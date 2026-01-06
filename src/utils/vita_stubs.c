@@ -1,6 +1,6 @@
 /**
- * Vita stubs for missing POSIX functions
- * These are required by fmt library but not available on Vita
+ * Vita stubs for missing functions
+ * These are required by various libraries but not available on Vita
  */
 
 #include <stdio.h>
@@ -14,4 +14,11 @@ void flockfile(FILE *filehandle) {
 void funlockfile(FILE *filehandle) {
     (void)filehandle;
     /* No-op on Vita */
+}
+
+/* SDL2 stub - DesktopPlatform uses this but we use PsvPlatform::openBrowser instead */
+int SDL_OpenURL(const char *url) {
+    (void)url;
+    /* PSV uses sceAppUtilLaunchWebBrowser via PsvPlatform::openBrowser() */
+    return -1;  /* Return error - actual implementation is in PsvPlatform */
 }
