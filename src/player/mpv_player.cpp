@@ -12,6 +12,7 @@
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/power.h>
 #include <nanovg.h>
+#include <nanovg_gxm.h>
 #include <nanovg_gxm_utils.h>
 #include <borealis/platforms/psv/psv_video.hpp>
 #endif
