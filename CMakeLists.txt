@@ -43,6 +43,12 @@ set(VITA_VERSION "02.00")
 # ATTRIBUTE2=12 enables maximum heap size mode - CRITICAL for memory-intensive apps
 set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12")
 
+# Apply patches to borealis before building
+# Fix: psv_platform.cpp uses wrong macro (__SDL2__ instead of BOREALIS_USE_GXM)
+file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/patches/psv_platform.cpp
+     DESTINATION ${BOREALIS_LIBRARY}/lib/platforms/psv/)
+message(STATUS "Applied patch: psv_platform.cpp (fixed __SDL2__ vs BOREALIS_USE_GXM)")
+
 # Add Borealis library subdirectory
 add_subdirectory(${BOREALIS_LIBRARY})
 
