@@ -90,6 +90,51 @@ void LoginActivity::onContentAvailable() {
     }
 }
 
+void LoginActivity::showServerSelectionDialog(const std::vector<PlexServer>& servers) {
+    // Create dialog with server list
+    auto* dialog = new brls::Dialog("Select Server");
+
+    auto* list = new brls::Box();
+    list->setAxis(brls::Axis::COLUMN);
+    list->setPadding(20);
+
+    for (size_t i = 0; i < servers.size(); i++) {
+        auto* btn = new brls::Button();
+        btn->setText(servers[i].name);
+        btn->setMarginBottom(10);
+
+        // Capture server by value
+        PlexServer server = servers[i];
+        btn->registerClickAction([this, server, dialog](brls::View* view) {
+            dialog->dismiss();
+            connectToSelectedServer(server);
+            return true;
+        });
+
+        list->addView(btn);
+    }
+
+    dialog->addView(list);
+    dialog->addButton("Cancel", [dialog]() { dialog->dismiss(); });
+
+    brls::Application::pushActivity(new brls::Activity(dialog));
+}
+
+void LoginActivity::connectToSelectedServer(const PlexServer& server) {
+    if (statusLabel) statusLabel->setText("Connecting to " + server.name + "...");
+
+    PlexClient& client = PlexClient::getInstance();
+    if (client.connectToServer(server.address)) {
+        Application::getInstance().saveSettings();
+        if (statusLabel) statusLabel->setText("Connected to " + server.name);
+        brls::sync([this]() {
+            Application::getInstance().pushMainActivity();
+        });
+    } else {
+        if (statusLabel) statusLabel->setText("Failed to connect to " + server.name);
+    }
+}
+
 void LoginActivity::onLoginPressed() {
     if (m_username.empty() || m_password.empty()) {
         if (statusLabel) statusLabel->setText("Please enter username and password");
@@ -121,16 +166,13 @@ void LoginActivity::onLoginPressed() {
             if (statusLabel) statusLabel->setText("Finding your servers...");
             std::vector<PlexServer> servers;
             if (client.fetchServers(servers) && !servers.empty()) {
-                // Connect to first available server
-                if (statusLabel) statusLabel->setText("Connecting to " + servers[0].name + "...");
-                if (client.connectToServer(servers[0].address)) {
-                    Application::getInstance().saveSettings();
-                    if (statusLabel) statusLabel->setText("Connected to " + servers[0].name);
-                    brls::sync([this]() {
-                        Application::getInstance().pushMainActivity();
-                    });
+                if (servers.size() == 1) {
+                    // Only one server, connect directly
+                    connectToSelectedServer(servers[0]);
                 } else {
-                    if (statusLabel) statusLabel->setText("Failed to connect to " + servers[0].name);
+                    // Multiple servers, show selection dialog
+                    if (statusLabel) statusLabel->setText("Select a server:");
+                    showServerSelectionDialog(servers);
                 }
             } else {
                 if (statusLabel) statusLabel->setText("No servers found - enter URL manually");
@@ -198,15 +240,13 @@ void LoginActivity::checkPinStatus() {
             // Auto-detect servers
             std::vector<PlexServer> servers;
             if (client.fetchServers(servers) && !servers.empty()) {
-                if (statusLabel) statusLabel->setText("Connecting to " + servers[0].name + "...");
-                if (client.connectToServer(servers[0].address)) {
-                    Application::getInstance().saveSettings();
-                    if (statusLabel) statusLabel->setText("Connected to " + servers[0].name);
-                    brls::sync([this]() {
-                        Application::getInstance().pushMainActivity();
-                    });
+                if (servers.size() == 1) {
+                    // Only one server, connect directly
+                    connectToSelectedServer(servers[0]);
                 } else {
-                    if (statusLabel) statusLabel->setText("Failed to connect to " + servers[0].name);
+                    // Multiple servers, show selection dialog
+                    if (statusLabel) statusLabel->setText("Select a server:");
+                    showServerSelectionDialog(servers);
                 }
             } else {
                 if (statusLabel) statusLabel->setText("No servers found - enter URL manually");

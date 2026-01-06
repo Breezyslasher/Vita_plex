@@ -368,103 +368,142 @@ void PlexClient::logout() {
 }
 
 bool PlexClient::fetchLibrarySections(std::vector<LibrarySection>& sections) {
+    brls::Logger::debug("fetchLibrarySections: serverUrl={}, hasToken={}",
+                        m_serverUrl, !m_authToken.empty());
+
     HttpClient client;
     std::string url = buildApiUrl("/library/sections");
-    HttpResponse resp = client.get(url);
+    brls::Logger::debug("Fetching: {}", url);
 
-    if (resp.statusCode != 200) return false;
+    HttpResponse resp = client.get(url);
+    brls::Logger::debug("Response: {} - {} bytes", resp.statusCode, resp.body.length());
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("Failed to fetch sections: {}", resp.statusCode);
+        if (!resp.body.empty()) {
+            brls::Logger::debug("Body: {}", resp.body.substr(0, 500));
+        }
+        return false;
+    }
+
+    // Log first part of response for debugging
+    brls::Logger::debug("Response body: {}", resp.body.substr(0, std::min((size_t)500, resp.body.length())));
 
     sections.clear();
 
-    // Find all Directory entries
+    // Find all Directory entries - in JSON arrays
     size_t pos = 0;
-    while ((pos = resp.body.find("\"Directory\"", pos)) != std::string::npos) {
-        size_t start = resp.body.find('{', pos);
-        if (start == std::string::npos) break;
+    while ((pos = resp.body.find("\"key\"", pos)) != std::string::npos) {
+        // Go back to find the start of this object
+        size_t objStart = resp.body.rfind('{', pos);
+        if (objStart == std::string::npos) {
+            pos++;
+            continue;
+        }
 
+        // Check if we've already processed this object
+        std::string beforeObj = resp.body.substr(objStart, pos - objStart);
+        if (beforeObj.find("\"key\"") != std::string::npos) {
+            pos++;
+            continue;
+        }
+
+        // Find end of object
         int braceCount = 1;
-        size_t end = start + 1;
-        while (braceCount > 0 && end < resp.body.length()) {
-            if (resp.body[end] == '{') braceCount++;
-            else if (resp.body[end] == '}') braceCount--;
-            end++;
+        size_t objEnd = objStart + 1;
+        while (braceCount > 0 && objEnd < resp.body.length()) {
+            if (resp.body[objEnd] == '{') braceCount++;
+            else if (resp.body[objEnd] == '}') braceCount--;
+            objEnd++;
         }
 
-        std::string obj = resp.body.substr(start, end - start);
+        std::string obj = resp.body.substr(objStart, objEnd - objStart);
 
-        LibrarySection section;
-        section.key = extractJsonValue(obj, "key");
-        section.title = extractJsonValue(obj, "title");
-        section.type = extractJsonValue(obj, "type");
-        section.art = extractJsonValue(obj, "art");
-        section.thumb = extractJsonValue(obj, "thumb");
-        section.count = extractJsonInt(obj, "count");
+        // Check if this looks like a library section (has title and type)
+        if (obj.find("\"title\"") != std::string::npos &&
+            obj.find("\"type\"") != std::string::npos) {
 
-        if (!section.key.empty()) {
-            sections.push_back(section);
+            LibrarySection section;
+            section.key = extractJsonValue(obj, "key");
+            section.title = extractJsonValue(obj, "title");
+            section.type = extractJsonValue(obj, "type");
+            section.art = extractJsonValue(obj, "art");
+            section.thumb = extractJsonValue(obj, "thumb");
+
+            if (!section.key.empty() && !section.title.empty()) {
+                brls::Logger::debug("Found section: {} ({})", section.title, section.type);
+                sections.push_back(section);
+            }
         }
 
-        pos = end;
+        pos = objEnd;
     }
 
     brls::Logger::info("Found {} library sections", sections.size());
-    return true;
+    return !sections.empty();
 }
 
 bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items) {
+    brls::Logger::debug("fetchLibraryContent: section={}", sectionKey);
+
     HttpClient client;
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all");
     HttpResponse resp = client.get(url);
 
-    if (resp.statusCode != 200) return false;
+    brls::Logger::debug("Response: {} - {} bytes", resp.statusCode, resp.body.length());
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("Failed to fetch content: {}", resp.statusCode);
+        return false;
+    }
 
     items.clear();
 
-    // Parse media items (simplified)
+    // Parse items by looking for objects with "ratingKey" (media items have this)
     size_t pos = 0;
-    std::string markers[] = {"\"Video\"", "\"Directory\"", "\"Track\"", "\"Photo\""};
-
-    for (const auto& marker : markers) {
-        pos = 0;
-        while ((pos = resp.body.find(marker, pos)) != std::string::npos) {
-            size_t start = resp.body.find('{', pos);
-            if (start == std::string::npos) break;
-
-            int braceCount = 1;
-            size_t end = start + 1;
-            while (braceCount > 0 && end < resp.body.length()) {
-                if (resp.body[end] == '{') braceCount++;
-                else if (resp.body[end] == '}') braceCount--;
-                end++;
-            }
-
-            std::string obj = resp.body.substr(start, end - start);
-
-            MediaItem item;
-            item.ratingKey = extractJsonValue(obj, "ratingKey");
-            item.key = extractJsonValue(obj, "key");
-            item.title = extractJsonValue(obj, "title");
-            item.summary = extractJsonValue(obj, "summary");
-            item.thumb = extractJsonValue(obj, "thumb");
-            item.art = extractJsonValue(obj, "art");
-            item.type = extractJsonValue(obj, "type");
-            item.mediaType = parseMediaType(item.type);
-            item.year = extractJsonInt(obj, "year");
-            item.duration = extractJsonInt(obj, "duration");
-            item.viewOffset = extractJsonInt(obj, "viewOffset");
-            item.rating = extractJsonFloat(obj, "rating");
-            item.contentRating = extractJsonValue(obj, "contentRating");
-
-            if (!item.ratingKey.empty()) {
-                items.push_back(item);
-            }
-
-            pos = end;
+    while ((pos = resp.body.find("\"ratingKey\"", pos)) != std::string::npos) {
+        // Go back to find start of this object
+        size_t objStart = resp.body.rfind('{', pos);
+        if (objStart == std::string::npos) {
+            pos++;
+            continue;
         }
+
+        // Find end of object
+        int braceCount = 1;
+        size_t objEnd = objStart + 1;
+        while (braceCount > 0 && objEnd < resp.body.length()) {
+            if (resp.body[objEnd] == '{') braceCount++;
+            else if (resp.body[objEnd] == '}') braceCount--;
+            objEnd++;
+        }
+
+        std::string obj = resp.body.substr(objStart, objEnd - objStart);
+
+        MediaItem item;
+        item.ratingKey = extractJsonValue(obj, "ratingKey");
+        item.key = extractJsonValue(obj, "key");
+        item.title = extractJsonValue(obj, "title");
+        item.summary = extractJsonValue(obj, "summary");
+        item.thumb = extractJsonValue(obj, "thumb");
+        item.art = extractJsonValue(obj, "art");
+        item.type = extractJsonValue(obj, "type");
+        item.mediaType = parseMediaType(item.type);
+        item.year = extractJsonInt(obj, "year");
+        item.duration = extractJsonInt(obj, "duration");
+        item.viewOffset = extractJsonInt(obj, "viewOffset");
+        item.rating = extractJsonFloat(obj, "rating");
+        item.contentRating = extractJsonValue(obj, "contentRating");
+
+        if (!item.ratingKey.empty() && !item.title.empty()) {
+            items.push_back(item);
+        }
+
+        pos = objEnd;
     }
 
-    brls::Logger::info("Found {} items in library", items.size());
-    return true;
+    brls::Logger::info("Found {} items in library section {}", items.size(), sectionKey);
+    return !items.empty() || resp.statusCode == 200;
 }
 
 bool PlexClient::fetchChildren(const std::string& ratingKey, std::vector<MediaItem>& items) {
@@ -750,51 +789,58 @@ bool PlexClient::fetchRecentlyAdded(std::vector<MediaItem>& items) {
 }
 
 bool PlexClient::search(const std::string& query, std::vector<MediaItem>& results) {
+    brls::Logger::debug("Searching for: {}", query);
+
     HttpClient client;
     std::string url = buildApiUrl("/hubs/search?query=" + HttpClient::urlEncode(query));
     HttpResponse resp = client.get(url);
 
-    if (resp.statusCode != 200) return false;
+    brls::Logger::debug("Search response: {} - {} bytes", resp.statusCode, resp.body.length());
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("Search failed: {}", resp.statusCode);
+        return false;
+    }
 
     results.clear();
 
-    // Parse search results - look for Video, Directory, Track, Photo, Metadata entries
+    // Parse search results by looking for objects with ratingKey
     size_t pos = 0;
-    std::string markers[] = {"\"Video\"", "\"Directory\"", "\"Track\"", "\"Photo\"", "\"Metadata\""};
-
-    for (const auto& marker : markers) {
-        pos = 0;
-        while ((pos = resp.body.find(marker, pos)) != std::string::npos) {
-            size_t start = resp.body.find('{', pos);
-            if (start == std::string::npos) break;
-
-            int braceCount = 1;
-            size_t end = start + 1;
-            while (braceCount > 0 && end < resp.body.length()) {
-                if (resp.body[end] == '{') braceCount++;
-                else if (resp.body[end] == '}') braceCount--;
-                end++;
-            }
-
-            std::string obj = resp.body.substr(start, end - start);
-
-            MediaItem item;
-            item.ratingKey = extractJsonValue(obj, "ratingKey");
-            item.key = extractJsonValue(obj, "key");
-            item.title = extractJsonValue(obj, "title");
-            item.summary = extractJsonValue(obj, "summary");
-            item.thumb = extractJsonValue(obj, "thumb");
-            item.art = extractJsonValue(obj, "art");
-            item.type = extractJsonValue(obj, "type");
-            item.mediaType = parseMediaType(item.type);
-            item.year = extractJsonInt(obj, "year");
-
-            if (!item.ratingKey.empty()) {
-                results.push_back(item);
-            }
-
-            pos = end;
+    while ((pos = resp.body.find("\"ratingKey\"", pos)) != std::string::npos) {
+        // Go back to find start of this object
+        size_t objStart = resp.body.rfind('{', pos);
+        if (objStart == std::string::npos) {
+            pos++;
+            continue;
         }
+
+        // Find end of object
+        int braceCount = 1;
+        size_t objEnd = objStart + 1;
+        while (braceCount > 0 && objEnd < resp.body.length()) {
+            if (resp.body[objEnd] == '{') braceCount++;
+            else if (resp.body[objEnd] == '}') braceCount--;
+            objEnd++;
+        }
+
+        std::string obj = resp.body.substr(objStart, objEnd - objStart);
+
+        MediaItem item;
+        item.ratingKey = extractJsonValue(obj, "ratingKey");
+        item.key = extractJsonValue(obj, "key");
+        item.title = extractJsonValue(obj, "title");
+        item.summary = extractJsonValue(obj, "summary");
+        item.thumb = extractJsonValue(obj, "thumb");
+        item.art = extractJsonValue(obj, "art");
+        item.type = extractJsonValue(obj, "type");
+        item.mediaType = parseMediaType(item.type);
+        item.year = extractJsonInt(obj, "year");
+
+        if (!item.ratingKey.empty() && !item.title.empty()) {
+            results.push_back(item);
+        }
+
+        pos = objEnd;
     }
 
     brls::Logger::info("Found {} search results for '{}'", results.size(), query);
