@@ -78,21 +78,20 @@ bool MpvPlayer::init() {
     // Video output configuration
     // ========================================
 
-    // Use libmpv for video output (like switchfin does)
-    // This allows proper integration with the rendering pipeline
-    mpv_set_option_string(m_mpv, "vo", "libmpv");
+    // Use null video output - we don't have a render context set up
+    // This means audio-only playback but won't crash
+    // For full video, would need mpv_render_context_create() with GXM params
+    mpv_set_option_string(m_mpv, "vo", "null");
+    mpv_set_option_string(m_mpv, "video", "no");  // Disable video decoding entirely
 
 #ifdef __vita__
-    // Vita-specific settings from switchfin
-    mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
-    mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
-    mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
+    // Vita-specific settings
+    mpv_set_option_string(m_mpv, "vd-lavc-threads", "2");
 
-    // Hardware decoding for Vita
-    mpv_set_option_string(m_mpv, "hwdec", "vita-copy");
-    brls::Logger::debug("MpvPlayer: Using hwdec=vita-copy");
+    // Don't use hwdec without proper render context
+    mpv_set_option_string(m_mpv, "hwdec", "no");
 #else
-    mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
+    mpv_set_option_string(m_mpv, "hwdec", "no");
 #endif
 
     // ========================================
@@ -109,12 +108,13 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "volume-max", "150");
 
     // ========================================
-    // Cache and demuxer settings
+    // Cache and demuxer settings (conservative for Vita)
     // ========================================
 
-    // Memory cache (matching switchfin's approach)
-    mpv_set_option_string(m_mpv, "demuxer-max-bytes", "32MiB");
-    mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "16MiB");
+    mpv_set_option_string(m_mpv, "cache", "yes");
+    mpv_set_option_string(m_mpv, "demuxer-max-bytes", "4MiB");
+    mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "2MiB");
+    mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "3");
 
     // ========================================
     // Network settings for streaming
@@ -232,28 +232,15 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
     // Mark command as pending
     m_commandPending = true;
 
-    // Use loadfile command with async (matching switchfin's setUrl method)
-    // Check MPV API version for command format
-    if (mpv_client_api_version() >= MPV_MAKE_VERSION(2, 3)) {
-        const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", "0", "", nullptr};
-        int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
-        if (result < 0) {
-            m_errorMessage = std::string("Failed to queue load command: ") + mpv_error_string(result);
-            brls::Logger::error("MpvPlayer: {}", m_errorMessage);
-            m_commandPending = false;
-            setState(MpvPlayerState::ERROR);
-            return false;
-        }
-    } else {
-        const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", "", nullptr};
-        int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
-        if (result < 0) {
-            m_errorMessage = std::string("Failed to queue load command: ") + mpv_error_string(result);
-            brls::Logger::error("MpvPlayer: {}", m_errorMessage);
-            m_commandPending = false;
-            setState(MpvPlayerState::ERROR);
-            return false;
-        }
+    // Use simple loadfile command
+    const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", nullptr};
+    int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
+    if (result < 0) {
+        m_errorMessage = std::string("Failed to queue load command: ") + mpv_error_string(result);
+        brls::Logger::error("MpvPlayer: {}", m_errorMessage);
+        m_commandPending = false;
+        setState(MpvPlayerState::ERROR);
+        return false;
     }
 
     setState(MpvPlayerState::LOADING);
