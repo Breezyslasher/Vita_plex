@@ -523,7 +523,7 @@ void MpvPlayer::handleEvent(mpv_event* event) {
                 brls::Logger::debug("MpvPlayer: Playback stopped");
                 setState(MpvPlayerState::IDLE);
             } else {
-                brls::Logger::debug("MpvPlayer: Unknown end reason {}", end->reason);
+                brls::Logger::debug("MpvPlayer: Unknown end reason {}", (int)end->reason);
                 setState(MpvPlayerState::IDLE);
             }
             break;
