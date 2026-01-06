@@ -5,7 +5,6 @@
 #include "app/plex_client.hpp"
 #include "app/application.hpp"
 #include "utils/http_client.hpp"
-#include "utils/jwt_auth.hpp"
 
 #include <borealis.hpp>
 #include <cstring>
@@ -179,36 +178,19 @@ bool PlexClient::login(const std::string& username, const std::string& password)
 bool PlexClient::requestPin(PinAuth& pinAuth) {
     brls::Logger::info("Requesting PIN for plex.tv/link authentication");
 
-    // Initialize JWT auth for key generation
-    JwtAuth& jwtAuth = JwtAuth::getInstance();
-    if (!jwtAuth.initialize()) {
-        brls::Logger::error("Failed to initialize JWT authentication");
-        // Fall back to legacy auth
-    }
-
     HttpClient client;
     HttpRequest req;
     req.url = "https://plex.tv/api/v2/pins";
     req.method = "POST";
     req.headers["Accept"] = "application/json";
+    req.headers["Content-Type"] = "application/x-www-form-urlencoded";
     req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
     req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
     req.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
     req.headers["X-Plex-Platform"] = PLEX_PLATFORM;
     req.headers["X-Plex-Device"] = PLEX_DEVICE;
 
-    // Use JWT flow with JWK if available
-    if (jwtAuth.hasValidKeyPair()) {
-        req.headers["Content-Type"] = "application/json";
-        // Request with JWK for JWT authentication, strong=false for 4-digit PIN
-        req.body = "{\"jwk\":" + jwtAuth.getJwk() + ",\"strong\":false}";
-        brls::Logger::debug("Using JWT PIN request with JWK");
-    } else {
-        // Legacy flow
-        req.headers["Content-Type"] = "application/x-www-form-urlencoded";
-        req.body = "strong=false";
-        brls::Logger::debug("Using legacy PIN request");
-    }
+    req.body = "strong=true";
 
     HttpResponse resp = client.request(req);
 
@@ -217,33 +199,19 @@ bool PlexClient::requestPin(PinAuth& pinAuth) {
         pinAuth.code = extractJsonValue(resp.body, "code");
         pinAuth.expiresIn = extractJsonInt(resp.body, "expiresIn");
         pinAuth.expired = false;
-        pinAuth.useJwt = jwtAuth.hasValidKeyPair();
 
-        brls::Logger::info("PIN requested: {} (JWT: {})", pinAuth.code, pinAuth.useJwt ? "yes" : "no");
+        brls::Logger::info("PIN requested: {}", pinAuth.code);
         return !pinAuth.code.empty();
     }
 
-    brls::Logger::error("PIN request failed: {} - {}", resp.statusCode, resp.body);
+    brls::Logger::error("PIN request failed: {}", resp.statusCode);
     return false;
 }
 
 bool PlexClient::checkPin(PinAuth& pinAuth) {
     HttpClient client;
     HttpRequest req;
-
-    // Build URL with deviceJWT if using JWT authentication
-    std::string url = "https://plex.tv/api/v2/pins/" + std::to_string(pinAuth.id);
-
-    JwtAuth& jwtAuth = JwtAuth::getInstance();
-    if (pinAuth.useJwt && jwtAuth.hasValidKeyPair()) {
-        std::string deviceJwt = jwtAuth.createPinVerificationJwt(PLEX_CLIENT_ID);
-        if (!deviceJwt.empty()) {
-            url += "?deviceJWT=" + HttpClient::urlEncode(deviceJwt);
-            brls::Logger::debug("Using JWT for PIN verification");
-        }
-    }
-
-    req.url = url;
+    req.url = "https://plex.tv/api/v2/pins/" + std::to_string(pinAuth.id);
     req.method = "GET";
     req.headers["Accept"] = "application/json";
     req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
@@ -266,74 +234,10 @@ bool PlexClient::checkPin(PinAuth& pinAuth) {
 }
 
 bool PlexClient::refreshToken() {
-    brls::Logger::info("Refreshing JWT token");
-
-    JwtAuth& jwtAuth = JwtAuth::getInstance();
-    if (!jwtAuth.hasValidKeyPair()) {
-        brls::Logger::error("No valid key pair for token refresh");
-        return false;
-    }
-
-    HttpClient client;
-
-    // Step 1: Get nonce
-    HttpRequest nonceReq;
-    nonceReq.url = "https://plex.tv/api/v2/auth/nonce";
-    nonceReq.method = "GET";
-    nonceReq.headers["Accept"] = "application/json";
-    nonceReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
-
-    HttpResponse nonceResp = client.request(nonceReq);
-    if (nonceResp.statusCode != 200) {
-        brls::Logger::error("Failed to get nonce: {}", nonceResp.statusCode);
-        return false;
-    }
-
-    std::string nonce = extractJsonValue(nonceResp.body, "nonce");
-    if (nonce.empty()) {
-        brls::Logger::error("Empty nonce received");
-        return false;
-    }
-
-    brls::Logger::debug("Got nonce: {}", nonce);
-
-    // Step 2: Create signed JWT with nonce
-    std::string deviceJwt = jwtAuth.createSignedJwt(nonce, PLEX_CLIENT_ID, "username,email,friendly_name");
-    if (deviceJwt.empty()) {
-        brls::Logger::error("Failed to create signed JWT");
-        return false;
-    }
-
-    // Step 3: Exchange for Plex token
-    HttpRequest tokenReq;
-    tokenReq.url = "https://plex.tv/api/v2/auth/token";
-    tokenReq.method = "POST";
-    tokenReq.headers["Accept"] = "application/json";
-    tokenReq.headers["Content-Type"] = "application/json";
-    tokenReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
-    tokenReq.body = "{\"jwt\":\"" + deviceJwt + "\"}";
-
-    HttpResponse tokenResp = client.request(tokenReq);
-    if (tokenResp.statusCode != 200 && tokenResp.statusCode != 201) {
-        brls::Logger::error("Failed to exchange JWT for token: {} - {}",
-                           tokenResp.statusCode, tokenResp.body);
-        return false;
-    }
-
-    std::string newToken = extractJsonValue(tokenResp.body, "auth_token");
-    if (newToken.empty()) {
-        newToken = extractJsonValue(tokenResp.body, "authToken");
-    }
-
-    if (newToken.empty()) {
-        brls::Logger::error("No token in response");
-        return false;
-    }
-
-    m_authToken = newToken;
-    Application::getInstance().setAuthToken(m_authToken);
-    brls::Logger::info("Token refreshed successfully");
-    return true;
+    // JWT token refresh not yet implemented
+    // Legacy tokens don't expire, so this is only needed for JWT auth
+    brls::Logger::info("Token refresh not available (using legacy auth)");
+    return false;
 }
 
 bool PlexClient::connectToServer(const std::string& url) {
