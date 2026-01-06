@@ -1,0 +1,77 @@
+{
+    "app": {
+        "name": "VitaPlex",
+        "version": "2.0.0"
+    },
+    "login": {
+        "title": "VitaPlex",
+        "server": "Server URL",
+        "username": "Username",
+        "password": "Password",
+        "login": "Login",
+        "pin_login": "Login with PIN",
+        "enter_server": "Enter your Plex server URL",
+        "enter_credentials": "Enter your Plex credentials",
+        "go_to_plex": "Go to plex.tv/link and enter the PIN",
+        "logging_in": "Logging in...",
+        "success": "Login successful!",
+        "failed": "Login failed",
+        "pin_expired": "PIN expired - try again"
+    },
+    "home": {
+        "title": "Home",
+        "continue_watching": "Continue Watching",
+        "recently_added": "Recently Added",
+        "on_deck": "On Deck"
+    },
+    "library": {
+        "title": "Library",
+        "movies": "Movies",
+        "shows": "TV Shows",
+        "music": "Music",
+        "photos": "Photos",
+        "empty": "No items found"
+    },
+    "search": {
+        "title": "Search",
+        "placeholder": "Tap to search...",
+        "results": "Found {count} results",
+        "no_results": "No results found"
+    },
+    "settings": {
+        "title": "Settings",
+        "account": "Account",
+        "user": "User",
+        "server": "Server",
+        "about": "About",
+        "version": "Version",
+        "logout": "Logout",
+        "logout_confirm": "Are you sure you want to logout?"
+    },
+    "player": {
+        "now_playing": "Now Playing",
+        "play": "Play",
+        "pause": "Pause",
+        "stop": "Stop",
+        "rewind": "Rewind",
+        "forward": "Forward"
+    },
+    "detail": {
+        "play": "Play",
+        "resume": "Resume",
+        "seasons": "Seasons",
+        "episodes": "Episodes",
+        "tracks": "Tracks",
+        "mark_watched": "Mark as Watched",
+        "mark_unwatched": "Mark as Unwatched"
+    },
+    "common": {
+        "ok": "OK",
+        "cancel": "Cancel",
+        "yes": "Yes",
+        "no": "No",
+        "loading": "Loading...",
+        "error": "Error",
+        "retry": "Retry"
+    }
+}
