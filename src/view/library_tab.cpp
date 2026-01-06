@@ -37,6 +37,10 @@ LibraryTab::LibraryTab() {
         onItemSelected(item);
     });
     this->addView(m_contentGrid);
+
+    // Load sections immediately
+    brls::Logger::debug("LibraryTab: Loading sections...");
+    loadSections();
 }
 
 void LibraryTab::onFocusGained() {
@@ -50,10 +54,15 @@ void LibraryTab::onFocusGained() {
 void LibraryTab::loadSections() {
     PlexClient& client = PlexClient::getInstance();
 
+    brls::Logger::debug("LibraryTab::loadSections - Server: {}", client.getServerUrl());
+    brls::Logger::debug("LibraryTab: Fetching library sections...");
+
     if (client.fetchLibrarySections(m_sections)) {
+        brls::Logger::info("LibraryTab: Got {} sections", m_sections.size());
         m_sectionsBox->clearViews();
 
         for (const auto& section : m_sections) {
+            brls::Logger::debug("LibraryTab: Adding section button: {}", section.title);
             auto* btn = new brls::Button();
             btn->setText(section.title);
             btn->setMarginRight(10);
@@ -68,18 +77,27 @@ void LibraryTab::loadSections() {
 
         // Load first section by default
         if (!m_sections.empty()) {
+            brls::Logger::debug("LibraryTab: Loading first section: {}", m_sections[0].title);
             onSectionSelected(m_sections[0]);
         }
+    } else {
+        brls::Logger::error("LibraryTab: Failed to fetch sections");
     }
 
     m_loaded = true;
+    brls::Logger::debug("LibraryTab: Sections loading complete");
 }
 
 void LibraryTab::loadContent(const std::string& sectionKey) {
     PlexClient& client = PlexClient::getInstance();
 
+    brls::Logger::debug("LibraryTab::loadContent - section: {}", sectionKey);
+
     if (client.fetchLibraryContent(sectionKey, m_items)) {
+        brls::Logger::info("LibraryTab: Got {} items for section {}", m_items.size(), sectionKey);
         m_contentGrid->setDataSource(m_items);
+    } else {
+        brls::Logger::error("LibraryTab: Failed to load content for section {}", sectionKey);
     }
 }
 

@@ -47,6 +47,10 @@ HomeTab::HomeTab() {
     m_recentlyAddedBox->setAxis(brls::Axis::ROW);
     m_recentlyAddedBox->setHeight(180);
     this->addView(m_recentlyAddedBox);
+
+    // Load content immediately
+    brls::Logger::debug("HomeTab: Loading content...");
+    loadContent();
 }
 
 void HomeTab::onFocusGained() {
@@ -60,8 +64,12 @@ void HomeTab::onFocusGained() {
 void HomeTab::loadContent() {
     PlexClient& client = PlexClient::getInstance();
 
+    brls::Logger::debug("HomeTab::loadContent - Server: {}", client.getServerUrl());
+
     // Load continue watching
+    brls::Logger::debug("HomeTab: Fetching continue watching...");
     if (client.fetchContinueWatching(m_continueWatching)) {
+        brls::Logger::info("HomeTab: Got {} continue watching items", m_continueWatching.size());
         m_continueWatchingBox->clearViews();
 
         for (const auto& item : m_continueWatching) {
@@ -78,10 +86,14 @@ void HomeTab::loadContent() {
 
             m_continueWatchingBox->addView(cell);
         }
+    } else {
+        brls::Logger::error("HomeTab: Failed to fetch continue watching");
     }
 
     // Load recently added
+    brls::Logger::debug("HomeTab: Fetching recently added...");
     if (client.fetchRecentlyAdded(m_recentlyAdded)) {
+        brls::Logger::info("HomeTab: Got {} recently added items", m_recentlyAdded.size());
         m_recentlyAddedBox->clearViews();
 
         for (const auto& item : m_recentlyAdded) {
@@ -98,9 +110,12 @@ void HomeTab::loadContent() {
 
             m_recentlyAddedBox->addView(cell);
         }
+    } else {
+        brls::Logger::error("HomeTab: Failed to fetch recently added");
     }
 
     m_loaded = true;
+    brls::Logger::debug("HomeTab: Content loading complete");
 }
 
 void HomeTab::onItemSelected(const MediaItem& item) {
