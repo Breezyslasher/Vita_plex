@@ -30,6 +30,7 @@ private:
     std::string m_mediaKey;
     bool m_isPlaying = false;
     bool m_isPhoto = false;
+    bool m_destroying = false;  // Flag to prevent timer callbacks during destruction
     brls::RepeatingTimer m_updateTimer;
 
     BRLS_BIND(brls::Box, playerContainer, "player/container");

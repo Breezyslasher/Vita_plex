@@ -66,6 +66,9 @@ void PlayerActivity::onContentAvailable() {
 void PlayerActivity::willDisappear(bool resetState) {
     brls::Activity::willDisappear(resetState);
 
+    // Mark as destroying to prevent timer callbacks
+    m_destroying = true;
+
     // Stop update timer
     m_updateTimer.stop();
 
@@ -138,27 +141,41 @@ void PlayerActivity::loadMedia() {
             MpvPlayer& player = MpvPlayer::getInstance();
 
             if (!player.isInitialized()) {
-                player.init();
+                if (!player.init()) {
+                    brls::Logger::error("Failed to initialize MPV player");
+                    return;
+                }
             }
 
-            // Resume from viewOffset if available
+            // Load the URL
+            if (!player.loadUrl(url, item.title)) {
+                brls::Logger::error("Failed to load URL: {}", url);
+                return;
+            }
+
+            // Resume from viewOffset if available (seekTo is async, safe to call)
             if (item.viewOffset > 0) {
-                player.loadUrl(url, item.title);
                 player.seekTo(item.viewOffset / 1000.0);
-            } else {
-                player.loadUrl(url, item.title);
             }
 
             player.play();
             m_isPlaying = true;
+        } else {
+            brls::Logger::error("Failed to get playback URL for: {}", m_mediaKey);
         }
     }
 }
 
 void PlayerActivity::updateProgress() {
+    // Don't update if destroying or showing photo
+    if (m_destroying || m_isPhoto) return;
+
     MpvPlayer& player = MpvPlayer::getInstance();
 
     if (!player.isInitialized()) return;
+
+    // Process MPV events (state changes, property updates, etc.)
+    player.update();
 
     double position = player.getPosition();
     double duration = player.getDuration();
@@ -181,8 +198,9 @@ void PlayerActivity::updateProgress() {
         }
     }
 
-    // Check if playback ended
-    if (player.hasEnded()) {
+    // Check if playback ended (only if we were actually playing)
+    if (m_isPlaying && player.hasEnded()) {
+        m_isPlaying = false;  // Prevent multiple triggers
         PlexClient::getInstance().markAsWatched(m_mediaKey);
         brls::Application::popActivity();
     }

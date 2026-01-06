@@ -42,28 +42,48 @@ void MainActivity::onContentAvailable() {
         }
 
         // Add tabs based on sidebar order setting
-        // Default order: Home, Library/Libraries, Search, Settings
+        // Default order: Home, Library/Libraries, Search, Live TV
         std::string sidebarOrder = settings.sidebarOrder;
 
-        // Add Home tab
-        tabFrame->addTab("Home", []() { return new HomeTab(); });
-
-        // Library handling based on settings
-        if (settings.showLibrariesInSidebar) {
-            // Load libraries synchronously to maintain correct order
-            loadLibrariesToSidebar();
+        // Parse the order or use default
+        std::vector<std::string> order;
+        if (!sidebarOrder.empty()) {
+            std::string orderStr = sidebarOrder;
+            size_t pos = 0;
+            while ((pos = orderStr.find(',')) != std::string::npos) {
+                order.push_back(orderStr.substr(0, pos));
+                orderStr.erase(0, pos + 1);
+            }
+            if (!orderStr.empty()) {
+                order.push_back(orderStr);
+            }
         } else {
-            // Single Library tab showing all sections
-            tabFrame->addTab("Library", []() { return new LibraryTab(); });
+            // Default order
+            order = {"home", "library", "search", "livetv"};
         }
 
-        // Add Search tab
-        tabFrame->addTab("Search", []() { return new SearchTab(); });
+        // Add tabs in specified order
+        bool hasLiveTV = PlexClient::getInstance().hasLiveTV();
+        bool addedLibraries = false;
 
-        // Check if Live TV is available
-        if (PlexClient::getInstance().hasLiveTV()) {
-            tabFrame->addSeparator();
-            tabFrame->addTab("Live TV", []() { return new LiveTVTab(); });
+        for (const std::string& item : order) {
+            if (item == "home") {
+                tabFrame->addTab("Home", []() { return new HomeTab(); });
+            } else if (item == "library") {
+                if (settings.showLibrariesInSidebar) {
+                    if (!addedLibraries) {
+                        loadLibrariesToSidebar();
+                        addedLibraries = true;
+                    }
+                } else {
+                    tabFrame->addTab("Library", []() { return new LibraryTab(); });
+                }
+            } else if (item == "search") {
+                tabFrame->addTab("Search", []() { return new SearchTab(); });
+            } else if (item == "livetv" && hasLiveTV) {
+                tabFrame->addSeparator();
+                tabFrame->addTab("Live TV", []() { return new LiveTVTab(); });
+            }
         }
 
         // Settings always at the bottom

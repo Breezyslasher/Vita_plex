@@ -27,6 +27,7 @@ private:
     void onSubtitleSizeChanged(int index);
     void onSeekIntervalChanged(int index);
     void onManageHiddenLibraries();
+    void onManageSidebarOrder();
 
     brls::ScrollingFrame* m_scrollView = nullptr;
     brls::Box* m_contentBox = nullptr;
@@ -45,6 +46,7 @@ private:
     brls::BooleanCell* m_sidebarLibrariesToggle = nullptr;
     brls::BooleanCell* m_collapseSidebarToggle = nullptr;
     brls::DetailCell* m_hiddenLibrariesCell = nullptr;
+    brls::DetailCell* m_sidebarOrderCell = nullptr;
 
     // Playback section
     brls::BooleanCell* m_autoPlayToggle = nullptr;
