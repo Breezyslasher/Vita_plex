@@ -129,9 +129,8 @@ target_link_libraries(${PROJECT_NAME}
     SceCodecEngine_stub
     SceAudio_stub
 
-    # Standard libraries last
+    # Standard libraries last (m is provided by libstdc++)
     z
-    m
     c
 )
 
