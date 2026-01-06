@@ -102,7 +102,7 @@ target_link_libraries(${PROJECT_NAME}
     SceShellSvc_stub
     SceAudiodec_stub
     SceVideodec_stub
-    SceAudioOut_stub
+    SceAudio_stub
 
     # External libraries
     curl
