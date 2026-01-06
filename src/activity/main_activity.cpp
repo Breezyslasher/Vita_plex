@@ -8,6 +8,7 @@
 #include "view/library_section_tab.hpp"
 #include "view/search_tab.hpp"
 #include "view/settings_tab.hpp"
+#include "view/livetv_tab.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
 #include "utils/async.hpp"
@@ -40,19 +41,33 @@ void MainActivity::onContentAvailable() {
             }
         }
 
-        // Add tabs
+        // Add tabs based on sidebar order setting
+        // Default order: Home, Library/Libraries, Search, Settings
+        std::string sidebarOrder = settings.sidebarOrder;
+
+        // Add Home tab
         tabFrame->addTab("Home", []() { return new HomeTab(); });
 
         // Library handling based on settings
         if (settings.showLibrariesInSidebar) {
-            // Load libraries and add them as individual sidebar tabs
+            // Load libraries synchronously to maintain correct order
             loadLibrariesToSidebar();
         } else {
             // Single Library tab showing all sections
             tabFrame->addTab("Library", []() { return new LibraryTab(); });
         }
 
+        // Add Search tab
         tabFrame->addTab("Search", []() { return new SearchTab(); });
+
+        // Check if Live TV is available
+        if (PlexClient::getInstance().hasLiveTV()) {
+            tabFrame->addSeparator();
+            tabFrame->addTab("Live TV", []() { return new LiveTVTab(); });
+        }
+
+        // Settings always at the bottom
+        tabFrame->addSeparator();
         tabFrame->addTab("Settings", []() { return new SettingsTab(); });
 
         // Focus first tab
@@ -66,63 +81,47 @@ void MainActivity::loadLibrariesToSidebar() {
     // Add separator before libraries
     tabFrame->addSeparator();
 
-    // Fetch libraries asynchronously and add them as tabs
-    asyncRun([this]() {
-        PlexClient& client = PlexClient::getInstance();
-        std::vector<LibrarySection> sections;
+    // Fetch libraries synchronously to maintain correct sidebar order
+    PlexClient& client = PlexClient::getInstance();
+    std::vector<LibrarySection> sections;
 
-        if (client.fetchLibrarySections(sections)) {
-            brls::Logger::info("MainActivity: Got {} library sections", sections.size());
+    if (client.fetchLibrarySections(sections)) {
+        brls::Logger::info("MainActivity: Got {} library sections", sections.size());
 
-            // Get hidden libraries setting
-            std::string hiddenLibraries = Application::getInstance().getSettings().hiddenLibraries;
+        // Get hidden libraries setting
+        std::string hiddenLibraries = Application::getInstance().getSettings().hiddenLibraries;
 
-            // Filter out hidden sections
-            std::vector<LibrarySection> visibleSections;
-            for (const auto& section : sections) {
-                // Check if hidden
-                bool hidden = false;
-                if (!hiddenLibraries.empty()) {
-                    std::string checkHidden = hiddenLibraries;
-                    size_t pos = 0;
-                    while ((pos = checkHidden.find(',')) != std::string::npos) {
-                        if (checkHidden.substr(0, pos) == section.key) {
-                            hidden = true;
-                            break;
-                        }
-                        checkHidden.erase(0, pos + 1);
-                    }
-                    if (!hidden && checkHidden == section.key) {
-                        hidden = true;
-                    }
-                }
+        // Helper to check if hidden
+        auto isHidden = [&hiddenLibraries](const std::string& key) -> bool {
+            if (hiddenLibraries.empty()) return false;
+            std::string hidden = hiddenLibraries;
+            size_t pos = 0;
+            while ((pos = hidden.find(',')) != std::string::npos) {
+                if (hidden.substr(0, pos) == key) return true;
+                hidden.erase(0, pos + 1);
+            }
+            return (hidden == key);
+        };
 
-                if (!hidden) {
-                    visibleSections.push_back(section);
-                } else {
-                    brls::Logger::debug("MainActivity: Hiding library: {}", section.title);
-                }
+        // Add library tabs
+        for (const auto& section : sections) {
+            if (isHidden(section.key)) {
+                brls::Logger::debug("MainActivity: Hiding library: {}", section.title);
+                continue;
             }
 
-            s_cachedSections = visibleSections;
+            std::string key = section.key;
+            std::string title = section.title;
 
-            // Add library tabs on main thread
-            brls::sync([this, visibleSections]() {
-                for (const auto& section : visibleSections) {
-                    std::string key = section.key;
-                    std::string title = section.title;
-
-                    tabFrame->addTab(title, [key, title]() {
-                        return new LibrarySectionTab(key, title);
-                    });
-
-                    brls::Logger::debug("MainActivity: Added sidebar tab for library: {}", title);
-                }
+            tabFrame->addTab(title, [key, title]() {
+                return new LibrarySectionTab(key, title);
             });
-        } else {
-            brls::Logger::error("MainActivity: Failed to fetch library sections");
+
+            brls::Logger::debug("MainActivity: Added sidebar tab for library: {}", title);
         }
-    });
+    } else {
+        brls::Logger::error("MainActivity: Failed to fetch library sections");
+    }
 }
 
 } // namespace vitaplex

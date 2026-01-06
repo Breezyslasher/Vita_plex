@@ -77,6 +77,7 @@ set(APP_SOURCES
     src/view/library_section_tab.cpp
     src/view/search_tab.cpp
     src/view/settings_tab.cpp
+    src/view/livetv_tab.cpp
     src/view/media_detail_view.cpp
     src/view/media_item_cell.cpp
     src/view/recycling_grid.cpp
