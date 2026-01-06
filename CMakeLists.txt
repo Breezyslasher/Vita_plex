@@ -1,58 +1,63 @@
 cmake_minimum_required(VERSION 3.16)
-
-# VitaSDK Configuration
-if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
-    if(DEFINED ENV{VITASDK})
-        set(CMAKE_TOOLCHAIN_FILE "$ENV{VITASDK}/share/vita.toolchain.cmake" CACHE PATH "toolchain file")
-    else()
-        message(FATAL_ERROR "Please define VITASDK to point to your SDK path!")
-    endif()
-endif()
-
-# Project definition
+ 
+# Set Borealis library path FIRST (required by cmake includes)
+set(BOREALIS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib/borealis)
+set(BOREALIS_LIBRARY ${BOREALIS_DIR}/library)
+ 
+# Set platform for Borealis BEFORE including cmake files
+set(PLATFORM_DESKTOP OFF CACHE BOOL "Build for Desktop" FORCE)
+set(PLATFORM_SWITCH OFF CACHE BOOL "Build for Switch" FORCE)
+set(PLATFORM_PSV ON CACHE BOOL "Build for PS Vita" FORCE)
+set(PLATFORM_PS4 OFF CACHE BOOL "Build for PS4" FORCE)
+set(PLATFORM_IOS OFF CACHE BOOL "Build for iOS" FORCE)
+set(PLATFORM_ANDROID OFF CACHE BOOL "Build for Android" FORCE)
+ 
+# Enable native GXM graphics for PS Vita
+set(USE_GXM ON CACHE BOOL "Use GXM for PS Vita" FORCE)
+set(USE_VITA_SHARK ON CACHE BOOL "Use VitaShark for shader compilation" FORCE)
+ 
+# Disable features not needed for Vita
+set(USE_LIBROMFS OFF CACHE BOOL "Use libromfs" FORCE)
+ 
+# Include Borealis cmake files (like switchfin does)
+# This properly sets up platform options and toolchain
+include(${BOREALIS_LIBRARY}/cmake/commonOption.cmake)
+include(${BOREALIS_LIBRARY}/cmake/toolchain.cmake)
+ 
+# Project definition (AFTER toolchain include)
 project(VitaPlex VERSION 2.0.0 LANGUAGES C CXX)
-
+ 
 # C++17 required for Borealis
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
+ 
 # Enable RTTI and exceptions (required by Borealis)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -frtti -fexceptions")
-
-include("${VITASDK}/share/vita.cmake" REQUIRED)
-
+ 
 # App metadata
 set(VITA_APP_NAME "VitaPlex")
 set(VITA_TITLEID "VPLEX0001")
 set(VITA_VERSION "02.00")
 set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1")
-
-# Add Borealis library
-option(BOREALIS_LIBRARY "Build borealis as library" ON)
-set(BOREALIS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib/borealis)
-
-# Set platform for Borealis - PS Vita
-set(PLATFORM_PSV ON CACHE BOOL "Build for PS Vita" FORCE)
-set(USE_LIBROMFS OFF CACHE BOOL "Use libromfs" FORCE)
-
-add_subdirectory(${BOREALIS_DIR}/library)
-
+ 
+# Add Borealis library subdirectory
+add_subdirectory(${BOREALIS_LIBRARY})
+ 
 # Application source files
 set(APP_SOURCES
     # Main entry
     src/main.cpp
-
+ 
     # Application
     src/app/application.cpp
     src/app/plex_client.cpp
-
+ 
     # Activities
     src/activity/main_activity.cpp
     src/activity/login_activity.cpp
     src/activity/player_activity.cpp
-
+ 
     # Views
-    src/view/login_view.cpp
     src/view/home_tab.cpp
     src/view/library_tab.cpp
     src/view/search_tab.cpp
@@ -60,51 +65,42 @@ set(APP_SOURCES
     src/view/media_detail_view.cpp
     src/view/media_item_cell.cpp
     src/view/recycling_grid.cpp
-
+ 
     # Player
     src/player/mpv_player.cpp
-
+ 
     # Utils
     src/utils/http_client.cpp
     src/utils/image_loader.cpp
 )
-
+ 
 # Include directories
 set(APP_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${BOREALIS_DIR}/library/include
-    ${BOREALIS_DIR}/library/include/borealis/extern
+    ${BOREALIS_LIBRARY}/include
+    ${BOREALIS_LIBRARY}/include/borealis/extern
 )
-
+ 
 # Create executable
 add_executable(${PROJECT_NAME} ${APP_SOURCES})
-
+ 
 target_include_directories(${PROJECT_NAME} PRIVATE ${APP_INCLUDES})
-
-# Link libraries
+ 
+# Link libraries - borealis + app platform libs from toolchain
 target_link_libraries(${PROJECT_NAME}
     borealis
-
-    # Vita SDK libraries
+    ${APP_PLATFORM_LIB}
+ 
+    # Vita SDK libraries (additional ones not in borealis)
     vita2d
-    SceDisplay_stub
-    SceCtrl_stub
-    SceSysmodule_stub
     SceNet_stub
     SceNetCtl_stub
     SceHttp_stub
     SceSsl_stub
-    SceAppUtil_stub
     ScePgf_stub
-    SceCommonDialog_stub
-    SceGxm_stub
-    SceTouch_stub
-    SceIme_stub
-    SceAudio_stub
-    ScePower_stub
     SceRtc_stub
     SceShellSvc_stub
-
+ 
     # External libraries
     curl
     ssl
@@ -116,32 +112,32 @@ target_link_libraries(${PROJECT_NAME}
     avutil
     swresample
     swscale
-
+ 
     # Standard libraries
     m
     c
     pthread
 )
-
+ 
 # Create Vita SELF
 vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME} UNSAFE)
-
+ 
 # Create VPK
 vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
     VERSION ${VITA_VERSION}
     NAME ${VITA_APP_NAME}
-
+ 
     # System files
     FILE sce_sys/icon0.png sce_sys/icon0.png
     FILE sce_sys/pic0.png sce_sys/pic0.png
     FILE sce_sys/livearea/contents/bg.png sce_sys/livearea/contents/bg.png
     FILE sce_sys/livearea/contents/startup.png sce_sys/livearea/contents/startup.png
     FILE sce_sys/livearea/contents/template.xml sce_sys/livearea/contents/template.xml
-
+ 
     # Borealis resources
-    FILE ${BOREALIS_DIR}/library/lib/resources/i18n/en-US/brls.json resources/i18n/en-US/brls.json
+    FILE ${BOREALIS_LIBRARY}/lib/resources/i18n/en-US/brls.json resources/i18n/en-US/brls.json
     FILE resources/i18n/en-US/main.json resources/i18n/en-US/main.json
-
+ 
     # App resources
     FILE resources/xml/activity/main.xml resources/xml/activity/main.xml
     FILE resources/xml/activity/login.xml resources/xml/activity/login.xml
@@ -152,8 +148,9 @@ vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
     FILE resources/xml/tabs/settings.xml resources/xml/tabs/settings.xml
     FILE resources/xml/view/media_detail.xml resources/xml/view/media_detail.xml
     FILE resources/xml/view/media_item.xml resources/xml/view/media_item.xml
-
+ 
     # Fonts
-    FILE ${BOREALIS_DIR}/library/lib/resources/fonts/switch_icons.ttf resources/fonts/switch_icons.ttf
-    FILE ${BOREALIS_DIR}/library/lib/resources/fonts/material_icons.ttf resources/fonts/material_icons.ttf
+    FILE ${BOREALIS_LIBRARY}/lib/resources/fonts/switch_icons.ttf resources/fonts/switch_icons.ttf
+    FILE ${BOREALIS_LIBRARY}/lib/resources/fonts/material_icons.ttf resources/fonts/material_icons.ttf
 )
+ 
