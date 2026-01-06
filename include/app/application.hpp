@@ -12,13 +12,12 @@
 #define VITA_PLEX_VERSION "2.0.0"
 #define VITA_PLEX_VERSION_NUM 200
 
-// Plex client identification - Client ID must be a proper UUID format
-#define PLEX_CLIENT_ID "a3f5c8d2-7b9e-4f1a-8c6d-2e5f9b4a1c3d"
+// Plex client identification
+#define PLEX_CLIENT_ID "vita-plex-client-001"
 #define PLEX_CLIENT_NAME "VitaPlex"
 #define PLEX_CLIENT_VERSION VITA_PLEX_VERSION
 #define PLEX_PLATFORM "PlayStation Vita"
 #define PLEX_DEVICE "PS Vita"
-#define PLEX_DEVICE_NAME "VitaPlex"
 
 namespace vitaplex {
 
