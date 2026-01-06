@@ -1,6 +1,7 @@
 /**
  * VitaPlex - MPV Video Player Implementation
  * Based on switchfin's MPV implementation for PS Vita
+ * Using software rendering with NanoVG display
  */
 
 #include "player/mpv_player.hpp"
@@ -10,6 +11,7 @@
 #include <psp2/kernel/clib.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/power.h>
+#include <nanovg.h>
 #endif
 
 #include <cstring>
@@ -78,18 +80,18 @@ bool MpvPlayer::init() {
     // Video output configuration
     // ========================================
 
-    // Use null video output - we don't have a render context set up
-    // This means audio-only playback but won't crash
-    // For full video, would need mpv_render_context_create() with GXM params
-    mpv_set_option_string(m_mpv, "vo", "null");
-    mpv_set_option_string(m_mpv, "video", "no");  // Disable video decoding entirely
+    // Use libmpv for video output - we'll create a render context
+    mpv_set_option_string(m_mpv, "vo", "libmpv");
 
 #ifdef __vita__
-    // Vita-specific settings
+    // Vita-specific settings for video decoding
     mpv_set_option_string(m_mpv, "vd-lavc-threads", "2");
 
-    // Don't use hwdec without proper render context
-    mpv_set_option_string(m_mpv, "hwdec", "no");
+    // Use vita hardware decoding if available
+    mpv_set_option_string(m_mpv, "hwdec", "vita-copy");
+
+    // Reduce video resolution for Vita's limited hardware
+    mpv_set_option_string(m_mpv, "vf", "scale=960:544:force_original_aspect_ratio=decrease");
 #else
     mpv_set_option_string(m_mpv, "hwdec", "no");
 #endif
@@ -157,6 +159,15 @@ bool MpvPlayer::init() {
     brls::Logger::debug("MpvPlayer: mpv_initialize succeeded");
 
     // ========================================
+    // Set up render context for video display
+    // ========================================
+
+    if (!initRenderContext()) {
+        brls::Logger::error("MpvPlayer: Failed to create render context, falling back to audio-only");
+        // Don't fail - we can still play audio
+    }
+
+    // ========================================
     // Set up property observers (matching switchfin IDs)
     // ========================================
 
@@ -182,6 +193,9 @@ void MpvPlayer::shutdown() {
         brls::Logger::debug("MpvPlayer: Shutting down");
 
         m_stopping = true;
+
+        // Clean up render context first
+        cleanupRenderContext();
 
         // Send quit command (like switchfin does in clean())
         const char* cmd[] = {"quit", NULL};
@@ -744,9 +758,151 @@ void MpvPlayer::updatePlaybackInfo() {
     }
 }
 
+// Callback for mpv render context when a new frame is ready
+static void on_mpv_render_update(void* ctx) {
+    MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
+    // Signal that a new frame is available
+    // The actual rendering will happen in render()
+#ifdef __vita__
+    if (player) {
+        // Set flag that new frame is ready (thread-safe atomic would be better)
+        // For now, we'll handle this in the render loop
+    }
+#endif
+}
+
+bool MpvPlayer::initRenderContext() {
+#ifdef __vita__
+    if (m_mpvRenderCtx) {
+        brls::Logger::debug("MpvPlayer: Render context already exists");
+        return true;
+    }
+
+    if (!m_mpv) {
+        brls::Logger::error("MpvPlayer: Cannot create render context - mpv not initialized");
+        return false;
+    }
+
+    brls::Logger::debug("MpvPlayer: Creating software render context");
+
+    // Allocate pixel buffer for software rendering (RGBA format)
+    m_videoWidth = 960;
+    m_videoHeight = 544;
+    m_pixelBufferSize = m_videoWidth * m_videoHeight * 4;  // RGBA
+    m_pixelBuffer = malloc(m_pixelBufferSize);
+
+    if (!m_pixelBuffer) {
+        brls::Logger::error("MpvPlayer: Failed to allocate pixel buffer");
+        return false;
+    }
+
+    memset(m_pixelBuffer, 0, m_pixelBufferSize);
+
+    // Create NanoVG image for display
+    NVGcontext* vg = brls::Application::getNVGContext();
+    if (vg) {
+        m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, (const unsigned char*)m_pixelBuffer);
+        if (m_nvgImage == 0) {
+            brls::Logger::error("MpvPlayer: Failed to create NanoVG image");
+            free(m_pixelBuffer);
+            m_pixelBuffer = nullptr;
+            return false;
+        }
+        brls::Logger::debug("MpvPlayer: Created NanoVG image: {}", m_nvgImage);
+    }
+
+    // Set up software render parameters
+    mpv_render_param params[] = {
+        {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_SW)},
+        {MPV_RENDER_PARAM_INVALID, nullptr},
+    };
+
+    int result = mpv_render_context_create(&m_mpvRenderCtx, m_mpv, params);
+    if (result < 0) {
+        brls::Logger::error("MpvPlayer: Failed to create render context: {}", mpv_error_string(result));
+        if (m_nvgImage && vg) {
+            nvgDeleteImage(vg, m_nvgImage);
+            m_nvgImage = 0;
+        }
+        free(m_pixelBuffer);
+        m_pixelBuffer = nullptr;
+        return false;
+    }
+
+    // Set up render update callback
+    mpv_render_context_set_update_callback(m_mpvRenderCtx, on_mpv_render_update, this);
+
+    m_renderReady = true;
+    brls::Logger::info("MpvPlayer: Render context created successfully");
+    return true;
+#else
+    // Non-Vita builds don't need render context
+    return false;
+#endif
+}
+
+void MpvPlayer::cleanupRenderContext() {
+#ifdef __vita__
+    if (m_mpvRenderCtx) {
+        brls::Logger::debug("MpvPlayer: Cleaning up render context");
+        mpv_render_context_free(m_mpvRenderCtx);
+        m_mpvRenderCtx = nullptr;
+    }
+
+    NVGcontext* vg = brls::Application::getNVGContext();
+    if (m_nvgImage && vg) {
+        nvgDeleteImage(vg, m_nvgImage);
+        m_nvgImage = 0;
+    }
+
+    if (m_pixelBuffer) {
+        free(m_pixelBuffer);
+        m_pixelBuffer = nullptr;
+        m_pixelBufferSize = 0;
+    }
+
+    m_renderReady = false;
+#endif
+}
+
 void MpvPlayer::render() {
-    // Rendering would be handled by borealis/mpv render context if using libmpv video output
-    // For now, this is a placeholder
+#ifdef __vita__
+    if (!m_mpvRenderCtx || !m_pixelBuffer || !m_renderReady) {
+        return;
+    }
+
+    // Check if a new frame is available
+    uint64_t flags = mpv_render_context_update(m_mpvRenderCtx);
+    if (!(flags & MPV_RENDER_UPDATE_FRAME)) {
+        return;  // No new frame
+    }
+
+    // Set up software render parameters for this frame
+    int stride = m_videoWidth * 4;  // RGBA stride
+    mpv_render_param render_params[] = {
+        {MPV_RENDER_PARAM_SW_SIZE, (int[]){m_videoWidth, m_videoHeight}},
+        {MPV_RENDER_PARAM_SW_FORMAT, const_cast<char*>("rgba")},
+        {MPV_RENDER_PARAM_SW_STRIDE, &stride},
+        {MPV_RENDER_PARAM_SW_POINTER, m_pixelBuffer},
+        {MPV_RENDER_PARAM_INVALID, nullptr},
+    };
+
+    // Render the frame to our pixel buffer
+    int result = mpv_render_context_render(m_mpvRenderCtx, render_params);
+    if (result < 0) {
+        brls::Logger::error("MpvPlayer: Render failed: {}", mpv_error_string(result));
+        return;
+    }
+
+    // Update NanoVG image with new frame data
+    NVGcontext* vg = brls::Application::getNVGContext();
+    if (vg && m_nvgImage) {
+        nvgUpdateImage(vg, m_nvgImage, (const unsigned char*)m_pixelBuffer);
+    }
+
+    // Report swap completion
+    mpv_render_context_report_swap(m_mpvRenderCtx);
+#endif
 }
 
 } // namespace vitaplex

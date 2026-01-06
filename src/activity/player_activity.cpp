@@ -6,6 +6,7 @@
 #include "app/plex_client.hpp"
 #include "player/mpv_player.hpp"
 #include "utils/image_loader.hpp"
+#include "view/video_view.hpp"
 
 namespace vitaplex {
 
@@ -71,6 +72,11 @@ void PlayerActivity::willDisappear(bool resetState) {
 
     // Stop update timer first
     m_updateTimer.stop();
+
+    // Hide video view
+    if (videoView) {
+        videoView->setVideoVisible(false);
+    }
 
     // For photos, nothing to stop
     if (m_isPhoto) {
@@ -172,6 +178,13 @@ void PlayerActivity::loadMedia() {
 
             // Note: Don't call play() here - MPV auto-starts playback when file is loaded
             // Calling play() while in LOADING state can cause crashes on Vita
+
+            // Show video view for video playback
+            if (videoView) {
+                videoView->setVisibility(brls::Visibility::VISIBLE);
+                videoView->setVideoVisible(true);
+                brls::Logger::debug("Video view enabled");
+            }
 
             // Resume from viewOffset if available (will be applied after file loads)
             if (item.viewOffset > 0) {

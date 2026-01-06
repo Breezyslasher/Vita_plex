@@ -81,6 +81,7 @@ set(APP_SOURCES
     src/view/media_detail_view.cpp
     src/view/media_item_cell.cpp
     src/view/recycling_grid.cpp
+    src/view/video_view.cpp
 
     # Player
     src/player/mpv_player.cpp

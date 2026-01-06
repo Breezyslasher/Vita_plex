@@ -9,6 +9,9 @@
 #include <borealis/core/timer.hpp>
 #include <string>
 
+// Forward declaration
+namespace vitaplex { class VideoView; }
+
 namespace vitaplex {
 
 class PlayerActivity : public brls::Activity {
@@ -41,6 +44,7 @@ private:
     BRLS_BIND(brls::Slider, progressSlider, "player/progress");
     BRLS_BIND(brls::Box, controlsBox, "player/controls");
     BRLS_BIND(brls::Image, photoImage, "player/photo");
+    BRLS_BIND(VideoView, videoView, "player/video");
 };
 
 } // namespace vitaplex

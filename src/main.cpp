@@ -12,6 +12,7 @@
 #include "view/media_item_cell.hpp"
 #include "view/recycling_grid.hpp"
 #include "view/media_detail_view.hpp"
+#include "view/video_view.hpp"
 #include "utils/http_client.hpp"
 
 #ifdef __vita__
@@ -150,6 +151,7 @@ static void cleanupVitaNetwork() {
 static void registerCustomViews() {
     brls::Application::registerXMLView("MediaItemCell", vitaplex::MediaItemCell::create);
     brls::Application::registerXMLView("RecyclingGrid", vitaplex::RecyclingGrid::create);
+    brls::Application::registerXMLView("vitaplex:VideoView", vitaplex::VideoView::create);
 }
 
 /**

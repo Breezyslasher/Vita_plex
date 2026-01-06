@@ -1,6 +1,6 @@
 /**
  * VitaPlex - MPV Video Player
- * Hardware-accelerated video playback using libmpv
+ * Hardware-accelerated video playback using libmpv with GXM rendering on Vita
  */
 
 #pragma once
@@ -9,11 +9,13 @@
 
 #ifdef __vita__
 #include <mpv/client.h>
+#include <mpv/render.h>
 #else
 // Stub for non-Vita builds
 typedef struct mpv_handle mpv_handle;
 typedef struct mpv_event mpv_event;
 typedef struct mpv_event_property mpv_event_property;
+typedef struct mpv_render_context mpv_render_context;
 #endif
 
 namespace vitaplex {
@@ -52,7 +54,7 @@ struct MpvPlaybackInfo {
 };
 
 /**
- * MPV-based video player
+ * MPV-based video player with GXM rendering support on Vita
  */
 class MpvPlayer {
 public:
@@ -122,12 +124,30 @@ public:
     void update();
     void render();
 
+    // Check if render context is available (video mode vs audio-only)
+    bool hasRenderContext() const { return m_mpvRenderCtx != nullptr; }
+
+    // Get NanoVG image handle for drawing video (returns 0 if not available)
+    int getVideoImage() const {
+#ifdef __vita__
+        return m_nvgImage;
+#else
+        return 0;
+#endif
+    }
+
+    // Get video dimensions
+    int getVideoWidth() const { return 960; }
+    int getVideoHeight() const { return 544; }
+
 private:
     MpvPlayer() = default;
     ~MpvPlayer();
     MpvPlayer(const MpvPlayer&) = delete;
     MpvPlayer& operator=(const MpvPlayer&) = delete;
 
+    bool initRenderContext();
+    void cleanupRenderContext();
     void eventMainLoop();
     void updatePlaybackInfo();
     void handleEvent(mpv_event* event);
@@ -135,6 +155,7 @@ private:
     void setState(MpvPlayerState newState);
 
     mpv_handle* m_mpv = nullptr;
+    mpv_render_context* m_mpvRenderCtx = nullptr;
     MpvPlayerState m_state = MpvPlayerState::IDLE;
     MpvPlaybackInfo m_playbackInfo;
     std::string m_errorMessage;
@@ -142,6 +163,16 @@ private:
     bool m_subtitlesVisible = true;
     bool m_stopping = false;        // Shutdown in progress
     bool m_commandPending = false;  // Async command pending
+
+#ifdef __vita__
+    // Software render resources
+    void* m_pixelBuffer = nullptr;      // Pixel buffer for software rendering
+    size_t m_pixelBufferSize = 0;       // Size of pixel buffer
+    int m_nvgImage = 0;                 // NanoVG image handle for display
+    int m_videoWidth = 960;
+    int m_videoHeight = 544;
+    bool m_renderReady = false;         // Flag for when frame is ready
+#endif
 };
 
 } // namespace vitaplex
