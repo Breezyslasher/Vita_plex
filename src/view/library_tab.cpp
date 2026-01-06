@@ -6,6 +6,7 @@
 #include "view/media_item_cell.hpp"
 #include "view/media_detail_view.hpp"
 #include "app/application.hpp"
+#include "utils/async.hpp"
 
 namespace vitaplex {
 
@@ -52,53 +53,74 @@ void LibraryTab::onFocusGained() {
 }
 
 void LibraryTab::loadSections() {
-    PlexClient& client = PlexClient::getInstance();
+    brls::Logger::debug("LibraryTab::loadSections - Starting async load");
 
-    brls::Logger::debug("LibraryTab::loadSections - Server: {}", client.getServerUrl());
-    brls::Logger::debug("LibraryTab: Fetching library sections...");
+    asyncRun([this]() {
+        brls::Logger::debug("LibraryTab: Fetching library sections (async)...");
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<LibrarySection> sections;
 
-    if (client.fetchLibrarySections(m_sections)) {
-        brls::Logger::info("LibraryTab: Got {} sections", m_sections.size());
-        m_sectionsBox->clearViews();
+        if (client.fetchLibrarySections(sections)) {
+            brls::Logger::info("LibraryTab: Got {} sections", sections.size());
 
-        for (const auto& section : m_sections) {
-            brls::Logger::debug("LibraryTab: Adding section button: {}", section.title);
-            auto* btn = new brls::Button();
-            btn->setText(section.title);
-            btn->setMarginRight(10);
+            // Update UI on main thread
+            brls::sync([this, sections]() {
+                m_sections = sections;
+                m_sectionsBox->clearViews();
 
-            btn->registerClickAction([this, section](brls::View* view) {
-                onSectionSelected(section);
-                return true;
+                for (const auto& section : m_sections) {
+                    brls::Logger::debug("LibraryTab: Adding section button: {}", section.title);
+                    auto* btn = new brls::Button();
+                    btn->setText(section.title);
+                    btn->setMarginRight(10);
+
+                    LibrarySection capturedSection = section;
+                    btn->registerClickAction([this, capturedSection](brls::View* view) {
+                        onSectionSelected(capturedSection);
+                        return true;
+                    });
+
+                    m_sectionsBox->addView(btn);
+                }
+
+                // Load first section by default
+                if (!m_sections.empty()) {
+                    brls::Logger::debug("LibraryTab: Loading first section: {}", m_sections[0].title);
+                    onSectionSelected(m_sections[0]);
+                }
+
+                m_loaded = true;
+                brls::Logger::debug("LibraryTab: Sections loading complete");
             });
-
-            m_sectionsBox->addView(btn);
+        } else {
+            brls::Logger::error("LibraryTab: Failed to fetch sections");
+            brls::sync([this]() {
+                m_loaded = true;
+            });
         }
-
-        // Load first section by default
-        if (!m_sections.empty()) {
-            brls::Logger::debug("LibraryTab: Loading first section: {}", m_sections[0].title);
-            onSectionSelected(m_sections[0]);
-        }
-    } else {
-        brls::Logger::error("LibraryTab: Failed to fetch sections");
-    }
-
-    m_loaded = true;
-    brls::Logger::debug("LibraryTab: Sections loading complete");
+    });
 }
 
 void LibraryTab::loadContent(const std::string& sectionKey) {
-    PlexClient& client = PlexClient::getInstance();
+    brls::Logger::debug("LibraryTab::loadContent - section: {} (async)", sectionKey);
 
-    brls::Logger::debug("LibraryTab::loadContent - section: {}", sectionKey);
+    std::string key = sectionKey;  // Capture by value
+    asyncRun([this, key]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> items;
 
-    if (client.fetchLibraryContent(sectionKey, m_items)) {
-        brls::Logger::info("LibraryTab: Got {} items for section {}", m_items.size(), sectionKey);
-        m_contentGrid->setDataSource(m_items);
-    } else {
-        brls::Logger::error("LibraryTab: Failed to load content for section {}", sectionKey);
-    }
+        if (client.fetchLibraryContent(key, items)) {
+            brls::Logger::info("LibraryTab: Got {} items for section {}", items.size(), key);
+
+            // Update UI on main thread
+            brls::sync([this, items]() {
+                m_items = items;
+                m_contentGrid->setDataSource(m_items);
+            });
+        } else {
+            brls::Logger::error("LibraryTab: Failed to load content for section {}", key);
+        }
+    });
 }
 
 void LibraryTab::onSectionSelected(const LibrarySection& section) {
