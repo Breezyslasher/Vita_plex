@@ -75,13 +75,21 @@ struct LibrarySection {
     int count = 0;
 };
 
+// Server connection info
+struct ServerConnection {
+    std::string uri;
+    bool local = false;
+    bool relay = false;
+};
+
 // Plex server info
 struct PlexServer {
     std::string name;
-    std::string address;
+    std::string address;  // Primary address (local preferred)
     int port = 32400;
     std::string machineIdentifier;
     std::string accessToken;
+    std::vector<ServerConnection> connections;  // All available connections
 };
 
 // PIN authentication info
@@ -130,6 +138,7 @@ public:
     bool requestPin(PinAuth& pinAuth);
     bool checkPin(PinAuth& pinAuth);
     bool refreshToken();  // JWT token refresh (call before 7-day expiry)
+    bool fetchServers(std::vector<PlexServer>& servers);  // Get user's servers from plex.tv
     bool connectToServer(const std::string& url);
     void logout();
 

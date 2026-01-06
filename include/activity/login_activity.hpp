@@ -23,6 +23,8 @@ private:
     void onLoginPressed();
     void onPinLoginPressed();
     void checkPinStatus();
+    void showServerSelectionDialog(const std::vector<PlexServer>& servers);
+    void connectToSelectedServer(const PlexServer& server);
 
     BRLS_BIND(brls::Label, titleLabel, "login/title");
     BRLS_BIND(brls::Box, inputContainer, "login/input_container");

@@ -170,6 +170,13 @@ int main(int argc, char* argv[]) {
         sceKernelExitProcess(1);
         return 1;
     }
+
+    // Create log directory and file on Vita
+    sceIoMkdir("ux0:data/VitaPlex", 0777);
+    FILE* logFile = std::fopen("ux0:data/VitaPlex/vitaplex.log", "w");
+    if (logFile) {
+        brls::Logger::setLogOutput(logFile);
+    }
 #endif
 
     // Initialize Borealis
