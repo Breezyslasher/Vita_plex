@@ -12,9 +12,11 @@ set(PLATFORM_PS4 OFF CACHE BOOL "Build for PS4" FORCE)
 set(PLATFORM_IOS OFF CACHE BOOL "Build for iOS" FORCE)
 set(PLATFORM_ANDROID OFF CACHE BOOL "Build for Android" FORCE)
 
-# Enable native GXM graphics for PS Vita
-set(USE_GXM ON CACHE BOOL "Use GXM for PS Vita" FORCE)
-set(USE_VITA_SHARK ON CACHE BOOL "Use VitaShark for shader compilation" FORCE)
+# Enable native GXM graphics for PS Vita (must be BOREALIS_USE_GXM)
+set(BOREALIS_USE_GXM ON CACHE BOOL "Use GXM for PS Vita" FORCE)
+# Disable VitaShark for now - requires libshacccg.suprx module which we don't have
+# Uses precompiled shaders instead
+set(USE_VITA_SHARK OFF CACHE BOOL "Use VitaShark for shader compilation" FORCE)
 
 # Disable features not needed for Vita
 set(USE_LIBROMFS OFF CACHE BOOL "Use libromfs" FORCE)
@@ -38,7 +40,8 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -frtti -fexceptions")
 set(VITA_APP_NAME "VitaPlex")
 set(VITA_TITLEID "VPLEX0001")
 set(VITA_VERSION "02.00")
-set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1")
+# ATTRIBUTE2=12 enables maximum heap size mode - CRITICAL for memory-intensive apps
+set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12")
 
 # Add Borealis library subdirectory
 add_subdirectory(${BOREALIS_LIBRARY})
@@ -128,14 +131,16 @@ target_link_libraries(${PROJECT_NAME}
     SceAvcodec_stub
     SceCodecEngine_stub
     SceAudio_stub
+    SceVshBridge_stub
+    SceAppMgr_stub
 
     # Standard libraries last (m is provided by libstdc++)
     z
     c
 )
 
-# Create Vita SELF
-vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME} UNSAFE)
+# Create Vita SELF (UNSAFE NOASLR flags required for homebrew compatibility)
+vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME} UNSAFE NOASLR)
 
 # Create VPK
 vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
