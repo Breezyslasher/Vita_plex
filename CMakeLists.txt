@@ -165,6 +165,8 @@ vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
     FILE resources/xml/view/media_item.xml resources/xml/view/media_item.xml
 
     # Fonts (using simpler DejaVu fonts for Vita compatibility)
+    FILE resources/font/font.ttf resources/font/font.ttf
+    FILE resources/font/icon.ttf resources/font/icon.ttf
     FILE resources/font/switch_font.ttf resources/font/switch_font.ttf
     FILE resources/font/switch_icons.ttf resources/font/switch_icons.ttf
     FILE resources/material/MaterialIcons-Regular.ttf resources/material/MaterialIcons-Regular.ttf
