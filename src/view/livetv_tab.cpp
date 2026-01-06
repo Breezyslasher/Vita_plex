@@ -357,7 +357,7 @@ void LiveTVTab::buildEPGGrid() {
             progCell->setWidth(cellWidth);
             progCell->setHeight(ROW_HEIGHT - 4);
             progCell->setPadding(4);
-            progCell->setMargin(2);
+            progCell->setMargins(2, 2, 2, 2);
             progCell->setBackgroundColor(nvgRGBA(60, 80, 100, 255));
             progCell->setCornerRadius(4);
             progCell->setFocusable(true);
@@ -396,7 +396,7 @@ void LiveTVTab::buildEPGGrid() {
                 nextCell->setWidth(TIME_SLOT_WIDTH);  // Default 30 min width
                 nextCell->setHeight(ROW_HEIGHT - 4);
                 nextCell->setPadding(4);
-                nextCell->setMargin(2);
+                nextCell->setMargins(2, 2, 2, 2);
                 nextCell->setBackgroundColor(nvgRGBA(50, 60, 80, 255));
                 nextCell->setCornerRadius(4);
                 nextCell->setFocusable(true);
@@ -422,7 +422,7 @@ void LiveTVTab::buildEPGGrid() {
                 auto* emptyCell = new brls::Box();
                 emptyCell->setWidth(TIME_SLOT_WIDTH);
                 emptyCell->setHeight(ROW_HEIGHT - 4);
-                emptyCell->setMargin(2);
+                emptyCell->setMargins(2, 2, 2, 2);
                 emptyCell->setBackgroundColor(nvgRGBA(40, 40, 50, 255));
                 emptyCell->setCornerRadius(4);
                 emptyCell->setFocusable(true);
