@@ -15,8 +15,12 @@ set(USE_OPENGL OFF CACHE BOOL "Use OpenGL" FORCE)
 set(BOREALIS_USE_STD_THREAD OFF CACHE BOOL "Use std::thread" FORCE)
 
 # Enable native GXM graphics for PS Vita (required!)
-# USE_GXM is the correct flag - it sets BOREALIS_USE_GXM internally
+# We set both USE_GXM and BOREALIS_USE_GXM because:
+# - USE_GXM is the external flag expected by Borealis toolchain.cmake
+# - BOREALIS_USE_GXM is what the library CMakeLists.txt actually checks
+# When adding library directly (without parent CMakeLists.txt), both are needed
 set(USE_GXM ON CACHE BOOL "Use GXM for PS Vita" FORCE)
+set(BOREALIS_USE_GXM ON CACHE BOOL "Use GXM driver" FORCE)
 set(USE_VITA_SHARK ON CACHE BOOL "Use VitaShark for shader compilation" FORCE)
 
 # VitaSDK Configuration
