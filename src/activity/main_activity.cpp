@@ -15,7 +15,7 @@ MainActivity::MainActivity() {
 }
 
 brls::View* MainActivity::createContentView() {
-    return brls::View::createFromXMLResource("xml/activity/main.xml");
+    return brls::View::createFromXMLResource("activity/main.xml");
 }
 
 void MainActivity::onContentAvailable() {

@@ -13,7 +13,7 @@ LoginActivity::LoginActivity() {
 }
 
 brls::View* LoginActivity::createContentView() {
-    return brls::View::createFromXMLResource("xml/activity/login.xml");
+    return brls::View::createFromXMLResource("activity/login.xml");
 }
 
 void LoginActivity::onContentAvailable() {

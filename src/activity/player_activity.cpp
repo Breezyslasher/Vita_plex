@@ -14,7 +14,7 @@ PlayerActivity::PlayerActivity(const std::string& mediaKey)
 }
 
 brls::View* PlayerActivity::createContentView() {
-    return brls::View::createFromXMLResource("xml/activity/player.xml");
+    return brls::View::createFromXMLResource("activity/player.xml");
 }
 
 void PlayerActivity::onContentAvailable() {

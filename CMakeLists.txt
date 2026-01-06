@@ -164,7 +164,8 @@ vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
     FILE resources/xml/view/media_detail.xml resources/xml/view/media_detail.xml
     FILE resources/xml/view/media_item.xml resources/xml/view/media_item.xml
 
-    # Fonts
-    FILE ${BOREALIS_DIR}/resources/font/switch_icons.ttf resources/fonts/switch_icons.ttf
-    FILE ${BOREALIS_DIR}/resources/material/MaterialIcons-Regular.ttf resources/fonts/material_icons.ttf
+    # Fonts (Borealis expects these at specific paths)
+    FILE ${BOREALIS_DIR}/resources/font/switch_font.ttf resources/font/switch_font.ttf
+    FILE ${BOREALIS_DIR}/resources/font/switch_icons.ttf resources/font/switch_icons.ttf
+    FILE ${BOREALIS_DIR}/resources/material/MaterialIcons-Regular.ttf resources/material/MaterialIcons-Regular.ttf
 )
