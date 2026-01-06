@@ -6,6 +6,7 @@
 #include "view/media_item_cell.hpp"
 #include "view/media_detail_view.hpp"
 #include "app/application.hpp"
+#include "utils/async.hpp"
 
 namespace vitaplex {
 
@@ -47,6 +48,10 @@ HomeTab::HomeTab() {
     m_recentlyAddedBox->setAxis(brls::Axis::ROW);
     m_recentlyAddedBox->setHeight(180);
     this->addView(m_recentlyAddedBox);
+
+    // Load content immediately
+    brls::Logger::debug("HomeTab: Loading content...");
+    loadContent();
 }
 
 void HomeTab::onFocusGained() {
@@ -58,49 +63,80 @@ void HomeTab::onFocusGained() {
 }
 
 void HomeTab::loadContent() {
-    PlexClient& client = PlexClient::getInstance();
+    brls::Logger::debug("HomeTab::loadContent - Starting async load");
 
-    // Load continue watching
-    if (client.fetchContinueWatching(m_continueWatching)) {
-        m_continueWatchingBox->clearViews();
+    // Load continue watching asynchronously
+    asyncRun([this]() {
+        brls::Logger::debug("HomeTab: Fetching continue watching (async)...");
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> items;
 
-        for (const auto& item : m_continueWatching) {
-            auto* cell = new MediaItemCell();
-            cell->setItem(item);
-            cell->setWidth(120);
-            cell->setHeight(170);
-            cell->setMarginRight(10);
+        if (client.fetchContinueWatching(items)) {
+            brls::Logger::info("HomeTab: Got {} continue watching items", items.size());
 
-            cell->registerClickAction([this, item](brls::View* view) {
-                onItemSelected(item);
-                return true;
+            // Update UI on main thread
+            brls::sync([this, items]() {
+                m_continueWatching = items;
+                m_continueWatchingBox->clearViews();
+
+                for (const auto& item : m_continueWatching) {
+                    auto* cell = new MediaItemCell();
+                    cell->setItem(item);
+                    cell->setWidth(120);
+                    cell->setHeight(170);
+                    cell->setMarginRight(10);
+
+                    MediaItem capturedItem = item;
+                    cell->registerClickAction([this, capturedItem](brls::View* view) {
+                        onItemSelected(capturedItem);
+                        return true;
+                    });
+
+                    m_continueWatchingBox->addView(cell);
+                }
             });
-
-            m_continueWatchingBox->addView(cell);
+        } else {
+            brls::Logger::error("HomeTab: Failed to fetch continue watching");
         }
-    }
+    });
 
-    // Load recently added
-    if (client.fetchRecentlyAdded(m_recentlyAdded)) {
-        m_recentlyAddedBox->clearViews();
+    // Load recently added asynchronously
+    asyncRun([this]() {
+        brls::Logger::debug("HomeTab: Fetching recently added (async)...");
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> items;
 
-        for (const auto& item : m_recentlyAdded) {
-            auto* cell = new MediaItemCell();
-            cell->setItem(item);
-            cell->setWidth(120);
-            cell->setHeight(170);
-            cell->setMarginRight(10);
+        if (client.fetchRecentlyAdded(items)) {
+            brls::Logger::info("HomeTab: Got {} recently added items", items.size());
 
-            cell->registerClickAction([this, item](brls::View* view) {
-                onItemSelected(item);
-                return true;
+            // Update UI on main thread
+            brls::sync([this, items]() {
+                m_recentlyAdded = items;
+                m_recentlyAddedBox->clearViews();
+
+                for (const auto& item : m_recentlyAdded) {
+                    auto* cell = new MediaItemCell();
+                    cell->setItem(item);
+                    cell->setWidth(120);
+                    cell->setHeight(170);
+                    cell->setMarginRight(10);
+
+                    MediaItem capturedItem = item;
+                    cell->registerClickAction([this, capturedItem](brls::View* view) {
+                        onItemSelected(capturedItem);
+                        return true;
+                    });
+
+                    m_recentlyAddedBox->addView(cell);
+                }
             });
-
-            m_recentlyAddedBox->addView(cell);
+        } else {
+            brls::Logger::error("HomeTab: Failed to fetch recently added");
         }
-    }
+    });
 
     m_loaded = true;
+    brls::Logger::debug("HomeTab: Async content loading started");
 }
 
 void HomeTab::onItemSelected(const MediaItem& item) {

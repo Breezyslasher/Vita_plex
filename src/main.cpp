@@ -173,11 +173,12 @@ int main(int argc, char* argv[]) {
 
     // Create log directory and file on Vita
     sceIoMkdir("ux0:data/VitaPlex", 0777);
-    FILE* logFile = std::fopen("ux0:data/VitaPlex/vitaplex.log", "w");
+    static FILE* logFile = std::fopen("ux0:data/VitaPlex/vitaplex.log", "w");
     if (logFile) {
         // Use line buffering so logs are written immediately
         setvbuf(logFile, NULL, _IOLBF, 0);
-        brls::Logger::setLogOutput(logFile);
+        // Note: brls::Logger::setLogOutput doesn't work on Vita (uses sceClibPrintf)
+        // We'll subscribe to log events after Borealis init
     }
 #endif
 
@@ -187,11 +188,40 @@ int main(int argc, char* argv[]) {
     if (!brls::Application::init()) {
         brls::Logger::error("Failed to initialize Borealis");
 #ifdef __vita__
+        if (logFile) fclose(logFile);
         cleanupVitaNetwork();
         sceKernelExitProcess(1);
 #endif
         return 1;
     }
+
+#ifdef __vita__
+    // Subscribe to log events to write to file (since setLogOutput doesn't work on Vita)
+    if (logFile) {
+        brls::Logger::getLogEvent()->subscribe([](brls::Logger::TimePoint time, brls::LogLevel level, std::string log) {
+            if (!logFile) return;
+
+            const char* levelStr = "UNKNOWN";
+            switch (level) {
+                case brls::LogLevel::LOG_ERROR: levelStr = "ERROR"; break;
+                case brls::LogLevel::LOG_WARNING: levelStr = "WARNING"; break;
+                case brls::LogLevel::LOG_INFO: levelStr = "INFO"; break;
+                case brls::LogLevel::LOG_DEBUG: levelStr = "DEBUG"; break;
+                case brls::LogLevel::LOG_VERBOSE: levelStr = "VERBOSE"; break;
+            }
+
+            std::time_t tt = std::chrono::system_clock::to_time_t(time);
+            std::tm time_tm = *std::localtime(&tt);
+            uint64_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                time.time_since_epoch()).count() % 1000;
+
+            fprintf(logFile, "%02d:%02d:%02d.%03d [%s] %s\n",
+                    time_tm.tm_hour, time_tm.tm_min, time_tm.tm_sec,
+                    (int)ms, levelStr, log.c_str());
+        });
+        brls::Logger::info("Log file initialized: ux0:data/VitaPlex/vitaplex.log");
+    }
+#endif
 
     // Create window
     brls::Application::createWindow("VitaPlex");

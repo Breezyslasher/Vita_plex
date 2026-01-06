@@ -32,11 +32,14 @@ bool Application::init() {
 
 #ifdef __vita__
     // Create data directory
-    sceIoMkdir("ux0:data/VitaPlex", 0777);
+    int ret = sceIoMkdir("ux0:data/VitaPlex", 0777);
+    brls::Logger::debug("sceIoMkdir result: {:#x}", ret);
 #endif
 
     // Load saved settings
-    loadSettings();
+    brls::Logger::info("Loading saved settings...");
+    bool loaded = loadSettings();
+    brls::Logger::info("Settings load result: {}", loaded ? "success" : "failed/not found");
 
     // Apply settings
     applyTheme();
@@ -47,13 +50,19 @@ bool Application::init() {
 }
 
 void Application::run() {
+    brls::Logger::info("Application::run - isLoggedIn={}, serverUrl={}",
+                       isLoggedIn(), m_serverUrl.empty() ? "(empty)" : m_serverUrl);
+
     // Check if we have saved login credentials
     if (isLoggedIn() && !m_serverUrl.empty()) {
+        brls::Logger::info("Restoring saved session...");
         // Verify connection and go to main
         PlexClient::getInstance().setAuthToken(m_authToken);
         PlexClient::getInstance().setServerUrl(m_serverUrl);
+        brls::Logger::info("Restored auth token and server URL to PlexClient");
         pushMainActivity();
     } else {
+        brls::Logger::info("No saved session, showing login screen");
         // Show login screen
         pushLoginActivity();
     }
@@ -145,9 +154,11 @@ std::string Application::getSubtitleSizeString(SubtitleSize size) {
 
 bool Application::loadSettings() {
 #ifdef __vita__
+    brls::Logger::debug("loadSettings: Opening {}", SETTINGS_PATH);
+
     SceUID fd = sceIoOpen(SETTINGS_PATH, SCE_O_RDONLY, 0);
     if (fd < 0) {
-        brls::Logger::debug("No settings file found");
+        brls::Logger::debug("No settings file found (error: {:#x})", fd);
         return false;
     }
 
@@ -155,7 +166,10 @@ bool Application::loadSettings() {
     SceOff size = sceIoLseek(fd, 0, SCE_SEEK_END);
     sceIoLseek(fd, 0, SCE_SEEK_SET);
 
+    brls::Logger::debug("loadSettings: File size = {}", size);
+
     if (size <= 0 || size > 16384) {
+        brls::Logger::error("loadSettings: Invalid file size");
         sceIoClose(fd);
         return false;
     }
@@ -164,6 +178,8 @@ bool Application::loadSettings() {
     content.resize(size);
     sceIoRead(fd, &content[0], size);
     sceIoClose(fd);
+
+    brls::Logger::debug("loadSettings: Read {} bytes", content.length());
 
     // Simple JSON parsing for strings
     auto extractString = [&content](const std::string& key) -> std::string {
@@ -203,6 +219,11 @@ bool Application::loadSettings() {
     m_serverUrl = extractString("serverUrl");
     m_username = extractString("username");
 
+    brls::Logger::info("loadSettings: authToken={}, serverUrl={}, username={}",
+                       m_authToken.empty() ? "(empty)" : "(set)",
+                       m_serverUrl.empty() ? "(empty)" : m_serverUrl,
+                       m_username.empty() ? "(empty)" : m_username);
+
     // Load UI settings
     m_settings.theme = static_cast<AppTheme>(extractInt("theme"));
     m_settings.showClock = extractBool("showClock", true);
@@ -229,7 +250,7 @@ bool Application::loadSettings() {
     if (m_settings.connectionTimeout <= 0) m_settings.connectionTimeout = 30;
     m_settings.directPlay = extractBool("directPlay", false);
 
-    brls::Logger::info("Loaded settings: user={}, server={}", m_username, m_serverUrl);
+    brls::Logger::info("Settings loaded successfully");
     return !m_authToken.empty();
 #else
     return false;
@@ -238,6 +259,12 @@ bool Application::loadSettings() {
 
 bool Application::saveSettings() {
 #ifdef __vita__
+    brls::Logger::info("saveSettings: Saving to {}", SETTINGS_PATH);
+    brls::Logger::debug("saveSettings: authToken={}, serverUrl={}, username={}",
+                        m_authToken.empty() ? "(empty)" : "(set)",
+                        m_serverUrl.empty() ? "(empty)" : m_serverUrl,
+                        m_username.empty() ? "(empty)" : m_username);
+
     // Create JSON content
     std::string json = "{\n";
 
@@ -273,15 +300,20 @@ bool Application::saveSettings() {
 
     SceUID fd = sceIoOpen(SETTINGS_PATH, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
     if (fd < 0) {
-        brls::Logger::error("Failed to save settings");
+        brls::Logger::error("Failed to open settings file for writing: {:#x}", fd);
         return false;
     }
 
-    sceIoWrite(fd, json.c_str(), json.length());
+    int written = sceIoWrite(fd, json.c_str(), json.length());
     sceIoClose(fd);
 
-    brls::Logger::info("Settings saved");
-    return true;
+    if (written == (int)json.length()) {
+        brls::Logger::info("Settings saved successfully ({} bytes)", written);
+        return true;
+    } else {
+        brls::Logger::error("Failed to write settings: only {} of {} bytes written", written, json.length());
+        return false;
+    }
 #else
     return false;
 #endif

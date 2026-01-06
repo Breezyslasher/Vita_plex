@@ -6,6 +6,7 @@
 #include "view/media_item_cell.hpp"
 #include "view/media_detail_view.hpp"
 #include "app/application.hpp"
+#include "utils/async.hpp"
 
 namespace vitaplex {
 
@@ -37,6 +38,10 @@ LibraryTab::LibraryTab() {
         onItemSelected(item);
     });
     this->addView(m_contentGrid);
+
+    // Load sections immediately
+    brls::Logger::debug("LibraryTab: Loading sections...");
+    loadSections();
 }
 
 void LibraryTab::onFocusGained() {
@@ -48,39 +53,74 @@ void LibraryTab::onFocusGained() {
 }
 
 void LibraryTab::loadSections() {
-    PlexClient& client = PlexClient::getInstance();
+    brls::Logger::debug("LibraryTab::loadSections - Starting async load");
 
-    if (client.fetchLibrarySections(m_sections)) {
-        m_sectionsBox->clearViews();
+    asyncRun([this]() {
+        brls::Logger::debug("LibraryTab: Fetching library sections (async)...");
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<LibrarySection> sections;
 
-        for (const auto& section : m_sections) {
-            auto* btn = new brls::Button();
-            btn->setText(section.title);
-            btn->setMarginRight(10);
+        if (client.fetchLibrarySections(sections)) {
+            brls::Logger::info("LibraryTab: Got {} sections", sections.size());
 
-            btn->registerClickAction([this, section](brls::View* view) {
-                onSectionSelected(section);
-                return true;
+            // Update UI on main thread
+            brls::sync([this, sections]() {
+                m_sections = sections;
+                m_sectionsBox->clearViews();
+
+                for (const auto& section : m_sections) {
+                    brls::Logger::debug("LibraryTab: Adding section button: {}", section.title);
+                    auto* btn = new brls::Button();
+                    btn->setText(section.title);
+                    btn->setMarginRight(10);
+
+                    LibrarySection capturedSection = section;
+                    btn->registerClickAction([this, capturedSection](brls::View* view) {
+                        onSectionSelected(capturedSection);
+                        return true;
+                    });
+
+                    m_sectionsBox->addView(btn);
+                }
+
+                // Load first section by default
+                if (!m_sections.empty()) {
+                    brls::Logger::debug("LibraryTab: Loading first section: {}", m_sections[0].title);
+                    onSectionSelected(m_sections[0]);
+                }
+
+                m_loaded = true;
+                brls::Logger::debug("LibraryTab: Sections loading complete");
             });
-
-            m_sectionsBox->addView(btn);
+        } else {
+            brls::Logger::error("LibraryTab: Failed to fetch sections");
+            brls::sync([this]() {
+                m_loaded = true;
+            });
         }
-
-        // Load first section by default
-        if (!m_sections.empty()) {
-            onSectionSelected(m_sections[0]);
-        }
-    }
-
-    m_loaded = true;
+    });
 }
 
 void LibraryTab::loadContent(const std::string& sectionKey) {
-    PlexClient& client = PlexClient::getInstance();
+    brls::Logger::debug("LibraryTab::loadContent - section: {} (async)", sectionKey);
 
-    if (client.fetchLibraryContent(sectionKey, m_items)) {
-        m_contentGrid->setDataSource(m_items);
-    }
+    std::string key = sectionKey;  // Capture by value
+    asyncRun([this, key]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> items;
+
+        if (client.fetchLibraryContent(key, items)) {
+            brls::Logger::info("LibraryTab: Got {} items for section {}", items.size(), key);
+
+            // Update UI on main thread
+            brls::sync([this, items]() {
+                m_items = items;
+                m_contentGrid->setDataSource(m_items);
+            });
+        } else {
+            brls::Logger::error("LibraryTab: Failed to load content for section {}", key);
+        }
+    });
 }
 
 void LibraryTab::onSectionSelected(const LibrarySection& section) {
