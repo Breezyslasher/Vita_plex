@@ -1,0 +1,22 @@
+# Build directories
+build/
+cmake-build-*/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Compiled files
+*.o
+*.a
+*.so
+*.elf
+*.self
+*.vpk
+
+# VitaSDK artifacts
+*.velf
+*.eboot.bin
