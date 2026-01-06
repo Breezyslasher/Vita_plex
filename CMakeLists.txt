@@ -45,9 +45,14 @@ set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1 -d ATTRIBUTE2=
 
 # Apply patches to borealis before building
 # Fix: psv_platform.cpp uses wrong macro (__SDL2__ instead of BOREALIS_USE_GXM)
-file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/patches/psv_platform.cpp
-     DESTINATION ${BOREALIS_LIBRARY}/lib/platforms/psv/)
-message(STATUS "Applied patch: psv_platform.cpp (fixed __SDL2__ vs BOREALIS_USE_GXM)")
+set(PSV_PLATFORM_PATCH ${CMAKE_CURRENT_SOURCE_DIR}/patches/psv_platform.cpp)
+set(PSV_PLATFORM_TARGET ${BOREALIS_LIBRARY}/lib/platforms/psv/psv_platform.cpp)
+if(EXISTS ${PSV_PLATFORM_PATCH})
+    message(STATUS "Applying patch: psv_platform.cpp")
+    configure_file(${PSV_PLATFORM_PATCH} ${PSV_PLATFORM_TARGET} COPYONLY)
+else()
+    message(FATAL_ERROR "Patch file not found: ${PSV_PLATFORM_PATCH}")
+endif()
 
 # Add Borealis library subdirectory
 add_subdirectory(${BOREALIS_LIBRARY})
