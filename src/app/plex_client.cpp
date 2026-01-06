@@ -158,39 +158,20 @@ bool PlexClient::login(const std::string& username, const std::string& password)
     req.headers["X-Plex-Platform"] = PLEX_PLATFORM;
     req.headers["X-Plex-Device"] = PLEX_DEVICE;
 
-    // Simple body format without URL encoding (matching working example)
-    req.body = "login=" + username + "&password=" + password;
+    req.body = "login=" + HttpClient::urlEncode(username) + "&password=" + HttpClient::urlEncode(password);
 
     HttpResponse resp = client.request(req);
-    brls::Logger::debug("Login response: {} - {}",
-        resp.statusCode, resp.body.length() > 200 ? resp.body.substr(0, 200) : resp.body);
 
     if (resp.statusCode == 201 || resp.statusCode == 200) {
         m_authToken = extractJsonValue(resp.body, "authToken");
         if (!m_authToken.empty()) {
-            brls::Logger::info("Login successful, token obtained");
-
-            // Store user info
-            std::string email = extractJsonValue(resp.body, "email");
-            std::string user = extractJsonValue(resp.body, "username");
-            if (user.empty()) {
-                user = username;  // Fallback to input
-            }
-            Application::getInstance().setUsername(user);
+            brls::Logger::info("Login successful");
             Application::getInstance().setAuthToken(m_authToken);
-
-            brls::Logger::info("Logged in as: {} ({})", user, email);
             return true;
         }
     }
 
-    // Log error from response if available
-    std::string error = extractJsonValue(resp.body, "error");
-    if (!error.empty()) {
-        brls::Logger::error("Login error: {}", error);
-    } else {
-        brls::Logger::error("Login failed: {}", resp.statusCode);
-    }
+    brls::Logger::error("Login failed: {}", resp.statusCode);
     return false;
 }
 
@@ -209,33 +190,25 @@ bool PlexClient::requestPin(PinAuth& pinAuth) {
     req.headers["X-Plex-Platform"] = PLEX_PLATFORM;
     req.headers["X-Plex-Device"] = PLEX_DEVICE;
 
-    // Non-strong code for plex.tv/link (matching working example)
     req.body = "strong=false";
 
     HttpResponse resp = client.request(req);
-    brls::Logger::debug("PIN request response: {} - {}", resp.statusCode,
-        resp.body.length() > 500 ? resp.body.substr(0, 500) : resp.body);
 
     if (resp.statusCode == 201 || resp.statusCode == 200) {
         pinAuth.id = extractJsonInt(resp.body, "id");
         pinAuth.code = extractJsonValue(resp.body, "code");
         pinAuth.expiresIn = extractJsonInt(resp.body, "expiresIn");
-        pinAuth.authToken = "";
         pinAuth.expired = false;
 
-        if (!pinAuth.code.empty()) {
-            brls::Logger::info("PIN obtained: {} (id: {})", pinAuth.code, pinAuth.id);
-            return true;
-        }
+        brls::Logger::info("PIN requested: {}", pinAuth.code);
+        return !pinAuth.code.empty();
     }
 
-    brls::Logger::error("Failed to get PIN: {}", resp.statusCode);
+    brls::Logger::error("PIN request failed: {}", resp.statusCode);
     return false;
 }
 
 bool PlexClient::checkPin(PinAuth& pinAuth) {
-    if (pinAuth.id == 0) return false;
-
     HttpClient client;
     HttpRequest req;
     req.url = "https://plex.tv/api/v2/pins/" + std::to_string(pinAuth.id);
@@ -246,31 +219,14 @@ bool PlexClient::checkPin(PinAuth& pinAuth) {
     HttpResponse resp = client.request(req);
 
     if (resp.statusCode == 200) {
-        std::string authToken = extractJsonValue(resp.body, "authToken");
-        if (!authToken.empty() && authToken != "null") {
-            pinAuth.authToken = authToken;
-            m_authToken = authToken;
+        pinAuth.authToken = extractJsonValue(resp.body, "authToken");
+        pinAuth.expired = extractJsonBool(resp.body, "expired");
 
-            // Store user info if available
-            std::string user = extractJsonValue(resp.body, "username");
-            std::string email = extractJsonValue(resp.body, "email");
-
+        if (!pinAuth.authToken.empty()) {
+            m_authToken = pinAuth.authToken;
             Application::getInstance().setAuthToken(m_authToken);
-            if (!user.empty()) {
-                Application::getInstance().setUsername(user);
-            }
-
-            brls::Logger::info("PIN authorized! Token obtained.");
-            if (!user.empty()) {
-                brls::Logger::info("Logged in as: {}", user);
-            }
+            brls::Logger::info("PIN authenticated successfully");
             return true;
-        }
-
-        // Check if expired
-        int expiresIn = extractJsonInt(resp.body, "expiresIn");
-        if (expiresIn <= 0) {
-            pinAuth.expired = true;
         }
     }
 
