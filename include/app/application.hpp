@@ -57,6 +57,7 @@ struct AppSettings {
     bool showLibrariesInSidebar = false;  // Show libraries in sidebar instead of Library tab
     bool collapseSidebar = false;         // Collapse sidebar to icons only
     std::string hiddenLibraries;          // Comma-separated list of library keys to hide
+    std::string sidebarOrder;             // Custom sidebar order (comma-separated: home,library,search,livetv,settings)
 
     // Playback Settings
     bool autoPlayNext = true;

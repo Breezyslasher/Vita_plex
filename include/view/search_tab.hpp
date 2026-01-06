@@ -35,6 +35,8 @@ private:
     brls::Box* m_moviesContent = nullptr;
     brls::HScrollingFrame* m_showsRow = nullptr;
     brls::Box* m_showsContent = nullptr;
+    brls::HScrollingFrame* m_episodesRow = nullptr;
+    brls::Box* m_episodesContent = nullptr;
     brls::HScrollingFrame* m_musicRow = nullptr;
     brls::Box* m_musicContent = nullptr;
 
@@ -42,6 +44,7 @@ private:
     std::vector<MediaItem> m_results;
     std::vector<MediaItem> m_movies;
     std::vector<MediaItem> m_shows;
+    std::vector<MediaItem> m_episodes;
     std::vector<MediaItem> m_music;
 };
 

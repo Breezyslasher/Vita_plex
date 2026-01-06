@@ -96,6 +96,25 @@ SearchTab::SearchTab() {
     m_showsRow->setContentView(m_showsContent);
     m_scrollContent->addView(m_showsRow);
 
+    // Episodes row (separate from TV Shows)
+    auto* episodesLabel = new brls::Label();
+    episodesLabel->setText("Episodes");
+    episodesLabel->setFontSize(20);
+    episodesLabel->setMarginBottom(10);
+    episodesLabel->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(episodesLabel);
+
+    m_episodesRow = new brls::HScrollingFrame();
+    m_episodesRow->setHeight(180);
+    m_episodesRow->setMarginBottom(15);
+    m_episodesRow->setVisibility(brls::Visibility::GONE);
+
+    m_episodesContent = new brls::Box();
+    m_episodesContent->setAxis(brls::Axis::ROW);
+    m_episodesContent->setJustifyContent(brls::JustifyContent::FLEX_START);
+    m_episodesRow->setContentView(m_episodesContent);
+    m_scrollContent->addView(m_episodesRow);
+
     // Music row
     auto* musicLabel = new brls::Label();
     musicLabel->setText("Music");
@@ -156,11 +175,13 @@ void SearchTab::performSearch(const std::string& query) {
         m_results.clear();
         m_movies.clear();
         m_shows.clear();
+        m_episodes.clear();
         m_music.clear();
 
         // Hide all rows
         m_moviesRow->setVisibility(brls::Visibility::GONE);
         m_showsRow->setVisibility(brls::Visibility::GONE);
+        m_episodesRow->setVisibility(brls::Visibility::GONE);
         m_musicRow->setVisibility(brls::Visibility::GONE);
 
         // Hide labels
@@ -176,18 +197,21 @@ void SearchTab::performSearch(const std::string& query) {
     if (client.search(query, m_results)) {
         m_resultsLabel->setText("Found " + std::to_string(m_results.size()) + " results");
 
-        // Organize results by type
+        // Organize results by type - separate shows from episodes
         m_movies.clear();
         m_shows.clear();
+        m_episodes.clear();
         m_music.clear();
 
         for (const auto& item : m_results) {
             if (item.mediaType == MediaType::MOVIE) {
                 m_movies.push_back(item);
-            } else if (item.mediaType == MediaType::SHOW ||
-                       item.mediaType == MediaType::SEASON ||
-                       item.mediaType == MediaType::EPISODE) {
+            } else if (item.mediaType == MediaType::SHOW || item.mediaType == MediaType::SEASON) {
+                // Shows and seasons go to TV Shows row
                 m_shows.push_back(item);
+            } else if (item.mediaType == MediaType::EPISODE) {
+                // Episodes get their own row
+                m_episodes.push_back(item);
             } else if (item.mediaType == MediaType::MUSIC_ARTIST ||
                        item.mediaType == MediaType::MUSIC_ALBUM ||
                        item.mediaType == MediaType::MUSIC_TRACK) {
@@ -196,6 +220,7 @@ void SearchTab::performSearch(const std::string& query) {
         }
 
         // Update rows visibility and content
+        // Order: Movies(0,1), Shows(2,3), Episodes(4,5), Music(6,7)
         auto& views = m_scrollContent->getChildren();
 
         // Movies (label at index 0, row at index 1)
@@ -218,13 +243,23 @@ void SearchTab::performSearch(const std::string& query) {
             m_showsRow->setVisibility(brls::Visibility::GONE);
         }
 
-        // Music (label at index 4, row at index 5)
-        if (!m_music.empty()) {
+        // Episodes (label at index 4, row at index 5)
+        if (!m_episodes.empty()) {
             views[4]->setVisibility(brls::Visibility::VISIBLE);
+            m_episodesRow->setVisibility(brls::Visibility::VISIBLE);
+            populateRow(m_episodesContent, m_episodes);
+        } else {
+            views[4]->setVisibility(brls::Visibility::GONE);
+            m_episodesRow->setVisibility(brls::Visibility::GONE);
+        }
+
+        // Music (label at index 6, row at index 7)
+        if (!m_music.empty()) {
+            views[6]->setVisibility(brls::Visibility::VISIBLE);
             m_musicRow->setVisibility(brls::Visibility::VISIBLE);
             populateRow(m_musicContent, m_music);
         } else {
-            views[4]->setVisibility(brls::Visibility::GONE);
+            views[6]->setVisibility(brls::Visibility::GONE);
             m_musicRow->setVisibility(brls::Visibility::GONE);
         }
 

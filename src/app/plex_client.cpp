@@ -608,6 +608,14 @@ bool PlexClient::fetchSectionRecentlyAdded(const std::string& sectionKey, std::v
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
 
+        // Parse episode-specific fields for show cover
+        item.grandparentTitle = extractJsonValue(obj, "grandparentTitle");
+        item.grandparentThumb = extractJsonValue(obj, "grandparentThumb");
+        item.parentTitle = extractJsonValue(obj, "parentTitle");
+        item.parentThumb = extractJsonValue(obj, "parentThumb");
+        item.parentIndex = extractJsonInt(obj, "parentIndex");
+        item.index = extractJsonInt(obj, "index");
+
         if (!item.ratingKey.empty() && !item.title.empty()) {
             items.push_back(item);
         }

@@ -411,16 +411,28 @@ void SettingsTab::onManageHiddenLibraries() {
     }
     if (!hidden.empty()) hiddenKeys.insert(hidden);
 
-    // Create dialog with checkboxes for each library
-    brls::Box* content = new brls::Box();
-    content->setAxis(brls::Axis::COLUMN);
-    content->setPadding(20);
+    // Create scrollable dialog content for many libraries
+    brls::Box* outerBox = new brls::Box();
+    outerBox->setAxis(brls::Axis::COLUMN);
+    outerBox->setWidth(400);
+    outerBox->setHeight(350);  // Fixed height for scrolling
 
     auto* title = new brls::Label();
     title->setText("Select libraries to hide:");
     title->setFontSize(20);
     title->setMarginBottom(15);
-    content->addView(title);
+    title->setMarginLeft(20);
+    title->setMarginTop(20);
+    outerBox->addView(title);
+
+    // Scrolling frame for checkboxes
+    brls::ScrollingFrame* scrollFrame = new brls::ScrollingFrame();
+    scrollFrame->setGrow(1.0f);
+
+    brls::Box* content = new brls::Box();
+    content->setAxis(brls::Axis::COLUMN);
+    content->setPaddingLeft(20);
+    content->setPaddingRight(20);
 
     std::vector<std::pair<std::string, brls::BooleanCell*>> checkboxes;
 
@@ -432,7 +444,10 @@ void SettingsTab::onManageHiddenLibraries() {
         checkboxes.push_back({section.key, checkbox});
     }
 
-    brls::Dialog* dialog = new brls::Dialog(content);
+    scrollFrame->setContentView(content);
+    outerBox->addView(scrollFrame);
+
+    brls::Dialog* dialog = new brls::Dialog(outerBox);
 
     dialog->addButton("Cancel", [dialog]() {
         dialog->close();
