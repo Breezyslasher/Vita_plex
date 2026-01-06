@@ -235,6 +235,11 @@ bool Application::loadSettings() {
     m_settings.animationsEnabled = extractBool("animationsEnabled", true);
     m_settings.debugLogging = extractBool("debugLogging", true);
 
+    // Load layout settings
+    m_settings.showLibrariesInSidebar = extractBool("showLibrariesInSidebar", false);
+    m_settings.collapseSidebar = extractBool("collapseSidebar", false);
+    m_settings.hiddenLibraries = extractString("hiddenLibraries");
+
     // Load playback settings
     m_settings.autoPlayNext = extractBool("autoPlayNext", true);
     m_settings.resumePlayback = extractBool("resumePlayback", true);
@@ -283,6 +288,11 @@ bool Application::saveSettings() {
     json += "  \"showClock\": " + std::string(m_settings.showClock ? "true" : "false") + ",\n";
     json += "  \"animationsEnabled\": " + std::string(m_settings.animationsEnabled ? "true" : "false") + ",\n";
     json += "  \"debugLogging\": " + std::string(m_settings.debugLogging ? "true" : "false") + ",\n";
+
+    // Layout settings
+    json += "  \"showLibrariesInSidebar\": " + std::string(m_settings.showLibrariesInSidebar ? "true" : "false") + ",\n";
+    json += "  \"collapseSidebar\": " + std::string(m_settings.collapseSidebar ? "true" : "false") + ",\n";
+    json += "  \"hiddenLibraries\": \"" + m_settings.hiddenLibraries + "\",\n";
 
     // Playback settings
     json += "  \"autoPlayNext\": " + std::string(m_settings.autoPlayNext ? "true" : "false") + ",\n";

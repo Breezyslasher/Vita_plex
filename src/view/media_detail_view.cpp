@@ -18,6 +18,12 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     this->setPadding(30);
     this->setGrow(1.0f);
 
+    // Register back button (B/Circle) to pop this activity
+    this->registerAction("Back", brls::ControllerButton::BUTTON_B, [](brls::View* view) {
+        brls::Application::popActivity();
+        return true;
+    }, false, false, brls::Sound::SOUND_BACK);
+
     // Left side - poster
     auto* leftBox = new brls::Box();
     leftBox->setAxis(brls::Axis::COLUMN);

@@ -58,6 +58,20 @@ void LibraryTab::onFocusGained() {
     }
 }
 
+// Helper function to check if a library is hidden
+static bool isLibraryHidden(const std::string& key, const std::string& hiddenLibraries) {
+    if (hiddenLibraries.empty()) return false;
+
+    std::string hidden = hiddenLibraries;
+    size_t pos = 0;
+    while ((pos = hidden.find(',')) != std::string::npos) {
+        std::string hiddenKey = hidden.substr(0, pos);
+        if (hiddenKey == key) return true;
+        hidden.erase(0, pos + 1);
+    }
+    return (hidden == key);
+}
+
 void LibraryTab::loadSections() {
     brls::Logger::debug("LibraryTab::loadSections - Starting async load");
 
@@ -69,9 +83,22 @@ void LibraryTab::loadSections() {
         if (client.fetchLibrarySections(sections)) {
             brls::Logger::info("LibraryTab: Got {} sections", sections.size());
 
+            // Get hidden libraries setting
+            std::string hiddenLibraries = Application::getInstance().getSettings().hiddenLibraries;
+
+            // Filter out hidden sections
+            std::vector<LibrarySection> visibleSections;
+            for (const auto& section : sections) {
+                if (!isLibraryHidden(section.key, hiddenLibraries)) {
+                    visibleSections.push_back(section);
+                } else {
+                    brls::Logger::debug("LibraryTab: Hiding section: {}", section.title);
+                }
+            }
+
             // Update UI on main thread
-            brls::sync([this, sections]() {
-                m_sections = sections;
+            brls::sync([this, visibleSections]() {
+                m_sections = visibleSections;
                 m_sectionsBox->clearViews();
 
                 for (const auto& section : m_sections) {

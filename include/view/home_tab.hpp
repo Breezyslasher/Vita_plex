@@ -22,8 +22,12 @@ private:
     void onItemSelected(const MediaItem& item);
 
     // Helper to create a media row with horizontal scrolling
-    brls::HScrollingFrame* createMediaRow();
+    brls::HScrollingFrame* createMediaRow(brls::Box** contentOut);
     void populateRow(brls::Box* rowContent, const std::vector<MediaItem>& items);
+
+    // Vertical scroll container
+    brls::ScrollingFrame* m_scrollView = nullptr;
+    brls::Box* m_scrollContent = nullptr;
 
     brls::Label* m_titleLabel = nullptr;
 

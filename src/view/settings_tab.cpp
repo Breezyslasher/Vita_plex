@@ -5,6 +5,7 @@
 #include "view/settings_tab.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
+#include <set>
 
 namespace vitaplex {
 
@@ -26,6 +27,7 @@ SettingsTab::SettingsTab() {
     // Create all sections
     createAccountSection();
     createUISection();
+    createLayoutSection();
     createPlaybackSection();
     createTranscodeSection();
     createAboutSection();
@@ -110,6 +112,60 @@ void SettingsTab::createUISection() {
         Application::getInstance().saveSettings();
     });
     m_contentBox->addView(m_debugLogToggle);
+}
+
+void SettingsTab::createLayoutSection() {
+    Application& app = Application::getInstance();
+    AppSettings& settings = app.getSettings();
+
+    // Section header
+    auto* header = new brls::Header();
+    header->setTitle("Layout");
+    m_contentBox->addView(header);
+
+    // Show libraries in sidebar toggle
+    m_sidebarLibrariesToggle = new brls::BooleanCell();
+    m_sidebarLibrariesToggle->init("Libraries in Sidebar", settings.showLibrariesInSidebar, [&settings](bool value) {
+        settings.showLibrariesInSidebar = value;
+        Application::getInstance().saveSettings();
+        // Note: Requires app restart to take effect
+    });
+    m_contentBox->addView(m_sidebarLibrariesToggle);
+
+    // Collapse sidebar toggle
+    m_collapseSidebarToggle = new brls::BooleanCell();
+    m_collapseSidebarToggle->init("Collapse Sidebar", settings.collapseSidebar, [&settings](bool value) {
+        settings.collapseSidebar = value;
+        Application::getInstance().saveSettings();
+        // Note: Requires app restart to take effect
+    });
+    m_contentBox->addView(m_collapseSidebarToggle);
+
+    // Manage hidden libraries
+    m_hiddenLibrariesCell = new brls::DetailCell();
+    m_hiddenLibrariesCell->setText("Manage Hidden Libraries");
+    int hiddenCount = 0;
+    if (!settings.hiddenLibraries.empty()) {
+        // Count comma-separated items
+        hiddenCount = 1;
+        for (char c : settings.hiddenLibraries) {
+            if (c == ',') hiddenCount++;
+        }
+    }
+    m_hiddenLibrariesCell->setDetailText(hiddenCount > 0 ? std::to_string(hiddenCount) + " hidden" : "None hidden");
+    m_hiddenLibrariesCell->registerClickAction([this](brls::View* view) {
+        onManageHiddenLibraries();
+        return true;
+    });
+    m_contentBox->addView(m_hiddenLibrariesCell);
+
+    // Info label
+    auto* infoLabel = new brls::Label();
+    infoLabel->setText("Layout changes require app restart");
+    infoLabel->setFontSize(14);
+    infoLabel->setMarginLeft(16);
+    infoLabel->setMarginTop(8);
+    m_contentBox->addView(infoLabel);
 }
 
 void SettingsTab::createPlaybackSection() {
@@ -327,6 +383,92 @@ void SettingsTab::onSeekIntervalChanged(int index) {
     }
 
     app.saveSettings();
+}
+
+void SettingsTab::onManageHiddenLibraries() {
+    Application& app = Application::getInstance();
+    AppSettings& settings = app.getSettings();
+
+    // Fetch library sections
+    std::vector<LibrarySection> sections;
+    PlexClient::getInstance().fetchLibrarySections(sections);
+
+    if (sections.empty()) {
+        brls::Dialog* dialog = new brls::Dialog("No libraries found");
+        dialog->addButton("OK", [dialog]() { dialog->close(); });
+        dialog->open();
+        return;
+    }
+
+    // Parse currently hidden libraries
+    std::set<std::string> hiddenKeys;
+    std::string hidden = settings.hiddenLibraries;
+    size_t pos = 0;
+    while ((pos = hidden.find(',')) != std::string::npos) {
+        std::string key = hidden.substr(0, pos);
+        if (!key.empty()) hiddenKeys.insert(key);
+        hidden.erase(0, pos + 1);
+    }
+    if (!hidden.empty()) hiddenKeys.insert(hidden);
+
+    // Create dialog with checkboxes for each library
+    brls::Box* content = new brls::Box();
+    content->setAxis(brls::Axis::COLUMN);
+    content->setPadding(20);
+
+    auto* title = new brls::Label();
+    title->setText("Select libraries to hide:");
+    title->setFontSize(20);
+    title->setMarginBottom(15);
+    content->addView(title);
+
+    std::vector<std::pair<std::string, brls::BooleanCell*>> checkboxes;
+
+    for (const auto& section : sections) {
+        auto* checkbox = new brls::BooleanCell();
+        bool isHidden = (hiddenKeys.find(section.key) != hiddenKeys.end());
+        checkbox->init(section.title, isHidden, [](bool value) {});
+        content->addView(checkbox);
+        checkboxes.push_back({section.key, checkbox});
+    }
+
+    brls::Dialog* dialog = new brls::Dialog(content);
+
+    dialog->addButton("Cancel", [dialog]() {
+        dialog->close();
+    });
+
+    dialog->addButton("Save", [dialog, checkboxes, this]() {
+        Application& app = Application::getInstance();
+        AppSettings& settings = app.getSettings();
+
+        std::string newHidden;
+        for (const auto& pair : checkboxes) {
+            if (pair.second->getToggleValue()) {
+                if (!newHidden.empty()) newHidden += ",";
+                newHidden += pair.first;
+            }
+        }
+
+        settings.hiddenLibraries = newHidden;
+        app.saveSettings();
+
+        // Update the cell text
+        int count = 0;
+        if (!newHidden.empty()) {
+            count = 1;
+            for (char c : newHidden) {
+                if (c == ',') count++;
+            }
+        }
+        if (m_hiddenLibrariesCell) {
+            m_hiddenLibrariesCell->setDetailText(count > 0 ? std::to_string(count) + " hidden" : "None hidden");
+        }
+
+        dialog->close();
+    });
+
+    dialog->open();
 }
 
 } // namespace vitaplex

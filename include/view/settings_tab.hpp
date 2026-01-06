@@ -16,6 +16,7 @@ public:
 private:
     void createAccountSection();
     void createUISection();
+    void createLayoutSection();
     void createPlaybackSection();
     void createTranscodeSection();
     void createAboutSection();
@@ -25,6 +26,7 @@ private:
     void onQualityChanged(int index);
     void onSubtitleSizeChanged(int index);
     void onSeekIntervalChanged(int index);
+    void onManageHiddenLibraries();
 
     brls::ScrollingFrame* m_scrollView = nullptr;
     brls::Box* m_contentBox = nullptr;
@@ -38,6 +40,11 @@ private:
     brls::BooleanCell* m_clockToggle = nullptr;
     brls::BooleanCell* m_animationsToggle = nullptr;
     brls::BooleanCell* m_debugLogToggle = nullptr;
+
+    // Layout section
+    brls::BooleanCell* m_sidebarLibrariesToggle = nullptr;
+    brls::BooleanCell* m_collapseSidebarToggle = nullptr;
+    brls::DetailCell* m_hiddenLibrariesCell = nullptr;
 
     // Playback section
     brls::BooleanCell* m_autoPlayToggle = nullptr;
