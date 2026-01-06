@@ -390,6 +390,10 @@ bool PlexClient::connectToServer(const std::string& url) {
         m_currentServer.address = url;
 
         brls::Logger::info("Connected to: {}", m_currentServer.name);
+
+        // Check if Live TV is available on this server
+        checkLiveTVAvailability();
+
         return true;
     }
 
@@ -1203,20 +1207,76 @@ bool PlexClient::markAsUnwatched(const std::string& ratingKey) {
     return resp.statusCode == 200;
 }
 
+void PlexClient::checkLiveTVAvailability() {
+    // Quick check if Live TV is available on this server
+    HttpClient client;
+    std::string url = buildApiUrl("/livetv/dvrs");
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    req.timeout = 10;  // Short timeout for availability check
+
+    HttpResponse resp = client.request(req);
+
+    // If we get a 200 response (even with empty DVR list), Live TV is configured
+    // A 404 or error means Live TV is not set up
+    m_hasLiveTV = (resp.statusCode == 200);
+    brls::Logger::info("Live TV availability check: {}", m_hasLiveTV ? "available" : "not available");
+}
+
 bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
     HttpClient client;
     std::string url = buildApiUrl("/livetv/sessions");
-    HttpResponse resp = client.get(url);
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
 
     if (resp.statusCode != 200) {
-        m_hasLiveTV = false;
+        brls::Logger::error("fetchLiveTVChannels failed: {}", resp.statusCode);
         return false;
     }
 
-    m_hasLiveTV = true;
     channels.clear();
-    // Parse channels
 
+    // Parse channels from response
+    size_t pos = 0;
+    while ((pos = resp.body.find("\"ratingKey\"", pos)) != std::string::npos) {
+        size_t objStart = resp.body.rfind('{', pos);
+        if (objStart == std::string::npos) {
+            pos++;
+            continue;
+        }
+
+        int braceCount = 1;
+        size_t objEnd = objStart + 1;
+        while (braceCount > 0 && objEnd < resp.body.length()) {
+            if (resp.body[objEnd] == '{') braceCount++;
+            else if (resp.body[objEnd] == '}') braceCount--;
+            objEnd++;
+        }
+
+        std::string obj = resp.body.substr(objStart, objEnd - objStart);
+
+        LiveTVChannel channel;
+        channel.ratingKey = extractJsonValue(obj, "ratingKey");
+        channel.key = extractJsonValue(obj, "key");
+        channel.title = extractJsonValue(obj, "title");
+        channel.thumb = extractJsonValue(obj, "thumb");
+        channel.callSign = extractJsonValue(obj, "callSign");
+        channel.channelNumber = extractJsonInt(obj, "channelNumber");
+        channel.currentProgram = extractJsonValue(obj, "title");  // Current playing title
+
+        if (!channel.ratingKey.empty()) {
+            channels.push_back(channel);
+        }
+
+        pos = objEnd;
+    }
+
+    brls::Logger::info("fetchLiveTVChannels: Found {} channels", channels.size());
     return true;
 }
 

@@ -68,6 +68,11 @@ void PlayerActivity::willDisappear(bool resetState) {
     // Stop update timer
     m_updateTimer.stop();
 
+    // For photos, nothing to stop
+    if (m_isPhoto) {
+        return;
+    }
+
     // Stop playback and save progress
     MpvPlayer& player = MpvPlayer::getInstance();
 
@@ -97,7 +102,34 @@ void PlayerActivity::loadMedia() {
             titleLabel->setText(title);
         }
 
-        // Get playback URL
+        // Handle photos differently - display image instead of playing
+        if (item.mediaType == MediaType::PHOTO) {
+            brls::Logger::info("Displaying photo: {}", item.title);
+            m_isPhoto = true;
+
+            // Load the full-size photo
+            if (!item.thumb.empty()) {
+                std::string photoUrl = client.getThumbnailUrl(item.thumb, 960, 544);
+                brls::Logger::debug("Photo URL: {}", photoUrl);
+
+                // Load photo into the view (photoImage is defined in player.xml)
+                if (photoImage) {
+                    photoImage->setVisibility(brls::Visibility::VISIBLE);
+                    photoImage->setImageFromURL(photoUrl);
+                }
+
+                // Hide player controls for photos
+                if (progressSlider) {
+                    progressSlider->setVisibility(brls::Visibility::GONE);
+                }
+                if (timeLabel) {
+                    timeLabel->setVisibility(brls::Visibility::GONE);
+                }
+            }
+            return;
+        }
+
+        // Get playback URL for video/audio
         std::string url;
         if (client.getPlaybackUrl(m_mediaKey, url)) {
             MpvPlayer& player = MpvPlayer::getInstance();

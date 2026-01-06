@@ -53,11 +53,12 @@ bool MpvPlayer::init() {
     // ========================================
     // We MUST use null video output because our app uses vita2d for UI
     // and vita2d can't be shared between app and mpv simultaneously.
-    // This means video won't display, but audio will work fine.
-    // For video playback, we'd need to completely stop vita2d first.
-    
+    // Video frames won't display but audio and seeking will work.
+    // For video display on Vita, a separate video player would be needed.
+
     mpv_set_option_string(m_mpv, "vo", "null");  // Disable video output
-    mpv_set_option_string(m_mpv, "video", "no"); // Don't process video at all (saves CPU)
+    // Note: We still process video to enable proper seeking and duration
+    // Setting video=no breaks audio playback for video files
     
     // ========================================
     // Audio output configuration for Vita
@@ -183,21 +184,29 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
         }
     }
 
-    brls::Logger::debug("MpvPlayer: Loading URL: {}", url);
-    
-    m_currentUrl = url;
+    // Normalize URL scheme to lowercase (Http -> http, Https -> https)
+    std::string normalizedUrl = url;
+    if (normalizedUrl.substr(0, 5) == "Http:") {
+        normalizedUrl = "http:" + normalizedUrl.substr(5);
+    } else if (normalizedUrl.substr(0, 6) == "Https:") {
+        normalizedUrl = "https:" + normalizedUrl.substr(6);
+    }
+
+    brls::Logger::debug("MpvPlayer: Loading URL: {}", normalizedUrl);
+
+    m_currentUrl = normalizedUrl;
     m_playbackInfo = MpvPlaybackInfo();
     m_playbackInfo.mediaTitle = title;
-    
+
     // Stop any current playback first
     const char* stopCmd[] = {"stop", NULL};
     mpv_command(m_mpv, stopCmd);
-    
+
     // Small delay to ensure stop completes
     sceKernelDelayThread(50000);  // 50ms
-    
+
     // Load the file
-    const char* cmd[] = {"loadfile", url.c_str(), "replace", NULL};
+    const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", NULL};
     int result = mpv_command(m_mpv, cmd);
     
     if (result < 0) {
@@ -442,37 +451,21 @@ void MpvPlayer::setState(MpvPlayerState newState) {
 }
 
 void MpvPlayer::update() {
-    if (!m_mpv) {
-        brls::Logger::debug("MpvPlayer::update() - mpv is null, skipping");
-        return;
-    }
+    if (!m_mpv) return;
 
-    brls::Logger::debug("MpvPlayer::update() - processing events...");
     processEvents();
-    brls::Logger::debug("MpvPlayer::update() - events processed, updating playback info...");
     updatePlaybackInfo();
-    brls::Logger::debug("MpvPlayer::update() - done");
 }
 
 void MpvPlayer::processEvents() {
     if (!m_mpv) return;
 
-    int eventCount = 0;
     while (m_mpv) {
         mpv_event* event = mpv_wait_event(m_mpv, 0);
-        if (!event) {
-            brls::Logger::debug("MpvPlayer: mpv_wait_event returned null");
+        if (!event || event->event_id == MPV_EVENT_NONE) {
             break;
         }
-        if (event->event_id == MPV_EVENT_NONE) {
-            break;
-        }
-        eventCount++;
-        brls::Logger::debug("MpvPlayer: Processing event {} (type={})", eventCount, (int)event->event_id);
         handleEvent(event);
-    }
-    if (eventCount > 0) {
-        brls::Logger::debug("MpvPlayer: Processed {} events", eventCount);
     }
 }
 

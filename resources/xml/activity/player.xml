@@ -8,6 +8,15 @@
     alignItems="stretch"
     padding="20">
 
+    <!-- Photo display area (for photos) -->
+    <brls:Image
+        id="player/photo"
+        width="100%"
+        height="100%"
+        scalingType="fit"
+        visibility="gone"
+        grow="1"/>
+
     <!-- Video area (handled by MPV) -->
 
     <!-- Controls overlay -->

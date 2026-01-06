@@ -194,6 +194,7 @@ private:
     std::string base64Encode(const std::string& input);
     int extractXmlAttr(const std::string& xml, const std::string& attr);
     std::string extractXmlAttrStr(const std::string& xml, const std::string& attr);
+    void checkLiveTVAvailability();
 
     std::string m_authToken;
     std::string m_serverUrl;

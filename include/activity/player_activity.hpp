@@ -29,6 +29,7 @@ private:
 
     std::string m_mediaKey;
     bool m_isPlaying = false;
+    bool m_isPhoto = false;
     brls::RepeatingTimer m_updateTimer;
 
     BRLS_BIND(brls::Box, playerContainer, "player/container");
@@ -36,6 +37,7 @@ private:
     BRLS_BIND(brls::Label, timeLabel, "player/time");
     BRLS_BIND(brls::Slider, progressSlider, "player/progress");
     BRLS_BIND(brls::Box, controlsBox, "player/controls");
+    BRLS_BIND(brls::Image, photoImage, "player/photo");
 };
 
 } // namespace vitaplex
