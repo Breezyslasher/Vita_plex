@@ -1,5 +1,23 @@
 cmake_minimum_required(VERSION 3.16)
 
+# Set platform for Borealis BEFORE project() - this is critical
+# These must be cache variables set before any project() call
+set(PLATFORM_DESKTOP OFF CACHE BOOL "Build for Desktop" FORCE)
+set(PLATFORM_SWITCH OFF CACHE BOOL "Build for Switch" FORCE)
+set(PLATFORM_PSV ON CACHE BOOL "Build for PS Vita" FORCE)
+set(PLATFORM_PS4 OFF CACHE BOOL "Build for PS4" FORCE)
+set(PLATFORM_IOS OFF CACHE BOOL "Build for iOS" FORCE)
+set(PLATFORM_ANDROID OFF CACHE BOOL "Build for Android" FORCE)
+
+# Disable features not needed for Vita
+set(USE_LIBROMFS OFF CACHE BOOL "Use libromfs" FORCE)
+set(USE_OPENGL OFF CACHE BOOL "Use OpenGL" FORCE)
+set(BOREALIS_USE_STD_THREAD OFF CACHE BOOL "Use std::thread" FORCE)
+
+# Enable native GXM graphics for PS Vita (required!)
+set(BOREALIS_USE_GXM ON CACHE BOOL "Use GXM for PS Vita" FORCE)
+set(USE_VITA_SHARK ON CACHE BOOL "Use VitaShark for shader compilation" FORCE)
+
 # VitaSDK Configuration
 if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
     if(DEFINED ENV{VITASDK})
@@ -21,20 +39,20 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -frtti -fexceptions")
 
 include("${VITASDK}/share/vita.cmake" REQUIRED)
 
+# Define VITA macro for platform detection
+add_definitions(-D__vita__ -DPLATFORM_PSV=1 -D__PSV__)
+
 # App metadata
 set(VITA_APP_NAME "VitaPlex")
 set(VITA_TITLEID "VPLEX0001")
 set(VITA_VERSION "02.00")
 set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1")
 
-# Add Borealis library
-option(BOREALIS_LIBRARY "Build borealis as library" ON)
+# Borealis library
 set(BOREALIS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib/borealis)
+option(BOREALIS_LIBRARY "Build borealis as library" ON)
 
-# Set platform for Borealis - PS Vita
-set(PLATFORM_PSV ON CACHE BOOL "Build for PS Vita" FORCE)
-set(USE_LIBROMFS OFF CACHE BOOL "Use libromfs" FORCE)
-
+# Add Borealis subdirectory
 add_subdirectory(${BOREALIS_DIR}/library)
 
 # Application source files
@@ -52,7 +70,6 @@ set(APP_SOURCES
     src/activity/player_activity.cpp
 
     # Views
-    src/view/login_view.cpp
     src/view/home_tab.cpp
     src/view/library_tab.cpp
     src/view/search_tab.cpp
