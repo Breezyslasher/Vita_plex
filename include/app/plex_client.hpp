@@ -91,6 +91,7 @@ struct PinAuth {
     std::string authToken;
     bool expired = false;
     int expiresIn = 0;
+    bool useJwt = false;  // Whether this PIN uses JWT authentication
 };
 
 // Hub (for home screen)
@@ -128,6 +129,7 @@ public:
     bool login(const std::string& username, const std::string& password);
     bool requestPin(PinAuth& pinAuth);
     bool checkPin(PinAuth& pinAuth);
+    bool refreshToken();  // JWT token refresh (call before 7-day expiry)
     bool connectToServer(const std::string& url);
     void logout();
 
@@ -173,6 +175,9 @@ private:
     int extractJsonInt(const std::string& json, const std::string& key);
     float extractJsonFloat(const std::string& json, const std::string& key);
     bool extractJsonBool(const std::string& json, const std::string& key);
+    std::string base64Encode(const std::string& input);
+    int extractXmlAttr(const std::string& xml, const std::string& attr);
+    std::string extractXmlAttrStr(const std::string& xml, const std::string& attr);
 
     std::string m_authToken;
     std::string m_serverUrl;

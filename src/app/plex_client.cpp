@@ -96,6 +96,53 @@ bool PlexClient::extractJsonBool(const std::string& json, const std::string& key
     return (value == "true" || value == "1");
 }
 
+std::string PlexClient::base64Encode(const std::string& input) {
+    static const char* base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string output;
+    int val = 0, valb = -6;
+
+    for (unsigned char c : input) {
+        val = (val << 8) + c;
+        valb += 8;
+        while (valb >= 0) {
+            output.push_back(base64_chars[(val >> valb) & 0x3F]);
+            valb -= 6;
+        }
+    }
+
+    if (valb > -6) {
+        output.push_back(base64_chars[((val << 8) >> (valb + 8)) & 0x3F]);
+    }
+
+    while (output.size() % 4) {
+        output.push_back('=');
+    }
+
+    return output;
+}
+
+int PlexClient::extractXmlAttr(const std::string& xml, const std::string& attr) {
+    // Extract integer attribute from XML like: attr="123"
+    std::string search = attr + "=\"";
+    size_t pos = xml.find(search);
+    if (pos == std::string::npos) return 0;
+    pos += search.length();
+    size_t end = xml.find("\"", pos);
+    if (end == std::string::npos) return 0;
+    return atoi(xml.substr(pos, end - pos).c_str());
+}
+
+std::string PlexClient::extractXmlAttrStr(const std::string& xml, const std::string& attr) {
+    // Extract string attribute from XML like: attr="value"
+    std::string search = attr + "=\"";
+    size_t pos = xml.find(search);
+    if (pos == std::string::npos) return "";
+    pos += search.length();
+    size_t end = xml.find("\"", pos);
+    if (end == std::string::npos) return "";
+    return xml.substr(pos, end - pos);
+}
+
 bool PlexClient::login(const std::string& username, const std::string& password) {
     brls::Logger::info("Attempting login for user: {}", username);
 
@@ -143,7 +190,7 @@ bool PlexClient::requestPin(PinAuth& pinAuth) {
     req.headers["X-Plex-Platform"] = PLEX_PLATFORM;
     req.headers["X-Plex-Device"] = PLEX_DEVICE;
 
-    req.body = "strong=true";
+    req.body = "strong=false";
 
     HttpResponse resp = client.request(req);
 
@@ -183,6 +230,13 @@ bool PlexClient::checkPin(PinAuth& pinAuth) {
         }
     }
 
+    return false;
+}
+
+bool PlexClient::refreshToken() {
+    // JWT token refresh not yet implemented
+    // Legacy tokens don't expire, so this is only needed for JWT auth
+    brls::Logger::info("Token refresh not available (using legacy auth)");
     return false;
 }
 
@@ -328,9 +382,55 @@ bool PlexClient::fetchChildren(const std::string& ratingKey, std::vector<MediaIt
     if (resp.statusCode != 200) return false;
 
     items.clear();
-    // Same parsing as fetchLibraryContent
-    // (simplified - reuse same logic)
 
+    // Parse media items (same logic as fetchLibraryContent)
+    size_t pos = 0;
+    std::string markers[] = {"\"Video\"", "\"Directory\"", "\"Track\"", "\"Photo\""};
+
+    for (const auto& marker : markers) {
+        pos = 0;
+        while ((pos = resp.body.find(marker, pos)) != std::string::npos) {
+            size_t start = resp.body.find('{', pos);
+            if (start == std::string::npos) break;
+
+            int braceCount = 1;
+            size_t end = start + 1;
+            while (braceCount > 0 && end < resp.body.length()) {
+                if (resp.body[end] == '{') braceCount++;
+                else if (resp.body[end] == '}') braceCount--;
+                end++;
+            }
+
+            std::string obj = resp.body.substr(start, end - start);
+
+            MediaItem item;
+            item.ratingKey = extractJsonValue(obj, "ratingKey");
+            item.key = extractJsonValue(obj, "key");
+            item.title = extractJsonValue(obj, "title");
+            item.summary = extractJsonValue(obj, "summary");
+            item.thumb = extractJsonValue(obj, "thumb");
+            item.art = extractJsonValue(obj, "art");
+            item.type = extractJsonValue(obj, "type");
+            item.mediaType = parseMediaType(item.type);
+            item.year = extractJsonInt(obj, "year");
+            item.duration = extractJsonInt(obj, "duration");
+            item.viewOffset = extractJsonInt(obj, "viewOffset");
+            item.rating = extractJsonFloat(obj, "rating");
+            item.contentRating = extractJsonValue(obj, "contentRating");
+            item.index = extractJsonInt(obj, "index");
+            item.parentIndex = extractJsonInt(obj, "parentIndex");
+            item.grandparentTitle = extractJsonValue(obj, "grandparentTitle");
+            item.parentTitle = extractJsonValue(obj, "parentTitle");
+
+            if (!item.ratingKey.empty()) {
+                items.push_back(item);
+            }
+
+            pos = end;
+        }
+    }
+
+    brls::Logger::info("Found {} children", items.size());
     return true;
 }
 
@@ -372,8 +472,75 @@ bool PlexClient::fetchHubs(std::vector<Hub>& hubs) {
     if (resp.statusCode != 200) return false;
 
     hubs.clear();
-    // Parse hubs (simplified)
 
+    // Parse hubs - look for "Hub" entries
+    size_t pos = 0;
+    while ((pos = resp.body.find("\"Hub\"", pos)) != std::string::npos) {
+        size_t start = resp.body.find('{', pos);
+        if (start == std::string::npos) break;
+
+        int braceCount = 1;
+        size_t end = start + 1;
+        while (braceCount > 0 && end < resp.body.length()) {
+            if (resp.body[end] == '{') braceCount++;
+            else if (resp.body[end] == '}') braceCount--;
+            end++;
+        }
+
+        std::string hubObj = resp.body.substr(start, end - start);
+
+        Hub hub;
+        hub.title = extractJsonValue(hubObj, "title");
+        hub.type = extractJsonValue(hubObj, "type");
+        hub.hubIdentifier = extractJsonValue(hubObj, "hubIdentifier");
+        hub.key = extractJsonValue(hubObj, "key");
+        hub.more = extractJsonBool(hubObj, "more");
+
+        // Parse items inside the hub
+        size_t itemPos = 0;
+        std::string itemMarkers[] = {"\"Video\"", "\"Directory\"", "\"Track\"", "\"Metadata\""};
+
+        for (const auto& marker : itemMarkers) {
+            itemPos = 0;
+            while ((itemPos = hubObj.find(marker, itemPos)) != std::string::npos) {
+                size_t itemStart = hubObj.find('{', itemPos);
+                if (itemStart == std::string::npos) break;
+
+                int itemBraceCount = 1;
+                size_t itemEnd = itemStart + 1;
+                while (itemBraceCount > 0 && itemEnd < hubObj.length()) {
+                    if (hubObj[itemEnd] == '{') itemBraceCount++;
+                    else if (hubObj[itemEnd] == '}') itemBraceCount--;
+                    itemEnd++;
+                }
+
+                std::string itemObj = hubObj.substr(itemStart, itemEnd - itemStart);
+
+                MediaItem item;
+                item.ratingKey = extractJsonValue(itemObj, "ratingKey");
+                item.title = extractJsonValue(itemObj, "title");
+                item.thumb = extractJsonValue(itemObj, "thumb");
+                item.type = extractJsonValue(itemObj, "type");
+                item.mediaType = parseMediaType(item.type);
+                item.year = extractJsonInt(itemObj, "year");
+                item.viewOffset = extractJsonInt(itemObj, "viewOffset");
+
+                if (!item.ratingKey.empty()) {
+                    hub.items.push_back(item);
+                }
+
+                itemPos = itemEnd;
+            }
+        }
+
+        if (!hub.title.empty()) {
+            hubs.push_back(hub);
+        }
+
+        pos = end;
+    }
+
+    brls::Logger::info("Found {} hubs", hubs.size());
     return true;
 }
 
@@ -384,9 +551,54 @@ bool PlexClient::fetchContinueWatching(std::vector<MediaItem>& items) {
 
     if (resp.statusCode != 200) return false;
 
-    // Parse continue watching items
     items.clear();
 
+    // Parse media items from "Video" or "Metadata" entries
+    size_t pos = 0;
+    std::string markers[] = {"\"Video\"", "\"Metadata\""};
+
+    for (const auto& marker : markers) {
+        pos = 0;
+        while ((pos = resp.body.find(marker, pos)) != std::string::npos) {
+            size_t start = resp.body.find('{', pos);
+            if (start == std::string::npos) break;
+
+            int braceCount = 1;
+            size_t end = start + 1;
+            while (braceCount > 0 && end < resp.body.length()) {
+                if (resp.body[end] == '{') braceCount++;
+                else if (resp.body[end] == '}') braceCount--;
+                end++;
+            }
+
+            std::string obj = resp.body.substr(start, end - start);
+
+            MediaItem item;
+            item.ratingKey = extractJsonValue(obj, "ratingKey");
+            item.key = extractJsonValue(obj, "key");
+            item.title = extractJsonValue(obj, "title");
+            item.summary = extractJsonValue(obj, "summary");
+            item.thumb = extractJsonValue(obj, "thumb");
+            item.art = extractJsonValue(obj, "art");
+            item.type = extractJsonValue(obj, "type");
+            item.mediaType = parseMediaType(item.type);
+            item.year = extractJsonInt(obj, "year");
+            item.duration = extractJsonInt(obj, "duration");
+            item.viewOffset = extractJsonInt(obj, "viewOffset");
+            item.grandparentTitle = extractJsonValue(obj, "grandparentTitle");
+            item.parentTitle = extractJsonValue(obj, "parentTitle");
+            item.index = extractJsonInt(obj, "index");
+            item.parentIndex = extractJsonInt(obj, "parentIndex");
+
+            if (!item.ratingKey.empty()) {
+                items.push_back(item);
+            }
+
+            pos = end;
+        }
+    }
+
+    brls::Logger::info("Found {} continue watching items", items.size());
     return true;
 }
 
@@ -398,8 +610,49 @@ bool PlexClient::fetchRecentlyAdded(std::vector<MediaItem>& items) {
     if (resp.statusCode != 200) return false;
 
     items.clear();
-    // Parse items
 
+    // Parse media items
+    size_t pos = 0;
+    std::string markers[] = {"\"Video\"", "\"Directory\"", "\"Track\"", "\"Photo\"", "\"Metadata\""};
+
+    for (const auto& marker : markers) {
+        pos = 0;
+        while ((pos = resp.body.find(marker, pos)) != std::string::npos) {
+            size_t start = resp.body.find('{', pos);
+            if (start == std::string::npos) break;
+
+            int braceCount = 1;
+            size_t end = start + 1;
+            while (braceCount > 0 && end < resp.body.length()) {
+                if (resp.body[end] == '{') braceCount++;
+                else if (resp.body[end] == '}') braceCount--;
+                end++;
+            }
+
+            std::string obj = resp.body.substr(start, end - start);
+
+            MediaItem item;
+            item.ratingKey = extractJsonValue(obj, "ratingKey");
+            item.key = extractJsonValue(obj, "key");
+            item.title = extractJsonValue(obj, "title");
+            item.summary = extractJsonValue(obj, "summary");
+            item.thumb = extractJsonValue(obj, "thumb");
+            item.art = extractJsonValue(obj, "art");
+            item.type = extractJsonValue(obj, "type");
+            item.mediaType = parseMediaType(item.type);
+            item.year = extractJsonInt(obj, "year");
+            item.duration = extractJsonInt(obj, "duration");
+            item.viewOffset = extractJsonInt(obj, "viewOffset");
+
+            if (!item.ratingKey.empty()) {
+                items.push_back(item);
+            }
+
+            pos = end;
+        }
+    }
+
+    brls::Logger::info("Found {} recently added items", items.size());
     return true;
 }
 
@@ -411,8 +664,47 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
     if (resp.statusCode != 200) return false;
 
     results.clear();
-    // Parse search results
 
+    // Parse search results - look for Video, Directory, Track, Photo, Metadata entries
+    size_t pos = 0;
+    std::string markers[] = {"\"Video\"", "\"Directory\"", "\"Track\"", "\"Photo\"", "\"Metadata\""};
+
+    for (const auto& marker : markers) {
+        pos = 0;
+        while ((pos = resp.body.find(marker, pos)) != std::string::npos) {
+            size_t start = resp.body.find('{', pos);
+            if (start == std::string::npos) break;
+
+            int braceCount = 1;
+            size_t end = start + 1;
+            while (braceCount > 0 && end < resp.body.length()) {
+                if (resp.body[end] == '{') braceCount++;
+                else if (resp.body[end] == '}') braceCount--;
+                end++;
+            }
+
+            std::string obj = resp.body.substr(start, end - start);
+
+            MediaItem item;
+            item.ratingKey = extractJsonValue(obj, "ratingKey");
+            item.key = extractJsonValue(obj, "key");
+            item.title = extractJsonValue(obj, "title");
+            item.summary = extractJsonValue(obj, "summary");
+            item.thumb = extractJsonValue(obj, "thumb");
+            item.art = extractJsonValue(obj, "art");
+            item.type = extractJsonValue(obj, "type");
+            item.mediaType = parseMediaType(item.type);
+            item.year = extractJsonInt(obj, "year");
+
+            if (!item.ratingKey.empty()) {
+                results.push_back(item);
+            }
+
+            pos = end;
+        }
+    }
+
+    brls::Logger::info("Found {} search results for '{}'", results.size(), query);
     return true;
 }
 

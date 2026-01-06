@@ -21,6 +21,56 @@
 
 namespace vitaplex {
 
+// Theme options
+enum class AppTheme {
+    SYSTEM = 0,  // Follow system setting
+    LIGHT = 1,
+    DARK = 2
+};
+
+// Video quality options for transcoding
+enum class VideoQuality {
+    ORIGINAL = 0,      // Direct play/stream
+    QUALITY_1080P = 1, // 1080p 20Mbps
+    QUALITY_720P = 2,  // 720p 4Mbps
+    QUALITY_480P = 3,  // 480p 2Mbps (recommended for Vita)
+    QUALITY_360P = 4,  // 360p 1Mbps
+    QUALITY_240P = 5   // 240p 500kbps
+};
+
+// Subtitle size options
+enum class SubtitleSize {
+    SMALL = 0,
+    MEDIUM = 1,
+    LARGE = 2
+};
+
+// Application settings structure
+struct AppSettings {
+    // UI Settings
+    AppTheme theme = AppTheme::DARK;
+    bool showClock = true;
+    bool animationsEnabled = true;
+    bool debugLogging = true;  // Enable debug logging
+
+    // Playback Settings
+    bool autoPlayNext = true;
+    bool resumePlayback = true;
+    bool showSubtitles = true;
+    SubtitleSize subtitleSize = SubtitleSize::MEDIUM;
+    int seekInterval = 10;  // seconds
+
+    // Transcode Settings
+    VideoQuality videoQuality = VideoQuality::QUALITY_480P;
+    bool forceTranscode = false;
+    bool burnSubtitles = true;  // Burn subtitles into video for Vita compatibility
+    int maxBitrate = 2000;      // kbps
+
+    // Network Settings
+    int connectionTimeout = 30; // seconds
+    bool directPlay = false;    // Try direct play first
+};
+
 /**
  * Application singleton - manages app lifecycle and global state
  */
@@ -53,6 +103,21 @@ public:
     const std::string& getUsername() const { return m_username; }
     void setUsername(const std::string& name) { m_username = name; }
 
+    // Application settings access
+    AppSettings& getSettings() { return m_settings; }
+    const AppSettings& getSettings() const { return m_settings; }
+
+    // Apply theme
+    void applyTheme();
+
+    // Apply log level based on settings
+    void applyLogLevel();
+
+    // Get quality string for display
+    static std::string getQualityString(VideoQuality quality);
+    static std::string getThemeString(AppTheme theme);
+    static std::string getSubtitleSizeString(SubtitleSize size);
+
 private:
     Application() = default;
     ~Application() = default;
@@ -63,6 +128,7 @@ private:
     std::string m_authToken;
     std::string m_serverUrl;
     std::string m_username;
+    AppSettings m_settings;
 };
 
 } // namespace vitaplex

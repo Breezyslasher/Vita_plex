@@ -14,13 +14,43 @@ public:
     SettingsTab();
 
 private:
-    void onLogout();
+    void createAccountSection();
+    void createUISection();
+    void createPlaybackSection();
+    void createTranscodeSection();
+    void createAboutSection();
 
-    brls::Label* m_titleLabel = nullptr;
+    void onLogout();
+    void onThemeChanged(int index);
+    void onQualityChanged(int index);
+    void onSubtitleSizeChanged(int index);
+    void onSeekIntervalChanged(int index);
+
+    brls::ScrollingFrame* m_scrollView = nullptr;
+    brls::Box* m_contentBox = nullptr;
+
+    // Account section
     brls::Label* m_userLabel = nullptr;
     brls::Label* m_serverLabel = nullptr;
-    brls::Label* m_versionLabel = nullptr;
-    brls::Button* m_logoutButton = nullptr;
+
+    // UI section
+    brls::SelectorCell* m_themeSelector = nullptr;
+    brls::BooleanCell* m_clockToggle = nullptr;
+    brls::BooleanCell* m_animationsToggle = nullptr;
+    brls::BooleanCell* m_debugLogToggle = nullptr;
+
+    // Playback section
+    brls::BooleanCell* m_autoPlayToggle = nullptr;
+    brls::BooleanCell* m_resumeToggle = nullptr;
+    brls::BooleanCell* m_subtitlesToggle = nullptr;
+    brls::SelectorCell* m_subtitleSizeSelector = nullptr;
+    brls::SelectorCell* m_seekIntervalSelector = nullptr;
+
+    // Transcode section
+    brls::SelectorCell* m_qualitySelector = nullptr;
+    brls::BooleanCell* m_forceTranscodeToggle = nullptr;
+    brls::BooleanCell* m_burnSubtitlesToggle = nullptr;
+    brls::BooleanCell* m_directPlayToggle = nullptr;
 };
 
 } // namespace vitaplex
