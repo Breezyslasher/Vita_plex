@@ -164,8 +164,8 @@ vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
     FILE resources/xml/view/media_detail.xml resources/xml/view/media_detail.xml
     FILE resources/xml/view/media_item.xml resources/xml/view/media_item.xml
 
-    # Fonts (Borealis expects these at specific paths)
-    FILE ${BOREALIS_DIR}/resources/font/switch_font.ttf resources/font/switch_font.ttf
-    FILE ${BOREALIS_DIR}/resources/font/switch_icons.ttf resources/font/switch_icons.ttf
-    FILE ${BOREALIS_DIR}/resources/material/MaterialIcons-Regular.ttf resources/material/MaterialIcons-Regular.ttf
+    # Fonts (using simpler DejaVu fonts for Vita compatibility)
+    FILE resources/font/switch_font.ttf resources/font/switch_font.ttf
+    FILE resources/font/switch_icons.ttf resources/font/switch_icons.ttf
+    FILE resources/material/MaterialIcons-Regular.ttf resources/material/MaterialIcons-Regular.ttf
 )
