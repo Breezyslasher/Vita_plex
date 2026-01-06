@@ -246,6 +246,9 @@ void HomeTab::onItemSelected(const MediaItem& item) {
         return;
     }
 
+    // Clear focus before pushing to avoid visual artifacts
+    brls::Application::giveFocus(nullptr);
+
     // Show media detail view for other types
     auto* detailView = new MediaDetailView(item);
     brls::Application::pushActivity(new brls::Activity(detailView));

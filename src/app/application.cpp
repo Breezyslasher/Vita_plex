@@ -58,9 +58,14 @@ void Application::run() {
         brls::Logger::info("Restoring saved session...");
         // Verify connection and go to main
         PlexClient::getInstance().setAuthToken(m_authToken);
-        PlexClient::getInstance().setServerUrl(m_serverUrl);
-        brls::Logger::info("Restored auth token and server URL to PlexClient");
-        pushMainActivity();
+        // Use connectToServer to properly initialize (including Live TV check)
+        if (PlexClient::getInstance().connectToServer(m_serverUrl)) {
+            brls::Logger::info("Restored session and connected to server");
+            pushMainActivity();
+        } else {
+            brls::Logger::error("Failed to connect to saved server, showing login");
+            pushLoginActivity();
+        }
     } else {
         brls::Logger::info("No saved session, showing login screen");
         // Show login screen
