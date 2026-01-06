@@ -190,7 +190,7 @@ bool PlexClient::requestPin(PinAuth& pinAuth) {
     req.headers["X-Plex-Platform"] = PLEX_PLATFORM;
     req.headers["X-Plex-Device"] = PLEX_DEVICE;
 
-    req.body = "strong=true";
+    req.body = "strong=false";
 
     HttpResponse resp = client.request(req);
 
