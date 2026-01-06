@@ -31,27 +31,100 @@ HomeTab::HomeTab() {
     continueLabel->setMarginBottom(10);
     this->addView(continueLabel);
 
-    m_continueWatchingBox = new brls::Box();
-    m_continueWatchingBox->setAxis(brls::Axis::ROW);
-    m_continueWatchingBox->setHeight(180);
-    m_continueWatchingBox->setMarginBottom(20);
-    this->addView(m_continueWatchingBox);
+    m_continueWatchingRow = createMediaRow();
+    this->addView(m_continueWatchingRow);
 
-    // Recently Added section
-    auto* recentLabel = new brls::Label();
-    recentLabel->setText("Recently Added");
-    recentLabel->setFontSize(22);
-    recentLabel->setMarginBottom(10);
-    this->addView(recentLabel);
+    // Recently Added Movies section
+    auto* moviesLabel = new brls::Label();
+    moviesLabel->setText("Recently Added Movies");
+    moviesLabel->setFontSize(22);
+    moviesLabel->setMarginBottom(10);
+    moviesLabel->setMarginTop(15);
+    this->addView(moviesLabel);
 
-    m_recentlyAddedBox = new brls::Box();
-    m_recentlyAddedBox->setAxis(brls::Axis::ROW);
-    m_recentlyAddedBox->setHeight(180);
-    this->addView(m_recentlyAddedBox);
+    m_moviesRow = createMediaRow();
+    this->addView(m_moviesRow);
+
+    // Recently Added TV Shows section
+    auto* showsLabel = new brls::Label();
+    showsLabel->setText("Recently Added TV Shows");
+    showsLabel->setFontSize(22);
+    showsLabel->setMarginBottom(10);
+    showsLabel->setMarginTop(15);
+    this->addView(showsLabel);
+
+    m_showsRow = createMediaRow();
+    this->addView(m_showsRow);
+
+    // Recently Added Music section
+    auto* musicLabel = new brls::Label();
+    musicLabel->setText("Recently Added Music");
+    musicLabel->setFontSize(22);
+    musicLabel->setMarginBottom(10);
+    musicLabel->setMarginTop(15);
+    this->addView(musicLabel);
+
+    m_musicRow = createMediaRow();
+    this->addView(m_musicRow);
 
     // Load content immediately
     brls::Logger::debug("HomeTab: Loading content...");
     loadContent();
+}
+
+brls::HScrollingFrame* HomeTab::createMediaRow() {
+    auto* scrollFrame = new brls::HScrollingFrame();
+    scrollFrame->setHeight(180);
+    scrollFrame->setMarginBottom(10);
+
+    auto* content = new brls::Box();
+    content->setAxis(brls::Axis::ROW);
+    content->setJustifyContent(brls::JustifyContent::FLEX_START);
+    content->setAlignItems(brls::AlignItems::CENTER);
+
+    scrollFrame->setContentView(content);
+
+    // Store content box reference based on which row this is
+    if (m_continueWatchingRow == nullptr) {
+        m_continueWatchingContent = content;
+    } else if (m_moviesRow == nullptr) {
+        m_moviesContent = content;
+    } else if (m_showsRow == nullptr) {
+        m_showsContent = content;
+    } else {
+        m_musicContent = content;
+    }
+
+    return scrollFrame;
+}
+
+void HomeTab::populateRow(brls::Box* rowContent, const std::vector<MediaItem>& items) {
+    rowContent->clearViews();
+
+    for (const auto& item : items) {
+        auto* cell = new MediaItemCell();
+        cell->setItem(item);
+        cell->setWidth(120);
+        cell->setHeight(170);
+        cell->setMarginRight(10);
+
+        MediaItem capturedItem = item;
+        cell->registerClickAction([this, capturedItem](brls::View* view) {
+            onItemSelected(capturedItem);
+            return true;
+        });
+
+        rowContent->addView(cell);
+    }
+
+    // Add placeholder if empty
+    if (items.empty()) {
+        auto* placeholder = new brls::Label();
+        placeholder->setText("No items");
+        placeholder->setFontSize(16);
+        placeholder->setMarginLeft(10);
+        rowContent->addView(placeholder);
+    }
 }
 
 void HomeTab::onFocusGained() {
@@ -74,64 +147,66 @@ void HomeTab::loadContent() {
         if (client.fetchContinueWatching(items)) {
             brls::Logger::info("HomeTab: Got {} continue watching items", items.size());
 
-            // Update UI on main thread
             brls::sync([this, items]() {
                 m_continueWatching = items;
-                m_continueWatchingBox->clearViews();
-
-                for (const auto& item : m_continueWatching) {
-                    auto* cell = new MediaItemCell();
-                    cell->setItem(item);
-                    cell->setWidth(120);
-                    cell->setHeight(170);
-                    cell->setMarginRight(10);
-
-                    MediaItem capturedItem = item;
-                    cell->registerClickAction([this, capturedItem](brls::View* view) {
-                        onItemSelected(capturedItem);
-                        return true;
-                    });
-
-                    m_continueWatchingBox->addView(cell);
-                }
+                populateRow(m_continueWatchingContent, m_continueWatching);
             });
         } else {
             brls::Logger::error("HomeTab: Failed to fetch continue watching");
         }
     });
 
-    // Load recently added asynchronously
+    // Load recently added movies asynchronously
     asyncRun([this]() {
-        brls::Logger::debug("HomeTab: Fetching recently added (async)...");
+        brls::Logger::debug("HomeTab: Fetching recently added movies (async)...");
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
-        if (client.fetchRecentlyAdded(items)) {
-            brls::Logger::info("HomeTab: Got {} recently added items", items.size());
+        if (client.fetchRecentlyAddedByType(MediaType::MOVIE, items)) {
+            brls::Logger::info("HomeTab: Got {} recently added movies", items.size());
 
-            // Update UI on main thread
             brls::sync([this, items]() {
-                m_recentlyAdded = items;
-                m_recentlyAddedBox->clearViews();
-
-                for (const auto& item : m_recentlyAdded) {
-                    auto* cell = new MediaItemCell();
-                    cell->setItem(item);
-                    cell->setWidth(120);
-                    cell->setHeight(170);
-                    cell->setMarginRight(10);
-
-                    MediaItem capturedItem = item;
-                    cell->registerClickAction([this, capturedItem](brls::View* view) {
-                        onItemSelected(capturedItem);
-                        return true;
-                    });
-
-                    m_recentlyAddedBox->addView(cell);
-                }
+                m_recentMovies = items;
+                populateRow(m_moviesContent, m_recentMovies);
             });
         } else {
-            brls::Logger::error("HomeTab: Failed to fetch recently added");
+            brls::Logger::error("HomeTab: Failed to fetch recently added movies");
+        }
+    });
+
+    // Load recently added TV shows asynchronously
+    asyncRun([this]() {
+        brls::Logger::debug("HomeTab: Fetching recently added TV shows (async)...");
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> items;
+
+        if (client.fetchRecentlyAddedByType(MediaType::SHOW, items)) {
+            brls::Logger::info("HomeTab: Got {} recently added TV shows", items.size());
+
+            brls::sync([this, items]() {
+                m_recentShows = items;
+                populateRow(m_showsContent, m_recentShows);
+            });
+        } else {
+            brls::Logger::error("HomeTab: Failed to fetch recently added TV shows");
+        }
+    });
+
+    // Load recently added music asynchronously
+    asyncRun([this]() {
+        brls::Logger::debug("HomeTab: Fetching recently added music (async)...");
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> items;
+
+        if (client.fetchRecentlyAddedByType(MediaType::MUSIC_ALBUM, items)) {
+            brls::Logger::info("HomeTab: Got {} recently added music items", items.size());
+
+            brls::sync([this, items]() {
+                m_recentMusic = items;
+                populateRow(m_musicContent, m_recentMusic);
+            });
+        } else {
+            brls::Logger::error("HomeTab: Failed to fetch recently added music");
         }
     });
 

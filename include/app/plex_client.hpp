@@ -152,6 +152,7 @@ public:
     bool fetchHubs(std::vector<Hub>& hubs);
     bool fetchContinueWatching(std::vector<MediaItem>& items);
     bool fetchRecentlyAdded(std::vector<MediaItem>& items);
+    bool fetchRecentlyAddedByType(MediaType type, std::vector<MediaItem>& items);
 
     // Search
     bool search(const std::string& query, std::vector<MediaItem>& results);

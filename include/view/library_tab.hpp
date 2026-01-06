@@ -24,6 +24,7 @@ private:
     void onItemSelected(const MediaItem& item);
 
     brls::Label* m_titleLabel = nullptr;
+    brls::HScrollingFrame* m_sectionsScroll = nullptr;
     brls::Box* m_sectionsBox = nullptr;
     RecyclingGrid* m_contentGrid = nullptr;
 
