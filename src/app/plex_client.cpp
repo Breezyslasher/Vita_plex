@@ -615,6 +615,15 @@ bool PlexClient::fetchChildren(const std::string& ratingKey, std::vector<MediaIt
         item.parentIndex = extractJsonInt(obj, "parentIndex");
         item.grandparentTitle = extractJsonValue(obj, "grandparentTitle");
         item.parentTitle = extractJsonValue(obj, "parentTitle");
+        item.leafCount = extractJsonInt(obj, "leafCount");
+        item.viewedLeafCount = extractJsonInt(obj, "viewedLeafCount");
+
+        // Extract subtype for albums (album, single, ep, compilation, soundtrack, live)
+        item.subtype = extractJsonValue(obj, "subtype");
+        if (item.subtype.empty()) {
+            // Try alternative field names
+            item.subtype = extractJsonValue(obj, "albumType");
+        }
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
             items.push_back(item);

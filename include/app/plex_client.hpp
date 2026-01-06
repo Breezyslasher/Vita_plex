@@ -57,6 +57,9 @@ struct MediaItem {
     int leafCount = 0;
     int viewedLeafCount = 0;
 
+    // Album subtype (album, single, ep, compilation, soundtrack, live, etc.)
+    std::string subtype;
+
     // Stream info
     std::string streamUrl;
     std::string videoCodec;

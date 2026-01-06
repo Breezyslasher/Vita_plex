@@ -444,7 +444,7 @@ void SettingsTab::onManageHiddenLibraries() {
 
         std::string newHidden;
         for (const auto& pair : checkboxes) {
-            if (pair.second->getToggleValue()) {
+            if (pair.second->isOn()) {
                 if (!newHidden.empty()) newHidden += ",";
                 newHidden += pair.first;
             }
