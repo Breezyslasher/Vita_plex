@@ -4,8 +4,8 @@
  * Based on switchfin's MPV implementation for PS Vita
  */
 
-#include "player/mpv_player.h"
-#include "app.h"  // For debugLog
+#include "player/mpv_player.hpp"
+#include <borealis.hpp>
 #include <psp2/kernel/clib.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/power.h>
@@ -25,11 +25,11 @@ MpvPlayer::~MpvPlayer() {
 
 bool MpvPlayer::init() {
     if (m_mpv) {
-        debugLog("MpvPlayer: Already initialized\n");
+        brls::Logger::debug("MpvPlayer: Already initialized");
         return true;
     }
-    
-    debugLog("MpvPlayer: Initializing libmpv...\n");
+
+    brls::Logger::debug("MpvPlayer: Initializing libmpv...");
     
     // Ensure CPU is at max speed for video decoding
     scePowerSetArmClockFrequency(444);
@@ -41,12 +41,12 @@ bool MpvPlayer::init() {
     m_mpv = mpv_create();
     if (!m_mpv) {
         m_errorMessage = "Failed to create mpv instance";
-        debugLog("MpvPlayer: %s\n", m_errorMessage.c_str());
+        brls::Logger::debug("MpvPlayer: {}", m_errorMessage);
         m_state = MpvPlayerState::ERROR;
         return false;
     }
-    
-    debugLog("MpvPlayer: mpv context created\n");
+
+    brls::Logger::debug("MpvPlayer: mpv context created");
     
     // ========================================
     // CRITICAL: Video output configuration
@@ -128,19 +128,19 @@ bool MpvPlayer::init() {
     // Initialize MPV
     // ========================================
     
-    debugLog("MpvPlayer: Calling mpv_initialize...\n");
-    
+    brls::Logger::debug("MpvPlayer: Calling mpv_initialize...");
+
     int result = mpv_initialize(m_mpv);
     if (result < 0) {
         m_errorMessage = std::string("Failed to initialize mpv: ") + mpv_error_string(result);
-        debugLog("MpvPlayer: %s\n", m_errorMessage.c_str());
+        brls::Logger::debug("MpvPlayer: {}", m_errorMessage);
         mpv_destroy(m_mpv);
         m_mpv = nullptr;
         m_state = MpvPlayerState::ERROR;
         return false;
     }
-    
-    debugLog("MpvPlayer: mpv_initialize succeeded\n");
+
+    brls::Logger::debug("MpvPlayer: mpv_initialize succeeded");
     
     // ========================================
     // Set up property observers
@@ -157,14 +157,14 @@ bool MpvPlayer::init() {
     mpv_observe_property(m_mpv, 0, "mute", MPV_FORMAT_FLAG);
     mpv_observe_property(m_mpv, 0, "track-list/count", MPV_FORMAT_INT64);
     
-    debugLog("MpvPlayer: Initialized successfully\n");
+    brls::Logger::debug("MpvPlayer: Initialized successfully");
     m_state = MpvPlayerState::IDLE;
     return true;
 }
 
 void MpvPlayer::shutdown() {
     if (m_mpv) {
-        debugLog("MpvPlayer: Shutting down\n");
+        brls::Logger::debug("MpvPlayer: Shutting down");
         stop();
         
         // Give mpv time to cleanup
@@ -182,8 +182,8 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
             return false;
         }
     }
-    
-    debugLog("MpvPlayer: Loading URL: %s\n", url.c_str());
+
+    brls::Logger::debug("MpvPlayer: Loading URL: {}", url);
     
     m_currentUrl = url;
     m_playbackInfo = MpvPlaybackInfo();
@@ -202,7 +202,7 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
     
     if (result < 0) {
         m_errorMessage = std::string("Failed to load URL: ") + mpv_error_string(result);
-        debugLog("MpvPlayer: %s\n", m_errorMessage.c_str());
+        brls::Logger::debug("MpvPlayer: {}", m_errorMessage);
         setState(MpvPlayerState::ERROR);
         return false;
     }
@@ -436,60 +436,60 @@ std::string MpvPlayer::getProperty(const std::string& name) const {
 
 void MpvPlayer::setState(MpvPlayerState newState) {
     if (m_state != newState) {
-        debugLog("MpvPlayer: State change: %d -> %d\n", (int)m_state, (int)newState);
+        brls::Logger::debug("MpvPlayer: State change: {} -> {}", (int)m_state, (int)newState);
         m_state = newState;
     }
 }
 
 void MpvPlayer::update() {
     if (!m_mpv) {
-        debugLog("MpvPlayer::update() - mpv is null, skipping\n");
+        brls::Logger::debug("MpvPlayer::update() - mpv is null, skipping");
         return;
     }
-    
-    debugLog("MpvPlayer::update() - processing events...\n");
+
+    brls::Logger::debug("MpvPlayer::update() - processing events...");
     processEvents();
-    debugLog("MpvPlayer::update() - events processed, updating playback info...\n");
+    brls::Logger::debug("MpvPlayer::update() - events processed, updating playback info...");
     updatePlaybackInfo();
-    debugLog("MpvPlayer::update() - done\n");
+    brls::Logger::debug("MpvPlayer::update() - done");
 }
 
 void MpvPlayer::processEvents() {
     if (!m_mpv) return;
-    
+
     int eventCount = 0;
     while (m_mpv) {
         mpv_event* event = mpv_wait_event(m_mpv, 0);
         if (!event) {
-            debugLog("MpvPlayer: mpv_wait_event returned null\n");
+            brls::Logger::debug("MpvPlayer: mpv_wait_event returned null");
             break;
         }
         if (event->event_id == MPV_EVENT_NONE) {
             break;
         }
         eventCount++;
-        debugLog("MpvPlayer: Processing event %d (type=%d)\n", eventCount, event->event_id);
+        brls::Logger::debug("MpvPlayer: Processing event {} (type={})", eventCount, event->event_id);
         handleEvent(event);
     }
     if (eventCount > 0) {
-        debugLog("MpvPlayer: Processed %d events\n", eventCount);
+        brls::Logger::debug("MpvPlayer: Processed {} events", eventCount);
     }
 }
 
 void MpvPlayer::handleEvent(mpv_event* event) {
     switch (event->event_id) {
         case MPV_EVENT_START_FILE:
-            debugLog("MpvPlayer: Event START_FILE\n");
+            brls::Logger::debug("MpvPlayer: Event START_FILE");
             setState(MpvPlayerState::LOADING);
             break;
-            
+
         case MPV_EVENT_FILE_LOADED:
-            debugLog("MpvPlayer: Event FILE_LOADED\n");
+            brls::Logger::debug("MpvPlayer: Event FILE_LOADED");
             setState(MpvPlayerState::PLAYING);
             break;
-            
+
         case MPV_EVENT_PLAYBACK_RESTART:
-            debugLog("MpvPlayer: Event PLAYBACK_RESTART\n");
+            brls::Logger::debug("MpvPlayer: Event PLAYBACK_RESTART");
             if (m_state == MpvPlayerState::LOADING || m_state == MpvPlayerState::BUFFERING) {
                 int paused = 0;
                 mpv_get_property(m_mpv, "pause", MPV_FORMAT_FLAG, &paused);
@@ -499,17 +499,17 @@ void MpvPlayer::handleEvent(mpv_event* event) {
             
         case MPV_EVENT_END_FILE: {
             mpv_event_end_file* end = (mpv_event_end_file*)event->data;
-            debugLog("MpvPlayer: Event END_FILE (reason: %d, error: %d)\n", end->reason, end->error);
-            
+            brls::Logger::debug("MpvPlayer: Event END_FILE (reason: {}, error: {})", end->reason, end->error);
+
             // MPV end file reasons:
             // 0 = EOF (finished normally)
-            // 2 = STOP (stopped by user)  
+            // 2 = STOP (stopped by user)
             // 3 = QUIT
             // 4 = ERROR (playback failed) - in newer mpv versions
             // 5 = REDIRECT
-            
+
             if (end->reason == 0) {  // MPV_END_FILE_REASON_EOF
-                debugLog("MpvPlayer: Playback finished (EOF)\n");
+                brls::Logger::debug("MpvPlayer: Playback finished (EOF)");
                 setState(MpvPlayerState::ENDED);
             } else if (end->reason == 4 || end->reason == 3) {  // ERROR (4 in new mpv, 3 in old)
                 if (end->error < 0) {
@@ -517,20 +517,20 @@ void MpvPlayer::handleEvent(mpv_event* event) {
                 } else {
                     m_errorMessage = "Playback failed - file may be incompatible";
                 }
-                debugLog("MpvPlayer: Error - %s\n", m_errorMessage.c_str());
+                brls::Logger::debug("MpvPlayer: Error - {}", m_errorMessage);
                 setState(MpvPlayerState::ERROR);
             } else if (end->reason == 2) {  // STOP
-                debugLog("MpvPlayer: Playback stopped\n");
+                brls::Logger::debug("MpvPlayer: Playback stopped");
                 setState(MpvPlayerState::IDLE);
             } else {
-                debugLog("MpvPlayer: Unknown end reason %d\n", end->reason);
+                brls::Logger::debug("MpvPlayer: Unknown end reason {}", end->reason);
                 setState(MpvPlayerState::IDLE);
             }
             break;
         }
-        
+
         case MPV_EVENT_IDLE:
-            debugLog("MpvPlayer: Event IDLE\n");
+            brls::Logger::debug("MpvPlayer: Event IDLE");
             if (m_state != MpvPlayerState::ERROR && m_state != MpvPlayerState::ENDED) {
                 setState(MpvPlayerState::IDLE);
             }
@@ -543,7 +543,7 @@ void MpvPlayer::handleEvent(mpv_event* event) {
         case MPV_EVENT_LOG_MESSAGE: {
             mpv_event_log_message* msg = (mpv_event_log_message*)event->data;
             if (msg->log_level <= MPV_LOG_LEVEL_WARN) {
-                debugLog("mpv [%s]: %s", msg->prefix, msg->text);
+                brls::Logger::debug("mpv [{}]: {}", msg->prefix, msg->text);
             }
             break;
         }
@@ -616,9 +616,9 @@ void MpvPlayer::updatePlaybackInfo() {
         mpv_get_property(m_mpv, "estimated-vf-fps", MPV_FORMAT_DOUBLE, &fps);
         m_playbackInfo.fps = fps;
         
-        debugLog("MpvPlayer: Video info - %dx%d @ %.2f fps, codec: %s\n",
+        brls::Logger::debug("MpvPlayer: Video info - {}x{} @ {:.2f} fps, codec: {}",
                       m_playbackInfo.videoWidth, m_playbackInfo.videoHeight,
-                      m_playbackInfo.fps, m_playbackInfo.videoCodec.c_str());
+                      m_playbackInfo.fps, m_playbackInfo.videoCodec);
     }
     
     if (m_playbackInfo.audioCodec.empty() && m_state == MpvPlayerState::PLAYING) {
@@ -634,9 +634,9 @@ void MpvPlayer::updatePlaybackInfo() {
         m_playbackInfo.audioChannels = (int)ch;
         m_playbackInfo.sampleRate = (int)sr;
         
-        debugLog("MpvPlayer: Audio info - %d channels @ %d Hz, codec: %s\n",
+        brls::Logger::debug("MpvPlayer: Audio info - {} channels @ {} Hz, codec: {}",
                       m_playbackInfo.audioChannels, m_playbackInfo.sampleRate,
-                      m_playbackInfo.audioCodec.c_str());
+                      m_playbackInfo.audioCodec);
     }
 }
 

@@ -100,23 +100,28 @@ target_link_libraries(${PROJECT_NAME}
     ScePgf_stub
     SceRtc_stub
     SceShellSvc_stub
+    SceAudiodec_stub
+    SceVideodec_stub
+    SceAudioOut_stub
 
     # External libraries
     curl
-    ssl
-    crypto
-    z
     mpv
     avcodec
     avformat
+    avfilter
     avutil
     swresample
     swscale
+    ass
+    mbedtls
+    mbedcrypto
+    mbedx509
+    z
 
-    # Standard libraries
+    # Standard libraries (pthread is already linked by borealis with --whole-archive)
     m
     c
-    pthread
 )
 
 # Create Vita SELF
