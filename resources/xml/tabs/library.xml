@@ -1,29 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <brls:Box
-    xmlns:brls="https://github.com/xfangfang/borealis"
     width="100%"
     height="100%"
     axis="column"
     padding="20">
-
     <!-- Title -->
     <brls:Label
         id="library/title"
         text="Library"
         fontSize="28"
         marginBottom="20"/>
-
     <!-- Section buttons -->
     <brls:Box
         id="library/sections"
         axis="row"
         height="50"
         marginBottom="20"/>
-
     <!-- Content grid -->
     <brls:ScrollingFrame
         id="library/content"
         grow="1"
         width="100%"/>
-
 </brls:Box>
