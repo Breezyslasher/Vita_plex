@@ -15,18 +15,18 @@ MainActivity::MainActivity() {
 }
 
 brls::View* MainActivity::createContentView() {
-    return brls::View::createFromXMLResource("xml/activity/main.xml");
+    return brls::View::createFromXMLResource("activity/main.xml");
 }
 
 void MainActivity::onContentAvailable() {
     brls::Logger::debug("MainActivity content available");
 
     if (tabFrame) {
-        // Add tabs
-        tabFrame->addTab("Home", new HomeTab());
-        tabFrame->addTab("Library", new LibraryTab());
-        tabFrame->addTab("Search", new SearchTab());
-        tabFrame->addTab("Settings", new SettingsTab());
+        // Add tabs - Borealis expects a creator function (lambda), not a direct pointer
+        tabFrame->addTab("Home", []() { return new HomeTab(); });
+        tabFrame->addTab("Library", []() { return new LibraryTab(); });
+        tabFrame->addTab("Search", []() { return new SearchTab(); });
+        tabFrame->addTab("Settings", []() { return new SettingsTab(); });
 
         // Focus first tab
         tabFrame->focusTab(0);

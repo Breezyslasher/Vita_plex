@@ -82,11 +82,11 @@ SettingsTab::SettingsTab() {
 void SettingsTab::onLogout() {
     brls::Dialog* dialog = new brls::Dialog("Are you sure you want to logout?");
 
-    dialog->addButton("Cancel", [dialog](brls::View* view) {
+    dialog->addButton("Cancel", [dialog]() {
         dialog->close();
     });
 
-    dialog->addButton("Logout", [dialog, this](brls::View* view) {
+    dialog->addButton("Logout", [dialog, this]() {
         dialog->close();
 
         // Clear credentials

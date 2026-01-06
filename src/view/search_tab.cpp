@@ -30,9 +30,9 @@ SearchTab::SearchTab() {
     m_searchLabel->setFocusable(true);
 
     m_searchLabel->registerClickAction([this](brls::View* view) {
-        brls::Swkbd::openForText([this](std::string text) {
+        brls::Application::getImeManager()->openForText([this](std::string text) {
             m_searchQuery = text;
-            m_searchLabel->setText("Search: " + text);
+            m_searchLabel->setText(std::string("Search: ") + text);
             performSearch(text);
         }, "Search", "Enter search query", 256, m_searchQuery);
         return true;

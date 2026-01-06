@@ -6,6 +6,7 @@
 #pragma once
 
 #include <borealis.hpp>
+#include <borealis/core/timer.hpp>
 #include <string>
 
 namespace vitaplex {
@@ -28,6 +29,7 @@ private:
 
     std::string m_mediaKey;
     bool m_isPlaying = false;
+    brls::RepeatingTimer m_updateTimer;
 
     BRLS_BIND(brls::Box, playerContainer, "player/container");
     BRLS_BIND(brls::Label, titleLabel, "player/title");

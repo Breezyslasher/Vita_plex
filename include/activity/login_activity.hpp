@@ -6,6 +6,7 @@
 #pragma once
 
 #include <borealis.hpp>
+#include <borealis/core/timer.hpp>
 #include "app/plex_client.hpp"
 
 namespace vitaplex {
@@ -39,6 +40,7 @@ private:
     PinAuth m_pinAuth;
     bool m_pinMode = false;
     int m_pinCheckTimer = 0;
+    brls::RepeatingTimer m_pinTimer;
 };
 
 } // namespace vitaplex

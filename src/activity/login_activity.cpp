@@ -13,7 +13,7 @@ LoginActivity::LoginActivity() {
 }
 
 brls::View* LoginActivity::createContentView() {
-    return brls::View::createFromXMLResource("xml/activity/login.xml");
+    return brls::View::createFromXMLResource("activity/login.xml");
 }
 
 void LoginActivity::onContentAvailable() {
@@ -34,11 +34,11 @@ void LoginActivity::onContentAvailable() {
 
     // Server URL input
     if (serverLabel) {
-        serverLabel->setText("Server: " + (m_serverUrl.empty() ? "Not set" : m_serverUrl));
+        serverLabel->setText(std::string("Server: ") + (m_serverUrl.empty() ? "Not set" : m_serverUrl));
         serverLabel->registerClickAction([this](brls::View* view) {
-            brls::Swkbd::openForText([this](std::string text) {
+            brls::Application::getImeManager()->openForText([this](std::string text) {
                 m_serverUrl = text;
-                serverLabel->setText("Server: " + text);
+                serverLabel->setText(std::string("Server: ") + text);
             }, "Enter Server URL", "http://your-server:32400", 256, m_serverUrl);
             return true;
         });
@@ -47,11 +47,11 @@ void LoginActivity::onContentAvailable() {
 
     // Username input
     if (usernameLabel) {
-        usernameLabel->setText("Username: " + (m_username.empty() ? "Not set" : m_username));
+        usernameLabel->setText(std::string("Username: ") + (m_username.empty() ? "Not set" : m_username));
         usernameLabel->registerClickAction([this](brls::View* view) {
-            brls::Swkbd::openForText([this](std::string text) {
+            brls::Application::getImeManager()->openForText([this](std::string text) {
                 m_username = text;
-                usernameLabel->setText("Username: " + text);
+                usernameLabel->setText(std::string("Username: ") + text);
             }, "Enter Username", "", 128, m_username);
             return true;
         });
@@ -60,12 +60,12 @@ void LoginActivity::onContentAvailable() {
 
     // Password input
     if (passwordLabel) {
-        passwordLabel->setText("Password: " + (m_password.empty() ? "Not set" : "********"));
+        passwordLabel->setText(std::string("Password: ") + (m_password.empty() ? "Not set" : "********"));
         passwordLabel->registerClickAction([this](brls::View* view) {
-            brls::Swkbd::openForText([this](std::string text) {
+            brls::Application::getImeManager()->openForPassword([this](std::string text) {
                 m_password = text;
                 passwordLabel->setText("Password: ********");
-            }, "Enter Password", "", 128, "", 0, "", 0);
+            }, "Enter Password", "", 128, "");
             return true;
         });
         passwordLabel->addGestureRecognizer(new brls::TapGestureRecognizer(passwordLabel));
@@ -138,25 +138,28 @@ void LoginActivity::onPinLoginPressed() {
     if (client.requestPin(m_pinAuth)) {
         if (pinCodeLabel) {
             pinCodeLabel->setVisibility(brls::Visibility::VISIBLE);
-            pinCodeLabel->setText("PIN: " + m_pinAuth.code);
+            pinCodeLabel->setText(std::string("PIN: ") + m_pinAuth.code);
         }
         if (statusLabel) {
             statusLabel->setText("Go to plex.tv/link and enter the PIN above");
         }
 
-        // Start checking PIN status
+        // Start checking PIN status using RepeatingTimer
         m_pinCheckTimer = 0;
-        brls::Application::createTimer(2000, [this]() {
+        m_pinTimer.setCallback([this]() {
             checkPinStatus();
-            return !m_pinMode; // Stop timer when not in PIN mode
         });
+        m_pinTimer.start(2000); // Check every 2 seconds
     } else {
         if (statusLabel) statusLabel->setText("Failed to request PIN");
     }
 }
 
 void LoginActivity::checkPinStatus() {
-    if (!m_pinMode) return;
+    if (!m_pinMode) {
+        m_pinTimer.stop();
+        return;
+    }
 
     m_pinCheckTimer++;
 
@@ -164,6 +167,7 @@ void LoginActivity::checkPinStatus() {
 
     if (client.checkPin(m_pinAuth)) {
         m_pinMode = false;
+        m_pinTimer.stop();
 
         if (client.connectToServer(m_serverUrl)) {
             Application::getInstance().saveSettings();
@@ -177,6 +181,7 @@ void LoginActivity::checkPinStatus() {
     } else if (m_pinAuth.expired || m_pinCheckTimer > 150) {
         // PIN expired (5 minutes)
         m_pinMode = false;
+        m_pinTimer.stop();
         if (statusLabel) statusLabel->setText("PIN expired - try again");
         if (pinCodeLabel) pinCodeLabel->setVisibility(brls::Visibility::GONE);
     }
