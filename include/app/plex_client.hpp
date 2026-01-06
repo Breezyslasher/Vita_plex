@@ -174,6 +174,8 @@ private:
     float extractJsonFloat(const std::string& json, const std::string& key);
     bool extractJsonBool(const std::string& json, const std::string& key);
     std::string base64Encode(const std::string& input);
+    int extractXmlAttr(const std::string& xml, const std::string& attr);
+    std::string extractXmlAttrStr(const std::string& xml, const std::string& attr);
 
     std::string m_authToken;
     std::string m_serverUrl;
