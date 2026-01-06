@@ -30,6 +30,11 @@ set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1")
 # Add Borealis library
 option(BOREALIS_LIBRARY "Build borealis as library" ON)
 set(BOREALIS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/lib/borealis)
+
+# Set platform for Borealis - PS Vita
+set(PLATFORM_PSV ON CACHE BOOL "Build for PS Vita" FORCE)
+set(USE_LIBROMFS OFF CACHE BOOL "Use libromfs" FORCE)
+
 add_subdirectory(${BOREALIS_DIR}/library)
 
 # Application source files
