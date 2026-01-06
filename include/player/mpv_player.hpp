@@ -10,6 +10,7 @@
 #ifdef __vita__
 #include <mpv/client.h>
 #include <mpv/render.h>
+#include <mpv/render_gxm.h>
 #else
 // Stub for non-Vita builds
 typedef struct mpv_handle mpv_handle;
@@ -165,10 +166,10 @@ private:
     bool m_commandPending = false;  // Async command pending
 
 #ifdef __vita__
-    // Software render resources
-    void* m_pixelBuffer = nullptr;      // Pixel buffer for software rendering
-    size_t m_pixelBufferSize = 0;       // Size of pixel buffer
+    // GXM render resources
     int m_nvgImage = 0;                 // NanoVG image handle for display
+    void* m_gxmFramebuffer = nullptr;   // GXM framebuffer structure
+    mpv_gxm_fbo m_mpvFbo = {};          // MPV GXM FBO parameters
     int m_videoWidth = 960;
     int m_videoHeight = 544;
     bool m_renderReady = false;         // Flag for when frame is ready

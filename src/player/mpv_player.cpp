@@ -12,6 +12,8 @@
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/power.h>
 #include <nanovg.h>
+#include <nanovg_gxm_utils.h>
+#include <borealis/platforms/psv/psv_video.hpp>
 #endif
 
 #include <cstring>
@@ -783,57 +785,112 @@ bool MpvPlayer::initRenderContext() {
         return false;
     }
 
-    brls::Logger::debug("MpvPlayer: Creating software render context");
+    brls::Logger::debug("MpvPlayer: Creating GXM render context");
 
-    // Allocate pixel buffer for software rendering (RGBA format)
-    m_videoWidth = 960;
-    m_videoHeight = 544;
-    m_pixelBufferSize = m_videoWidth * m_videoHeight * 4;  // RGBA
-    m_pixelBuffer = malloc(m_pixelBufferSize);
-
-    if (!m_pixelBuffer) {
-        brls::Logger::error("MpvPlayer: Failed to allocate pixel buffer");
+    // Get the GXM window from borealis
+    brls::PsvVideoContext* videoContext = dynamic_cast<brls::PsvVideoContext*>(
+        brls::Application::getPlatform()->getVideoContext());
+    if (!videoContext) {
+        brls::Logger::error("MpvPlayer: Failed to get PSV video context");
         return false;
     }
 
-    memset(m_pixelBuffer, 0, m_pixelBufferSize);
-
-    // Create NanoVG image for display
-    NVGcontext* vg = brls::Application::getNVGContext();
-    if (vg) {
-        m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, (const unsigned char*)m_pixelBuffer);
-        if (m_nvgImage == 0) {
-            brls::Logger::error("MpvPlayer: Failed to create NanoVG image");
-            free(m_pixelBuffer);
-            m_pixelBuffer = nullptr;
-            return false;
-        }
-        brls::Logger::debug("MpvPlayer: Created NanoVG image: {}", m_nvgImage);
+    NVGXMwindow* gxm = videoContext->getWindow();
+    if (!gxm) {
+        brls::Logger::error("MpvPlayer: Failed to get GXM window");
+        return false;
     }
 
-    // Set up software render parameters
+    NVGcontext* vg = brls::Application::getNVGContext();
+    if (!vg) {
+        brls::Logger::error("MpvPlayer: Failed to get NanoVG context");
+        return false;
+    }
+
+    // Set up GXM init parameters
+    mpv_gxm_init_params gxm_params = {
+        .context = gxm->context,
+        .shader_patcher = gxm->shader_patcher,
+        .buffer_index = 0,
+        .msaa = SCE_GXM_MULTISAMPLE_4X,
+    };
+
     mpv_render_param params[] = {
-        {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_SW)},
+        {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_GXM)},
+        {MPV_RENDER_PARAM_GXM_INIT_PARAMS, &gxm_params},
         {MPV_RENDER_PARAM_INVALID, nullptr},
     };
 
+    // Create render context
     int result = mpv_render_context_create(&m_mpvRenderCtx, m_mpv, params);
     if (result < 0) {
-        brls::Logger::error("MpvPlayer: Failed to create render context: {}", mpv_error_string(result));
-        if (m_nvgImage && vg) {
-            nvgDeleteImage(vg, m_nvgImage);
-            m_nvgImage = 0;
-        }
-        free(m_pixelBuffer);
-        m_pixelBuffer = nullptr;
+        brls::Logger::error("MpvPlayer: Failed to create GXM render context: {}", mpv_error_string(result));
         return false;
     }
+
+    brls::Logger::debug("MpvPlayer: GXM render context created");
+
+    // Create NanoVG image and GXM framebuffer for video output
+    m_videoWidth = DISPLAY_WIDTH;
+    m_videoHeight = DISPLAY_HEIGHT;
+    int texture_stride = ALIGN(m_videoWidth, 8);
+
+    // Create NanoVG image
+    m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, nullptr);
+    if (m_nvgImage == 0) {
+        brls::Logger::error("MpvPlayer: Failed to create NanoVG image");
+        mpv_render_context_free(m_mpvRenderCtx);
+        m_mpvRenderCtx = nullptr;
+        return false;
+    }
+
+    // Get the texture from NanoVG image for GXM framebuffer
+    NVGXMtexture* texture = nvgxmImageHandle(vg, m_nvgImage);
+    if (!texture) {
+        brls::Logger::error("MpvPlayer: Failed to get NanoVG texture handle");
+        nvgDeleteImage(vg, m_nvgImage);
+        m_nvgImage = 0;
+        mpv_render_context_free(m_mpvRenderCtx);
+        m_mpvRenderCtx = nullptr;
+        return false;
+    }
+
+    // Create GXM framebuffer for MPV to render to
+    NVGXMframebufferInitOptions framebufferOpts = {
+        .display_buffer_count = 1,
+        .scenesPerFrame = 1,
+        .render_target = texture,
+        .color_format = SCE_GXM_COLOR_FORMAT_U8U8U8U8_ABGR,
+        .color_surface_type = SCE_GXM_COLOR_SURFACE_LINEAR,
+        .display_width = m_videoWidth,
+        .display_height = m_videoHeight,
+        .display_stride = texture_stride,
+    };
+
+    NVGXMframebuffer* fbo = gxmCreateFramebuffer(&framebufferOpts);
+    if (!fbo) {
+        brls::Logger::error("MpvPlayer: Failed to create GXM framebuffer");
+        nvgDeleteImage(vg, m_nvgImage);
+        m_nvgImage = 0;
+        mpv_render_context_free(m_mpvRenderCtx);
+        m_mpvRenderCtx = nullptr;
+        return false;
+    }
+
+    m_gxmFramebuffer = fbo;
+
+    // Set up MPV FBO parameters
+    m_mpvFbo.render_target = fbo->gxm_render_target;
+    m_mpvFbo.color_surface = &fbo->gxm_color_surfaces[0].surface;
+    m_mpvFbo.depth_stencil_surface = &fbo->gxm_depth_stencil_surface;
+    m_mpvFbo.w = m_videoWidth;
+    m_mpvFbo.h = m_videoHeight;
 
     // Set up render update callback
     mpv_render_context_set_update_callback(m_mpvRenderCtx, on_mpv_render_update, this);
 
     m_renderReady = true;
-    brls::Logger::info("MpvPlayer: Render context created successfully");
+    brls::Logger::info("MpvPlayer: GXM render context created successfully ({}x{})", m_videoWidth, m_videoHeight);
     return true;
 #else
     // Non-Vita builds don't need render context
@@ -843,31 +900,35 @@ bool MpvPlayer::initRenderContext() {
 
 void MpvPlayer::cleanupRenderContext() {
 #ifdef __vita__
+    m_renderReady = false;
+
     if (m_mpvRenderCtx) {
-        brls::Logger::debug("MpvPlayer: Cleaning up render context");
+        brls::Logger::debug("MpvPlayer: Cleaning up GXM render context");
         mpv_render_context_free(m_mpvRenderCtx);
         m_mpvRenderCtx = nullptr;
     }
 
+    // Clean up GXM framebuffer
+    if (m_gxmFramebuffer) {
+        gxmDeleteFramebuffer(static_cast<NVGXMframebuffer*>(m_gxmFramebuffer));
+        m_gxmFramebuffer = nullptr;
+    }
+
+    // Clean up NanoVG image
     NVGcontext* vg = brls::Application::getNVGContext();
     if (m_nvgImage && vg) {
         nvgDeleteImage(vg, m_nvgImage);
         m_nvgImage = 0;
     }
 
-    if (m_pixelBuffer) {
-        free(m_pixelBuffer);
-        m_pixelBuffer = nullptr;
-        m_pixelBufferSize = 0;
-    }
-
-    m_renderReady = false;
+    // Reset FBO
+    m_mpvFbo = {};
 #endif
 }
 
 void MpvPlayer::render() {
 #ifdef __vita__
-    if (!m_mpvRenderCtx || !m_pixelBuffer || !m_renderReady) {
+    if (!m_mpvRenderCtx || !m_renderReady || !m_gxmFramebuffer) {
         return;
     }
 
@@ -877,31 +938,20 @@ void MpvPlayer::render() {
         return;  // No new frame
     }
 
-    // Set up software render parameters for this frame
-    int stride = m_videoWidth * 4;  // RGBA stride
+    // Set up GXM render parameters for this frame
     mpv_render_param render_params[] = {
-        {MPV_RENDER_PARAM_SW_SIZE, (int[]){m_videoWidth, m_videoHeight}},
-        {MPV_RENDER_PARAM_SW_FORMAT, const_cast<char*>("rgba")},
-        {MPV_RENDER_PARAM_SW_STRIDE, &stride},
-        {MPV_RENDER_PARAM_SW_POINTER, m_pixelBuffer},
+        {MPV_RENDER_PARAM_GXM_FBO, &m_mpvFbo},
         {MPV_RENDER_PARAM_INVALID, nullptr},
     };
 
-    // Render the frame to our pixel buffer
-    int result = mpv_render_context_render(m_mpvRenderCtx, render_params);
-    if (result < 0) {
-        brls::Logger::error("MpvPlayer: Render failed: {}", mpv_error_string(result));
-        return;
-    }
-
-    // Update NanoVG image with new frame data
-    NVGcontext* vg = brls::Application::getNVGContext();
-    if (vg && m_nvgImage) {
-        nvgUpdateImage(vg, m_nvgImage, (const unsigned char*)m_pixelBuffer);
-    }
-
-    // Report swap completion
-    mpv_render_context_report_swap(m_mpvRenderCtx);
+    // Render the frame using GXM - run in sync with borealis frame
+    brls::sync([this, &render_params]() {
+        int result = mpv_render_context_render(m_mpvRenderCtx, render_params);
+        if (result < 0) {
+            brls::Logger::error("MpvPlayer: GXM render failed: {}", mpv_error_string(result));
+        }
+        mpv_render_context_report_swap(m_mpvRenderCtx);
+    });
 #endif
 }
 
