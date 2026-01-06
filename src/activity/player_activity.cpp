@@ -1,0 +1,170 @@
+/**
+ * VitaPlex - Player Activity implementation
+ */
+
+#include "activity/player_activity.hpp"
+#include "app/plex_client.hpp"
+#include "player/mpv_player.hpp"
+
+namespace vitaplex {
+
+PlayerActivity::PlayerActivity(const std::string& mediaKey)
+    : m_mediaKey(mediaKey) {
+    brls::Logger::debug("PlayerActivity created for media: {}", mediaKey);
+}
+
+brls::View* PlayerActivity::createContentView() {
+    return brls::View::createFromXMLResource("xml/activity/player.xml");
+}
+
+void PlayerActivity::onContentAvailable() {
+    brls::Logger::debug("PlayerActivity content available");
+
+    // Load media details
+    loadMedia();
+
+    // Set up controls
+    if (progressSlider) {
+        progressSlider->setProgress(0.0f);
+        progressSlider->getProgressEvent()->subscribe([this](float progress) {
+            // Seek to position
+            MpvPlayer& player = MpvPlayer::getInstance();
+            double duration = player.getDuration();
+            player.seekTo(duration * progress);
+        });
+    }
+
+    // Register controller actions
+    this->registerAction("Play/Pause", brls::ControllerButton::BUTTON_A, [this](brls::View* view) {
+        togglePlayPause();
+        return true;
+    });
+
+    this->registerAction("Back", brls::ControllerButton::BUTTON_B, [this](brls::View* view) {
+        brls::Application::popActivity();
+        return true;
+    });
+
+    this->registerAction("Rewind", brls::ControllerButton::BUTTON_LB, [this](brls::View* view) {
+        seek(-10);
+        return true;
+    });
+
+    this->registerAction("Forward", brls::ControllerButton::BUTTON_RB, [this](brls::View* view) {
+        seek(10);
+        return true;
+    });
+
+    // Start update timer
+    brls::Application::createTimer(1000, [this]() {
+        updateProgress();
+        return m_isPlaying;
+    });
+}
+
+void PlayerActivity::willDisappear(bool resetState) {
+    brls::Activity::willDisappear(resetState);
+
+    // Stop playback and save progress
+    MpvPlayer& player = MpvPlayer::getInstance();
+
+    if (player.isPlaying() || player.isPaused()) {
+        double position = player.getPosition();
+        int timeMs = (int)(position * 1000);
+
+        // Save progress to Plex
+        PlexClient::getInstance().updatePlayProgress(m_mediaKey, timeMs);
+
+        player.stop();
+    }
+
+    m_isPlaying = false;
+}
+
+void PlayerActivity::loadMedia() {
+    PlexClient& client = PlexClient::getInstance();
+    MediaItem item;
+
+    if (client.fetchMediaDetails(m_mediaKey, item)) {
+        if (titleLabel) {
+            std::string title = item.title;
+            if (item.mediaType == MediaType::EPISODE) {
+                title = item.grandparentTitle + " - " + item.title;
+            }
+            titleLabel->setText(title);
+        }
+
+        // Get playback URL
+        std::string url;
+        if (client.getPlaybackUrl(m_mediaKey, url)) {
+            MpvPlayer& player = MpvPlayer::getInstance();
+
+            if (!player.isInitialized()) {
+                player.init();
+            }
+
+            // Resume from viewOffset if available
+            if (item.viewOffset > 0) {
+                player.loadUrl(url, item.title);
+                player.seekTo(item.viewOffset / 1000.0);
+            } else {
+                player.loadUrl(url, item.title);
+            }
+
+            player.play();
+            m_isPlaying = true;
+        }
+    }
+}
+
+void PlayerActivity::updateProgress() {
+    MpvPlayer& player = MpvPlayer::getInstance();
+
+    if (!player.isInitialized()) return;
+
+    double position = player.getPosition();
+    double duration = player.getDuration();
+
+    if (duration > 0) {
+        if (progressSlider) {
+            progressSlider->setProgress((float)(position / duration));
+        }
+
+        if (timeLabel) {
+            int posMin = (int)position / 60;
+            int posSec = (int)position % 60;
+            int durMin = (int)duration / 60;
+            int durSec = (int)duration % 60;
+
+            char timeStr[32];
+            snprintf(timeStr, sizeof(timeStr), "%02d:%02d / %02d:%02d",
+                     posMin, posSec, durMin, durSec);
+            timeLabel->setText(timeStr);
+        }
+    }
+
+    // Check if playback ended
+    if (player.hasEnded()) {
+        PlexClient::getInstance().markAsWatched(m_mediaKey);
+        brls::Application::popActivity();
+    }
+}
+
+void PlayerActivity::togglePlayPause() {
+    MpvPlayer& player = MpvPlayer::getInstance();
+
+    if (player.isPlaying()) {
+        player.pause();
+        m_isPlaying = false;
+    } else if (player.isPaused()) {
+        player.play();
+        m_isPlaying = true;
+    }
+}
+
+void PlayerActivity::seek(int seconds) {
+    MpvPlayer& player = MpvPlayer::getInstance();
+    player.seekRelative(seconds);
+}
+
+} // namespace vitaplex

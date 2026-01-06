@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="utf-8"?>
+<brls:Box
+    xmlns:brls="https://github.com/xfangfang/borealis"
+    width="100%"
+    height="100%"
+    axis="column"
+    padding="20">
+
+    <!-- Title -->
+    <brls:Label
+        id="settings/title"
+        text="Settings"
+        fontSize="28"
+        marginBottom="30"/>
+
+    <!-- Account section -->
+    <brls:Label
+        text="Account"
+        fontSize="22"
+        marginBottom="10"/>
+
+    <brls:Label
+        id="settings/user"
+        text="User: Not logged in"
+        fontSize="18"
+        marginBottom="10"/>
+
+    <brls:Label
+        id="settings/server"
+        text="Server: Not connected"
+        fontSize="18"
+        marginBottom="30"/>
+
+    <!-- About section -->
+    <brls:Label
+        text="About"
+        fontSize="22"
+        marginBottom="10"/>
+
+    <brls:Label
+        id="settings/version"
+        text="VitaPlex v2.0.0"
+        fontSize="18"
+        marginBottom="10"/>
+
+    <brls:Label
+        text="Plex Client for PlayStation Vita"
+        fontSize="16"
+        marginBottom="10"/>
+
+    <brls:Label
+        text="UI powered by Borealis"
+        fontSize="16"
+        marginBottom="30"/>
+
+    <!-- Logout button -->
+    <brls:Button
+        id="settings/logout"
+        text="Logout"
+        width="200"/>
+
+</brls:Box>

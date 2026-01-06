@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<brls:Box
+    xmlns:brls="https://github.com/xfangfang/borealis"
+    width="140"
+    height="200"
+    axis="column"
+    alignItems="center"
+    padding="5"
+    cornerRadius="8"
+    backgroundColor="#333333"
+    focusable="true">
+
+    <!-- Thumbnail -->
+    <brls:Image
+        id="item/thumbnail"
+        width="110"
+        height="165"
+        scalingType="fit"
+        cornerRadius="4"/>
+
+    <!-- Title -->
+    <brls:Label
+        id="item/title"
+        text=""
+        fontSize="12"
+        marginTop="5"
+        horizontalAlign="center"/>
+
+    <!-- Subtitle (for episodes) -->
+    <brls:Label
+        id="item/subtitle"
+        text=""
+        fontSize="10"
+        horizontalAlign="center"/>
+
+    <!-- Progress bar -->
+    <brls:Rectangle
+        id="item/progress"
+        width="0"
+        height="3"
+        color="#E5A00D"/>
+
+</brls:Box>

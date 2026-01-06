@@ -1,0 +1,183 @@
+/**
+ * VitaPlex - Plex API Client
+ * Handles all communication with Plex servers
+ */
+
+#pragma once
+
+#include <string>
+#include <vector>
+#include <functional>
+#include <memory>
+
+namespace vitaplex {
+
+// Media types
+enum class MediaType {
+    UNKNOWN,
+    MOVIE,
+    SHOW,
+    SEASON,
+    EPISODE,
+    MUSIC_ARTIST,
+    MUSIC_ALBUM,
+    MUSIC_TRACK,
+    PHOTO,
+    LIVE_TV_CHANNEL,
+    LIVE_TV_PROGRAM
+};
+
+// Media item info
+struct MediaItem {
+    std::string ratingKey;
+    std::string key;
+    std::string title;
+    std::string summary;
+    std::string thumb;
+    std::string art;
+    std::string type;
+    MediaType mediaType = MediaType::UNKNOWN;
+    int year = 0;
+    int duration = 0;
+    int viewOffset = 0;
+    float rating = 0.0f;
+    std::string contentRating;
+    std::string studio;
+    bool watched = false;
+
+    // For episodes
+    std::string grandparentTitle;
+    std::string parentTitle;
+    int parentIndex = 0;
+    int index = 0;
+    int seasonNumber = 0;
+    int episodeNumber = 0;
+
+    // For seasons/albums
+    int leafCount = 0;
+    int viewedLeafCount = 0;
+
+    // Stream info
+    std::string streamUrl;
+    std::string videoCodec;
+    std::string audioCodec;
+    int videoWidth = 0;
+    int videoHeight = 0;
+};
+
+// Library section info
+struct LibrarySection {
+    std::string key;
+    std::string title;
+    std::string type;
+    std::string art;
+    std::string thumb;
+    int count = 0;
+};
+
+// Plex server info
+struct PlexServer {
+    std::string name;
+    std::string address;
+    int port = 32400;
+    std::string machineIdentifier;
+    std::string accessToken;
+};
+
+// PIN authentication info
+struct PinAuth {
+    int id = 0;
+    std::string code;
+    std::string authToken;
+    bool expired = false;
+    int expiresIn = 0;
+};
+
+// Hub (for home screen)
+struct Hub {
+    std::string title;
+    std::string type;
+    std::string hubIdentifier;
+    std::string key;
+    std::vector<MediaItem> items;
+    bool more = false;
+};
+
+// Live TV Channel
+struct LiveTVChannel {
+    std::string ratingKey;
+    std::string key;
+    std::string title;
+    std::string thumb;
+    std::string callSign;
+    int channelNumber = 0;
+    std::string currentProgram;
+    std::string nextProgram;
+    int64_t programStart = 0;
+    int64_t programEnd = 0;
+};
+
+/**
+ * Plex API Client singleton
+ */
+class PlexClient {
+public:
+    static PlexClient& getInstance();
+
+    // Authentication
+    bool login(const std::string& username, const std::string& password);
+    bool requestPin(PinAuth& pinAuth);
+    bool checkPin(PinAuth& pinAuth);
+    bool connectToServer(const std::string& url);
+    void logout();
+
+    // Library operations
+    bool fetchLibrarySections(std::vector<LibrarySection>& sections);
+    bool fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items);
+    bool fetchChildren(const std::string& ratingKey, std::vector<MediaItem>& items);
+    bool fetchMediaDetails(const std::string& ratingKey, MediaItem& item);
+
+    // Home screen
+    bool fetchHubs(std::vector<Hub>& hubs);
+    bool fetchContinueWatching(std::vector<MediaItem>& items);
+    bool fetchRecentlyAdded(std::vector<MediaItem>& items);
+
+    // Search
+    bool search(const std::string& query, std::vector<MediaItem>& results);
+
+    // Playback
+    bool getPlaybackUrl(const std::string& ratingKey, std::string& url);
+    bool updatePlayProgress(const std::string& ratingKey, int timeMs);
+    bool markAsWatched(const std::string& ratingKey);
+    bool markAsUnwatched(const std::string& ratingKey);
+
+    // Live TV
+    bool fetchLiveTVChannels(std::vector<LiveTVChannel>& channels);
+    bool hasLiveTV() const { return m_hasLiveTV; }
+
+    // Thumbnail URL
+    std::string getThumbnailUrl(const std::string& thumb, int width = 300, int height = 450);
+
+    // Configuration
+    void setAuthToken(const std::string& token) { m_authToken = token; }
+    void setServerUrl(const std::string& url) { m_serverUrl = url; }
+    const std::string& getServerUrl() const { return m_serverUrl; }
+
+private:
+    PlexClient() = default;
+    ~PlexClient() = default;
+
+    std::string buildApiUrl(const std::string& endpoint);
+    MediaType parseMediaType(const std::string& typeStr);
+    std::string extractJsonValue(const std::string& json, const std::string& key);
+    int extractJsonInt(const std::string& json, const std::string& key);
+    float extractJsonFloat(const std::string& json, const std::string& key);
+    bool extractJsonBool(const std::string& json, const std::string& key);
+
+    std::string m_authToken;
+    std::string m_serverUrl;
+    PlexServer m_currentServer;
+    bool m_hasLiveTV = false;
+};
+
+} // namespace vitaplex

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<brls:Box
+    xmlns:brls="https://github.com/xfangfang/borealis"
+    id="player/container"
+    width="100%"
+    height="100%"
+    axis="column"
+    justifyContent="flexEnd"
+    alignItems="stretch"
+    padding="20">
+
+    <!-- Video area (handled by MPV) -->
+
+    <!-- Controls overlay -->
+    <brls:Box
+        id="player/controls"
+        width="100%"
+        axis="column"
+        alignItems="stretch"
+        padding="15"
+        backgroundColor="#80000000"
+        cornerRadius="8">
+
+        <!-- Title -->
+        <brls:Label
+            id="player/title"
+            text="Now Playing"
+            fontSize="20"
+            marginBottom="10"/>
+
+        <!-- Progress slider -->
+        <brls:Slider
+            id="player/progress"
+            width="100%"
+            height="30"
+            marginBottom="10"/>
+
+        <!-- Time display -->
+        <brls:Label
+            id="player/time"
+            text="00:00 / 00:00"
+            fontSize="14"
+            horizontalAlign="center"/>
+
+    </brls:Box>
+
+</brls:Box>
