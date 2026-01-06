@@ -72,6 +72,7 @@ set(APP_SOURCES
     # Utils
     src/utils/http_client.cpp
     src/utils/image_loader.cpp
+    src/utils/vita_stubs.c
 )
 
 # Include directories
@@ -93,7 +94,7 @@ target_link_libraries(${PROJECT_NAME}
     ${APP_PLATFORM_LIB}
 
     # External libraries first (they depend on Vita stubs)
-    # FFmpeg order: filters/format depend on codec, codec depends on util
+    # FFmpeg has circular dependencies - list avcodec multiple times
     curl
     mpv
     avfilter
@@ -102,6 +103,7 @@ target_link_libraries(${PROJECT_NAME}
     swresample
     swscale
     avutil
+    avcodec
     ass
     freetype
     harfbuzz
