@@ -412,7 +412,12 @@ bool PlexClient::fetchLibrarySections(std::vector<LibrarySection>& sections) {
     std::string url = buildApiUrl("/library/sections");
     brls::Logger::debug("Fetching: {}", url);
 
-    HttpResponse resp = client.get(url);
+    // Request JSON format (Plex returns XML by default)
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
     brls::Logger::debug("Response: {} - {} bytes", resp.statusCode, resp.body.length());
 
     if (resp.statusCode != 200) {
@@ -485,7 +490,13 @@ bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<
 
     HttpClient client;
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all");
-    HttpResponse resp = client.get(url);
+
+    // Request JSON format
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
 
     brls::Logger::debug("Response: {} - {} bytes", resp.statusCode, resp.body.length());
 
@@ -548,7 +559,13 @@ bool PlexClient::fetchChildren(const std::string& ratingKey, std::vector<MediaIt
 
     HttpClient client;
     std::string url = buildApiUrl("/library/metadata/" + ratingKey + "/children");
-    HttpResponse resp = client.get(url);
+
+    // Request JSON format
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
 
     brls::Logger::debug("Children response: {} - {} bytes", resp.statusCode, resp.body.length());
 
@@ -613,7 +630,13 @@ bool PlexClient::fetchChildren(const std::string& ratingKey, std::vector<MediaIt
 bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item) {
     HttpClient client;
     std::string url = buildApiUrl("/library/metadata/" + ratingKey);
-    HttpResponse resp = client.get(url);
+
+    // Request JSON format
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
 
     if (resp.statusCode != 200) return false;
 
@@ -645,7 +668,13 @@ bool PlexClient::fetchHubs(std::vector<Hub>& hubs) {
 
     HttpClient client;
     std::string url = buildApiUrl("/hubs");
-    HttpResponse resp = client.get(url);
+
+    // Request JSON format
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
 
     brls::Logger::debug("Hubs response: {} - {} bytes", resp.statusCode, resp.body.length());
 
@@ -737,7 +766,13 @@ bool PlexClient::fetchContinueWatching(std::vector<MediaItem>& items) {
 
     HttpClient client;
     std::string url = buildApiUrl("/hubs/continueWatching");
-    HttpResponse resp = client.get(url);
+
+    // Request JSON format
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
 
     brls::Logger::debug("ContinueWatching response: {} - {} bytes", resp.statusCode, resp.body.length());
 
@@ -802,7 +837,13 @@ bool PlexClient::fetchRecentlyAdded(std::vector<MediaItem>& items) {
 
     HttpClient client;
     std::string url = buildApiUrl("/library/recentlyAdded");
-    HttpResponse resp = client.get(url);
+
+    // Request JSON format
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
 
     brls::Logger::debug("RecentlyAdded response: {} - {} bytes", resp.statusCode, resp.body.length());
 
@@ -863,7 +904,13 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
 
     HttpClient client;
     std::string url = buildApiUrl("/hubs/search?query=" + HttpClient::urlEncode(query));
-    HttpResponse resp = client.get(url);
+
+    // Request JSON format
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
 
     brls::Logger::debug("Search response: {} - {} bytes", resp.statusCode, resp.body.length());
 
