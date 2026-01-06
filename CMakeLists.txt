@@ -150,7 +150,7 @@ vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
     FILE sce_sys/livearea/contents/template.xml sce_sys/livearea/contents/template.xml
 
     # Borealis resources
-    FILE ${BOREALIS_LIBRARY}/lib/resources/i18n/en-US/brls.json resources/i18n/en-US/brls.json
+    FILE ${BOREALIS_DIR}/resources/i18n/en-US/hints.json resources/i18n/en-US/hints.json
     FILE resources/i18n/en-US/main.json resources/i18n/en-US/main.json
 
     # App resources
@@ -165,6 +165,6 @@ vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
     FILE resources/xml/view/media_item.xml resources/xml/view/media_item.xml
 
     # Fonts
-    FILE ${BOREALIS_LIBRARY}/lib/resources/fonts/switch_icons.ttf resources/fonts/switch_icons.ttf
-    FILE ${BOREALIS_LIBRARY}/lib/resources/fonts/material_icons.ttf resources/fonts/material_icons.ttf
+    FILE ${BOREALIS_DIR}/resources/font/switch_icons.ttf resources/fonts/switch_icons.ttf
+    FILE ${BOREALIS_DIR}/resources/material/MaterialIcons-Regular.ttf resources/fonts/material_icons.ttf
 )
