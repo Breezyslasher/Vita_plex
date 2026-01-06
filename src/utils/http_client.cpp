@@ -35,6 +35,14 @@ void HttpClient::globalCleanup() {
 HttpClient::HttpClient() {
     m_curl = curl_easy_init();
     m_userAgent = PLEX_CLIENT_NAME "/" PLEX_CLIENT_VERSION " (" PLEX_PLATFORM ")";
+
+    // Set default headers for Plex API
+    m_defaultHeaders["Accept"] = "application/json";
+    m_defaultHeaders["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+    m_defaultHeaders["X-Plex-Product"] = PLEX_CLIENT_NAME;
+    m_defaultHeaders["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+    m_defaultHeaders["X-Plex-Platform"] = PLEX_PLATFORM;
+    m_defaultHeaders["X-Plex-Device"] = PLEX_DEVICE;
 }
 
 HttpClient::~HttpClient() {
