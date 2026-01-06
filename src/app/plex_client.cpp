@@ -554,6 +554,71 @@ bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<
     return !items.empty() || resp.statusCode == 200;
 }
 
+bool PlexClient::fetchSectionRecentlyAdded(const std::string& sectionKey, std::vector<MediaItem>& items) {
+    brls::Logger::debug("fetchSectionRecentlyAdded: section={}", sectionKey);
+
+    HttpClient client;
+    // Correct endpoint: /library/sections/{key}/recentlyAdded (no /all)
+    std::string url = buildApiUrl("/library/sections/" + sectionKey + "/recentlyAdded");
+
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+
+    brls::Logger::debug("RecentlyAdded response: {} - {} bytes", resp.statusCode, resp.body.length());
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("Failed to fetch recently added: {}", resp.statusCode);
+        return false;
+    }
+
+    items.clear();
+
+    // Parse items by looking for objects with "ratingKey"
+    size_t pos = 0;
+    while ((pos = resp.body.find("\"ratingKey\"", pos)) != std::string::npos) {
+        size_t objStart = resp.body.rfind('{', pos);
+        if (objStart == std::string::npos) {
+            pos++;
+            continue;
+        }
+
+        int braceCount = 1;
+        size_t objEnd = objStart + 1;
+        while (braceCount > 0 && objEnd < resp.body.length()) {
+            if (resp.body[objEnd] == '{') braceCount++;
+            else if (resp.body[objEnd] == '}') braceCount--;
+            objEnd++;
+        }
+
+        std::string obj = resp.body.substr(objStart, objEnd - objStart);
+
+        MediaItem item;
+        item.ratingKey = extractJsonValue(obj, "ratingKey");
+        item.key = extractJsonValue(obj, "key");
+        item.title = extractJsonValue(obj, "title");
+        item.summary = extractJsonValue(obj, "summary");
+        item.thumb = extractJsonValue(obj, "thumb");
+        item.art = extractJsonValue(obj, "art");
+        item.type = extractJsonValue(obj, "type");
+        item.mediaType = parseMediaType(item.type);
+        item.year = extractJsonInt(obj, "year");
+        item.duration = extractJsonInt(obj, "duration");
+        item.viewOffset = extractJsonInt(obj, "viewOffset");
+
+        if (!item.ratingKey.empty() && !item.title.empty()) {
+            items.push_back(item);
+        }
+
+        pos = objEnd;
+    }
+
+    brls::Logger::info("Found {} recently added items in section {}", items.size(), sectionKey);
+    return true;
+}
+
 bool PlexClient::fetchChildren(const std::string& ratingKey, std::vector<MediaItem>& items) {
     brls::Logger::debug("fetchChildren: ratingKey={}", ratingKey);
 
@@ -827,6 +892,8 @@ bool PlexClient::fetchContinueWatching(std::vector<MediaItem>& items) {
         item.viewOffset = extractJsonInt(obj, "viewOffset");
         item.grandparentTitle = extractJsonValue(obj, "grandparentTitle");
         item.parentTitle = extractJsonValue(obj, "parentTitle");
+        item.grandparentThumb = extractJsonValue(obj, "grandparentThumb");
+        item.parentThumb = extractJsonValue(obj, "parentThumb");
         item.index = extractJsonInt(obj, "index");
         item.parentIndex = extractJsonInt(obj, "parentIndex");
 
@@ -1061,8 +1128,49 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
 }
 
 bool PlexClient::getPlaybackUrl(const std::string& ratingKey, std::string& url) {
-    // Build direct play URL
-    url = buildApiUrl("/library/metadata/" + ratingKey + "/file");
+    brls::Logger::debug("getPlaybackUrl: ratingKey={}", ratingKey);
+
+    // Fetch media details to get the Part key for streaming
+    HttpClient client;
+    std::string apiUrl = buildApiUrl("/library/metadata/" + ratingKey);
+
+    HttpRequest req;
+    req.url = apiUrl;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("getPlaybackUrl: Failed to fetch metadata: {}", resp.statusCode);
+        return false;
+    }
+
+    // Find the Part key in the response
+    // Look for "Part":[{"key":"/library/parts/..."
+    size_t partPos = resp.body.find("\"Part\"");
+    if (partPos == std::string::npos) {
+        brls::Logger::error("getPlaybackUrl: No Part found in metadata");
+        return false;
+    }
+
+    // Find the key within Part
+    size_t keyPos = resp.body.find("\"key\"", partPos);
+    if (keyPos == std::string::npos || keyPos > partPos + 500) {
+        brls::Logger::error("getPlaybackUrl: No key found in Part");
+        return false;
+    }
+
+    std::string partKey = extractJsonValue(resp.body.substr(keyPos, 200), "key");
+    if (partKey.empty()) {
+        brls::Logger::error("getPlaybackUrl: Part key is empty");
+        return false;
+    }
+
+    // Build stream URL from Part key
+    // The Part key is something like /library/parts/12345/1234567890/file.mkv
+    url = m_serverUrl + partKey + "?X-Plex-Token=" + m_authToken;
+
+    brls::Logger::info("getPlaybackUrl: Stream URL = {}", url);
     return true;
 }
 

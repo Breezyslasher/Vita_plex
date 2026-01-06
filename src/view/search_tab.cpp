@@ -4,6 +4,7 @@
 
 #include "view/search_tab.hpp"
 #include "view/media_detail_view.hpp"
+#include "view/media_item_cell.hpp"
 #include "app/application.hpp"
 
 namespace vitaplex {
@@ -26,7 +27,7 @@ SearchTab::SearchTab() {
     m_searchLabel = new brls::Label();
     m_searchLabel->setText("Tap to search...");
     m_searchLabel->setFontSize(20);
-    m_searchLabel->setMarginBottom(20);
+    m_searchLabel->setMarginBottom(10);
     m_searchLabel->setFocusable(true);
 
     m_searchLabel->registerClickAction([this](brls::View* view) {
@@ -48,13 +49,74 @@ SearchTab::SearchTab() {
     m_resultsLabel->setMarginBottom(10);
     this->addView(m_resultsLabel);
 
-    // Results grid
-    m_resultsGrid = new RecyclingGrid();
-    m_resultsGrid->setGrow(1.0f);
-    m_resultsGrid->setOnItemSelected([this](const MediaItem& item) {
-        onItemSelected(item);
-    });
-    this->addView(m_resultsGrid);
+    // Scrollable content for results
+    m_scrollView = new brls::ScrollingFrame();
+    m_scrollView->setGrow(1.0f);
+
+    m_scrollContent = new brls::Box();
+    m_scrollContent->setAxis(brls::Axis::COLUMN);
+    m_scrollContent->setJustifyContent(brls::JustifyContent::FLEX_START);
+    m_scrollContent->setAlignItems(brls::AlignItems::STRETCH);
+
+    // Movies row
+    auto* moviesLabel = new brls::Label();
+    moviesLabel->setText("Movies");
+    moviesLabel->setFontSize(20);
+    moviesLabel->setMarginBottom(10);
+    moviesLabel->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(moviesLabel);
+
+    m_moviesRow = new brls::HScrollingFrame();
+    m_moviesRow->setHeight(180);
+    m_moviesRow->setMarginBottom(15);
+    m_moviesRow->setVisibility(brls::Visibility::GONE);
+
+    m_moviesContent = new brls::Box();
+    m_moviesContent->setAxis(brls::Axis::ROW);
+    m_moviesContent->setJustifyContent(brls::JustifyContent::FLEX_START);
+    m_moviesRow->setContentView(m_moviesContent);
+    m_scrollContent->addView(m_moviesRow);
+
+    // TV Shows row
+    auto* showsLabel = new brls::Label();
+    showsLabel->setText("TV Shows");
+    showsLabel->setFontSize(20);
+    showsLabel->setMarginBottom(10);
+    showsLabel->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(showsLabel);
+
+    m_showsRow = new brls::HScrollingFrame();
+    m_showsRow->setHeight(180);
+    m_showsRow->setMarginBottom(15);
+    m_showsRow->setVisibility(brls::Visibility::GONE);
+
+    m_showsContent = new brls::Box();
+    m_showsContent->setAxis(brls::Axis::ROW);
+    m_showsContent->setJustifyContent(brls::JustifyContent::FLEX_START);
+    m_showsRow->setContentView(m_showsContent);
+    m_scrollContent->addView(m_showsRow);
+
+    // Music row
+    auto* musicLabel = new brls::Label();
+    musicLabel->setText("Music");
+    musicLabel->setFontSize(20);
+    musicLabel->setMarginBottom(10);
+    musicLabel->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(musicLabel);
+
+    m_musicRow = new brls::HScrollingFrame();
+    m_musicRow->setHeight(160);
+    m_musicRow->setMarginBottom(15);
+    m_musicRow->setVisibility(brls::Visibility::GONE);
+
+    m_musicContent = new brls::Box();
+    m_musicContent->setAxis(brls::Axis::ROW);
+    m_musicContent->setJustifyContent(brls::JustifyContent::FLEX_START);
+    m_musicRow->setContentView(m_musicContent);
+    m_scrollContent->addView(m_musicRow);
+
+    m_scrollView->setContentView(m_scrollContent);
+    this->addView(m_scrollView);
 }
 
 void SearchTab::onFocusGained() {
@@ -66,11 +128,46 @@ void SearchTab::onFocusGained() {
     }
 }
 
+void SearchTab::populateRow(brls::Box* rowContent, const std::vector<MediaItem>& items) {
+    if (!rowContent) return;
+
+    rowContent->clearViews();
+
+    for (const auto& item : items) {
+        auto* cell = new MediaItemCell();
+        cell->setItem(item);
+        cell->setWidth(120);
+        cell->setHeight(170);
+        cell->setMarginRight(10);
+
+        MediaItem capturedItem = item;
+        cell->registerClickAction([this, capturedItem](brls::View* view) {
+            onItemSelected(capturedItem);
+            return true;
+        });
+
+        rowContent->addView(cell);
+    }
+}
+
 void SearchTab::performSearch(const std::string& query) {
     if (query.empty()) {
         m_resultsLabel->setText("");
         m_results.clear();
-        m_resultsGrid->setDataSource(m_results);
+        m_movies.clear();
+        m_shows.clear();
+        m_music.clear();
+
+        // Hide all rows
+        m_moviesRow->setVisibility(brls::Visibility::GONE);
+        m_showsRow->setVisibility(brls::Visibility::GONE);
+        m_musicRow->setVisibility(brls::Visibility::GONE);
+
+        // Hide labels
+        auto& views = m_scrollContent->getChildren();
+        for (size_t i = 0; i < views.size(); i++) {
+            views[i]->setVisibility(brls::Visibility::GONE);
+        }
         return;
     }
 
@@ -78,15 +175,73 @@ void SearchTab::performSearch(const std::string& query) {
 
     if (client.search(query, m_results)) {
         m_resultsLabel->setText("Found " + std::to_string(m_results.size()) + " results");
-        m_resultsGrid->setDataSource(m_results);
+
+        // Organize results by type
+        m_movies.clear();
+        m_shows.clear();
+        m_music.clear();
+
+        for (const auto& item : m_results) {
+            if (item.mediaType == MediaType::MOVIE) {
+                m_movies.push_back(item);
+            } else if (item.mediaType == MediaType::SHOW ||
+                       item.mediaType == MediaType::SEASON ||
+                       item.mediaType == MediaType::EPISODE) {
+                m_shows.push_back(item);
+            } else if (item.mediaType == MediaType::MUSIC_ARTIST ||
+                       item.mediaType == MediaType::MUSIC_ALBUM ||
+                       item.mediaType == MediaType::MUSIC_TRACK) {
+                m_music.push_back(item);
+            }
+        }
+
+        // Update rows visibility and content
+        auto& views = m_scrollContent->getChildren();
+
+        // Movies (label at index 0, row at index 1)
+        if (!m_movies.empty()) {
+            views[0]->setVisibility(brls::Visibility::VISIBLE);
+            m_moviesRow->setVisibility(brls::Visibility::VISIBLE);
+            populateRow(m_moviesContent, m_movies);
+        } else {
+            views[0]->setVisibility(brls::Visibility::GONE);
+            m_moviesRow->setVisibility(brls::Visibility::GONE);
+        }
+
+        // Shows (label at index 2, row at index 3)
+        if (!m_shows.empty()) {
+            views[2]->setVisibility(brls::Visibility::VISIBLE);
+            m_showsRow->setVisibility(brls::Visibility::VISIBLE);
+            populateRow(m_showsContent, m_shows);
+        } else {
+            views[2]->setVisibility(brls::Visibility::GONE);
+            m_showsRow->setVisibility(brls::Visibility::GONE);
+        }
+
+        // Music (label at index 4, row at index 5)
+        if (!m_music.empty()) {
+            views[4]->setVisibility(brls::Visibility::VISIBLE);
+            m_musicRow->setVisibility(brls::Visibility::VISIBLE);
+            populateRow(m_musicContent, m_music);
+        } else {
+            views[4]->setVisibility(brls::Visibility::GONE);
+            m_musicRow->setVisibility(brls::Visibility::GONE);
+        }
+
     } else {
         m_resultsLabel->setText("Search failed");
         m_results.clear();
-        m_resultsGrid->setDataSource(m_results);
     }
 }
 
 void SearchTab::onItemSelected(const MediaItem& item) {
+    // For tracks, play directly instead of showing detail view
+    if (item.mediaType == MediaType::MUSIC_TRACK) {
+        Application::getInstance().pushPlayerActivity(item.ratingKey);
+        return;
+    }
+
+    // Show media detail view for other types
     auto* detailView = new MediaDetailView(item);
     brls::Application::pushActivity(new brls::Activity(detailView));
 }

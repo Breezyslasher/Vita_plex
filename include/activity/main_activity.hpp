@@ -18,6 +18,8 @@ public:
     void onContentAvailable() override;
 
 private:
+    void loadLibrariesToSidebar();
+
     BRLS_BIND(brls::TabFrame, tabFrame, "main/tab_frame");
 };
 

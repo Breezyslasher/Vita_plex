@@ -204,10 +204,9 @@ void HomeTab::loadContent() {
             }
 
             std::vector<MediaItem> sectionItems;
-            std::string url = "/library/sections/" + section.key + "/recentlyAdded";
 
-            // Fetch content using the library content method
-            if (client.fetchLibraryContent(section.key + "/recentlyAdded", sectionItems)) {
+            // Fetch recently added using the correct API endpoint
+            if (client.fetchSectionRecentlyAdded(section.key, sectionItems)) {
                 // Sort items by type
                 for (auto& item : sectionItems) {
                     if (section.type == "movie") {
@@ -241,7 +240,13 @@ void HomeTab::loadContent() {
 }
 
 void HomeTab::onItemSelected(const MediaItem& item) {
-    // Show media detail view
+    // For tracks, play directly instead of showing detail view
+    if (item.mediaType == MediaType::MUSIC_TRACK) {
+        Application::getInstance().pushPlayerActivity(item.ratingKey);
+        return;
+    }
+
+    // Show media detail view for other types
     auto* detailView = new MediaDetailView(item);
     brls::Application::pushActivity(new brls::Activity(detailView));
 }

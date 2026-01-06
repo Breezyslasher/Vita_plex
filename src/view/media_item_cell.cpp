@@ -111,7 +111,7 @@ void MediaItemCell::setItem(const MediaItem& item) {
 }
 
 void MediaItemCell::loadThumbnail() {
-    if (!m_thumbnailImage || m_item.thumb.empty()) return;
+    if (!m_thumbnailImage) return;
 
     PlexClient& client = PlexClient::getInstance();
 
@@ -123,7 +123,15 @@ void MediaItemCell::loadThumbnail() {
     int width = isMusic ? 220 : 220;
     int height = isMusic ? 220 : 330;
 
-    std::string url = client.getThumbnailUrl(m_item.thumb, width, height);
+    // For episodes, prefer grandparentThumb (show poster) if available
+    std::string thumbPath = m_item.thumb;
+    if (m_item.mediaType == MediaType::EPISODE && !m_item.grandparentThumb.empty()) {
+        thumbPath = m_item.grandparentThumb;
+    }
+
+    if (thumbPath.empty()) return;
+
+    std::string url = client.getThumbnailUrl(thumbPath, width, height);
 
     ImageLoader::loadAsync(url, [this](brls::Image* image) {
         // Image loaded callback

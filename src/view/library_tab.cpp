@@ -163,7 +163,13 @@ void LibraryTab::onSectionSelected(const LibrarySection& section) {
 }
 
 void LibraryTab::onItemSelected(const MediaItem& item) {
-    // Show media detail view
+    // For tracks, play directly instead of showing detail view
+    if (item.mediaType == MediaType::MUSIC_TRACK) {
+        Application::getInstance().pushPlayerActivity(item.ratingKey);
+        return;
+    }
+
+    // Show media detail view for other types
     auto* detailView = new MediaDetailView(item);
     brls::Application::pushActivity(new brls::Activity(detailView));
 }

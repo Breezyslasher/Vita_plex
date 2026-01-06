@@ -48,6 +48,8 @@ struct MediaItem {
     // For episodes
     std::string grandparentTitle;
     std::string parentTitle;
+    std::string grandparentThumb;  // Series/show poster for episodes
+    std::string parentThumb;       // Season poster for episodes
     int parentIndex = 0;
     int index = 0;
     int seasonNumber = 0;
@@ -148,6 +150,7 @@ public:
     // Library operations
     bool fetchLibrarySections(std::vector<LibrarySection>& sections);
     bool fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items);
+    bool fetchSectionRecentlyAdded(const std::string& sectionKey, std::vector<MediaItem>& items);
     bool fetchChildren(const std::string& ratingKey, std::vector<MediaItem>& items);
     bool fetchMediaDetails(const std::string& ratingKey, MediaItem& item);
 
