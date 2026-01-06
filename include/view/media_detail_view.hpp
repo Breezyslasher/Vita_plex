@@ -19,10 +19,17 @@ public:
 private:
     void loadDetails();
     void loadChildren();
+    void loadMusicCategories();
     void onPlay(bool resume = false);
+
+    brls::HScrollingFrame* createMediaRow(const std::string& title, brls::Box** contentOut);
 
     MediaItem m_item;
     std::vector<MediaItem> m_children;
+
+    // Main layout
+    brls::ScrollingFrame* m_scrollView = nullptr;
+    brls::Box* m_mainContent = nullptr;
 
     brls::Label* m_titleLabel = nullptr;
     brls::Label* m_yearLabel = nullptr;
@@ -33,6 +40,14 @@ private:
     brls::Button* m_playButton = nullptr;
     brls::Button* m_resumeButton = nullptr;
     brls::Box* m_childrenBox = nullptr;
+
+    // Music category rows for artists
+    brls::Box* m_musicCategoriesBox = nullptr;
+    brls::Box* m_albumsContent = nullptr;
+    brls::Box* m_singlesContent = nullptr;
+    brls::Box* m_epsContent = nullptr;
+    brls::Box* m_compilationsContent = nullptr;
+    brls::Box* m_soundtracksContent = nullptr;
 };
 
 } // namespace vitaplex

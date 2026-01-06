@@ -6,17 +6,43 @@
 #include "view/media_item_cell.hpp"
 #include "app/application.hpp"
 #include "utils/image_loader.hpp"
+#include "utils/async.hpp"
 
 namespace vitaplex {
 
 MediaDetailView::MediaDetailView(const MediaItem& item)
     : m_item(item) {
 
-    this->setAxis(brls::Axis::ROW);
+    this->setAxis(brls::Axis::COLUMN);
     this->setJustifyContent(brls::JustifyContent::FLEX_START);
-    this->setAlignItems(brls::AlignItems::FLEX_START);
-    this->setPadding(30);
+    this->setAlignItems(brls::AlignItems::STRETCH);
     this->setGrow(1.0f);
+
+    // Register back button (B/Circle) to pop this activity
+    this->registerAction("Back", brls::ControllerButton::BUTTON_B, [](brls::View* view) {
+        brls::Application::popActivity();
+        return true;
+    }, false, false, brls::Sound::SOUND_BACK);
+
+    // Create scrollable content
+    m_scrollView = new brls::ScrollingFrame();
+    m_scrollView->setGrow(1.0f);
+
+    m_mainContent = new brls::Box();
+    m_mainContent->setAxis(brls::Axis::COLUMN);
+    m_mainContent->setPadding(30);
+
+    // Check if this is music content
+    bool isMusic = (m_item.mediaType == MediaType::MUSIC_ARTIST ||
+                    m_item.mediaType == MediaType::MUSIC_ALBUM ||
+                    m_item.mediaType == MediaType::MUSIC_TRACK);
+
+    // Top row - poster and info
+    auto* topRow = new brls::Box();
+    topRow->setAxis(brls::Axis::ROW);
+    topRow->setJustifyContent(brls::JustifyContent::FLEX_START);
+    topRow->setAlignItems(brls::AlignItems::FLEX_START);
+    topRow->setMarginBottom(20);
 
     // Left side - poster
     auto* leftBox = new brls::Box();
@@ -25,35 +51,44 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     leftBox->setMarginRight(30);
 
     m_posterImage = new brls::Image();
-    m_posterImage->setWidth(200);
-    m_posterImage->setHeight(300);
+    if (isMusic) {
+        // Square album art
+        m_posterImage->setWidth(200);
+        m_posterImage->setHeight(200);
+    } else {
+        // Portrait poster
+        m_posterImage->setWidth(200);
+        m_posterImage->setHeight(300);
+    }
     m_posterImage->setScalingType(brls::ImageScalingType::FIT);
     leftBox->addView(m_posterImage);
 
-    // Play buttons
-    m_playButton = new brls::Button();
-    m_playButton->setText("Play");
-    m_playButton->setWidth(200);
-    m_playButton->setMarginTop(20);
-    m_playButton->registerClickAction([this](brls::View* view) {
-        onPlay(false);
-        return true;
-    });
-    leftBox->addView(m_playButton);
-
-    if (m_item.viewOffset > 0) {
-        m_resumeButton = new brls::Button();
-        m_resumeButton->setText("Resume");
-        m_resumeButton->setWidth(200);
-        m_resumeButton->setMarginTop(10);
-        m_resumeButton->registerClickAction([this](brls::View* view) {
-            onPlay(true);
+    // Play buttons (not for artists)
+    if (m_item.mediaType != MediaType::MUSIC_ARTIST) {
+        m_playButton = new brls::Button();
+        m_playButton->setText("Play");
+        m_playButton->setWidth(200);
+        m_playButton->setMarginTop(20);
+        m_playButton->registerClickAction([this](brls::View* view) {
+            onPlay(false);
             return true;
         });
-        leftBox->addView(m_resumeButton);
+        leftBox->addView(m_playButton);
+
+        if (m_item.viewOffset > 0) {
+            m_resumeButton = new brls::Button();
+            m_resumeButton->setText("Resume");
+            m_resumeButton->setWidth(200);
+            m_resumeButton->setMarginTop(10);
+            m_resumeButton->registerClickAction([this](brls::View* view) {
+                onPlay(true);
+                return true;
+            });
+            leftBox->addView(m_resumeButton);
+        }
     }
 
-    this->addView(leftBox);
+    topRow->addView(leftBox);
 
     // Right side - details
     auto* rightBox = new brls::Box();
@@ -107,7 +142,10 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         rightBox->addView(m_summaryLabel);
     }
 
-    // Children container (for shows/seasons)
+    topRow->addView(rightBox);
+    m_mainContent->addView(topRow);
+
+    // Children container (for shows/seasons/albums - but NOT artists)
     if (m_item.mediaType == MediaType::SHOW ||
         m_item.mediaType == MediaType::SEASON ||
         m_item.mediaType == MediaType::MUSIC_ALBUM) {
@@ -122,18 +160,58 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         }
         childrenLabel->setFontSize(20);
         childrenLabel->setMarginBottom(10);
-        rightBox->addView(childrenLabel);
+        m_mainContent->addView(childrenLabel);
+
+        auto* childrenScroll = new brls::HScrollingFrame();
+        childrenScroll->setHeight(180);
+        childrenScroll->setMarginBottom(20);
 
         m_childrenBox = new brls::Box();
         m_childrenBox->setAxis(brls::Axis::ROW);
-        m_childrenBox->setHeight(180);
-        rightBox->addView(m_childrenBox);
+        m_childrenBox->setJustifyContent(brls::JustifyContent::FLEX_START);
+
+        childrenScroll->setContentView(m_childrenBox);
+        m_mainContent->addView(childrenScroll);
     }
 
-    this->addView(rightBox);
+    // Music categories container for artists
+    if (m_item.mediaType == MediaType::MUSIC_ARTIST) {
+        m_musicCategoriesBox = new brls::Box();
+        m_musicCategoriesBox->setAxis(brls::Axis::COLUMN);
+        m_mainContent->addView(m_musicCategoriesBox);
+    }
+
+    m_scrollView->setContentView(m_mainContent);
+    this->addView(m_scrollView);
 
     // Load full details
     loadDetails();
+}
+
+brls::HScrollingFrame* MediaDetailView::createMediaRow(const std::string& title, brls::Box** contentOut) {
+    auto* label = new brls::Label();
+    label->setText(title);
+    label->setFontSize(20);
+    label->setMarginBottom(10);
+    label->setMarginTop(15);
+    m_musicCategoriesBox->addView(label);
+
+    auto* scrollFrame = new brls::HScrollingFrame();
+    scrollFrame->setHeight(150);
+    scrollFrame->setMarginBottom(10);
+
+    auto* content = new brls::Box();
+    content->setAxis(brls::Axis::ROW);
+    content->setJustifyContent(brls::JustifyContent::FLEX_START);
+
+    scrollFrame->setContentView(content);
+    m_musicCategoriesBox->addView(scrollFrame);
+
+    if (contentOut) {
+        *contentOut = content;
+    }
+
+    return scrollFrame;
 }
 
 brls::View* MediaDetailView::create() {
@@ -158,16 +236,27 @@ void MediaDetailView::loadDetails() {
         }
     }
 
-    // Load thumbnail
+    // Load thumbnail with appropriate aspect ratio
     if (m_posterImage && !m_item.thumb.empty()) {
-        std::string url = client.getThumbnailUrl(m_item.thumb, 400, 600);
+        bool isMusic = (m_item.mediaType == MediaType::MUSIC_ARTIST ||
+                        m_item.mediaType == MediaType::MUSIC_ALBUM ||
+                        m_item.mediaType == MediaType::MUSIC_TRACK);
+
+        int width = isMusic ? 400 : 400;
+        int height = isMusic ? 400 : 600;
+
+        std::string url = client.getThumbnailUrl(m_item.thumb, width, height);
         ImageLoader::loadAsync(url, [this](brls::Image* image) {
             // Image loaded
         }, m_posterImage);
     }
 
     // Load children if applicable
-    loadChildren();
+    if (m_item.mediaType == MediaType::MUSIC_ARTIST) {
+        loadMusicCategories();
+    } else {
+        loadChildren();
+    }
 }
 
 void MediaDetailView::loadChildren() {
@@ -182,7 +271,7 @@ void MediaDetailView::loadChildren() {
             auto* cell = new MediaItemCell();
             cell->setItem(child);
             cell->setWidth(120);
-            cell->setHeight(170);
+            cell->setHeight(150);
             cell->setMarginRight(10);
 
             cell->registerClickAction([this, child](brls::View* view) {
@@ -197,10 +286,93 @@ void MediaDetailView::loadChildren() {
     }
 }
 
+void MediaDetailView::loadMusicCategories() {
+    if (!m_musicCategoriesBox) return;
+
+    asyncRun([this]() {
+        PlexClient& client = PlexClient::getInstance();
+
+        std::vector<MediaItem> allAlbums;
+        if (!client.fetchChildren(m_item.ratingKey, allAlbums)) {
+            brls::Logger::error("Failed to fetch albums for artist");
+            return;
+        }
+
+        // Categorize albums by subtype
+        std::vector<MediaItem> albums;
+        std::vector<MediaItem> singles;
+        std::vector<MediaItem> eps;
+        std::vector<MediaItem> compilations;
+        std::vector<MediaItem> soundtracks;
+        std::vector<MediaItem> other;
+
+        for (const auto& album : allAlbums) {
+            std::string subtype = album.subtype;
+            // Convert to lowercase for comparison
+            for (char& c : subtype) c = tolower(c);
+
+            if (subtype == "single") {
+                singles.push_back(album);
+            } else if (subtype == "ep") {
+                eps.push_back(album);
+            } else if (subtype == "compilation") {
+                compilations.push_back(album);
+            } else if (subtype == "soundtrack") {
+                soundtracks.push_back(album);
+            } else if (subtype == "album" || subtype.empty()) {
+                albums.push_back(album);
+            } else {
+                other.push_back(album);
+            }
+        }
+
+        brls::Logger::info("Music categories: {} albums, {} singles, {} EPs, {} compilations, {} soundtracks, {} other",
+                           albums.size(), singles.size(), eps.size(),
+                           compilations.size(), soundtracks.size(), other.size());
+
+        // Update UI on main thread
+        brls::sync([this, albums, singles, eps, compilations, soundtracks, other]() {
+            m_musicCategoriesBox->clearViews();
+
+            auto addCategory = [this](const std::string& title, const std::vector<MediaItem>& items) {
+                if (items.empty()) return;
+
+                brls::Box* content = nullptr;
+                createMediaRow(title, &content);
+
+                for (const auto& item : items) {
+                    auto* cell = new MediaItemCell();
+                    cell->setItem(item);
+                    cell->setWidth(120);
+                    cell->setHeight(150);
+                    cell->setMarginRight(10);
+
+                    MediaItem capturedItem = item;
+                    cell->registerClickAction([this, capturedItem](brls::View* view) {
+                        auto* detailView = new MediaDetailView(capturedItem);
+                        brls::Application::pushActivity(new brls::Activity(detailView));
+                        return true;
+                    });
+
+                    content->addView(cell);
+                }
+            };
+
+            addCategory("Albums", albums);
+            addCategory("Singles", singles);
+            addCategory("EPs", eps);
+            addCategory("Compilations", compilations);
+            addCategory("Soundtracks", soundtracks);
+            addCategory("Other", other);
+        });
+    });
+}
+
 void MediaDetailView::onPlay(bool resume) {
     // Start playback
     if (m_item.mediaType == MediaType::MOVIE ||
-        m_item.mediaType == MediaType::EPISODE) {
+        m_item.mediaType == MediaType::EPISODE ||
+        m_item.mediaType == MediaType::MUSIC_TRACK) {
 
         Application::getInstance().pushPlayerActivity(m_item.ratingKey);
     }

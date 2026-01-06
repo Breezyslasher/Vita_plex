@@ -53,6 +53,11 @@ struct AppSettings {
     bool animationsEnabled = true;
     bool debugLogging = true;  // Enable debug logging
 
+    // Layout Settings
+    bool showLibrariesInSidebar = false;  // Show libraries in sidebar instead of Library tab
+    bool collapseSidebar = false;         // Collapse sidebar to icons only
+    std::string hiddenLibraries;          // Comma-separated list of library keys to hide
+
     // Playback Settings
     bool autoPlayNext = true;
     bool resumePlayback = true;

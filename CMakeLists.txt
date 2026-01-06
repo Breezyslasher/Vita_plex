@@ -74,6 +74,7 @@ set(APP_SOURCES
     # Views
     src/view/home_tab.cpp
     src/view/library_tab.cpp
+    src/view/library_section_tab.cpp
     src/view/search_tab.cpp
     src/view/settings_tab.cpp
     src/view/media_detail_view.cpp

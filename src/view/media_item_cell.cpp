@@ -51,6 +51,23 @@ MediaItemCell::MediaItemCell() {
 void MediaItemCell::setItem(const MediaItem& item) {
     m_item = item;
 
+    // Adjust thumbnail size based on media type
+    // Music (albums, artists, tracks) use square covers
+    // Movies, TV shows use portrait posters
+    bool isMusic = (item.mediaType == MediaType::MUSIC_ARTIST ||
+                    item.mediaType == MediaType::MUSIC_ALBUM ||
+                    item.mediaType == MediaType::MUSIC_TRACK);
+
+    if (isMusic) {
+        // Square album art
+        m_thumbnailImage->setWidth(110);
+        m_thumbnailImage->setHeight(110);
+    } else {
+        // Portrait poster
+        m_thumbnailImage->setWidth(110);
+        m_thumbnailImage->setHeight(165);
+    }
+
     // Set title
     if (m_titleLabel) {
         std::string title = item.title;
@@ -69,6 +86,14 @@ void MediaItemCell::setItem(const MediaItem& item) {
                      item.parentIndex, item.index);
             m_subtitleLabel->setText(subtitle);
             m_subtitleLabel->setVisibility(brls::Visibility::VISIBLE);
+        } else if (item.mediaType == MediaType::MUSIC_TRACK) {
+            // Show track number for music
+            if (item.index > 0) {
+                m_subtitleLabel->setText("Track " + std::to_string(item.index));
+                m_subtitleLabel->setVisibility(brls::Visibility::VISIBLE);
+            } else {
+                m_subtitleLabel->setVisibility(brls::Visibility::GONE);
+            }
         } else {
             m_subtitleLabel->setVisibility(brls::Visibility::GONE);
         }
@@ -86,10 +111,27 @@ void MediaItemCell::setItem(const MediaItem& item) {
 }
 
 void MediaItemCell::loadThumbnail() {
-    if (!m_thumbnailImage || m_item.thumb.empty()) return;
+    if (!m_thumbnailImage) return;
 
     PlexClient& client = PlexClient::getInstance();
-    std::string url = client.getThumbnailUrl(m_item.thumb, 220, 330);
+
+    // Use square dimensions for music, portrait for movies/TV
+    bool isMusic = (m_item.mediaType == MediaType::MUSIC_ARTIST ||
+                    m_item.mediaType == MediaType::MUSIC_ALBUM ||
+                    m_item.mediaType == MediaType::MUSIC_TRACK);
+
+    int width = isMusic ? 220 : 220;
+    int height = isMusic ? 220 : 330;
+
+    // For episodes, prefer grandparentThumb (show poster) if available
+    std::string thumbPath = m_item.thumb;
+    if (m_item.mediaType == MediaType::EPISODE && !m_item.grandparentThumb.empty()) {
+        thumbPath = m_item.grandparentThumb;
+    }
+
+    if (thumbPath.empty()) return;
+
+    std::string url = client.getThumbnailUrl(thumbPath, width, height);
 
     ImageLoader::loadAsync(url, [this](brls::Image* image) {
         // Image loaded callback
