@@ -130,6 +130,7 @@ public:
     bool requestPin(PinAuth& pinAuth);
     bool checkPin(PinAuth& pinAuth);
     bool refreshToken();  // JWT token refresh (call before 7-day expiry)
+    bool fetchServers(std::vector<PlexServer>& servers);  // Get user's servers from plex.tv
     bool connectToServer(const std::string& url);
     void logout();
 

@@ -91,11 +91,6 @@ void LoginActivity::onContentAvailable() {
 }
 
 void LoginActivity::onLoginPressed() {
-    if (m_serverUrl.empty()) {
-        if (statusLabel) statusLabel->setText("Please enter a server URL");
-        return;
-    }
-
     if (m_username.empty() || m_password.empty()) {
         if (statusLabel) statusLabel->setText("Please enter username and password");
         return;
@@ -107,18 +102,39 @@ void LoginActivity::onLoginPressed() {
     PlexClient& client = PlexClient::getInstance();
 
     if (client.login(m_username, m_password)) {
-        if (client.connectToServer(m_serverUrl)) {
-            Application::getInstance().setUsername(m_username);
-            Application::getInstance().saveSettings();
+        Application::getInstance().setUsername(m_username);
 
-            if (statusLabel) statusLabel->setText("Login successful!");
-
-            // Navigate to main activity
-            brls::sync([this]() {
-                Application::getInstance().pushMainActivity();
-            });
+        // If server URL provided, use it; otherwise auto-detect
+        if (!m_serverUrl.empty()) {
+            if (statusLabel) statusLabel->setText("Connecting to server...");
+            if (client.connectToServer(m_serverUrl)) {
+                Application::getInstance().saveSettings();
+                if (statusLabel) statusLabel->setText("Login successful!");
+                brls::sync([this]() {
+                    Application::getInstance().pushMainActivity();
+                });
+            } else {
+                if (statusLabel) statusLabel->setText("Failed to connect to server");
+            }
         } else {
-            if (statusLabel) statusLabel->setText("Failed to connect to server");
+            // Auto-detect servers
+            if (statusLabel) statusLabel->setText("Finding your servers...");
+            std::vector<PlexServer> servers;
+            if (client.fetchServers(servers) && !servers.empty()) {
+                // Connect to first available server
+                if (statusLabel) statusLabel->setText("Connecting to " + servers[0].name + "...");
+                if (client.connectToServer(servers[0].address)) {
+                    Application::getInstance().saveSettings();
+                    if (statusLabel) statusLabel->setText("Connected to " + servers[0].name);
+                    brls::sync([this]() {
+                        Application::getInstance().pushMainActivity();
+                    });
+                } else {
+                    if (statusLabel) statusLabel->setText("Failed to connect to " + servers[0].name);
+                }
+            } else {
+                if (statusLabel) statusLabel->setText("No servers found - enter URL manually");
+            }
         }
     } else {
         if (statusLabel) statusLabel->setText("Login failed - check credentials");
@@ -126,11 +142,6 @@ void LoginActivity::onLoginPressed() {
 }
 
 void LoginActivity::onPinLoginPressed() {
-    if (m_serverUrl.empty()) {
-        if (statusLabel) statusLabel->setText("Please enter a server URL first");
-        return;
-    }
-
     m_pinMode = true;
 
     PlexClient& client = PlexClient::getInstance();
@@ -168,15 +179,38 @@ void LoginActivity::checkPinStatus() {
     if (client.checkPin(m_pinAuth)) {
         m_pinMode = false;
         m_pinTimer.stop();
+        if (pinCodeLabel) pinCodeLabel->setVisibility(brls::Visibility::GONE);
 
-        if (client.connectToServer(m_serverUrl)) {
-            Application::getInstance().saveSettings();
+        if (statusLabel) statusLabel->setText("PIN authenticated! Finding servers...");
 
-            if (statusLabel) statusLabel->setText("PIN authenticated!");
-
-            brls::sync([this]() {
-                Application::getInstance().pushMainActivity();
-            });
+        // If server URL provided, use it; otherwise auto-detect
+        if (!m_serverUrl.empty()) {
+            if (client.connectToServer(m_serverUrl)) {
+                Application::getInstance().saveSettings();
+                if (statusLabel) statusLabel->setText("Connected!");
+                brls::sync([this]() {
+                    Application::getInstance().pushMainActivity();
+                });
+            } else {
+                if (statusLabel) statusLabel->setText("Failed to connect to server");
+            }
+        } else {
+            // Auto-detect servers
+            std::vector<PlexServer> servers;
+            if (client.fetchServers(servers) && !servers.empty()) {
+                if (statusLabel) statusLabel->setText("Connecting to " + servers[0].name + "...");
+                if (client.connectToServer(servers[0].address)) {
+                    Application::getInstance().saveSettings();
+                    if (statusLabel) statusLabel->setText("Connected to " + servers[0].name);
+                    brls::sync([this]() {
+                        Application::getInstance().pushMainActivity();
+                    });
+                } else {
+                    if (statusLabel) statusLabel->setText("Failed to connect to " + servers[0].name);
+                }
+            } else {
+                if (statusLabel) statusLabel->setText("No servers found - enter URL manually");
+            }
         }
     } else if (m_pinAuth.expired || m_pinCheckTimer > 150) {
         // PIN expired (5 minutes)

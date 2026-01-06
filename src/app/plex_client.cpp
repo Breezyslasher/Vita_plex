@@ -240,6 +240,99 @@ bool PlexClient::refreshToken() {
     return false;
 }
 
+bool PlexClient::fetchServers(std::vector<PlexServer>& servers) {
+    brls::Logger::info("Fetching user's servers from plex.tv");
+
+    if (m_authToken.empty()) {
+        brls::Logger::error("No auth token - please login first");
+        return false;
+    }
+
+    HttpClient client;
+    HttpRequest req;
+    req.url = "https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=0";
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    req.headers["X-Plex-Token"] = m_authToken;
+    req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+
+    HttpResponse resp = client.request(req);
+
+    brls::Logger::debug("Servers response: {} - {} bytes", resp.statusCode, resp.body.length());
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("Failed to fetch servers: {}", resp.statusCode);
+        return false;
+    }
+
+    servers.clear();
+
+    // Parse server resources - look for devices that provide "server"
+    // Response is an array of resources
+    size_t pos = 0;
+    while ((pos = resp.body.find("\"name\"", pos)) != std::string::npos) {
+        // Find the start of this object (go back to find opening brace)
+        size_t objStart = resp.body.rfind('{', pos);
+        if (objStart == std::string::npos) {
+            pos++;
+            continue;
+        }
+
+        // Find end of object
+        int braceCount = 1;
+        size_t objEnd = objStart + 1;
+        while (braceCount > 0 && objEnd < resp.body.length()) {
+            if (resp.body[objEnd] == '{') braceCount++;
+            else if (resp.body[objEnd] == '}') braceCount--;
+            objEnd++;
+        }
+
+        std::string obj = resp.body.substr(objStart, objEnd - objStart);
+
+        // Check if this resource provides "server"
+        if (obj.find("\"provides\"") != std::string::npos &&
+            obj.find("\"server\"") != std::string::npos) {
+
+            PlexServer server;
+            server.name = extractJsonValue(obj, "name");
+            server.machineIdentifier = extractJsonValue(obj, "clientIdentifier");
+
+            // Find connections - look for the first available URI
+            size_t connPos = obj.find("\"connections\"");
+            if (connPos != std::string::npos) {
+                // Find first uri in connections
+                size_t uriPos = obj.find("\"uri\"", connPos);
+                if (uriPos != std::string::npos) {
+                    server.address = extractJsonValue(obj.substr(uriPos), "uri");
+                }
+
+                // Also try to find local connection
+                size_t localPos = obj.find("\"local\":true", connPos);
+                if (localPos != std::string::npos) {
+                    // Find uri near this local connection
+                    size_t localUriPos = obj.rfind("\"uri\"", localPos);
+                    if (localUriPos != std::string::npos && localUriPos > connPos) {
+                        std::string localUri = extractJsonValue(obj.substr(localUriPos), "uri");
+                        if (!localUri.empty()) {
+                            server.address = localUri;  // Prefer local connection
+                        }
+                    }
+                }
+            }
+
+            if (!server.name.empty() && !server.address.empty()) {
+                brls::Logger::info("Found server: {} at {}", server.name, server.address);
+                servers.push_back(server);
+            }
+        }
+
+        pos = objEnd;
+    }
+
+    brls::Logger::info("Found {} servers", servers.size());
+    return !servers.empty();
+}
+
 bool PlexClient::connectToServer(const std::string& url) {
     brls::Logger::info("Connecting to server: {}", url);
 
