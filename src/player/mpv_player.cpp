@@ -468,7 +468,7 @@ void MpvPlayer::processEvents() {
             break;
         }
         eventCount++;
-        brls::Logger::debug("MpvPlayer: Processing event {} (type={})", eventCount, event->event_id);
+        brls::Logger::debug("MpvPlayer: Processing event {} (type={})", eventCount, (int)event->event_id);
         handleEvent(event);
     }
     if (eventCount > 0) {
@@ -499,7 +499,7 @@ void MpvPlayer::handleEvent(mpv_event* event) {
             
         case MPV_EVENT_END_FILE: {
             mpv_event_end_file* end = (mpv_event_end_file*)event->data;
-            brls::Logger::debug("MpvPlayer: Event END_FILE (reason: {}, error: {})", end->reason, end->error);
+            brls::Logger::debug("MpvPlayer: Event END_FILE (reason: {}, error: {})", (int)end->reason, end->error);
 
             // MPV end file reasons:
             // 0 = EOF (finished normally)

@@ -75,6 +75,7 @@ public:
     void seekTo(double seconds);
     void seekRelative(double seconds);
     void seekPercent(double percent);
+    void seekChapter(int delta);
 
     // Volume
     void setVolume(int percent);
@@ -90,6 +91,8 @@ public:
     void cycleSubtitle();
     void cycleAudio();
     void toggleSubtitles();
+    void setSubtitleDelay(double seconds);
+    void setAudioDelay(double seconds);
 
     // State
     MpvPlayerState getState() const { return m_state; }
@@ -109,6 +112,11 @@ public:
 
     // OSD
     void showOSD(const std::string& text, double durationSec = 2.0);
+    void toggleOSD();
+
+    // Options and properties
+    void setOption(const std::string& name, const std::string& value);
+    std::string getProperty(const std::string& name) const;
 
     // Update (call in render loop)
     void update();
