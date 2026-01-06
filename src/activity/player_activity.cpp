@@ -5,6 +5,7 @@
 #include "activity/player_activity.hpp"
 #include "app/plex_client.hpp"
 #include "player/mpv_player.hpp"
+#include "utils/image_loader.hpp"
 
 namespace vitaplex {
 
@@ -115,7 +116,9 @@ void PlayerActivity::loadMedia() {
                 // Load photo into the view (photoImage is defined in player.xml)
                 if (photoImage) {
                     photoImage->setVisibility(brls::Visibility::VISIBLE);
-                    photoImage->setImageFromURL(photoUrl);
+                    ImageLoader::loadAsync(photoUrl, [](brls::Image* image) {
+                        // Photo loaded
+                    }, photoImage);
                 }
 
                 // Hide player controls for photos
