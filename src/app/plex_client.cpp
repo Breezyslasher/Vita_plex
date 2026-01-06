@@ -96,11 +96,38 @@ bool PlexClient::extractJsonBool(const std::string& json, const std::string& key
     return (value == "true" || value == "1");
 }
 
+std::string PlexClient::base64Encode(const std::string& input) {
+    static const char* base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string output;
+    int val = 0, valb = -6;
+
+    for (unsigned char c : input) {
+        val = (val << 8) + c;
+        valb += 8;
+        while (valb >= 0) {
+            output.push_back(base64_chars[(val >> valb) & 0x3F]);
+            valb -= 6;
+        }
+    }
+
+    if (valb > -6) {
+        output.push_back(base64_chars[((val << 8) >> (valb + 8)) & 0x3F]);
+    }
+
+    while (output.size() % 4) {
+        output.push_back('=');
+    }
+
+    return output;
+}
+
 bool PlexClient::login(const std::string& username, const std::string& password) {
     brls::Logger::info("Attempting login for user: {}", username);
 
     HttpClient client;
     HttpRequest req;
+
+    // Try the newer v2 endpoint first with form data
     req.url = "https://plex.tv/api/v2/users/signin";
     req.method = "POST";
     req.headers["Accept"] = "application/json";
@@ -111,20 +138,65 @@ bool PlexClient::login(const std::string& username, const std::string& password)
     req.headers["X-Plex-Platform"] = PLEX_PLATFORM;
     req.headers["X-Plex-Device"] = PLEX_DEVICE;
 
-    req.body = "login=" + HttpClient::urlEncode(username) + "&password=" + HttpClient::urlEncode(password);
+    // Include X-Plex parameters in body as well as headers
+    req.body = "login=" + HttpClient::urlEncode(username) +
+               "&password=" + HttpClient::urlEncode(password) +
+               "&X-Plex-Client-Identifier=" + HttpClient::urlEncode(PLEX_CLIENT_ID) +
+               "&X-Plex-Product=" + HttpClient::urlEncode(PLEX_CLIENT_NAME) +
+               "&X-Plex-Version=" + HttpClient::urlEncode(PLEX_CLIENT_VERSION) +
+               "&X-Plex-Platform=" + HttpClient::urlEncode(PLEX_PLATFORM) +
+               "&X-Plex-Device=" + HttpClient::urlEncode(PLEX_DEVICE);
 
     HttpResponse resp = client.request(req);
+    brls::Logger::debug("Login response: {} - {}", resp.statusCode, resp.body.substr(0, 200));
 
     if (resp.statusCode == 201 || resp.statusCode == 200) {
         m_authToken = extractJsonValue(resp.body, "authToken");
         if (!m_authToken.empty()) {
-            brls::Logger::info("Login successful");
+            brls::Logger::info("Login successful with v2 API");
             Application::getInstance().setAuthToken(m_authToken);
             return true;
         }
     }
 
-    brls::Logger::error("Login failed: {}", resp.statusCode);
+    // If v2 failed, try the older sign_in.json endpoint with Basic Auth
+    brls::Logger::info("v2 login failed, trying legacy endpoint");
+
+    HttpRequest legacyReq;
+    legacyReq.url = "https://plex.tv/users/sign_in.json";
+    legacyReq.method = "POST";
+    legacyReq.headers["Accept"] = "application/json";
+    legacyReq.headers["Content-Type"] = "application/x-www-form-urlencoded";
+    legacyReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+    legacyReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+    legacyReq.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+    legacyReq.headers["X-Plex-Platform"] = PLEX_PLATFORM;
+    legacyReq.headers["X-Plex-Device"] = PLEX_DEVICE;
+
+    // Create Basic Auth header
+    std::string credentials = username + ":" + password;
+    std::string base64Creds = base64Encode(credentials);
+    legacyReq.headers["Authorization"] = "Basic " + base64Creds;
+
+    legacyReq.body = "";  // Body not needed with Basic Auth
+
+    HttpResponse legacyResp = client.request(legacyReq);
+    brls::Logger::debug("Legacy login response: {} - {}", legacyResp.statusCode, legacyResp.body.substr(0, 200));
+
+    if (legacyResp.statusCode == 201 || legacyResp.statusCode == 200) {
+        // Legacy response has token in user.authentication_token or user.authToken
+        m_authToken = extractJsonValue(legacyResp.body, "authentication_token");
+        if (m_authToken.empty()) {
+            m_authToken = extractJsonValue(legacyResp.body, "authToken");
+        }
+        if (!m_authToken.empty()) {
+            brls::Logger::info("Login successful with legacy API");
+            Application::getInstance().setAuthToken(m_authToken);
+            return true;
+        }
+    }
+
+    brls::Logger::error("Login failed: v2={}, legacy={}", resp.statusCode, legacyResp.statusCode);
     return false;
 }
 
@@ -133,6 +205,8 @@ bool PlexClient::requestPin(PinAuth& pinAuth) {
 
     HttpClient client;
     HttpRequest req;
+
+    // Use plex.tv/api/v2/pins endpoint
     req.url = "https://plex.tv/api/v2/pins";
     req.method = "POST";
     req.headers["Accept"] = "application/json";
@@ -143,9 +217,17 @@ bool PlexClient::requestPin(PinAuth& pinAuth) {
     req.headers["X-Plex-Platform"] = PLEX_PLATFORM;
     req.headers["X-Plex-Device"] = PLEX_DEVICE;
 
-    req.body = "strong=true";
+    // Include X-Plex parameters in body for PIN request
+    // strong=true enables OAuth-style 4-character PIN for plex.tv/link
+    req.body = "strong=true"
+               "&X-Plex-Client-Identifier=" + HttpClient::urlEncode(PLEX_CLIENT_ID) +
+               "&X-Plex-Product=" + HttpClient::urlEncode(PLEX_CLIENT_NAME) +
+               "&X-Plex-Version=" + HttpClient::urlEncode(PLEX_CLIENT_VERSION) +
+               "&X-Plex-Platform=" + HttpClient::urlEncode(PLEX_PLATFORM) +
+               "&X-Plex-Device=" + HttpClient::urlEncode(PLEX_DEVICE);
 
     HttpResponse resp = client.request(req);
+    brls::Logger::debug("PIN request response: {} - {}", resp.statusCode, resp.body.substr(0, 500));
 
     if (resp.statusCode == 201 || resp.statusCode == 200) {
         pinAuth.id = extractJsonInt(resp.body, "id");
@@ -153,11 +235,29 @@ bool PlexClient::requestPin(PinAuth& pinAuth) {
         pinAuth.expiresIn = extractJsonInt(resp.body, "expiresIn");
         pinAuth.expired = false;
 
-        brls::Logger::info("PIN requested: {}", pinAuth.code);
-        return !pinAuth.code.empty();
+        brls::Logger::info("PIN requested successfully: {}", pinAuth.code);
+        return !pinAuth.code.empty() && pinAuth.id > 0;
     }
 
-    brls::Logger::error("PIN request failed: {}", resp.statusCode);
+    // If failed, try alternative endpoint (clients.plex.tv)
+    brls::Logger::info("Primary PIN endpoint failed, trying alternative");
+
+    req.url = "https://clients.plex.tv/api/v2/pins";
+    HttpResponse resp2 = client.request(req);
+    brls::Logger::debug("Alternative PIN response: {} - {}", resp2.statusCode, resp2.body.substr(0, 500));
+
+    if (resp2.statusCode == 201 || resp2.statusCode == 200) {
+        pinAuth.id = extractJsonInt(resp2.body, "id");
+        pinAuth.code = extractJsonValue(resp2.body, "code");
+        pinAuth.expiresIn = extractJsonInt(resp2.body, "expiresIn");
+        pinAuth.expired = false;
+
+        brls::Logger::info("PIN requested (alt endpoint): {}", pinAuth.code);
+        return !pinAuth.code.empty() && pinAuth.id > 0;
+    }
+
+    brls::Logger::error("PIN request failed: primary={}, alt={}", resp.statusCode, resp2.statusCode);
+    brls::Logger::error("Response body: {}", resp.body.empty() ? resp2.body : resp.body);
     return false;
 }
 

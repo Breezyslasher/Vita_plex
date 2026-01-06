@@ -12,71 +12,220 @@ SettingsTab::SettingsTab() {
     this->setAxis(brls::Axis::COLUMN);
     this->setJustifyContent(brls::JustifyContent::FLEX_START);
     this->setAlignItems(brls::AlignItems::STRETCH);
-    this->setPadding(20);
     this->setGrow(1.0f);
 
-    // Title
-    m_titleLabel = new brls::Label();
-    m_titleLabel->setText("Settings");
-    m_titleLabel->setFontSize(28);
-    m_titleLabel->setMarginBottom(30);
-    this->addView(m_titleLabel);
+    // Create scrolling container
+    m_scrollView = new brls::ScrollingFrame();
+    m_scrollView->setGrow(1.0f);
 
-    // User info section
-    auto* userSection = new brls::Label();
-    userSection->setText("Account");
-    userSection->setFontSize(22);
-    userSection->setMarginBottom(10);
-    this->addView(userSection);
+    m_contentBox = new brls::Box();
+    m_contentBox->setAxis(brls::Axis::COLUMN);
+    m_contentBox->setPadding(20);
+    m_contentBox->setGrow(1.0f);
 
+    // Create all sections
+    createAccountSection();
+    createUISection();
+    createPlaybackSection();
+    createTranscodeSection();
+    createAboutSection();
+
+    m_scrollView->setContentView(m_contentBox);
+    this->addView(m_scrollView);
+}
+
+void SettingsTab::createAccountSection() {
     Application& app = Application::getInstance();
 
+    // Section header
+    auto* header = new brls::Header("Account");
+    m_contentBox->addView(header);
+
+    // User info cell
     m_userLabel = new brls::Label();
-    m_userLabel->setText("User: " + app.getUsername());
+    m_userLabel->setText("User: " + (app.getUsername().empty() ? "Not logged in" : app.getUsername()));
     m_userLabel->setFontSize(18);
-    m_userLabel->setMarginBottom(10);
-    this->addView(m_userLabel);
+    m_userLabel->setMarginLeft(16);
+    m_userLabel->setMarginBottom(8);
+    m_contentBox->addView(m_userLabel);
 
+    // Server info cell
     m_serverLabel = new brls::Label();
-    m_serverLabel->setText("Server: " + app.getServerUrl());
+    m_serverLabel->setText("Server: " + (app.getServerUrl().empty() ? "Not connected" : app.getServerUrl()));
     m_serverLabel->setFontSize(18);
-    m_serverLabel->setMarginBottom(30);
-    this->addView(m_serverLabel);
-
-    // About section
-    auto* aboutSection = new brls::Label();
-    aboutSection->setText("About");
-    aboutSection->setFontSize(22);
-    aboutSection->setMarginBottom(10);
-    this->addView(aboutSection);
-
-    m_versionLabel = new brls::Label();
-    m_versionLabel->setText("VitaPlex v" VITA_PLEX_VERSION);
-    m_versionLabel->setFontSize(18);
-    m_versionLabel->setMarginBottom(10);
-    this->addView(m_versionLabel);
-
-    auto* creditLabel = new brls::Label();
-    creditLabel->setText("Plex Client for PlayStation Vita");
-    creditLabel->setFontSize(16);
-    creditLabel->setMarginBottom(10);
-    this->addView(creditLabel);
-
-    auto* borealisLabel = new brls::Label();
-    borealisLabel->setText("UI powered by Borealis");
-    borealisLabel->setFontSize(16);
-    borealisLabel->setMarginBottom(30);
-    this->addView(borealisLabel);
+    m_serverLabel->setMarginLeft(16);
+    m_serverLabel->setMarginBottom(16);
+    m_contentBox->addView(m_serverLabel);
 
     // Logout button
-    m_logoutButton = new brls::Button();
-    m_logoutButton->setText("Logout");
-    m_logoutButton->setWidth(200);
-    m_logoutButton->registerClickAction([this](brls::View* view) {
+    auto* logoutCell = new brls::DetailCell();
+    logoutCell->setText("Logout");
+    logoutCell->setDetailText("Sign out from current account");
+    logoutCell->registerClickAction([this](brls::View* view) {
         onLogout();
         return true;
     });
-    this->addView(m_logoutButton);
+    m_contentBox->addView(logoutCell);
+}
+
+void SettingsTab::createUISection() {
+    Application& app = Application::getInstance();
+    AppSettings& settings = app.getSettings();
+
+    // Section header
+    auto* header = new brls::Header("User Interface");
+    m_contentBox->addView(header);
+
+    // Theme selector
+    m_themeSelector = new brls::SelectorCell();
+    m_themeSelector->init("Theme", {"System", "Light", "Dark"}, static_cast<int>(settings.theme),
+        [this](int index) {
+            onThemeChanged(index);
+        });
+    m_contentBox->addView(m_themeSelector);
+
+    // Show clock toggle
+    m_clockToggle = new brls::BooleanCell();
+    m_clockToggle->init("Show Clock", settings.showClock, [&settings](bool value) {
+        settings.showClock = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_clockToggle);
+
+    // Animations toggle
+    m_animationsToggle = new brls::BooleanCell();
+    m_animationsToggle->init("Enable Animations", settings.animationsEnabled, [&settings](bool value) {
+        settings.animationsEnabled = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_animationsToggle);
+}
+
+void SettingsTab::createPlaybackSection() {
+    Application& app = Application::getInstance();
+    AppSettings& settings = app.getSettings();
+
+    // Section header
+    auto* header = new brls::Header("Playback");
+    m_contentBox->addView(header);
+
+    // Auto-play next toggle
+    m_autoPlayToggle = new brls::BooleanCell();
+    m_autoPlayToggle->init("Auto-Play Next Episode", settings.autoPlayNext, [&settings](bool value) {
+        settings.autoPlayNext = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_autoPlayToggle);
+
+    // Resume playback toggle
+    m_resumeToggle = new brls::BooleanCell();
+    m_resumeToggle->init("Resume Playback", settings.resumePlayback, [&settings](bool value) {
+        settings.resumePlayback = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_resumeToggle);
+
+    // Show subtitles toggle
+    m_subtitlesToggle = new brls::BooleanCell();
+    m_subtitlesToggle->init("Show Subtitles", settings.showSubtitles, [&settings](bool value) {
+        settings.showSubtitles = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_subtitlesToggle);
+
+    // Subtitle size selector
+    m_subtitleSizeSelector = new brls::SelectorCell();
+    m_subtitleSizeSelector->init("Subtitle Size", {"Small", "Medium", "Large"},
+        static_cast<int>(settings.subtitleSize),
+        [this](int index) {
+            onSubtitleSizeChanged(index);
+        });
+    m_contentBox->addView(m_subtitleSizeSelector);
+
+    // Seek interval selector
+    m_seekIntervalSelector = new brls::SelectorCell();
+    m_seekIntervalSelector->init("Seek Interval",
+        {"5 seconds", "10 seconds", "15 seconds", "30 seconds", "60 seconds"},
+        settings.seekInterval == 5 ? 0 :
+        settings.seekInterval == 10 ? 1 :
+        settings.seekInterval == 15 ? 2 :
+        settings.seekInterval == 30 ? 3 : 4,
+        [this](int index) {
+            onSeekIntervalChanged(index);
+        });
+    m_contentBox->addView(m_seekIntervalSelector);
+}
+
+void SettingsTab::createTranscodeSection() {
+    Application& app = Application::getInstance();
+    AppSettings& settings = app.getSettings();
+
+    // Section header
+    auto* header = new brls::Header("Transcoding");
+    m_contentBox->addView(header);
+
+    // Video quality selector
+    m_qualitySelector = new brls::SelectorCell();
+    m_qualitySelector->init("Video Quality",
+        {"Original (Direct Play)", "1080p (20 Mbps)", "720p (4 Mbps)", "480p (2 Mbps)", "360p (1 Mbps)", "240p (500 Kbps)"},
+        static_cast<int>(settings.videoQuality),
+        [this](int index) {
+            onQualityChanged(index);
+        });
+    m_contentBox->addView(m_qualitySelector);
+
+    // Force transcode toggle
+    m_forceTranscodeToggle = new brls::BooleanCell();
+    m_forceTranscodeToggle->init("Force Transcode", settings.forceTranscode, [&settings](bool value) {
+        settings.forceTranscode = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_forceTranscodeToggle);
+
+    // Burn subtitles toggle
+    m_burnSubtitlesToggle = new brls::BooleanCell();
+    m_burnSubtitlesToggle->init("Burn Subtitles", settings.burnSubtitles, [&settings](bool value) {
+        settings.burnSubtitles = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_burnSubtitlesToggle);
+
+    // Direct play toggle
+    m_directPlayToggle = new brls::BooleanCell();
+    m_directPlayToggle->init("Try Direct Play First", settings.directPlay, [&settings](bool value) {
+        settings.directPlay = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_directPlayToggle);
+}
+
+void SettingsTab::createAboutSection() {
+    // Section header
+    auto* header = new brls::Header("About");
+    m_contentBox->addView(header);
+
+    // Version info
+    auto* versionCell = new brls::DetailCell();
+    versionCell->setText("Version");
+    versionCell->setDetailText(VITA_PLEX_VERSION);
+    m_contentBox->addView(versionCell);
+
+    // App description
+    auto* descLabel = new brls::Label();
+    descLabel->setText("VitaPlex - Plex Client for PlayStation Vita");
+    descLabel->setFontSize(16);
+    descLabel->setMarginLeft(16);
+    descLabel->setMarginTop(8);
+    m_contentBox->addView(descLabel);
+
+    // Credit
+    auto* creditLabel = new brls::Label();
+    creditLabel->setText("UI powered by Borealis");
+    creditLabel->setFontSize(14);
+    creditLabel->setMarginLeft(16);
+    creditLabel->setMarginTop(4);
+    creditLabel->setMarginBottom(20);
+    m_contentBox->addView(creditLabel);
 }
 
 void SettingsTab::onLogout() {
@@ -101,6 +250,69 @@ void SettingsTab::onLogout() {
     });
 
     dialog->open();
+}
+
+void SettingsTab::onThemeChanged(int index) {
+    Application& app = Application::getInstance();
+    AppSettings& settings = app.getSettings();
+
+    settings.theme = static_cast<AppTheme>(index);
+    app.applyTheme();
+    app.saveSettings();
+}
+
+void SettingsTab::onQualityChanged(int index) {
+    Application& app = Application::getInstance();
+    AppSettings& settings = app.getSettings();
+
+    settings.videoQuality = static_cast<VideoQuality>(index);
+
+    // Update bitrate based on quality
+    switch (settings.videoQuality) {
+        case VideoQuality::ORIGINAL:
+            settings.maxBitrate = 0;  // No limit
+            break;
+        case VideoQuality::QUALITY_1080P:
+            settings.maxBitrate = 20000;
+            break;
+        case VideoQuality::QUALITY_720P:
+            settings.maxBitrate = 4000;
+            break;
+        case VideoQuality::QUALITY_480P:
+            settings.maxBitrate = 2000;
+            break;
+        case VideoQuality::QUALITY_360P:
+            settings.maxBitrate = 1000;
+            break;
+        case VideoQuality::QUALITY_240P:
+            settings.maxBitrate = 500;
+            break;
+    }
+
+    app.saveSettings();
+}
+
+void SettingsTab::onSubtitleSizeChanged(int index) {
+    Application& app = Application::getInstance();
+    AppSettings& settings = app.getSettings();
+
+    settings.subtitleSize = static_cast<SubtitleSize>(index);
+    app.saveSettings();
+}
+
+void SettingsTab::onSeekIntervalChanged(int index) {
+    Application& app = Application::getInstance();
+    AppSettings& settings = app.getSettings();
+
+    switch (index) {
+        case 0: settings.seekInterval = 5; break;
+        case 1: settings.seekInterval = 10; break;
+        case 2: settings.seekInterval = 15; break;
+        case 3: settings.seekInterval = 30; break;
+        case 4: settings.seekInterval = 60; break;
+    }
+
+    app.saveSettings();
 }
 
 } // namespace vitaplex
