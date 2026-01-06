@@ -121,18 +121,32 @@ void LoginActivity::showServerSelectionDialog(const std::vector<PlexServer>& ser
 }
 
 void LoginActivity::connectToSelectedServer(const PlexServer& server) {
-    if (statusLabel) statusLabel->setText("Connecting to " + server.name + "...");
-
     PlexClient& client = PlexClient::getInstance();
-    if (client.connectToServer(server.address)) {
-        Application::getInstance().saveSettings();
-        if (statusLabel) statusLabel->setText("Connected to " + server.name);
-        brls::sync([this]() {
-            Application::getInstance().pushMainActivity();
-        });
-    } else {
-        if (statusLabel) statusLabel->setText("Failed to connect to " + server.name);
+
+    // Try all available connections in order (local first, then remote, then relay)
+    for (size_t i = 0; i < server.connections.size(); i++) {
+        const auto& conn = server.connections[i];
+        std::string connType = conn.local ? "local" : (conn.relay ? "relay" : "remote");
+        if (statusLabel) {
+            statusLabel->setText("Connecting to " + server.name + " (" + connType + ")...");
+        }
+        brls::Logger::info("Trying connection {}/{}: {} ({})",
+                          i + 1, server.connections.size(), conn.uri, connType);
+
+        if (client.connectToServer(conn.uri)) {
+            Application::getInstance().saveSettings();
+            if (statusLabel) statusLabel->setText("Connected to " + server.name);
+            brls::sync([this]() {
+                Application::getInstance().pushMainActivity();
+            });
+            return;
+        }
+        brls::Logger::info("Connection failed, trying next...");
     }
+
+    // All connections failed
+    if (statusLabel) statusLabel->setText("Failed to connect to " + server.name);
+    brls::Logger::error("All {} connections failed for {}", server.connections.size(), server.name);
 }
 
 void LoginActivity::onLoginPressed() {

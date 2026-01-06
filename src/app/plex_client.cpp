@@ -297,11 +297,7 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers) {
             server.name = extractJsonValue(obj, "name");
             server.machineIdentifier = extractJsonValue(obj, "clientIdentifier");
 
-            // Parse connections array to find local connection
-            // Each connection object has: uri, local, address, port, protocol
-            std::string localUri;
-            std::string remoteUri;
-
+            // Parse connections array - store ALL connections for fallback
             size_t connPos = obj.find("\"connections\"");
             if (connPos != std::string::npos) {
                 // Find the connections array start
@@ -327,13 +323,13 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers) {
                                        connObj.find("\"relay\": true") != std::string::npos);
 
                         if (!uri.empty()) {
-                            if (isLocal) {
-                                localUri = uri;
-                                brls::Logger::debug("Found local connection: {}", uri);
-                            } else if (!isRelay && remoteUri.empty()) {
-                                remoteUri = uri;
-                                brls::Logger::debug("Found remote connection: {}", uri);
-                            }
+                            ServerConnection conn;
+                            conn.uri = uri;
+                            conn.local = isLocal;
+                            conn.relay = isRelay;
+                            server.connections.push_back(conn);
+                            brls::Logger::debug("Found connection: {} (local={}, relay={})",
+                                               uri, isLocal, isRelay);
                         }
 
                         connObjPos = connObjEnd;
@@ -341,15 +337,24 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers) {
                 }
             }
 
-            // Prefer local connection, then remote, skip relay-only servers
-            if (!localUri.empty()) {
-                server.address = localUri;
-            } else if (!remoteUri.empty()) {
-                server.address = remoteUri;
+            // Sort connections: local first, then non-relay remote, then relay
+            std::sort(server.connections.begin(), server.connections.end(),
+                     [](const ServerConnection& a, const ServerConnection& b) {
+                         // Local connections first
+                         if (a.local != b.local) return a.local;
+                         // Then non-relay connections
+                         if (a.relay != b.relay) return !a.relay;
+                         return false;
+                     });
+
+            // Set primary address to first (best) connection
+            if (!server.connections.empty()) {
+                server.address = server.connections[0].uri;
             }
 
             if (!server.name.empty() && !server.address.empty()) {
-                brls::Logger::info("Found server: {} at {}", server.name, server.address);
+                brls::Logger::info("Found server: {} with {} connections (primary: {})",
+                                   server.name, server.connections.size(), server.address);
                 servers.push_back(server);
             }
         }
@@ -372,6 +377,10 @@ bool PlexClient::connectToServer(const std::string& url) {
     req.url = buildApiUrl("/");
     req.method = "GET";
     req.headers["Accept"] = "application/json";
+
+    // Use longer timeout for potentially slow connections (relay, remote)
+    bool isRelay = (url.find(".plex.direct") != std::string::npos);
+    req.timeout = isRelay ? 60 : 30;
 
     HttpResponse resp = client.request(req);
 

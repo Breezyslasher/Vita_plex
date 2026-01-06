@@ -130,9 +130,14 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
     // Set URL
     curl_easy_setopt(curl, CURLOPT_URL, req.url.c_str());
 
-    // Set timeout
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, req.timeout > 0 ? req.timeout : m_timeout);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10);
+    // Set timeout - longer connect timeout for relay connections
+    int timeout = req.timeout > 0 ? req.timeout : m_timeout;
+    int connectTimeout = timeout > 30 ? 30 : 15;  // Use longer connect timeout for long requests
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, connectTimeout);
+
+    // Enable DNS caching for faster reconnects
+    curl_easy_setopt(curl, CURLOPT_DNS_CACHE_TIMEOUT, 300);  // 5 minutes
 
     // Follow redirects
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, req.followRedirects ? 1L : 0L);
