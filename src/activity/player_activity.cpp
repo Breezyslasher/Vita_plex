@@ -56,14 +56,17 @@ void PlayerActivity::onContentAvailable() {
     });
 
     // Start update timer
-    brls::Application::createTimer(1000, [this]() {
+    m_updateTimer.setCallback([this]() {
         updateProgress();
-        return m_isPlaying;
     });
+    m_updateTimer.start(1000); // Update every second
 }
 
 void PlayerActivity::willDisappear(bool resetState) {
     brls::Activity::willDisappear(resetState);
+
+    // Stop update timer
+    m_updateTimer.stop();
 
     // Stop playback and save progress
     MpvPlayer& player = MpvPlayer::getInstance();
