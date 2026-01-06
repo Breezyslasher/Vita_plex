@@ -899,6 +899,93 @@ bool PlexClient::fetchRecentlyAdded(std::vector<MediaItem>& items) {
     return true;
 }
 
+bool PlexClient::fetchRecentlyAddedByType(MediaType type, std::vector<MediaItem>& items) {
+    brls::Logger::debug("fetchRecentlyAddedByType: type={}", static_cast<int>(type));
+
+    // Plex API type codes: 1=movie, 2=show, 8=artist (music), 9=album, 10=track
+    int typeCode = 0;
+    std::string typeName;
+    switch (type) {
+        case MediaType::MOVIE:
+            typeCode = 1;
+            typeName = "movie";
+            break;
+        case MediaType::SHOW:
+        case MediaType::EPISODE:
+            typeCode = 2;
+            typeName = "show";
+            break;
+        case MediaType::MUSIC_ARTIST:
+        case MediaType::MUSIC_ALBUM:
+        case MediaType::MUSIC_TRACK:
+            typeCode = 8;  // artist
+            typeName = "artist";
+            break;
+        default:
+            return fetchRecentlyAdded(items);  // Fallback to all types
+    }
+
+    HttpClient client;
+    std::string url = buildApiUrl("/library/recentlyAdded?type=" + std::to_string(typeCode));
+
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+
+    brls::Logger::debug("RecentlyAddedByType response: {} - {} bytes", resp.statusCode, resp.body.length());
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("Failed to fetch recently added by type: {}", resp.statusCode);
+        return false;
+    }
+
+    items.clear();
+
+    // Parse media items by looking for objects with ratingKey
+    size_t pos = 0;
+    while ((pos = resp.body.find("\"ratingKey\"", pos)) != std::string::npos) {
+        size_t objStart = resp.body.rfind('{', pos);
+        if (objStart == std::string::npos) {
+            pos++;
+            continue;
+        }
+
+        int braceCount = 1;
+        size_t objEnd = objStart + 1;
+        while (braceCount > 0 && objEnd < resp.body.length()) {
+            if (resp.body[objEnd] == '{') braceCount++;
+            else if (resp.body[objEnd] == '}') braceCount--;
+            objEnd++;
+        }
+
+        std::string obj = resp.body.substr(objStart, objEnd - objStart);
+
+        MediaItem item;
+        item.ratingKey = extractJsonValue(obj, "ratingKey");
+        item.key = extractJsonValue(obj, "key");
+        item.title = extractJsonValue(obj, "title");
+        item.summary = extractJsonValue(obj, "summary");
+        item.thumb = extractJsonValue(obj, "thumb");
+        item.art = extractJsonValue(obj, "art");
+        item.type = extractJsonValue(obj, "type");
+        item.mediaType = parseMediaType(item.type);
+        item.year = extractJsonInt(obj, "year");
+        item.duration = extractJsonInt(obj, "duration");
+        item.viewOffset = extractJsonInt(obj, "viewOffset");
+
+        if (!item.ratingKey.empty() && !item.title.empty()) {
+            items.push_back(item);
+        }
+
+        pos = objEnd;
+    }
+
+    brls::Logger::info("Found {} recently added {} items", items.size(), typeName);
+    return true;
+}
+
 bool PlexClient::search(const std::string& query, std::vector<MediaItem>& results) {
     brls::Logger::debug("Searching for: {}", query);
 

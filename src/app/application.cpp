@@ -181,12 +181,17 @@ bool Application::loadSettings() {
 
     brls::Logger::debug("loadSettings: Read {} bytes", content.length());
 
-    // Simple JSON parsing for strings
+    // Simple JSON parsing for strings (handles whitespace after colon)
     auto extractString = [&content](const std::string& key) -> std::string {
-        std::string search = "\"" + key + "\":\"";
+        std::string search = "\"" + key + "\":";
         size_t pos = content.find(search);
         if (pos == std::string::npos) return "";
         pos += search.length();
+        // Skip whitespace after colon
+        while (pos < content.length() && (content[pos] == ' ' || content[pos] == '\t')) pos++;
+        // Expect opening quote
+        if (pos >= content.length() || content[pos] != '"') return "";
+        pos++; // Skip opening quote
         size_t end = content.find("\"", pos);
         if (end == std::string::npos) return "";
         return content.substr(pos, end - pos);

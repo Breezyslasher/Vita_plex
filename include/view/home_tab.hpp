@@ -1,6 +1,6 @@
 /**
  * VitaPlex - Home Tab
- * Shows continue watching, recently added, and hubs
+ * Shows continue watching, recently added movies, shows, and music
  */
 
 #pragma once
@@ -21,12 +21,32 @@ private:
     void loadContent();
     void onItemSelected(const MediaItem& item);
 
+    // Helper to create a media row with horizontal scrolling
+    brls::HScrollingFrame* createMediaRow();
+    void populateRow(brls::Box* rowContent, const std::vector<MediaItem>& items);
+
     brls::Label* m_titleLabel = nullptr;
-    brls::Box* m_continueWatchingBox = nullptr;
-    brls::Box* m_recentlyAddedBox = nullptr;
+
+    // Continue Watching section
+    brls::HScrollingFrame* m_continueWatchingRow = nullptr;
+    brls::Box* m_continueWatchingContent = nullptr;
+
+    // Recently Added Movies section
+    brls::HScrollingFrame* m_moviesRow = nullptr;
+    brls::Box* m_moviesContent = nullptr;
+
+    // Recently Added TV Shows section
+    brls::HScrollingFrame* m_showsRow = nullptr;
+    brls::Box* m_showsContent = nullptr;
+
+    // Recently Added Music section
+    brls::HScrollingFrame* m_musicRow = nullptr;
+    brls::Box* m_musicContent = nullptr;
 
     std::vector<MediaItem> m_continueWatching;
-    std::vector<MediaItem> m_recentlyAdded;
+    std::vector<MediaItem> m_recentMovies;
+    std::vector<MediaItem> m_recentShows;
+    std::vector<MediaItem> m_recentMusic;
     bool m_loaded = false;
 };
 

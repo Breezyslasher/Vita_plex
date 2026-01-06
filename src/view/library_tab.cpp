@@ -24,12 +24,18 @@ LibraryTab::LibraryTab() {
     m_titleLabel->setMarginBottom(20);
     this->addView(m_titleLabel);
 
-    // Sections row
+    // Sections row with horizontal scrolling
+    m_sectionsScroll = new brls::HScrollingFrame();
+    m_sectionsScroll->setHeight(50);
+    m_sectionsScroll->setMarginBottom(20);
+
     m_sectionsBox = new brls::Box();
     m_sectionsBox->setAxis(brls::Axis::ROW);
-    m_sectionsBox->setHeight(50);
-    m_sectionsBox->setMarginBottom(20);
-    this->addView(m_sectionsBox);
+    m_sectionsBox->setJustifyContent(brls::JustifyContent::FLEX_START);
+    m_sectionsBox->setAlignItems(brls::AlignItems::CENTER);
+
+    m_sectionsScroll->setContentView(m_sectionsBox);
+    this->addView(m_sectionsScroll);
 
     // Content grid
     m_contentGrid = new RecyclingGrid();
