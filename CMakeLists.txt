@@ -93,14 +93,15 @@ target_link_libraries(${PROJECT_NAME}
     ${APP_PLATFORM_LIB}
 
     # External libraries first (they depend on Vita stubs)
+    # FFmpeg order: filters/format depend on codec, codec depends on util
     curl
     mpv
-    avcodec
-    avformat
     avfilter
-    avutil
+    avformat
+    avcodec
     swresample
     swscale
+    avutil
     ass
     freetype
     harfbuzz
