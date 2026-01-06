@@ -171,6 +171,7 @@ public:
 
     // Live TV
     bool fetchLiveTVChannels(std::vector<LiveTVChannel>& channels);
+    bool fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, int hoursAhead = 4);
     bool hasLiveTV() const { return m_hasLiveTV; }
 
     // Thumbnail URL

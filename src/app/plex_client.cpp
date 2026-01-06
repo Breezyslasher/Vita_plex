@@ -1280,6 +1280,159 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
     return true;
 }
 
+bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, int hoursAhead) {
+    brls::Logger::debug("fetchEPGGrid: fetching {} hours of programming", hoursAhead);
+
+    HttpClient client;
+
+    // First get the DVR info to find the guide endpoint
+    std::string dvrsUrl = buildApiUrl("/livetv/dvrs");
+    HttpRequest dvrsReq;
+    dvrsReq.url = dvrsUrl;
+    dvrsReq.method = "GET";
+    dvrsReq.headers["Accept"] = "application/json";
+    HttpResponse dvrsResp = client.request(dvrsReq);
+
+    if (dvrsResp.statusCode != 200) {
+        brls::Logger::error("fetchEPGGrid: Failed to fetch DVRs: {}", dvrsResp.statusCode);
+        return false;
+    }
+
+    // Get the DVR key from the response
+    std::string dvrKey = extractJsonValue(dvrsResp.body, "key");
+    if (dvrKey.empty()) {
+        // Try to find it in the response
+        size_t keyPos = dvrsResp.body.find("\"key\"");
+        if (keyPos != std::string::npos) {
+            dvrKey = extractJsonValue(dvrsResp.body.substr(keyPos), "key");
+        }
+    }
+
+    brls::Logger::debug("fetchEPGGrid: DVR key = {}", dvrKey);
+
+    // Fetch EPG grid - try multiple endpoints
+    std::string epgUrl;
+    HttpResponse epgResp;
+
+    // Try /livetv/epg endpoint first
+    epgUrl = buildApiUrl("/livetv/epg");
+    HttpRequest epgReq;
+    epgReq.url = epgUrl;
+    epgReq.method = "GET";
+    epgReq.headers["Accept"] = "application/json";
+    epgReq.timeout = 30;
+    epgResp = client.request(epgReq);
+
+    if (epgResp.statusCode != 200) {
+        // Try alternative: /media/subscriptions/scheduled
+        brls::Logger::debug("fetchEPGGrid: /livetv/epg failed, trying grid endpoint");
+
+        // Try with the DVR key
+        if (!dvrKey.empty()) {
+            epgUrl = buildApiUrl(dvrKey + "/grid?");
+        } else {
+            epgUrl = buildApiUrl("/livetv/grid");
+        }
+        epgReq.url = epgUrl;
+        epgResp = client.request(epgReq);
+    }
+
+    if (epgResp.statusCode != 200) {
+        brls::Logger::error("fetchEPGGrid: Failed to fetch EPG: {}", epgResp.statusCode);
+        // Fall back to basic channels without program info
+        return fetchLiveTVChannels(channelsWithPrograms);
+    }
+
+    brls::Logger::debug("fetchEPGGrid: Got {} bytes of EPG data", epgResp.body.length());
+
+    channelsWithPrograms.clear();
+
+    // Parse the EPG response - look for channel entries with program data
+    // The structure varies but typically has channels with Media/Program entries
+    size_t pos = 0;
+
+    // Look for channel markers in the response
+    while ((pos = epgResp.body.find("\"channelNumber\"", pos)) != std::string::npos) {
+        // Find the start of this channel object
+        size_t objStart = epgResp.body.rfind('{', pos);
+        if (objStart == std::string::npos) {
+            pos++;
+            continue;
+        }
+
+        // Skip if we already parsed this object (check if there's a channelNumber before this in same object)
+        std::string beforeSection = epgResp.body.substr(objStart, pos - objStart);
+        if (beforeSection.find("\"channelNumber\"") != std::string::npos) {
+            pos++;
+            continue;
+        }
+
+        // Find end of object - need to account for nested objects
+        int braceCount = 1;
+        size_t objEnd = objStart + 1;
+        while (braceCount > 0 && objEnd < epgResp.body.length()) {
+            if (epgResp.body[objEnd] == '{') braceCount++;
+            else if (epgResp.body[objEnd] == '}') braceCount--;
+            objEnd++;
+        }
+
+        std::string channelObj = epgResp.body.substr(objStart, objEnd - objStart);
+
+        LiveTVChannel channel;
+        channel.ratingKey = extractJsonValue(channelObj, "ratingKey");
+        channel.key = extractJsonValue(channelObj, "key");
+        channel.title = extractJsonValue(channelObj, "title");
+        channel.thumb = extractJsonValue(channelObj, "thumb");
+        channel.callSign = extractJsonValue(channelObj, "callSign");
+        channel.channelNumber = extractJsonInt(channelObj, "channelNumber");
+
+        // Look for program info in the channel object
+        // Programs may be in "Media" array or directly as program fields
+        size_t programPos = channelObj.find("\"Program\"");
+        if (programPos == std::string::npos) {
+            programPos = channelObj.find("\"Media\"");
+        }
+
+        if (programPos != std::string::npos) {
+            // Extract program title
+            std::string programSection = channelObj.substr(programPos);
+            channel.currentProgram = extractJsonValue(programSection, "title");
+
+            // Try to get program times
+            std::string beginsAt = extractJsonValue(programSection, "beginsAt");
+            std::string endsAt = extractJsonValue(programSection, "endsAt");
+
+            if (!beginsAt.empty()) {
+                channel.programStart = atoll(beginsAt.c_str());
+            }
+            if (!endsAt.empty()) {
+                channel.programEnd = atoll(endsAt.c_str());
+            }
+
+            // Get next program if available
+            size_t nextProgramPos = programSection.find("\"title\"", 10);
+            if (nextProgramPos != std::string::npos) {
+                channel.nextProgram = extractJsonValue(programSection.substr(nextProgramPos), "title");
+            }
+        }
+
+        if (!channel.ratingKey.empty() || channel.channelNumber > 0) {
+            channelsWithPrograms.push_back(channel);
+        }
+
+        pos = objEnd;
+    }
+
+    // Sort channels by channel number
+    std::sort(channelsWithPrograms.begin(), channelsWithPrograms.end(),
+              [](const LiveTVChannel& a, const LiveTVChannel& b) {
+                  return a.channelNumber < b.channelNumber;
+              });
+
+    brls::Logger::info("fetchEPGGrid: Got {} channels with program info", channelsWithPrograms.size());
+    return !channelsWithPrograms.empty();
+}
+
 std::string PlexClient::getThumbnailUrl(const std::string& thumb, int width, int height) {
     if (thumb.empty()) return "";
 
