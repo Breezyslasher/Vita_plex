@@ -147,18 +147,21 @@ void PlayerActivity::loadMedia() {
                 }
             }
 
-            // Load the URL
+            // Load the URL - MPV will auto-start playback
             if (!player.loadUrl(url, item.title)) {
                 brls::Logger::error("Failed to load URL: {}", url);
                 return;
             }
 
-            // Resume from viewOffset if available (seekTo is async, safe to call)
+            // Note: Don't call play() here - MPV auto-starts playback when file is loaded
+            // Calling play() while in LOADING state can cause issues on Vita
+
+            // Resume from viewOffset if available (will be applied after file loads)
             if (item.viewOffset > 0) {
-                player.seekTo(item.viewOffset / 1000.0);
+                // Delay seek until file is loaded
+                m_pendingSeek = item.viewOffset / 1000.0;
             }
 
-            player.play();
             m_isPlaying = true;
         } else {
             brls::Logger::error("Failed to get playback URL for: {}", m_mediaKey);
@@ -174,8 +177,19 @@ void PlayerActivity::updateProgress() {
 
     if (!player.isInitialized()) return;
 
-    // Process MPV events (state changes, property updates, etc.)
+    // Always process MPV events to handle state transitions
     player.update();
+
+    // Skip UI updates while MPV is still loading - be gentle on Vita's limited hardware
+    if (player.isLoading()) {
+        return;
+    }
+
+    // Handle pending seek when playback becomes ready
+    if (m_pendingSeek > 0.0 && player.isPlaying()) {
+        player.seekTo(m_pendingSeek);
+        m_pendingSeek = 0.0;
+    }
 
     double position = player.getPosition();
     double duration = player.getDuration();

@@ -549,16 +549,20 @@ void SettingsTab::onManageSidebarOrder() {
     // Create dialog content
     brls::Box* outerBox = new brls::Box();
     outerBox->setAxis(brls::Axis::COLUMN);
-    outerBox->setWidth(400);
-    outerBox->setHeight(350);
+    outerBox->setWidth(450);
+    outerBox->setHeight(380);
 
     auto* title = new brls::Label();
-    title->setText("Drag items to reorder sidebar:");
+    title->setText("Reorder sidebar items:");
     title->setFontSize(20);
     title->setMarginBottom(15);
     title->setMarginLeft(20);
     title->setMarginTop(20);
     outerBox->addView(title);
+
+    // Use shared state
+    auto orderCopy = std::make_shared<std::vector<std::pair<std::string, std::string>>>(currentOrder);
+    auto labels = std::make_shared<std::vector<brls::Label*>>();
 
     // Scrolling frame for items
     brls::ScrollingFrame* scrollFrame = new brls::ScrollingFrame();
@@ -569,76 +573,77 @@ void SettingsTab::onManageSidebarOrder() {
     content->setPaddingLeft(20);
     content->setPaddingRight(20);
 
-    // Store item boxes for reordering
-    std::vector<brls::Box*> itemBoxes;
-    auto orderCopy = std::make_shared<std::vector<std::pair<std::string, std::string>>>(currentOrder);
-
-    // Helper to rebuild the item list
-    auto rebuildList = [content, &itemBoxes, orderCopy]() {
-        content->clearViews();
-        itemBoxes.clear();
-
-        for (size_t i = 0; i < orderCopy->size(); i++) {
-            auto* row = new brls::Box();
-            row->setAxis(brls::Axis::ROW);
-            row->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
-            row->setAlignItems(brls::AlignItems::CENTER);
-            row->setHeight(45);
-            row->setMarginBottom(5);
-
-            auto* label = new brls::Label();
-            label->setText(std::to_string(i + 1) + ". " + (*orderCopy)[i].second);
-            label->setFontSize(18);
-            label->setGrow(1.0f);
-            row->addView(label);
-
-            auto* btnBox = new brls::Box();
-            btnBox->setAxis(brls::Axis::ROW);
-
-            if (i > 0) {
-                auto* upBtn = new brls::Button();
-                upBtn->setText("Up");
-                upBtn->setWidth(60);
-                upBtn->setMarginRight(5);
-                size_t idx = i;
-                upBtn->registerClickAction([orderCopy, idx, content, &itemBoxes](brls::View* view) {
-                    if (idx > 0) {
-                        std::swap((*orderCopy)[idx], (*orderCopy)[idx - 1]);
-                        // Trigger rebuild by closing and reopening
-                    }
-                    return true;
-                });
-                btnBox->addView(upBtn);
-            }
-
-            if (i < orderCopy->size() - 1) {
-                auto* downBtn = new brls::Button();
-                downBtn->setText("Down");
-                downBtn->setWidth(60);
-                size_t idx = i;
-                downBtn->registerClickAction([orderCopy, idx](brls::View* view) {
-                    if (idx < orderCopy->size() - 1) {
-                        std::swap((*orderCopy)[idx], (*orderCopy)[idx + 1]);
-                    }
-                    return true;
-                });
-                btnBox->addView(downBtn);
-            }
-
-            row->addView(btnBox);
-            content->addView(row);
-            itemBoxes.push_back(row);
+    // Helper to update all labels
+    auto updateLabels = [orderCopy, labels]() {
+        for (size_t i = 0; i < labels->size() && i < orderCopy->size(); i++) {
+            (*labels)[i]->setText(std::to_string(i + 1) + ". " + (*orderCopy)[i].second);
         }
     };
 
-    rebuildList();
+    // Create rows for each item
+    for (size_t i = 0; i < orderCopy->size(); i++) {
+        auto* row = new brls::Box();
+        row->setAxis(brls::Axis::ROW);
+        row->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
+        row->setAlignItems(brls::AlignItems::CENTER);
+        row->setHeight(50);
+        row->setMarginBottom(8);
+
+        auto* label = new brls::Label();
+        label->setText(std::to_string(i + 1) + ". " + (*orderCopy)[i].second);
+        label->setFontSize(18);
+        label->setGrow(1.0f);
+        row->addView(label);
+        labels->push_back(label);
+
+        auto* btnBox = new brls::Box();
+        btnBox->setAxis(brls::Axis::ROW);
+
+        // Up button (move item up)
+        auto* upBtn = new brls::Button();
+        upBtn->setText(i > 0 ? "^" : " ");
+        upBtn->setWidth(45);
+        upBtn->setHeight(35);
+        upBtn->setMarginRight(8);
+        if (i > 0) {
+            size_t idx = i;
+            upBtn->registerClickAction([orderCopy, labels, idx, updateLabels](brls::View* view) {
+                if (idx > 0 && idx < orderCopy->size()) {
+                    std::swap((*orderCopy)[idx], (*orderCopy)[idx - 1]);
+                    updateLabels();
+                }
+                return true;
+            });
+        }
+        btnBox->addView(upBtn);
+
+        // Down button (move item down)
+        auto* downBtn = new brls::Button();
+        downBtn->setText(i < orderCopy->size() - 1 ? "v" : " ");
+        downBtn->setWidth(45);
+        downBtn->setHeight(35);
+        if (i < orderCopy->size() - 1) {
+            size_t idx = i;
+            downBtn->registerClickAction([orderCopy, labels, idx, updateLabels](brls::View* view) {
+                if (idx < orderCopy->size() - 1) {
+                    std::swap((*orderCopy)[idx], (*orderCopy)[idx + 1]);
+                    updateLabels();
+                }
+                return true;
+            });
+        }
+        btnBox->addView(downBtn);
+
+        row->addView(btnBox);
+        content->addView(row);
+    }
 
     scrollFrame->setContentView(content);
     outerBox->addView(scrollFrame);
 
     // Note about Settings
     auto* noteLabel = new brls::Label();
-    noteLabel->setText("Settings is always last");
+    noteLabel->setText("Settings always appears last. Restart required.");
     noteLabel->setFontSize(14);
     noteLabel->setMarginLeft(20);
     noteLabel->setMarginBottom(10);
@@ -651,7 +656,6 @@ void SettingsTab::onManageSidebarOrder() {
     });
 
     dialog->addButton("Reset", [dialog, orderCopy, defaultItems, this]() {
-        *orderCopy = defaultItems;
         Application& app = Application::getInstance();
         AppSettings& settings = app.getSettings();
         settings.sidebarOrder = "";

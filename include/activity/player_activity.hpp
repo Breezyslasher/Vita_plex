@@ -31,6 +31,7 @@ private:
     bool m_isPlaying = false;
     bool m_isPhoto = false;
     bool m_destroying = false;  // Flag to prevent timer callbacks during destruction
+    double m_pendingSeek = 0.0;  // Pending seek position (set when resuming)
     brls::RepeatingTimer m_updateTimer;
 
     BRLS_BIND(brls::Box, playerContainer, "player/container");
