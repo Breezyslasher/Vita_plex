@@ -102,6 +102,8 @@ target_link_libraries(${PROJECT_NAME}
     SceShellSvc_stub
     SceAudiodec_stub
     SceVideodec_stub
+    SceAvcdec_stub
+    SceCodecEngineUser_stub
     SceAudio_stub
 
     # External libraries
@@ -114,6 +116,9 @@ target_link_libraries(${PROJECT_NAME}
     swresample
     swscale
     ass
+    freetype
+    harfbuzz
+    fribidi
     mbedtls
     mbedcrypto
     mbedx509
