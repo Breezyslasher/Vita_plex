@@ -38,8 +38,9 @@ bool Application::init() {
     // Load saved settings
     loadSettings();
 
-    // Apply theme
+    // Apply settings
     applyTheme();
+    applyLogLevel();
 
     m_initialized = true;
     return true;
@@ -100,6 +101,16 @@ void Application::applyTheme() {
 
     brls::Application::getPlatform()->setThemeVariant(variant);
     brls::Logger::info("Applied theme: {}", getThemeString(m_settings.theme));
+}
+
+void Application::applyLogLevel() {
+    if (m_settings.debugLogging) {
+        brls::Logger::setLogLevel(brls::LogLevel::LOG_DEBUG);
+        brls::Logger::info("Debug logging enabled");
+    } else {
+        brls::Logger::setLogLevel(brls::LogLevel::LOG_INFO);
+        brls::Logger::info("Debug logging disabled");
+    }
 }
 
 std::string Application::getQualityString(VideoQuality quality) {
@@ -196,6 +207,7 @@ bool Application::loadSettings() {
     m_settings.theme = static_cast<AppTheme>(extractInt("theme"));
     m_settings.showClock = extractBool("showClock", true);
     m_settings.animationsEnabled = extractBool("animationsEnabled", true);
+    m_settings.debugLogging = extractBool("debugLogging", true);
 
     // Load playback settings
     m_settings.autoPlayNext = extractBool("autoPlayNext", true);
@@ -238,6 +250,7 @@ bool Application::saveSettings() {
     json += "  \"theme\": " + std::to_string(static_cast<int>(m_settings.theme)) + ",\n";
     json += "  \"showClock\": " + std::string(m_settings.showClock ? "true" : "false") + ",\n";
     json += "  \"animationsEnabled\": " + std::string(m_settings.animationsEnabled ? "true" : "false") + ",\n";
+    json += "  \"debugLogging\": " + std::string(m_settings.debugLogging ? "true" : "false") + ",\n";
 
     // Playback settings
     json += "  \"autoPlayNext\": " + std::string(m_settings.autoPlayNext ? "true" : "false") + ",\n";

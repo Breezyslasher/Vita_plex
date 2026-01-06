@@ -51,6 +51,7 @@ struct AppSettings {
     AppTheme theme = AppTheme::DARK;
     bool showClock = true;
     bool animationsEnabled = true;
+    bool debugLogging = true;  // Enable debug logging
 
     // Playback Settings
     bool autoPlayNext = true;
@@ -108,6 +109,9 @@ public:
 
     // Apply theme
     void applyTheme();
+
+    // Apply log level based on settings
+    void applyLogLevel();
 
     // Get quality string for display
     static std::string getQualityString(VideoQuality quality);

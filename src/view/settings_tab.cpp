@@ -38,7 +38,8 @@ void SettingsTab::createAccountSection() {
     Application& app = Application::getInstance();
 
     // Section header
-    auto* header = new brls::Header("Account");
+    auto* header = new brls::Header();
+    header->setTitle("Account");
     m_contentBox->addView(header);
 
     // User info cell
@@ -73,7 +74,8 @@ void SettingsTab::createUISection() {
     AppSettings& settings = app.getSettings();
 
     // Section header
-    auto* header = new brls::Header("User Interface");
+    auto* header = new brls::Header();
+    header->setTitle("User Interface");
     m_contentBox->addView(header);
 
     // Theme selector
@@ -99,6 +101,15 @@ void SettingsTab::createUISection() {
         Application::getInstance().saveSettings();
     });
     m_contentBox->addView(m_animationsToggle);
+
+    // Debug logging toggle
+    m_debugLogToggle = new brls::BooleanCell();
+    m_debugLogToggle->init("Debug Logging", settings.debugLogging, [&settings](bool value) {
+        settings.debugLogging = value;
+        Application::getInstance().applyLogLevel();
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_debugLogToggle);
 }
 
 void SettingsTab::createPlaybackSection() {
@@ -106,7 +117,8 @@ void SettingsTab::createPlaybackSection() {
     AppSettings& settings = app.getSettings();
 
     // Section header
-    auto* header = new brls::Header("Playback");
+    auto* header = new brls::Header();
+    header->setTitle("Playback");
     m_contentBox->addView(header);
 
     // Auto-play next toggle
@@ -161,7 +173,8 @@ void SettingsTab::createTranscodeSection() {
     AppSettings& settings = app.getSettings();
 
     // Section header
-    auto* header = new brls::Header("Transcoding");
+    auto* header = new brls::Header();
+    header->setTitle("Transcoding");
     m_contentBox->addView(header);
 
     // Video quality selector
@@ -201,7 +214,8 @@ void SettingsTab::createTranscodeSection() {
 
 void SettingsTab::createAboutSection() {
     // Section header
-    auto* header = new brls::Header("About");
+    auto* header = new brls::Header();
+    header->setTitle("About");
     m_contentBox->addView(header);
 
     // Version info
