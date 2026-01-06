@@ -175,6 +175,8 @@ int main(int argc, char* argv[]) {
     sceIoMkdir("ux0:data/VitaPlex", 0777);
     FILE* logFile = std::fopen("ux0:data/VitaPlex/vitaplex.log", "w");
     if (logFile) {
+        // Use line buffering so logs are written immediately
+        setvbuf(logFile, NULL, _IOLBF, 0);
         brls::Logger::setLogOutput(logFile);
     }
 #endif
