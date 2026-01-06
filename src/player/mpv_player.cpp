@@ -1,16 +1,20 @@
 /**
  * VitaPlex - MPV Video Player Implementation
- * Hardware-accelerated video playback using libmpv with FFmpeg-vita
  * Based on switchfin's MPV implementation for PS Vita
  */
 
 #include "player/mpv_player.hpp"
 #include <borealis.hpp>
+
+#ifdef __vita__
 #include <psp2/kernel/clib.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/power.h>
+#endif
+
 #include <cstring>
 #include <cstdlib>
+#include <clocale>
 
 namespace vitaplex {
 
@@ -36,17 +40,22 @@ bool MpvPlayer::init() {
 
     brls::Logger::debug("MpvPlayer: Initializing libmpv...");
 
+    // Set locale for consistent number formatting (important for mpv)
+    setlocale(LC_NUMERIC, "C");
+
+#ifdef __vita__
     // Ensure CPU is at max speed for video decoding
     scePowerSetArmClockFrequency(444);
     scePowerSetBusClockFrequency(222);
     scePowerSetGpuClockFrequency(222);
     scePowerSetGpuXbarClockFrequency(166);
+#endif
 
     // Create mpv instance
     m_mpv = mpv_create();
     if (!m_mpv) {
         m_errorMessage = "Failed to create mpv instance";
-        brls::Logger::debug("MpvPlayer: {}", m_errorMessage);
+        brls::Logger::error("MpvPlayer: {}", m_errorMessage);
         m_state = MpvPlayerState::ERROR;
         return false;
     }
@@ -54,70 +63,77 @@ bool MpvPlayer::init() {
     brls::Logger::debug("MpvPlayer: mpv context created");
 
     // ========================================
-    // CRITICAL: Video output configuration
-    // ========================================
-    // We MUST use null video output because our app uses vita2d for UI
-    // and vita2d can't be shared between app and mpv simultaneously.
-
-    mpv_set_option_string(m_mpv, "vo", "null");
-
-    // ========================================
-    // Audio output configuration for Vita
+    // Core configuration (matching switchfin)
     // ========================================
 
-    mpv_set_option_string(m_mpv, "ao", "vita,null");
+    mpv_set_option_string(m_mpv, "osd-level", "0");
+    mpv_set_option_string(m_mpv, "video-timing-offset", "0");
+    mpv_set_option_string(m_mpv, "keep-open", "yes");
+    mpv_set_option_string(m_mpv, "idle", "yes");
+    mpv_set_option_string(m_mpv, "input-default-bindings", "no");
+    mpv_set_option_string(m_mpv, "input-vo-keyboard", "no");
+    mpv_set_option_string(m_mpv, "terminal", "no");
+
+    // ========================================
+    // Video output configuration
+    // ========================================
+
+    // Use libmpv for video output (like switchfin does)
+    // This allows proper integration with the rendering pipeline
+    mpv_set_option_string(m_mpv, "vo", "libmpv");
+
+#ifdef __vita__
+    // Vita-specific settings from switchfin
+    mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
+    mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
+    mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
+
+    // Hardware decoding for Vita
+    mpv_set_option_string(m_mpv, "hwdec", "vita-copy");
+    brls::Logger::debug("MpvPlayer: Using hwdec=vita-copy");
+#else
+    mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
+#endif
+
+    // ========================================
+    // Audio output configuration
+    // ========================================
+
+#ifdef __vita__
+    mpv_set_option_string(m_mpv, "ao", "vita");
     mpv_set_option_string(m_mpv, "audio-channels", "stereo");
+#else
+    mpv_set_option_string(m_mpv, "audio-channels", "stereo");
+#endif
     mpv_set_option_string(m_mpv, "volume", "100");
-    mpv_set_option_string(m_mpv, "volume-max", "100");
+    mpv_set_option_string(m_mpv, "volume-max", "150");
 
     // ========================================
     // Cache and demuxer settings
     // ========================================
 
-    mpv_set_option_string(m_mpv, "cache", "yes");
-    mpv_set_option_string(m_mpv, "cache-secs", "10");
-    mpv_set_option_string(m_mpv, "demuxer-max-bytes", "8MiB");
-    mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "4MiB");
-    mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "5");
+    // Memory cache (matching switchfin's approach)
+    mpv_set_option_string(m_mpv, "demuxer-max-bytes", "32MiB");
+    mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "16MiB");
 
     // ========================================
     // Network settings for streaming
     // ========================================
 
     mpv_set_option_string(m_mpv, "network-timeout", "30");
-    mpv_set_option_string(m_mpv, "stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5");
 
-    mpv_set_option_string(m_mpv, "user-agent", "VitaPlex/1.0 (PlayStation Vita)");
-
-    mpv_set_option_string(m_mpv, "http-header-fields",
-        "Accept: */*,"
-        "X-Plex-Client-Identifier: vita-plex-client-001,"
-        "X-Plex-Product: VitaPlex,"
-        "X-Plex-Version: 1.5.1,"
-        "X-Plex-Platform: PlayStation Vita,"
-        "X-Plex-Device: PS Vita");
-
-    // ========================================
-    // Playback behavior
-    // ========================================
-
-    mpv_set_option_string(m_mpv, "keep-open", "yes");
-    mpv_set_option_string(m_mpv, "idle", "yes");
-    mpv_set_option_string(m_mpv, "force-window", "no");
-    mpv_set_option_string(m_mpv, "input-default-bindings", "no");
-    mpv_set_option_string(m_mpv, "input-vo-keyboard", "no");
-    mpv_set_option_string(m_mpv, "terminal", "no");
-    mpv_set_option_string(m_mpv, "msg-level", "all=warn");
+    // User agent for Plex compatibility
+    mpv_set_option_string(m_mpv, "user-agent", "VitaPlex/1.0");
 
     // ========================================
     // Subtitle settings
     // ========================================
 
-    mpv_set_option_string(m_mpv, "sub-auto", "no");
-    mpv_set_option_string(m_mpv, "sub-visibility", "no");
+    mpv_set_option_string(m_mpv, "sub-auto", "fuzzy");
+    mpv_set_option_string(m_mpv, "subs-fallback", "yes");
 
     // ========================================
-    // Logging
+    // Request log messages
     // ========================================
 
     mpv_request_log_messages(m_mpv, "warn");
@@ -131,7 +147,7 @@ bool MpvPlayer::init() {
     int result = mpv_initialize(m_mpv);
     if (result < 0) {
         m_errorMessage = std::string("Failed to initialize mpv: ") + mpv_error_string(result);
-        brls::Logger::debug("MpvPlayer: {}", m_errorMessage);
+        brls::Logger::error("MpvPlayer: {}", m_errorMessage);
         mpv_destroy(m_mpv);
         m_mpv = nullptr;
         m_state = MpvPlayerState::ERROR;
@@ -141,21 +157,21 @@ bool MpvPlayer::init() {
     brls::Logger::debug("MpvPlayer: mpv_initialize succeeded");
 
     // ========================================
-    // Set up property observers
+    // Set up property observers (matching switchfin IDs)
     // ========================================
 
-    mpv_observe_property(m_mpv, 0, "time-pos", MPV_FORMAT_DOUBLE);
-    mpv_observe_property(m_mpv, 0, "duration", MPV_FORMAT_DOUBLE);
-    mpv_observe_property(m_mpv, 0, "pause", MPV_FORMAT_FLAG);
-    mpv_observe_property(m_mpv, 0, "eof-reached", MPV_FORMAT_FLAG);
-    mpv_observe_property(m_mpv, 0, "seeking", MPV_FORMAT_FLAG);
-    mpv_observe_property(m_mpv, 0, "paused-for-cache", MPV_FORMAT_FLAG);
-    mpv_observe_property(m_mpv, 0, "cache-buffering-state", MPV_FORMAT_DOUBLE);
-    mpv_observe_property(m_mpv, 0, "volume", MPV_FORMAT_DOUBLE);
-    mpv_observe_property(m_mpv, 0, "mute", MPV_FORMAT_FLAG);
-    mpv_observe_property(m_mpv, 0, "core-idle", MPV_FORMAT_FLAG);
+    mpv_observe_property(m_mpv, 1, "core-idle", MPV_FORMAT_FLAG);
+    mpv_observe_property(m_mpv, 2, "pause", MPV_FORMAT_FLAG);
+    mpv_observe_property(m_mpv, 3, "duration", MPV_FORMAT_INT64);
+    mpv_observe_property(m_mpv, 4, "playback-time", MPV_FORMAT_DOUBLE);
+    mpv_observe_property(m_mpv, 5, "cache-speed", MPV_FORMAT_INT64);
+    mpv_observe_property(m_mpv, 6, "paused-for-cache", MPV_FORMAT_FLAG);
+    mpv_observe_property(m_mpv, 7, "eof-reached", MPV_FORMAT_FLAG);
+    mpv_observe_property(m_mpv, 8, "seeking", MPV_FORMAT_FLAG);
+    mpv_observe_property(m_mpv, 9, "speed", MPV_FORMAT_DOUBLE);
+    mpv_observe_property(m_mpv, 10, "volume", MPV_FORMAT_INT64);
 
-    brls::Logger::debug("MpvPlayer: Initialized successfully");
+    brls::Logger::info("MpvPlayer: Initialized successfully");
     m_state = MpvPlayerState::IDLE;
     m_commandPending = false;
     return true;
@@ -165,15 +181,16 @@ void MpvPlayer::shutdown() {
     if (m_mpv) {
         brls::Logger::debug("MpvPlayer: Shutting down");
 
-        // Set stopping flag to prevent further operations
         m_stopping = true;
 
-        // Stop playback synchronously during shutdown
-        const char* stopCmd[] = {"stop", NULL};
-        mpv_command(m_mpv, stopCmd);
+        // Send quit command (like switchfin does in clean())
+        const char* cmd[] = {"quit", NULL};
+        mpv_command(m_mpv, cmd);
 
+#ifdef __vita__
         // Give mpv time to cleanup
         sceKernelDelayThread(200000);  // 200ms
+#endif
 
         mpv_terminate_destroy(m_mpv);
         m_mpv = nullptr;
@@ -198,13 +215,15 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
 
     // Normalize URL scheme to lowercase
     std::string normalizedUrl = url;
-    if (normalizedUrl.substr(0, 5) == "Http:") {
-        normalizedUrl = "http:" + normalizedUrl.substr(5);
-    } else if (normalizedUrl.substr(0, 6) == "Https:") {
-        normalizedUrl = "https:" + normalizedUrl.substr(6);
+    if (normalizedUrl.length() > 5) {
+        // Convert scheme to lowercase
+        for (size_t i = 0; i < 6 && i < normalizedUrl.length(); i++) {
+            if (normalizedUrl[i] == ':') break;
+            normalizedUrl[i] = tolower(normalizedUrl[i]);
+        }
     }
 
-    brls::Logger::debug("MpvPlayer: Loading URL: {}", normalizedUrl);
+    brls::Logger::info("MpvPlayer: Loading URL: {}", normalizedUrl);
 
     m_currentUrl = normalizedUrl;
     m_playbackInfo = MpvPlaybackInfo();
@@ -213,17 +232,28 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
     // Mark command as pending
     m_commandPending = true;
 
-    // Use ASYNC loadfile command - this is critical for Vita stability
-    // The "replace" mode stops current playback and loads the new file
-    const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", NULL};
-    int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
-
-    if (result < 0) {
-        m_errorMessage = std::string("Failed to queue load command: ") + mpv_error_string(result);
-        brls::Logger::debug("MpvPlayer: {}", m_errorMessage);
-        m_commandPending = false;
-        setState(MpvPlayerState::ERROR);
-        return false;
+    // Use loadfile command with async (matching switchfin's setUrl method)
+    // Check MPV API version for command format
+    if (mpv_client_api_version() >= MPV_MAKE_VERSION(2, 3)) {
+        const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", "0", "", nullptr};
+        int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
+        if (result < 0) {
+            m_errorMessage = std::string("Failed to queue load command: ") + mpv_error_string(result);
+            brls::Logger::error("MpvPlayer: {}", m_errorMessage);
+            m_commandPending = false;
+            setState(MpvPlayerState::ERROR);
+            return false;
+        }
+    } else {
+        const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", "", nullptr};
+        int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
+        if (result < 0) {
+            m_errorMessage = std::string("Failed to queue load command: ") + mpv_error_string(result);
+            brls::Logger::error("MpvPlayer: {}", m_errorMessage);
+            m_commandPending = false;
+            setState(MpvPlayerState::ERROR);
+            return false;
+        }
     }
 
     setState(MpvPlayerState::LOADING);
@@ -237,7 +267,6 @@ bool MpvPlayer::loadFile(const std::string& path) {
 void MpvPlayer::play() {
     if (!m_mpv || m_stopping) return;
 
-    // Use async property set for safety
     int paused = 0;
     mpv_set_property_async(m_mpv, 0, "pause", MPV_FORMAT_FLAG, &paused);
 }
@@ -261,7 +290,6 @@ void MpvPlayer::stop() {
 
     brls::Logger::debug("MpvPlayer: Stopping playback");
 
-    // Use async stop command
     const char* cmd[] = {"stop", NULL};
     mpv_command_async(m_mpv, CMD_STOP, cmd);
 
@@ -273,7 +301,6 @@ void MpvPlayer::stop() {
 void MpvPlayer::seekTo(double seconds) {
     if (!m_mpv || m_stopping) return;
 
-    // Don't seek while loading
     if (m_state == MpvPlayerState::LOADING) {
         brls::Logger::debug("MpvPlayer: Deferring seek (still loading)");
         return;
@@ -326,15 +353,15 @@ void MpvPlayer::setVolume(int percent) {
     if (percent < 0) percent = 0;
     if (percent > 150) percent = 150;
 
-    double vol = (double)percent;
-    mpv_set_property_async(m_mpv, 0, "volume", MPV_FORMAT_DOUBLE, &vol);
+    int64_t vol = (int64_t)percent;
+    mpv_set_property_async(m_mpv, 0, "volume", MPV_FORMAT_INT64, &vol);
 }
 
 int MpvPlayer::getVolume() const {
     if (!m_mpv) return 100;
 
-    double vol = 100.0;
-    mpv_get_property(m_mpv, "volume", MPV_FORMAT_DOUBLE, &vol);
+    int64_t vol = 100;
+    mpv_get_property(m_mpv, "volume", MPV_FORMAT_INT64, &vol);
     return (int)vol;
 }
 
@@ -416,16 +443,16 @@ double MpvPlayer::getPosition() const {
     if (!m_mpv) return 0.0;
 
     double pos = 0.0;
-    mpv_get_property(m_mpv, "time-pos", MPV_FORMAT_DOUBLE, &pos);
+    mpv_get_property(m_mpv, "playback-time", MPV_FORMAT_DOUBLE, &pos);
     return pos;
 }
 
 double MpvPlayer::getDuration() const {
     if (!m_mpv) return 0.0;
 
-    double dur = 0.0;
-    mpv_get_property(m_mpv, "duration", MPV_FORMAT_DOUBLE, &dur);
-    return dur;
+    int64_t dur = 0;
+    mpv_get_property(m_mpv, "duration", MPV_FORMAT_INT64, &dur);
+    return (double)dur;
 }
 
 double MpvPlayer::getPercentPosition() const {
@@ -477,179 +504,207 @@ void MpvPlayer::setState(MpvPlayerState newState) {
 void MpvPlayer::update() {
     if (!m_mpv || m_stopping) return;
 
-    processEvents();
+    // Process events (matching switchfin's eventMainLoop)
+    eventMainLoop();
 
-    // Only update playback info when actually playing
+    // Update playback info when playing
     if (m_state == MpvPlayerState::PLAYING || m_state == MpvPlayerState::PAUSED) {
         updatePlaybackInfo();
     }
 }
 
-void MpvPlayer::processEvents() {
+void MpvPlayer::eventMainLoop() {
     if (!m_mpv) return;
 
-    // Process all pending events with zero timeout (non-blocking)
-    while (m_mpv && !m_stopping) {
+    // Process all pending events (matching switchfin's approach)
+    while (true) {
         mpv_event* event = mpv_wait_event(m_mpv, 0);
+
         if (!event || event->event_id == MPV_EVENT_NONE) {
-            break;
+            return;
         }
-        handleEvent(event);
+
+        switch (event->event_id) {
+            case MPV_EVENT_LOG_MESSAGE: {
+                if (event->data) {
+                    mpv_event_log_message* msg = (mpv_event_log_message*)event->data;
+                    if (msg->log_level <= MPV_LOG_LEVEL_ERROR) {
+                        brls::Logger::error("mpv {}: {}", msg->prefix, msg->text);
+                    } else if (msg->log_level <= MPV_LOG_LEVEL_WARN) {
+                        brls::Logger::warning("mpv {}: {}", msg->prefix, msg->text);
+                    } else if (msg->log_level <= MPV_LOG_LEVEL_INFO) {
+                        brls::Logger::info("mpv {}: {}", msg->prefix, msg->text);
+                    }
+                }
+                break;
+            }
+
+            case MPV_EVENT_SHUTDOWN:
+                brls::Logger::debug("MpvPlayer: EVENT_SHUTDOWN");
+                setState(MpvPlayerState::IDLE);
+                return;
+
+            case MPV_EVENT_START_FILE:
+                brls::Logger::debug("MpvPlayer: EVENT_START_FILE");
+                setState(MpvPlayerState::LOADING);
+                break;
+
+            case MPV_EVENT_FILE_LOADED:
+                brls::Logger::info("MpvPlayer: EVENT_FILE_LOADED");
+                m_commandPending = false;
+                // Don't transition to PLAYING yet - wait for playback to actually start
+                break;
+
+            case MPV_EVENT_PLAYBACK_RESTART:
+                brls::Logger::debug("MpvPlayer: EVENT_PLAYBACK_RESTART");
+                m_commandPending = false;
+                // Now safe to say we're playing
+                if (m_state == MpvPlayerState::LOADING || m_state == MpvPlayerState::BUFFERING) {
+                    int paused = 0;
+                    if (mpv_get_property(m_mpv, "pause", MPV_FORMAT_FLAG, &paused) >= 0) {
+                        setState(paused ? MpvPlayerState::PAUSED : MpvPlayerState::PLAYING);
+                    } else {
+                        setState(MpvPlayerState::PLAYING);
+                    }
+                }
+                break;
+
+            case MPV_EVENT_END_FILE: {
+                if (event->data) {
+                    mpv_event_end_file* end = (mpv_event_end_file*)event->data;
+                    brls::Logger::debug("MpvPlayer: EVENT_END_FILE reason={} error={}",
+                                       (int)end->reason, end->error);
+
+                    m_commandPending = false;
+
+                    // MPV_END_FILE_REASON_EOF = 0
+                    // MPV_END_FILE_REASON_STOP = 2
+                    // MPV_END_FILE_REASON_ERROR = 4
+                    if (end->reason == 0) {
+                        setState(MpvPlayerState::ENDED);
+                    } else if (end->reason == 4 || end->error < 0) {
+                        if (end->error < 0) {
+                            m_errorMessage = std::string("Playback error: ") + mpv_error_string(end->error);
+                        } else {
+                            m_errorMessage = "Playback failed";
+                        }
+                        brls::Logger::error("MpvPlayer: {}", m_errorMessage);
+                        setState(MpvPlayerState::ERROR);
+                    } else {
+                        setState(MpvPlayerState::IDLE);
+                    }
+                }
+                break;
+            }
+
+            case MPV_EVENT_IDLE:
+                brls::Logger::debug("MpvPlayer: EVENT_IDLE");
+                m_commandPending = false;
+                if (m_state != MpvPlayerState::ERROR && m_state != MpvPlayerState::ENDED) {
+                    setState(MpvPlayerState::IDLE);
+                }
+                break;
+
+            case MPV_EVENT_COMMAND_REPLY:
+                brls::Logger::debug("MpvPlayer: EVENT_COMMAND_REPLY id={} error={}",
+                                   event->reply_userdata, event->error);
+                if (event->reply_userdata == CMD_LOADFILE && event->error < 0) {
+                    m_errorMessage = std::string("Load failed: ") + mpv_error_string(event->error);
+                    brls::Logger::error("MpvPlayer: {}", m_errorMessage);
+                    m_commandPending = false;
+                    setState(MpvPlayerState::ERROR);
+                }
+                break;
+
+            case MPV_EVENT_PROPERTY_CHANGE:
+                if (event->data) {
+                    handlePropertyChange((mpv_event_property*)event->data, event->reply_userdata);
+                }
+                break;
+
+            default:
+                break;
+        }
     }
 }
 
-void MpvPlayer::handleEvent(mpv_event* event) {
-    if (!event) return;
+void MpvPlayer::handlePropertyChange(mpv_event_property* prop, uint64_t id) {
+    if (!prop || !prop->name) return;
 
-    switch (event->event_id) {
-        case MPV_EVENT_START_FILE:
-            brls::Logger::debug("MpvPlayer: Event START_FILE");
-            setState(MpvPlayerState::LOADING);
+    // Handle property changes based on observer ID (matching switchfin)
+    switch (id) {
+        case 1: // core-idle
+            if (prop->format == MPV_FORMAT_FLAG && prop->data) {
+                bool idle = *(int*)prop->data != 0;
+                brls::Logger::debug("MpvPlayer: core-idle = {}", idle);
+            }
             break;
 
-        case MPV_EVENT_FILE_LOADED:
-            brls::Logger::debug("MpvPlayer: Event FILE_LOADED");
-            m_commandPending = false;  // Load command completed
-            // Don't change state yet - wait for PLAYBACK_RESTART
-            break;
-
-        case MPV_EVENT_PLAYBACK_RESTART:
-            brls::Logger::debug("MpvPlayer: Event PLAYBACK_RESTART");
-            m_commandPending = false;
-            // Now safe to transition to playing
-            if (m_state == MpvPlayerState::LOADING || m_state == MpvPlayerState::BUFFERING) {
-                int paused = 0;
-                if (mpv_get_property(m_mpv, "pause", MPV_FORMAT_FLAG, &paused) >= 0) {
+        case 2: // pause
+            if (prop->format == MPV_FORMAT_FLAG && prop->data) {
+                bool paused = *(int*)prop->data != 0;
+                if (m_state == MpvPlayerState::PLAYING || m_state == MpvPlayerState::PAUSED) {
                     setState(paused ? MpvPlayerState::PAUSED : MpvPlayerState::PLAYING);
-                } else {
+                }
+            }
+            break;
+
+        case 3: // duration
+            if (prop->format == MPV_FORMAT_INT64 && prop->data) {
+                m_playbackInfo.duration = (double)(*(int64_t*)prop->data);
+            }
+            break;
+
+        case 4: // playback-time
+            if (prop->format == MPV_FORMAT_DOUBLE && prop->data) {
+                m_playbackInfo.position = *(double*)prop->data;
+            }
+            break;
+
+        case 5: // cache-speed
+            if (prop->format == MPV_FORMAT_INT64 && prop->data) {
+                m_playbackInfo.cacheUsed = (double)(*(int64_t*)prop->data);
+            }
+            break;
+
+        case 6: // paused-for-cache
+            if (prop->format == MPV_FORMAT_FLAG && prop->data) {
+                bool buffering = *(int*)prop->data != 0;
+                m_playbackInfo.buffering = buffering;
+                if (buffering && m_state == MpvPlayerState::PLAYING) {
+                    setState(MpvPlayerState::BUFFERING);
+                } else if (!buffering && m_state == MpvPlayerState::BUFFERING) {
                     setState(MpvPlayerState::PLAYING);
                 }
             }
             break;
 
-        case MPV_EVENT_END_FILE: {
-            if (!event->data) break;
-
-            mpv_event_end_file* end = (mpv_event_end_file*)event->data;
-            brls::Logger::debug("MpvPlayer: Event END_FILE (reason: {}, error: {})", (int)end->reason, end->error);
-
-            m_commandPending = false;
-
-            if (end->reason == 0) {  // MPV_END_FILE_REASON_EOF
-                brls::Logger::debug("MpvPlayer: Playback finished (EOF)");
-                setState(MpvPlayerState::ENDED);
-            } else if (end->reason == 4 || end->error < 0) {  // ERROR
-                if (end->error < 0) {
-                    m_errorMessage = std::string("Playback error: ") + mpv_error_string(end->error);
-                } else {
-                    m_errorMessage = "Playback failed - file may be incompatible";
+        case 7: // eof-reached
+            if (prop->format == MPV_FORMAT_FLAG && prop->data) {
+                bool eof = *(int*)prop->data != 0;
+                if (eof) {
+                    brls::Logger::debug("MpvPlayer: EOF reached");
                 }
-                brls::Logger::debug("MpvPlayer: Error - {}", m_errorMessage);
-                setState(MpvPlayerState::ERROR);
-            } else if (end->reason == 2) {  // STOP
-                brls::Logger::debug("MpvPlayer: Playback stopped");
-                setState(MpvPlayerState::IDLE);
-            } else {
-                brls::Logger::debug("MpvPlayer: End reason {}", (int)end->reason);
-                setState(MpvPlayerState::IDLE);
-            }
-            break;
-        }
-
-        case MPV_EVENT_IDLE:
-            brls::Logger::debug("MpvPlayer: Event IDLE");
-            m_commandPending = false;
-            if (m_state != MpvPlayerState::ERROR && m_state != MpvPlayerState::ENDED) {
-                setState(MpvPlayerState::IDLE);
             }
             break;
 
-        case MPV_EVENT_COMMAND_REPLY: {
-            // Handle async command completion
-            brls::Logger::debug("MpvPlayer: Command reply (id: {}, error: {})",
-                              event->reply_userdata, event->error);
-
-            if (event->reply_userdata == CMD_LOADFILE) {
-                if (event->error < 0) {
-                    m_errorMessage = std::string("Load failed: ") + mpv_error_string(event->error);
-                    brls::Logger::debug("MpvPlayer: {}", m_errorMessage);
-                    m_commandPending = false;
-                    setState(MpvPlayerState::ERROR);
-                }
-                // Success will be signaled by FILE_LOADED event
-            }
-            break;
-        }
-
-        case MPV_EVENT_PROPERTY_CHANGE:
-            if (event->data) {
-                handlePropertyChange((mpv_event_property*)event->data);
+        case 8: // seeking
+            if (prop->format == MPV_FORMAT_FLAG && prop->data) {
+                m_playbackInfo.seeking = *(int*)prop->data != 0;
             }
             break;
 
-        case MPV_EVENT_LOG_MESSAGE: {
-            if (!event->data) break;
-
-            mpv_event_log_message* msg = (mpv_event_log_message*)event->data;
-            if (msg && msg->log_level <= MPV_LOG_LEVEL_WARN && msg->prefix && msg->text) {
-                brls::Logger::debug("mpv [{}]: {}", msg->prefix, msg->text);
+        case 9: // speed
+            if (prop->format == MPV_FORMAT_DOUBLE && prop->data) {
+                // Could store playback speed if needed
             }
             break;
-        }
 
-        default:
+        case 10: // volume
+            if (prop->format == MPV_FORMAT_INT64 && prop->data) {
+                m_playbackInfo.volume = (int)(*(int64_t*)prop->data);
+            }
             break;
-    }
-}
-
-void MpvPlayer::handlePropertyChange(mpv_event_property* prop) {
-    if (!prop || !prop->name || !prop->data) return;
-
-    if (strcmp(prop->name, "pause") == 0 && prop->format == MPV_FORMAT_FLAG) {
-        int paused = *(int*)prop->data;
-        if (m_state == MpvPlayerState::PLAYING || m_state == MpvPlayerState::PAUSED) {
-            setState(paused ? MpvPlayerState::PAUSED : MpvPlayerState::PLAYING);
-        }
-    }
-    else if (strcmp(prop->name, "time-pos") == 0 && prop->format == MPV_FORMAT_DOUBLE) {
-        m_playbackInfo.position = *(double*)prop->data;
-    }
-    else if (strcmp(prop->name, "duration") == 0 && prop->format == MPV_FORMAT_DOUBLE) {
-        m_playbackInfo.duration = *(double*)prop->data;
-    }
-    else if (strcmp(prop->name, "volume") == 0 && prop->format == MPV_FORMAT_DOUBLE) {
-        m_playbackInfo.volume = (int)(*(double*)prop->data);
-    }
-    else if (strcmp(prop->name, "mute") == 0 && prop->format == MPV_FORMAT_FLAG) {
-        m_playbackInfo.muted = *(int*)prop->data != 0;
-    }
-    else if (strcmp(prop->name, "paused-for-cache") == 0 && prop->format == MPV_FORMAT_FLAG) {
-        int pausedForCache = *(int*)prop->data;
-        if (pausedForCache) {
-            m_playbackInfo.buffering = true;
-            if (m_state == MpvPlayerState::PLAYING) {
-                setState(MpvPlayerState::BUFFERING);
-            }
-        } else {
-            m_playbackInfo.buffering = false;
-            if (m_state == MpvPlayerState::BUFFERING) {
-                setState(MpvPlayerState::PLAYING);
-            }
-        }
-    }
-    else if (strcmp(prop->name, "cache-buffering-state") == 0 && prop->format == MPV_FORMAT_DOUBLE) {
-        m_playbackInfo.bufferingPercent = *(double*)prop->data;
-    }
-    else if (strcmp(prop->name, "seeking") == 0 && prop->format == MPV_FORMAT_FLAG) {
-        m_playbackInfo.seeking = *(int*)prop->data != 0;
-    }
-    else if (strcmp(prop->name, "core-idle") == 0 && prop->format == MPV_FORMAT_FLAG) {
-        // Core idle indicates mpv is ready for next command
-        int idle = *(int*)prop->data;
-        if (idle && m_state == MpvPlayerState::LOADING) {
-            // If we're idle while loading, something went wrong
-            brls::Logger::debug("MpvPlayer: Core idle during loading state");
-        }
     }
 }
 
@@ -675,9 +730,9 @@ void MpvPlayer::updatePlaybackInfo() {
         m_playbackInfo.fps = fps;
 
         if (m_playbackInfo.videoWidth > 0) {
-            brls::Logger::debug("MpvPlayer: Video info - {}x{} @ {:.2f} fps, codec: {}",
-                          m_playbackInfo.videoWidth, m_playbackInfo.videoHeight,
-                          m_playbackInfo.fps, m_playbackInfo.videoCodec);
+            brls::Logger::info("MpvPlayer: Video {}x{} @ {:.2f}fps codec={}",
+                              m_playbackInfo.videoWidth, m_playbackInfo.videoHeight,
+                              m_playbackInfo.fps, m_playbackInfo.videoCodec);
         }
     }
 
@@ -695,15 +750,16 @@ void MpvPlayer::updatePlaybackInfo() {
         m_playbackInfo.sampleRate = (int)sr;
 
         if (m_playbackInfo.audioChannels > 0) {
-            brls::Logger::debug("MpvPlayer: Audio info - {} channels @ {} Hz, codec: {}",
-                          m_playbackInfo.audioChannels, m_playbackInfo.sampleRate,
-                          m_playbackInfo.audioCodec);
+            brls::Logger::info("MpvPlayer: Audio {}ch @ {}Hz codec={}",
+                              m_playbackInfo.audioChannels, m_playbackInfo.sampleRate,
+                              m_playbackInfo.audioCodec);
         }
     }
 }
 
 void MpvPlayer::render() {
-    // With null vo, nothing to render
+    // Rendering would be handled by borealis/mpv render context if using libmpv video output
+    // For now, this is a placeholder
 }
 
 } // namespace vitaplex

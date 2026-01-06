@@ -128,10 +128,10 @@ private:
     MpvPlayer(const MpvPlayer&) = delete;
     MpvPlayer& operator=(const MpvPlayer&) = delete;
 
-    void processEvents();
+    void eventMainLoop();
     void updatePlaybackInfo();
     void handleEvent(mpv_event* event);
-    void handlePropertyChange(mpv_event_property* prop);
+    void handlePropertyChange(mpv_event_property* prop, uint64_t id);
     void setState(MpvPlayerState newState);
 
     mpv_handle* m_mpv = nullptr;
