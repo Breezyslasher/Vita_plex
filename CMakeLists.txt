@@ -87,26 +87,12 @@ add_executable(${PROJECT_NAME} ${APP_SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE ${APP_INCLUDES})
 
 # Link libraries - borealis + app platform libs from toolchain
+# Order matters: libraries that PROVIDE symbols must come AFTER libraries that NEED them
 target_link_libraries(${PROJECT_NAME}
     borealis
     ${APP_PLATFORM_LIB}
 
-    # Vita SDK libraries (additional ones not in borealis)
-    vita2d
-    SceNet_stub
-    SceNetCtl_stub
-    SceHttp_stub
-    SceSsl_stub
-    ScePgf_stub
-    SceRtc_stub
-    SceShellSvc_stub
-    SceAudiodec_stub
-    SceVideodec_stub
-    SceAvcodec_stub
-    SceCodecEngine_stub
-    SceAudio_stub
-
-    # External libraries (order matters for static linking)
+    # External libraries first (they depend on Vita stubs)
     curl
     mpv
     avcodec
@@ -124,9 +110,24 @@ target_link_libraries(${PROJECT_NAME}
     mbedtls
     mbedcrypto
     mbedx509
-    z
 
-    # Standard libraries (pthread is already linked by borealis with --whole-archive)
+    # Vita SDK stubs (provide symbols for above libraries)
+    vita2d
+    SceNet_stub
+    SceNetCtl_stub
+    SceHttp_stub
+    SceSsl_stub
+    ScePgf_stub
+    SceRtc_stub
+    SceShellSvc_stub
+    SceAudiodec_stub
+    SceVideodec_stub
+    SceAvcodec_stub
+    SceCodecEngine_stub
+    SceAudio_stub
+
+    # Standard libraries last
+    z
     m
     c
 )
