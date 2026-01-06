@@ -216,9 +216,9 @@ void MediaItemCell::updateFocusInfo(bool focused) {
             if (m_item.year > 0) {
                 info = std::to_string(m_item.year);
             }
-            if (m_item.childCount > 0) {
+            if (m_item.leafCount > 0) {
                 if (!info.empty()) info += " - ";
-                info += std::to_string(m_item.childCount) + " seasons";
+                info += std::to_string(m_item.leafCount) + " seasons";
             }
             if (!info.empty()) {
                 m_descriptionLabel->setText(info);
