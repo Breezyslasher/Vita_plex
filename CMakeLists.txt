@@ -106,7 +106,7 @@ target_link_libraries(${PROJECT_NAME}
     SceCodecEngine_stub
     SceAudio_stub
 
-    # External libraries
+    # External libraries (order matters for static linking)
     curl
     mpv
     avcodec
@@ -119,6 +119,8 @@ target_link_libraries(${PROJECT_NAME}
     freetype
     harfbuzz
     fribidi
+    png
+    bz2
     mbedtls
     mbedcrypto
     mbedx509
