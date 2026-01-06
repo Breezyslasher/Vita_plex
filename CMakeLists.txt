@@ -15,7 +15,8 @@ set(USE_OPENGL OFF CACHE BOOL "Use OpenGL" FORCE)
 set(BOREALIS_USE_STD_THREAD OFF CACHE BOOL "Use std::thread" FORCE)
 
 # Enable native GXM graphics for PS Vita (required!)
-set(BOREALIS_USE_GXM ON CACHE BOOL "Use GXM for PS Vita" FORCE)
+# USE_GXM is the correct flag - it sets BOREALIS_USE_GXM internally
+set(USE_GXM ON CACHE BOOL "Use GXM for PS Vita" FORCE)
 set(USE_VITA_SHARK ON CACHE BOOL "Use VitaShark for shader compilation" FORCE)
 
 # VitaSDK Configuration
