@@ -69,7 +69,7 @@ void PlayerActivity::willDisappear(bool resetState) {
     // Mark as destroying to prevent timer callbacks
     m_destroying = true;
 
-    // Stop update timer
+    // Stop update timer first
     m_updateTimer.stop();
 
     // For photos, nothing to stop
@@ -80,13 +80,18 @@ void PlayerActivity::willDisappear(bool resetState) {
     // Stop playback and save progress
     MpvPlayer& player = MpvPlayer::getInstance();
 
-    if (player.isPlaying() || player.isPaused()) {
+    // Only try to save progress if player is in a valid state
+    if (player.isInitialized() && (player.isPlaying() || player.isPaused())) {
         double position = player.getPosition();
-        int timeMs = (int)(position * 1000);
+        if (position > 0) {
+            int timeMs = (int)(position * 1000);
+            // Save progress to Plex
+            PlexClient::getInstance().updatePlayProgress(m_mediaKey, timeMs);
+        }
+    }
 
-        // Save progress to Plex
-        PlexClient::getInstance().updatePlayProgress(m_mediaKey, timeMs);
-
+    // Stop playback (safe to call even if not playing)
+    if (player.isInitialized()) {
         player.stop();
     }
 
@@ -94,6 +99,13 @@ void PlayerActivity::willDisappear(bool resetState) {
 }
 
 void PlayerActivity::loadMedia() {
+    // Prevent rapid re-entry
+    if (m_loadingMedia) {
+        brls::Logger::debug("PlayerActivity: Already loading media, skipping");
+        return;
+    }
+    m_loadingMedia = true;
+
     PlexClient& client = PlexClient::getInstance();
     MediaItem item;
 
@@ -110,6 +122,7 @@ void PlayerActivity::loadMedia() {
         if (item.mediaType == MediaType::PHOTO) {
             brls::Logger::info("Displaying photo: {}", item.title);
             m_isPhoto = true;
+            m_loadingMedia = false;
 
             // Load the full-size photo
             if (!item.thumb.empty()) {
@@ -140,21 +153,25 @@ void PlayerActivity::loadMedia() {
         if (client.getPlaybackUrl(m_mediaKey, url)) {
             MpvPlayer& player = MpvPlayer::getInstance();
 
+            // Initialize player if needed
             if (!player.isInitialized()) {
                 if (!player.init()) {
                     brls::Logger::error("Failed to initialize MPV player");
+                    m_loadingMedia = false;
                     return;
                 }
             }
 
-            // Load the URL - MPV will auto-start playback
+            // Load the URL using async command
+            // loadUrl returns false if a command is already pending (prevents rapid clicks)
             if (!player.loadUrl(url, item.title)) {
                 brls::Logger::error("Failed to load URL: {}", url);
+                m_loadingMedia = false;
                 return;
             }
 
             // Note: Don't call play() here - MPV auto-starts playback when file is loaded
-            // Calling play() while in LOADING state can cause issues on Vita
+            // Calling play() while in LOADING state can cause crashes on Vita
 
             // Resume from viewOffset if available (will be applied after file loads)
             if (item.viewOffset > 0) {
@@ -167,6 +184,8 @@ void PlayerActivity::loadMedia() {
             brls::Logger::error("Failed to get playback URL for: {}", m_mediaKey);
         }
     }
+
+    m_loadingMedia = false;
 }
 
 void PlayerActivity::updateProgress() {

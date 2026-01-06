@@ -140,6 +140,8 @@ private:
     std::string m_errorMessage;
     std::string m_currentUrl;
     bool m_subtitlesVisible = true;
+    bool m_stopping = false;        // Shutdown in progress
+    bool m_commandPending = false;  // Async command pending
 };
 
 } // namespace vitaplex
