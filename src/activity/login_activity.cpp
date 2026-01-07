@@ -8,6 +8,8 @@
 #include "view/progress_dialog.hpp"
 #include "utils/async.hpp"
 
+#include <memory>
+
 namespace vitaplex {
 
 LoginActivity::LoginActivity() {
@@ -130,19 +132,19 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
     progressDialog->setStatus("Connecting to " + server.name + "...");
     progressDialog->show();
 
-    // Track if connection was cancelled
-    bool cancelled = false;
-    progressDialog->setCancelCallback([&cancelled]() {
-        cancelled = true;
+    // Track if connection was cancelled - use shared_ptr so it persists across async operation
+    auto cancelled = std::make_shared<bool>(false);
+    progressDialog->setCancelCallback([cancelled]() {
+        *cancelled = true;
     });
 
     size_t totalConnections = server.connections.size();
 
     // Run connection attempts asynchronously
-    asyncRun([this, server, progressDialog, totalConnections, &cancelled]() {
+    asyncRun([this, server, progressDialog, totalConnections, cancelled]() {
         PlexClient& client = PlexClient::getInstance();
 
-        for (size_t i = 0; i < totalConnections && !cancelled; i++) {
+        for (size_t i = 0; i < totalConnections && !*cancelled; i++) {
             const auto& conn = server.connections[i];
             std::string connType = conn.local ? "local" : (conn.relay ? "relay" : "remote");
 
