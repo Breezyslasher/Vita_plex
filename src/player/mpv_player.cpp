@@ -51,13 +51,26 @@ bool MpvPlayer::init() {
     // ========================================
     // CRITICAL: Video output configuration
     // ========================================
-    // We MUST use null video output because our app uses vita2d for UI
-    // and vita2d can't be shared between app and mpv simultaneously.
-    // This means video won't display, but audio will work fine.
-    // For video playback, we'd need to completely stop vita2d first.
-    
-    mpv_set_option_string(m_mpv, "vo", "null");  // Disable video output
-    mpv_set_option_string(m_mpv, "video", "no"); // Don't process video at all (saves CPU)
+    // We MUST completely disable video because our app uses vita2d for UI
+    // and vita2d/GXM can't be shared between app and mpv simultaneously.
+    // Any video processing will conflict with borealis rendering and cause crashes.
+    //
+    // Multiple options are set to ensure video is truly disabled:
+
+    // 1. Disable video output renderer
+    mpv_set_option_string(m_mpv, "vo", "null");
+
+    // 2. Disable video track selection entirely
+    mpv_set_option_string(m_mpv, "video", "no");
+    mpv_set_option_string(m_mpv, "vid", "no");
+
+    // 3. Disable hardware decoding (prevents GPU conflicts)
+    mpv_set_option_string(m_mpv, "hwdec", "no");
+
+    // 4. Set video codec list to empty (prevent any video decoder from loading)
+    mpv_set_option_string(m_mpv, "vd", "");
+
+    brls::Logger::debug("MpvPlayer: Video output disabled (vo=null, video=no, vid=no, hwdec=no)");
     
     // ========================================
     // Audio output configuration for Vita
@@ -121,8 +134,9 @@ bool MpvPlayer::init() {
     // ========================================
     // Logging - request log messages for debugging
     // ========================================
-    
-    mpv_request_log_messages(m_mpv, "warn");
+
+    // Request INFO level to see useful mpv status messages
+    mpv_request_log_messages(m_mpv, "info");
     
     // ========================================
     // Initialize MPV
@@ -183,31 +197,45 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
         }
     }
 
+    // Prevent loading while already loading to avoid "command already pending" issues
+    if (m_state == MpvPlayerState::LOADING) {
+        brls::Logger::debug("MpvPlayer: Already loading, ignoring duplicate load request");
+        return false;
+    }
+
     brls::Logger::debug("MpvPlayer: Loading URL: {}", url);
-    
+
+    // Reset state before loading
     m_currentUrl = url;
     m_playbackInfo = MpvPlaybackInfo();
     m_playbackInfo.mediaTitle = title;
-    
-    // Stop any current playback first
+    m_commandId = 1;  // Reset command ID counter
+
+    // Stop any current playback first (synchronous)
     const char* stopCmd[] = {"stop", NULL};
     mpv_command(m_mpv, stopCmd);
-    
+
+    // Process any pending events from the stop command
+    processEvents();
+
     // Small delay to ensure stop completes
     sceKernelDelayThread(50000);  // 50ms
-    
-    // Load the file
+
+    // Set loading state BEFORE sending the command
+    setState(MpvPlayerState::LOADING);
+
+    // Load the file using async command to track completion
     const char* cmd[] = {"loadfile", url.c_str(), "replace", NULL};
-    int result = mpv_command(m_mpv, cmd);
-    
+    int result = mpv_command_async(m_mpv, m_commandId++, cmd);
+
     if (result < 0) {
         m_errorMessage = std::string("Failed to load URL: ") + mpv_error_string(result);
-        brls::Logger::debug("MpvPlayer: {}", m_errorMessage);
+        brls::Logger::error("MpvPlayer: {}", m_errorMessage);
         setState(MpvPlayerState::ERROR);
         return false;
     }
-    
-    setState(MpvPlayerState::LOADING);
+
+    brls::Logger::debug("MpvPlayer: Load command sent (async id={})", m_commandId - 1);
     return true;
 }
 
@@ -443,36 +471,22 @@ void MpvPlayer::setState(MpvPlayerState newState) {
 
 void MpvPlayer::update() {
     if (!m_mpv) {
-        brls::Logger::debug("MpvPlayer::update() - mpv is null, skipping");
         return;
     }
 
-    brls::Logger::debug("MpvPlayer::update() - processing events...");
     processEvents();
-    brls::Logger::debug("MpvPlayer::update() - events processed, updating playback info...");
     updatePlaybackInfo();
-    brls::Logger::debug("MpvPlayer::update() - done");
 }
 
 void MpvPlayer::processEvents() {
     if (!m_mpv) return;
 
-    int eventCount = 0;
     while (m_mpv) {
         mpv_event* event = mpv_wait_event(m_mpv, 0);
-        if (!event) {
-            brls::Logger::debug("MpvPlayer: mpv_wait_event returned null");
+        if (!event || event->event_id == MPV_EVENT_NONE) {
             break;
         }
-        if (event->event_id == MPV_EVENT_NONE) {
-            break;
-        }
-        eventCount++;
-        brls::Logger::debug("MpvPlayer: Processing event {} (type={})", eventCount, (int)event->event_id);
         handleEvent(event);
-    }
-    if (eventCount > 0) {
-        brls::Logger::debug("MpvPlayer: Processed {} events", eventCount);
     }
 }
 
@@ -542,12 +556,27 @@ void MpvPlayer::handleEvent(mpv_event* event) {
             
         case MPV_EVENT_LOG_MESSAGE: {
             mpv_event_log_message* msg = (mpv_event_log_message*)event->data;
-            if (msg->log_level <= MPV_LOG_LEVEL_WARN) {
-                brls::Logger::debug("mpv [{}]: {}", msg->prefix, msg->text);
+            // Log mpv messages at appropriate level
+            if (msg->log_level <= MPV_LOG_LEVEL_ERROR) {
+                brls::Logger::error("mpv {}: {}", msg->prefix, msg->text);
+            } else if (msg->log_level <= MPV_LOG_LEVEL_WARN) {
+                brls::Logger::warning("mpv {}: {}", msg->prefix, msg->text);
+            } else if (msg->log_level <= MPV_LOG_LEVEL_INFO) {
+                brls::Logger::info("mpv {}: {}", msg->prefix, msg->text);
             }
             break;
         }
-        
+
+        case MPV_EVENT_COMMAND_REPLY: {
+            brls::Logger::debug("MpvPlayer: EVENT_COMMAND_REPLY id={} error={}",
+                               event->reply_userdata, event->error);
+            if (event->error < 0) {
+                brls::Logger::error("MpvPlayer: Command {} failed: {}",
+                                   event->reply_userdata, mpv_error_string(event->error));
+            }
+            break;
+        }
+
         default:
             break;
     }

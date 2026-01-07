@@ -140,6 +140,7 @@ private:
     std::string m_errorMessage;
     std::string m_currentUrl;
     bool m_subtitlesVisible = true;
+    int64_t m_commandId = 1;  // Async command ID counter
 };
 
 } // namespace vitaplex

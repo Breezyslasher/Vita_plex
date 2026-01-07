@@ -29,6 +29,7 @@ private:
 
     std::string m_mediaKey;
     bool m_isPlaying = false;
+    int m_pendingSeekOffset = 0;  // Deferred seek offset in milliseconds (wait for file to load)
     brls::RepeatingTimer m_updateTimer;
 
     BRLS_BIND(brls::Box, playerContainer, "player/container");

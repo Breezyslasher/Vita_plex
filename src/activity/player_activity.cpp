@@ -97,25 +97,28 @@ void PlayerActivity::loadMedia() {
             titleLabel->setText(title);
         }
 
+        // Store viewOffset for deferred seeking after file loads
+        m_pendingSeekOffset = item.viewOffset;
+
         // Get playback URL
         std::string url;
         if (client.getPlaybackUrl(m_mediaKey, url)) {
             MpvPlayer& player = MpvPlayer::getInstance();
 
             if (!player.isInitialized()) {
-                player.init();
+                if (!player.init()) {
+                    brls::Logger::error("Failed to initialize MPV player");
+                    return;
+                }
             }
 
-            // Resume from viewOffset if available
-            if (item.viewOffset > 0) {
-                player.loadUrl(url, item.title);
-                player.seekTo(item.viewOffset / 1000.0);
+            // Load URL - seeking will happen in updateProgress() after file loads
+            if (player.loadUrl(url, item.title)) {
+                player.play();
+                m_isPlaying = true;
             } else {
-                player.loadUrl(url, item.title);
+                brls::Logger::error("Failed to load media URL");
             }
-
-            player.play();
-            m_isPlaying = true;
         }
     }
 }
@@ -124,6 +127,23 @@ void PlayerActivity::updateProgress() {
     MpvPlayer& player = MpvPlayer::getInstance();
 
     if (!player.isInitialized()) return;
+
+    // Process mpv events to update state
+    player.update();
+
+    // Handle deferred seeking after file loads
+    if (m_pendingSeekOffset > 0 && player.isPlaying()) {
+        double seekSeconds = m_pendingSeekOffset / 1000.0;
+        brls::Logger::debug("Performing deferred seek to {} seconds", seekSeconds);
+        player.seekTo(seekSeconds);
+        m_pendingSeekOffset = 0;  // Clear pending seek
+    }
+
+    // Don't update UI if player is in error state or not playing
+    if (player.hasError()) {
+        brls::Logger::error("Player error: {}", player.getErrorMessage());
+        return;
+    }
 
     double position = player.getPosition();
     double duration = player.getDuration();
