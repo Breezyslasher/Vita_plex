@@ -6,6 +6,7 @@
 #pragma once
 
 #include <borealis.hpp>
+#include <memory>
 #include "app/plex_client.hpp"
 #include "view/recycling_grid.hpp"
 
@@ -14,7 +15,7 @@ namespace vitaplex {
 class MusicTab : public brls::Box {
 public:
     MusicTab();
-    ~MusicTab() override = default;
+    ~MusicTab() override;
 
     void onFocusGained() override;
 
@@ -53,6 +54,9 @@ private:
     std::vector<MediaItem> m_collections;
     std::string m_currentSection;
     bool m_loaded = false;
+
+    // Shared pointer to track if this object is still alive
+    std::shared_ptr<bool> m_alive;
 };
 
 } // namespace vitaplex

@@ -7,6 +7,7 @@
 #pragma once
 
 #include <borealis.hpp>
+#include <memory>
 #include "app/plex_client.hpp"
 #include "view/recycling_grid.hpp"
 
@@ -23,6 +24,7 @@ enum class LibraryViewMode {
 class LibrarySectionTab : public brls::Box {
 public:
     LibrarySectionTab(const std::string& sectionKey, const std::string& title, const std::string& sectionType = "");
+    ~LibrarySectionTab() override;
 
     void onFocusGained() override;
 
@@ -37,6 +39,9 @@ private:
     void onCollectionSelected(const MediaItem& collection);
     void onGenreSelected(const GenreItem& genre);
     void updateViewModeButtons();
+
+    // Check if this tab is still valid (not destroyed)
+    bool isValid() const { return m_alive && *m_alive; }
 
     std::string m_sectionKey;
     std::string m_title;
@@ -64,6 +69,10 @@ private:
     bool m_loaded = false;
     bool m_collectionsLoaded = false;
     bool m_genresLoaded = false;
+
+    // Shared pointer to track if this object is still alive
+    // Used by async callbacks to check validity before updating UI
+    std::shared_ptr<bool> m_alive;
 };
 
 } // namespace vitaplex

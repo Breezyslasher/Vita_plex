@@ -11,6 +11,9 @@
 namespace vitaplex {
 
 MusicTab::MusicTab() {
+    // Create alive flag for async callback safety
+    m_alive = std::make_shared<bool>(true);
+
     this->setAxis(brls::Axis::COLUMN);
     this->setJustifyContent(brls::JustifyContent::FLEX_START);
     this->setAlignItems(brls::AlignItems::STRETCH);
@@ -87,6 +90,14 @@ MusicTab::MusicTab() {
     loadSections();
 }
 
+MusicTab::~MusicTab() {
+    // Mark as no longer alive to prevent async callbacks from updating destroyed UI
+    if (m_alive) {
+        *m_alive = false;
+    }
+    brls::Logger::debug("MusicTab: Destroyed");
+}
+
 brls::Box* MusicTab::createHorizontalRow(const std::string& title) {
     auto* rowBox = new brls::Box();
     rowBox->setAxis(brls::Axis::COLUMN);
@@ -130,7 +141,9 @@ void MusicTab::onFocusGained() {
 void MusicTab::loadSections() {
     brls::Logger::debug("MusicTab::loadSections - Starting async load");
 
-    asyncRun([this]() {
+    std::weak_ptr<bool> aliveWeak = m_alive;
+
+    asyncRun([this, aliveWeak]() {
         brls::Logger::debug("MusicTab: Fetching library sections (async)...");
         PlexClient& client = PlexClient::getInstance();
         std::vector<LibrarySection> allSections;
@@ -147,7 +160,10 @@ void MusicTab::loadSections() {
             brls::Logger::info("MusicTab: Got {} music sections", musicSections.size());
 
             // Update UI on main thread
-            brls::sync([this, musicSections]() {
+            brls::sync([this, musicSections, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
                 m_sections = musicSections;
                 m_sectionsBox->clearViews();
 
@@ -183,7 +199,9 @@ void MusicTab::loadSections() {
             });
         } else {
             brls::Logger::error("MusicTab: Failed to fetch sections");
-            brls::sync([this]() {
+            brls::sync([this, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
                 m_loaded = true;
             });
         }
@@ -200,7 +218,9 @@ void MusicTab::loadContent(const std::string& sectionKey) {
     brls::Logger::debug("MusicTab::loadContent - section: {} (async)", sectionKey);
 
     std::string key = sectionKey;
-    asyncRun([this, key]() {
+    std::weak_ptr<bool> aliveWeak = m_alive;
+
+    asyncRun([this, key, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
@@ -208,7 +228,10 @@ void MusicTab::loadContent(const std::string& sectionKey) {
             brls::Logger::info("MusicTab: Got {} items for section {}", items.size(), key);
 
             // Update UI on main thread
-            brls::sync([this, items]() {
+            brls::sync([this, items, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
                 m_items = items;
                 m_contentGrid->setDataSource(m_items);
             });
@@ -219,7 +242,9 @@ void MusicTab::loadContent(const std::string& sectionKey) {
 }
 
 void MusicTab::loadPlaylists() {
-    asyncRun([this]() {
+    std::weak_ptr<bool> aliveWeak = m_alive;
+
+    asyncRun([this, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> allPlaylists;
 
@@ -236,7 +261,10 @@ void MusicTab::loadPlaylists() {
             if (!audioPlaylists.empty()) {
                 brls::Logger::info("MusicTab: Got {} audio playlists", audioPlaylists.size());
 
-                brls::sync([this, audioPlaylists]() {
+                brls::sync([this, audioPlaylists, aliveWeak]() {
+                    auto alive = aliveWeak.lock();
+                    if (!alive || !*alive) return;
+
                     m_playlists = audioPlaylists;
                     if (m_playlistsContainer && m_playlistsRow) {
                         m_playlistsContainer->clearViews();
@@ -268,14 +296,19 @@ void MusicTab::loadPlaylists() {
 
 void MusicTab::loadCollections(const std::string& sectionKey) {
     std::string key = sectionKey;
-    asyncRun([this, key]() {
+    std::weak_ptr<bool> aliveWeak = m_alive;
+
+    asyncRun([this, key, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> collections;
 
         if (client.fetchCollections(key, collections) && !collections.empty()) {
             brls::Logger::info("MusicTab: Got {} collections for section {}", collections.size(), key);
 
-            brls::sync([this, collections]() {
+            brls::sync([this, collections, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
                 m_collections = collections;
                 if (m_collectionsContainer && m_collectionsRow) {
                     m_collectionsContainer->clearViews();
@@ -300,7 +333,10 @@ void MusicTab::loadCollections(const std::string& sectionKey) {
             });
         } else {
             brls::Logger::debug("MusicTab: No collections for section {}", key);
-            brls::sync([this]() {
+            brls::sync([this, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
                 if (m_collectionsRow) {
                     m_collectionsRow->setVisibility(brls::Visibility::GONE);
                 }
@@ -326,15 +362,19 @@ void MusicTab::onPlaylistSelected(const MediaItem& playlist) {
 
     std::string playlistKey = playlist.ratingKey;
     std::string playlistTitle = playlist.title;
+    std::weak_ptr<bool> aliveWeak = m_alive;
 
-    asyncRun([this, playlistKey, playlistTitle]() {
+    asyncRun([this, playlistKey, playlistTitle, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
         if (client.fetchChildren(playlistKey, items)) {
             brls::Logger::info("MusicTab: Got {} items in playlist", items.size());
 
-            brls::sync([this, items, playlistTitle]() {
+            brls::sync([this, items, playlistTitle, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
                 m_titleLabel->setText("Playlist - " + playlistTitle);
                 m_items = items;
                 m_contentGrid->setDataSource(m_items);
@@ -350,15 +390,19 @@ void MusicTab::onCollectionSelected(const MediaItem& collection) {
 
     std::string collectionKey = collection.ratingKey;
     std::string collectionTitle = collection.title;
+    std::weak_ptr<bool> aliveWeak = m_alive;
 
-    asyncRun([this, collectionKey, collectionTitle]() {
+    asyncRun([this, collectionKey, collectionTitle, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
         if (client.fetchChildren(collectionKey, items)) {
             brls::Logger::info("MusicTab: Got {} items in collection", items.size());
 
-            brls::sync([this, items, collectionTitle]() {
+            brls::sync([this, items, collectionTitle, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
                 m_titleLabel->setText("Collection - " + collectionTitle);
                 m_items = items;
                 m_contentGrid->setDataSource(m_items);

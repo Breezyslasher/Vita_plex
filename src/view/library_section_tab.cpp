@@ -13,6 +13,9 @@ namespace vitaplex {
 LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::string& title, const std::string& sectionType)
     : m_sectionKey(sectionKey), m_title(title), m_sectionType(sectionType) {
 
+    // Create alive flag for async callback safety
+    m_alive = std::make_shared<bool>(true);
+
     this->setAxis(brls::Axis::COLUMN);
     this->setJustifyContent(brls::JustifyContent::FLEX_START);
     this->setAlignItems(brls::AlignItems::STRETCH);
@@ -94,6 +97,14 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     loadContent();
 }
 
+LibrarySectionTab::~LibrarySectionTab() {
+    // Mark as no longer alive to prevent async callbacks from updating destroyed UI
+    if (m_alive) {
+        *m_alive = false;
+    }
+    brls::Logger::debug("LibrarySectionTab: Destroyed for section {}", m_sectionKey);
+}
+
 void LibrarySectionTab::onFocusGained() {
     brls::Box::onFocusGained();
 
@@ -106,21 +117,32 @@ void LibrarySectionTab::loadContent() {
     brls::Logger::debug("LibrarySectionTab::loadContent - section: {} (async)", m_sectionKey);
 
     std::string key = m_sectionKey;
-    asyncRun([this, key]() {
+    std::weak_ptr<bool> aliveWeak = m_alive;  // Capture weak_ptr for async safety
+
+    asyncRun([this, key, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
         if (client.fetchLibraryContent(key, items)) {
             brls::Logger::info("LibrarySectionTab: Got {} items for section {}", items.size(), key);
 
-            brls::sync([this, items]() {
+            brls::sync([this, items, aliveWeak]() {
+                // Check if object is still alive before updating UI
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) {
+                    brls::Logger::debug("LibrarySectionTab: Tab destroyed, skipping UI update");
+                    return;
+                }
+
                 m_items = items;
                 m_contentGrid->setDataSource(m_items);
                 m_loaded = true;
             });
         } else {
             brls::Logger::error("LibrarySectionTab: Failed to load content for section {}", key);
-            brls::sync([this]() {
+            brls::sync([this, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
                 m_loaded = true;
             });
         }
@@ -138,14 +160,19 @@ void LibrarySectionTab::loadContent() {
 
 void LibrarySectionTab::loadCollections() {
     std::string key = m_sectionKey;
-    asyncRun([this, key]() {
+    std::weak_ptr<bool> aliveWeak = m_alive;
+
+    asyncRun([this, key, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> collections;
 
         if (client.fetchCollections(key, collections)) {
             brls::Logger::info("LibrarySectionTab: Got {} collections for section {}", collections.size(), key);
 
-            brls::sync([this, collections]() {
+            brls::sync([this, collections, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
                 m_collections = collections;
                 m_collectionsLoaded = true;
 
@@ -156,7 +183,10 @@ void LibrarySectionTab::loadCollections() {
             });
         } else {
             brls::Logger::debug("LibrarySectionTab: No collections for section {}", key);
-            brls::sync([this]() {
+            brls::sync([this, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
                 m_collectionsLoaded = true;
                 if (m_collectionsBtn) {
                     m_collectionsBtn->setVisibility(brls::Visibility::GONE);
@@ -168,20 +198,28 @@ void LibrarySectionTab::loadCollections() {
 
 void LibrarySectionTab::loadGenres() {
     std::string key = m_sectionKey;
-    asyncRun([this, key]() {
+    std::weak_ptr<bool> aliveWeak = m_alive;
+
+    asyncRun([this, key, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<GenreItem> genres;
 
         if (client.fetchGenreItems(key, genres) && !genres.empty()) {
             brls::Logger::info("LibrarySectionTab: Got {} genres for section {}", genres.size(), key);
 
-            brls::sync([this, genres]() {
+            brls::sync([this, genres, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
                 m_genres = genres;
                 m_genresLoaded = true;
             });
         } else {
             brls::Logger::debug("LibrarySectionTab: No genres for section {}", key);
-            brls::sync([this]() {
+            brls::sync([this, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
                 m_genresLoaded = true;
                 if (m_categoriesBtn) {
                     m_categoriesBtn->setVisibility(brls::Visibility::GONE);
@@ -295,23 +333,30 @@ void LibrarySectionTab::onCollectionSelected(const MediaItem& collection) {
 
     m_filterTitle = collection.title;
     std::string collectionKey = collection.ratingKey;
+    std::string filterTitle = m_filterTitle;
+    std::weak_ptr<bool> aliveWeak = m_alive;
 
-    asyncRun([this, collectionKey]() {
+    asyncRun([this, collectionKey, filterTitle, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
         if (client.fetchChildren(collectionKey, items)) {
             brls::Logger::info("LibrarySectionTab: Got {} items in collection", items.size());
 
-            brls::sync([this, items]() {
+            brls::sync([this, items, filterTitle, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
                 m_viewMode = LibraryViewMode::FILTERED;
-                m_titleLabel->setText(m_title + " - " + m_filterTitle);
+                m_titleLabel->setText(m_title + " - " + filterTitle);
                 m_contentGrid->setDataSource(items);
                 updateViewModeButtons();
             });
         } else {
             brls::Logger::error("LibrarySectionTab: Failed to load collection content");
-            brls::sync([]() {
+            brls::sync([aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
                 brls::Application::notify("Failed to load collection");
             });
         }
@@ -324,24 +369,32 @@ void LibrarySectionTab::onGenreSelected(const GenreItem& genre) {
     m_filterTitle = genre.title;
     std::string key = m_sectionKey;
     std::string genreKey = genre.key;
+    std::string genreTitle = genre.title;
+    std::string filterTitle = m_filterTitle;
+    std::weak_ptr<bool> aliveWeak = m_alive;
 
-    asyncRun([this, key, genreKey]() {
+    asyncRun([this, key, genreKey, genreTitle, filterTitle, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
         // Try with genre key first, fall back to title
-        if (client.fetchByGenreKey(key, genreKey, items) || client.fetchByGenre(key, m_filterTitle, items)) {
+        if (client.fetchByGenreKey(key, genreKey, items) || client.fetchByGenre(key, genreTitle, items)) {
             brls::Logger::info("LibrarySectionTab: Got {} items for genre", items.size());
 
-            brls::sync([this, items]() {
+            brls::sync([this, items, filterTitle, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
                 m_viewMode = LibraryViewMode::FILTERED;
-                m_titleLabel->setText(m_title + " - " + m_filterTitle);
+                m_titleLabel->setText(m_title + " - " + filterTitle);
                 m_contentGrid->setDataSource(items);
                 updateViewModeButtons();
             });
         } else {
             brls::Logger::error("LibrarySectionTab: Failed to load genre content");
-            brls::sync([]() {
+            brls::sync([aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
                 brls::Application::notify("Failed to load category");
             });
         }
