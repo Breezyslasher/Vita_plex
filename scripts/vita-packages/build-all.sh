@@ -51,6 +51,7 @@ echo -e "${YELLOW}[2/7] Building vita-netdb (DNS resolver)...${NC}"
 mkdir -p vita-netdb
 cp "$SCRIPT_DIR/vita-netdb/vita_netdb.h" vita-netdb/
 cp "$SCRIPT_DIR/vita-netdb/vita_netdb.c" vita-netdb/
+cp "$SCRIPT_DIR/vita-netdb/netdb.h" vita-netdb/
 cp "$SCRIPT_DIR/vita-netdb/CMakeLists.txt" vita-netdb/
 cd vita-netdb
 
