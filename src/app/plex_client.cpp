@@ -1642,12 +1642,11 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     bool isAudio = (resp.body.find("\"type\":\"track\"") != std::string::npos);
     brls::Logger::debug("getTranscodeUrl: isAudio={}", isAudio);
 
-    // The path parameter should be the absolute path to the metadata key
-    // Format: /library/metadata/{ratingKey} (not a full URL per Plex API)
-    std::string metadataPath = "/library/metadata/" + ratingKey;
-    std::string encodedPath = HttpClient::urlEncode(metadataPath);
+    // The path parameter should be the part key (file path), not metadata path
+    // partKey is like /library/parts/11201/1643230399/file.m4a
+    std::string encodedPath = HttpClient::urlEncode(partKey);
 
-    brls::Logger::debug("getTranscodeUrl: metadataPath={}", metadataPath);
+    brls::Logger::debug("getTranscodeUrl: partKey={}", partKey);
 
     // Build transcode URL
     url = m_serverUrl;
