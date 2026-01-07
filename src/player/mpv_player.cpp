@@ -123,6 +123,18 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "volume", "100");
     mpv_set_option_string(m_mpv, "volume-max", "150");
 
+#ifdef __vita__
+    // Audio-specific optimizations for Vita
+    if (m_audioOnly) {
+        // Pre-buffer more audio to prevent stuttering during playback
+        mpv_set_option_string(m_mpv, "audio-buffer", "0.5");  // 500ms audio buffer
+
+        // Demuxer settings for smoother audio
+        mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "5");  // Read 5 seconds ahead
+        mpv_set_option_string(m_mpv, "demuxer-max-bytes", "512KiB");  // Allow some buffering for audio
+    }
+#endif
+
     // ========================================
     // Cache and demuxer settings
     // ========================================
@@ -148,6 +160,20 @@ bool MpvPlayer::init() {
 
     // Note: demuxer-lavf-probe-info and force-seekable caused crashes on Vita
     // Keep options minimal for compatibility
+
+    // ========================================
+    // Seek settings for faster seeking
+    // ========================================
+
+#ifdef __vita__
+    // Use keyframe-based seeking for faster forward/rewind (especially for audio)
+    // hr-seek=no means seek to nearest keyframe instead of exact position
+    // This is much faster and prevents stuttering during seek operations
+    mpv_set_option_string(m_mpv, "hr-seek", "no");
+
+    // Don't wait for audio to resync after seeking - reduces seek delay
+    mpv_set_option_string(m_mpv, "hr-seek-framedrop", "yes");
+#endif
 
     // ========================================
     // Subtitle settings

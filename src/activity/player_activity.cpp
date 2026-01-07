@@ -327,6 +327,11 @@ void PlayerActivity::loadMedia() {
             if (isAudioContent && url.find("http://") == 0) {
                 brls::Logger::info("PlayerActivity: Downloading audio stream to local file (HTTP workaround)...");
 
+                // Show loading message in title
+                if (titleLabel) {
+                    titleLabel->setText("Loading audio...");
+                }
+
                 // Extract file extension from URL (e.g., .mp3, .m4a, .ogg, .flac)
                 std::string ext = ".mp3";  // Default extension
                 size_t queryPos = url.find('?');
@@ -334,7 +339,6 @@ void PlayerActivity::loadMedia() {
                 size_t dotPos = urlPath.rfind('.');
                 if (dotPos != std::string::npos) {
                     ext = urlPath.substr(dotPos);
-                    brls::Logger::debug("PlayerActivity: Detected audio extension: {}", ext);
                 }
 
                 // Build temp file path with correct extension
@@ -344,19 +348,40 @@ void PlayerActivity::loadMedia() {
                 std::ofstream tempFile(tempPath, std::ios::binary);
                 if (!tempFile.is_open()) {
                     brls::Logger::error("Failed to create temp file: {}", tempPath);
+                    if (titleLabel) titleLabel->setText("Error: Cannot create temp file");
                     m_loadingMedia = false;
                     return;
                 }
 
-                // Download the stream
+                // Track download progress
+                int64_t totalBytes = 0;
+                int64_t downloadedBytes = 0;
+                int lastProgressPercent = -1;
+
+                // Download the stream with progress updates
                 HttpClient httpClient;
                 bool downloadSuccess = httpClient.downloadFile(url,
-                    [&tempFile](const char* data, size_t size) -> bool {
+                    [&tempFile, &downloadedBytes, &totalBytes, &lastProgressPercent, this](const char* data, size_t size) -> bool {
                         tempFile.write(data, size);
+                        downloadedBytes += size;
+
+                        // Update progress display (only when percentage changes to reduce overhead)
+                        if (totalBytes > 0) {
+                            int percent = (int)((downloadedBytes * 100) / totalBytes);
+                            if (percent != lastProgressPercent && titleLabel) {
+                                lastProgressPercent = percent;
+                                char progressText[64];
+                                snprintf(progressText, sizeof(progressText), "Loading audio... %d%%", percent);
+                                brls::sync([this, progressText]() {
+                                    if (titleLabel) titleLabel->setText(progressText);
+                                });
+                            }
+                        }
+
                         return tempFile.good();
                     },
-                    [](int64_t totalSize) {
-                        brls::Logger::debug("PlayerActivity: Stream size: {} bytes", totalSize);
+                    [&totalBytes](int64_t size) {
+                        totalBytes = size;
                     }
                 );
 
@@ -364,11 +389,17 @@ void PlayerActivity::loadMedia() {
 
                 if (!downloadSuccess) {
                     brls::Logger::error("Failed to download audio stream");
+                    if (titleLabel) titleLabel->setText("Error: Download failed");
                     m_loadingMedia = false;
                     return;
                 }
 
-                brls::Logger::info("PlayerActivity: Audio downloaded to {}, playing local file", tempPath);
+                // Restore title after download
+                if (titleLabel) {
+                    titleLabel->setText(item.title);
+                }
+
+                brls::Logger::info("PlayerActivity: Audio downloaded ({} bytes), playing local file", downloadedBytes);
                 playUrl = tempPath;
             }
 
