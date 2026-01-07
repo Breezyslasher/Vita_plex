@@ -314,11 +314,13 @@ void PlayerActivity::loadMedia() {
 
             // Load the URL using async command
             // loadUrl returns false if a command is already pending (prevents rapid clicks)
+            brls::Logger::debug("PlayerActivity: Calling player.loadUrl...");
             if (!player.loadUrl(url, item.title)) {
                 brls::Logger::error("Failed to load URL: {}", url);
                 m_loadingMedia = false;
                 return;
             }
+            brls::Logger::debug("PlayerActivity: player.loadUrl returned successfully");
 
             // Note: Don't call play() here - MPV auto-starts playback when file is loaded
             // Calling play() while in LOADING state can cause crashes on Vita
@@ -334,11 +336,13 @@ void PlayerActivity::loadMedia() {
             // No need for m_pendingSeek for remote playback
 
             m_isPlaying = true;
+            brls::Logger::debug("PlayerActivity: loadMedia completed successfully for Plex stream");
         } else {
             brls::Logger::error("Failed to get transcode URL for: {}", m_mediaKey);
         }
     }
 
+    brls::Logger::debug("PlayerActivity: loadMedia exiting");
     m_loadingMedia = false;
 }
 
@@ -348,10 +352,15 @@ void PlayerActivity::updateProgress() {
 
     MpvPlayer& player = MpvPlayer::getInstance();
 
-    if (!player.isInitialized()) return;
+    if (!player.isInitialized()) {
+        brls::Logger::debug("PlayerActivity::updateProgress: player not initialized");
+        return;
+    }
 
     // Always process MPV events to handle state transitions
+    brls::Logger::debug("PlayerActivity::updateProgress: calling player.update()");
     player.update();
+    brls::Logger::debug("PlayerActivity::updateProgress: player.update() returned");
 
     // Skip UI updates while MPV is still loading - be gentle on Vita's limited hardware
     if (player.isLoading()) {

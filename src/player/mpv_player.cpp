@@ -299,6 +299,7 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
     // Use simple loadfile command - options are already set globally during init()
     // Format: loadfile <url> [flags]
     // Note: Per-file options (5th arg) require different format and aren't well supported
+    brls::Logger::debug("MpvPlayer: Sending loadfile command...");
     const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", nullptr};
     int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
     if (result < 0) {
@@ -308,8 +309,10 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
         setState(MpvPlayerState::ERROR);
         return false;
     }
+    brls::Logger::debug("MpvPlayer: loadfile command queued successfully (result={})", result);
 
     setState(MpvPlayerState::LOADING);
+    brls::Logger::debug("MpvPlayer: loadUrl complete, returning true");
     return true;
 }
 

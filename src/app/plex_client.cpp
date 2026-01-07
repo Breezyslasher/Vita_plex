@@ -1642,23 +1642,24 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     bool isAudio = (resp.body.find("\"type\":\"track\"") != std::string::npos);
     brls::Logger::debug("getTranscodeUrl: isAudio={}", isAudio);
 
-    // The path parameter should be a full URL to the metadata endpoint
-    // Format: http://127.0.0.1:32400/library/metadata/{ratingKey}
-    // This tells the transcoder which media item to transcode
-    std::string metadataUrl = "http://127.0.0.1:32400/library/metadata/" + ratingKey;
-    std::string encodedPath = HttpClient::urlEncode(metadataUrl);
+    // The path parameter should be the absolute path to the metadata key
+    // Format: /library/metadata/{ratingKey} (not a full URL per Plex API)
+    std::string metadataPath = "/library/metadata/" + ratingKey;
+    std::string encodedPath = HttpClient::urlEncode(metadataPath);
+
+    brls::Logger::debug("getTranscodeUrl: metadataPath={}", metadataPath);
 
     // Build transcode URL
     url = m_serverUrl;
 
     if (isAudio) {
-        // Audio transcode - convert to MP3 which the Vita can play
-        url += "/music/:/transcode/universal/start.mp3?";
+        // Audio transcode - use HLS format like official Plex clients
+        url += "/music/:/transcode/universal/start.m3u8?";
         url += "path=" + encodedPath;
         url += "&mediaIndex=0&partIndex=0";
-        url += "&protocol=http";
+        url += "&protocol=hls";
         url += "&directPlay=0&directStream=0";  // Force transcode
-        url += "&audioCodec=mp3&audioBitrate=320";
+        url += "&musicBitrate=320";
     } else {
         // Video transcode - convert to H.264/AAC which the Vita can decode
         url += "/video/:/transcode/universal/start.mp4?";
