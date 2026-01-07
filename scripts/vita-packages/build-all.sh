@@ -196,9 +196,9 @@ patch --strip=1 --input="$BUILD_DIR/ffmpeg.patch"
     --enable-filter=scale \
     --enable-filter=aresample
 
-# KEY FIX: Do NOT disable HAVE_GETADDRINFO (this was breaking HTTP)
-# Original switchfin had: sed 's/#define HAVE_GETADDRINFO 1/#define HAVE_GETADDRINFO 0/g' -i config.h
-# We're NOT doing that anymore
+# Vita SDK doesn't have gai_strerror, so we MUST disable getaddrinfo
+# This means FFmpeg can't resolve hostnames - must use IP addresses or pre-resolve with curl
+sed -i 's/#define HAVE_GETADDRINFO 1/#define HAVE_GETADDRINFO 0/g' config.h
 
 make -j$(nproc)
 make install
@@ -287,8 +287,11 @@ echo "Packages installed to: $VITASDK/arm-vita-eabi"
 echo ""
 echo "Changes made:"
 echo "  - curl: Enabled threaded resolver"
-echo "  - FFmpeg: Enabled HAVE_GETADDRINFO (DNS), explicit HTTP/HLS protocols"
+echo "  - FFmpeg: Explicit HTTP/HLS protocols enabled"
 echo "  - MPV: No changes (uses FFmpeg for network)"
+echo ""
+echo "NOTE: Vita doesn't support DNS in FFmpeg (no gai_strerror)."
+echo "      HTTP streaming must use IP addresses OR use curl to download first."
 echo ""
 echo "Next: Rebuild VitaPlex with:"
 echo "  cd /path/to/Vita_plex"
