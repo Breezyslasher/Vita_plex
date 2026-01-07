@@ -746,6 +746,37 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
     item.index = extractJsonInt(resp.body, "index");
     item.parentIndex = extractJsonInt(resp.body, "parentIndex");
 
+    // Extract part path for downloads from Media[0].Part[0].key
+    // Look for "Part":[{"key":"/library/parts/...
+    size_t partPos = resp.body.find("\"Part\":");
+    if (partPos != std::string::npos) {
+        size_t partKeyPos = resp.body.find("\"key\":", partPos);
+        if (partKeyPos != std::string::npos && partKeyPos < partPos + 500) {
+            // Extract the part key value
+            size_t start = resp.body.find('"', partKeyPos + 6);
+            if (start != std::string::npos) {
+                size_t end = resp.body.find('"', start + 1);
+                if (end != std::string::npos) {
+                    item.partPath = resp.body.substr(start + 1, end - start - 1);
+                    brls::Logger::debug("fetchMediaDetails: partPath={}", item.partPath);
+                }
+            }
+        }
+
+        // Also try to get the file size
+        size_t sizePos = resp.body.find("\"size\":", partPos);
+        if (sizePos != std::string::npos && sizePos < partPos + 500) {
+            size_t numStart = sizePos + 7;
+            while (numStart < resp.body.length() && !isdigit(resp.body[numStart])) numStart++;
+            size_t numEnd = numStart;
+            while (numEnd < resp.body.length() && isdigit(resp.body[numEnd])) numEnd++;
+            if (numEnd > numStart) {
+                item.partSize = std::stoll(resp.body.substr(numStart, numEnd - numStart));
+                brls::Logger::debug("fetchMediaDetails: partSize={}", item.partSize);
+            }
+        }
+    }
+
     return true;
 }
 

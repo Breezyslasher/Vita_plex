@@ -5,6 +5,7 @@
 #include "view/media_detail_view.hpp"
 #include "view/media_item_cell.hpp"
 #include "app/application.hpp"
+#include "app/downloads_manager.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
 
@@ -85,6 +86,26 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
                 return true;
             });
             leftBox->addView(m_resumeButton);
+        }
+
+        // Download button (for movies and episodes)
+        if (m_item.mediaType == MediaType::MOVIE || m_item.mediaType == MediaType::EPISODE) {
+            m_downloadButton = new brls::Button();
+
+            // Check if already downloaded
+            if (DownloadsManager::getInstance().isDownloaded(m_item.ratingKey)) {
+                m_downloadButton->setText("Downloaded");
+            } else {
+                m_downloadButton->setText("Download");
+            }
+
+            m_downloadButton->setWidth(200);
+            m_downloadButton->setMarginTop(10);
+            m_downloadButton->registerClickAction([this](brls::View* view) {
+                onDownload();
+                return true;
+            });
+            leftBox->addView(m_downloadButton);
         }
     }
 
@@ -234,6 +255,16 @@ void MediaDetailView::loadDetails() {
         if (m_summaryLabel && !m_item.summary.empty()) {
             m_summaryLabel->setText(m_item.summary);
         }
+
+        // Update download button state now that we have the part path
+        if (m_downloadButton && !m_item.partPath.empty()) {
+            if (DownloadsManager::getInstance().isDownloaded(m_item.ratingKey)) {
+                m_downloadButton->setText("Downloaded");
+            } else {
+                m_downloadButton->setText("Download");
+            }
+            brls::Logger::debug("loadDetails: partPath available, download enabled");
+        }
     }
 
     // Load thumbnail with appropriate aspect ratio
@@ -375,6 +406,60 @@ void MediaDetailView::onPlay(bool resume) {
         m_item.mediaType == MediaType::MUSIC_TRACK) {
 
         Application::getInstance().pushPlayerActivity(m_item.ratingKey);
+    }
+}
+
+void MediaDetailView::onDownload() {
+    // Check if already downloaded
+    if (DownloadsManager::getInstance().isDownloaded(m_item.ratingKey)) {
+        brls::Application::notify("Already downloaded");
+        return;
+    }
+
+    // Check if we have the part path (need to fetch full details first)
+    if (m_item.partPath.empty()) {
+        brls::Application::notify("Loading media info...");
+
+        // We need the part path - it should have been loaded in loadDetails()
+        brls::Logger::debug("onDownload: partPath is empty, cannot download");
+        brls::Application::notify("Unable to download - media info not available");
+        return;
+    }
+
+    // Determine media type and parent info
+    std::string mediaType = (m_item.mediaType == MediaType::MOVIE) ? "movie" : "episode";
+    std::string parentTitle = "";
+    int seasonNum = 0;
+    int episodeNum = 0;
+
+    if (m_item.mediaType == MediaType::EPISODE) {
+        parentTitle = m_item.grandparentTitle;  // Show name
+        seasonNum = m_item.parentIndex;  // Season number
+        episodeNum = m_item.index;       // Episode number
+    }
+
+    // Queue the download
+    bool queued = DownloadsManager::getInstance().queueDownload(
+        m_item.ratingKey,
+        m_item.title,
+        m_item.partPath,
+        m_item.duration,
+        mediaType,
+        parentTitle,
+        seasonNum,
+        episodeNum
+    );
+
+    if (queued) {
+        brls::Application::notify("Download queued: " + m_item.title);
+        if (m_downloadButton) {
+            m_downloadButton->setText("Queued");
+        }
+
+        // Start downloading
+        DownloadsManager::getInstance().startDownloads();
+    } else {
+        brls::Application::notify("Failed to queue download");
     }
 }
 

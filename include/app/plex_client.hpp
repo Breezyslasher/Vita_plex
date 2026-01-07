@@ -68,6 +68,10 @@ struct MediaItem {
     std::string audioCodec;
     int videoWidth = 0;
     int videoHeight = 0;
+
+    // For downloads - media part path on server
+    std::string partPath;
+    int64_t partSize = 0;
 };
 
 // Library section info
