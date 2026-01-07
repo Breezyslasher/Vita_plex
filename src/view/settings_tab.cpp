@@ -28,6 +28,7 @@ SettingsTab::SettingsTab() {
     createAccountSection();
     createUISection();
     createLayoutSection();
+    createContentDisplaySection();
     createPlaybackSection();
     createTranscodeSection();
     createAboutSection();
@@ -176,6 +177,48 @@ void SettingsTab::createLayoutSection() {
     infoLabel->setMarginLeft(16);
     infoLabel->setMarginTop(8);
     m_contentBox->addView(infoLabel);
+}
+
+void SettingsTab::createContentDisplaySection() {
+    Application& app = Application::getInstance();
+    AppSettings& settings = app.getSettings();
+
+    // Section header
+    auto* header = new brls::Header();
+    header->setTitle("Content Display");
+    m_contentBox->addView(header);
+
+    // Show collections toggle
+    m_collectionsToggle = new brls::BooleanCell();
+    m_collectionsToggle->init("Show Collections", settings.showCollections, [&settings](bool value) {
+        settings.showCollections = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_collectionsToggle);
+
+    // Show playlists toggle
+    m_playlistsToggle = new brls::BooleanCell();
+    m_playlistsToggle->init("Show Playlists", settings.showPlaylists, [&settings](bool value) {
+        settings.showPlaylists = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_playlistsToggle);
+
+    // Show genres/categories toggle
+    m_genresToggle = new brls::BooleanCell();
+    m_genresToggle->init("Show Categories", settings.showGenres, [&settings](bool value) {
+        settings.showGenres = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_genresToggle);
+
+    // Info label
+    auto* contentInfoLabel = new brls::Label();
+    contentInfoLabel->setText("Hides empty sections automatically");
+    contentInfoLabel->setFontSize(14);
+    contentInfoLabel->setMarginLeft(16);
+    contentInfoLabel->setMarginTop(8);
+    m_contentBox->addView(contentInfoLabel);
 }
 
 void SettingsTab::createPlaybackSection() {
@@ -504,6 +547,7 @@ void SettingsTab::onManageSidebarOrder() {
     std::vector<std::pair<std::string, std::string>> defaultItems = {
         {"home", "Home"},
         {"library", "Library"},
+        {"music", "Music"},
         {"search", "Search"},
         {"livetv", "Live TV"}
     };

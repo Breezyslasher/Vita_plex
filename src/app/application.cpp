@@ -244,6 +244,12 @@ bool Application::loadSettings() {
     m_settings.showLibrariesInSidebar = extractBool("showLibrariesInSidebar", false);
     m_settings.collapseSidebar = extractBool("collapseSidebar", false);
     m_settings.hiddenLibraries = extractString("hiddenLibraries");
+    m_settings.sidebarOrder = extractString("sidebarOrder");
+
+    // Load content display settings
+    m_settings.showCollections = extractBool("showCollections", true);
+    m_settings.showPlaylists = extractBool("showPlaylists", true);
+    m_settings.showGenres = extractBool("showGenres", true);
 
     // Load playback settings
     m_settings.autoPlayNext = extractBool("autoPlayNext", true);
@@ -298,6 +304,12 @@ bool Application::saveSettings() {
     json += "  \"showLibrariesInSidebar\": " + std::string(m_settings.showLibrariesInSidebar ? "true" : "false") + ",\n";
     json += "  \"collapseSidebar\": " + std::string(m_settings.collapseSidebar ? "true" : "false") + ",\n";
     json += "  \"hiddenLibraries\": \"" + m_settings.hiddenLibraries + "\",\n";
+    json += "  \"sidebarOrder\": \"" + m_settings.sidebarOrder + "\",\n";
+
+    // Content display settings
+    json += "  \"showCollections\": " + std::string(m_settings.showCollections ? "true" : "false") + ",\n";
+    json += "  \"showPlaylists\": " + std::string(m_settings.showPlaylists ? "true" : "false") + ",\n";
+    json += "  \"showGenres\": " + std::string(m_settings.showGenres ? "true" : "false") + ",\n";
 
     // Playback settings
     json += "  \"autoPlayNext\": " + std::string(m_settings.autoPlayNext ? "true" : "false") + ",\n";

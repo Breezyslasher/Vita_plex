@@ -84,6 +84,7 @@ set(APP_SOURCES
     src/view/recycling_grid.cpp
     src/view/video_view.cpp
     src/view/downloads_tab.cpp
+    src/view/music_tab.cpp
 
     # Player
     src/player/mpv_player.cpp

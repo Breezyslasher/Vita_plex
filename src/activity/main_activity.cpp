@@ -10,6 +10,7 @@
 #include "view/settings_tab.hpp"
 #include "view/livetv_tab.hpp"
 #include "view/downloads_tab.hpp"
+#include "view/music_tab.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
@@ -61,7 +62,7 @@ void MainActivity::onContentAvailable() {
             }
         } else {
             // Default order
-            order = {"home", "library", "search", "livetv"};
+            order = {"home", "library", "music", "search", "livetv"};
         }
 
         // Add tabs in specified order
@@ -80,6 +81,8 @@ void MainActivity::onContentAvailable() {
                 } else {
                     tabFrame->addTab("Library", []() { return new LibraryTab(); });
                 }
+            } else if (item == "music") {
+                tabFrame->addTab("Music", []() { return new MusicTab(); });
             } else if (item == "search") {
                 tabFrame->addTab("Search", []() { return new SearchTab(); });
             } else if (item == "livetv" && hasLiveTV) {

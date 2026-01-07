@@ -1,7 +1,6 @@
 /**
- * VitaPlex - Library Section Tab
- * Shows content for a single library section (for sidebar mode)
- * Includes collections, playlists, and genres (categories)
+ * VitaPlex - Music Tab
+ * Displays music libraries with playlists and collections
  */
 
 #pragma once
@@ -12,43 +11,47 @@
 
 namespace vitaplex {
 
-class LibrarySectionTab : public brls::Box {
+class MusicTab : public brls::Box {
 public:
-    LibrarySectionTab(const std::string& sectionKey, const std::string& title, const std::string& sectionType = "");
+    MusicTab();
+    ~MusicTab() override = default;
 
     void onFocusGained() override;
 
 private:
-    void loadContent();
-    void loadCollections();
-    void loadGenres();
+    void loadSections();
+    void loadContent(const std::string& sectionKey);
+    void loadPlaylists();
+    void loadCollections(const std::string& sectionKey);
     void onItemSelected(const MediaItem& item);
+    void onPlaylistSelected(const MediaItem& playlist);
     void onCollectionSelected(const MediaItem& collection);
-    void onGenreSelected(const std::string& genre);
     brls::Box* createHorizontalRow(const std::string& title);
-
-    std::string m_sectionKey;
-    std::string m_title;
-    std::string m_sectionType;  // "movie", "show", "artist"
 
     brls::ScrollingFrame* m_scrollView = nullptr;
     brls::Box* m_mainContainer = nullptr;
     brls::Label* m_titleLabel = nullptr;
 
+    // Section selector
+    brls::HScrollingFrame* m_sectionsScroll = nullptr;
+    brls::Box* m_sectionsBox = nullptr;
+
+    // Playlists row
+    brls::Box* m_playlistsRow = nullptr;
+    brls::Box* m_playlistsContainer = nullptr;
+
     // Collections row
     brls::Box* m_collectionsRow = nullptr;
     brls::Box* m_collectionsContainer = nullptr;
 
-    // Genres row
-    brls::Box* m_genresRow = nullptr;
-    brls::Box* m_genresContainer = nullptr;
-
     // Main content grid
     RecyclingGrid* m_contentGrid = nullptr;
 
+    std::vector<LibrarySection> m_sections;  // Music sections only
     std::vector<MediaItem> m_items;
+    std::vector<MediaItem> m_playlists;
     std::vector<MediaItem> m_collections;
-    std::vector<std::string> m_genres;
+    std::string m_currentSection;
     bool m_loaded = false;
 };
 

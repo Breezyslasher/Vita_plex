@@ -59,6 +59,11 @@ struct AppSettings {
     std::string hiddenLibraries;          // Comma-separated list of library keys to hide
     std::string sidebarOrder;             // Custom sidebar order (comma-separated: home,library,search,livetv,settings)
 
+    // Content Display Settings
+    bool showCollections = true;          // Show collections in library sections
+    bool showPlaylists = true;            // Show playlists
+    bool showGenres = true;               // Show genre categories
+
     // Playback Settings
     bool autoPlayNext = true;
     bool resumePlayback = true;

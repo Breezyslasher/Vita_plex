@@ -163,6 +163,12 @@ public:
     // Search
     bool search(const std::string& query, std::vector<MediaItem>& results);
 
+    // Collections, Playlists, Genres
+    bool fetchCollections(const std::string& sectionKey, std::vector<MediaItem>& collections);
+    bool fetchPlaylists(std::vector<MediaItem>& playlists);
+    bool fetchGenres(const std::string& sectionKey, std::vector<std::string>& genres);
+    bool fetchByGenre(const std::string& sectionKey, const std::string& genre, std::vector<MediaItem>& items);
+
     // Playback
     bool getPlaybackUrl(const std::string& ratingKey, std::string& url);
     bool updatePlayProgress(const std::string& ratingKey, int timeMs);

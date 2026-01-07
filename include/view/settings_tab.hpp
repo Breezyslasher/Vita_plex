@@ -17,6 +17,7 @@ private:
     void createAccountSection();
     void createUISection();
     void createLayoutSection();
+    void createContentDisplaySection();
     void createPlaybackSection();
     void createTranscodeSection();
     void createAboutSection();
@@ -47,6 +48,11 @@ private:
     brls::BooleanCell* m_collapseSidebarToggle = nullptr;
     brls::DetailCell* m_hiddenLibrariesCell = nullptr;
     brls::DetailCell* m_sidebarOrderCell = nullptr;
+
+    // Content display section
+    brls::BooleanCell* m_collectionsToggle = nullptr;
+    brls::BooleanCell* m_playlistsToggle = nullptr;
+    brls::BooleanCell* m_genresToggle = nullptr;
 
     // Playback section
     brls::BooleanCell* m_autoPlayToggle = nullptr;
