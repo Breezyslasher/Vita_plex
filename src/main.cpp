@@ -12,6 +12,8 @@
 #include "view/media_item_cell.hpp"
 #include "view/recycling_grid.hpp"
 #include "view/media_detail_view.hpp"
+#include "view/video_view.hpp"
+#include "app/downloads_manager.hpp"
 #include "utils/http_client.hpp"
 
 #ifdef __vita__
@@ -150,6 +152,7 @@ static void cleanupVitaNetwork() {
 static void registerCustomViews() {
     brls::Application::registerXMLView("MediaItemCell", vitaplex::MediaItemCell::create);
     brls::Application::registerXMLView("RecyclingGrid", vitaplex::RecyclingGrid::create);
+    brls::Application::registerXMLView("vitaplex:VideoView", vitaplex::VideoView::create);
 }
 
 /**
@@ -223,6 +226,11 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
+    // Override sidebar padding for better text visibility on Vita's small screen
+    brls::Style style = brls::getStyle();
+    style.addMetric("brls/sidebar/padding_left", 20.0f);
+    style.addMetric("brls/sidebar/padding_right", 20.0f);
+
     // Create window
     brls::Application::createWindow("VitaPlex");
 
@@ -231,6 +239,9 @@ int main(int argc, char* argv[]) {
 
     // Register custom views
     registerCustomViews();
+
+    // Initialize downloads manager
+    vitaplex::DownloadsManager::getInstance().init();
 
     // Initialize application
     vitaplex::Application& app = vitaplex::Application::getInstance();

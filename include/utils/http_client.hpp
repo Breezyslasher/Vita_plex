@@ -62,6 +62,16 @@ public:
     void setFollowRedirects(bool follow) { m_followRedirects = follow; }
     void setUserAgent(const std::string& ua) { m_userAgent = ua; }
 
+    // Simple get that returns body directly
+    bool get(const std::string& url, std::string& response);
+
+    // Download file with progress callbacks
+    // writeCallback: receives data chunks, return false to cancel
+    // sizeCallback: called with total file size when known
+    using WriteCallback = std::function<bool(const char* data, size_t size)>;
+    using SizeCallback = std::function<void(int64_t totalSize)>;
+    bool downloadFile(const std::string& url, WriteCallback writeCallback, SizeCallback sizeCallback = nullptr);
+
     // URL encoding
     static std::string urlEncode(const std::string& str);
     static std::string urlDecode(const std::string& str);
