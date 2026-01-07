@@ -139,16 +139,33 @@ void PlayerActivity::loadMedia() {
     if (m_isDirectFile) {
         brls::Logger::info("PlayerActivity: Playing direct file: {}", m_directFilePath);
 
+        // Extract filename from path
+        size_t lastSlash = m_directFilePath.find_last_of("/\\");
+        std::string filename = (lastSlash != std::string::npos)
+            ? m_directFilePath.substr(lastSlash + 1)
+            : m_directFilePath;
+
         if (titleLabel) {
-            // Extract filename from path
-            size_t lastSlash = m_directFilePath.find_last_of("/\\");
-            std::string filename = (lastSlash != std::string::npos)
-                ? m_directFilePath.substr(lastSlash + 1)
-                : m_directFilePath;
             titleLabel->setText(filename);
         }
 
+        // Detect if this is an audio file
+        std::string lowerPath = m_directFilePath;
+        for (auto& c : lowerPath) c = tolower(c);
+        bool isAudioFile = (lowerPath.find(".mp3") != std::string::npos ||
+                           lowerPath.find(".m4a") != std::string::npos ||
+                           lowerPath.find(".aac") != std::string::npos ||
+                           lowerPath.find(".flac") != std::string::npos ||
+                           lowerPath.find(".ogg") != std::string::npos ||
+                           lowerPath.find(".wav") != std::string::npos ||
+                           lowerPath.find(".wma") != std::string::npos);
+
+        brls::Logger::info("PlayerActivity: File type detection - audio: {}", isAudioFile);
+
         MpvPlayer& player = MpvPlayer::getInstance();
+
+        // Set audio-only mode BEFORE initializing (to skip render context)
+        player.setAudioOnly(isAudioFile);
 
         if (!player.isInitialized()) {
             if (!player.init()) {
@@ -165,8 +182,8 @@ void PlayerActivity::loadMedia() {
             return;
         }
 
-        // Show video view
-        if (videoView) {
+        // Show video view only for video files
+        if (videoView && !isAudioFile) {
             videoView->setVisibility(brls::Visibility::VISIBLE);
             videoView->setVideoVisible(true);
         }
@@ -273,10 +290,18 @@ void PlayerActivity::loadMedia() {
             return;
         }
 
+        // Detect if this is audio content
+        bool isAudioContent = (item.mediaType == MediaType::MUSIC_TRACK);
+        brls::Logger::info("PlayerActivity: Media type detection - audio: {}, type: {}",
+                          isAudioContent, (int)item.mediaType);
+
         // Get transcode URL for video/audio (forces Plex to convert to Vita-compatible format)
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, item.viewOffset)) {
             MpvPlayer& player = MpvPlayer::getInstance();
+
+            // Set audio-only mode BEFORE initializing
+            player.setAudioOnly(isAudioContent);
 
             // Initialize player if needed
             if (!player.isInitialized()) {
@@ -298,8 +323,8 @@ void PlayerActivity::loadMedia() {
             // Note: Don't call play() here - MPV auto-starts playback when file is loaded
             // Calling play() while in LOADING state can cause crashes on Vita
 
-            // Show video view for video playback
-            if (videoView) {
+            // Show video view only for video content
+            if (videoView && !isAudioContent) {
                 videoView->setVisibility(brls::Visibility::VISIBLE);
                 videoView->setVideoVisible(true);
                 brls::Logger::debug("Video view enabled");

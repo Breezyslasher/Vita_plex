@@ -80,27 +80,38 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "terminal", "no");
 
     // ========================================
-    // Video output configuration (matching switchfin for Vita)
+    // Video output configuration
     // ========================================
 
-    // Use libmpv for video output - we'll create a render context
-    mpv_set_option_string(m_mpv, "vo", "libmpv");
+    if (m_audioOnly) {
+        // Audio-only mode: disable all video processing
+        brls::Logger::info("MpvPlayer: Initializing in audio-only mode");
+        mpv_set_option_string(m_mpv, "vo", "null");
+        mpv_set_option_string(m_mpv, "vid", "no");
+        mpv_set_option_string(m_mpv, "video", "no");
+        mpv_set_option_string(m_mpv, "audio-display", "no");  // Don't try to show album art
+        mpv_set_option_string(m_mpv, "hwdec", "no");
+    } else {
+        // Video mode: use libmpv for video output - we'll create a render context
+        brls::Logger::info("MpvPlayer: Initializing in video mode");
+        mpv_set_option_string(m_mpv, "vo", "libmpv");
 
 #ifdef __vita__
-    // Vita-specific settings from switchfin
-    mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
-    mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "all");
-    mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
+        // Vita-specific settings from switchfin
+        mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
+        mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "all");
+        mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
 
-    // Use Vita hardware decoding (from switchfin)
-    mpv_set_option_string(m_mpv, "hwdec", "vita-copy");
+        // Use Vita hardware decoding (from switchfin)
+        mpv_set_option_string(m_mpv, "hwdec", "vita-copy");
 
-    // GXM-specific settings from switchfin
-    mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
-    mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
+        // GXM-specific settings from switchfin
+        mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
+        mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
 #else
-    mpv_set_option_string(m_mpv, "hwdec", "no");
+        mpv_set_option_string(m_mpv, "hwdec", "no");
 #endif
+    }
 
     // ========================================
     // Audio output configuration
@@ -168,12 +179,16 @@ bool MpvPlayer::init() {
     brls::Logger::debug("MpvPlayer: mpv_initialize succeeded");
 
     // ========================================
-    // Set up render context for video display
+    // Set up render context for video display (skip for audio-only)
     // ========================================
 
-    if (!initRenderContext()) {
-        brls::Logger::error("MpvPlayer: Failed to create render context, falling back to audio-only");
-        // Don't fail - we can still play audio
+    if (!m_audioOnly) {
+        if (!initRenderContext()) {
+            brls::Logger::error("MpvPlayer: Failed to create render context, falling back to audio-only");
+            // Don't fail - we can still play audio
+        }
+    } else {
+        brls::Logger::info("MpvPlayer: Skipping render context for audio-only mode");
     }
 
     // ========================================
@@ -223,6 +238,21 @@ void MpvPlayer::shutdown() {
     m_commandPending = false;
 }
 
+void MpvPlayer::setAudioOnly(bool audioOnly) {
+    if (m_audioOnly == audioOnly) return;
+
+    brls::Logger::info("MpvPlayer: Setting audio-only mode: {}", audioOnly);
+
+    // If player is already initialized, we need to reinitialize with new mode
+    // because vo and hwdec settings can only be set before mpv_initialize
+    if (m_mpv) {
+        brls::Logger::info("MpvPlayer: Reinitializing to change mode...");
+        shutdown();
+    }
+
+    m_audioOnly = audioOnly;
+}
+
 bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
     if (!m_mpv) {
         if (!init()) {
@@ -236,9 +266,29 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
         return false;
     }
 
-    // Normalize URL scheme to lowercase
+    // Handle Vita-specific paths (ux0:, uma0:, etc.)
     std::string normalizedUrl = url;
-    if (normalizedUrl.length() > 5) {
+
+#ifdef __vita__
+    // Convert Vita paths like "ux0:data/..." to "/ux0/data/..."
+    // MPV on Vita expects Unix-style paths
+    if (normalizedUrl.length() > 3) {
+        size_t colonPos = normalizedUrl.find(':');
+        if (colonPos != std::string::npos && colonPos < 5) {
+            // Check if this is a Vita drive (ux0, uma0, etc.) not http/https
+            std::string scheme = normalizedUrl.substr(0, colonPos);
+            if (scheme == "ux0" || scheme == "uma0" || scheme == "ur0" ||
+                scheme == "gro0" || scheme == "grw0" || scheme == "vs0") {
+                // Convert "ux0:path" to "/ux0/path"
+                normalizedUrl = "/" + scheme + "/" + normalizedUrl.substr(colonPos + 1);
+                brls::Logger::info("MpvPlayer: Converted Vita path to: {}", normalizedUrl);
+            }
+        }
+    }
+#endif
+
+    // Normalize URL scheme to lowercase for http/https
+    if (normalizedUrl.length() > 5 && normalizedUrl[0] != '/') {
         // Convert scheme to lowercase
         for (size_t i = 0; i < 6 && i < normalizedUrl.length(); i++) {
             if (normalizedUrl[i] == ':') break;

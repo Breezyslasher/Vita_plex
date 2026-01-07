@@ -74,6 +74,10 @@ public:
     void togglePause();
     void stop();
 
+    // Audio-only mode (disables video decoding for music playback)
+    void setAudioOnly(bool audioOnly);
+    bool isAudioOnly() const { return m_audioOnly; }
+
     // Seeking
     void seekTo(double seconds);
     void seekRelative(double seconds);
@@ -164,6 +168,7 @@ private:
     bool m_subtitlesVisible = true;
     bool m_stopping = false;        // Shutdown in progress
     bool m_commandPending = false;  // Async command pending
+    bool m_audioOnly = false;       // Audio-only mode (no video decoding)
 
 #ifdef __vita__
     // GXM render resources
