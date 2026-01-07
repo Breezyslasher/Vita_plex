@@ -131,6 +131,13 @@ struct LiveTVChannel {
     int64_t programEnd = 0;
 };
 
+// Genre/Category item with key for filtering
+struct GenreItem {
+    std::string title;      // Display name
+    std::string key;        // Filter key (ID) for API calls
+    std::string fastKey;    // Fast filter URL path
+};
+
 /**
  * Plex API Client singleton
  */
@@ -167,7 +174,9 @@ public:
     bool fetchCollections(const std::string& sectionKey, std::vector<MediaItem>& collections);
     bool fetchPlaylists(std::vector<MediaItem>& playlists);
     bool fetchGenres(const std::string& sectionKey, std::vector<std::string>& genres);
+    bool fetchGenreItems(const std::string& sectionKey, std::vector<GenreItem>& genres);
     bool fetchByGenre(const std::string& sectionKey, const std::string& genre, std::vector<MediaItem>& items);
+    bool fetchByGenreKey(const std::string& sectionKey, const std::string& genreKey, std::vector<MediaItem>& items);
 
     // Playback
     bool getPlaybackUrl(const std::string& ratingKey, std::string& url);

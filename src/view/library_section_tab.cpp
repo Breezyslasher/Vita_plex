@@ -16,96 +16,82 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     this->setAxis(brls::Axis::COLUMN);
     this->setJustifyContent(brls::JustifyContent::FLEX_START);
     this->setAlignItems(brls::AlignItems::STRETCH);
+    this->setPadding(20);
     this->setGrow(1.0f);
-
-    // Scrollable main container
-    m_scrollView = new brls::ScrollingFrame();
-    m_scrollView->setGrow(1.0f);
-
-    m_mainContainer = new brls::Box();
-    m_mainContainer->setAxis(brls::Axis::COLUMN);
-    m_mainContainer->setJustifyContent(brls::JustifyContent::FLEX_START);
-    m_mainContainer->setAlignItems(brls::AlignItems::STRETCH);
-    m_mainContainer->setPadding(20);
 
     // Title
     m_titleLabel = new brls::Label();
     m_titleLabel->setText(title);
     m_titleLabel->setFontSize(28);
-    m_titleLabel->setMarginBottom(20);
-    m_mainContainer->addView(m_titleLabel);
+    m_titleLabel->setMarginBottom(15);
+    this->addView(m_titleLabel);
 
     const auto& settings = Application::getInstance().getSettings();
 
-    // Collections row (hidden by default, shown when data loads)
+    // View mode selector (All / Collections / Categories)
+    m_viewModeBox = new brls::Box();
+    m_viewModeBox->setAxis(brls::Axis::ROW);
+    m_viewModeBox->setJustifyContent(brls::JustifyContent::FLEX_START);
+    m_viewModeBox->setAlignItems(brls::AlignItems::CENTER);
+    m_viewModeBox->setMarginBottom(15);
+
+    // All Items button
+    m_allBtn = new brls::Button();
+    m_allBtn->setText("All");
+    m_allBtn->setMarginRight(10);
+    m_allBtn->registerClickAction([this](brls::View* view) {
+        showAllItems();
+        return true;
+    });
+    m_viewModeBox->addView(m_allBtn);
+
+    // Collections button (only show if enabled)
     if (settings.showCollections) {
-        m_collectionsRow = createHorizontalRow("Collections");
-        m_collectionsRow->setVisibility(brls::Visibility::GONE);
-        m_mainContainer->addView(m_collectionsRow);
+        m_collectionsBtn = new brls::Button();
+        m_collectionsBtn->setText("Collections");
+        m_collectionsBtn->setMarginRight(10);
+        m_collectionsBtn->registerClickAction([this](brls::View* view) {
+            showCollections();
+            return true;
+        });
+        m_viewModeBox->addView(m_collectionsBtn);
     }
 
-    // Genres row (hidden by default, shown when data loads)
+    // Categories button (only show if enabled)
     if (settings.showGenres) {
-        m_genresRow = createHorizontalRow("Categories");
-        m_genresRow->setVisibility(brls::Visibility::GONE);
-        m_mainContainer->addView(m_genresRow);
+        m_categoriesBtn = new brls::Button();
+        m_categoriesBtn->setText("Categories");
+        m_categoriesBtn->setMarginRight(10);
+        m_categoriesBtn->registerClickAction([this](brls::View* view) {
+            showCategories();
+            return true;
+        });
+        m_viewModeBox->addView(m_categoriesBtn);
     }
 
-    // "All Items" label
-    auto* allItemsLabel = new brls::Label();
-    allItemsLabel->setText("All Items");
-    allItemsLabel->setFontSize(22);
-    allItemsLabel->setMarginTop(10);
-    allItemsLabel->setMarginBottom(10);
-    m_mainContainer->addView(allItemsLabel);
+    // Back button (hidden by default, shown in filtered view)
+    m_backBtn = new brls::Button();
+    m_backBtn->setText("< Back");
+    m_backBtn->setVisibility(brls::Visibility::GONE);
+    m_backBtn->registerClickAction([this](brls::View* view) {
+        showAllItems();
+        return true;
+    });
+    m_viewModeBox->addView(m_backBtn);
+
+    this->addView(m_viewModeBox);
 
     // Content grid
     m_contentGrid = new RecyclingGrid();
     m_contentGrid->setGrow(1.0f);
-    m_contentGrid->setHeight(400);  // Fixed height for scrolling
     m_contentGrid->setOnItemSelected([this](const MediaItem& item) {
         onItemSelected(item);
     });
-    m_mainContainer->addView(m_contentGrid);
-
-    m_scrollView->setContentView(m_mainContainer);
-    this->addView(m_scrollView);
+    this->addView(m_contentGrid);
 
     // Load content immediately
     brls::Logger::debug("LibrarySectionTab: Created for section {} ({}) type={}", m_sectionKey, m_title, m_sectionType);
     loadContent();
-}
-
-brls::Box* LibrarySectionTab::createHorizontalRow(const std::string& title) {
-    auto* rowBox = new brls::Box();
-    rowBox->setAxis(brls::Axis::COLUMN);
-    rowBox->setMarginBottom(15);
-
-    auto* titleLabel = new brls::Label();
-    titleLabel->setText(title);
-    titleLabel->setFontSize(22);
-    titleLabel->setMarginBottom(10);
-    rowBox->addView(titleLabel);
-
-    auto* scrollFrame = new brls::HScrollingFrame();
-    scrollFrame->setHeight(120);
-
-    auto* container = new brls::Box();
-    container->setAxis(brls::Axis::ROW);
-    container->setJustifyContent(brls::JustifyContent::FLEX_START);
-    container->setAlignItems(brls::AlignItems::CENTER);
-
-    scrollFrame->setContentView(container);
-    rowBox->addView(scrollFrame);
-
-    // Store container reference based on title
-    if (title == "Collections") {
-        m_collectionsContainer = container;
-    } else if (title == "Categories") {
-        m_genresContainer = container;
-    }
-
-    return rowBox;
 }
 
 void LibrarySectionTab::onFocusGained() {
@@ -140,7 +126,7 @@ void LibrarySectionTab::loadContent() {
         }
     });
 
-    // Also load collections and genres if enabled
+    // Preload collections and genres for quick switching
     const auto& settings = Application::getInstance().getSettings();
     if (settings.showCollections) {
         loadCollections();
@@ -156,34 +142,26 @@ void LibrarySectionTab::loadCollections() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> collections;
 
-        if (client.fetchCollections(key, collections) && !collections.empty()) {
+        if (client.fetchCollections(key, collections)) {
             brls::Logger::info("LibrarySectionTab: Got {} collections for section {}", collections.size(), key);
 
             brls::sync([this, collections]() {
                 m_collections = collections;
-                if (m_collectionsContainer && m_collectionsRow) {
-                    m_collectionsContainer->clearViews();
+                m_collectionsLoaded = true;
 
-                    for (const auto& collection : m_collections) {
-                        auto* btn = new brls::Button();
-                        btn->setText(collection.title);
-                        btn->setMarginRight(10);
-                        btn->setHeight(40);
-
-                        MediaItem capturedCollection = collection;
-                        btn->registerClickAction([this, capturedCollection](brls::View* view) {
-                            onCollectionSelected(capturedCollection);
-                            return true;
-                        });
-
-                        m_collectionsContainer->addView(btn);
-                    }
-
-                    m_collectionsRow->setVisibility(brls::Visibility::VISIBLE);
+                // Hide collections button if none available
+                if (m_collections.empty() && m_collectionsBtn) {
+                    m_collectionsBtn->setVisibility(brls::Visibility::GONE);
                 }
             });
         } else {
             brls::Logger::debug("LibrarySectionTab: No collections for section {}", key);
+            brls::sync([this]() {
+                m_collectionsLoaded = true;
+                if (m_collectionsBtn) {
+                    m_collectionsBtn->setVisibility(brls::Visibility::GONE);
+                }
+            });
         }
     });
 }
@@ -192,42 +170,116 @@ void LibrarySectionTab::loadGenres() {
     std::string key = m_sectionKey;
     asyncRun([this, key]() {
         PlexClient& client = PlexClient::getInstance();
-        std::vector<std::string> genres;
+        std::vector<GenreItem> genres;
 
-        if (client.fetchGenres(key, genres) && !genres.empty()) {
+        if (client.fetchGenreItems(key, genres) && !genres.empty()) {
             brls::Logger::info("LibrarySectionTab: Got {} genres for section {}", genres.size(), key);
 
             brls::sync([this, genres]() {
                 m_genres = genres;
-                if (m_genresContainer && m_genresRow) {
-                    m_genresContainer->clearViews();
-
-                    for (const auto& genre : m_genres) {
-                        auto* btn = new brls::Button();
-                        btn->setText(genre);
-                        btn->setMarginRight(10);
-                        btn->setHeight(40);
-
-                        std::string capturedGenre = genre;
-                        btn->registerClickAction([this, capturedGenre](brls::View* view) {
-                            onGenreSelected(capturedGenre);
-                            return true;
-                        });
-
-                        m_genresContainer->addView(btn);
-                    }
-
-                    m_genresRow->setVisibility(brls::Visibility::VISIBLE);
-                }
+                m_genresLoaded = true;
             });
         } else {
             brls::Logger::debug("LibrarySectionTab: No genres for section {}", key);
+            brls::sync([this]() {
+                m_genresLoaded = true;
+                if (m_categoriesBtn) {
+                    m_categoriesBtn->setVisibility(brls::Visibility::GONE);
+                }
+            });
         }
     });
 }
 
+void LibrarySectionTab::showAllItems() {
+    m_viewMode = LibraryViewMode::ALL_ITEMS;
+    m_titleLabel->setText(m_title);
+    m_contentGrid->setDataSource(m_items);
+    updateViewModeButtons();
+}
+
+void LibrarySectionTab::showCollections() {
+    if (!m_collectionsLoaded) {
+        brls::Application::notify("Loading collections...");
+        return;
+    }
+
+    if (m_collections.empty()) {
+        brls::Application::notify("No collections available");
+        return;
+    }
+
+    m_viewMode = LibraryViewMode::COLLECTIONS;
+    m_titleLabel->setText(m_title + " - Collections");
+
+    // Show collections in the grid
+    m_contentGrid->setDataSource(m_collections);
+    updateViewModeButtons();
+}
+
+void LibrarySectionTab::showCategories() {
+    if (!m_genresLoaded) {
+        brls::Application::notify("Loading categories...");
+        return;
+    }
+
+    if (m_genres.empty()) {
+        brls::Application::notify("No categories available");
+        return;
+    }
+
+    m_viewMode = LibraryViewMode::CATEGORIES;
+    m_titleLabel->setText(m_title + " - Categories");
+
+    // Convert genres to MediaItem format for the grid
+    std::vector<MediaItem> genreItems;
+    for (const auto& genre : m_genres) {
+        MediaItem item;
+        item.title = genre.title;
+        item.ratingKey = genre.key;  // Use genre key for filtering
+        item.type = "genre";
+        item.mediaType = MediaType::UNKNOWN;
+        genreItems.push_back(item);
+    }
+
+    m_contentGrid->setDataSource(genreItems);
+    updateViewModeButtons();
+}
+
+void LibrarySectionTab::updateViewModeButtons() {
+    // Show/hide back button
+    bool inFilteredView = (m_viewMode == LibraryViewMode::FILTERED);
+    m_backBtn->setVisibility(inFilteredView ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
+
+    // Show/hide mode buttons
+    bool showModeButtons = (m_viewMode != LibraryViewMode::FILTERED);
+    m_allBtn->setVisibility(showModeButtons ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
+    if (m_collectionsBtn) {
+        m_collectionsBtn->setVisibility(showModeButtons && !m_collections.empty() ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
+    }
+    if (m_categoriesBtn) {
+        m_categoriesBtn->setVisibility(showModeButtons && !m_genres.empty() ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
+    }
+}
+
 void LibrarySectionTab::onItemSelected(const MediaItem& item) {
-    // For tracks, play directly instead of showing detail view
+    // Handle selection based on current view mode
+    if (m_viewMode == LibraryViewMode::COLLECTIONS) {
+        // Selected a collection - show its contents
+        onCollectionSelected(item);
+        return;
+    }
+
+    if (m_viewMode == LibraryViewMode::CATEGORIES) {
+        // Selected a category/genre - filter by it
+        GenreItem genre;
+        genre.title = item.title;
+        genre.key = item.ratingKey;
+        onGenreSelected(genre);
+        return;
+    }
+
+    // Normal item selection
     if (item.mediaType == MediaType::MUSIC_TRACK) {
         Application::getInstance().pushPlayerActivity(item.ratingKey);
         return;
@@ -241,48 +293,57 @@ void LibrarySectionTab::onItemSelected(const MediaItem& item) {
 void LibrarySectionTab::onCollectionSelected(const MediaItem& collection) {
     brls::Logger::debug("LibrarySectionTab: Selected collection: {}", collection.title);
 
-    // Fetch collection children and display them
+    m_filterTitle = collection.title;
     std::string collectionKey = collection.ratingKey;
-    std::string collectionTitle = collection.title;
 
-    asyncRun([this, collectionKey, collectionTitle]() {
+    asyncRun([this, collectionKey]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
         if (client.fetchChildren(collectionKey, items)) {
             brls::Logger::info("LibrarySectionTab: Got {} items in collection", items.size());
 
-            brls::sync([this, items, collectionTitle]() {
-                m_titleLabel->setText(m_title + " - " + collectionTitle);
-                m_items = items;
-                m_contentGrid->setDataSource(m_items);
+            brls::sync([this, items]() {
+                m_viewMode = LibraryViewMode::FILTERED;
+                m_titleLabel->setText(m_title + " - " + m_filterTitle);
+                m_contentGrid->setDataSource(items);
+                updateViewModeButtons();
             });
         } else {
             brls::Logger::error("LibrarySectionTab: Failed to load collection content");
+            brls::sync([]() {
+                brls::Application::notify("Failed to load collection");
+            });
         }
     });
 }
 
-void LibrarySectionTab::onGenreSelected(const std::string& genre) {
-    brls::Logger::debug("LibrarySectionTab: Selected genre: {}", genre);
+void LibrarySectionTab::onGenreSelected(const GenreItem& genre) {
+    brls::Logger::debug("LibrarySectionTab: Selected genre: {} (key: {})", genre.title, genre.key);
 
+    m_filterTitle = genre.title;
     std::string key = m_sectionKey;
-    std::string genreCopy = genre;
+    std::string genreKey = genre.key;
 
-    asyncRun([this, key, genreCopy]() {
+    asyncRun([this, key, genreKey]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
-        if (client.fetchByGenre(key, genreCopy, items)) {
-            brls::Logger::info("LibrarySectionTab: Got {} items for genre {}", items.size(), genreCopy);
+        // Try with genre key first, fall back to title
+        if (client.fetchByGenreKey(key, genreKey, items) || client.fetchByGenre(key, m_filterTitle, items)) {
+            brls::Logger::info("LibrarySectionTab: Got {} items for genre", items.size());
 
-            brls::sync([this, items, genreCopy]() {
-                m_titleLabel->setText(m_title + " - " + genreCopy);
-                m_items = items;
-                m_contentGrid->setDataSource(m_items);
+            brls::sync([this, items]() {
+                m_viewMode = LibraryViewMode::FILTERED;
+                m_titleLabel->setText(m_title + " - " + m_filterTitle);
+                m_contentGrid->setDataSource(items);
+                updateViewModeButtons();
             });
         } else {
             brls::Logger::error("LibrarySectionTab: Failed to load genre content");
+            brls::sync([]() {
+                brls::Application::notify("Failed to load category");
+            });
         }
     });
 }
