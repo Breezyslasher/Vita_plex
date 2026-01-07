@@ -80,6 +80,22 @@ void freeaddrinfo(struct addrinfo *res);
  */
 const char *gai_strerror(int errcode);
 
+/**
+ * Convert address to hostname (POSIX)
+ *
+ * @param sa       Socket address
+ * @param salen    Length of socket address
+ * @param host     Buffer for hostname (can be NULL)
+ * @param hostlen  Length of host buffer
+ * @param serv     Buffer for service name (can be NULL)
+ * @param servlen  Length of service buffer
+ * @param flags    NI_* flags
+ * @return 0 on success, EAI_* error code on failure
+ */
+int getnameinfo(const struct sockaddr *sa, socklen_t salen,
+                char *host, socklen_t hostlen,
+                char *serv, socklen_t servlen, int flags);
+
 #ifdef __cplusplus
 }
 #endif

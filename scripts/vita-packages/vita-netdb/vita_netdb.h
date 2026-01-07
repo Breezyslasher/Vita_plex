@@ -9,6 +9,7 @@
 #define VITA_NETDB_H
 
 #include <sys/types.h>
+#include <sys/socket.h>
 #include <netinet/in.h>
 
 #ifdef __cplusplus
@@ -69,6 +70,20 @@ void freeaddrinfo(struct addrinfo *res);
  * Get error string for EAI_* error code
  */
 const char *gai_strerror(int errcode);
+
+/* NI flags for getnameinfo */
+#define NI_NUMERICHOST  0x0001
+#define NI_NUMERICSERV  0x0002
+#define NI_NOFQDN       0x0004
+#define NI_NAMEREQD     0x0008
+#define NI_DGRAM        0x0010
+
+/**
+ * Convert address to hostname
+ */
+int getnameinfo(const struct sockaddr *sa, socklen_t salen,
+                char *host, socklen_t hostlen,
+                char *serv, socklen_t servlen, int flags);
 
 #ifdef __cplusplus
 }

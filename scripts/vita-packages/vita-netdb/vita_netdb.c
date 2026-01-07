@@ -12,6 +12,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
+#include <arpa/inet.h>
 
 #include <psp2/net/net.h>
 #include <psp2/net/netctl.h>
@@ -242,4 +243,92 @@ const char *gai_strerror(int errcode) {
         case EAI_OVERFLOW:  return "Buffer overflow";
         default:            return "Unknown error";
     }
+}
+
+int getnameinfo(const struct sockaddr *sa, socklen_t salen,
+                char *host, socklen_t hostlen,
+                char *serv, socklen_t servlen, int flags) {
+    /* Only support IPv4 */
+    if (!sa || sa->sa_family != AF_INET) {
+        return EAI_FAMILY;
+    }
+
+    const struct sockaddr_in *sin = (const struct sockaddr_in *)sa;
+
+    /* Get hostname */
+    if (host && hostlen > 0) {
+        if (flags & NI_NUMERICHOST) {
+            /* Return numeric IP */
+            unsigned char *ip = (unsigned char *)&sin->sin_addr.s_addr;
+            int ret = snprintf(host, hostlen, "%u.%u.%u.%u",
+                               ip[0], ip[1], ip[2], ip[3]);
+            if (ret < 0 || (size_t)ret >= hostlen) {
+                return EAI_OVERFLOW;
+            }
+        } else {
+            /* Try reverse DNS lookup using Vita's resolver */
+            if (vita_resolver_create() < 0) {
+                /* Fall back to numeric if resolver fails */
+                unsigned char *ip = (unsigned char *)&sin->sin_addr.s_addr;
+                int ret = snprintf(host, hostlen, "%u.%u.%u.%u",
+                                   ip[0], ip[1], ip[2], ip[3]);
+                if (ret < 0 || (size_t)ret >= hostlen) {
+                    return EAI_OVERFLOW;
+                }
+            } else {
+                SceNetInAddr vita_addr;
+                vita_addr.s_addr = sin->sin_addr.s_addr;
+
+                int ret = sceNetResolverStartAton(s_resolver_id, &vita_addr,
+                                                   host, hostlen,
+                                                   RESOLVER_TIMEOUT, RESOLVER_RETRY, 0);
+                if (ret < 0) {
+                    if (flags & NI_NAMEREQD) {
+                        return EAI_NONAME;
+                    }
+                    /* Fall back to numeric */
+                    unsigned char *ip = (unsigned char *)&sin->sin_addr.s_addr;
+                    ret = snprintf(host, hostlen, "%u.%u.%u.%u",
+                                   ip[0], ip[1], ip[2], ip[3]);
+                    if (ret < 0 || (size_t)ret >= hostlen) {
+                        return EAI_OVERFLOW;
+                    }
+                }
+            }
+        }
+    }
+
+    /* Get service name (port) */
+    if (serv && servlen > 0) {
+        int port = ntohs(sin->sin_port);
+
+        if (flags & NI_NUMERICSERV) {
+            /* Return numeric port */
+            int ret = snprintf(serv, servlen, "%d", port);
+            if (ret < 0 || (size_t)ret >= servlen) {
+                return EAI_OVERFLOW;
+            }
+        } else {
+            /* Try to get service name, fall back to numeric */
+            const char *name = NULL;
+            if (port == 80) name = "http";
+            else if (port == 443) name = "https";
+            else if (port == 21) name = "ftp";
+            else if (port == 22) name = "ssh";
+
+            if (name) {
+                if (strlen(name) >= servlen) {
+                    return EAI_OVERFLOW;
+                }
+                strcpy(serv, name);
+            } else {
+                int ret = snprintf(serv, servlen, "%d", port);
+                if (ret < 0 || (size_t)ret >= servlen) {
+                    return EAI_OVERFLOW;
+                }
+            }
+        }
+    }
+
+    return 0;
 }
