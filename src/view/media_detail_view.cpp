@@ -431,6 +431,41 @@ void MediaDetailView::onPlay(bool resume) {
 
         Application::getInstance().pushPlayerActivity(m_item.ratingKey);
     }
+    // For shows/seasons/albums, play the first child item
+    else if (m_item.mediaType == MediaType::SHOW ||
+             m_item.mediaType == MediaType::SEASON ||
+             m_item.mediaType == MediaType::MUSIC_ALBUM) {
+
+        // If we already have children loaded, play the first one
+        if (!m_children.empty()) {
+            // For shows, the first child is a season - need to get its first episode
+            if (m_item.mediaType == MediaType::SHOW) {
+                PlexClient& client = PlexClient::getInstance();
+                std::vector<MediaItem> episodes;
+                if (client.fetchChildren(m_children[0].ratingKey, episodes) && !episodes.empty()) {
+                    Application::getInstance().pushPlayerActivity(episodes[0].ratingKey);
+                }
+            } else {
+                // For seasons/albums, first child is directly playable
+                Application::getInstance().pushPlayerActivity(m_children[0].ratingKey);
+            }
+        } else {
+            // Fetch children and play first one
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> children;
+            if (client.fetchChildren(m_item.ratingKey, children) && !children.empty()) {
+                if (m_item.mediaType == MediaType::SHOW) {
+                    // First child is a season, get its episodes
+                    std::vector<MediaItem> episodes;
+                    if (client.fetchChildren(children[0].ratingKey, episodes) && !episodes.empty()) {
+                        Application::getInstance().pushPlayerActivity(episodes[0].ratingKey);
+                    }
+                } else {
+                    Application::getInstance().pushPlayerActivity(children[0].ratingKey);
+                }
+            }
+        }
+    }
 }
 
 void MediaDetailView::onDownload() {

@@ -22,6 +22,14 @@ PlayerActivity::PlayerActivity(const std::string& mediaKey, bool isLocalFile)
                        isLocalFile ? "local" : "remote", mediaKey);
 }
 
+PlayerActivity* PlayerActivity::createForDirectFile(const std::string& filePath) {
+    PlayerActivity* activity = new PlayerActivity("", false);
+    activity->m_isDirectFile = true;
+    activity->m_directFilePath = filePath;
+    brls::Logger::debug("PlayerActivity created for direct file: {}", filePath);
+    return activity;
+}
+
 brls::View* PlayerActivity::createContentView() {
     return brls::View::createFromXMLResource("activity/player.xml");
 }
@@ -126,6 +134,47 @@ void PlayerActivity::loadMedia() {
         return;
     }
     m_loadingMedia = true;
+
+    // Handle direct file playback (debug/testing)
+    if (m_isDirectFile) {
+        brls::Logger::info("PlayerActivity: Playing direct file: {}", m_directFilePath);
+
+        if (titleLabel) {
+            // Extract filename from path
+            size_t lastSlash = m_directFilePath.find_last_of("/\\");
+            std::string filename = (lastSlash != std::string::npos)
+                ? m_directFilePath.substr(lastSlash + 1)
+                : m_directFilePath;
+            titleLabel->setText(filename);
+        }
+
+        MpvPlayer& player = MpvPlayer::getInstance();
+
+        if (!player.isInitialized()) {
+            if (!player.init()) {
+                brls::Logger::error("Failed to initialize MPV player");
+                m_loadingMedia = false;
+                return;
+            }
+        }
+
+        // Load direct file
+        if (!player.loadUrl(m_directFilePath, "Test File")) {
+            brls::Logger::error("Failed to load direct file: {}", m_directFilePath);
+            m_loadingMedia = false;
+            return;
+        }
+
+        // Show video view
+        if (videoView) {
+            videoView->setVisibility(brls::Visibility::VISIBLE);
+            videoView->setVideoVisible(true);
+        }
+
+        m_isPlaying = true;
+        m_loadingMedia = false;
+        return;
+    }
 
     // Handle local file playback (downloaded media)
     if (m_isLocalFile) {

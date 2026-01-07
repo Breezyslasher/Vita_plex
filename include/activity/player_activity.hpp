@@ -22,6 +22,9 @@ public:
     // Play local downloaded file
     PlayerActivity(const std::string& mediaKey, bool isLocalFile);
 
+    // Play direct file path (for debug/testing)
+    static PlayerActivity* createForDirectFile(const std::string& filePath);
+
     brls::View* createContentView() override;
 
     void onContentAvailable() override;
@@ -35,9 +38,11 @@ private:
     void seek(int seconds);
 
     std::string m_mediaKey;
+    std::string m_directFilePath;  // For direct file playback (debug)
     bool m_isPlaying = false;
     bool m_isPhoto = false;
     bool m_isLocalFile = false;   // Playing from local download
+    bool m_isDirectFile = false;  // Playing direct file path (debug)
     bool m_destroying = false;    // Flag to prevent timer callbacks during destruction
     bool m_loadingMedia = false;  // Flag to prevent rapid re-entry of loadMedia
     double m_pendingSeek = 0.0;   // Pending seek position (set when resuming)

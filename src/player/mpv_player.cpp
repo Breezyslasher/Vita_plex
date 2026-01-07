@@ -111,12 +111,16 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "volume-max", "150");
 
     // ========================================
-    // Cache and demuxer settings (switchfin disables cache on Vita)
+    // Cache and demuxer settings
     // ========================================
 
 #ifdef __vita__
-    // Switchfin uses no cache on Vita for lower memory usage
-    mpv_set_option_string(m_mpv, "cache", "no");
+    // Enable cache for network streaming (required for HTTP)
+    // Use smaller cache sizes for Vita's limited memory
+    mpv_set_option_string(m_mpv, "cache", "yes");
+    mpv_set_option_string(m_mpv, "demuxer-max-bytes", "2MiB");
+    mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "512KiB");
+    mpv_set_option_string(m_mpv, "cache-secs", "10");
 #else
     mpv_set_option_string(m_mpv, "cache", "yes");
     mpv_set_option_string(m_mpv, "demuxer-max-bytes", "4MiB");

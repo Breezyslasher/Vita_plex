@@ -7,6 +7,7 @@
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
 #include "player/mpv_player.hpp"
+#include "activity/player_activity.hpp"
 #include <set>
 
 namespace vitaplex {
@@ -860,10 +861,10 @@ void SettingsTab::onTestLocalPlayback() {
     const std::string basePath = "ux0:data/VitaPlex/";
     std::string testFile;
 
-    // Try mp3 first, then mp4
+    // Try mp4 first (to test video), then audio files
     std::vector<std::string> testFiles = {
-        basePath + "test.mp3",
         basePath + "test.mp4",
+        basePath + "test.mp3",
         basePath + "test.ogg",
         basePath + "test.wav"
     };
@@ -884,37 +885,10 @@ void SettingsTab::onTestLocalPlayback() {
         return;
     }
 
-    // Initialize MPV player
-    MpvPlayer& player = MpvPlayer::getInstance();
-
-    if (!player.isInitialized()) {
-        brls::Logger::info("SettingsTab: Initializing MPV player...");
-        if (!player.init()) {
-            brls::Application::notify("Failed to initialize MPV player");
-            brls::Logger::error("SettingsTab: Failed to init MPV");
-            return;
-        }
-        brls::Logger::info("SettingsTab: MPV player initialized successfully");
-    }
-
-    // Stop any current playback
-    if (player.isPlaying() || player.isPaused()) {
-        brls::Logger::info("SettingsTab: Stopping current playback...");
-        player.stop();
-    }
-
-    // Try to load the local file
-    brls::Logger::info("SettingsTab: Loading local file: {}", testFile);
-    brls::Application::notify("Loading: " + testFile);
-
-    if (!player.loadFile(testFile)) {
-        brls::Application::notify("Failed to load file");
-        brls::Logger::error("SettingsTab: Failed to load file: {}", testFile);
-        return;
-    }
-
-    brls::Logger::info("SettingsTab: File loaded successfully, starting playback...");
-    brls::Application::notify("Playback started!");
+    // Push player activity with the test file (this shows the video view properly)
+    brls::Logger::info("SettingsTab: Pushing player activity for: {}", testFile);
+    PlayerActivity* activity = PlayerActivity::createForDirectFile(testFile);
+    brls::Application::pushActivity(activity);
 }
 
 } // namespace vitaplex
