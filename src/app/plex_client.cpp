@@ -1653,13 +1653,14 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     url = m_serverUrl;
 
     if (isAudio) {
-        // Audio transcode - use HLS format like official Plex clients
-        url += "/music/:/transcode/universal/start.m3u8?";
+        // Audio transcode - use HTTP protocol with MP3 output (simpler for Vita)
+        // Per official Plex API: /{transcodeType}/:/transcode/universal/start.*
+        url += "/music/:/transcode/universal/start.mp3?";
         url += "path=" + encodedPath;
         url += "&mediaIndex=0&partIndex=0";
-        url += "&protocol=hls";
+        url += "&protocol=http";  // HTTP is simpler than HLS for Vita
         url += "&directPlay=0&directStream=0";  // Force transcode
-        url += "&musicBitrate=320";
+        url += "&musicBitrate=320";  // 320 kbps MP3
     } else {
         // Video transcode - convert to H.264/AAC which the Vita can decode
         url += "/video/:/transcode/universal/start.mp4?";
