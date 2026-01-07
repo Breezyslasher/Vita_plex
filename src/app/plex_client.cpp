@@ -1642,8 +1642,11 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     bool isAudio = (resp.body.find("\"type\":\"track\"") != std::string::npos);
     brls::Logger::debug("getTranscodeUrl: isAudio={}", isAudio);
 
-    // URL-encode the path for the transcode request
-    std::string encodedPath = HttpClient::urlEncode(partKey);
+    // The path parameter should be a full URL to the metadata endpoint
+    // Format: http://127.0.0.1:32400/library/metadata/{ratingKey}
+    // This tells the transcoder which media item to transcode
+    std::string metadataUrl = "http://127.0.0.1:32400/library/metadata/" + ratingKey;
+    std::string encodedPath = HttpClient::urlEncode(metadataUrl);
 
     // Build transcode URL
     url = m_serverUrl;
