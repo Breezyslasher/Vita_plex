@@ -85,6 +85,7 @@ set(APP_SOURCES
     src/view/video_view.cpp
     src/view/downloads_tab.cpp
     src/view/music_tab.cpp
+    src/view/progress_dialog.cpp
 
     # Player
     src/player/mpv_player.cpp
