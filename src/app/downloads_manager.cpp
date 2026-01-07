@@ -6,10 +6,12 @@
 #include "app/downloads_manager.hpp"
 #include "app/plex_client.hpp"
 #include "utils/http_client.hpp"
+#include "utils/async.hpp"
 #include <borealis.hpp>
 #include <fstream>
 #include <sstream>
 #include <ctime>
+#include <thread>
 
 #ifdef __vita__
 #include <psp2/io/fcntl.h>
@@ -97,8 +99,12 @@ void DownloadsManager::startDownloads() {
     if (m_downloading) return;
     m_downloading = true;
 
-    // Process downloads in background
-    brls::async([this]() {
+    brls::Logger::info("DownloadsManager: Starting download queue");
+
+    // Process downloads in background using asyncRun
+    asyncRun([this]() {
+        brls::Logger::info("DownloadsManager: Download thread started");
+
         while (m_downloading) {
             DownloadItem* nextItem = nullptr;
 
@@ -108,19 +114,23 @@ void DownloadsManager::startDownloads() {
                     if (item.state == DownloadState::QUEUED) {
                         item.state = DownloadState::DOWNLOADING;
                         nextItem = &item;
+                        brls::Logger::info("DownloadsManager: Found queued item: {}", item.title);
                         break;
                     }
                 }
             }
 
             if (nextItem) {
+                brls::Logger::info("DownloadsManager: Starting download of {}", nextItem->title);
                 downloadItem(*nextItem);
             } else {
                 // No more queued items
+                brls::Logger::info("DownloadsManager: No more queued items");
                 break;
             }
         }
         m_downloading = false;
+        brls::Logger::info("DownloadsManager: Download thread finished");
     });
 }
 

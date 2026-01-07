@@ -8,6 +8,7 @@
 #include <borealis.hpp>
 #include <functional>
 #include <string>
+#include <chrono>
 
 namespace vitaplex {
 
@@ -24,6 +25,12 @@ public:
 
     // Set attempt info (e.g., "Attempt 2/5")
     void setAttempt(int current, int total);
+
+    // Set network speed display
+    void setSpeed(int64_t bytesPerSecond);
+
+    // Update download progress with speed calculation
+    void updateDownloadProgress(int64_t downloaded, int64_t total);
 
     // Show/hide the dialog
     void show();
@@ -43,11 +50,16 @@ private:
     brls::Label* m_statusLabel = nullptr;
     brls::Label* m_attemptLabel = nullptr;
     brls::Label* m_progressLabel = nullptr;
+    brls::Label* m_speedLabel = nullptr;
     brls::Rectangle* m_progressBg = nullptr;
     brls::Rectangle* m_progressBar = nullptr;
     brls::Button* m_cancelButton = nullptr;
     std::function<void()> m_cancelCallback;
     bool m_dismissed = false;
+
+    // For speed calculation
+    int64_t m_lastDownloaded = 0;
+    std::chrono::steady_clock::time_point m_lastSpeedUpdate;
 };
 
 } // namespace vitaplex

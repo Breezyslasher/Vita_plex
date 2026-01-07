@@ -94,8 +94,9 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             leftBox->addView(m_resumeButton);
         }
 
-        // Download button (for movies and episodes)
-        if (m_item.mediaType == MediaType::MOVIE || m_item.mediaType == MediaType::EPISODE) {
+        // Download button (for movies, episodes, and tracks)
+        if (m_item.mediaType == MediaType::MOVIE || m_item.mediaType == MediaType::EPISODE ||
+            m_item.mediaType == MediaType::MUSIC_TRACK) {
             m_downloadButton = new brls::Button();
 
             // Check if already downloaded
@@ -450,7 +451,15 @@ void MediaDetailView::onDownload() {
     }
 
     // Determine media type and parent info
-    std::string mediaType = (m_item.mediaType == MediaType::MOVIE) ? "movie" : "episode";
+    std::string mediaType;
+    if (m_item.mediaType == MediaType::MOVIE) {
+        mediaType = "movie";
+    } else if (m_item.mediaType == MediaType::MUSIC_TRACK) {
+        mediaType = "track";
+    } else {
+        mediaType = "episode";
+    }
+
     std::string parentTitle = "";
     int seasonNum = 0;
     int episodeNum = 0;
@@ -459,6 +468,8 @@ void MediaDetailView::onDownload() {
         parentTitle = m_item.grandparentTitle;  // Show name
         seasonNum = m_item.parentIndex;  // Season number
         episodeNum = m_item.index;       // Episode number
+    } else if (m_item.mediaType == MediaType::MUSIC_TRACK) {
+        parentTitle = m_item.grandparentTitle;  // Artist name
     }
 
     // Queue the download
@@ -488,25 +499,11 @@ void MediaDetailView::onDownload() {
         std::string ratingKey = m_item.ratingKey;
         brls::Button* downloadBtn = m_downloadButton;
 
-        // Set progress callback
+        // Set progress callback with speed display
         DownloadsManager::getInstance().setProgressCallback(
-            [progressDialog, ratingKey](int64_t downloaded, int64_t total) {
+            [progressDialog](int64_t downloaded, int64_t total) {
                 brls::sync([progressDialog, downloaded, total]() {
-                    if (total > 0) {
-                        float progress = static_cast<float>(downloaded) / static_cast<float>(total);
-                        progressDialog->setProgress(progress);
-
-                        // Format size for display
-                        std::string sizeStr;
-                        if (total >= 1073741824) {
-                            sizeStr = std::to_string(downloaded / 1048576) + " / " +
-                                     std::to_string(total / 1048576) + " MB";
-                        } else {
-                            sizeStr = std::to_string(downloaded / 1024) + " / " +
-                                     std::to_string(total / 1024) + " KB";
-                        }
-                        progressDialog->setStatus(sizeStr);
-                    }
+                    progressDialog->updateDownloadProgress(downloaded, total);
                 });
             }
         );

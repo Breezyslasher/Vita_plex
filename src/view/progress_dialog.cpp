@@ -75,9 +75,21 @@ ProgressDialog::ProgressDialog(const std::string& title) {
     m_progressLabel = new brls::Label();
     m_progressLabel->setText("0%");
     m_progressLabel->setFontSize(14);
-    m_progressLabel->setMarginBottom(20);
+    m_progressLabel->setMarginBottom(5);
     m_progressLabel->setVisibility(brls::Visibility::GONE);
     container->addView(m_progressLabel);
+
+    // Speed label
+    m_speedLabel = new brls::Label();
+    m_speedLabel->setText("");
+    m_speedLabel->setFontSize(14);
+    m_speedLabel->setMarginBottom(20);
+    m_speedLabel->setVisibility(brls::Visibility::GONE);
+    container->addView(m_speedLabel);
+
+    // Initialize speed tracking
+    m_lastSpeedUpdate = std::chrono::steady_clock::now();
+    m_lastDownloaded = 0;
 
     // Cancel button
     m_cancelButton = new brls::Button();
@@ -126,6 +138,79 @@ void ProgressDialog::setAttempt(int current, int total) {
     if (m_attemptLabel && !m_dismissed) {
         m_attemptLabel->setVisibility(brls::Visibility::VISIBLE);
         m_attemptLabel->setText("Attempt " + std::to_string(current) + " of " + std::to_string(total));
+    }
+}
+
+void ProgressDialog::setSpeed(int64_t bytesPerSecond) {
+    if (m_speedLabel && !m_dismissed) {
+        m_speedLabel->setVisibility(brls::Visibility::VISIBLE);
+
+        std::string speedStr;
+        if (bytesPerSecond >= 1048576) {
+            // MB/s
+            float mbps = static_cast<float>(bytesPerSecond) / 1048576.0f;
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%.1f MB/s", mbps);
+            speedStr = buf;
+        } else if (bytesPerSecond >= 1024) {
+            // KB/s
+            float kbps = static_cast<float>(bytesPerSecond) / 1024.0f;
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%.0f KB/s", kbps);
+            speedStr = buf;
+        } else {
+            speedStr = std::to_string(bytesPerSecond) + " B/s";
+        }
+
+        m_speedLabel->setText(speedStr);
+    }
+}
+
+void ProgressDialog::updateDownloadProgress(int64_t downloaded, int64_t total) {
+    if (m_dismissed) return;
+
+    // Update progress bar
+    if (total > 0) {
+        float progress = static_cast<float>(downloaded) / static_cast<float>(total);
+        setProgress(progress);
+    }
+
+    // Calculate speed
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastSpeedUpdate).count();
+
+    if (elapsed >= 500) {  // Update speed every 500ms
+        int64_t bytesDiff = downloaded - m_lastDownloaded;
+        int64_t bytesPerSecond = (bytesDiff * 1000) / elapsed;
+
+        setSpeed(bytesPerSecond);
+
+        m_lastDownloaded = downloaded;
+        m_lastSpeedUpdate = now;
+    }
+
+    // Update status with size info
+    if (m_statusLabel && total > 0) {
+        std::string sizeStr;
+        if (total >= 1073741824) {
+            // GB
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%.1f / %.1f GB",
+                    static_cast<float>(downloaded) / 1073741824.0f,
+                    static_cast<float>(total) / 1073741824.0f);
+            sizeStr = buf;
+        } else if (total >= 1048576) {
+            // MB
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%.1f / %.1f MB",
+                    static_cast<float>(downloaded) / 1048576.0f,
+                    static_cast<float>(total) / 1048576.0f);
+            sizeStr = buf;
+        } else {
+            sizeStr = std::to_string(downloaded / 1024) + " / " +
+                     std::to_string(total / 1024) + " KB";
+        }
+        m_statusLabel->setText(sizeStr);
     }
 }
 
