@@ -46,9 +46,6 @@ void MainActivity::onContentAvailable() {
                 sidebar->setWidth(280);
                 brls::Logger::debug("MainActivity: Set sidebar to 280px");
             }
-            // Add padding to prevent text cutoff on both sides
-            sidebar->setPaddingLeft(15);
-            sidebar->setPaddingRight(15);
         }
 
         bool hasLiveTV = PlexClient::getInstance().hasLiveTV();
