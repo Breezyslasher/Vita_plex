@@ -1,0 +1,23 @@
+# Maintainer: VitaPlex
+# POSIX getaddrinfo implementation for Vita using sceNetResolver
+
+pkgname=vita-netdb
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="POSIX getaddrinfo/gai_strerror implementation for Vita"
+url="https://github.com/user/Vita_plex"
+depends=()
+source=()
+sha256sums=()
+
+build() {
+    cmake -B build -DCMAKE_TOOLCHAIN_FILE=$VITASDK/share/vita.toolchain.cmake \
+        -DCMAKE_INSTALL_PREFIX=$prefix \
+        -DCMAKE_BUILD_TYPE=Release
+
+    cmake --build build
+}
+
+package() {
+    DESTDIR=$pkgdir cmake --install build
+}
