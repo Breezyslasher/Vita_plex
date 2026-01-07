@@ -7,9 +7,15 @@
 #include "app/downloads_manager.hpp"
 #include "player/mpv_player.hpp"
 #include "utils/image_loader.hpp"
+#include "utils/http_client.hpp"
 #include "view/video_view.hpp"
+#include <fstream>
+#include <sys/stat.h>
 
 namespace vitaplex {
+
+// Temp file path for streaming audio (MPV's HTTP handling crashes on Vita)
+static const std::string TEMP_AUDIO_PATH = "ux0:data/vitaplex/temp_stream.mp3";
 
 PlayerActivity::PlayerActivity(const std::string& mediaKey)
     : m_mediaKey(mediaKey), m_isLocalFile(false) {
@@ -312,11 +318,49 @@ void PlayerActivity::loadMedia() {
                 }
             }
 
+            // WORKAROUND: MPV's HTTP handling crashes on Vita
+            // For audio, download the stream to a local file first, then play that
+            std::string playUrl = url;
+            if (isAudioContent && url.find("http://") == 0) {
+                brls::Logger::info("PlayerActivity: Downloading audio stream to local file...");
+
+                // Open temp file for writing
+                std::ofstream tempFile(TEMP_AUDIO_PATH, std::ios::binary);
+                if (!tempFile.is_open()) {
+                    brls::Logger::error("Failed to create temp file: {}", TEMP_AUDIO_PATH);
+                    m_loadingMedia = false;
+                    return;
+                }
+
+                // Download the stream
+                HttpClient httpClient;
+                bool downloadSuccess = httpClient.downloadFile(url,
+                    [&tempFile](const char* data, size_t size) -> bool {
+                        tempFile.write(data, size);
+                        return tempFile.good();
+                    },
+                    [](int64_t totalSize) {
+                        brls::Logger::debug("PlayerActivity: Stream size: {} bytes", totalSize);
+                    }
+                );
+
+                tempFile.close();
+
+                if (!downloadSuccess) {
+                    brls::Logger::error("Failed to download audio stream");
+                    m_loadingMedia = false;
+                    return;
+                }
+
+                brls::Logger::info("PlayerActivity: Audio downloaded, playing local file");
+                playUrl = TEMP_AUDIO_PATH;
+            }
+
             // Load the URL using async command
             // loadUrl returns false if a command is already pending (prevents rapid clicks)
             brls::Logger::debug("PlayerActivity: Calling player.loadUrl...");
-            if (!player.loadUrl(url, item.title)) {
-                brls::Logger::error("Failed to load URL: {}", url);
+            if (!player.loadUrl(playUrl, item.title)) {
+                brls::Logger::error("Failed to load URL: {}", playUrl);
                 m_loadingMedia = false;
                 return;
             }
