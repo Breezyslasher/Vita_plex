@@ -147,6 +147,11 @@ bool MpvPlayer::init() {
     // User agent for Plex compatibility
     mpv_set_option_string(m_mpv, "user-agent", "VitaPlex/1.0");
 
+    // HTTP streaming options for Plex compatibility
+    mpv_set_option_string(m_mpv, "demuxer-lavf-probe-info", "yes");      // Full probing for streams
+    mpv_set_option_string(m_mpv, "demuxer-lavf-analyzeduration", "3");   // Analyze 3 seconds
+    mpv_set_option_string(m_mpv, "force-seekable", "yes");               // Enable seeking on HTTP
+
     // ========================================
     // Subtitle settings
     // ========================================
@@ -155,10 +160,10 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "subs-fallback", "yes");
 
     // ========================================
-    // Request log messages (verbose for debugging crashes)
+    // Request log messages (verbose for debugging HTTP streaming)
     // ========================================
 
-    mpv_request_log_messages(m_mpv, "info");
+    mpv_request_log_messages(m_mpv, "v");  // Verbose logging to see HTTP activity
 
     // ========================================
     // Initialize MPV
@@ -294,33 +299,17 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
     // Mark command as pending
     m_commandPending = true;
 
-    // Check if this is a network URL
-    bool isNetworkUrl = (normalizedUrl.find("http://") == 0 || normalizedUrl.find("https://") == 0);
-
-    if (isNetworkUrl) {
-        // For network URLs, pass extra options like switchfin does
-        // Format: loadfile <url> <flags> <index> <options>
-        std::string options = "network-timeout=30";
-        const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", "0", options.c_str(), nullptr};
-        int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
-        if (result < 0) {
-            m_errorMessage = std::string("Failed to queue load command: ") + mpv_error_string(result);
-            brls::Logger::error("MpvPlayer: {}", m_errorMessage);
-            m_commandPending = false;
-            setState(MpvPlayerState::ERROR);
-            return false;
-        }
-    } else {
-        // For local files, use simple command
-        const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", nullptr};
-        int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
-        if (result < 0) {
-            m_errorMessage = std::string("Failed to queue load command: ") + mpv_error_string(result);
-            brls::Logger::error("MpvPlayer: {}", m_errorMessage);
-            m_commandPending = false;
-            setState(MpvPlayerState::ERROR);
-            return false;
-        }
+    // Use simple loadfile command - options are already set globally during init()
+    // Format: loadfile <url> [flags]
+    // Note: Per-file options (5th arg) require different format and aren't well supported
+    const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", nullptr};
+    int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
+    if (result < 0) {
+        m_errorMessage = std::string("Failed to queue load command: ") + mpv_error_string(result);
+        brls::Logger::error("MpvPlayer: {}", m_errorMessage);
+        m_commandPending = false;
+        setState(MpvPlayerState::ERROR);
+        return false;
     }
 
     setState(MpvPlayerState::LOADING);
@@ -593,6 +582,9 @@ void MpvPlayer::eventMainLoop() {
             return;
         }
 
+        // Log all events for debugging
+        brls::Logger::debug("MpvPlayer: Event {} received", (int)event->event_id);
+
         switch (event->event_id) {
             case MPV_EVENT_LOG_MESSAGE: {
                 if (event->data) {
@@ -603,6 +595,9 @@ void MpvPlayer::eventMainLoop() {
                         brls::Logger::warning("mpv {}: {}", msg->prefix, msg->text);
                     } else if (msg->log_level <= MPV_LOG_LEVEL_INFO) {
                         brls::Logger::info("mpv {}: {}", msg->prefix, msg->text);
+                    } else {
+                        // Verbose/debug level - show for HTTP debugging
+                        brls::Logger::debug("mpv {}: {}", msg->prefix, msg->text);
                     }
                 }
                 break;
