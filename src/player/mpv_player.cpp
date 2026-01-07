@@ -93,8 +93,9 @@ bool MpvPlayer::init() {
     // Use vita hardware decoding if available
     mpv_set_option_string(m_mpv, "hwdec", "vita-copy");
 
-    // Reduce video resolution for Vita's limited hardware
-    mpv_set_option_string(m_mpv, "vf", "scale=960:544:force_original_aspect_ratio=decrease");
+    // Video latency optimizations (from switchfin)
+    mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
+    mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
 #else
     mpv_set_option_string(m_mpv, "hwdec", "no");
 #endif
@@ -945,14 +946,12 @@ void MpvPlayer::render() {
         {MPV_RENDER_PARAM_INVALID, nullptr},
     };
 
-    // Render the frame using GXM - run in sync with borealis frame
-    brls::sync([this, &render_params]() {
-        int result = mpv_render_context_render(m_mpvRenderCtx, render_params);
-        if (result < 0) {
-            brls::Logger::error("MpvPlayer: GXM render failed: {}", mpv_error_string(result));
-        }
-        mpv_render_context_report_swap(m_mpvRenderCtx);
-    });
+    // Render the frame using GXM directly (not deferred)
+    int result = mpv_render_context_render(m_mpvRenderCtx, render_params);
+    if (result < 0) {
+        brls::Logger::error("MpvPlayer: GXM render failed: {}", mpv_error_string(result));
+    }
+    mpv_render_context_report_swap(m_mpvRenderCtx);
 #endif
 }
 

@@ -4,6 +4,7 @@
 
 #include "activity/player_activity.hpp"
 #include "app/plex_client.hpp"
+#include "app/downloads_manager.hpp"
 #include "player/mpv_player.hpp"
 #include "utils/image_loader.hpp"
 #include "view/video_view.hpp"
@@ -11,8 +12,14 @@
 namespace vitaplex {
 
 PlayerActivity::PlayerActivity(const std::string& mediaKey)
-    : m_mediaKey(mediaKey) {
+    : m_mediaKey(mediaKey), m_isLocalFile(false) {
     brls::Logger::debug("PlayerActivity created for media: {}", mediaKey);
+}
+
+PlayerActivity::PlayerActivity(const std::string& mediaKey, bool isLocalFile)
+    : m_mediaKey(mediaKey), m_isLocalFile(isLocalFile) {
+    brls::Logger::debug("PlayerActivity created for {} media: {}",
+                       isLocalFile ? "local" : "remote", mediaKey);
 }
 
 brls::View* PlayerActivity::createContentView() {
@@ -91,8 +98,16 @@ void PlayerActivity::willDisappear(bool resetState) {
         double position = player.getPosition();
         if (position > 0) {
             int timeMs = (int)(position * 1000);
-            // Save progress to Plex
-            PlexClient::getInstance().updatePlayProgress(m_mediaKey, timeMs);
+
+            if (m_isLocalFile) {
+                // Save progress for downloaded media
+                DownloadsManager::getInstance().updateProgress(m_mediaKey, timeMs);
+                DownloadsManager::getInstance().saveState();
+                brls::Logger::info("PlayerActivity: Saved local progress {}ms for {}", timeMs, m_mediaKey);
+            } else {
+                // Save progress to Plex server
+                PlexClient::getInstance().updatePlayProgress(m_mediaKey, timeMs);
+            }
         }
     }
 
@@ -112,6 +127,61 @@ void PlayerActivity::loadMedia() {
     }
     m_loadingMedia = true;
 
+    // Handle local file playback (downloaded media)
+    if (m_isLocalFile) {
+        DownloadsManager& downloads = DownloadsManager::getInstance();
+        DownloadItem* download = downloads.getDownload(m_mediaKey);
+
+        if (!download || download->state != DownloadState::COMPLETED) {
+            brls::Logger::error("PlayerActivity: Downloaded media not found or incomplete");
+            m_loadingMedia = false;
+            return;
+        }
+
+        brls::Logger::info("PlayerActivity: Playing local file: {}", download->localPath);
+
+        if (titleLabel) {
+            std::string title = download->title;
+            if (!download->parentTitle.empty()) {
+                title = download->parentTitle + " - " + download->title;
+            }
+            titleLabel->setText(title);
+        }
+
+        MpvPlayer& player = MpvPlayer::getInstance();
+
+        if (!player.isInitialized()) {
+            if (!player.init()) {
+                brls::Logger::error("Failed to initialize MPV player");
+                m_loadingMedia = false;
+                return;
+            }
+        }
+
+        // Load local file
+        if (!player.loadUrl(download->localPath, download->title)) {
+            brls::Logger::error("Failed to load local file: {}", download->localPath);
+            m_loadingMedia = false;
+            return;
+        }
+
+        // Show video view
+        if (videoView) {
+            videoView->setVisibility(brls::Visibility::VISIBLE);
+            videoView->setVideoVisible(true);
+        }
+
+        // Resume from saved viewOffset
+        if (download->viewOffset > 0) {
+            m_pendingSeek = download->viewOffset / 1000.0;
+        }
+
+        m_isPlaying = true;
+        m_loadingMedia = false;
+        return;
+    }
+
+    // Remote playback from Plex server
     PlexClient& client = PlexClient::getInstance();
     MediaItem item;
 

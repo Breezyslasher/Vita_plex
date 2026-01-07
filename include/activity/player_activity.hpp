@@ -16,7 +16,11 @@ namespace vitaplex {
 
 class PlayerActivity : public brls::Activity {
 public:
+    // Play from Plex server
     PlayerActivity(const std::string& mediaKey);
+
+    // Play local downloaded file
+    PlayerActivity(const std::string& mediaKey, bool isLocalFile);
 
     brls::View* createContentView() override;
 
@@ -33,6 +37,7 @@ private:
     std::string m_mediaKey;
     bool m_isPlaying = false;
     bool m_isPhoto = false;
+    bool m_isLocalFile = false;   // Playing from local download
     bool m_destroying = false;    // Flag to prevent timer callbacks during destruction
     bool m_loadingMedia = false;  // Flag to prevent rapid re-entry of loadMedia
     double m_pendingSeek = 0.0;   // Pending seek position (set when resuming)

@@ -13,6 +13,7 @@
 #include "view/recycling_grid.hpp"
 #include "view/media_detail_view.hpp"
 #include "view/video_view.hpp"
+#include "app/downloads_manager.hpp"
 #include "utils/http_client.hpp"
 
 #ifdef __vita__
@@ -233,6 +234,9 @@ int main(int argc, char* argv[]) {
 
     // Register custom views
     registerCustomViews();
+
+    // Initialize downloads manager
+    vitaplex::DownloadsManager::getInstance().init();
 
     // Initialize application
     vitaplex::Application& app = vitaplex::Application::getInstance();

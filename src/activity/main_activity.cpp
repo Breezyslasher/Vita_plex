@@ -9,6 +9,8 @@
 #include "view/search_tab.hpp"
 #include "view/settings_tab.hpp"
 #include "view/livetv_tab.hpp"
+#include "view/downloads_tab.hpp"
+#include "app/downloads_manager.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
 #include "utils/async.hpp"
@@ -81,10 +83,13 @@ void MainActivity::onContentAvailable() {
             } else if (item == "search") {
                 tabFrame->addTab("Search", []() { return new SearchTab(); });
             } else if (item == "livetv" && hasLiveTV) {
-                tabFrame->addSeparator();
+                // No separator - Live TV appears with libraries
                 tabFrame->addTab("Live TV", []() { return new LiveTVTab(); });
             }
         }
+
+        // Downloads tab (always available)
+        tabFrame->addTab("Downloads", []() { return new DownloadsTab(); });
 
         // Settings always at the bottom
         tabFrame->addSeparator();

@@ -65,6 +65,7 @@ set(APP_SOURCES
     # Application
     src/app/application.cpp
     src/app/plex_client.cpp
+    src/app/downloads_manager.cpp
 
     # Activities
     src/activity/main_activity.cpp
@@ -82,6 +83,7 @@ set(APP_SOURCES
     src/view/media_item_cell.cpp
     src/view/recycling_grid.cpp
     src/view/video_view.cpp
+    src/view/downloads_tab.cpp
 
     # Player
     src/player/mpv_player.cpp
