@@ -5,12 +5,14 @@
 
 #include "app/downloads_manager.hpp"
 #include "app/plex_client.hpp"
+#include "app/application.hpp"
 #include "utils/http_client.hpp"
 #include "utils/async.hpp"
 #include <borealis.hpp>
 #include <fstream>
 #include <sstream>
 #include <ctime>
+#include <cstdlib>
 #include <thread>
 
 #ifdef __vita__
@@ -84,8 +86,9 @@ bool DownloadsManager::queueDownload(const std::string& ratingKey, const std::st
     item.episodeNum = episodeNum;
     item.state = DownloadState::QUEUED;
 
-    // Generate local path
-    std::string filename = ratingKey + ".mp4";
+    // Generate local path with appropriate extension for transcoded format
+    std::string extension = (mediaType == "track") ? ".mp3" : ".mp4";
+    std::string filename = ratingKey + extension;
     item.localPath = m_downloadsPath + "/" + filename;
 
     m_downloads.push_back(item);
@@ -281,8 +284,54 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         return;
     }
 
-    // Build download URL
-    std::string url = serverUrl + item.partPath + "?download=1&X-Plex-Token=" + token;
+    // Build transcode URL for Vita-compatible format
+    // URL-encode the path
+    std::string encodedPath = HttpClient::urlEncode(item.partPath);
+
+    std::string url = serverUrl;
+    bool isAudio = (item.mediaType == "track");
+
+    if (isAudio) {
+        // Audio transcode - convert to MP3 which the Vita can play
+        url += "/music/:/transcode/universal/start.mp3?";
+        url += "path=" + encodedPath;
+        url += "&mediaIndex=0&partIndex=0";
+        url += "&protocol=http";
+        url += "&directPlay=0&directStream=0";  // Force transcode
+        url += "&audioCodec=mp3&audioBitrate=320";
+    } else {
+        // Video transcode - convert to H.264/AAC which the Vita can decode
+        url += "/video/:/transcode/universal/start.mp4?";
+        url += "path=" + encodedPath;
+        url += "&mediaIndex=0&partIndex=0";
+        url += "&protocol=http";
+        url += "&fastSeek=1";
+        url += "&directPlay=0&directStream=0";  // Force transcode
+
+        // Get quality settings
+        AppSettings& settings = Application::getInstance().getSettings();
+        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : 4000;
+
+        char bitrateStr[64];
+        snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
+        url += bitrateStr;
+        url += "&videoCodec=h264";
+        url += "&maxWidth=960&maxHeight=544";  // Vita screen resolution
+        url += "&audioCodec=aac&audioChannels=2";
+    }
+
+    // Add authentication and client identification
+    url += "&X-Plex-Token=" + token;
+    url += "&X-Plex-Client-Identifier=VitaPlex";
+    url += "&X-Plex-Product=VitaPlex";
+    url += "&X-Plex-Version=1.0.0";
+    url += "&X-Plex-Platform=PlayStation%20Vita";
+    url += "&X-Plex-Device=PS%20Vita";
+
+    // Generate a session ID for this transcode request
+    char sessionId[32];
+    snprintf(sessionId, sizeof(sessionId), "&session=%lu", (unsigned long)time(nullptr));
+    url += sessionId;
 
     brls::Logger::debug("DownloadsManager: Downloading from {}", url);
 
