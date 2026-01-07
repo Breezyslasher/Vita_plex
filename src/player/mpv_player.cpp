@@ -266,29 +266,12 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
         return false;
     }
 
-    // Handle Vita-specific paths (ux0:, uma0:, etc.)
+    // Use the URL as-is - MPV on Vita should handle ux0: paths directly
     std::string normalizedUrl = url;
 
-#ifdef __vita__
-    // Convert Vita paths like "ux0:data/..." to "/ux0/data/..."
-    // MPV on Vita expects Unix-style paths
-    if (normalizedUrl.length() > 3) {
-        size_t colonPos = normalizedUrl.find(':');
-        if (colonPos != std::string::npos && colonPos < 5) {
-            // Check if this is a Vita drive (ux0, uma0, etc.) not http/https
-            std::string scheme = normalizedUrl.substr(0, colonPos);
-            if (scheme == "ux0" || scheme == "uma0" || scheme == "ur0" ||
-                scheme == "gro0" || scheme == "grw0" || scheme == "vs0") {
-                // Convert "ux0:path" to "/ux0/path"
-                normalizedUrl = "/" + scheme + "/" + normalizedUrl.substr(colonPos + 1);
-                brls::Logger::info("MpvPlayer: Converted Vita path to: {}", normalizedUrl);
-            }
-        }
-    }
-#endif
-
-    // Normalize URL scheme to lowercase for http/https
-    if (normalizedUrl.length() > 5 && normalizedUrl[0] != '/') {
+    // Normalize URL scheme to lowercase for http/https only
+    if (normalizedUrl.length() > 5 &&
+        (normalizedUrl.find("http") == 0 || normalizedUrl.find("HTTP") == 0)) {
         // Convert scheme to lowercase
         for (size_t i = 0; i < 6 && i < normalizedUrl.length(); i++) {
             if (normalizedUrl[i] == ':') break;
@@ -361,8 +344,9 @@ void MpvPlayer::stop() {
 void MpvPlayer::seekTo(double seconds) {
     if (!m_mpv || m_stopping) return;
 
-    if (m_state == MpvPlayerState::LOADING) {
-        brls::Logger::debug("MpvPlayer: Deferring seek (still loading)");
+    // Don't seek if not actively playing/paused
+    if (m_state != MpvPlayerState::PLAYING && m_state != MpvPlayerState::PAUSED) {
+        brls::Logger::debug("MpvPlayer: Cannot seek in state {}", (int)m_state);
         return;
     }
 
@@ -376,7 +360,8 @@ void MpvPlayer::seekTo(double seconds) {
 void MpvPlayer::seekRelative(double seconds) {
     if (!m_mpv || m_stopping) return;
 
-    if (m_state == MpvPlayerState::LOADING) return;
+    // Don't seek if not actively playing/paused
+    if (m_state != MpvPlayerState::PLAYING && m_state != MpvPlayerState::PAUSED) return;
 
     char timeStr[32];
     snprintf(timeStr, sizeof(timeStr), "%+.2f", seconds);
