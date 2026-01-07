@@ -78,6 +78,8 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "input-default-bindings", "no");
     mpv_set_option_string(m_mpv, "input-vo-keyboard", "no");
     mpv_set_option_string(m_mpv, "terminal", "no");
+    mpv_set_option_string(m_mpv, "ytdl", "no");  // Disable youtube-dl (like switchfin)
+    mpv_set_option_string(m_mpv, "reset-on-next-file", "speed,pause");  // Reset state between files
 
     // ========================================
     // Video output configuration
@@ -126,12 +128,9 @@ bool MpvPlayer::init() {
     // ========================================
 
 #ifdef __vita__
-    // Enable cache for network streaming (required for HTTP)
-    // Use smaller cache sizes for Vita's limited memory
-    mpv_set_option_string(m_mpv, "cache", "yes");
-    mpv_set_option_string(m_mpv, "demuxer-max-bytes", "2MiB");
-    mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "512KiB");
-    mpv_set_option_string(m_mpv, "cache-secs", "10");
+    // Switchfin disables cache for Vita due to limited memory
+    // MPV handles HTTP buffering internally
+    mpv_set_option_string(m_mpv, "cache", "no");
 #else
     mpv_set_option_string(m_mpv, "cache", "yes");
     mpv_set_option_string(m_mpv, "demuxer-max-bytes", "4MiB");
