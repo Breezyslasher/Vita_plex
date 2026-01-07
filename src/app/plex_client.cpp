@@ -1638,30 +1638,25 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
         return false;
     }
 
+    brls::Logger::debug("getTranscodeUrl: partKey={}", partKey);
+
     // Detect if this is audio (track) or video
     bool isAudio = (resp.body.find("\"type\":\"track\"") != std::string::npos);
     brls::Logger::debug("getTranscodeUrl: isAudio={}", isAudio);
 
-    // The path parameter should be the part key (file path), not metadata path
-    // partKey is like /library/parts/11201/1643230399/file.m4a
-    std::string encodedPath = HttpClient::urlEncode(partKey);
-
-    brls::Logger::debug("getTranscodeUrl: partKey={}", partKey);
-
-    // Build transcode URL
-    url = m_serverUrl;
-
     if (isAudio) {
-        // Audio transcode - use HTTP protocol with MP3 output (simpler for Vita)
-        // Per official Plex API: /{transcodeType}/:/transcode/universal/start.*
-        url += "/music/:/transcode/universal/start.mp3?";
-        url += "path=" + encodedPath;
-        url += "&mediaIndex=0&partIndex=0";
-        url += "&protocol=http";  // HTTP is simpler than HLS for Vita
-        url += "&directPlay=0&directStream=0";  // Force transcode
-        url += "&musicBitrate=320";  // 320 kbps MP3
+        // For audio: Use DIRECT DOWNLOAD instead of transcoding
+        // The part key points directly to the audio file (e.g., /library/parts/123/456/file.mp3)
+        // This avoids the transcode endpoint which has issues
+        url = m_serverUrl + partKey + "?X-Plex-Token=" + m_authToken;
+        brls::Logger::info("getTranscodeUrl: Using direct audio URL = {}", url);
     } else {
-        // Video transcode - convert to H.264/AAC which the Vita can decode
+        // For video: Use transcode endpoint with metadata path
+        // Per Plex API docs, path should be /library/metadata/{ratingKey}
+        std::string metadataPath = "/library/metadata/" + ratingKey;
+        std::string encodedPath = HttpClient::urlEncode(metadataPath);
+
+        url = m_serverUrl;
         url += "/video/:/transcode/universal/start.mp4?";
         url += "path=" + encodedPath;
         url += "&mediaIndex=0&partIndex=0";
@@ -1698,29 +1693,30 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
 
         // Audio settings - stereo AAC
         url += "&audioCodec=aac&audioChannels=2";
+
+        // Add resume offset if specified (in seconds for video)
+        if (offsetMs > 0) {
+            char offsetStr[32];
+            snprintf(offsetStr, sizeof(offsetStr), "&offset=%.1f", offsetMs / 1000.0);
+            url += offsetStr;
+        }
+
+        // Add authentication and client identification
+        url += "&X-Plex-Token=" + m_authToken;
+        url += "&X-Plex-Client-Identifier=VitaPlex";
+        url += "&X-Plex-Product=VitaPlex";
+        url += "&X-Plex-Version=1.0.0";
+        url += "&X-Plex-Platform=PlayStation%20Vita";
+        url += "&X-Plex-Device=PS%20Vita";
+
+        // Generate a session ID for this transcode request
+        char sessionId[32];
+        snprintf(sessionId, sizeof(sessionId), "&session=%lu", (unsigned long)time(nullptr));
+        url += sessionId;
+
+        brls::Logger::info("getTranscodeUrl: Transcode URL = {}", url);
     }
 
-    // Add resume offset if specified
-    if (offsetMs > 0) {
-        char offsetStr[32];
-        snprintf(offsetStr, sizeof(offsetStr), "&offset=%d", offsetMs);
-        url += offsetStr;
-    }
-
-    // Add authentication and client identification
-    url += "&X-Plex-Token=" + m_authToken;
-    url += "&X-Plex-Client-Identifier=VitaPlex";
-    url += "&X-Plex-Product=VitaPlex";
-    url += "&X-Plex-Version=1.0.0";
-    url += "&X-Plex-Platform=PlayStation%20Vita";
-    url += "&X-Plex-Device=PS%20Vita";
-
-    // Generate a session ID for this transcode request
-    char sessionId[32];
-    snprintf(sessionId, sizeof(sessionId), "&session=%lu", (unsigned long)time(nullptr));
-    url += sessionId;
-
-    brls::Logger::info("getTranscodeUrl: Transcode URL = {}", url);
     return true;
 }
 
