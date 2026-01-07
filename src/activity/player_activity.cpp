@@ -14,8 +14,9 @@
 
 namespace vitaplex {
 
-// Temp file path for streaming audio (MPV's HTTP handling crashes on Vita)
-static const std::string TEMP_AUDIO_PATH = "ux0:data/vitaplex/temp_stream.mp3";
+// Base temp file path for streaming audio (MPV's HTTP handling crashes on Vita)
+// Extension will be added dynamically based on the actual file type
+static const std::string TEMP_AUDIO_BASE = "ux0:data/vitaplex/temp_stream";
 
 PlayerActivity::PlayerActivity(const std::string& mediaKey)
     : m_mediaKey(mediaKey), m_isLocalFile(false) {
@@ -324,10 +325,23 @@ void PlayerActivity::loadMedia() {
             if (isAudioContent && url.find("http://") == 0) {
                 brls::Logger::info("PlayerActivity: Downloading audio stream to local file...");
 
+                // Extract file extension from URL (e.g., .mp3, .m4a, .ogg, .flac)
+                std::string ext = ".mp3";  // Default extension
+                size_t queryPos = url.find('?');
+                std::string urlPath = (queryPos != std::string::npos) ? url.substr(0, queryPos) : url;
+                size_t dotPos = urlPath.rfind('.');
+                if (dotPos != std::string::npos) {
+                    ext = urlPath.substr(dotPos);
+                    brls::Logger::debug("PlayerActivity: Detected audio extension: {}", ext);
+                }
+
+                // Build temp file path with correct extension
+                std::string tempPath = TEMP_AUDIO_BASE + ext;
+
                 // Open temp file for writing
-                std::ofstream tempFile(TEMP_AUDIO_PATH, std::ios::binary);
+                std::ofstream tempFile(tempPath, std::ios::binary);
                 if (!tempFile.is_open()) {
-                    brls::Logger::error("Failed to create temp file: {}", TEMP_AUDIO_PATH);
+                    brls::Logger::error("Failed to create temp file: {}", tempPath);
                     m_loadingMedia = false;
                     return;
                 }
@@ -352,8 +366,8 @@ void PlayerActivity::loadMedia() {
                     return;
                 }
 
-                brls::Logger::info("PlayerActivity: Audio downloaded, playing local file");
-                playUrl = TEMP_AUDIO_PATH;
+                brls::Logger::info("PlayerActivity: Audio downloaded to {}, playing local file", tempPath);
+                playUrl = tempPath;
             }
 
             // Load the URL using async command
