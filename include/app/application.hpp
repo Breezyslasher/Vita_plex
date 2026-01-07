@@ -78,8 +78,8 @@ struct AppSettings {
     int maxBitrate = 2000;      // kbps
 
     // Network Settings
-    int connectionTimeout = 30; // seconds
-    bool directPlay = false;    // Try direct play first
+    int connectionTimeout = 180; // seconds (3 minutes for slow connections)
+    bool directPlay = false;     // Try direct play first
 
     // Download Settings
     bool autoStartDownloads = true;    // Start downloads automatically after queueing

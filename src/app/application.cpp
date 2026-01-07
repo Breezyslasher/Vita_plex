@@ -268,7 +268,7 @@ bool Application::loadSettings() {
 
     // Load network settings
     m_settings.connectionTimeout = extractInt("connectionTimeout");
-    if (m_settings.connectionTimeout <= 0) m_settings.connectionTimeout = 30;
+    if (m_settings.connectionTimeout <= 0) m_settings.connectionTimeout = 180; // 3 minutes default
     m_settings.directPlay = extractBool("directPlay", false);
 
     brls::Logger::info("Settings loaded successfully");

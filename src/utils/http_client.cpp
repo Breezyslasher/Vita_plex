@@ -130,9 +130,9 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
     // Set URL
     curl_easy_setopt(curl, CURLOPT_URL, req.url.c_str());
 
-    // Set timeout - longer connect timeout for relay connections
+    // Set timeout - use up to 60 second connect timeout for slow connections
     int timeout = req.timeout > 0 ? req.timeout : m_timeout;
-    int connectTimeout = timeout > 30 ? 30 : 15;  // Use longer connect timeout for long requests
+    int connectTimeout = timeout > 60 ? 60 : (timeout > 30 ? 30 : 15);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, connectTimeout);
 

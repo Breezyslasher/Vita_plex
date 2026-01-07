@@ -378,9 +378,12 @@ bool PlexClient::connectToServer(const std::string& url) {
     req.method = "GET";
     req.headers["Accept"] = "application/json";
 
-    // Use longer timeout for potentially slow connections (relay, remote)
-    bool isRelay = (url.find(".plex.direct") != std::string::npos);
-    req.timeout = isRelay ? 60 : 30;
+    // Use connection timeout from settings (default 3 minutes for slow connections)
+    int timeout = Application::getInstance().getSettings().connectionTimeout;
+    if (timeout <= 0) timeout = 180;  // Default to 3 minutes
+    req.timeout = timeout;
+
+    brls::Logger::debug("Connection timeout: {} seconds", timeout);
 
     HttpResponse resp = client.request(req);
 
