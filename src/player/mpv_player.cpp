@@ -147,10 +147,8 @@ bool MpvPlayer::init() {
     // User agent for Plex compatibility
     mpv_set_option_string(m_mpv, "user-agent", "VitaPlex/1.0");
 
-    // HTTP streaming options for Plex compatibility
-    mpv_set_option_string(m_mpv, "demuxer-lavf-probe-info", "yes");      // Full probing for streams
-    mpv_set_option_string(m_mpv, "demuxer-lavf-analyzeduration", "3");   // Analyze 3 seconds
-    mpv_set_option_string(m_mpv, "force-seekable", "yes");               // Enable seeking on HTTP
+    // Note: demuxer-lavf-probe-info and force-seekable caused crashes on Vita
+    // Keep options minimal for compatibility
 
     // ========================================
     // Subtitle settings
@@ -160,10 +158,10 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "subs-fallback", "yes");
 
     // ========================================
-    // Request log messages (verbose for debugging HTTP streaming)
+    // Request log messages for debugging
     // ========================================
 
-    mpv_request_log_messages(m_mpv, "v");  // Verbose logging to see HTTP activity
+    mpv_request_log_messages(m_mpv, "warn");  // Use warn level to reduce log spam on Vita
 
     // ========================================
     // Initialize MPV
@@ -582,9 +580,6 @@ void MpvPlayer::eventMainLoop() {
             return;
         }
 
-        // Log all events for debugging
-        brls::Logger::debug("MpvPlayer: Event {} received", (int)event->event_id);
-
         switch (event->event_id) {
             case MPV_EVENT_LOG_MESSAGE: {
                 if (event->data) {
@@ -593,11 +588,6 @@ void MpvPlayer::eventMainLoop() {
                         brls::Logger::error("mpv {}: {}", msg->prefix, msg->text);
                     } else if (msg->log_level <= MPV_LOG_LEVEL_WARN) {
                         brls::Logger::warning("mpv {}: {}", msg->prefix, msg->text);
-                    } else if (msg->log_level <= MPV_LOG_LEVEL_INFO) {
-                        brls::Logger::info("mpv {}: {}", msg->prefix, msg->text);
-                    } else {
-                        // Verbose/debug level - show for HTTP debugging
-                        brls::Logger::debug("mpv {}: {}", msg->prefix, msg->text);
                     }
                 }
                 break;
