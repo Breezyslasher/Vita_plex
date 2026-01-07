@@ -226,6 +226,11 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
+    // Override sidebar padding for better text visibility on Vita's small screen
+    brls::Style style = brls::getStyle();
+    style.addMetric("brls/sidebar/padding_left", 20.0f);
+    style.addMetric("brls/sidebar/padding_right", 20.0f);
+
     // Create window
     brls::Application::createWindow("VitaPlex");
 
