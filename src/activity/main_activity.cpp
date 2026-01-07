@@ -44,50 +44,59 @@ void MainActivity::onContentAvailable() {
             }
         }
 
-        // Add tabs based on sidebar order setting
-        // Default order: Home, Library/Libraries, Search, Live TV
-        std::string sidebarOrder = settings.sidebarOrder;
+        bool hasLiveTV = PlexClient::getInstance().hasLiveTV();
 
-        // Parse the order or use default
-        std::vector<std::string> order;
-        if (!sidebarOrder.empty()) {
-            std::string orderStr = sidebarOrder;
-            size_t pos = 0;
-            while ((pos = orderStr.find(',')) != std::string::npos) {
-                order.push_back(orderStr.substr(0, pos));
-                orderStr.erase(0, pos + 1);
-            }
-            if (!orderStr.empty()) {
-                order.push_back(orderStr);
+        // If showing libraries in sidebar, only show actual library sections
+        // Don't show premade tabs like "Library", "Music", "TV"
+        if (settings.showLibrariesInSidebar) {
+            // Home tab
+            tabFrame->addTab("Home", []() { return new HomeTab(); });
+
+            // Load actual library sections to sidebar
+            loadLibrariesToSidebar();
+
+            // Search
+            tabFrame->addTab("Search", []() { return new SearchTab(); });
+
+            // Live TV if available
+            if (hasLiveTV) {
+                tabFrame->addTab("Live TV", []() { return new LiveTVTab(); });
             }
         } else {
-            // Default order
-            order = {"home", "library", "music", "search", "livetv"};
-        }
+            // Standard mode with premade tabs
+            // Add tabs based on sidebar order setting
+            std::string sidebarOrder = settings.sidebarOrder;
 
-        // Add tabs in specified order
-        bool hasLiveTV = PlexClient::getInstance().hasLiveTV();
-        bool addedLibraries = false;
-
-        for (const std::string& item : order) {
-            if (item == "home") {
-                tabFrame->addTab("Home", []() { return new HomeTab(); });
-            } else if (item == "library") {
-                if (settings.showLibrariesInSidebar) {
-                    if (!addedLibraries) {
-                        loadLibrariesToSidebar();
-                        addedLibraries = true;
-                    }
-                } else {
-                    tabFrame->addTab("Library", []() { return new LibraryTab(); });
+            // Parse the order or use default
+            std::vector<std::string> order;
+            if (!sidebarOrder.empty()) {
+                std::string orderStr = sidebarOrder;
+                size_t pos = 0;
+                while ((pos = orderStr.find(',')) != std::string::npos) {
+                    order.push_back(orderStr.substr(0, pos));
+                    orderStr.erase(0, pos + 1);
                 }
-            } else if (item == "music") {
-                tabFrame->addTab("Music", []() { return new MusicTab(); });
-            } else if (item == "search") {
-                tabFrame->addTab("Search", []() { return new SearchTab(); });
-            } else if (item == "livetv" && hasLiveTV) {
-                // No separator - Live TV appears with libraries
-                tabFrame->addTab("Live TV", []() { return new LiveTVTab(); });
+                if (!orderStr.empty()) {
+                    order.push_back(orderStr);
+                }
+            } else {
+                // Default order
+                order = {"home", "library", "music", "search", "livetv"};
+            }
+
+            // Add tabs in specified order
+            for (const std::string& item : order) {
+                if (item == "home") {
+                    tabFrame->addTab("Home", []() { return new HomeTab(); });
+                } else if (item == "library") {
+                    tabFrame->addTab("Library", []() { return new LibraryTab(); });
+                } else if (item == "music") {
+                    tabFrame->addTab("Music", []() { return new MusicTab(); });
+                } else if (item == "search") {
+                    tabFrame->addTab("Search", []() { return new SearchTab(); });
+                } else if (item == "livetv" && hasLiveTV) {
+                    tabFrame->addTab("Live TV", []() { return new LiveTVTab(); });
+                }
             }
         }
 

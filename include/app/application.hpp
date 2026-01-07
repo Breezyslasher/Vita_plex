@@ -80,6 +80,13 @@ struct AppSettings {
     // Network Settings
     int connectionTimeout = 30; // seconds
     bool directPlay = false;    // Try direct play first
+
+    // Download Settings
+    bool autoStartDownloads = true;    // Start downloads automatically after queueing
+    bool downloadOverWifiOnly = false; // Only download when on WiFi
+    int maxConcurrentDownloads = 1;    // Max concurrent downloads
+    bool deleteAfterWatch = false;     // Auto-delete after fully watched
+    bool syncProgressOnConnect = true; // Sync offline progress when connected
 };
 
 /**

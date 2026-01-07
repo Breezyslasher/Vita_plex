@@ -4,10 +4,16 @@
 
 #include "view/media_detail_view.hpp"
 #include "view/media_item_cell.hpp"
+#include "view/progress_dialog.hpp"
 #include "app/application.hpp"
 #include "app/downloads_manager.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
+#include <thread>
+
+#ifdef __vita__
+#include <psp2/kernel/threadmgr.h>
+#endif
 
 namespace vitaplex {
 
@@ -107,6 +113,23 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             });
             leftBox->addView(m_downloadButton);
         }
+    }
+
+    // Download options for shows, seasons, albums
+    if (m_item.mediaType == MediaType::SHOW ||
+        m_item.mediaType == MediaType::SEASON ||
+        m_item.mediaType == MediaType::MUSIC_ALBUM ||
+        m_item.mediaType == MediaType::MUSIC_ARTIST) {
+
+        m_downloadButton = new brls::Button();
+        m_downloadButton->setText("Download...");
+        m_downloadButton->setWidth(200);
+        m_downloadButton->setMarginTop(10);
+        m_downloadButton->registerClickAction([this](brls::View* view) {
+            showDownloadOptions();
+            return true;
+        });
+        leftBox->addView(m_downloadButton);
     }
 
     topRow->addView(leftBox);
@@ -451,16 +474,400 @@ void MediaDetailView::onDownload() {
     );
 
     if (queued) {
-        brls::Application::notify("Download queued: " + m_item.title);
         if (m_downloadButton) {
-            m_downloadButton->setText("Queued");
+            m_downloadButton->setText("Downloading...");
         }
+
+        // Show progress dialog
+        auto* progressDialog = new ProgressDialog("Downloading");
+        progressDialog->setStatus(m_item.title);
+        progressDialog->setProgress(0);
+        progressDialog->show();
+
+        // Track the rating key to update button when done
+        std::string ratingKey = m_item.ratingKey;
+        brls::Button* downloadBtn = m_downloadButton;
+
+        // Set progress callback
+        DownloadsManager::getInstance().setProgressCallback(
+            [progressDialog, ratingKey](int64_t downloaded, int64_t total) {
+                brls::sync([progressDialog, downloaded, total]() {
+                    if (total > 0) {
+                        float progress = static_cast<float>(downloaded) / static_cast<float>(total);
+                        progressDialog->setProgress(progress);
+
+                        // Format size for display
+                        std::string sizeStr;
+                        if (total >= 1073741824) {
+                            sizeStr = std::to_string(downloaded / 1048576) + " / " +
+                                     std::to_string(total / 1048576) + " MB";
+                        } else {
+                            sizeStr = std::to_string(downloaded / 1024) + " / " +
+                                     std::to_string(total / 1024) + " KB";
+                        }
+                        progressDialog->setStatus(sizeStr);
+                    }
+                });
+            }
+        );
+
+        // Allow dismissing dialog - download continues in background
+        progressDialog->setCancelCallback([progressDialog, downloadBtn]() {
+            brls::Application::notify("Download continues in background");
+            // Clear callback to avoid updating dismissed dialog
+            DownloadsManager::getInstance().setProgressCallback(nullptr);
+        });
 
         // Start downloading
         DownloadsManager::getInstance().startDownloads();
+
+        // Monitor for completion
+        asyncRun([progressDialog, downloadBtn, ratingKey]() {
+            while (true) {
+                auto* item = DownloadsManager::getInstance().getDownload(ratingKey);
+                if (!item) break;
+
+                if (item->state == DownloadState::COMPLETED) {
+                    brls::sync([progressDialog, downloadBtn]() {
+                        progressDialog->setStatus("Download complete!");
+                        progressDialog->setProgress(1.0f);
+                        if (downloadBtn) {
+                            downloadBtn->setText("Downloaded");
+                        }
+                        brls::delay(1500, [progressDialog]() {
+                            progressDialog->dismiss();
+                        });
+                    });
+                    break;
+                } else if (item->state == DownloadState::FAILED) {
+                    brls::sync([progressDialog, downloadBtn]() {
+                        progressDialog->setStatus("Download failed");
+                        if (downloadBtn) {
+                            downloadBtn->setText("Download");
+                        }
+                        brls::delay(2000, [progressDialog]() {
+                            progressDialog->dismiss();
+                        });
+                    });
+                    break;
+                }
+
+                // Sleep briefly before checking again
+#ifdef __vita__
+                sceKernelDelayThread(500 * 1000);  // 500ms
+#else
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+#endif
+            }
+
+            // Clear progress callback
+            DownloadsManager::getInstance().setProgressCallback(nullptr);
+        });
     } else {
         brls::Application::notify("Failed to queue download");
     }
+}
+
+void MediaDetailView::showDownloadOptions() {
+    // Create dialog with download options
+    auto* dialog = new brls::Dialog("Download Options");
+
+    auto* optionsBox = new brls::Box();
+    optionsBox->setAxis(brls::Axis::COLUMN);
+    optionsBox->setPadding(20);
+
+    // Different options based on media type
+    if (m_item.mediaType == MediaType::SHOW) {
+        // Show options: Download all seasons, download unwatched
+        auto* downloadAllBtn = new brls::Button();
+        downloadAllBtn->setText("Download All Episodes");
+        downloadAllBtn->setMarginBottom(10);
+        downloadAllBtn->registerClickAction([this, dialog](brls::View*) {
+            dialog->dismiss();
+            downloadAll();
+            return true;
+        });
+        optionsBox->addView(downloadAllBtn);
+
+        auto* downloadUnwatchedBtn = new brls::Button();
+        downloadUnwatchedBtn->setText("Download Unwatched");
+        downloadUnwatchedBtn->setMarginBottom(10);
+        downloadUnwatchedBtn->registerClickAction([this, dialog](brls::View*) {
+            dialog->dismiss();
+            downloadUnwatched();
+            return true;
+        });
+        optionsBox->addView(downloadUnwatchedBtn);
+
+        auto* downloadNext5Btn = new brls::Button();
+        downloadNext5Btn->setText("Download Next 5 Unwatched");
+        downloadNext5Btn->setMarginBottom(10);
+        downloadNext5Btn->registerClickAction([this, dialog](brls::View*) {
+            dialog->dismiss();
+            downloadUnwatched(5);
+            return true;
+        });
+        optionsBox->addView(downloadNext5Btn);
+
+    } else if (m_item.mediaType == MediaType::SEASON) {
+        // Season options: Download all episodes, download unwatched
+        auto* downloadAllBtn = new brls::Button();
+        downloadAllBtn->setText("Download All Episodes");
+        downloadAllBtn->setMarginBottom(10);
+        downloadAllBtn->registerClickAction([this, dialog](brls::View*) {
+            dialog->dismiss();
+            downloadAll();
+            return true;
+        });
+        optionsBox->addView(downloadAllBtn);
+
+        auto* downloadUnwatchedBtn = new brls::Button();
+        downloadUnwatchedBtn->setText("Download Unwatched");
+        downloadUnwatchedBtn->setMarginBottom(10);
+        downloadUnwatchedBtn->registerClickAction([this, dialog](brls::View*) {
+            dialog->dismiss();
+            downloadUnwatched();
+            return true;
+        });
+        optionsBox->addView(downloadUnwatchedBtn);
+
+        auto* downloadNext3Btn = new brls::Button();
+        downloadNext3Btn->setText("Download Next 3 Unwatched");
+        downloadNext3Btn->setMarginBottom(10);
+        downloadNext3Btn->registerClickAction([this, dialog](brls::View*) {
+            dialog->dismiss();
+            downloadUnwatched(3);
+            return true;
+        });
+        optionsBox->addView(downloadNext3Btn);
+
+    } else if (m_item.mediaType == MediaType::MUSIC_ALBUM) {
+        // Album options: Download all tracks
+        auto* downloadAlbumBtn = new brls::Button();
+        downloadAlbumBtn->setText("Download Album");
+        downloadAlbumBtn->setMarginBottom(10);
+        downloadAlbumBtn->registerClickAction([this, dialog](brls::View*) {
+            dialog->dismiss();
+            downloadAll();
+            return true;
+        });
+        optionsBox->addView(downloadAlbumBtn);
+
+    } else if (m_item.mediaType == MediaType::MUSIC_ARTIST) {
+        // Artist options: Download all albums
+        auto* downloadAllBtn = new brls::Button();
+        downloadAllBtn->setText("Download All Albums");
+        downloadAllBtn->setMarginBottom(10);
+        downloadAllBtn->registerClickAction([this, dialog](brls::View*) {
+            dialog->dismiss();
+            downloadAll();
+            return true;
+        });
+        optionsBox->addView(downloadAllBtn);
+    }
+
+    // Cancel button
+    auto* cancelBtn = new brls::Button();
+    cancelBtn->setText("Cancel");
+    cancelBtn->registerClickAction([dialog](brls::View*) {
+        dialog->dismiss();
+        return true;
+    });
+    optionsBox->addView(cancelBtn);
+
+    dialog->addView(optionsBox);
+    brls::Application::pushActivity(new brls::Activity(dialog));
+}
+
+void MediaDetailView::downloadAll() {
+    // Show progress dialog
+    auto* progressDialog = new ProgressDialog("Preparing Downloads");
+    progressDialog->setStatus("Fetching content list...");
+    progressDialog->show();
+
+    std::string ratingKey = m_item.ratingKey;
+    MediaType mediaType = m_item.mediaType;
+    std::string parentTitle = m_item.title;
+
+    asyncRun([this, progressDialog, ratingKey, mediaType, parentTitle]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> items;
+        int queued = 0;
+
+        if (mediaType == MediaType::SHOW) {
+            // Get all seasons first, then all episodes
+            std::vector<MediaItem> seasons;
+            if (client.fetchChildren(ratingKey, seasons)) {
+                for (const auto& season : seasons) {
+                    std::vector<MediaItem> episodes;
+                    if (client.fetchChildren(season.ratingKey, episodes)) {
+                        for (auto& ep : episodes) {
+                            items.push_back(ep);
+                        }
+                    }
+                }
+            }
+        } else if (mediaType == MediaType::SEASON || mediaType == MediaType::MUSIC_ALBUM) {
+            // Get direct children (episodes or tracks)
+            client.fetchChildren(ratingKey, items);
+        } else if (mediaType == MediaType::MUSIC_ARTIST) {
+            // Get all albums, then all tracks
+            std::vector<MediaItem> albums;
+            if (client.fetchChildren(ratingKey, albums)) {
+                for (const auto& album : albums) {
+                    std::vector<MediaItem> tracks;
+                    if (client.fetchChildren(album.ratingKey, tracks)) {
+                        for (auto& track : tracks) {
+                            items.push_back(track);
+                        }
+                    }
+                }
+            }
+        }
+
+        brls::sync([progressDialog, items]() {
+            progressDialog->setStatus("Found " + std::to_string(items.size()) + " items");
+        });
+
+        // Queue each item for download
+        for (size_t i = 0; i < items.size(); i++) {
+            const auto& item = items[i];
+
+            // Get full details to get the part path
+            MediaItem fullItem;
+            if (client.fetchMediaDetails(item.ratingKey, fullItem) && !fullItem.partPath.empty()) {
+                std::string itemMediaType = "episode";
+                if (fullItem.mediaType == MediaType::MOVIE) itemMediaType = "movie";
+                else if (fullItem.mediaType == MediaType::MUSIC_TRACK) itemMediaType = "track";
+
+                if (DownloadsManager::getInstance().queueDownload(
+                    fullItem.ratingKey,
+                    fullItem.title,
+                    fullItem.partPath,
+                    fullItem.duration,
+                    itemMediaType,
+                    parentTitle,
+                    fullItem.parentIndex,
+                    fullItem.index
+                )) {
+                    queued++;
+                }
+            }
+
+            brls::sync([progressDialog, i, items, queued]() {
+                progressDialog->setStatus("Queued " + std::to_string(queued) + " of " +
+                                         std::to_string(items.size()));
+                progressDialog->setProgress(static_cast<float>(i + 1) / items.size());
+            });
+        }
+
+        // Start downloads
+        DownloadsManager::getInstance().startDownloads();
+
+        brls::sync([progressDialog, queued]() {
+            progressDialog->setStatus("Queued " + std::to_string(queued) + " downloads");
+            brls::delay(1500, [progressDialog]() {
+                progressDialog->dismiss();
+            });
+        });
+    });
+}
+
+void MediaDetailView::downloadUnwatched(int maxCount) {
+    // Show progress dialog
+    auto* progressDialog = new ProgressDialog("Preparing Downloads");
+    progressDialog->setStatus("Fetching unwatched content...");
+    progressDialog->show();
+
+    std::string ratingKey = m_item.ratingKey;
+    MediaType mediaType = m_item.mediaType;
+    std::string parentTitle = m_item.title;
+
+    asyncRun([this, progressDialog, ratingKey, mediaType, parentTitle, maxCount]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> unwatchedItems;
+        int queued = 0;
+
+        if (mediaType == MediaType::SHOW) {
+            // Get all seasons first, then unwatched episodes
+            std::vector<MediaItem> seasons;
+            if (client.fetchChildren(ratingKey, seasons)) {
+                for (const auto& season : seasons) {
+                    std::vector<MediaItem> episodes;
+                    if (client.fetchChildren(season.ratingKey, episodes)) {
+                        for (auto& ep : episodes) {
+                            if (!ep.watched && ep.viewOffset == 0) {
+                                unwatchedItems.push_back(ep);
+                                if (maxCount > 0 && (int)unwatchedItems.size() >= maxCount) {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (maxCount > 0 && (int)unwatchedItems.size() >= maxCount) {
+                        break;
+                    }
+                }
+            }
+        } else if (mediaType == MediaType::SEASON) {
+            // Get unwatched episodes in this season
+            std::vector<MediaItem> episodes;
+            if (client.fetchChildren(ratingKey, episodes)) {
+                for (auto& ep : episodes) {
+                    if (!ep.watched && ep.viewOffset == 0) {
+                        unwatchedItems.push_back(ep);
+                        if (maxCount > 0 && (int)unwatchedItems.size() >= maxCount) {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        brls::sync([progressDialog, unwatchedItems]() {
+            progressDialog->setStatus("Found " + std::to_string(unwatchedItems.size()) + " unwatched");
+        });
+
+        // Queue each unwatched item for download
+        for (size_t i = 0; i < unwatchedItems.size(); i++) {
+            const auto& item = unwatchedItems[i];
+
+            // Get full details to get the part path
+            MediaItem fullItem;
+            if (client.fetchMediaDetails(item.ratingKey, fullItem) && !fullItem.partPath.empty()) {
+                std::string itemMediaType = "episode";
+
+                if (DownloadsManager::getInstance().queueDownload(
+                    fullItem.ratingKey,
+                    fullItem.title,
+                    fullItem.partPath,
+                    fullItem.duration,
+                    itemMediaType,
+                    parentTitle,
+                    fullItem.parentIndex,
+                    fullItem.index
+                )) {
+                    queued++;
+                }
+            }
+
+            brls::sync([progressDialog, i, unwatchedItems, queued]() {
+                progressDialog->setStatus("Queued " + std::to_string(queued) + " of " +
+                                         std::to_string(unwatchedItems.size()));
+                progressDialog->setProgress(static_cast<float>(i + 1) / unwatchedItems.size());
+            });
+        }
+
+        // Start downloads
+        DownloadsManager::getInstance().startDownloads();
+
+        brls::sync([progressDialog, queued]() {
+            progressDialog->setStatus("Queued " + std::to_string(queued) + " downloads");
+            brls::delay(1500, [progressDialog]() {
+                progressDialog->dismiss();
+            });
+        });
+    });
 }
 
 } // namespace vitaplex

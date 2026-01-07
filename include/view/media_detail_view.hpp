@@ -22,6 +22,9 @@ private:
     void loadMusicCategories();
     void onPlay(bool resume = false);
     void onDownload();
+    void showDownloadOptions();
+    void downloadAll();
+    void downloadUnwatched(int maxCount = -1);
 
     brls::HScrollingFrame* createMediaRow(const std::string& title, brls::Box** contentOut);
 

@@ -5,6 +5,7 @@
 #include "view/settings_tab.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
+#include "app/downloads_manager.hpp"
 #include <set>
 
 namespace vitaplex {
@@ -31,6 +32,7 @@ SettingsTab::SettingsTab() {
     createContentDisplaySection();
     createPlaybackSection();
     createTranscodeSection();
+    createDownloadsSection();
     createAboutSection();
 
     m_scrollView->setContentView(m_contentBox);
@@ -319,6 +321,96 @@ void SettingsTab::createTranscodeSection() {
         Application::getInstance().saveSettings();
     });
     m_contentBox->addView(m_directPlayToggle);
+}
+
+void SettingsTab::createDownloadsSection() {
+    Application& app = Application::getInstance();
+    AppSettings& settings = app.getSettings();
+
+    // Section header
+    auto* header = new brls::Header();
+    header->setTitle("Downloads");
+    m_contentBox->addView(header);
+
+    // Auto-start downloads toggle
+    m_autoStartDownloadsToggle = new brls::BooleanCell();
+    m_autoStartDownloadsToggle->init("Auto-Start Downloads", settings.autoStartDownloads, [&settings](bool value) {
+        settings.autoStartDownloads = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_autoStartDownloadsToggle);
+
+    // WiFi only toggle
+    m_wifiOnlyToggle = new brls::BooleanCell();
+    m_wifiOnlyToggle->init("Download Over WiFi Only", settings.downloadOverWifiOnly, [&settings](bool value) {
+        settings.downloadOverWifiOnly = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_wifiOnlyToggle);
+
+    // Concurrent downloads selector
+    m_concurrentDownloadsSelector = new brls::SelectorCell();
+    m_concurrentDownloadsSelector->init("Max Concurrent Downloads",
+        {"1", "2", "3"},
+        settings.maxConcurrentDownloads - 1,
+        [&settings](int index) {
+            settings.maxConcurrentDownloads = index + 1;
+            Application::getInstance().saveSettings();
+        });
+    m_contentBox->addView(m_concurrentDownloadsSelector);
+
+    // Delete after watch toggle
+    m_deleteAfterWatchToggle = new brls::BooleanCell();
+    m_deleteAfterWatchToggle->init("Delete After Watching", settings.deleteAfterWatch, [&settings](bool value) {
+        settings.deleteAfterWatch = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_deleteAfterWatchToggle);
+
+    // Sync progress toggle
+    m_syncProgressToggle = new brls::BooleanCell();
+    m_syncProgressToggle->init("Sync Progress on Connect", settings.syncProgressOnConnect, [&settings](bool value) {
+        settings.syncProgressOnConnect = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_syncProgressToggle);
+
+    // Clear all downloads
+    m_clearDownloadsCell = new brls::DetailCell();
+    m_clearDownloadsCell->setText("Clear All Downloads");
+    auto downloads = DownloadsManager::getInstance().getDownloads();
+    m_clearDownloadsCell->setDetailText(std::to_string(downloads.size()) + " items");
+    m_clearDownloadsCell->registerClickAction([this](brls::View* view) {
+        brls::Dialog* dialog = new brls::Dialog("Delete all downloaded content?");
+
+        dialog->addButton("Cancel", [dialog]() {
+            dialog->close();
+        });
+
+        dialog->addButton("Delete All", [dialog, this]() {
+            auto downloads = DownloadsManager::getInstance().getDownloads();
+            for (const auto& item : downloads) {
+                DownloadsManager::getInstance().deleteDownload(item.ratingKey);
+            }
+            if (m_clearDownloadsCell) {
+                m_clearDownloadsCell->setDetailText("0 items");
+            }
+            dialog->close();
+            brls::Application::notify("All downloads deleted");
+        });
+
+        dialog->open();
+        return true;
+    });
+    m_contentBox->addView(m_clearDownloadsCell);
+
+    // Downloads storage path info
+    auto* pathLabel = new brls::Label();
+    pathLabel->setText("Storage: " + DownloadsManager::getInstance().getDownloadsPath());
+    pathLabel->setFontSize(14);
+    pathLabel->setMarginLeft(16);
+    pathLabel->setMarginTop(8);
+    m_contentBox->addView(pathLabel);
 }
 
 void SettingsTab::createAboutSection() {

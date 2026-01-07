@@ -20,6 +20,7 @@ private:
     void createContentDisplaySection();
     void createPlaybackSection();
     void createTranscodeSection();
+    void createDownloadsSection();
     void createAboutSection();
 
     void onLogout();
@@ -66,6 +67,14 @@ private:
     brls::BooleanCell* m_forceTranscodeToggle = nullptr;
     brls::BooleanCell* m_burnSubtitlesToggle = nullptr;
     brls::BooleanCell* m_directPlayToggle = nullptr;
+
+    // Downloads section
+    brls::BooleanCell* m_autoStartDownloadsToggle = nullptr;
+    brls::BooleanCell* m_wifiOnlyToggle = nullptr;
+    brls::SelectorCell* m_concurrentDownloadsSelector = nullptr;
+    brls::BooleanCell* m_deleteAfterWatchToggle = nullptr;
+    brls::BooleanCell* m_syncProgressToggle = nullptr;
+    brls::DetailCell* m_clearDownloadsCell = nullptr;
 };
 
 } // namespace vitaplex
