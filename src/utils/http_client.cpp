@@ -292,6 +292,53 @@ bool HttpClient::get(const std::string& url, std::string& response) {
     return false;
 }
 
+bool HttpClient::get(const std::string& url, std::string& response,
+                     const std::map<std::string, std::string>& headers) {
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers = headers;
+    HttpResponse res = request(req);
+    if (res.success) {
+        response = res.body;
+        return true;
+    }
+    return false;
+}
+
+bool HttpClient::post(const std::string& url, const std::string& body, std::string& response,
+                      const std::map<std::string, std::string>& headers) {
+    HttpRequest req;
+    req.url = url;
+    req.method = "POST";
+    req.body = body;
+    req.headers = headers;
+    HttpResponse res = request(req);
+    if (res.success) {
+        response = res.body;
+        return true;
+    }
+    return false;
+}
+
+bool HttpClient::put(const std::string& url, const std::string& body, std::string& response) {
+    HttpResponse res = put(url, body);
+    if (res.success) {
+        response = res.body;
+        return true;
+    }
+    return false;
+}
+
+bool HttpClient::del(const std::string& url, std::string& response) {
+    HttpResponse res = del(url);
+    if (res.success) {
+        response = res.body;
+        return true;
+    }
+    return false;
+}
+
 // Download callback data structure
 struct DownloadCallbackData {
     HttpClient::WriteCallback writeCallback;
