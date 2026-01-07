@@ -444,10 +444,17 @@ void MediaDetailView::onDownload() {
     if (m_item.partPath.empty()) {
         brls::Application::notify("Loading media info...");
 
-        // We need the part path - it should have been loaded in loadDetails()
-        brls::Logger::debug("onDownload: partPath is empty, cannot download");
-        brls::Application::notify("Unable to download - media info not available");
-        return;
+        // Try to load details now
+        PlexClient& client = PlexClient::getInstance();
+        MediaItem fullItem;
+        if (client.fetchMediaDetails(m_item.ratingKey, fullItem) && !fullItem.partPath.empty()) {
+            m_item = fullItem;
+            brls::Logger::debug("onDownload: Loaded partPath={}", m_item.partPath);
+        } else {
+            brls::Logger::debug("onDownload: partPath is still empty, cannot download");
+            brls::Application::notify("Unable to download - media info not available");
+            return;
+        }
     }
 
     // Determine media type and parent info
@@ -722,9 +729,22 @@ void MediaDetailView::downloadAll() {
             }
         }
 
-        brls::sync([progressDialog, items]() {
-            progressDialog->setStatus("Found " + std::to_string(items.size()) + " items");
+        size_t itemCount = items.size();
+        brls::sync([progressDialog, itemCount]() {
+            progressDialog->setStatus("Found " + std::to_string(itemCount) + " items");
+            progressDialog->setProgress(0.1f);
         });
+
+        // If no items found, dismiss dialog
+        if (items.empty()) {
+            brls::sync([progressDialog]() {
+                progressDialog->setStatus("No items found to download");
+                brls::delay(1500, [progressDialog]() {
+                    progressDialog->dismiss();
+                });
+            });
+            return;
+        }
 
         // Queue each item for download
         for (size_t i = 0; i < items.size(); i++) {
@@ -751,10 +771,11 @@ void MediaDetailView::downloadAll() {
                 }
             }
 
-            brls::sync([progressDialog, i, items, queued]() {
+            size_t currentIndex = i;
+            brls::sync([progressDialog, currentIndex, itemCount, queued]() {
                 progressDialog->setStatus("Queued " + std::to_string(queued) + " of " +
-                                         std::to_string(items.size()));
-                progressDialog->setProgress(static_cast<float>(i + 1) / items.size());
+                                         std::to_string(itemCount));
+                progressDialog->setProgress(0.1f + 0.9f * static_cast<float>(currentIndex + 1) / itemCount);
             });
         }
 
@@ -821,9 +842,22 @@ void MediaDetailView::downloadUnwatched(int maxCount) {
             }
         }
 
-        brls::sync([progressDialog, unwatchedItems]() {
-            progressDialog->setStatus("Found " + std::to_string(unwatchedItems.size()) + " unwatched");
+        size_t itemCount = unwatchedItems.size();
+        brls::sync([progressDialog, itemCount]() {
+            progressDialog->setStatus("Found " + std::to_string(itemCount) + " unwatched");
+            progressDialog->setProgress(0.1f);
         });
+
+        // If no items found, dismiss dialog
+        if (unwatchedItems.empty()) {
+            brls::sync([progressDialog]() {
+                progressDialog->setStatus("No unwatched items found");
+                brls::delay(1500, [progressDialog]() {
+                    progressDialog->dismiss();
+                });
+            });
+            return;
+        }
 
         // Queue each unwatched item for download
         for (size_t i = 0; i < unwatchedItems.size(); i++) {
@@ -848,10 +882,11 @@ void MediaDetailView::downloadUnwatched(int maxCount) {
                 }
             }
 
-            brls::sync([progressDialog, i, unwatchedItems, queued]() {
+            size_t currentIndex = i;
+            brls::sync([progressDialog, currentIndex, itemCount, queued]() {
                 progressDialog->setStatus("Queued " + std::to_string(queued) + " of " +
-                                         std::to_string(unwatchedItems.size()));
-                progressDialog->setProgress(static_cast<float>(i + 1) / unwatchedItems.size());
+                                         std::to_string(itemCount));
+                progressDialog->setProgress(0.1f + 0.9f * static_cast<float>(currentIndex + 1) / itemCount);
             });
         }
 

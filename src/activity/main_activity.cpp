@@ -46,6 +46,14 @@ void MainActivity::onContentAvailable() {
                 sidebar->setWidth(220);
                 brls::Logger::debug("MainActivity: Set sidebar to compact 220px");
             }
+            // Add left padding to prevent text cutoff
+            sidebar->setPaddingLeft(10);
+        }
+
+        // Add left margin to content area to prevent overlap with sidebar
+        brls::View* contentArea = tabFrame->getView("brls/tab_frame/content_frame");
+        if (contentArea) {
+            contentArea->setMarginLeft(10);
         }
 
         bool hasLiveTV = PlexClient::getInstance().hasLiveTV();
