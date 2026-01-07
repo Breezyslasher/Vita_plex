@@ -88,14 +88,16 @@ bool MpvPlayer::init() {
 
 #ifdef __vita__
     // Vita-specific settings for video decoding
-    mpv_set_option_string(m_mpv, "vd-lavc-threads", "2");
+    // Use single thread to reduce memory usage
+    mpv_set_option_string(m_mpv, "vd-lavc-threads", "1");
 
-    // Use vita hardware decoding if available
-    mpv_set_option_string(m_mpv, "hwdec", "vita-copy");
+    // Disable hardware decoding - software decoding is more reliable
+    // The Vita's hardware decoder has limited codec support
+    mpv_set_option_string(m_mpv, "hwdec", "no");
 
-    // Video latency optimizations (from switchfin)
-    mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
-    mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
+    // Video optimizations for low-power device
+    mpv_set_option_string(m_mpv, "video-sync", "audio");
+    mpv_set_option_string(m_mpv, "framedrop", "vo");
 #else
     mpv_set_option_string(m_mpv, "hwdec", "no");
 #endif
@@ -105,8 +107,10 @@ bool MpvPlayer::init() {
     // ========================================
 
 #ifdef __vita__
-    mpv_set_option_string(m_mpv, "ao", "vita");
+    // Let mpv auto-detect audio output
+    // The switchfin vita-packages should provide appropriate ao driver
     mpv_set_option_string(m_mpv, "audio-channels", "stereo");
+    mpv_set_option_string(m_mpv, "audio-samplerate", "48000");
 #else
     mpv_set_option_string(m_mpv, "audio-channels", "stereo");
 #endif
@@ -114,13 +118,13 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "volume-max", "150");
 
     // ========================================
-    // Cache and demuxer settings (conservative for Vita)
+    // Cache and demuxer settings (very conservative for Vita's limited RAM)
     // ========================================
 
     mpv_set_option_string(m_mpv, "cache", "yes");
-    mpv_set_option_string(m_mpv, "demuxer-max-bytes", "4MiB");
-    mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "2MiB");
-    mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "3");
+    mpv_set_option_string(m_mpv, "demuxer-max-bytes", "2MiB");
+    mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "1MiB");
+    mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "2");
 
     // ========================================
     // Network settings for streaming
@@ -139,10 +143,10 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "subs-fallback", "yes");
 
     // ========================================
-    // Request log messages
+    // Request log messages (verbose for debugging crashes)
     // ========================================
 
-    mpv_request_log_messages(m_mpv, "warn");
+    mpv_request_log_messages(m_mpv, "info");
 
     // ========================================
     // Initialize MPV
@@ -787,35 +791,44 @@ bool MpvPlayer::initRenderContext() {
         return false;
     }
 
-    brls::Logger::debug("MpvPlayer: Creating GXM render context");
+    brls::Logger::info("MpvPlayer: Creating GXM render context...");
 
     // Get the GXM window from borealis
     brls::PsvVideoContext* videoContext = dynamic_cast<brls::PsvVideoContext*>(
         brls::Application::getPlatform()->getVideoContext());
     if (!videoContext) {
-        brls::Logger::error("MpvPlayer: Failed to get PSV video context");
+        brls::Logger::error("MpvPlayer: Failed to get PSV video context - will play audio only");
         return false;
     }
 
     NVGXMwindow* gxm = videoContext->getWindow();
     if (!gxm) {
-        brls::Logger::error("MpvPlayer: Failed to get GXM window");
+        brls::Logger::error("MpvPlayer: Failed to get GXM window - will play audio only");
+        return false;
+    }
+
+    if (!gxm->context || !gxm->shader_patcher) {
+        brls::Logger::error("MpvPlayer: GXM context or shader_patcher is null - will play audio only");
         return false;
     }
 
     NVGcontext* vg = brls::Application::getNVGContext();
     if (!vg) {
-        brls::Logger::error("MpvPlayer: Failed to get NanoVG context");
+        brls::Logger::error("MpvPlayer: Failed to get NanoVG context - will play audio only");
         return false;
     }
 
-    // Set up GXM init parameters
+    brls::Logger::info("MpvPlayer: GXM context acquired, setting up render params...");
+
+    // Set up GXM init parameters - use no MSAA to reduce memory usage
     mpv_gxm_init_params gxm_params = {
         .context = gxm->context,
         .shader_patcher = gxm->shader_patcher,
         .buffer_index = 0,
-        .msaa = SCE_GXM_MULTISAMPLE_4X,
+        .msaa = SCE_GXM_MULTISAMPLE_NONE,  // Reduce memory usage
     };
+
+    brls::Logger::info("MpvPlayer: Setting up MPV render params with API type: {}", MPV_RENDER_API_TYPE_GXM);
 
     mpv_render_param params[] = {
         {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_GXM)},
@@ -824,13 +837,16 @@ bool MpvPlayer::initRenderContext() {
     };
 
     // Create render context
+    brls::Logger::info("MpvPlayer: Calling mpv_render_context_create...");
     int result = mpv_render_context_create(&m_mpvRenderCtx, m_mpv, params);
     if (result < 0) {
-        brls::Logger::error("MpvPlayer: Failed to create GXM render context: {}", mpv_error_string(result));
+        brls::Logger::error("MpvPlayer: Failed to create GXM render context: {} (code {})",
+                           mpv_error_string(result), result);
+        brls::Logger::error("MpvPlayer: Will continue with audio-only playback");
         return false;
     }
 
-    brls::Logger::debug("MpvPlayer: GXM render context created");
+    brls::Logger::info("MpvPlayer: GXM render context created successfully!");
 
     // Create NanoVG image and GXM framebuffer for video output
     m_videoWidth = DISPLAY_WIDTH;

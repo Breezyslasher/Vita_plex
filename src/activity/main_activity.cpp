@@ -16,10 +16,22 @@
 #include "app/plex_client.hpp"
 #include "utils/async.hpp"
 
+#include <algorithm>
+
 namespace vitaplex {
 
 // Cached library sections for sidebar mode
 static std::vector<LibrarySection> s_cachedSections;
+
+// Helper to calculate text width (approximate based on character count)
+// Average character width at default font size is about 8-10 pixels
+static int calculateTextWidth(const std::string& text) {
+    // Base width per character (approximate for default sidebar font)
+    const int charWidth = 10;
+    // Add padding for margins and icon
+    const int padding = 60;
+    return static_cast<int>(text.length()) * charWidth + padding;
+}
 
 MainActivity::MainActivity() {
     brls::Logger::debug("MainActivity created");
@@ -35,16 +47,37 @@ void MainActivity::onContentAvailable() {
     if (tabFrame) {
         AppSettings& settings = Application::getInstance().getSettings();
 
-        // Apply sidebar width settings
+        // Calculate dynamic sidebar width based on content
+        int sidebarWidth = 200;  // Minimum width
+
+        // Standard tab names to consider
+        std::vector<std::string> standardTabs = {"Home", "Library", "Music", "Search", "Live TV", "Downloads", "Settings"};
+        for (const auto& tab : standardTabs) {
+            sidebarWidth = std::max(sidebarWidth, calculateTextWidth(tab));
+        }
+
+        // If showing libraries in sidebar, check library names too
+        if (settings.showLibrariesInSidebar) {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<LibrarySection> sections;
+            if (client.fetchLibrarySections(sections)) {
+                s_cachedSections = sections;  // Cache for later use
+                for (const auto& section : sections) {
+                    sidebarWidth = std::max(sidebarWidth, calculateTextWidth(section.title));
+                }
+            }
+        }
+
+        // Apply sidebar width (with reasonable bounds)
+        sidebarWidth = std::min(sidebarWidth, 350);  // Max width
         brls::View* sidebar = tabFrame->getView("brls/tab_frame/sidebar");
         if (sidebar) {
             if (settings.collapseSidebar) {
                 sidebar->setWidth(160);
                 brls::Logger::debug("MainActivity: Collapsed sidebar to 160px");
             } else {
-                // Width to fit longer library names like "DVR TV Shows"
-                sidebar->setWidth(280);
-                brls::Logger::debug("MainActivity: Set sidebar to 280px");
+                sidebar->setWidth(sidebarWidth);
+                brls::Logger::debug("MainActivity: Dynamic sidebar width: {}px", sidebarWidth);
             }
         }
 
