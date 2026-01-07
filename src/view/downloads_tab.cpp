@@ -22,7 +22,7 @@ DownloadsTab::DownloadsTab() {
 
     // Sync button
     auto syncBtn = new brls::Button();
-    syncBtn->setLabel("Sync Progress to Server");
+    syncBtn->setText("Sync Progress to Server");
     syncBtn->setMargins(0, 0, 20, 0);
     syncBtn->registerClickAction([](brls::View*) {
         DownloadsManager::getInstance().syncProgressToServer();
@@ -130,7 +130,7 @@ void DownloadsTab::refresh() {
         // Actions based on state
         if (item.state == DownloadState::COMPLETED) {
             auto playBtn = new brls::Button();
-            playBtn->setLabel("Play");
+            playBtn->setText("Play");
             playBtn->setMargins(0, 0, 0, 10);
 
             std::string ratingKey = item.ratingKey;
@@ -143,7 +143,7 @@ void DownloadsTab::refresh() {
             row->addView(playBtn);
 
             auto deleteBtn = new brls::Button();
-            deleteBtn->setLabel("Delete");
+            deleteBtn->setText("Delete");
             std::string key = item.ratingKey;
             deleteBtn->registerClickAction([key](brls::View*) {
                 DownloadsManager::getInstance().deleteDownload(key);
@@ -153,7 +153,7 @@ void DownloadsTab::refresh() {
             row->addView(deleteBtn);
         } else if (item.state == DownloadState::DOWNLOADING || item.state == DownloadState::QUEUED) {
             auto cancelBtn = new brls::Button();
-            cancelBtn->setLabel("Cancel");
+            cancelBtn->setText("Cancel");
             std::string key = item.ratingKey;
             cancelBtn->registerClickAction([key](brls::View*) {
                 DownloadsManager::getInstance().cancelDownload(key);
