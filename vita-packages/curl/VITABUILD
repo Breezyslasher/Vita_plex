@@ -1,6 +1,6 @@
 pkgname=curl
 pkgver=8.9.1
-pkgrel=2
+pkgrel=3
 url="https://curl.se/"
 source=("https://github.com/curl/curl/releases/download/curl-8_9_1/curl-8.9.1.tar.gz")
 sha256sums=('291124a007ee5111997825940b3876b3048f7d31e73e9caa681b80fe48b2dcd5')
@@ -8,11 +8,49 @@ depends=('mbedtls' 'zlib')
 
 prepare() {
   cd curl-${pkgver}
+
+  # Create a header with missing Vita netdb definitions
+  cat > lib/vita_netdb_compat.h << 'VITA_HEADER_EOF'
+#ifndef _VITA_NETDB_COMPAT_H
+#define _VITA_NETDB_COMPAT_H
+
+/* PS Vita: Define missing netdb structures */
+#ifdef __vita__
+
+struct hostent {
+    char  *h_name;       /* official name of host */
+    char **h_aliases;    /* alias list */
+    int    h_addrtype;   /* host address type */
+    int    h_length;     /* length of address */
+    char **h_addr_list;  /* list of addresses */
+};
+#ifndef h_addr
+#define h_addr h_addr_list[0]
+#endif
+
+/* Stub - Vita doesn't have gethostbyname, uses sceNet APIs */
+static inline struct hostent *gethostbyname(const char *name) {
+    (void)name;
+    return (struct hostent *)0;
+}
+
+static inline struct hostent *gethostbyaddr(const void *addr, int len, int type) {
+    (void)addr; (void)len; (void)type;
+    return (struct hostent *)0;
+}
+
+#endif /* __vita__ */
+#endif /* _VITA_NETDB_COMPAT_H */
+VITA_HEADER_EOF
+
+  # Include the compat header at the top of files that need hostent
+  sed -i '1i #include "vita_netdb_compat.h"' lib/curl_addrinfo.c
+  sed -i '1i #include "vita_netdb_compat.h"' lib/hostip.c
 }
 
 build() {
   cd curl-${pkgver}
-  mkdir build && cd build
+  mkdir -p build && cd build
   cmake .. -DCMAKE_TOOLCHAIN_FILE=$VITASDK/share/vita.toolchain.cmake \
     -DCMAKE_INSTALL_PREFIX=$prefix \
     -DCMAKE_BUILD_TYPE=Release \
@@ -26,6 +64,8 @@ build() {
     -DENABLE_CURL_MANUAL=OFF \
     -DCURL_USE_MBEDTLS=ON \
     -DCURL_USE_OPENSSL=OFF \
+    -DCURL_DISABLE_LDAP=ON \
+    -DCURL_DISABLE_LDAPS=ON \
     -DCURL_CA_BUNDLE="vs0:data/external/cert/CA_LIST.cer"
   make -j$(nproc)
 }
