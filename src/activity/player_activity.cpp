@@ -319,16 +319,13 @@ void PlayerActivity::loadMedia() {
                 }
             }
 
-            // Try direct streaming first - the URL is now a direct file URL (not transcode)
-            // If MPV's HTTP crashes, we'll need the download workaround
+            // MPV's HTTP handling crashes on Vita when loading network URLs directly.
+            // Workaround: Download audio to local file first, then play the local file.
+            // This uses libcurl (via HttpClient) which handles HTTP correctly on Vita.
             std::string playUrl = url;
 
-            // For now, try direct streaming (comment out download workaround)
-            brls::Logger::info("PlayerActivity: Attempting direct audio streaming...");
-
-            /* DOWNLOAD WORKAROUND - Enable if direct streaming crashes:
             if (isAudioContent && url.find("http://") == 0) {
-                brls::Logger::info("PlayerActivity: Downloading audio stream to local file...");
+                brls::Logger::info("PlayerActivity: Downloading audio stream to local file (HTTP workaround)...");
 
                 // Extract file extension from URL (e.g., .mp3, .m4a, .ogg, .flac)
                 std::string ext = ".mp3";  // Default extension
@@ -374,7 +371,6 @@ void PlayerActivity::loadMedia() {
                 brls::Logger::info("PlayerActivity: Audio downloaded to {}, playing local file", tempPath);
                 playUrl = tempPath;
             }
-            */
 
             // Load the URL using async command
             // loadUrl returns false if a command is already pending (prevents rapid clicks)
