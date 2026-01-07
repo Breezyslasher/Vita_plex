@@ -311,8 +311,9 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
     }
     brls::Logger::debug("MpvPlayer: loadfile command queued successfully (result={})", result);
 
+    brls::Logger::debug("MpvPlayer: About to call setState(LOADING)...");
     setState(MpvPlayerState::LOADING);
-    brls::Logger::debug("MpvPlayer: loadUrl complete, returning true");
+    brls::Logger::debug("MpvPlayer: setState done, about to return true");
     return true;
 }
 
@@ -553,10 +554,13 @@ std::string MpvPlayer::getProperty(const std::string& name) const {
 }
 
 void MpvPlayer::setState(MpvPlayerState newState) {
+    brls::Logger::debug("MpvPlayer::setState entered with newState={}", (int)newState);
     if (m_state != newState) {
         brls::Logger::debug("MpvPlayer: State change: {} -> {}", (int)m_state, (int)newState);
         m_state = newState;
+        brls::Logger::debug("MpvPlayer::setState assignment done");
     }
+    brls::Logger::debug("MpvPlayer::setState exiting");
 }
 
 void MpvPlayer::update() {
