@@ -1,6 +1,7 @@
 #!/bin/bash
-# Build and install modified Vita packages for VitaPlex
-# This script builds vita-netdb, curl, ffmpeg, and mpv with HTTP streaming fixes
+# Build and install Vita packages for VitaPlex
+# Uses the same approach as switchfin - disable getaddrinfo in FFmpeg
+# HTTP downloading is handled by curl in our app code
 
 set -e
 
@@ -34,7 +35,7 @@ cd "$BUILD_DIR"
 # ============================================
 # Download patches
 # ============================================
-echo -e "${YELLOW}[1/7] Downloading patches...${NC}"
+echo -e "${YELLOW}[1/5] Downloading patches...${NC}"
 
 curl -L -s -o ffmpeg.patch "$SWITCHFIN_RAW/ffmpeg/ffmpeg.patch"
 echo "  Downloaded ffmpeg.patch"
@@ -43,34 +44,10 @@ curl -L -s -o gxm.patch "$SWITCHFIN_RAW/mpv/gxm.patch"
 echo "  Downloaded gxm.patch"
 
 # ============================================
-# Build vita-netdb (POSIX DNS wrapper)
-# ============================================
-echo ""
-echo -e "${YELLOW}[2/7] Building vita-netdb (DNS resolver)...${NC}"
-
-mkdir -p vita-netdb/sys
-cp "$SCRIPT_DIR/vita-netdb/vita_netdb.h" vita-netdb/
-cp "$SCRIPT_DIR/vita-netdb/vita_netdb.c" vita-netdb/
-cp "$SCRIPT_DIR/vita-netdb/netdb.h" vita-netdb/
-cp "$SCRIPT_DIR/vita-netdb/sys/mman.h" vita-netdb/sys/
-cp "$SCRIPT_DIR/vita-netdb/CMakeLists.txt" vita-netdb/
-cd vita-netdb
-
-cmake -B build -DCMAKE_TOOLCHAIN_FILE=$VITASDK/share/vita.toolchain.cmake \
-    -DCMAKE_INSTALL_PREFIX=$VITASDK/arm-vita-eabi \
-    -DCMAKE_BUILD_TYPE=Release
-
-cmake --build build
-cmake --install build
-
-echo -e "${GREEN}  vita-netdb installed to $VITASDK${NC}"
-cd "$BUILD_DIR"
-
-# ============================================
 # Build curl
 # ============================================
 echo ""
-echo -e "${YELLOW}[3/7] Building curl...${NC}"
+echo -e "${YELLOW}[2/5] Building curl...${NC}"
 
 CURL_VER="8.11.0"
 if [ ! -f "curl-${CURL_VER}.tar.xz" ]; then
@@ -95,7 +72,7 @@ cmake -B build -DCMAKE_TOOLCHAIN_FILE=$VITASDK/share/vita.toolchain.cmake \
     -DCURL_USE_MBEDTLS=ON \
     -DCURL_DISABLE_PROGRESS_METER=ON \
     -DENABLE_IPV6=OFF \
-    -DENABLE_THREADED_RESOLVER=ON \
+    -DENABLE_THREADED_RESOLVER=OFF \
     -DUSE_NGHTTP2=OFF \
     -DUSE_LIBIDN2=OFF \
     -DCURL_BROTLI=OFF \
@@ -113,10 +90,10 @@ echo -e "${GREEN}  curl installed to $VITASDK${NC}"
 cd "$BUILD_DIR"
 
 # ============================================
-# Build FFmpeg (with vita-netdb for DNS)
+# Build FFmpeg (same as switchfin)
 # ============================================
 echo ""
-echo -e "${YELLOW}[4/7] Building FFmpeg (with DNS support)...${NC}"
+echo -e "${YELLOW}[3/5] Building FFmpeg...${NC}"
 
 FFMPEG_VER="n6.0"
 if [ ! -f "FFmpeg-${FFMPEG_VER}.tar.gz" ]; then
@@ -130,16 +107,12 @@ cd "FFmpeg-${FFMPEG_VER}"
 # Apply patch
 patch --strip=1 --input="$BUILD_DIR/ffmpeg.patch"
 
-# Configure FFmpeg with vita-netdb for DNS resolution
 ./configure \
     --prefix=$VITASDK/arm-vita-eabi \
     --enable-vita \
     --target-os=vita \
     --enable-cross-compile \
     --cross-prefix=$VITASDK/bin/arm-vita-eabi- \
-    --extra-cflags="-I$VITASDK/arm-vita-eabi/include" \
-    --extra-ldflags="-L$VITASDK/arm-vita-eabi/lib" \
-    --extra-libs="-lvita_netdb -lSceNet_stub -lSceNetCtl_stub" \
     --disable-runtime-cpudetect \
     --disable-armv5te \
     --disable-shared \
@@ -159,13 +132,6 @@ patch --strip=1 --input="$BUILD_DIR/ffmpeg.patch"
     --enable-mbedtls \
     --enable-version3 \
     --enable-pthreads \
-    \
-    --enable-protocol=file \
-    --enable-protocol=http \
-    --enable-protocol=https \
-    --enable-protocol=tcp \
-    --enable-protocol=hls \
-    --enable-protocol=crypto \
     \
     --enable-demuxer=hls \
     --enable-demuxer=flac \
@@ -224,9 +190,9 @@ patch --strip=1 --input="$BUILD_DIR/ffmpeg.patch"
     --enable-filter=scale \
     --enable-filter=aresample
 
-# KEY: Do NOT disable HAVE_GETADDRINFO - our vita-netdb provides it!
-# The original switchfin had: sed 's/#define HAVE_GETADDRINFO 1/#define HAVE_GETADDRINFO 0/g' -i config.h
-# We're NOT doing that because vita-netdb provides getaddrinfo/gai_strerror
+# Disable getaddrinfo - Vita doesn't have full POSIX DNS support
+# HTTP downloads are handled by curl in VitaPlex app code instead
+sed -i 's/#define HAVE_GETADDRINFO 1/#define HAVE_GETADDRINFO 0/g' config.h
 
 make -j$(nproc)
 make install
@@ -238,7 +204,7 @@ cd "$BUILD_DIR"
 # Build MPV
 # ============================================
 echo ""
-echo -e "${YELLOW}[5/7] Building MPV...${NC}"
+echo -e "${YELLOW}[4/5] Building MPV...${NC}"
 
 MPV_VER="0.36.0"
 if [ ! -f "mpv-${MPV_VER}.tar.gz" ]; then
@@ -296,30 +262,16 @@ echo -e "${GREEN}  MPV installed to $VITASDK${NC}"
 cd "$BUILD_DIR"
 
 # ============================================
-# Cleanup (optional)
-# ============================================
-echo ""
-echo -e "${YELLOW}[6/7] Cleaning up...${NC}"
-# Uncomment to remove build files:
-# rm -rf "$BUILD_DIR"
-echo "  Build files kept in $BUILD_DIR"
-echo "  Run 'rm -rf $BUILD_DIR' to remove them"
-
-# ============================================
 # Done
 # ============================================
 echo ""
-echo -e "${GREEN}[7/7] Build complete!${NC}"
+echo -e "${GREEN}[5/5] Build complete!${NC}"
 echo ""
 echo "Packages installed to: $VITASDK/arm-vita-eabi"
 echo ""
-echo "Changes made:"
-echo "  - vita-netdb: NEW - provides getaddrinfo/gai_strerror using sceNetResolver"
-echo "  - curl: Enabled threaded resolver"
-echo "  - FFmpeg: DNS support via vita-netdb, HTTP/HLS protocols enabled"
-echo "  - MPV: No changes (uses FFmpeg for network)"
-echo ""
-echo "FFmpeg can now resolve hostnames! HTTP streaming should work."
+echo "NOTE: FFmpeg cannot resolve hostnames (no getaddrinfo on Vita)."
+echo "      VitaPlex uses curl for HTTP downloads, then plays local files."
+echo "      This is the same approach used by switchfin."
 echo ""
 echo "Next: Rebuild VitaPlex with:"
 echo "  cd /path/to/Vita_plex"
