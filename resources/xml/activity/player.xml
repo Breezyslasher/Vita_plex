@@ -25,6 +25,22 @@
         visibility="gone"
         grow="1"/>
 
+    <!-- Album art for music (centered above controls) -->
+    <brls:Box
+        width="100%"
+        grow="1"
+        axis="column"
+        justifyContent="center"
+        alignItems="center">
+        <brls:Image
+            id="player/album_art"
+            width="200"
+            height="200"
+            scalingType="fit"
+            cornerRadius="8"
+            visibility="gone"/>
+    </brls:Box>
+
     <!-- Controls overlay -->
     <brls:Box
         id="player/controls"
@@ -40,7 +56,25 @@
             id="player/title"
             text="Now Playing"
             fontSize="20"
-            marginBottom="10"/>
+            marginBottom="5"/>
+
+        <!-- Artist (for music) -->
+        <brls:Label
+            id="player/artist"
+            text=""
+            fontSize="16"
+            textColor="#AAAAAA"
+            marginBottom="10"
+            visibility="gone"/>
+
+        <!-- Queue info (track X of Y, shuffle/repeat status) -->
+        <brls:Label
+            id="player/queue_info"
+            text=""
+            fontSize="12"
+            textColor="#888888"
+            marginBottom="10"
+            visibility="gone"/>
 
         <!-- Progress slider -->
         <brls:Slider

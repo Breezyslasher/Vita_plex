@@ -66,6 +66,7 @@ set(APP_SOURCES
     src/app/application.cpp
     src/app/plex_client.cpp
     src/app/downloads_manager.cpp
+    src/app/music_queue.cpp
 
     # Activities
     src/activity/main_activity.cpp
