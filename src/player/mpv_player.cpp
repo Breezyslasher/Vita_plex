@@ -817,18 +817,33 @@ void MpvPlayer::updatePlaybackInfo() {
     }
 }
 
-// Callback for mpv render context when a new frame is ready
-static void on_mpv_render_update(void* ctx) {
-    MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
-    // Signal that a new frame is available
-    // The actual rendering will happen in render()
 #ifdef __vita__
-    if (player) {
-        // Set flag that new frame is ready (thread-safe atomic would be better)
-        // For now, we'll handle this in the render loop
+// Callback for mpv render context when a new frame is ready
+// This is called from MPV's thread, so we use brls::sync() to synchronize with main thread
+void MpvPlayer::onRenderUpdate(void* ctx) {
+    MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
+    if (!player || !player->m_mpvRenderCtx || !player->m_renderReady) {
+        return;
     }
-#endif
+
+    // Use brls::sync to render on the main thread (like switchfin does)
+    brls::sync([player]() {
+        if (!player->m_mpvRenderCtx || !player->m_renderReady) {
+            return;
+        }
+
+        uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
+        if (flags & MPV_RENDER_UPDATE_FRAME) {
+            // Render the frame to our GXM framebuffer
+            int result = mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
+            if (result < 0) {
+                brls::Logger::error("MpvPlayer: GXM render failed: {}", mpv_error_string(result));
+            }
+            mpv_render_context_report_swap(player->m_mpvRenderCtx);
+        }
+    });
 }
+#endif
 
 bool MpvPlayer::initRenderContext() {
 #ifdef __vita__
@@ -955,8 +970,12 @@ bool MpvPlayer::initRenderContext() {
     m_mpvFbo.w = m_videoWidth;
     m_mpvFbo.h = m_videoHeight;
 
-    // Set up render update callback
-    mpv_render_context_set_update_callback(m_mpvRenderCtx, on_mpv_render_update, this);
+    // Set up render params array for use in callbacks (like switchfin)
+    m_mpvParams[0] = {MPV_RENDER_PARAM_GXM_FBO, &m_mpvFbo};
+    m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
+
+    // Set up render update callback (using switchfin's approach with brls::sync)
+    mpv_render_context_set_update_callback(m_mpvRenderCtx, onRenderUpdate, this);
 
     m_renderReady = true;
     brls::Logger::info("MpvPlayer: GXM render context created successfully ({}x{})", m_videoWidth, m_videoHeight);
@@ -990,36 +1009,17 @@ void MpvPlayer::cleanupRenderContext() {
         m_nvgImage = 0;
     }
 
-    // Reset FBO
+    // Reset FBO and render params
     m_mpvFbo = {};
+    m_mpvParams[0] = {MPV_RENDER_PARAM_INVALID, nullptr};
+    m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
 #endif
 }
 
 void MpvPlayer::render() {
-#ifdef __vita__
-    if (!m_mpvRenderCtx || !m_renderReady || !m_gxmFramebuffer) {
-        return;
-    }
-
-    // Check if a new frame is available
-    uint64_t flags = mpv_render_context_update(m_mpvRenderCtx);
-    if (!(flags & MPV_RENDER_UPDATE_FRAME)) {
-        return;  // No new frame
-    }
-
-    // Set up GXM render parameters for this frame
-    mpv_render_param render_params[] = {
-        {MPV_RENDER_PARAM_GXM_FBO, &m_mpvFbo},
-        {MPV_RENDER_PARAM_INVALID, nullptr},
-    };
-
-    // Render the frame using GXM directly (not deferred)
-    int result = mpv_render_context_render(m_mpvRenderCtx, render_params);
-    if (result < 0) {
-        brls::Logger::error("MpvPlayer: GXM render failed: {}", mpv_error_string(result));
-    }
-    mpv_render_context_report_swap(m_mpvRenderCtx);
-#endif
+    // Rendering is now handled in the onRenderUpdate callback via brls::sync()
+    // This function is kept for API compatibility but does nothing
+    // The callback automatically renders frames when MPV signals they are ready
 }
 
 } // namespace vitaplex

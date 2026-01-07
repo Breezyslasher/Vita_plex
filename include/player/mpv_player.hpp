@@ -175,9 +175,13 @@ private:
     int m_nvgImage = 0;                 // NanoVG image handle for display
     void* m_gxmFramebuffer = nullptr;   // GXM framebuffer structure
     mpv_gxm_fbo m_mpvFbo = {};          // MPV GXM FBO parameters
+    mpv_render_param m_mpvParams[2] = {};  // Render params for mpv_render_context_render
     int m_videoWidth = 960;
     int m_videoHeight = 544;
     bool m_renderReady = false;         // Flag for when frame is ready
+
+    // Static callback for render updates (called from MPV thread)
+    static void onRenderUpdate(void* ctx);
 #endif
 };
 
