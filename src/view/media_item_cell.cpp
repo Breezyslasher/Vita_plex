@@ -39,6 +39,13 @@ MediaItemCell::MediaItemCell() {
     m_subtitleLabel->setVisibility(brls::Visibility::GONE);
     this->addView(m_subtitleLabel);
 
+    // Description label (shows on focus for episodes)
+    m_descriptionLabel = new brls::Label();
+    m_descriptionLabel->setFontSize(9);
+    m_descriptionLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+    m_descriptionLabel->setVisibility(brls::Visibility::GONE);
+    this->addView(m_descriptionLabel);
+
     // Progress bar (for continue watching)
     m_progressBar = new brls::Rectangle();
     m_progressBar->setHeight(3);
@@ -75,6 +82,7 @@ void MediaItemCell::setItem(const MediaItem& item) {
         if (title.length() > 15) {
             title = title.substr(0, 13) + "...";
         }
+        m_originalTitle = title;  // Store truncated title for focus restore
         m_titleLabel->setText(title);
     }
 
@@ -140,6 +148,88 @@ void MediaItemCell::loadThumbnail() {
 
 brls::View* MediaItemCell::create() {
     return new MediaItemCell();
+}
+
+void MediaItemCell::onFocusGained() {
+    brls::Box::onFocusGained();
+    updateFocusInfo(true);
+}
+
+void MediaItemCell::onFocusLost() {
+    brls::Box::onFocusLost();
+    updateFocusInfo(false);
+}
+
+void MediaItemCell::updateFocusInfo(bool focused) {
+    if (!m_titleLabel || !m_descriptionLabel) return;
+
+    // For episodes, show extended info on focus
+    if (m_item.mediaType == MediaType::EPISODE) {
+        if (focused) {
+            // Show full title
+            m_titleLabel->setText(m_item.title);
+
+            // Show duration and other info
+            std::string info;
+            if (m_item.duration > 0) {
+                int minutes = m_item.duration / 60000;
+                info = std::to_string(minutes) + " min";
+            }
+            if (!m_item.summary.empty()) {
+                // Show first 50 chars of summary
+                std::string summary = m_item.summary;
+                if (summary.length() > 50) {
+                    summary = summary.substr(0, 47) + "...";
+                }
+                if (!info.empty()) info += " - ";
+                info += summary;
+            }
+            if (!info.empty()) {
+                m_descriptionLabel->setText(info);
+                m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
+            }
+        } else {
+            // Restore truncated title
+            m_titleLabel->setText(m_originalTitle);
+            m_descriptionLabel->setVisibility(brls::Visibility::GONE);
+        }
+    } else if (m_item.mediaType == MediaType::MOVIE) {
+        // Show runtime for movies on focus
+        if (focused && m_item.duration > 0) {
+            int minutes = m_item.duration / 60000;
+            std::string info = std::to_string(minutes) + " min";
+            if (m_item.year > 0) {
+                info = std::to_string(m_item.year) + " - " + info;
+            }
+            m_descriptionLabel->setText(info);
+            m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
+            // Show full title
+            m_titleLabel->setText(m_item.title);
+        } else {
+            m_titleLabel->setText(m_originalTitle);
+            m_descriptionLabel->setVisibility(brls::Visibility::GONE);
+        }
+    } else if (m_item.mediaType == MediaType::SHOW) {
+        // Show year for shows on focus
+        if (focused) {
+            std::string info;
+            if (m_item.year > 0) {
+                info = std::to_string(m_item.year);
+            }
+            if (m_item.leafCount > 0) {
+                if (!info.empty()) info += " - ";
+                info += std::to_string(m_item.leafCount) + " seasons";
+            }
+            if (!info.empty()) {
+                m_descriptionLabel->setText(info);
+                m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
+            }
+            m_titleLabel->setText(m_item.title);
+        } else {
+            m_titleLabel->setText(m_originalTitle);
+            m_descriptionLabel->setVisibility(brls::Visibility::GONE);
+        }
+    }
 }
 
 } // namespace vitaplex

@@ -68,6 +68,10 @@ struct MediaItem {
     std::string audioCodec;
     int videoWidth = 0;
     int videoHeight = 0;
+
+    // For downloads - media part path on server
+    std::string partPath;
+    int64_t partSize = 0;
 };
 
 // Library section info
@@ -131,6 +135,13 @@ struct LiveTVChannel {
     int64_t programEnd = 0;
 };
 
+// Genre/Category item with key for filtering
+struct GenreItem {
+    std::string title;      // Display name
+    std::string key;        // Filter key (ID) for API calls
+    std::string fastKey;    // Fast filter URL path
+};
+
 /**
  * Plex API Client singleton
  */
@@ -163,14 +174,24 @@ public:
     // Search
     bool search(const std::string& query, std::vector<MediaItem>& results);
 
+    // Collections, Playlists, Genres
+    bool fetchCollections(const std::string& sectionKey, std::vector<MediaItem>& collections);
+    bool fetchPlaylists(std::vector<MediaItem>& playlists);
+    bool fetchGenres(const std::string& sectionKey, std::vector<std::string>& genres);
+    bool fetchGenreItems(const std::string& sectionKey, std::vector<GenreItem>& genres);
+    bool fetchByGenre(const std::string& sectionKey, const std::string& genre, std::vector<MediaItem>& items);
+    bool fetchByGenreKey(const std::string& sectionKey, const std::string& genreKey, std::vector<MediaItem>& items);
+
     // Playback
     bool getPlaybackUrl(const std::string& ratingKey, std::string& url);
+    bool getTranscodeUrl(const std::string& ratingKey, std::string& url, int offsetMs = 0);
     bool updatePlayProgress(const std::string& ratingKey, int timeMs);
     bool markAsWatched(const std::string& ratingKey);
     bool markAsUnwatched(const std::string& ratingKey);
 
     // Live TV
     bool fetchLiveTVChannels(std::vector<LiveTVChannel>& channels);
+    bool fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, int hoursAhead = 4);
     bool hasLiveTV() const { return m_hasLiveTV; }
 
     // Thumbnail URL
@@ -178,6 +199,7 @@ public:
 
     // Configuration
     void setAuthToken(const std::string& token) { m_authToken = token; }
+    const std::string& getAuthToken() const { return m_authToken; }
     void setServerUrl(const std::string& url) { m_serverUrl = url; }
     const std::string& getServerUrl() const { return m_serverUrl; }
 
@@ -194,6 +216,7 @@ private:
     std::string base64Encode(const std::string& input);
     int extractXmlAttr(const std::string& xml, const std::string& attr);
     std::string extractXmlAttrStr(const std::string& xml, const std::string& attr);
+    void checkLiveTVAvailability();
 
     std::string m_authToken;
     std::string m_serverUrl;

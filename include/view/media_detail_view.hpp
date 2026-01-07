@@ -21,6 +21,10 @@ private:
     void loadChildren();
     void loadMusicCategories();
     void onPlay(bool resume = false);
+    void onDownload();
+    void showDownloadOptions();
+    void downloadAll();
+    void downloadUnwatched(int maxCount = -1);
 
     brls::HScrollingFrame* createMediaRow(const std::string& title, brls::Box** contentOut);
 
@@ -39,6 +43,7 @@ private:
     brls::Image* m_posterImage = nullptr;
     brls::Button* m_playButton = nullptr;
     brls::Button* m_resumeButton = nullptr;
+    brls::Button* m_downloadButton = nullptr;
     brls::Box* m_childrenBox = nullptr;
 
     // Music category rows for artists

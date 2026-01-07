@@ -58,9 +58,14 @@ void Application::run() {
         brls::Logger::info("Restoring saved session...");
         // Verify connection and go to main
         PlexClient::getInstance().setAuthToken(m_authToken);
-        PlexClient::getInstance().setServerUrl(m_serverUrl);
-        brls::Logger::info("Restored auth token and server URL to PlexClient");
-        pushMainActivity();
+        // Use connectToServer to properly initialize (including Live TV check)
+        if (PlexClient::getInstance().connectToServer(m_serverUrl)) {
+            brls::Logger::info("Restored session and connected to server");
+            pushMainActivity();
+        } else {
+            brls::Logger::error("Failed to connect to saved server, showing login");
+            pushLoginActivity();
+        }
     } else {
         brls::Logger::info("No saved session, showing login screen");
         // Show login screen
@@ -239,6 +244,12 @@ bool Application::loadSettings() {
     m_settings.showLibrariesInSidebar = extractBool("showLibrariesInSidebar", false);
     m_settings.collapseSidebar = extractBool("collapseSidebar", false);
     m_settings.hiddenLibraries = extractString("hiddenLibraries");
+    m_settings.sidebarOrder = extractString("sidebarOrder");
+
+    // Load content display settings
+    m_settings.showCollections = extractBool("showCollections", true);
+    m_settings.showPlaylists = extractBool("showPlaylists", true);
+    m_settings.showGenres = extractBool("showGenres", true);
 
     // Load playback settings
     m_settings.autoPlayNext = extractBool("autoPlayNext", true);
@@ -257,7 +268,7 @@ bool Application::loadSettings() {
 
     // Load network settings
     m_settings.connectionTimeout = extractInt("connectionTimeout");
-    if (m_settings.connectionTimeout <= 0) m_settings.connectionTimeout = 30;
+    if (m_settings.connectionTimeout <= 0) m_settings.connectionTimeout = 180; // 3 minutes default
     m_settings.directPlay = extractBool("directPlay", false);
 
     brls::Logger::info("Settings loaded successfully");
@@ -293,6 +304,12 @@ bool Application::saveSettings() {
     json += "  \"showLibrariesInSidebar\": " + std::string(m_settings.showLibrariesInSidebar ? "true" : "false") + ",\n";
     json += "  \"collapseSidebar\": " + std::string(m_settings.collapseSidebar ? "true" : "false") + ",\n";
     json += "  \"hiddenLibraries\": \"" + m_settings.hiddenLibraries + "\",\n";
+    json += "  \"sidebarOrder\": \"" + m_settings.sidebarOrder + "\",\n";
+
+    // Content display settings
+    json += "  \"showCollections\": " + std::string(m_settings.showCollections ? "true" : "false") + ",\n";
+    json += "  \"showPlaylists\": " + std::string(m_settings.showPlaylists ? "true" : "false") + ",\n";
+    json += "  \"showGenres\": " + std::string(m_settings.showGenres ? "true" : "false") + ",\n";
 
     // Playback settings
     json += "  \"autoPlayNext\": " + std::string(m_settings.autoPlayNext ? "true" : "false") + ",\n";

@@ -59,6 +59,11 @@ struct AppSettings {
     std::string hiddenLibraries;          // Comma-separated list of library keys to hide
     std::string sidebarOrder;             // Custom sidebar order (comma-separated: home,library,search,livetv,settings)
 
+    // Content Display Settings
+    bool showCollections = true;          // Show collections in library sections
+    bool showPlaylists = true;            // Show playlists
+    bool showGenres = true;               // Show genre categories
+
     // Playback Settings
     bool autoPlayNext = true;
     bool resumePlayback = true;
@@ -73,8 +78,15 @@ struct AppSettings {
     int maxBitrate = 2000;      // kbps
 
     // Network Settings
-    int connectionTimeout = 30; // seconds
-    bool directPlay = false;    // Try direct play first
+    int connectionTimeout = 180; // seconds (3 minutes for slow connections)
+    bool directPlay = false;     // Try direct play first
+
+    // Download Settings
+    bool autoStartDownloads = true;    // Start downloads automatically after queueing
+    bool downloadOverWifiOnly = false; // Only download when on WiFi
+    int maxConcurrentDownloads = 1;    // Max concurrent downloads
+    bool deleteAfterWatch = false;     // Auto-delete after fully watched
+    bool syncProgressOnConnect = true; // Sync offline progress when connected
 };
 
 /**
