@@ -35,12 +35,16 @@ void MainActivity::onContentAvailable() {
     if (tabFrame) {
         AppSettings& settings = Application::getInstance().getSettings();
 
-        // Apply collapse sidebar setting
-        if (settings.collapseSidebar) {
-            brls::View* sidebar = tabFrame->getView("brls/tab_frame/sidebar");
-            if (sidebar) {
+        // Apply sidebar width settings
+        brls::View* sidebar = tabFrame->getView("brls/tab_frame/sidebar");
+        if (sidebar) {
+            if (settings.collapseSidebar) {
                 sidebar->setWidth(150);
                 brls::Logger::debug("MainActivity: Collapsed sidebar to 150px");
+            } else {
+                // Use a compact sidebar width that fits library names
+                sidebar->setWidth(220);
+                brls::Logger::debug("MainActivity: Set sidebar to compact 220px");
             }
         }
 
