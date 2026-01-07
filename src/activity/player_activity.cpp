@@ -88,6 +88,62 @@ void PlayerActivity::loadMedia() {
     PlexClient& client = PlexClient::getInstance();
     MediaItem item;
 
+    // Check if this is a direct file path (local playback test)
+    bool isLocalFile = m_mediaKey.find("ux0:") == 0 || m_mediaKey.find("/") == 0;
+
+    if (isLocalFile) {
+        brls::Logger::info("PlayerActivity: Playing direct file: {}", m_mediaKey);
+
+        // Set up title
+        if (titleLabel) {
+            size_t lastSlash = m_mediaKey.find_last_of("/\\");
+            std::string filename = (lastSlash != std::string::npos) ?
+                m_mediaKey.substr(lastSlash + 1) : m_mediaKey;
+            titleLabel->setText(filename);
+        }
+
+        MpvPlayer& player = MpvPlayer::getInstance();
+
+        // Determine if this is audio or video based on extension
+        bool isAudio = (m_mediaKey.find(".mp3") != std::string::npos ||
+                       m_mediaKey.find(".flac") != std::string::npos ||
+                       m_mediaKey.find(".aac") != std::string::npos ||
+                       m_mediaKey.find(".ogg") != std::string::npos ||
+                       m_mediaKey.find(".wav") != std::string::npos);
+
+        // For video files, we need to handle UI differently
+        if (!isAudio) {
+            brls::Logger::info("PlayerActivity: Video file detected, using video mode");
+            player.setVideoEnabled(true);
+
+            // Hide the borealis UI during video playback to avoid GPU conflicts
+            // MPV's vita VO will render directly to the screen
+            if (controlsBox) {
+                controlsBox->setVisibility(brls::Visibility::GONE);
+            }
+        } else {
+            brls::Logger::info("PlayerActivity: Audio file detected, using audio-only mode");
+            player.setVideoEnabled(false);
+        }
+
+        if (!player.isInitialized()) {
+            if (!player.init()) {
+                brls::Logger::error("Failed to initialize MPV player");
+                return;
+            }
+        }
+
+        // Load the file directly
+        if (player.loadUrl(m_mediaKey, m_mediaKey)) {
+            player.play();
+            m_isPlaying = true;
+        } else {
+            brls::Logger::error("Failed to load file: {}", m_mediaKey);
+        }
+        return;
+    }
+
+    // Normal Plex media playback
     if (client.fetchMediaDetails(m_mediaKey, item)) {
         if (titleLabel) {
             std::string title = item.title;
@@ -100,11 +156,29 @@ void PlayerActivity::loadMedia() {
         // Store viewOffset for deferred seeking after file loads
         m_pendingSeekOffset = item.viewOffset;
 
+        // Determine if this is audio content
+        bool isAudio = (item.mediaType == MediaType::MUSIC_TRACK ||
+                       item.type == "track");
+
+        MpvPlayer& player = MpvPlayer::getInstance();
+
+        // Configure player mode based on content type
+        if (!isAudio) {
+            brls::Logger::info("PlayerActivity: Video content, enabling video mode");
+            player.setVideoEnabled(true);
+
+            // Hide UI for video - MPV renders directly to screen
+            if (controlsBox) {
+                controlsBox->setVisibility(brls::Visibility::GONE);
+            }
+        } else {
+            brls::Logger::info("PlayerActivity: Audio content, using audio-only mode");
+            player.setVideoEnabled(false);
+        }
+
         // Get playback URL
         std::string url;
         if (client.getPlaybackUrl(m_mediaKey, url)) {
-            MpvPlayer& player = MpvPlayer::getInstance();
-
             if (!player.isInitialized()) {
                 if (!player.init()) {
                     brls::Logger::error("Failed to initialize MPV player");

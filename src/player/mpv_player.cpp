@@ -12,6 +12,10 @@
 #include <cstring>
 #include <cstdlib>
 
+#ifdef __vita__
+#include <mpv/render.h>
+#endif
+
 namespace vitaplex {
 
 MpvPlayer& MpvPlayer::getInstance() {
@@ -24,142 +28,262 @@ MpvPlayer::~MpvPlayer() {
 }
 
 bool MpvPlayer::init() {
+    // Check if we want video or audio-only mode
+    return m_videoEnabled ? initWithVideo() : initAudioOnly();
+}
+
+bool MpvPlayer::initAudioOnly() {
     if (m_mpv) {
         brls::Logger::debug("MpvPlayer: Already initialized");
         return true;
     }
 
-    brls::Logger::debug("MpvPlayer: Initializing libmpv...");
-    
-    // Ensure CPU is at max speed for video decoding
+    brls::Logger::info("MpvPlayer: Initializing in AUDIO-ONLY mode...");
+
+    // Ensure CPU is at max speed for decoding
     scePowerSetArmClockFrequency(444);
     scePowerSetBusClockFrequency(222);
     scePowerSetGpuClockFrequency(222);
     scePowerSetGpuXbarClockFrequency(166);
-    
+
     // Create mpv instance
     m_mpv = mpv_create();
     if (!m_mpv) {
         m_errorMessage = "Failed to create mpv instance";
-        brls::Logger::debug("MpvPlayer: {}", m_errorMessage);
+        brls::Logger::error("MpvPlayer: {}", m_errorMessage);
         m_state = MpvPlayerState::ERROR;
         return false;
     }
 
     brls::Logger::debug("MpvPlayer: mpv context created");
-    
-    // ========================================
-    // CRITICAL: Video output configuration
-    // ========================================
-    // We MUST completely disable video because our app uses vita2d for UI
-    // and vita2d/GXM can't be shared between app and mpv simultaneously.
-    // Any video processing will conflict with borealis rendering and cause crashes.
-    //
-    // Multiple options are set to ensure video is truly disabled:
 
-    // 1. Disable video output renderer
+    // ========================================
+    // AUDIO-ONLY: Disable video completely
+    // ========================================
     mpv_set_option_string(m_mpv, "vo", "null");
-
-    // 2. Disable video track selection entirely
     mpv_set_option_string(m_mpv, "video", "no");
     mpv_set_option_string(m_mpv, "vid", "no");
-
-    // 3. Disable hardware decoding (prevents GPU conflicts)
     mpv_set_option_string(m_mpv, "hwdec", "no");
-
-    // 4. Set video codec list to empty (prevent any video decoder from loading)
     mpv_set_option_string(m_mpv, "vd", "");
 
-    brls::Logger::debug("MpvPlayer: Video output disabled (vo=null, video=no, vid=no, hwdec=no)");
-    
-    // ========================================
-    // Audio output configuration for Vita
-    // ========================================
-    
-    // Use vita audio output for audio playback
+    brls::Logger::debug("MpvPlayer: Video disabled for audio-only mode");
+
+    // Audio output configuration
     mpv_set_option_string(m_mpv, "ao", "vita,null");
     mpv_set_option_string(m_mpv, "audio-channels", "stereo");
     mpv_set_option_string(m_mpv, "volume", "100");
     mpv_set_option_string(m_mpv, "volume-max", "100");
-    
-    // ========================================
+
     // Cache and demuxer settings
-    // ========================================
-    
-    // Reduced cache settings for Vita's limited memory
     mpv_set_option_string(m_mpv, "cache", "yes");
     mpv_set_option_string(m_mpv, "cache-secs", "10");
     mpv_set_option_string(m_mpv, "demuxer-max-bytes", "8MiB");
     mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "4MiB");
     mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "5");
-    
-    // ========================================
-    // Network settings for streaming
-    // ========================================
-    
+
+    // Network settings
     mpv_set_option_string(m_mpv, "network-timeout", "30");
     mpv_set_option_string(m_mpv, "stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5");
-    
-    // User agent for Plex compatibility
     mpv_set_option_string(m_mpv, "user-agent", "VitaPlex/1.0 (PlayStation Vita)");
-    
-    // HTTP headers for Plex
-    mpv_set_option_string(m_mpv, "http-header-fields", 
+
+    // Plex headers
+    mpv_set_option_string(m_mpv, "http-header-fields",
         "Accept: */*,"
         "X-Plex-Client-Identifier: vita-plex-client-001,"
         "X-Plex-Product: VitaPlex,"
         "X-Plex-Version: 1.5.1,"
         "X-Plex-Platform: PlayStation Vita,"
         "X-Plex-Device: PS Vita");
-    
-    // ========================================
+
     // Playback behavior
-    // ========================================
-    
     mpv_set_option_string(m_mpv, "keep-open", "yes");
     mpv_set_option_string(m_mpv, "idle", "yes");
     mpv_set_option_string(m_mpv, "force-window", "no");
     mpv_set_option_string(m_mpv, "input-default-bindings", "no");
     mpv_set_option_string(m_mpv, "input-vo-keyboard", "no");
     mpv_set_option_string(m_mpv, "terminal", "no");
-    mpv_set_option_string(m_mpv, "msg-level", "all=warn");
-    
-    // ========================================
-    // Subtitle settings (disabled for audio-only)
-    // ========================================
-    
+    mpv_set_option_string(m_mpv, "msg-level", "all=info");
+
+    // Subtitles disabled
     mpv_set_option_string(m_mpv, "sub-auto", "no");
     mpv_set_option_string(m_mpv, "sub-visibility", "no");
-    
-    // ========================================
-    // Logging - request log messages for debugging
-    // ========================================
 
-    // Request INFO level to see useful mpv status messages
+    // Logging
     mpv_request_log_messages(m_mpv, "info");
-    
-    // ========================================
-    // Initialize MPV
-    // ========================================
-    
-    brls::Logger::debug("MpvPlayer: Calling mpv_initialize...");
 
+    // Initialize MPV
+    brls::Logger::debug("MpvPlayer: Calling mpv_initialize...");
     int result = mpv_initialize(m_mpv);
     if (result < 0) {
         m_errorMessage = std::string("Failed to initialize mpv: ") + mpv_error_string(result);
-        brls::Logger::debug("MpvPlayer: {}", m_errorMessage);
+        brls::Logger::error("MpvPlayer: {}", m_errorMessage);
         mpv_destroy(m_mpv);
         m_mpv = nullptr;
         m_state = MpvPlayerState::ERROR;
         return false;
     }
 
-    brls::Logger::debug("MpvPlayer: mpv_initialize succeeded");
-    
+    brls::Logger::info("MpvPlayer: Audio-only mode initialized successfully");
+    setupPropertyObservers();
+    m_state = MpvPlayerState::IDLE;
+    return true;
+}
+
+bool MpvPlayer::initWithVideo() {
+    if (m_mpv) {
+        brls::Logger::debug("MpvPlayer: Already initialized");
+        return true;
+    }
+
+    brls::Logger::info("MpvPlayer: Initializing with VIDEO support...");
+
+    // Max CPU/GPU speed for video decoding
+    scePowerSetArmClockFrequency(444);
+    scePowerSetBusClockFrequency(222);
+    scePowerSetGpuClockFrequency(222);
+    scePowerSetGpuXbarClockFrequency(166);
+
+    // Create mpv instance
+    m_mpv = mpv_create();
+    if (!m_mpv) {
+        m_errorMessage = "Failed to create mpv instance";
+        brls::Logger::error("MpvPlayer: {}", m_errorMessage);
+        m_state = MpvPlayerState::ERROR;
+        return false;
+    }
+
+    brls::Logger::debug("MpvPlayer: mpv context created");
+
     // ========================================
-    // Set up property observers
+    // VIDEO MODE: Use libmpv video output
     // ========================================
-    
+    // Use libmpv as video output - we'll handle rendering ourselves
+    mpv_set_option_string(m_mpv, "vo", "libmpv");
+
+    // Enable hardware decoding for Vita
+    mpv_set_option_string(m_mpv, "hwdec", "auto");
+
+    // Video settings for Vita's 960x544 screen
+    mpv_set_option_string(m_mpv, "video-sync", "audio");
+    mpv_set_option_string(m_mpv, "framedrop", "vo");  // Drop frames if decoding is slow
+
+    brls::Logger::debug("MpvPlayer: Video output configured (vo=libmpv, hwdec=auto)");
+
+    // Audio output configuration
+    mpv_set_option_string(m_mpv, "ao", "vita,null");
+    mpv_set_option_string(m_mpv, "audio-channels", "stereo");
+    mpv_set_option_string(m_mpv, "volume", "100");
+    mpv_set_option_string(m_mpv, "volume-max", "100");
+
+    // Cache settings - reduced for video to save memory
+    mpv_set_option_string(m_mpv, "cache", "yes");
+    mpv_set_option_string(m_mpv, "cache-secs", "5");
+    mpv_set_option_string(m_mpv, "demuxer-max-bytes", "16MiB");
+    mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "4MiB");
+    mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "3");
+
+    // Network settings
+    mpv_set_option_string(m_mpv, "network-timeout", "30");
+    mpv_set_option_string(m_mpv, "stream-lavf-o", "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5");
+    mpv_set_option_string(m_mpv, "user-agent", "VitaPlex/1.0 (PlayStation Vita)");
+
+    // Plex headers
+    mpv_set_option_string(m_mpv, "http-header-fields",
+        "Accept: */*,"
+        "X-Plex-Client-Identifier: vita-plex-client-001,"
+        "X-Plex-Product: VitaPlex,"
+        "X-Plex-Version: 1.5.1,"
+        "X-Plex-Platform: PlayStation Vita,"
+        "X-Plex-Device: PS Vita");
+
+    // Playback behavior
+    mpv_set_option_string(m_mpv, "keep-open", "yes");
+    mpv_set_option_string(m_mpv, "idle", "yes");
+    mpv_set_option_string(m_mpv, "force-window", "no");
+    mpv_set_option_string(m_mpv, "input-default-bindings", "no");
+    mpv_set_option_string(m_mpv, "input-vo-keyboard", "no");
+    mpv_set_option_string(m_mpv, "terminal", "no");
+    mpv_set_option_string(m_mpv, "msg-level", "all=info");
+
+    // Subtitles
+    mpv_set_option_string(m_mpv, "sub-auto", "fuzzy");
+    mpv_set_option_string(m_mpv, "sub-visibility", "yes");
+
+    // Logging
+    mpv_request_log_messages(m_mpv, "info");
+
+    // Initialize MPV
+    brls::Logger::debug("MpvPlayer: Calling mpv_initialize...");
+    int result = mpv_initialize(m_mpv);
+    if (result < 0) {
+        m_errorMessage = std::string("Failed to initialize mpv: ") + mpv_error_string(result);
+        brls::Logger::error("MpvPlayer: {}", m_errorMessage);
+        mpv_destroy(m_mpv);
+        m_mpv = nullptr;
+        m_state = MpvPlayerState::ERROR;
+        return false;
+    }
+
+    brls::Logger::info("MpvPlayer: mpv_initialize succeeded, creating render context...");
+
+#ifdef __vita__
+    // Create MPV render context for video output
+    if (!createRenderContext()) {
+        brls::Logger::error("MpvPlayer: Failed to create render context, falling back to audio-only");
+        mpv_destroy(m_mpv);
+        m_mpv = nullptr;
+        m_videoEnabled = false;
+        return initAudioOnly();
+    }
+#endif
+
+    brls::Logger::info("MpvPlayer: Video mode initialized successfully");
+    setupPropertyObservers();
+    m_state = MpvPlayerState::IDLE;
+    return true;
+}
+
+#ifdef __vita__
+bool MpvPlayer::createRenderContext() {
+    brls::Logger::info("MpvPlayer: Creating render context...");
+
+    // Get the GXM context from borealis
+    auto platform = brls::Application::getPlatform();
+    if (!platform) {
+        brls::Logger::error("MpvPlayer: No platform available");
+        return false;
+    }
+
+    auto videoContext = platform->getVideoContext();
+    if (!videoContext) {
+        brls::Logger::error("MpvPlayer: No video context available");
+        return false;
+    }
+
+    // For now, we'll use a simple software rendering approach
+    // The MPV render API requires specific GXM setup that needs to be
+    // coordinated with borealis. Until that's implemented, we'll use
+    // the vita video output driver directly.
+
+    brls::Logger::info("MpvPlayer: Using vita VO driver for video output");
+
+    // Switch to vita VO instead of libmpv to avoid context conflicts
+    mpv_set_property_string(m_mpv, "vo", "vita");
+
+    m_hasRenderContext = true;
+    return true;
+}
+
+void MpvPlayer::destroyRenderContext() {
+    if (m_renderContext) {
+        mpv_render_context_free(m_renderContext);
+        m_renderContext = nullptr;
+    }
+    m_hasRenderContext = false;
+}
+#endif
+
+void MpvPlayer::setupPropertyObservers() {
     mpv_observe_property(m_mpv, 0, "time-pos", MPV_FORMAT_DOUBLE);
     mpv_observe_property(m_mpv, 0, "duration", MPV_FORMAT_DOUBLE);
     mpv_observe_property(m_mpv, 0, "pause", MPV_FORMAT_FLAG);
@@ -170,24 +294,32 @@ bool MpvPlayer::init() {
     mpv_observe_property(m_mpv, 0, "volume", MPV_FORMAT_DOUBLE);
     mpv_observe_property(m_mpv, 0, "mute", MPV_FORMAT_FLAG);
     mpv_observe_property(m_mpv, 0, "track-list/count", MPV_FORMAT_INT64);
-    
-    brls::Logger::debug("MpvPlayer: Initialized successfully");
-    m_state = MpvPlayerState::IDLE;
-    return true;
 }
 
 void MpvPlayer::shutdown() {
+#ifdef __vita__
+    destroyRenderContext();
+#endif
+
     if (m_mpv) {
         brls::Logger::debug("MpvPlayer: Shutting down");
         stop();
-        
+
         // Give mpv time to cleanup
         sceKernelDelayThread(100000);  // 100ms
-        
+
         mpv_terminate_destroy(m_mpv);
         m_mpv = nullptr;
     }
     m_state = MpvPlayerState::IDLE;
+}
+
+void MpvPlayer::setVideoEnabled(bool enabled) {
+    if (m_mpv && m_videoEnabled != enabled) {
+        // Need to reinitialize with different mode
+        shutdown();
+    }
+    m_videoEnabled = enabled;
 }
 
 bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {

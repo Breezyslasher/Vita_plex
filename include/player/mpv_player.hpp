@@ -1,6 +1,7 @@
 /**
  * VitaPlex - MPV Video Player
  * Hardware-accelerated video playback using libmpv
+ * Supports both audio-only and video modes
  */
 
 #pragma once
@@ -9,11 +10,13 @@
 
 #ifdef __vita__
 #include <mpv/client.h>
+#include <mpv/render.h>
 #else
 // Stub for non-Vita builds
 typedef struct mpv_handle mpv_handle;
 typedef struct mpv_event mpv_event;
 typedef struct mpv_event_property mpv_event_property;
+typedef struct mpv_render_context mpv_render_context;
 #endif
 
 namespace vitaplex {
@@ -62,6 +65,11 @@ public:
     bool init();
     void shutdown();
     bool isInitialized() const { return m_mpv != nullptr; }
+
+    // Video mode control
+    void setVideoEnabled(bool enabled);
+    bool isVideoEnabled() const { return m_videoEnabled; }
+    bool hasVideoRenderContext() const { return m_hasRenderContext; }
 
     // Playback control
     bool loadUrl(const std::string& url, const std::string& title = "");
@@ -128,12 +136,24 @@ private:
     MpvPlayer(const MpvPlayer&) = delete;
     MpvPlayer& operator=(const MpvPlayer&) = delete;
 
+    // Initialization helpers
+    bool initAudioOnly();
+    bool initWithVideo();
+    void setupPropertyObservers();
+
+#ifdef __vita__
+    bool createRenderContext();
+    void destroyRenderContext();
+#endif
+
+    // Event processing
     void processEvents();
     void updatePlaybackInfo();
     void handleEvent(mpv_event* event);
     void handlePropertyChange(mpv_event_property* prop);
     void setState(MpvPlayerState newState);
 
+    // Core state
     mpv_handle* m_mpv = nullptr;
     MpvPlayerState m_state = MpvPlayerState::IDLE;
     MpvPlaybackInfo m_playbackInfo;
@@ -141,6 +161,11 @@ private:
     std::string m_currentUrl;
     bool m_subtitlesVisible = true;
     int64_t m_commandId = 1;  // Async command ID counter
+
+    // Video mode state
+    bool m_videoEnabled = true;  // Default to video mode
+    bool m_hasRenderContext = false;
+    mpv_render_context* m_renderContext = nullptr;
 };
 
 } // namespace vitaplex
