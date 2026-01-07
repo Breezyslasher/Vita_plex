@@ -12,3 +12,5 @@ install(TARGETS vita_netdb ARCHIVE DESTINATION lib)
 install(FILES vita_netdb.h DESTINATION include)
 # Install netdb.h so FFmpeg/etc find getaddrinfo via #include <netdb.h>
 install(FILES netdb.h DESTINATION include)
+# Install sys/mman.h stub for MPV
+install(FILES sys/mman.h DESTINATION include/sys)
