@@ -39,21 +39,16 @@ void MainActivity::onContentAvailable() {
         brls::View* sidebar = tabFrame->getView("brls/tab_frame/sidebar");
         if (sidebar) {
             if (settings.collapseSidebar) {
-                sidebar->setWidth(150);
-                brls::Logger::debug("MainActivity: Collapsed sidebar to 150px");
+                sidebar->setWidth(160);
+                brls::Logger::debug("MainActivity: Collapsed sidebar to 160px");
             } else {
-                // Use a compact sidebar width that fits library names
-                sidebar->setWidth(220);
-                brls::Logger::debug("MainActivity: Set sidebar to compact 220px");
+                // Width to fit longer library names like "DVR TV Shows"
+                sidebar->setWidth(280);
+                brls::Logger::debug("MainActivity: Set sidebar to 280px");
             }
-            // Add left padding to prevent text cutoff
-            sidebar->setPaddingLeft(10);
-        }
-
-        // Add left margin to content area to prevent overlap with sidebar
-        brls::View* contentArea = tabFrame->getView("brls/tab_frame/content_frame");
-        if (contentArea) {
-            contentArea->setMarginLeft(10);
+            // Add padding to prevent text cutoff on both sides
+            sidebar->setPaddingLeft(15);
+            sidebar->setPaddingRight(15);
         }
 
         bool hasLiveTV = PlexClient::getInstance().hasLiveTV();
