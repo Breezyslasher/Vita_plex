@@ -179,6 +179,7 @@ public:
 
     // Configuration
     void setAuthToken(const std::string& token) { m_authToken = token; }
+    const std::string& getAuthToken() const { return m_authToken; }
     void setServerUrl(const std::string& url) { m_serverUrl = url; }
     const std::string& getServerUrl() const { return m_serverUrl; }
 
