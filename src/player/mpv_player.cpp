@@ -804,22 +804,22 @@ void MpvPlayer::updatePlaybackInfo() {
 
 #ifdef __vita__
 // Callback for mpv render context when a new frame is ready
-// This is called from MPV's thread, so we use brls::sync() to synchronize with main thread
+// Uses brls::sync() to render on main thread OUTSIDE of draw phase (like switchfin)
 void MpvPlayer::onRenderUpdate(void* ctx) {
     MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
-    if (!player || !player->m_mpvRenderCtx || !player->m_renderReady) {
+    if (!player || !player->m_mpvRenderCtx) {
         return;
     }
 
-    // Use brls::sync to render on the main thread (like switchfin does)
+    // Schedule render on main thread - brls::sync executes between frames, not during draw
     brls::sync([player]() {
-        if (!player->m_mpvRenderCtx || !player->m_renderReady) {
+        // Double-check state inside sync in case player was destroyed
+        if (!player->m_mpvRenderCtx || !player->m_gxmFramebuffer || player->m_stopping) {
             return;
         }
 
         uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
         if (flags & MPV_RENDER_UPDATE_FRAME) {
-            // Render the frame to our GXM framebuffer
             int result = mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
             if (result < 0) {
                 brls::Logger::error("MpvPlayer: GXM render failed: {}", mpv_error_string(result));
@@ -1002,9 +1002,9 @@ void MpvPlayer::cleanupRenderContext() {
 }
 
 void MpvPlayer::render() {
-    // Rendering is now handled in the onRenderUpdate callback via brls::sync()
-    // This function is kept for API compatibility but does nothing
-    // The callback automatically renders frames when MPV signals they are ready
+    // Rendering is handled in onRenderUpdate callback via brls::sync()
+    // This function exists for API compatibility but does nothing
+    // VideoView::draw() just displays the already-rendered NanoVG texture
 }
 
 } // namespace vitaplex
