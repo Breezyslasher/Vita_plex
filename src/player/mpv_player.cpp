@@ -80,24 +80,24 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "terminal", "no");
 
     // ========================================
-    // Video output configuration
+    // Video output configuration (matching switchfin for Vita)
     // ========================================
 
     // Use libmpv for video output - we'll create a render context
     mpv_set_option_string(m_mpv, "vo", "libmpv");
 
 #ifdef __vita__
-    // Vita-specific settings for video decoding
-    // Use single thread to reduce memory usage
-    mpv_set_option_string(m_mpv, "vd-lavc-threads", "1");
+    // Vita-specific settings from switchfin
+    mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
+    mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "all");
+    mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
 
-    // Disable hardware decoding - software decoding is more reliable
-    // The Vita's hardware decoder has limited codec support
-    mpv_set_option_string(m_mpv, "hwdec", "no");
+    // Use Vita hardware decoding (from switchfin)
+    mpv_set_option_string(m_mpv, "hwdec", "vita-copy");
 
-    // Video optimizations for low-power device
-    mpv_set_option_string(m_mpv, "video-sync", "audio");
-    mpv_set_option_string(m_mpv, "framedrop", "vo");
+    // GXM-specific settings from switchfin
+    mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
+    mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
 #else
     mpv_set_option_string(m_mpv, "hwdec", "no");
 #endif
@@ -106,25 +106,22 @@ bool MpvPlayer::init() {
     // Audio output configuration
     // ========================================
 
-#ifdef __vita__
-    // Let mpv auto-detect audio output
-    // The switchfin vita-packages should provide appropriate ao driver
     mpv_set_option_string(m_mpv, "audio-channels", "stereo");
-    mpv_set_option_string(m_mpv, "audio-samplerate", "48000");
-#else
-    mpv_set_option_string(m_mpv, "audio-channels", "stereo");
-#endif
     mpv_set_option_string(m_mpv, "volume", "100");
     mpv_set_option_string(m_mpv, "volume-max", "150");
 
     // ========================================
-    // Cache and demuxer settings (very conservative for Vita's limited RAM)
+    // Cache and demuxer settings (switchfin disables cache on Vita)
     // ========================================
 
+#ifdef __vita__
+    // Switchfin uses no cache on Vita for lower memory usage
+    mpv_set_option_string(m_mpv, "cache", "no");
+#else
     mpv_set_option_string(m_mpv, "cache", "yes");
-    mpv_set_option_string(m_mpv, "demuxer-max-bytes", "2MiB");
-    mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "1MiB");
-    mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "2");
+    mpv_set_option_string(m_mpv, "demuxer-max-bytes", "4MiB");
+    mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "2MiB");
+#endif
 
     // ========================================
     // Network settings for streaming
@@ -820,12 +817,12 @@ bool MpvPlayer::initRenderContext() {
 
     brls::Logger::info("MpvPlayer: GXM context acquired, setting up render params...");
 
-    // Set up GXM init parameters - use no MSAA to reduce memory usage
+    // Set up GXM init parameters (matching switchfin)
     mpv_gxm_init_params gxm_params = {
         .context = gxm->context,
         .shader_patcher = gxm->shader_patcher,
         .buffer_index = 0,
-        .msaa = SCE_GXM_MULTISAMPLE_NONE,  // Reduce memory usage
+        .msaa = SCE_GXM_MULTISAMPLE_4X,  // Match switchfin
     };
 
     brls::Logger::info("MpvPlayer: Setting up MPV render params with API type: {}", MPV_RENDER_API_TYPE_GXM);
