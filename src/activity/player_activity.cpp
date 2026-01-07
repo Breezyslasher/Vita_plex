@@ -224,9 +224,9 @@ void PlayerActivity::loadMedia() {
             return;
         }
 
-        // Get playback URL for video/audio
+        // Get transcode URL for video/audio (forces Plex to convert to Vita-compatible format)
         std::string url;
-        if (client.getPlaybackUrl(m_mediaKey, url)) {
+        if (client.getTranscodeUrl(m_mediaKey, url, item.viewOffset)) {
             MpvPlayer& player = MpvPlayer::getInstance();
 
             // Initialize player if needed
@@ -256,15 +256,12 @@ void PlayerActivity::loadMedia() {
                 brls::Logger::debug("Video view enabled");
             }
 
-            // Resume from viewOffset if available (will be applied after file loads)
-            if (item.viewOffset > 0) {
-                // Delay seek until file is loaded
-                m_pendingSeek = item.viewOffset / 1000.0;
-            }
+            // Note: viewOffset is passed to transcode URL, so Plex handles resume position
+            // No need for m_pendingSeek for remote playback
 
             m_isPlaying = true;
         } else {
-            brls::Logger::error("Failed to get playback URL for: {}", m_mediaKey);
+            brls::Logger::error("Failed to get transcode URL for: {}", m_mediaKey);
         }
     }
 

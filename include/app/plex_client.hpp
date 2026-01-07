@@ -184,6 +184,7 @@ public:
 
     // Playback
     bool getPlaybackUrl(const std::string& ratingKey, std::string& url);
+    bool getTranscodeUrl(const std::string& ratingKey, std::string& url, int offsetMs = 0);
     bool updatePlayProgress(const std::string& ratingKey, int timeMs);
     bool markAsWatched(const std::string& ratingKey);
     bool markAsUnwatched(const std::string& ratingKey);

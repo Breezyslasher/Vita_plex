@@ -26,10 +26,10 @@ static std::vector<LibrarySection> s_cachedSections;
 // Helper to calculate text width (approximate based on character count)
 // Average character width at default font size is about 8-10 pixels
 static int calculateTextWidth(const std::string& text) {
-    // Base width per character (approximate for default sidebar font)
-    const int charWidth = 10;
-    // Add padding for margins and icon
-    const int padding = 60;
+    // Base width per character (approximate for sidebar font size 22)
+    const int charWidth = 12;
+    // Add minimal padding for accent bar and margins (sidebar padding is now 20+20=40)
+    const int padding = 50;
     return static_cast<int>(text.length()) * charWidth + padding;
 }
 

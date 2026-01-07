@@ -8,6 +8,7 @@
 
 #include <borealis.hpp>
 #include <cstring>
+#include <ctime>
 #include <algorithm>
 
 namespace vitaplex {
@@ -1587,6 +1588,126 @@ bool PlexClient::getPlaybackUrl(const std::string& ratingKey, std::string& url) 
     url = m_serverUrl + partKey + "?X-Plex-Token=" + m_authToken;
 
     brls::Logger::info("getPlaybackUrl: Stream URL = {}", url);
+    return true;
+}
+
+bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url, int offsetMs) {
+    brls::Logger::debug("getTranscodeUrl: ratingKey={}, offsetMs={}", ratingKey, offsetMs);
+
+    // Fetch media details to get the Part key and determine if audio or video
+    HttpClient client;
+    std::string apiUrl = buildApiUrl("/library/metadata/" + ratingKey);
+
+    HttpRequest req;
+    req.url = apiUrl;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("getTranscodeUrl: Failed to fetch metadata: {}", resp.statusCode);
+        return false;
+    }
+
+    // Find the Part key in the response
+    size_t partPos = resp.body.find("\"Part\"");
+    if (partPos == std::string::npos) {
+        brls::Logger::error("getTranscodeUrl: No Part found in metadata");
+        return false;
+    }
+
+    // Find the key within Part
+    size_t keyPos = resp.body.find("\"key\"", partPos);
+    if (keyPos == std::string::npos || keyPos > partPos + 500) {
+        brls::Logger::error("getTranscodeUrl: No key found in Part");
+        return false;
+    }
+
+    std::string partKey = extractJsonValue(resp.body.substr(keyPos, 200), "key");
+    if (partKey.empty()) {
+        brls::Logger::error("getTranscodeUrl: Part key is empty");
+        return false;
+    }
+
+    // Detect if this is audio (track) or video
+    bool isAudio = (resp.body.find("\"type\":\"track\"") != std::string::npos);
+    brls::Logger::debug("getTranscodeUrl: isAudio={}", isAudio);
+
+    // URL-encode the path for the transcode request
+    std::string encodedPath = HttpClient::urlEncode(partKey);
+
+    // Build transcode URL
+    url = m_serverUrl;
+
+    if (isAudio) {
+        // Audio transcode - convert to MP3 which the Vita can play
+        url += "/music/:/transcode/universal/start.mp3?";
+        url += "path=" + encodedPath;
+        url += "&mediaIndex=0&partIndex=0";
+        url += "&protocol=http";
+        url += "&directPlay=0&directStream=0";  // Force transcode
+        url += "&audioCodec=mp3&audioBitrate=320";
+    } else {
+        // Video transcode - convert to H.264/AAC which the Vita can decode
+        url += "/video/:/transcode/universal/start.mp4?";
+        url += "path=" + encodedPath;
+        url += "&mediaIndex=0&partIndex=0";
+        url += "&protocol=http";
+        url += "&fastSeek=1";
+        url += "&directPlay=0&directStream=0";  // Force transcode
+
+        // Get quality settings
+        AppSettings& settings = Application::getInstance().getSettings();
+        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : 4000;
+        int maxWidth = 960;   // Vita screen width
+        int maxHeight = 544;  // Vita screen height
+
+        // Adjust resolution based on quality setting
+        if (bitrate >= 8000) {
+            maxWidth = 1280;
+            maxHeight = 720;
+        } else if (bitrate >= 2000) {
+            maxWidth = 960;
+            maxHeight = 544;
+        } else {
+            maxWidth = 640;
+            maxHeight = 360;
+        }
+
+        char bitrateStr[64];
+        snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
+        url += bitrateStr;
+        url += "&videoCodec=h264";
+
+        char resStr[64];
+        snprintf(resStr, sizeof(resStr), "&maxWidth=%d&maxHeight=%d", maxWidth, maxHeight);
+        url += resStr;
+
+        // Audio settings - stereo AAC
+        url += "&audioCodec=aac&audioChannels=2";
+    }
+
+    // Add resume offset if specified
+    if (offsetMs > 0) {
+        char offsetStr[32];
+        snprintf(offsetStr, sizeof(offsetStr), "&offset=%d", offsetMs);
+        url += offsetStr;
+    }
+
+    // Add authentication and client identification
+    url += "&X-Plex-Token=" + m_authToken;
+    url += "&X-Plex-Client-Identifier=VitaPlex";
+    url += "&X-Plex-Product=VitaPlex";
+    url += "&X-Plex-Version=1.0.0";
+    url += "&X-Plex-Platform=PlayStation%20Vita";
+    url += "&X-Plex-Device=PS%20Vita";
+
+    // Generate a session ID for this transcode request
+    char sessionId[32];
+    snprintf(sessionId, sizeof(sessionId), "&session=%lu", (unsigned long)time(nullptr));
+    url += sessionId;
+
+    brls::Logger::info("getTranscodeUrl: Transcode URL = {}", url);
     return true;
 }
 
