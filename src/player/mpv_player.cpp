@@ -266,16 +266,22 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
         return false;
     }
 
-    // Use the URL as-is - MPV on Vita should handle ux0: paths directly
     std::string normalizedUrl = url;
 
-    // Normalize URL scheme to lowercase for http/https only
-    if (normalizedUrl.length() > 5 &&
-        (normalizedUrl.find("http") == 0 || normalizedUrl.find("HTTP") == 0)) {
-        // Convert scheme to lowercase
-        for (size_t i = 0; i < 6 && i < normalizedUrl.length(); i++) {
-            if (normalizedUrl[i] == ':') break;
-            normalizedUrl[i] = tolower(normalizedUrl[i]);
+    // Normalize URL scheme to lowercase for http/https (handles Http, HTTP, HtTp, etc.)
+    if (normalizedUrl.length() > 7) {
+        // Check for http:// or https:// (case insensitive)
+        std::string prefix = normalizedUrl.substr(0, 8);
+        for (auto& c : prefix) c = tolower(c);
+
+        if (prefix.find("http://") == 0 || prefix.find("https://") == 0) {
+            // Find the :// and lowercase everything before it
+            size_t colonPos = normalizedUrl.find("://");
+            if (colonPos != std::string::npos) {
+                for (size_t i = 0; i < colonPos; i++) {
+                    normalizedUrl[i] = tolower(normalizedUrl[i]);
+                }
+            }
         }
     }
 

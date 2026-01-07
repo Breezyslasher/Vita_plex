@@ -370,8 +370,17 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers) {
 bool PlexClient::connectToServer(const std::string& url) {
     brls::Logger::info("Connecting to server: {}", url);
 
+    // Normalize URL - ensure http/https is lowercase
     m_serverUrl = url;
-    Application::getInstance().setServerUrl(url);
+    if (m_serverUrl.length() > 7) {
+        size_t colonPos = m_serverUrl.find("://");
+        if (colonPos != std::string::npos && colonPos < 6) {
+            for (size_t i = 0; i < colonPos; i++) {
+                m_serverUrl[i] = tolower(m_serverUrl[i]);
+            }
+        }
+    }
+    Application::getInstance().setServerUrl(m_serverUrl);  // Use normalized URL
 
     HttpClient client;
     HttpRequest req;
