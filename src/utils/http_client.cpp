@@ -130,9 +130,9 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
     // Set URL
     curl_easy_setopt(curl, CURLOPT_URL, req.url.c_str());
 
-    // Set timeout - use up to 60 second connect timeout for slow connections
+    // Set timeout - longer connect timeout for relay connections
     int timeout = req.timeout > 0 ? req.timeout : m_timeout;
-    int connectTimeout = timeout > 60 ? 60 : (timeout > 30 ? 30 : 15);
+    int connectTimeout = timeout > 30 ? 30 : 15;  // Use longer connect timeout for long requests
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, connectTimeout);
 
@@ -281,137 +281,6 @@ std::string HttpClient::urlDecode(const std::string& str) {
     }
 
     return decoded;
-}
-
-bool HttpClient::get(const std::string& url, std::string& response) {
-    HttpResponse res = get(url);
-    if (res.success) {
-        response = res.body;
-        return true;
-    }
-    return false;
-}
-
-// Download callback data structure
-struct DownloadCallbackData {
-    HttpClient::WriteCallback writeCallback;
-    HttpClient::SizeCallback sizeCallback;
-    bool sizeReported;
-    bool cancelled;
-};
-
-static size_t downloadWriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
-    DownloadCallbackData* data = static_cast<DownloadCallbackData*>(userp);
-    size_t totalSize = size * nmemb;
-
-    if (data && data->writeCallback) {
-        // Call user's write callback
-        if (!data->writeCallback(static_cast<const char*>(contents), totalSize)) {
-            data->cancelled = true;
-            return 0; // Return 0 to signal curl to abort
-        }
-    }
-
-    return totalSize;
-}
-
-static size_t downloadHeaderCallback(void* contents, size_t size, size_t nmemb, void* userp) {
-    DownloadCallbackData* data = static_cast<DownloadCallbackData*>(userp);
-    size_t totalSize = size * nmemb;
-
-    if (data && data->sizeCallback && !data->sizeReported) {
-        std::string header(static_cast<char*>(contents), totalSize);
-
-        // Look for Content-Length header
-        if (header.find("Content-Length:") == 0 || header.find("content-length:") == 0) {
-            size_t colonPos = header.find(':');
-            if (colonPos != std::string::npos) {
-                std::string value = header.substr(colonPos + 1);
-                // Trim whitespace
-                while (!value.empty() && (value[0] == ' ' || value[0] == '\t')) {
-                    value = value.substr(1);
-                }
-                int64_t contentLength = std::stoll(value);
-                data->sizeCallback(contentLength);
-                data->sizeReported = true;
-            }
-        }
-    }
-
-    return totalSize;
-}
-
-bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallback, SizeCallback sizeCallback) {
-    if (!m_curl) {
-        brls::Logger::error("CURL not initialized for download");
-        return false;
-    }
-
-    CURL* curl = (CURL*)m_curl;
-
-    // Reset curl handle
-    curl_easy_reset(curl);
-
-    // Set URL
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-
-    // Set longer timeout for downloads (10 minutes)
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
-
-    // Follow redirects
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-
-    // SSL options (Vita specific)
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-    curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
-
-    // User agent
-    curl_easy_setopt(curl, CURLOPT_USERAGENT, m_userAgent.c_str());
-
-    // Setup callback data
-    DownloadCallbackData callbackData;
-    callbackData.writeCallback = writeCallback;
-    callbackData.sizeCallback = sizeCallback;
-    callbackData.sizeReported = false;
-    callbackData.cancelled = false;
-
-    // Set callbacks
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, downloadWriteCallback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &callbackData);
-    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, downloadHeaderCallback);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &callbackData);
-
-    // Low speed limit - abort if < 1KB/s for 30 seconds
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 30L);
-
-    brls::Logger::info("HttpClient: Starting download from {}", url);
-
-    // Perform download
-    CURLcode res = curl_easy_perform(curl);
-
-    if (callbackData.cancelled) {
-        brls::Logger::info("HttpClient: Download cancelled by user");
-        return false;
-    }
-
-    if (res == CURLE_OK) {
-        long httpCode;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-
-        if (httpCode >= 200 && httpCode < 300) {
-            brls::Logger::info("HttpClient: Download completed successfully");
-            return true;
-        } else {
-            brls::Logger::error("HttpClient: Download failed with HTTP {}", httpCode);
-            return false;
-        }
-    } else {
-        brls::Logger::error("HttpClient: Download failed: {}", curl_easy_strerror(res));
-        return false;
-    }
 }
 
 } // namespace vitaplex

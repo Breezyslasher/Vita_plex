@@ -5,10 +5,6 @@
 #include "activity/login_activity.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
-#include "view/progress_dialog.hpp"
-#include "utils/async.hpp"
-
-#include <memory>
 
 namespace vitaplex {
 
@@ -127,71 +123,30 @@ void LoginActivity::showServerSelectionDialog(const std::vector<PlexServer>& ser
 void LoginActivity::connectToSelectedServer(const PlexServer& server) {
     PlexClient& client = PlexClient::getInstance();
 
-    // Show progress dialog
-    auto* progressDialog = new ProgressDialog("Connecting");
-    progressDialog->setStatus("Connecting to " + server.name + "...");
-    progressDialog->show();
-
-    // Track if connection was cancelled - use shared_ptr so it persists across async operation
-    auto cancelled = std::make_shared<bool>(false);
-    progressDialog->setCancelCallback([cancelled]() {
-        *cancelled = true;
-    });
-
-    size_t totalConnections = server.connections.size();
-
-    // Run connection attempts asynchronously
-    asyncRun([this, server, progressDialog, totalConnections, cancelled]() {
-        PlexClient& client = PlexClient::getInstance();
-
-        for (size_t i = 0; i < totalConnections && !*cancelled; i++) {
-            const auto& conn = server.connections[i];
-            std::string connType = conn.local ? "local" : (conn.relay ? "relay" : "remote");
-
-            brls::sync([progressDialog, i, totalConnections, server, connType]() {
-                progressDialog->setAttempt(i + 1, totalConnections);
-                progressDialog->setStatus("Trying " + connType + " connection...");
-                progressDialog->setProgress(static_cast<float>(i) / totalConnections);
-            });
-
-            brls::Logger::info("Trying connection {}/{}: {} ({})",
-                              i + 1, totalConnections, conn.uri, connType);
-
-            if (client.connectToServer(conn.uri)) {
-                // Success!
-                brls::sync([this, progressDialog, server]() {
-                    progressDialog->setStatus("Connected!");
-                    progressDialog->setProgress(1.0f);
-
-                    Application::getInstance().saveSettings();
-                    if (statusLabel) statusLabel->setText("Connected to " + server.name);
-
-                    // Delay to show success, then proceed
-                    brls::delay(500, [this, progressDialog]() {
-                        progressDialog->dismiss();
-                        Application::getInstance().pushMainActivity();
-                    });
-                });
-                return;
-            }
-
-            brls::Logger::info("Connection {} failed, trying next...", i + 1);
+    // Try all available connections in order (local first, then remote, then relay)
+    for (size_t i = 0; i < server.connections.size(); i++) {
+        const auto& conn = server.connections[i];
+        std::string connType = conn.local ? "local" : (conn.relay ? "relay" : "remote");
+        if (statusLabel) {
+            statusLabel->setText("Connecting to " + server.name + " (" + connType + ")...");
         }
+        brls::Logger::info("Trying connection {}/{}: {} ({})",
+                          i + 1, server.connections.size(), conn.uri, connType);
 
-        // All connections failed
-        brls::sync([this, progressDialog, server, totalConnections]() {
-            progressDialog->setStatus("All " + std::to_string(totalConnections) + " connection attempts failed");
-            progressDialog->setProgress(1.0f);
-
-            if (statusLabel) statusLabel->setText("Failed to connect to " + server.name);
-            brls::Logger::error("All {} connections failed for {}", totalConnections, server.name);
-
-            // Delay then dismiss
-            brls::delay(2000, [progressDialog]() {
-                progressDialog->dismiss();
+        if (client.connectToServer(conn.uri)) {
+            Application::getInstance().saveSettings();
+            if (statusLabel) statusLabel->setText("Connected to " + server.name);
+            brls::sync([this]() {
+                Application::getInstance().pushMainActivity();
             });
-        });
-    });
+            return;
+        }
+        brls::Logger::info("Connection failed, trying next...");
+    }
+
+    // All connections failed
+    if (statusLabel) statusLabel->setText("Failed to connect to " + server.name);
+    brls::Logger::error("All {} connections failed for {}", server.connections.size(), server.name);
 }
 
 void LoginActivity::onLoginPressed() {
