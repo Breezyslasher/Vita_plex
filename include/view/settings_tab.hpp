@@ -22,8 +22,10 @@ private:
     void createTranscodeSection();
     void createDownloadsSection();
     void createAboutSection();
+    void createDebugSection();
 
     void onLogout();
+    void onTestLocalPlayback();
     void onThemeChanged(int index);
     void onQualityChanged(int index);
     void onSubtitleSizeChanged(int index);

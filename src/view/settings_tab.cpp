@@ -6,6 +6,7 @@
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
+#include "player/mpv_player.hpp"
 #include <set>
 
 namespace vitaplex {
@@ -33,6 +34,7 @@ SettingsTab::SettingsTab() {
     createPlaybackSection();
     createTranscodeSection();
     createDownloadsSection();
+    createDebugSection();
     createAboutSection();
 
     m_scrollView->setContentView(m_contentBox);
@@ -411,6 +413,32 @@ void SettingsTab::createDownloadsSection() {
     pathLabel->setMarginLeft(16);
     pathLabel->setMarginTop(8);
     m_contentBox->addView(pathLabel);
+}
+
+void SettingsTab::createDebugSection() {
+    // Section header
+    auto* header = new brls::Header();
+    header->setTitle("Debug");
+    m_contentBox->addView(header);
+
+    // Test local playback button
+    auto* testLocalCell = new brls::DetailCell();
+    testLocalCell->setText("Test Local Playback");
+    testLocalCell->setDetailText("ux0:data/VitaPlex/test.mp3");
+    testLocalCell->registerClickAction([this](brls::View* view) {
+        onTestLocalPlayback();
+        return true;
+    });
+    m_contentBox->addView(testLocalCell);
+
+    // Info label
+    auto* infoLabel = new brls::Label();
+    infoLabel->setText("Place test.mp3 or test.mp4 in ux0:data/VitaPlex/");
+    infoLabel->setFontSize(14);
+    infoLabel->setMarginLeft(16);
+    infoLabel->setMarginTop(8);
+    infoLabel->setMarginBottom(16);
+    m_contentBox->addView(infoLabel);
 }
 
 void SettingsTab::createAboutSection() {
@@ -823,6 +851,70 @@ void SettingsTab::onManageSidebarOrder() {
     });
 
     dialog->open();
+}
+
+void SettingsTab::onTestLocalPlayback() {
+    brls::Logger::info("SettingsTab: Testing local playback...");
+
+    // Check for test files
+    const std::string basePath = "ux0:data/VitaPlex/";
+    std::string testFile;
+
+    // Try mp3 first, then mp4
+    std::vector<std::string> testFiles = {
+        basePath + "test.mp3",
+        basePath + "test.mp4",
+        basePath + "test.ogg",
+        basePath + "test.wav"
+    };
+
+    for (const auto& file : testFiles) {
+        FILE* f = fopen(file.c_str(), "rb");
+        if (f) {
+            fclose(f);
+            testFile = file;
+            brls::Logger::info("SettingsTab: Found test file: {}", testFile);
+            break;
+        }
+    }
+
+    if (testFile.empty()) {
+        brls::Application::notify("No test file found in ux0:data/VitaPlex/");
+        brls::Logger::error("SettingsTab: No test file found");
+        return;
+    }
+
+    // Initialize MPV player
+    MpvPlayer& player = MpvPlayer::getInstance();
+
+    if (!player.isInitialized()) {
+        brls::Logger::info("SettingsTab: Initializing MPV player...");
+        if (!player.init()) {
+            brls::Application::notify("Failed to initialize MPV player");
+            brls::Logger::error("SettingsTab: Failed to init MPV");
+            return;
+        }
+        brls::Logger::info("SettingsTab: MPV player initialized successfully");
+    }
+
+    // Stop any current playback
+    if (player.isPlaying() || player.isPaused()) {
+        brls::Logger::info("SettingsTab: Stopping current playback...");
+        player.stop();
+    }
+
+    // Try to load the local file
+    brls::Logger::info("SettingsTab: Loading local file: {}", testFile);
+    brls::Application::notify("Loading: " + testFile);
+
+    if (!player.loadFile(testFile)) {
+        brls::Application::notify("Failed to load file");
+        brls::Logger::error("SettingsTab: Failed to load file: {}", testFile);
+        return;
+    }
+
+    brls::Logger::info("SettingsTab: File loaded successfully, starting playback...");
+    brls::Application::notify("Playback started!");
 }
 
 } // namespace vitaplex
