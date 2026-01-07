@@ -294,15 +294,33 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
     // Mark command as pending
     m_commandPending = true;
 
-    // Use simple loadfile command
-    const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", nullptr};
-    int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
-    if (result < 0) {
-        m_errorMessage = std::string("Failed to queue load command: ") + mpv_error_string(result);
-        brls::Logger::error("MpvPlayer: {}", m_errorMessage);
-        m_commandPending = false;
-        setState(MpvPlayerState::ERROR);
-        return false;
+    // Check if this is a network URL
+    bool isNetworkUrl = (normalizedUrl.find("http://") == 0 || normalizedUrl.find("https://") == 0);
+
+    if (isNetworkUrl) {
+        // For network URLs, pass extra options like switchfin does
+        // Format: loadfile <url> <flags> <index> <options>
+        std::string options = "network-timeout=30";
+        const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", "0", options.c_str(), nullptr};
+        int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
+        if (result < 0) {
+            m_errorMessage = std::string("Failed to queue load command: ") + mpv_error_string(result);
+            brls::Logger::error("MpvPlayer: {}", m_errorMessage);
+            m_commandPending = false;
+            setState(MpvPlayerState::ERROR);
+            return false;
+        }
+    } else {
+        // For local files, use simple command
+        const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", nullptr};
+        int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
+        if (result < 0) {
+            m_errorMessage = std::string("Failed to queue load command: ") + mpv_error_string(result);
+            brls::Logger::error("MpvPlayer: {}", m_errorMessage);
+            m_commandPending = false;
+            setState(MpvPlayerState::ERROR);
+            return false;
+        }
     }
 
     setState(MpvPlayerState::LOADING);
