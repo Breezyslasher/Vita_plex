@@ -11,9 +11,9 @@
 #include <psp2/ctrl.h>
 #include <vita2d.h>
 
-// Application version
-#define VITA_PLEX_VERSION "1.5.1"
-#define VITA_PLEX_VERSION_NUM 151
+// Application version - kept in sync with include/app/application.hpp
+#define VITA_PLEX_VERSION "2.0.0"
+#define VITA_PLEX_VERSION_NUM 200
 
 // Screen dimensions (PS Vita)
 #define SCREEN_WIDTH 960

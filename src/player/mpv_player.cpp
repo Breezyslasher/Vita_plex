@@ -5,6 +5,7 @@
  */
 
 #include "player/mpv_player.hpp"
+#include "app/application.hpp"
 #include <borealis.hpp>
 
 #ifdef __vita__
@@ -156,7 +157,7 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "network-timeout", "30");
 
     // User agent for Plex compatibility
-    mpv_set_option_string(m_mpv, "user-agent", "VitaPlex/1.0");
+    mpv_set_option_string(m_mpv, "user-agent", PLEX_CLIENT_NAME "/" PLEX_CLIENT_VERSION);
 
     // Note: demuxer-lavf-probe-info and force-seekable caused crashes on Vita
     // Keep options minimal for compatibility

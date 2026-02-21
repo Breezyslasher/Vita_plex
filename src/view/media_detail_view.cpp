@@ -18,7 +18,7 @@
 namespace vitaplex {
 
 MediaDetailView::MediaDetailView(const MediaItem& item)
-    : m_item(item) {
+    : m_item(item), m_alive(std::make_shared<bool>(true)) {
 
     this->setAxis(brls::Axis::COLUMN);
     this->setJustifyContent(brls::JustifyContent::FLEX_START);
@@ -233,6 +233,13 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     loadDetails();
 }
 
+MediaDetailView::~MediaDetailView() {
+    if (m_alive) {
+        *m_alive = false;
+    }
+    brls::Logger::debug("MediaDetailView: Destroyed");
+}
+
 brls::HScrollingFrame* MediaDetailView::createMediaRow(const std::string& title, brls::Box** contentOut) {
     auto* label = new brls::Label();
     label->setText(title);
@@ -264,54 +271,68 @@ brls::View* MediaDetailView::create() {
 }
 
 void MediaDetailView::loadDetails() {
-    PlexClient& client = PlexClient::getInstance();
+    std::string ratingKey = m_item.ratingKey;
+    std::string thumbPath = m_item.thumb;
+    MediaType mediaType = m_item.mediaType;
 
-    // Load full details
-    MediaItem fullItem;
-    if (client.fetchMediaDetails(m_item.ratingKey, fullItem)) {
-        m_item = fullItem;
+    // Load full details asynchronously to avoid blocking the UI thread
+    asyncRun([this, ratingKey, thumbPath, mediaType]() {
+        PlexClient& client = PlexClient::getInstance();
 
-        // Update UI with full details
-        if (m_titleLabel && !m_item.title.empty()) {
-            m_titleLabel->setText(m_item.title);
-        }
+        // Fetch full details on background thread
+        MediaItem fullItem;
+        bool detailsLoaded = client.fetchMediaDetails(ratingKey, fullItem);
 
-        if (m_summaryLabel && !m_item.summary.empty()) {
-            m_summaryLabel->setText(m_item.summary);
-        }
+        // Update UI on main thread
+        brls::sync([this, detailsLoaded, fullItem, thumbPath, mediaType]() {
+            if (detailsLoaded) {
+                m_item = fullItem;
 
-        // Update download button state now that we have the part path
-        if (m_downloadButton && !m_item.partPath.empty()) {
-            if (DownloadsManager::getInstance().isDownloaded(m_item.ratingKey)) {
-                m_downloadButton->setText("Downloaded");
-            } else {
-                m_downloadButton->setText("Download");
+                // Update UI with full details
+                if (m_titleLabel && !m_item.title.empty()) {
+                    m_titleLabel->setText(m_item.title);
+                }
+
+                if (m_summaryLabel && !m_item.summary.empty()) {
+                    m_summaryLabel->setText(m_item.summary);
+                }
+
+                // Update download button state now that we have the part path
+                if (m_downloadButton && !m_item.partPath.empty()) {
+                    if (DownloadsManager::getInstance().isDownloaded(m_item.ratingKey)) {
+                        m_downloadButton->setText("Downloaded");
+                    } else {
+                        m_downloadButton->setText("Download");
+                    }
+                    brls::Logger::debug("loadDetails: partPath available, download enabled");
+                }
             }
-            brls::Logger::debug("loadDetails: partPath available, download enabled");
-        }
-    }
 
-    // Load thumbnail with appropriate aspect ratio
-    if (m_posterImage && !m_item.thumb.empty()) {
-        bool isMusic = (m_item.mediaType == MediaType::MUSIC_ARTIST ||
-                        m_item.mediaType == MediaType::MUSIC_ALBUM ||
-                        m_item.mediaType == MediaType::MUSIC_TRACK);
+            // Load thumbnail with appropriate aspect ratio
+            std::string thumb = detailsLoaded ? m_item.thumb : thumbPath;
+            if (m_posterImage && !thumb.empty()) {
+                bool isMusic = (m_item.mediaType == MediaType::MUSIC_ARTIST ||
+                                m_item.mediaType == MediaType::MUSIC_ALBUM ||
+                                m_item.mediaType == MediaType::MUSIC_TRACK);
 
-        int width = isMusic ? 400 : 400;
-        int height = isMusic ? 400 : 600;
+                int width = 400;
+                int height = isMusic ? 400 : 600;
 
-        std::string url = client.getThumbnailUrl(m_item.thumb, width, height);
-        ImageLoader::loadAsync(url, [this](brls::Image* image) {
-            // Image loaded
-        }, m_posterImage);
-    }
+                PlexClient& client = PlexClient::getInstance();
+                std::string url = client.getThumbnailUrl(thumb, width, height);
+                ImageLoader::loadAsync(url, [this](brls::Image* image) {
+                    // Image loaded
+                }, m_posterImage);
+            }
 
-    // Load children if applicable
-    if (m_item.mediaType == MediaType::MUSIC_ARTIST) {
-        loadMusicCategories();
-    } else {
-        loadChildren();
-    }
+            // Load children if applicable
+            if (m_item.mediaType == MediaType::MUSIC_ARTIST) {
+                loadMusicCategories();
+            } else {
+                loadChildren();
+            }
+        });
+    });
 }
 
 void MediaDetailView::loadChildren() {
@@ -539,7 +560,7 @@ void MediaDetailView::onDownload() {
 
         // Track the rating key to update button when done
         std::string ratingKey = m_item.ratingKey;
-        brls::Button* downloadBtn = m_downloadButton;
+        std::weak_ptr<bool> aliveWeak = m_alive;
 
         // Set progress callback with speed display
         DownloadsManager::getInstance().setProgressCallback(
@@ -551,7 +572,7 @@ void MediaDetailView::onDownload() {
         );
 
         // Allow dismissing dialog - download continues in background
-        progressDialog->setCancelCallback([progressDialog, downloadBtn]() {
+        progressDialog->setCancelCallback([progressDialog]() {
             brls::Application::notify("Download continues in background");
             // Clear callback to avoid updating dismissed dialog
             DownloadsManager::getInstance().setProgressCallback(nullptr);
@@ -560,30 +581,24 @@ void MediaDetailView::onDownload() {
         // Start downloading
         DownloadsManager::getInstance().startDownloads();
 
-        // Monitor for completion
-        asyncRun([progressDialog, downloadBtn, ratingKey]() {
+        // Monitor for completion - use weak_ptr to avoid use-after-free on view destruction
+        asyncRun([progressDialog, aliveWeak, ratingKey]() {
             while (true) {
                 auto* item = DownloadsManager::getInstance().getDownload(ratingKey);
                 if (!item) break;
 
                 if (item->state == DownloadState::COMPLETED) {
-                    brls::sync([progressDialog, downloadBtn]() {
+                    brls::sync([progressDialog, aliveWeak]() {
                         progressDialog->setStatus("Download complete!");
                         progressDialog->setProgress(1.0f);
-                        if (downloadBtn) {
-                            downloadBtn->setText("Downloaded");
-                        }
                         brls::delay(1500, [progressDialog]() {
                             progressDialog->dismiss();
                         });
                     });
                     break;
                 } else if (item->state == DownloadState::FAILED) {
-                    brls::sync([progressDialog, downloadBtn]() {
+                    brls::sync([progressDialog, aliveWeak]() {
                         progressDialog->setStatus("Download failed");
-                        if (downloadBtn) {
-                            downloadBtn->setText("Download");
-                        }
                         brls::delay(2000, [progressDialog]() {
                             progressDialog->dismiss();
                         });

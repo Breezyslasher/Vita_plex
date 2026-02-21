@@ -64,8 +64,13 @@ std::string PlexClient::extractJsonValue(const std::string& json, const std::str
     if (valueStart == std::string::npos) return "";
 
     if (json[valueStart] == '"') {
-        size_t valueEnd = json.find('"', valueStart + 1);
-        if (valueEnd == std::string::npos) return "";
+        // Find closing quote, skipping escaped quotes
+        size_t valueEnd = valueStart + 1;
+        while (valueEnd < json.length()) {
+            if (json[valueEnd] == '"' && json[valueEnd - 1] != '\\') break;
+            valueEnd++;
+        }
+        if (valueEnd >= json.length()) return "";
         return json.substr(valueStart + 1, valueEnd - valueStart - 1);
     } else if (json[valueStart] == 'n' && json.substr(valueStart, 4) == "null") {
         return "";

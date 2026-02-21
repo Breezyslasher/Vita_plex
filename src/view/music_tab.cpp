@@ -492,37 +492,17 @@ void MusicTab::onCollectionSelected(const MediaItem& collection) {
 }
 
 void MusicTab::showCreatePlaylistDialog() {
-    // Create simple input dialog for playlist name
-    brls::Dialog* dialog = new brls::Dialog("Create New Playlist");
+    // Use IME (on-screen keyboard) to get playlist name from user
+    std::weak_ptr<bool> aliveWeak = m_alive;
 
-    auto* inputBox = new brls::Box();
-    inputBox->setAxis(brls::Axis::COLUMN);
-    inputBox->setPadding(20);
+    brls::Application::getImeManager()->openForText([this, aliveWeak](std::string playlistName) {
+        if (playlistName.empty()) return;
 
-    auto* label = new brls::Label();
-    label->setText("Enter playlist name:");
-    label->setMarginBottom(10);
-    inputBox->addView(label);
-
-    // Note: borealis doesn't have a built-in text input, so we'll use a simple approach
-    // with pre-defined name or keyboard on Vita
-    auto* nameLabel = new brls::Label();
-    nameLabel->setText("New Playlist");
-    nameLabel->setFontSize(20);
-    nameLabel->setMarginBottom(20);
-    inputBox->addView(nameLabel);
-
-    dialog->addView(inputBox);
-
-    dialog->addButton("Create", [this, dialog]() {
-        // Create empty playlist
-        std::weak_ptr<bool> aliveWeak = m_alive;
-
-        asyncRun([this, aliveWeak]() {
+        asyncRun([this, playlistName, aliveWeak]() {
             PlexClient& client = PlexClient::getInstance();
             Playlist result;
 
-            if (client.createPlaylist("New Playlist", "audio", result)) {
+            if (client.createPlaylist(playlistName, "audio", result)) {
                 brls::Logger::info("MusicTab: Created playlist: {}", result.title);
 
                 brls::sync([this, aliveWeak]() {
@@ -533,17 +513,12 @@ void MusicTab::showCreatePlaylistDialog() {
                 });
             } else {
                 brls::Logger::error("MusicTab: Failed to create playlist");
+                brls::sync([]() {
+                    brls::Application::notify("Failed to create playlist");
+                });
             }
         });
-
-        dialog->dismiss();
-    });
-
-    dialog->addButton("Cancel", [dialog]() {
-        dialog->dismiss();
-    });
-
-    dialog->open();
+    }, "New Playlist", "Enter playlist name", 128, "");
 }
 
 void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {

@@ -6,6 +6,7 @@
 #pragma once
 
 #include <borealis.hpp>
+#include <memory>
 #include "app/plex_client.hpp"
 
 namespace vitaplex {
@@ -13,6 +14,7 @@ namespace vitaplex {
 class MediaDetailView : public brls::Box {
 public:
     MediaDetailView(const MediaItem& item);
+    ~MediaDetailView();
 
     static brls::View* create();
 
@@ -53,6 +55,9 @@ private:
     brls::Box* m_epsContent = nullptr;
     brls::Box* m_compilationsContent = nullptr;
     brls::Box* m_soundtracksContent = nullptr;
+
+    // Shared alive flag to prevent async callbacks from accessing destroyed view
+    std::shared_ptr<bool> m_alive;
 };
 
 } // namespace vitaplex

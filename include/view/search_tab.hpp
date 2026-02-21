@@ -30,13 +30,17 @@ private:
     brls::ScrollingFrame* m_scrollView = nullptr;
     brls::Box* m_scrollContent = nullptr;
 
-    // Category rows
+    // Category labels and rows
+    brls::Label* m_moviesLabel = nullptr;
     brls::HScrollingFrame* m_moviesRow = nullptr;
     brls::Box* m_moviesContent = nullptr;
+    brls::Label* m_showsLabel = nullptr;
     brls::HScrollingFrame* m_showsRow = nullptr;
     brls::Box* m_showsContent = nullptr;
+    brls::Label* m_episodesLabel = nullptr;
     brls::HScrollingFrame* m_episodesRow = nullptr;
     brls::Box* m_episodesContent = nullptr;
+    brls::Label* m_musicLabel = nullptr;
     brls::HScrollingFrame* m_musicRow = nullptr;
     brls::Box* m_musicContent = nullptr;
 
