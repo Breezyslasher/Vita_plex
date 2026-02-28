@@ -65,6 +65,14 @@ public:
     // Simple get that returns body directly
     bool get(const std::string& url, std::string& response);
 
+    // Simple methods with custom headers
+    bool get(const std::string& url, std::string& response,
+             const std::map<std::string, std::string>& headers);
+    bool post(const std::string& url, const std::string& body, std::string& response,
+              const std::map<std::string, std::string>& headers);
+    bool put(const std::string& url, const std::string& body, std::string& response);
+    bool del(const std::string& url, std::string& response);
+
     // Download file with progress callbacks
     // writeCallback: receives data chunks, return false to cancel
     // sizeCallback: called with total file size when known

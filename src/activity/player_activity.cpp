@@ -5,11 +5,19 @@
 #include "activity/player_activity.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
+#include "app/music_queue.hpp"
 #include "player/mpv_player.hpp"
 #include "utils/image_loader.hpp"
+#include "utils/http_client.hpp"
 #include "view/video_view.hpp"
+#include <fstream>
+#include <sys/stat.h>
 
 namespace vitaplex {
+
+// Base temp file path for streaming audio (MPV's HTTP handling crashes on Vita)
+// Extension will be added dynamically based on the actual file type
+static const std::string TEMP_AUDIO_BASE = "ux0:data/vitaplex/temp_stream";
 
 PlayerActivity::PlayerActivity(const std::string& mediaKey)
     : m_mediaKey(mediaKey), m_isLocalFile(false) {
@@ -30,6 +38,24 @@ PlayerActivity* PlayerActivity::createForDirectFile(const std::string& filePath)
     return activity;
 }
 
+PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tracks, int startIndex) {
+    PlayerActivity* activity = new PlayerActivity("", false);
+    activity->m_isQueueMode = true;
+
+    // Set up the queue
+    MusicQueue& queue = MusicQueue::getInstance();
+    queue.setQueue(tracks, startIndex);
+
+    // Set up track ended callback
+    queue.setTrackEndedCallback([activity](const QueueItem* nextTrack) {
+        activity->onTrackEnded(nextTrack);
+    });
+
+    brls::Logger::info("PlayerActivity created with queue of {} tracks, starting at {}",
+                      tracks.size(), startIndex);
+    return activity;
+}
+
 brls::View* PlayerActivity::createContentView() {
     return brls::View::createFromXMLResource("activity/player.xml");
 }
@@ -38,7 +64,11 @@ void PlayerActivity::onContentAvailable() {
     brls::Logger::debug("PlayerActivity content available");
 
     // Load media details
-    loadMedia();
+    if (m_isQueueMode) {
+        loadFromQueue();
+    } else {
+        loadMedia();
+    }
 
     // Set up controls
     if (progressSlider) {
@@ -62,15 +92,39 @@ void PlayerActivity::onContentAvailable() {
         return true;
     });
 
-    this->registerAction("Rewind", brls::ControllerButton::BUTTON_LB, [this](brls::View* view) {
-        seek(-10);
-        return true;
-    });
+    // Queue controls for music (LB/RB for previous/next, triggers for shuffle/repeat)
+    if (m_isQueueMode) {
+        this->registerAction("Previous", brls::ControllerButton::BUTTON_LB, [this](brls::View* view) {
+            playPrevious();
+            return true;
+        });
 
-    this->registerAction("Forward", brls::ControllerButton::BUTTON_RB, [this](brls::View* view) {
-        seek(10);
-        return true;
-    });
+        this->registerAction("Next", brls::ControllerButton::BUTTON_RB, [this](brls::View* view) {
+            playNext();
+            return true;
+        });
+
+        this->registerAction("Shuffle", brls::ControllerButton::BUTTON_X, [this](brls::View* view) {
+            toggleShuffle();
+            return true;
+        });
+
+        this->registerAction("Repeat", brls::ControllerButton::BUTTON_Y, [this](brls::View* view) {
+            toggleRepeat();
+            return true;
+        });
+    } else {
+        // Standard seek for non-queue playback
+        this->registerAction("Rewind", brls::ControllerButton::BUTTON_LB, [this](brls::View* view) {
+            seek(-10);
+            return true;
+        });
+
+        this->registerAction("Forward", brls::ControllerButton::BUTTON_RB, [this](brls::View* view) {
+            seek(10);
+            return true;
+        });
+    }
 
     // Start update timer
     m_updateTimer.setCallback([this]() {
@@ -112,11 +166,16 @@ void PlayerActivity::willDisappear(bool resetState) {
                 DownloadsManager::getInstance().updateProgress(m_mediaKey, timeMs);
                 DownloadsManager::getInstance().saveState();
                 brls::Logger::info("PlayerActivity: Saved local progress {}ms for {}", timeMs, m_mediaKey);
-            } else {
-                // Save progress to Plex server
+            } else if (!m_isQueueMode && !m_mediaKey.empty()) {
+                // Save progress to Plex server (not for queue mode - tracks change)
                 PlexClient::getInstance().updatePlayProgress(m_mediaKey, timeMs);
             }
         }
+    }
+
+    // Save queue state
+    if (m_isQueueMode) {
+        MusicQueue::getInstance().saveState();
     }
 
     // Stop playback (safe to call even if not playing)
@@ -125,6 +184,158 @@ void PlayerActivity::willDisappear(bool resetState) {
     }
 
     m_isPlaying = false;
+}
+
+void PlayerActivity::loadFromQueue() {
+    // Prevent rapid re-entry
+    if (m_loadingMedia) {
+        brls::Logger::debug("PlayerActivity: Already loading media, skipping");
+        return;
+    }
+    m_loadingMedia = true;
+
+    MusicQueue& queue = MusicQueue::getInstance();
+    const QueueItem* track = queue.getCurrentTrack();
+
+    if (!track) {
+        brls::Logger::error("PlayerActivity: No current track in queue");
+        m_loadingMedia = false;
+        return;
+    }
+
+    brls::Logger::info("PlayerActivity: Loading track from queue: {} - {}",
+                      track->artist, track->title);
+
+    // Update display
+    if (titleLabel) {
+        titleLabel->setText(track->title);
+    }
+    if (artistLabel) {
+        artistLabel->setText(track->artist);
+    }
+
+    // Update queue info display
+    updateQueueDisplay();
+
+    // Load album art
+    if (albumArt && !track->thumb.empty()) {
+        PlexClient& client = PlexClient::getInstance();
+        std::string thumbUrl = client.getThumbnailUrl(track->thumb, 300, 300);
+        ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {
+            // Art loaded
+        }, albumArt);
+        albumArt->setVisibility(brls::Visibility::VISIBLE);
+    }
+
+    // Use the rating key to get transcode URL
+    m_mediaKey = track->ratingKey;
+    PlexClient& client = PlexClient::getInstance();
+    std::string url;
+
+    if (!client.getTranscodeUrl(track->ratingKey, url, 0)) {
+        brls::Logger::error("Failed to get transcode URL for track: {}", track->ratingKey);
+        m_loadingMedia = false;
+        return;
+    }
+
+    MpvPlayer& player = MpvPlayer::getInstance();
+
+    // Set audio-only mode BEFORE initializing
+    player.setAudioOnly(true);
+
+    // Initialize player if needed
+    if (!player.isInitialized()) {
+        if (!player.init()) {
+            brls::Logger::error("Failed to initialize MPV player");
+            m_loadingMedia = false;
+            return;
+        }
+    }
+
+    // Download audio to local file (HTTP workaround for Vita)
+    std::string playUrl = url;
+
+    if (url.find("http://") == 0) {
+        brls::Logger::info("PlayerActivity: Downloading audio stream to local file...");
+
+        // Show loading message
+        if (titleLabel) {
+            titleLabel->setText("Loading audio...");
+        }
+
+        // Extract file extension from URL
+        std::string ext = ".mp3";
+        size_t queryPos = url.find('?');
+        std::string urlPath = (queryPos != std::string::npos) ? url.substr(0, queryPos) : url;
+        size_t dotPos = urlPath.rfind('.');
+        if (dotPos != std::string::npos) {
+            ext = urlPath.substr(dotPos);
+        }
+
+        std::string tempPath = TEMP_AUDIO_BASE + ext;
+
+        std::ofstream tempFile(tempPath, std::ios::binary);
+        if (!tempFile.is_open()) {
+            brls::Logger::error("Failed to create temp file: {}", tempPath);
+            m_loadingMedia = false;
+            return;
+        }
+
+        int64_t totalBytes = 0;
+        int64_t downloadedBytes = 0;
+        int lastProgressPercent = -1;
+
+        HttpClient httpClient;
+        bool downloadSuccess = httpClient.downloadFile(url,
+            [&tempFile, &downloadedBytes, &totalBytes, &lastProgressPercent, this](const char* data, size_t size) -> bool {
+                tempFile.write(data, size);
+                downloadedBytes += size;
+
+                if (totalBytes > 0) {
+                    int percent = (int)((downloadedBytes * 100) / totalBytes);
+                    if (percent != lastProgressPercent && titleLabel) {
+                        lastProgressPercent = percent;
+                        char progressText[64];
+                        snprintf(progressText, sizeof(progressText), "Loading audio... %d%%", percent);
+                        brls::sync([this, progressText]() {
+                            if (titleLabel) titleLabel->setText(progressText);
+                        });
+                    }
+                }
+
+                return tempFile.good();
+            },
+            [&totalBytes](int64_t size) {
+                totalBytes = size;
+            }
+        );
+
+        tempFile.close();
+
+        if (!downloadSuccess) {
+            brls::Logger::error("Failed to download audio stream");
+            m_loadingMedia = false;
+            return;
+        }
+
+        // Restore title after download
+        if (titleLabel) {
+            titleLabel->setText(track->title);
+        }
+
+        brls::Logger::info("PlayerActivity: Audio downloaded ({} bytes)", downloadedBytes);
+        playUrl = tempPath;
+    }
+
+    // Load the URL
+    if (!player.loadUrl(playUrl, track->title)) {
+        brls::Logger::error("Failed to load URL: {}", playUrl);
+        m_loadingMedia = false;
+        return;
+    }
+
+    m_isPlaying = true;
+    m_loadingMedia = false;
 }
 
 void PlayerActivity::loadMedia() {
@@ -139,16 +350,33 @@ void PlayerActivity::loadMedia() {
     if (m_isDirectFile) {
         brls::Logger::info("PlayerActivity: Playing direct file: {}", m_directFilePath);
 
+        // Extract filename from path
+        size_t lastSlash = m_directFilePath.find_last_of("/\\");
+        std::string filename = (lastSlash != std::string::npos)
+            ? m_directFilePath.substr(lastSlash + 1)
+            : m_directFilePath;
+
         if (titleLabel) {
-            // Extract filename from path
-            size_t lastSlash = m_directFilePath.find_last_of("/\\");
-            std::string filename = (lastSlash != std::string::npos)
-                ? m_directFilePath.substr(lastSlash + 1)
-                : m_directFilePath;
             titleLabel->setText(filename);
         }
 
+        // Detect if this is an audio file
+        std::string lowerPath = m_directFilePath;
+        for (auto& c : lowerPath) c = tolower(c);
+        bool isAudioFile = (lowerPath.find(".mp3") != std::string::npos ||
+                           lowerPath.find(".m4a") != std::string::npos ||
+                           lowerPath.find(".aac") != std::string::npos ||
+                           lowerPath.find(".flac") != std::string::npos ||
+                           lowerPath.find(".ogg") != std::string::npos ||
+                           lowerPath.find(".wav") != std::string::npos ||
+                           lowerPath.find(".wma") != std::string::npos);
+
+        brls::Logger::info("PlayerActivity: File type detection - audio: {}", isAudioFile);
+
         MpvPlayer& player = MpvPlayer::getInstance();
+
+        // Set audio-only mode BEFORE initializing (to skip render context)
+        player.setAudioOnly(isAudioFile);
 
         if (!player.isInitialized()) {
             if (!player.init()) {
@@ -165,8 +393,8 @@ void PlayerActivity::loadMedia() {
             return;
         }
 
-        // Show video view
-        if (videoView) {
+        // Show video view only for video files
+        if (videoView && !isAudioFile) {
             videoView->setVisibility(brls::Visibility::VISIBLE);
             videoView->setVideoVisible(true);
         }
@@ -273,10 +501,18 @@ void PlayerActivity::loadMedia() {
             return;
         }
 
+        // Detect if this is audio content
+        bool isAudioContent = (item.mediaType == MediaType::MUSIC_TRACK);
+        brls::Logger::info("PlayerActivity: Media type detection - audio: {}, type: {}",
+                          isAudioContent, (int)item.mediaType);
+
         // Get transcode URL for video/audio (forces Plex to convert to Vita-compatible format)
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, item.viewOffset)) {
             MpvPlayer& player = MpvPlayer::getInstance();
+
+            // Set audio-only mode BEFORE initializing
+            player.setAudioOnly(isAudioContent);
 
             // Initialize player if needed
             if (!player.isInitialized()) {
@@ -287,19 +523,105 @@ void PlayerActivity::loadMedia() {
                 }
             }
 
+            // MPV's HTTP handling crashes on Vita when loading network URLs directly.
+            // Workaround: Download audio to local file first, then play the local file.
+            // This uses libcurl (via HttpClient) which handles HTTP correctly on Vita.
+            std::string playUrl = url;
+
+            if (isAudioContent && url.find("http://") == 0) {
+                brls::Logger::info("PlayerActivity: Downloading audio stream to local file (HTTP workaround)...");
+
+                // Show loading message in title
+                if (titleLabel) {
+                    titleLabel->setText("Loading audio...");
+                }
+
+                // Extract file extension from URL (e.g., .mp3, .m4a, .ogg, .flac)
+                std::string ext = ".mp3";  // Default extension
+                size_t queryPos = url.find('?');
+                std::string urlPath = (queryPos != std::string::npos) ? url.substr(0, queryPos) : url;
+                size_t dotPos = urlPath.rfind('.');
+                if (dotPos != std::string::npos) {
+                    ext = urlPath.substr(dotPos);
+                }
+
+                // Build temp file path with correct extension
+                std::string tempPath = TEMP_AUDIO_BASE + ext;
+
+                // Open temp file for writing
+                std::ofstream tempFile(tempPath, std::ios::binary);
+                if (!tempFile.is_open()) {
+                    brls::Logger::error("Failed to create temp file: {}", tempPath);
+                    if (titleLabel) titleLabel->setText("Error: Cannot create temp file");
+                    m_loadingMedia = false;
+                    return;
+                }
+
+                // Track download progress
+                int64_t totalBytes = 0;
+                int64_t downloadedBytes = 0;
+                int lastProgressPercent = -1;
+
+                // Download the stream with progress updates
+                HttpClient httpClient;
+                bool downloadSuccess = httpClient.downloadFile(url,
+                    [&tempFile, &downloadedBytes, &totalBytes, &lastProgressPercent, this](const char* data, size_t size) -> bool {
+                        tempFile.write(data, size);
+                        downloadedBytes += size;
+
+                        // Update progress display (only when percentage changes to reduce overhead)
+                        if (totalBytes > 0) {
+                            int percent = (int)((downloadedBytes * 100) / totalBytes);
+                            if (percent != lastProgressPercent && titleLabel) {
+                                lastProgressPercent = percent;
+                                char progressText[64];
+                                snprintf(progressText, sizeof(progressText), "Loading audio... %d%%", percent);
+                                brls::sync([this, progressText]() {
+                                    if (titleLabel) titleLabel->setText(progressText);
+                                });
+                            }
+                        }
+
+                        return tempFile.good();
+                    },
+                    [&totalBytes](int64_t size) {
+                        totalBytes = size;
+                    }
+                );
+
+                tempFile.close();
+
+                if (!downloadSuccess) {
+                    brls::Logger::error("Failed to download audio stream");
+                    if (titleLabel) titleLabel->setText("Error: Download failed");
+                    m_loadingMedia = false;
+                    return;
+                }
+
+                // Restore title after download
+                if (titleLabel) {
+                    titleLabel->setText(item.title);
+                }
+
+                brls::Logger::info("PlayerActivity: Audio downloaded ({} bytes), playing local file", downloadedBytes);
+                playUrl = tempPath;
+            }
+
             // Load the URL using async command
             // loadUrl returns false if a command is already pending (prevents rapid clicks)
-            if (!player.loadUrl(url, item.title)) {
-                brls::Logger::error("Failed to load URL: {}", url);
+            brls::Logger::debug("PlayerActivity: Calling player.loadUrl...");
+            if (!player.loadUrl(playUrl, item.title)) {
+                brls::Logger::error("Failed to load URL: {}", playUrl);
                 m_loadingMedia = false;
                 return;
             }
+            brls::Logger::debug("PlayerActivity: player.loadUrl returned successfully");
 
             // Note: Don't call play() here - MPV auto-starts playback when file is loaded
             // Calling play() while in LOADING state can cause crashes on Vita
 
-            // Show video view for video playback
-            if (videoView) {
+            // Show video view only for video content
+            if (videoView && !isAudioContent) {
                 videoView->setVisibility(brls::Visibility::VISIBLE);
                 videoView->setVideoVisible(true);
                 brls::Logger::debug("Video view enabled");
@@ -309,11 +631,13 @@ void PlayerActivity::loadMedia() {
             // No need for m_pendingSeek for remote playback
 
             m_isPlaying = true;
+            brls::Logger::debug("PlayerActivity: loadMedia completed successfully for Plex stream");
         } else {
             brls::Logger::error("Failed to get transcode URL for: {}", m_mediaKey);
         }
     }
 
+    brls::Logger::debug("PlayerActivity: loadMedia exiting");
     m_loadingMedia = false;
 }
 
@@ -323,7 +647,10 @@ void PlayerActivity::updateProgress() {
 
     MpvPlayer& player = MpvPlayer::getInstance();
 
-    if (!player.isInitialized()) return;
+    if (!player.isInitialized()) {
+        brls::Logger::debug("PlayerActivity::updateProgress: player not initialized");
+        return;
+    }
 
     // Always process MPV events to handle state transitions
     player.update();
@@ -363,8 +690,14 @@ void PlayerActivity::updateProgress() {
     // Check if playback ended (only if we were actually playing)
     if (m_isPlaying && player.hasEnded()) {
         m_isPlaying = false;  // Prevent multiple triggers
-        PlexClient::getInstance().markAsWatched(m_mediaKey);
-        brls::Application::popActivity();
+
+        if (m_isQueueMode) {
+            // Notify queue that track ended - it will call onTrackEnded
+            MusicQueue::getInstance().onTrackEnded();
+        } else {
+            PlexClient::getInstance().markAsWatched(m_mediaKey);
+            brls::Application::popActivity();
+        }
     }
 }
 
@@ -383,6 +716,127 @@ void PlayerActivity::togglePlayPause() {
 void PlayerActivity::seek(int seconds) {
     MpvPlayer& player = MpvPlayer::getInstance();
     player.seekRelative(seconds);
+}
+
+// Queue control methods
+
+void PlayerActivity::playNext() {
+    if (!m_isQueueMode) return;
+
+    MusicQueue& queue = MusicQueue::getInstance();
+    if (queue.playNext()) {
+        // Stop current playback
+        MpvPlayer::getInstance().stop();
+        m_isPlaying = false;
+
+        // Load next track
+        loadFromQueue();
+    } else {
+        brls::Logger::info("PlayerActivity: No next track");
+    }
+}
+
+void PlayerActivity::playPrevious() {
+    if (!m_isQueueMode) return;
+
+    MpvPlayer& player = MpvPlayer::getInstance();
+
+    // If we're more than 3 seconds in, restart current track
+    if (player.getPosition() > 3.0) {
+        player.seekTo(0);
+        return;
+    }
+
+    MusicQueue& queue = MusicQueue::getInstance();
+    if (queue.playPrevious()) {
+        // Stop current playback
+        player.stop();
+        m_isPlaying = false;
+
+        // Load previous track
+        loadFromQueue();
+    } else {
+        // Just restart current track
+        player.seekTo(0);
+    }
+}
+
+void PlayerActivity::toggleShuffle() {
+    if (!m_isQueueMode) return;
+
+    MusicQueue& queue = MusicQueue::getInstance();
+    queue.setShuffle(!queue.isShuffleEnabled());
+
+    updateQueueDisplay();
+
+    // Show OSD feedback
+    MpvPlayer::getInstance().showOSD(
+        queue.isShuffleEnabled() ? "Shuffle: ON" : "Shuffle: OFF", 1.5);
+}
+
+void PlayerActivity::toggleRepeat() {
+    if (!m_isQueueMode) return;
+
+    MusicQueue& queue = MusicQueue::getInstance();
+    queue.cycleRepeatMode();
+
+    updateQueueDisplay();
+
+    // Show OSD feedback
+    const char* modeStr = "Repeat: OFF";
+    if (queue.getRepeatMode() == RepeatMode::ONE) {
+        modeStr = "Repeat: ONE";
+    } else if (queue.getRepeatMode() == RepeatMode::ALL) {
+        modeStr = "Repeat: ALL";
+    }
+    MpvPlayer::getInstance().showOSD(modeStr, 1.5);
+}
+
+void PlayerActivity::onTrackEnded(const QueueItem* nextTrack) {
+    if (m_destroying) return;
+
+    if (nextTrack) {
+        brls::Logger::info("PlayerActivity: Auto-advancing to next track: {}", nextTrack->title);
+
+        // Load the next track
+        brls::sync([this]() {
+            loadFromQueue();
+        });
+    } else {
+        brls::Logger::info("PlayerActivity: Queue ended, closing player");
+        brls::sync([]() {
+            brls::Application::popActivity();
+        });
+    }
+}
+
+void PlayerActivity::updateQueueDisplay() {
+    if (!m_isQueueMode) return;
+
+    MusicQueue& queue = MusicQueue::getInstance();
+
+    if (queueLabel) {
+        char queueInfo[64];
+
+        // Build status string
+        std::string status;
+        if (queue.isShuffleEnabled()) {
+            status += " [Shuffle]";
+        }
+        if (queue.getRepeatMode() == RepeatMode::ONE) {
+            status += " [Repeat 1]";
+        } else if (queue.getRepeatMode() == RepeatMode::ALL) {
+            status += " [Repeat]";
+        }
+
+        snprintf(queueInfo, sizeof(queueInfo), "Track %d of %d%s",
+                queue.getCurrentIndex() + 1,
+                queue.getQueueSize(),
+                status.c_str());
+
+        queueLabel->setText(queueInfo);
+        queueLabel->setVisibility(brls::Visibility::VISIBLE);
+    }
 }
 
 } // namespace vitaplex

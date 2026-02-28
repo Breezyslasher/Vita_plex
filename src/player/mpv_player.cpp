@@ -5,6 +5,7 @@
  */
 
 #include "player/mpv_player.hpp"
+#include "app/application.hpp"
 #include <borealis.hpp>
 
 #ifdef __vita__
@@ -78,29 +79,42 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "input-default-bindings", "no");
     mpv_set_option_string(m_mpv, "input-vo-keyboard", "no");
     mpv_set_option_string(m_mpv, "terminal", "no");
+    mpv_set_option_string(m_mpv, "ytdl", "no");  // Disable youtube-dl (like switchfin)
+    mpv_set_option_string(m_mpv, "reset-on-next-file", "speed,pause");  // Reset state between files
 
     // ========================================
-    // Video output configuration (matching switchfin for Vita)
+    // Video output configuration
     // ========================================
 
-    // Use libmpv for video output - we'll create a render context
-    mpv_set_option_string(m_mpv, "vo", "libmpv");
+    if (m_audioOnly) {
+        // Audio-only mode: disable all video processing
+        brls::Logger::info("MpvPlayer: Initializing in audio-only mode");
+        mpv_set_option_string(m_mpv, "vo", "null");
+        mpv_set_option_string(m_mpv, "vid", "no");
+        mpv_set_option_string(m_mpv, "video", "no");
+        mpv_set_option_string(m_mpv, "audio-display", "no");  // Don't try to show album art
+        mpv_set_option_string(m_mpv, "hwdec", "no");
+    } else {
+        // Video mode: use libmpv for video output - we'll create a render context
+        brls::Logger::info("MpvPlayer: Initializing in video mode");
+        mpv_set_option_string(m_mpv, "vo", "libmpv");
 
 #ifdef __vita__
-    // Vita-specific settings from switchfin
-    mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
-    mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "all");
-    mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
+        // Vita-specific settings from switchfin
+        mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
+        mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "all");
+        mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
 
-    // Use Vita hardware decoding (from switchfin)
-    mpv_set_option_string(m_mpv, "hwdec", "vita-copy");
+        // Use Vita hardware decoding (from switchfin)
+        mpv_set_option_string(m_mpv, "hwdec", "vita-copy");
 
-    // GXM-specific settings from switchfin
-    mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
-    mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
+        // GXM-specific settings from switchfin
+        mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
+        mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
 #else
-    mpv_set_option_string(m_mpv, "hwdec", "no");
+        mpv_set_option_string(m_mpv, "hwdec", "no");
 #endif
+    }
 
     // ========================================
     // Audio output configuration
@@ -110,17 +124,26 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "volume", "100");
     mpv_set_option_string(m_mpv, "volume-max", "150");
 
+#ifdef __vita__
+    // Audio-specific optimizations for Vita
+    if (m_audioOnly) {
+        // Pre-buffer more audio to prevent stuttering during playback
+        mpv_set_option_string(m_mpv, "audio-buffer", "0.5");  // 500ms audio buffer
+
+        // Demuxer settings for smoother audio
+        mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "5");  // Read 5 seconds ahead
+        mpv_set_option_string(m_mpv, "demuxer-max-bytes", "512KiB");  // Allow some buffering for audio
+    }
+#endif
+
     // ========================================
     // Cache and demuxer settings
     // ========================================
 
 #ifdef __vita__
-    // Enable cache for network streaming (required for HTTP)
-    // Use smaller cache sizes for Vita's limited memory
-    mpv_set_option_string(m_mpv, "cache", "yes");
-    mpv_set_option_string(m_mpv, "demuxer-max-bytes", "2MiB");
-    mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "512KiB");
-    mpv_set_option_string(m_mpv, "cache-secs", "10");
+    // Switchfin disables cache for Vita due to limited memory
+    // MPV handles HTTP buffering internally
+    mpv_set_option_string(m_mpv, "cache", "no");
 #else
     mpv_set_option_string(m_mpv, "cache", "yes");
     mpv_set_option_string(m_mpv, "demuxer-max-bytes", "4MiB");
@@ -134,7 +157,24 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "network-timeout", "30");
 
     // User agent for Plex compatibility
-    mpv_set_option_string(m_mpv, "user-agent", "VitaPlex/1.0");
+    mpv_set_option_string(m_mpv, "user-agent", PLEX_CLIENT_NAME "/" PLEX_CLIENT_VERSION);
+
+    // Note: demuxer-lavf-probe-info and force-seekable caused crashes on Vita
+    // Keep options minimal for compatibility
+
+    // ========================================
+    // Seek settings for faster seeking
+    // ========================================
+
+#ifdef __vita__
+    // Use keyframe-based seeking for faster forward/rewind (especially for audio)
+    // hr-seek=no means seek to nearest keyframe instead of exact position
+    // This is much faster and prevents stuttering during seek operations
+    mpv_set_option_string(m_mpv, "hr-seek", "no");
+
+    // Don't wait for audio to resync after seeking - reduces seek delay
+    mpv_set_option_string(m_mpv, "hr-seek-framedrop", "yes");
+#endif
 
     // ========================================
     // Subtitle settings
@@ -144,10 +184,10 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "subs-fallback", "yes");
 
     // ========================================
-    // Request log messages (verbose for debugging crashes)
+    // Request log messages for debugging
     // ========================================
 
-    mpv_request_log_messages(m_mpv, "info");
+    mpv_request_log_messages(m_mpv, "warn");  // Use warn level to reduce log spam on Vita
 
     // ========================================
     // Initialize MPV
@@ -168,12 +208,16 @@ bool MpvPlayer::init() {
     brls::Logger::debug("MpvPlayer: mpv_initialize succeeded");
 
     // ========================================
-    // Set up render context for video display
+    // Set up render context for video display (skip for audio-only)
     // ========================================
 
-    if (!initRenderContext()) {
-        brls::Logger::error("MpvPlayer: Failed to create render context, falling back to audio-only");
-        // Don't fail - we can still play audio
+    if (!m_audioOnly) {
+        if (!initRenderContext()) {
+            brls::Logger::error("MpvPlayer: Failed to create render context, falling back to audio-only");
+            // Don't fail - we can still play audio
+        }
+    } else {
+        brls::Logger::info("MpvPlayer: Skipping render context for audio-only mode");
     }
 
     // ========================================
@@ -223,6 +267,21 @@ void MpvPlayer::shutdown() {
     m_commandPending = false;
 }
 
+void MpvPlayer::setAudioOnly(bool audioOnly) {
+    if (m_audioOnly == audioOnly) return;
+
+    brls::Logger::info("MpvPlayer: Setting audio-only mode: {}", audioOnly);
+
+    // If player is already initialized, we need to reinitialize with new mode
+    // because vo and hwdec settings can only be set before mpv_initialize
+    if (m_mpv) {
+        brls::Logger::info("MpvPlayer: Reinitializing to change mode...");
+        shutdown();
+    }
+
+    m_audioOnly = audioOnly;
+}
+
 bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
     if (!m_mpv) {
         if (!init()) {
@@ -236,13 +295,22 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
         return false;
     }
 
-    // Normalize URL scheme to lowercase
     std::string normalizedUrl = url;
-    if (normalizedUrl.length() > 5) {
-        // Convert scheme to lowercase
-        for (size_t i = 0; i < 6 && i < normalizedUrl.length(); i++) {
-            if (normalizedUrl[i] == ':') break;
-            normalizedUrl[i] = tolower(normalizedUrl[i]);
+
+    // Normalize URL scheme to lowercase for http/https (handles Http, HTTP, HtTp, etc.)
+    if (normalizedUrl.length() > 7) {
+        // Check for http:// or https:// (case insensitive)
+        std::string prefix = normalizedUrl.substr(0, 8);
+        for (auto& c : prefix) c = tolower(c);
+
+        if (prefix.find("http://") == 0 || prefix.find("https://") == 0) {
+            // Find the :// and lowercase everything before it
+            size_t colonPos = normalizedUrl.find("://");
+            if (colonPos != std::string::npos) {
+                for (size_t i = 0; i < colonPos; i++) {
+                    normalizedUrl[i] = tolower(normalizedUrl[i]);
+                }
+            }
         }
     }
 
@@ -255,7 +323,10 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
     // Mark command as pending
     m_commandPending = true;
 
-    // Use simple loadfile command
+    // Use simple loadfile command - options are already set globally during init()
+    // Format: loadfile <url> [flags]
+    // Note: Per-file options (5th arg) require different format and aren't well supported
+    brls::Logger::debug("MpvPlayer: Sending loadfile command...");
     const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", nullptr};
     int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
     if (result < 0) {
@@ -265,8 +336,11 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
         setState(MpvPlayerState::ERROR);
         return false;
     }
+    brls::Logger::debug("MpvPlayer: loadfile command queued successfully (result={})", result);
 
+    brls::Logger::debug("MpvPlayer: About to call setState(LOADING)...");
     setState(MpvPlayerState::LOADING);
+    brls::Logger::debug("MpvPlayer: setState done, about to return true");
     return true;
 }
 
@@ -311,8 +385,9 @@ void MpvPlayer::stop() {
 void MpvPlayer::seekTo(double seconds) {
     if (!m_mpv || m_stopping) return;
 
-    if (m_state == MpvPlayerState::LOADING) {
-        brls::Logger::debug("MpvPlayer: Deferring seek (still loading)");
+    // Don't seek if not actively playing/paused
+    if (m_state != MpvPlayerState::PLAYING && m_state != MpvPlayerState::PAUSED) {
+        brls::Logger::debug("MpvPlayer: Cannot seek in state {}", (int)m_state);
         return;
     }
 
@@ -326,7 +401,8 @@ void MpvPlayer::seekTo(double seconds) {
 void MpvPlayer::seekRelative(double seconds) {
     if (!m_mpv || m_stopping) return;
 
-    if (m_state == MpvPlayerState::LOADING) return;
+    // Don't seek if not actively playing/paused
+    if (m_state != MpvPlayerState::PLAYING && m_state != MpvPlayerState::PAUSED) return;
 
     char timeStr[32];
     snprintf(timeStr, sizeof(timeStr), "%+.2f", seconds);
@@ -505,10 +581,13 @@ std::string MpvPlayer::getProperty(const std::string& name) const {
 }
 
 void MpvPlayer::setState(MpvPlayerState newState) {
+    brls::Logger::debug("MpvPlayer::setState entered with newState={}", (int)newState);
     if (m_state != newState) {
         brls::Logger::debug("MpvPlayer: State change: {} -> {}", (int)m_state, (int)newState);
         m_state = newState;
+        brls::Logger::debug("MpvPlayer::setState assignment done");
     }
+    brls::Logger::debug("MpvPlayer::setState exiting");
 }
 
 void MpvPlayer::update() {
@@ -542,8 +621,6 @@ void MpvPlayer::eventMainLoop() {
                         brls::Logger::error("mpv {}: {}", msg->prefix, msg->text);
                     } else if (msg->log_level <= MPV_LOG_LEVEL_WARN) {
                         brls::Logger::warning("mpv {}: {}", msg->prefix, msg->text);
-                    } else if (msg->log_level <= MPV_LOG_LEVEL_INFO) {
-                        brls::Logger::info("mpv {}: {}", msg->prefix, msg->text);
                     }
                 }
                 break;
@@ -767,18 +844,33 @@ void MpvPlayer::updatePlaybackInfo() {
     }
 }
 
-// Callback for mpv render context when a new frame is ready
-static void on_mpv_render_update(void* ctx) {
-    MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
-    // Signal that a new frame is available
-    // The actual rendering will happen in render()
 #ifdef __vita__
-    if (player) {
-        // Set flag that new frame is ready (thread-safe atomic would be better)
-        // For now, we'll handle this in the render loop
+// Callback for mpv render context when a new frame is ready
+// Uses brls::sync() to render on main thread OUTSIDE of draw phase (like switchfin)
+void MpvPlayer::onRenderUpdate(void* ctx) {
+    MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
+    if (!player || !player->m_mpvRenderCtx) {
+        return;
     }
-#endif
+
+    // Schedule render on main thread - brls::sync executes between frames, not during draw
+    brls::sync([player]() {
+        // Double-check state inside sync in case player was destroyed
+        if (!player->m_mpvRenderCtx || !player->m_gxmFramebuffer || player->m_stopping) {
+            return;
+        }
+
+        uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
+        if (flags & MPV_RENDER_UPDATE_FRAME) {
+            int result = mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
+            if (result < 0) {
+                brls::Logger::error("MpvPlayer: GXM render failed: {}", mpv_error_string(result));
+            }
+            mpv_render_context_report_swap(player->m_mpvRenderCtx);
+        }
+    });
 }
+#endif
 
 bool MpvPlayer::initRenderContext() {
 #ifdef __vita__
@@ -905,8 +997,12 @@ bool MpvPlayer::initRenderContext() {
     m_mpvFbo.w = m_videoWidth;
     m_mpvFbo.h = m_videoHeight;
 
-    // Set up render update callback
-    mpv_render_context_set_update_callback(m_mpvRenderCtx, on_mpv_render_update, this);
+    // Set up render params array for use in callbacks (like switchfin)
+    m_mpvParams[0] = {MPV_RENDER_PARAM_GXM_FBO, &m_mpvFbo};
+    m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
+
+    // Set up render update callback (using switchfin's approach with brls::sync)
+    mpv_render_context_set_update_callback(m_mpvRenderCtx, onRenderUpdate, this);
 
     m_renderReady = true;
     brls::Logger::info("MpvPlayer: GXM render context created successfully ({}x{})", m_videoWidth, m_videoHeight);
@@ -940,36 +1036,17 @@ void MpvPlayer::cleanupRenderContext() {
         m_nvgImage = 0;
     }
 
-    // Reset FBO
+    // Reset FBO and render params
     m_mpvFbo = {};
+    m_mpvParams[0] = {MPV_RENDER_PARAM_INVALID, nullptr};
+    m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
 #endif
 }
 
 void MpvPlayer::render() {
-#ifdef __vita__
-    if (!m_mpvRenderCtx || !m_renderReady || !m_gxmFramebuffer) {
-        return;
-    }
-
-    // Check if a new frame is available
-    uint64_t flags = mpv_render_context_update(m_mpvRenderCtx);
-    if (!(flags & MPV_RENDER_UPDATE_FRAME)) {
-        return;  // No new frame
-    }
-
-    // Set up GXM render parameters for this frame
-    mpv_render_param render_params[] = {
-        {MPV_RENDER_PARAM_GXM_FBO, &m_mpvFbo},
-        {MPV_RENDER_PARAM_INVALID, nullptr},
-    };
-
-    // Render the frame using GXM directly (not deferred)
-    int result = mpv_render_context_render(m_mpvRenderCtx, render_params);
-    if (result < 0) {
-        brls::Logger::error("MpvPlayer: GXM render failed: {}", mpv_error_string(result));
-    }
-    mpv_render_context_report_swap(m_mpvRenderCtx);
-#endif
+    // Rendering is handled in onRenderUpdate callback via brls::sync()
+    // This function exists for API compatibility but does nothing
+    // VideoView::draw() just displays the already-rendered NanoVG texture
 }
 
 } // namespace vitaplex

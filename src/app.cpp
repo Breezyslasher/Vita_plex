@@ -79,6 +79,9 @@ void setDebugLogEnabled(bool enabled) {
     }
 }
 
+static int s_logWriteCount = 0;
+static const int LOG_FLUSH_INTERVAL = 10;  // Flush every 10 writes instead of every write
+
 void debugLog(const char* format, ...) {
     char buffer[1024];
 
@@ -108,13 +111,18 @@ void debugLog(const char* format, ...) {
         // Write log
         sceIoWrite(s_logFile, timestamped, strlen(timestamped));
 
-        // FORCE flush (Vita-safe way)
-        sceIoClose(s_logFile);
-        s_logFile = sceIoOpen(
-            LOG_PATH,
-            SCE_O_WRONLY | SCE_O_APPEND | SCE_O_CREAT,
-            0777
-        );
+        // Periodic flush (Vita-safe way) - close/reopen to ensure data is written
+        // Only flush every N writes to avoid excessive I/O overhead on flash storage
+        s_logWriteCount++;
+        if (s_logWriteCount >= LOG_FLUSH_INTERVAL) {
+            s_logWriteCount = 0;
+            sceIoClose(s_logFile);
+            s_logFile = sceIoOpen(
+                LOG_PATH,
+                SCE_O_WRONLY | SCE_O_APPEND | SCE_O_CREAT,
+                0777
+            );
+        }
     }
 }
 
@@ -154,16 +162,21 @@ static std::string extractJsonValue(const std::string& json, const std::string& 
     std::string searchKey = "\"" + key + "\"";
     size_t keyPos = json.find(searchKey);
     if (keyPos == std::string::npos) return "";
-    
+
     size_t colonPos = json.find(':', keyPos);
     if (colonPos == std::string::npos) return "";
-    
+
     size_t valueStart = json.find_first_not_of(" \t\n\r", colonPos + 1);
     if (valueStart == std::string::npos) return "";
-    
+
     if (json[valueStart] == '"') {
-        size_t valueEnd = json.find('"', valueStart + 1);
-        if (valueEnd == std::string::npos) return "";
+        // Find closing quote, skipping escaped quotes
+        size_t valueEnd = valueStart + 1;
+        while (valueEnd < json.length()) {
+            if (json[valueEnd] == '"' && json[valueEnd - 1] != '\\') break;
+            valueEnd++;
+        }
+        if (valueEnd >= json.length()) return "";
         return json.substr(valueStart + 1, valueEnd - valueStart - 1);
     } else if (json[valueStart] == 'n' && json.substr(valueStart, 4) == "null") {
         return "";
@@ -462,7 +475,7 @@ bool App::login(const std::string& username, const std::string& password) {
     req.headers["X-Plex-Platform"] = PLEX_PLATFORM;
     req.headers["X-Plex-Device"] = PLEX_DEVICE;
     
-    req.body = "login=" + username + "&password=" + password;
+    req.body = "login=" + HttpClient::urlEncode(username) + "&password=" + HttpClient::urlEncode(password);
     
     HttpResponse resp = client.request(req);
     
@@ -663,34 +676,21 @@ bool App::saveSettings() {
         return false;
     }
     
-    // Write simple key=value format
-    char buffer[2048];
-    int len = snprintf(buffer, sizeof(buffer),
-        "version=%d\n"
-        "videoQuality=%d\n"
-        "autoPlay=%d\n"
-        "showSubtitles=%d\n"
-        "enableFileLogging=%d\n"
-        "rememberLogin=%d\n"
-        "username=%s\n"
-        "email=%s\n"
-        "authToken=%s\n"
-        "serverUrl=%s\n"
-        "serverName=%s\n",
-        VITA_PLEX_VERSION_NUM,
-        (int)m_settings.videoQuality,
-        m_settings.autoPlay ? 1 : 0,
-        m_settings.showSubtitles ? 1 : 0,
-        m_settings.enableFileLogging ? 1 : 0,
-        m_settings.rememberLogin ? 1 : 0,
-        m_settings.username.c_str(),
-        m_settings.email.c_str(),
-        m_settings.rememberLogin ? m_settings.savedAuthToken.c_str() : "",
-        m_settings.rememberLogin ? m_settings.savedServerUrl.c_str() : "",
-        m_settings.rememberLogin ? m_settings.savedServerName.c_str() : ""
-    );
-    
-    sceIoWrite(fd, buffer, len);
+    // Write simple key=value format using std::string to avoid buffer overflow
+    std::string content;
+    content += "version=" + std::to_string(VITA_PLEX_VERSION_NUM) + "\n";
+    content += "videoQuality=" + std::to_string((int)m_settings.videoQuality) + "\n";
+    content += "autoPlay=" + std::to_string(m_settings.autoPlay ? 1 : 0) + "\n";
+    content += "showSubtitles=" + std::to_string(m_settings.showSubtitles ? 1 : 0) + "\n";
+    content += "enableFileLogging=" + std::to_string(m_settings.enableFileLogging ? 1 : 0) + "\n";
+    content += "rememberLogin=" + std::to_string(m_settings.rememberLogin ? 1 : 0) + "\n";
+    content += "username=" + m_settings.username + "\n";
+    content += "email=" + m_settings.email + "\n";
+    content += "authToken=" + std::string(m_settings.rememberLogin ? m_settings.savedAuthToken : "") + "\n";
+    content += "serverUrl=" + std::string(m_settings.rememberLogin ? m_settings.savedServerUrl : "") + "\n";
+    content += "serverName=" + std::string(m_settings.rememberLogin ? m_settings.savedServerName : "") + "\n";
+
+    sceIoWrite(fd, content.c_str(), content.length());
     sceIoClose(fd);
     
     debugLog("Settings saved successfully\n");
@@ -706,7 +706,7 @@ bool App::loadSettings() {
         return false;
     }
     
-    char buffer[2048];
+    char buffer[4096];
     int bytesRead = sceIoRead(fd, buffer, sizeof(buffer) - 1);
     sceIoClose(fd);
     

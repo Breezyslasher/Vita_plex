@@ -66,6 +66,7 @@ set(APP_SOURCES
     src/app/application.cpp
     src/app/plex_client.cpp
     src/app/downloads_manager.cpp
+    src/app/music_queue.cpp
 
     # Activities
     src/activity/main_activity.cpp
@@ -119,6 +120,8 @@ target_link_libraries(${PROJECT_NAME}
     # FFmpeg has circular dependencies - list avcodec multiple times
     curl
     mpv
+    archive
+    zstd
     avfilter
     avformat
     avcodec
@@ -132,6 +135,7 @@ target_link_libraries(${PROJECT_NAME}
     fribidi
     png
     bz2
+    lzma
     mbedtls
     mbedcrypto
     mbedx509

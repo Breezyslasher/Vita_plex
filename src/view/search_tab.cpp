@@ -59,12 +59,12 @@ SearchTab::SearchTab() {
     m_scrollContent->setAlignItems(brls::AlignItems::STRETCH);
 
     // Movies row
-    auto* moviesLabel = new brls::Label();
-    moviesLabel->setText("Movies");
-    moviesLabel->setFontSize(20);
-    moviesLabel->setMarginBottom(10);
-    moviesLabel->setVisibility(brls::Visibility::GONE);
-    m_scrollContent->addView(moviesLabel);
+    m_moviesLabel = new brls::Label();
+    m_moviesLabel->setText("Movies");
+    m_moviesLabel->setFontSize(20);
+    m_moviesLabel->setMarginBottom(10);
+    m_moviesLabel->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(m_moviesLabel);
 
     m_moviesRow = new brls::HScrollingFrame();
     m_moviesRow->setHeight(180);
@@ -78,12 +78,12 @@ SearchTab::SearchTab() {
     m_scrollContent->addView(m_moviesRow);
 
     // TV Shows row
-    auto* showsLabel = new brls::Label();
-    showsLabel->setText("TV Shows");
-    showsLabel->setFontSize(20);
-    showsLabel->setMarginBottom(10);
-    showsLabel->setVisibility(brls::Visibility::GONE);
-    m_scrollContent->addView(showsLabel);
+    m_showsLabel = new brls::Label();
+    m_showsLabel->setText("TV Shows");
+    m_showsLabel->setFontSize(20);
+    m_showsLabel->setMarginBottom(10);
+    m_showsLabel->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(m_showsLabel);
 
     m_showsRow = new brls::HScrollingFrame();
     m_showsRow->setHeight(180);
@@ -97,12 +97,12 @@ SearchTab::SearchTab() {
     m_scrollContent->addView(m_showsRow);
 
     // Episodes row (separate from TV Shows)
-    auto* episodesLabel = new brls::Label();
-    episodesLabel->setText("Episodes");
-    episodesLabel->setFontSize(20);
-    episodesLabel->setMarginBottom(10);
-    episodesLabel->setVisibility(brls::Visibility::GONE);
-    m_scrollContent->addView(episodesLabel);
+    m_episodesLabel = new brls::Label();
+    m_episodesLabel->setText("Episodes");
+    m_episodesLabel->setFontSize(20);
+    m_episodesLabel->setMarginBottom(10);
+    m_episodesLabel->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(m_episodesLabel);
 
     m_episodesRow = new brls::HScrollingFrame();
     m_episodesRow->setHeight(180);
@@ -116,12 +116,12 @@ SearchTab::SearchTab() {
     m_scrollContent->addView(m_episodesRow);
 
     // Music row
-    auto* musicLabel = new brls::Label();
-    musicLabel->setText("Music");
-    musicLabel->setFontSize(20);
-    musicLabel->setMarginBottom(10);
-    musicLabel->setVisibility(brls::Visibility::GONE);
-    m_scrollContent->addView(musicLabel);
+    m_musicLabel = new brls::Label();
+    m_musicLabel->setText("Music");
+    m_musicLabel->setFontSize(20);
+    m_musicLabel->setMarginBottom(10);
+    m_musicLabel->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(m_musicLabel);
 
     m_musicRow = new brls::HScrollingFrame();
     m_musicRow->setHeight(160);
@@ -178,17 +178,15 @@ void SearchTab::performSearch(const std::string& query) {
         m_episodes.clear();
         m_music.clear();
 
-        // Hide all rows
+        // Hide all rows and labels
+        m_moviesLabel->setVisibility(brls::Visibility::GONE);
         m_moviesRow->setVisibility(brls::Visibility::GONE);
+        m_showsLabel->setVisibility(brls::Visibility::GONE);
         m_showsRow->setVisibility(brls::Visibility::GONE);
+        m_episodesLabel->setVisibility(brls::Visibility::GONE);
         m_episodesRow->setVisibility(brls::Visibility::GONE);
+        m_musicLabel->setVisibility(brls::Visibility::GONE);
         m_musicRow->setVisibility(brls::Visibility::GONE);
-
-        // Hide labels
-        auto& views = m_scrollContent->getChildren();
-        for (size_t i = 0; i < views.size(); i++) {
-            views[i]->setVisibility(brls::Visibility::GONE);
-        }
         return;
     }
 
@@ -219,47 +217,40 @@ void SearchTab::performSearch(const std::string& query) {
             }
         }
 
-        // Update rows visibility and content
-        // Order: Movies(0,1), Shows(2,3), Episodes(4,5), Music(6,7)
-        auto& views = m_scrollContent->getChildren();
-
-        // Movies (label at index 0, row at index 1)
+        // Update rows visibility and content using stored label references
         if (!m_movies.empty()) {
-            views[0]->setVisibility(brls::Visibility::VISIBLE);
+            m_moviesLabel->setVisibility(brls::Visibility::VISIBLE);
             m_moviesRow->setVisibility(brls::Visibility::VISIBLE);
             populateRow(m_moviesContent, m_movies);
         } else {
-            views[0]->setVisibility(brls::Visibility::GONE);
+            m_moviesLabel->setVisibility(brls::Visibility::GONE);
             m_moviesRow->setVisibility(brls::Visibility::GONE);
         }
 
-        // Shows (label at index 2, row at index 3)
         if (!m_shows.empty()) {
-            views[2]->setVisibility(brls::Visibility::VISIBLE);
+            m_showsLabel->setVisibility(brls::Visibility::VISIBLE);
             m_showsRow->setVisibility(brls::Visibility::VISIBLE);
             populateRow(m_showsContent, m_shows);
         } else {
-            views[2]->setVisibility(brls::Visibility::GONE);
+            m_showsLabel->setVisibility(brls::Visibility::GONE);
             m_showsRow->setVisibility(brls::Visibility::GONE);
         }
 
-        // Episodes (label at index 4, row at index 5)
         if (!m_episodes.empty()) {
-            views[4]->setVisibility(brls::Visibility::VISIBLE);
+            m_episodesLabel->setVisibility(brls::Visibility::VISIBLE);
             m_episodesRow->setVisibility(brls::Visibility::VISIBLE);
             populateRow(m_episodesContent, m_episodes);
         } else {
-            views[4]->setVisibility(brls::Visibility::GONE);
+            m_episodesLabel->setVisibility(brls::Visibility::GONE);
             m_episodesRow->setVisibility(brls::Visibility::GONE);
         }
 
-        // Music (label at index 6, row at index 7)
         if (!m_music.empty()) {
-            views[6]->setVisibility(brls::Visibility::VISIBLE);
+            m_musicLabel->setVisibility(brls::Visibility::VISIBLE);
             m_musicRow->setVisibility(brls::Visibility::VISIBLE);
             populateRow(m_musicContent, m_music);
         } else {
-            views[6]->setVisibility(brls::Visibility::GONE);
+            m_musicLabel->setVisibility(brls::Visibility::GONE);
             m_musicRow->setVisibility(brls::Visibility::GONE);
         }
 

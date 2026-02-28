@@ -64,8 +64,13 @@ std::string PlexClient::extractJsonValue(const std::string& json, const std::str
     if (valueStart == std::string::npos) return "";
 
     if (json[valueStart] == '"') {
-        size_t valueEnd = json.find('"', valueStart + 1);
-        if (valueEnd == std::string::npos) return "";
+        // Find closing quote, skipping escaped quotes
+        size_t valueEnd = valueStart + 1;
+        while (valueEnd < json.length()) {
+            if (json[valueEnd] == '"' && json[valueEnd - 1] != '\\') break;
+            valueEnd++;
+        }
+        if (valueEnd >= json.length()) return "";
         return json.substr(valueStart + 1, valueEnd - valueStart - 1);
     } else if (json[valueStart] == 'n' && json.substr(valueStart, 4) == "null") {
         return "";
@@ -370,8 +375,17 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers) {
 bool PlexClient::connectToServer(const std::string& url) {
     brls::Logger::info("Connecting to server: {}", url);
 
+    // Normalize URL - ensure http/https is lowercase
     m_serverUrl = url;
-    Application::getInstance().setServerUrl(url);
+    if (m_serverUrl.length() > 7) {
+        size_t colonPos = m_serverUrl.find("://");
+        if (colonPos != std::string::npos && colonPos < 6) {
+            for (size_t i = 0; i < colonPos; i++) {
+                m_serverUrl[i] = tolower(m_serverUrl[i]);
+            }
+        }
+    }
+    Application::getInstance().setServerUrl(m_serverUrl);  // Use normalized URL
 
     HttpClient client;
     HttpRequest req;
@@ -1629,26 +1643,25 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
         return false;
     }
 
+    brls::Logger::debug("getTranscodeUrl: partKey={}", partKey);
+
     // Detect if this is audio (track) or video
     bool isAudio = (resp.body.find("\"type\":\"track\"") != std::string::npos);
     brls::Logger::debug("getTranscodeUrl: isAudio={}", isAudio);
 
-    // URL-encode the path for the transcode request
-    std::string encodedPath = HttpClient::urlEncode(partKey);
-
-    // Build transcode URL
-    url = m_serverUrl;
-
     if (isAudio) {
-        // Audio transcode - convert to MP3 which the Vita can play
-        url += "/music/:/transcode/universal/start.mp3?";
-        url += "path=" + encodedPath;
-        url += "&mediaIndex=0&partIndex=0";
-        url += "&protocol=http";
-        url += "&directPlay=0&directStream=0";  // Force transcode
-        url += "&audioCodec=mp3&audioBitrate=320";
+        // For audio: Use DIRECT DOWNLOAD instead of transcoding
+        // The part key points directly to the audio file (e.g., /library/parts/123/456/file.mp3)
+        // This avoids the transcode endpoint which has issues
+        url = m_serverUrl + partKey + "?X-Plex-Token=" + m_authToken;
+        brls::Logger::info("getTranscodeUrl: Using direct audio URL = {}", url);
     } else {
-        // Video transcode - convert to H.264/AAC which the Vita can decode
+        // For video: Use transcode endpoint with metadata path
+        // Per Plex API docs, path should be /library/metadata/{ratingKey}
+        std::string metadataPath = "/library/metadata/" + ratingKey;
+        std::string encodedPath = HttpClient::urlEncode(metadataPath);
+
+        url = m_serverUrl;
         url += "/video/:/transcode/universal/start.mp4?";
         url += "path=" + encodedPath;
         url += "&mediaIndex=0&partIndex=0";
@@ -1685,29 +1698,30 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
 
         // Audio settings - stereo AAC
         url += "&audioCodec=aac&audioChannels=2";
+
+        // Add resume offset if specified (in seconds for video)
+        if (offsetMs > 0) {
+            char offsetStr[32];
+            snprintf(offsetStr, sizeof(offsetStr), "&offset=%.1f", offsetMs / 1000.0);
+            url += offsetStr;
+        }
+
+        // Add authentication and client identification
+        url += "&X-Plex-Token=" + m_authToken;
+        url += "&X-Plex-Client-Identifier=VitaPlex";
+        url += "&X-Plex-Product=VitaPlex";
+        url += "&X-Plex-Version=1.0.0";
+        url += "&X-Plex-Platform=PlayStation%20Vita";
+        url += "&X-Plex-Device=PS%20Vita";
+
+        // Generate a session ID for this transcode request
+        char sessionId[32];
+        snprintf(sessionId, sizeof(sessionId), "&session=%lu", (unsigned long)time(nullptr));
+        url += sessionId;
+
+        brls::Logger::info("getTranscodeUrl: Transcode URL = {}", url);
     }
 
-    // Add resume offset if specified
-    if (offsetMs > 0) {
-        char offsetStr[32];
-        snprintf(offsetStr, sizeof(offsetStr), "&offset=%d", offsetMs);
-        url += offsetStr;
-    }
-
-    // Add authentication and client identification
-    url += "&X-Plex-Token=" + m_authToken;
-    url += "&X-Plex-Client-Identifier=VitaPlex";
-    url += "&X-Plex-Product=VitaPlex";
-    url += "&X-Plex-Version=1.0.0";
-    url += "&X-Plex-Platform=PlayStation%20Vita";
-    url += "&X-Plex-Device=PS%20Vita";
-
-    // Generate a session ID for this transcode request
-    char sessionId[32];
-    snprintf(sessionId, sizeof(sessionId), "&session=%lu", (unsigned long)time(nullptr));
-    url += sessionId;
-
-    brls::Logger::info("getTranscodeUrl: Transcode URL = {}", url);
     return true;
 }
 
@@ -1966,6 +1980,358 @@ std::string PlexClient::getThumbnailUrl(const std::string& thumb, int width, int
                                   "&height=" + std::to_string(height) +
                                   "&minSize=1&upscale=1");
     return url;
+}
+
+// ============================================================================
+// Playlist Management (Official Plex API from developer.plex.tv)
+// ============================================================================
+
+bool PlexClient::fetchMusicPlaylists(std::vector<Playlist>& playlists) {
+    playlists.clear();
+
+    // GET /playlists?playlistType=audio&smart=0
+    // Returns non-smart (dumb) audio playlists
+    std::string url = buildApiUrl("/playlists?playlistType=audio");
+
+    HttpClient client;
+    std::string response;
+
+    if (!client.get(url, response, {{"Accept", "application/json"}})) {
+        brls::Logger::error("fetchMusicPlaylists: Request failed");
+        return false;
+    }
+
+    // Parse JSON response
+    // Look for "Metadata" array
+    size_t metadataPos = response.find("\"Metadata\"");
+    if (metadataPos == std::string::npos) {
+        brls::Logger::debug("fetchMusicPlaylists: No playlists found");
+        return true;  // Empty is valid
+    }
+
+    size_t arrStart = response.find('[', metadataPos);
+    if (arrStart == std::string::npos) return false;
+
+    size_t pos = arrStart + 1;
+    while (pos < response.size()) {
+        size_t objStart = response.find('{', pos);
+        if (objStart == std::string::npos) break;
+
+        // Find matching closing brace (accounting for nesting)
+        int depth = 1;
+        size_t objEnd = objStart + 1;
+        while (objEnd < response.size() && depth > 0) {
+            if (response[objEnd] == '{') depth++;
+            else if (response[objEnd] == '}') depth--;
+            objEnd++;
+        }
+
+        std::string objStr = response.substr(objStart, objEnd - objStart);
+
+        Playlist pl;
+        pl.ratingKey = extractJsonValue(objStr, "ratingKey");
+        pl.key = extractJsonValue(objStr, "key");
+        pl.title = extractJsonValue(objStr, "title");
+        pl.summary = extractJsonValue(objStr, "summary");
+        pl.thumb = extractJsonValue(objStr, "thumb");
+        pl.composite = extractJsonValue(objStr, "composite");
+        pl.playlistType = extractJsonValue(objStr, "playlistType");
+        pl.smart = extractJsonBool(objStr, "smart");
+        pl.leafCount = extractJsonInt(objStr, "leafCount");
+        pl.duration = extractJsonInt(objStr, "duration");
+        pl.addedAt = extractJsonInt(objStr, "addedAt");
+        pl.updatedAt = extractJsonInt(objStr, "updatedAt");
+
+        if (!pl.ratingKey.empty()) {
+            playlists.push_back(pl);
+        }
+
+        pos = objEnd;
+    }
+
+    brls::Logger::info("fetchMusicPlaylists: Found {} playlists", playlists.size());
+    return true;
+}
+
+bool PlexClient::fetchPlaylistItems(const std::string& playlistId, std::vector<PlaylistItem>& items) {
+    items.clear();
+
+    // GET /playlists/{playlistId}/items
+    std::string url = buildApiUrl("/playlists/" + playlistId + "/items");
+
+    HttpClient client;
+    std::string response;
+
+    if (!client.get(url, response, {{"Accept", "application/json"}})) {
+        brls::Logger::error("fetchPlaylistItems: Request failed for playlist {}", playlistId);
+        return false;
+    }
+
+    // Parse JSON response
+    size_t metadataPos = response.find("\"Metadata\"");
+    if (metadataPos == std::string::npos) {
+        brls::Logger::debug("fetchPlaylistItems: Playlist {} is empty", playlistId);
+        return true;
+    }
+
+    size_t arrStart = response.find('[', metadataPos);
+    if (arrStart == std::string::npos) return false;
+
+    size_t pos = arrStart + 1;
+    while (pos < response.size()) {
+        size_t objStart = response.find('{', pos);
+        if (objStart == std::string::npos) break;
+
+        int depth = 1;
+        size_t objEnd = objStart + 1;
+        while (objEnd < response.size() && depth > 0) {
+            if (response[objEnd] == '{') depth++;
+            else if (response[objEnd] == '}') depth--;
+            objEnd++;
+        }
+
+        std::string objStr = response.substr(objStart, objEnd - objStart);
+
+        PlaylistItem item;
+        item.playlistItemId = extractJsonValue(objStr, "playlistItemID");
+
+        // Parse media item
+        item.media.ratingKey = extractJsonValue(objStr, "ratingKey");
+        item.media.key = extractJsonValue(objStr, "key");
+        item.media.title = extractJsonValue(objStr, "title");
+        item.media.thumb = extractJsonValue(objStr, "thumb");
+        item.media.duration = extractJsonInt(objStr, "duration");
+        item.media.grandparentTitle = extractJsonValue(objStr, "grandparentTitle");  // Artist
+        item.media.parentTitle = extractJsonValue(objStr, "parentTitle");            // Album
+        item.media.parentThumb = extractJsonValue(objStr, "parentThumb");
+        item.media.grandparentThumb = extractJsonValue(objStr, "grandparentThumb");
+        item.media.index = extractJsonInt(objStr, "index");  // Track number
+        item.media.type = extractJsonValue(objStr, "type");
+        item.media.mediaType = parseMediaType(item.media.type);
+
+        if (!item.media.ratingKey.empty()) {
+            items.push_back(item);
+        }
+
+        pos = objEnd;
+    }
+
+    brls::Logger::info("fetchPlaylistItems: Playlist {} has {} items", playlistId, items.size());
+    return true;
+}
+
+bool PlexClient::createPlaylist(const std::string& title, const std::string& playlistType, Playlist& result) {
+    // POST /playlists?type=15&title={title}&smart=0&playlistType={type}
+    // type=15 is the Plex type for playlists
+    std::string url = buildApiUrl("/playlists?type=15&title=" + HttpClient::urlEncode(title) +
+                                  "&smart=0&playlistType=" + playlistType);
+
+    HttpClient client;
+    std::string response;
+
+    if (!client.post(url, "", response, {{"Accept", "application/json"}})) {
+        brls::Logger::error("createPlaylist: Failed to create playlist '{}'", title);
+        return false;
+    }
+
+    // Parse response to get new playlist info
+    size_t metadataPos = response.find("\"Metadata\"");
+    if (metadataPos == std::string::npos) {
+        brls::Logger::error("createPlaylist: Invalid response");
+        return false;
+    }
+
+    size_t objStart = response.find('{', metadataPos);
+    if (objStart == std::string::npos) return false;
+
+    int depth = 1;
+    size_t objEnd = objStart + 1;
+    while (objEnd < response.size() && depth > 0) {
+        if (response[objEnd] == '{') depth++;
+        else if (response[objEnd] == '}') depth--;
+        objEnd++;
+    }
+
+    std::string objStr = response.substr(objStart, objEnd - objStart);
+
+    result.ratingKey = extractJsonValue(objStr, "ratingKey");
+    result.key = extractJsonValue(objStr, "key");
+    result.title = extractJsonValue(objStr, "title");
+    result.playlistType = extractJsonValue(objStr, "playlistType");
+    result.smart = false;
+    result.leafCount = 0;
+
+    brls::Logger::info("createPlaylist: Created playlist '{}' with id {}", title, result.ratingKey);
+    return !result.ratingKey.empty();
+}
+
+bool PlexClient::createPlaylistWithItems(const std::string& title, const std::vector<std::string>& ratingKeys, Playlist& result) {
+    if (ratingKeys.empty()) {
+        return createPlaylist(title, "audio", result);
+    }
+
+    // Build URI: server://{machineId}/com.plexapp.plugins.library/library/metadata/{key1},{key2},...
+    std::string keysStr;
+    for (size_t i = 0; i < ratingKeys.size(); i++) {
+        if (i > 0) keysStr += ",";
+        keysStr += ratingKeys[i];
+    }
+
+    std::string uri = "server://" + m_currentServer.machineIdentifier +
+                      "/com.plexapp.plugins.library/library/metadata/" + keysStr;
+
+    // POST /playlists?type=15&title={title}&smart=0&playlistType=audio&uri={uri}
+    std::string url = buildApiUrl("/playlists?type=15&title=" + HttpClient::urlEncode(title) +
+                                  "&smart=0&playlistType=audio&uri=" + HttpClient::urlEncode(uri));
+
+    HttpClient client;
+    std::string response;
+
+    if (!client.post(url, "", response, {{"Accept", "application/json"}})) {
+        brls::Logger::error("createPlaylistWithItems: Failed to create playlist '{}'", title);
+        return false;
+    }
+
+    // Parse response
+    size_t metadataPos = response.find("\"Metadata\"");
+    if (metadataPos == std::string::npos) {
+        brls::Logger::error("createPlaylistWithItems: Invalid response");
+        return false;
+    }
+
+    size_t objStart = response.find('{', metadataPos);
+    if (objStart == std::string::npos) return false;
+
+    int depth = 1;
+    size_t objEnd = objStart + 1;
+    while (objEnd < response.size() && depth > 0) {
+        if (response[objEnd] == '{') depth++;
+        else if (response[objEnd] == '}') depth--;
+        objEnd++;
+    }
+
+    std::string objStr = response.substr(objStart, objEnd - objStart);
+
+    result.ratingKey = extractJsonValue(objStr, "ratingKey");
+    result.key = extractJsonValue(objStr, "key");
+    result.title = extractJsonValue(objStr, "title");
+    result.playlistType = "audio";
+    result.smart = false;
+    result.leafCount = (int)ratingKeys.size();
+
+    brls::Logger::info("createPlaylistWithItems: Created playlist '{}' with {} items", title, ratingKeys.size());
+    return !result.ratingKey.empty();
+}
+
+bool PlexClient::deletePlaylist(const std::string& playlistId) {
+    // DELETE /playlists/{playlistId}
+    std::string url = buildApiUrl("/playlists/" + playlistId);
+
+    HttpClient client;
+    std::string response;
+
+    if (!client.del(url, response)) {
+        brls::Logger::error("deletePlaylist: Failed to delete playlist {}", playlistId);
+        return false;
+    }
+
+    brls::Logger::info("deletePlaylist: Deleted playlist {}", playlistId);
+    return true;
+}
+
+bool PlexClient::renamePlaylist(const std::string& playlistId, const std::string& newTitle) {
+    // PUT /playlists/{playlistId}?title={newTitle}
+    std::string url = buildApiUrl("/playlists/" + playlistId + "?title=" + HttpClient::urlEncode(newTitle));
+
+    HttpClient client;
+    std::string response;
+
+    if (!client.put(url, "", response)) {
+        brls::Logger::error("renamePlaylist: Failed to rename playlist {}", playlistId);
+        return false;
+    }
+
+    brls::Logger::info("renamePlaylist: Renamed playlist {} to '{}'", playlistId, newTitle);
+    return true;
+}
+
+bool PlexClient::addToPlaylist(const std::string& playlistId, const std::vector<std::string>& ratingKeys) {
+    if (ratingKeys.empty()) return true;
+
+    // Build URI
+    std::string keysStr;
+    for (size_t i = 0; i < ratingKeys.size(); i++) {
+        if (i > 0) keysStr += ",";
+        keysStr += ratingKeys[i];
+    }
+
+    std::string uri = "server://" + m_currentServer.machineIdentifier +
+                      "/com.plexapp.plugins.library/library/metadata/" + keysStr;
+
+    // PUT /playlists/{playlistId}/items?uri={uri}
+    std::string url = buildApiUrl("/playlists/" + playlistId + "/items?uri=" + HttpClient::urlEncode(uri));
+
+    HttpClient client;
+    std::string response;
+
+    if (!client.put(url, "", response)) {
+        brls::Logger::error("addToPlaylist: Failed to add items to playlist {}", playlistId);
+        return false;
+    }
+
+    brls::Logger::info("addToPlaylist: Added {} items to playlist {}", ratingKeys.size(), playlistId);
+    return true;
+}
+
+bool PlexClient::removeFromPlaylist(const std::string& playlistId, const std::string& playlistItemId) {
+    // DELETE /playlists/{playlistId}/items/{playlistItemId}
+    std::string url = buildApiUrl("/playlists/" + playlistId + "/items/" + playlistItemId);
+
+    HttpClient client;
+    std::string response;
+
+    if (!client.del(url, response)) {
+        brls::Logger::error("removeFromPlaylist: Failed to remove item {} from playlist {}", playlistItemId, playlistId);
+        return false;
+    }
+
+    brls::Logger::info("removeFromPlaylist: Removed item {} from playlist {}", playlistItemId, playlistId);
+    return true;
+}
+
+bool PlexClient::clearPlaylist(const std::string& playlistId) {
+    // DELETE /playlists/{playlistId}/items
+    std::string url = buildApiUrl("/playlists/" + playlistId + "/items");
+
+    HttpClient client;
+    std::string response;
+
+    if (!client.del(url, response)) {
+        brls::Logger::error("clearPlaylist: Failed to clear playlist {}", playlistId);
+        return false;
+    }
+
+    brls::Logger::info("clearPlaylist: Cleared playlist {}", playlistId);
+    return true;
+}
+
+bool PlexClient::movePlaylistItem(const std::string& playlistId, const std::string& playlistItemId, const std::string& afterItemId) {
+    // PUT /playlists/{playlistId}/items/{playlistItemId}/move?after={afterItemId}
+    std::string url = buildApiUrl("/playlists/" + playlistId + "/items/" + playlistItemId + "/move");
+    if (!afterItemId.empty()) {
+        url += "&after=" + afterItemId;
+    }
+
+    HttpClient client;
+    std::string response;
+
+    if (!client.put(url, "", response)) {
+        brls::Logger::error("movePlaylistItem: Failed to move item {} in playlist {}", playlistItemId, playlistId);
+        return false;
+    }
+
+    brls::Logger::info("movePlaylistItem: Moved item {} after {} in playlist {}", playlistItemId, afterItemId, playlistId);
+    return true;
 }
 
 } // namespace vitaplex

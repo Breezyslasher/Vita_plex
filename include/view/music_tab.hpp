@@ -25,9 +25,15 @@ private:
     void loadPlaylists();
     void loadCollections(const std::string& sectionKey);
     void onItemSelected(const MediaItem& item);
-    void onPlaylistSelected(const MediaItem& playlist);
+    void onPlaylistSelected(const Playlist& playlist);
     void onCollectionSelected(const MediaItem& collection);
     brls::Box* createHorizontalRow(const std::string& title);
+
+    // Playlist management
+    void showCreatePlaylistDialog();
+    void showPlaylistOptionsDialog(const Playlist& playlist);
+    void playPlaylistWithQueue(const std::string& playlistId, int startIndex = 0);
+    void refreshPlaylists();
 
     brls::ScrollingFrame* m_scrollView = nullptr;
     brls::Box* m_mainContainer = nullptr;
@@ -50,10 +56,12 @@ private:
 
     std::vector<LibrarySection> m_sections;  // Music sections only
     std::vector<MediaItem> m_items;
-    std::vector<MediaItem> m_playlists;
+    std::vector<Playlist> m_playlists;        // Using new Playlist struct
     std::vector<MediaItem> m_collections;
     std::string m_currentSection;
+    std::string m_currentPlaylistId;          // Currently viewing playlist
     bool m_loaded = false;
+    bool m_viewingPlaylist = false;           // True if viewing playlist contents
 
     // Shared pointer to track if this object is still alive
     std::shared_ptr<bool> m_alive;

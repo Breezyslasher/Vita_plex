@@ -23,8 +23,8 @@ void VideoView::draw(NVGcontext* vg, float x, float y, float width, float height
 
     MpvPlayer& player = MpvPlayer::getInstance();
 
-    // Render new frame if available
-    player.render();
+    // Note: Rendering happens in MpvPlayer's onRenderUpdate callback via brls::sync()
+    // We just display the already-rendered NanoVG texture here
 
     // Get the video image handle
     int videoImage = player.getVideoImage();

@@ -74,6 +74,10 @@ public:
     void togglePause();
     void stop();
 
+    // Audio-only mode (disables video decoding for music playback)
+    void setAudioOnly(bool audioOnly);
+    bool isAudioOnly() const { return m_audioOnly; }
+
     // Seeking
     void seekTo(double seconds);
     void seekRelative(double seconds);
@@ -164,15 +168,20 @@ private:
     bool m_subtitlesVisible = true;
     bool m_stopping = false;        // Shutdown in progress
     bool m_commandPending = false;  // Async command pending
+    bool m_audioOnly = false;       // Audio-only mode (no video decoding)
 
 #ifdef __vita__
     // GXM render resources
     int m_nvgImage = 0;                 // NanoVG image handle for display
     void* m_gxmFramebuffer = nullptr;   // GXM framebuffer structure
     mpv_gxm_fbo m_mpvFbo = {};          // MPV GXM FBO parameters
+    mpv_render_param m_mpvParams[2] = {};  // Render params for mpv_render_context_render
     int m_videoWidth = 960;
     int m_videoHeight = 544;
     bool m_renderReady = false;         // Flag for when frame is ready
+
+    // Static callback for render updates (called from MPV thread)
+    static void onRenderUpdate(void* ctx);
 #endif
 };
 

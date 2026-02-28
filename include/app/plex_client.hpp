@@ -142,6 +142,28 @@ struct GenreItem {
     std::string fastKey;    // Fast filter URL path
 };
 
+// Playlist info (from Plex API)
+struct Playlist {
+    std::string ratingKey;      // Playlist ID
+    std::string key;            // Items endpoint (e.g., /playlists/{id}/items)
+    std::string title;
+    std::string summary;
+    std::string thumb;
+    std::string composite;      // Composite thumbnail
+    std::string playlistType;   // "audio", "video", "photo"
+    bool smart = false;         // Smart playlist vs. dumb playlist
+    int leafCount = 0;          // Number of items
+    int duration = 0;           // Total duration in ms
+    int64_t addedAt = 0;
+    int64_t updatedAt = 0;
+};
+
+// Playlist item (track with playlist-specific info)
+struct PlaylistItem {
+    std::string playlistItemId;  // Used for remove/move operations
+    MediaItem media;             // The actual media item (track)
+};
+
 /**
  * Plex API Client singleton
  */
@@ -174,13 +196,28 @@ public:
     // Search
     bool search(const std::string& query, std::vector<MediaItem>& results);
 
-    // Collections, Playlists, Genres
+    // Collections, Genres
     bool fetchCollections(const std::string& sectionKey, std::vector<MediaItem>& collections);
-    bool fetchPlaylists(std::vector<MediaItem>& playlists);
     bool fetchGenres(const std::string& sectionKey, std::vector<std::string>& genres);
     bool fetchGenreItems(const std::string& sectionKey, std::vector<GenreItem>& genres);
     bool fetchByGenre(const std::string& sectionKey, const std::string& genre, std::vector<MediaItem>& items);
     bool fetchByGenreKey(const std::string& sectionKey, const std::string& genreKey, std::vector<MediaItem>& items);
+
+    // Playlists (using official Plex API from developer.plex.tv)
+    bool fetchPlaylists(std::vector<MediaItem>& playlists);  // Legacy - returns as MediaItem
+    bool fetchMusicPlaylists(std::vector<Playlist>& playlists);  // Get audio playlists
+    bool fetchPlaylistItems(const std::string& playlistId, std::vector<PlaylistItem>& items);
+    bool createPlaylist(const std::string& title, const std::string& playlistType, Playlist& result);
+    bool createPlaylistWithItems(const std::string& title, const std::vector<std::string>& ratingKeys, Playlist& result);
+    bool deletePlaylist(const std::string& playlistId);
+    bool renamePlaylist(const std::string& playlistId, const std::string& newTitle);
+    bool addToPlaylist(const std::string& playlistId, const std::vector<std::string>& ratingKeys);
+    bool removeFromPlaylist(const std::string& playlistId, const std::string& playlistItemId);
+    bool clearPlaylist(const std::string& playlistId);
+    bool movePlaylistItem(const std::string& playlistId, const std::string& playlistItemId, const std::string& afterItemId);
+
+    // Get machine identifier for playlist URIs
+    const std::string& getMachineIdentifier() const { return m_currentServer.machineIdentifier; }
 
     // Playback
     bool getPlaybackUrl(const std::string& ratingKey, std::string& url);
