@@ -40,6 +40,10 @@ static void flushGxmPipeline() {
         }
     }
 }
+
+void MpvPlayer::flushGpu() {
+    flushGxmPipeline();
+}
 #endif
 
 // Command IDs for async operations
@@ -119,7 +123,7 @@ bool MpvPlayer::init() {
 
 #ifdef __vita__
         // Vita-specific settings from switchfin
-        mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
+        mpv_set_option_string(m_mpv, "vd-lavc-threads", "2");
         mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "all");
         mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
 
@@ -365,6 +369,17 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
         return false;
     }
     brls::Logger::debug("MpvPlayer: loadfile command queued successfully (result={})", result);
+
+#ifdef __vita__
+    // After queueing loadfile, MPV's decoder threads will start initializing
+    // GXM resources (shader compilation, buffer allocation). Give them time
+    // to finish before NanoVG resumes rendering on the shared GXM context.
+    // GXM is NOT thread-safe - concurrent access causes crashes.
+    if (m_mpvRenderCtx) {
+        sceKernelDelayThread(50000);  // 50ms for MPV threads to start
+        flushGxmPipeline();
+    }
+#endif
 
     brls::Logger::debug("MpvPlayer: About to call setState(LOADING)...");
     setState(MpvPlayerState::LOADING);
@@ -620,6 +635,16 @@ void MpvPlayer::setState(MpvPlayerState newState) {
 
 void MpvPlayer::update() {
     if (!m_mpv || m_stopping) return;
+
+#ifdef __vita__
+    // During loading/buffering, MPV's decoder threads may be actively using
+    // GXM for shader compilation and buffer allocation. Flush GPU to ensure
+    // their work is complete before the main thread processes events or
+    // NanoVG draws the next frame.
+    if ((m_state == MpvPlayerState::LOADING || m_state == MpvPlayerState::BUFFERING) && m_mpvRenderCtx) {
+        flushGxmPipeline();
+    }
+#endif
 
     // Process events (matching switchfin's eventMainLoop)
     eventMainLoop();

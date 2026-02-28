@@ -131,6 +131,9 @@ public:
     void update();
     void render();
 
+    // Flush GPU pipeline to serialize GXM access between MPV and NanoVG
+    static void flushGpu();
+
     // Check if render context is available (video mode vs audio-only)
     bool hasRenderContext() const { return m_mpvRenderCtx != nullptr; }
 
