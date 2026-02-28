@@ -121,6 +121,7 @@ target_link_libraries(${PROJECT_NAME}
     curl
     mpv
     archive
+    zstd
     avfilter
     avformat
     avcodec
