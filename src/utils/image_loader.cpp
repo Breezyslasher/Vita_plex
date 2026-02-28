@@ -36,8 +36,8 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback, brls:
 
             {
                 std::lock_guard<std::mutex> lock(s_cacheMutex);
-                // Limit cache size
-                if (s_cache.size() > 100) {
+                // Limit cache size - keep low to preserve memory on Vita (256MB total)
+                if (s_cache.size() > 30) {
                     s_cache.clear();
                 }
                 s_cache[url] = imageData;

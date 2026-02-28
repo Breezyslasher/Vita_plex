@@ -210,11 +210,11 @@ void HomeTab::loadContent() {
                 // Sort items by type
                 for (auto& item : sectionItems) {
                     if (section.type == "movie") {
-                        if (movies.size() < 20) movies.push_back(item);
+                        if (movies.size() < 10) movies.push_back(item);
                     } else if (section.type == "show") {
-                        if (shows.size() < 20) shows.push_back(item);
+                        if (shows.size() < 10) shows.push_back(item);
                     } else if (section.type == "artist") {
-                        if (music.size() < 20) music.push_back(item);
+                        if (music.size() < 10) music.push_back(item);
                     }
                 }
             }

@@ -238,6 +238,9 @@ void PlayerActivity::loadFromQueue() {
         return;
     }
 
+    // Free image cache to reclaim memory for MPV
+    ImageLoader::clearCache();
+
     MpvPlayer& player = MpvPlayer::getInstance();
 
     // Set audio-only mode BEFORE initializing
@@ -373,6 +376,9 @@ void PlayerActivity::loadMedia() {
 
         brls::Logger::info("PlayerActivity: File type detection - audio: {}", isAudioFile);
 
+        // Free image cache to reclaim memory for MPV
+        ImageLoader::clearCache();
+
         MpvPlayer& player = MpvPlayer::getInstance();
 
         // Set audio-only mode BEFORE initializing (to skip render context)
@@ -424,6 +430,9 @@ void PlayerActivity::loadMedia() {
             }
             titleLabel->setText(title);
         }
+
+        // Free image cache to reclaim memory for MPV
+        ImageLoader::clearCache();
 
         MpvPlayer& player = MpvPlayer::getInstance();
 
@@ -509,6 +518,10 @@ void PlayerActivity::loadMedia() {
         // Get transcode URL for video/audio (forces Plex to convert to Vita-compatible format)
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, item.viewOffset)) {
+            // Free image cache memory before initializing MPV - the Vita only has 256MB
+            // and MPV needs substantial memory for video decoding buffers
+            ImageLoader::clearCache();
+
             MpvPlayer& player = MpvPlayer::getInstance();
 
             // Set audio-only mode BEFORE initializing

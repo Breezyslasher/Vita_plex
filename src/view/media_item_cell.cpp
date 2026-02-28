@@ -128,8 +128,9 @@ void MediaItemCell::loadThumbnail() {
                     m_item.mediaType == MediaType::MUSIC_ALBUM ||
                     m_item.mediaType == MediaType::MUSIC_TRACK);
 
-    int width = isMusic ? 220 : 220;
-    int height = isMusic ? 220 : 330;
+    // Request at display size to save memory on Vita (110x165 portrait, 110x110 square)
+    int width = isMusic ? 110 : 110;
+    int height = isMusic ? 110 : 165;
 
     // For episodes, prefer grandparentThumb (show poster) if available
     std::string thumbPath = m_item.thumb;
