@@ -120,6 +120,7 @@ target_link_libraries(${PROJECT_NAME}
     # FFmpeg has circular dependencies - list avcodec multiple times
     curl
     mpv
+    archive
     avfilter
     avformat
     avcodec
@@ -133,6 +134,7 @@ target_link_libraries(${PROJECT_NAME}
     fribidi
     png
     bz2
+    lzma
     mbedtls
     mbedcrypto
     mbedx509
