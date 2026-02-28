@@ -20,7 +20,3 @@ cmake-build-*/
 # VitaSDK artifacts
 *.velf
 *.eboot.bin
-
-# Crash dumps and logs
-*.psp2dmp
-vitaplex.log
