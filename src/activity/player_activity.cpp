@@ -136,8 +136,11 @@ void PlayerActivity::onContentAvailable() {
 void PlayerActivity::willDisappear(bool resetState) {
     brls::Activity::willDisappear(resetState);
 
-    // Mark as destroying to prevent timer callbacks
+    // Mark as destroying to prevent timer and image loader callbacks
     m_destroying = true;
+    if (m_alive) {
+        m_alive->store(false);
+    }
 
     // Stop update timer first
     m_updateTimer.stop();
@@ -223,7 +226,7 @@ void PlayerActivity::loadFromQueue() {
         std::string thumbUrl = client.getThumbnailUrl(track->thumb, 300, 300);
         ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {
             // Art loaded
-        }, albumArt);
+        }, albumArt, m_alive);
         albumArt->setVisibility(brls::Visibility::VISIBLE);
     }
 
@@ -238,7 +241,9 @@ void PlayerActivity::loadFromQueue() {
         return;
     }
 
-    // Free image cache to reclaim memory for MPV
+    // Cancel in-flight image loads and free cache to reclaim memory for MPV.
+    // This prevents stale async callbacks from writing to freed brls::Image* pointers.
+    ImageLoader::cancelAll();
     ImageLoader::clearCache();
 
     MpvPlayer& player = MpvPlayer::getInstance();
@@ -376,7 +381,8 @@ void PlayerActivity::loadMedia() {
 
         brls::Logger::info("PlayerActivity: File type detection - audio: {}", isAudioFile);
 
-        // Free image cache to reclaim memory for MPV
+        // Cancel in-flight image loads and free cache to reclaim memory for MPV
+        ImageLoader::cancelAll();
         ImageLoader::clearCache();
 
         MpvPlayer& player = MpvPlayer::getInstance();
@@ -431,7 +437,8 @@ void PlayerActivity::loadMedia() {
             titleLabel->setText(title);
         }
 
-        // Free image cache to reclaim memory for MPV
+        // Cancel in-flight image loads and free cache to reclaim memory for MPV
+        ImageLoader::cancelAll();
         ImageLoader::clearCache();
 
         MpvPlayer& player = MpvPlayer::getInstance();
@@ -496,7 +503,7 @@ void PlayerActivity::loadMedia() {
                     photoImage->setVisibility(brls::Visibility::VISIBLE);
                     ImageLoader::loadAsync(photoUrl, [](brls::Image* image) {
                         // Photo loaded
-                    }, photoImage);
+                    }, photoImage, m_alive);
                 }
 
                 // Hide player controls for photos
@@ -518,8 +525,12 @@ void PlayerActivity::loadMedia() {
         // Get transcode URL for video/audio (forces Plex to convert to Vita-compatible format)
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, item.viewOffset)) {
-            // Free image cache memory before initializing MPV - the Vita only has 256MB
-            // and MPV needs substantial memory for video decoding buffers
+            // Cancel in-flight image loads and free cache memory before initializing MPV.
+            // The Vita only has 256MB and MPV needs substantial memory for video decoding.
+            // cancelAll() increments the generation counter so any pending brls::sync
+            // callbacks from image downloads will be safely skipped, preventing
+            // use-after-free when those callbacks try to write to destroyed views.
+            ImageLoader::cancelAll();
             ImageLoader::clearCache();
 
             MpvPlayer& player = MpvPlayer::getInstance();

@@ -9,6 +9,8 @@
 #include <borealis/core/timer.hpp>
 #include <string>
 #include <vector>
+#include <memory>
+#include <atomic>
 
 // Forward declarations
 namespace vitaplex {
@@ -65,6 +67,9 @@ private:
     bool m_loadingMedia = false;   // Flag to prevent rapid re-entry of loadMedia
     double m_pendingSeek = 0.0;    // Pending seek position (set when resuming)
     brls::RepeatingTimer m_updateTimer;
+
+    // Alive flag for async image loads - prevents use-after-free when activity is destroyed
+    std::shared_ptr<std::atomic<bool>> m_alive = std::make_shared<std::atomic<bool>>(true);
 
     BRLS_BIND(brls::Box, playerContainer, "player/container");
     BRLS_BIND(brls::Label, titleLabel, "player/title");

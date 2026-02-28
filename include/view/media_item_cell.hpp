@@ -6,6 +6,8 @@
 #pragma once
 
 #include <borealis.hpp>
+#include <memory>
+#include <atomic>
 #include "app/plex_client.hpp"
 
 namespace vitaplex {
@@ -13,6 +15,7 @@ namespace vitaplex {
 class MediaItemCell : public brls::Box {
 public:
     MediaItemCell();
+    ~MediaItemCell() override;
 
     void setItem(const MediaItem& item);
     const MediaItem& getItem() const { return m_item; }
@@ -28,6 +31,10 @@ private:
 
     MediaItem m_item;
     std::string m_originalTitle;  // Store original truncated title
+
+    // Alive flag - set to false in destructor to prevent use-after-free
+    // in async image loader callbacks
+    std::shared_ptr<std::atomic<bool>> m_alive;
 
     brls::Image* m_thumbnailImage = nullptr;
     brls::Label* m_titleLabel = nullptr;
