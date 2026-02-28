@@ -12,6 +12,7 @@
 #include <psp2/kernel/clib.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/power.h>
+#include <psp2/gxm.h>
 #include <nanovg.h>
 #include <nanovg_gxm.h>
 #include <nanovg_gxm_utils.h>
@@ -24,6 +25,22 @@
 #include <mutex>
 
 namespace vitaplex {
+
+#ifdef __vita__
+// Flush the GXM GPU pipeline to ensure it's idle before mpv uses the shared
+// GXM context. GXM is NOT thread-safe, so mpv's decoder threads and the main
+// thread's NanoVG rendering must not use the GPU concurrently.
+static void flushGxmPipeline() {
+    brls::PsvVideoContext* videoContext = dynamic_cast<brls::PsvVideoContext*>(
+        brls::Application::getPlatform()->getVideoContext());
+    if (videoContext) {
+        NVGXMwindow* gxm = videoContext->getWindow();
+        if (gxm && gxm->context) {
+            sceGxmFinish(gxm->context);
+        }
+    }
+}
+#endif
 
 // Command IDs for async operations
 static const uint64_t CMD_LOADFILE = 1;
@@ -328,6 +345,16 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
     // Format: loadfile <url> [flags]
     // Note: Per-file options (5th arg) require different format and aren't well supported
     brls::Logger::debug("MpvPlayer: Sending loadfile command...");
+
+#ifdef __vita__
+    // Flush GPU pipeline before loadfile. When mpv processes the loadfile command,
+    // it spawns decoder threads that use the shared GXM context. If NanoVG's GPU
+    // operations are still in flight, the concurrent GXM access crashes Thread 6.
+    if (m_mpvRenderCtx) {
+        flushGxmPipeline();
+    }
+#endif
+
     const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", nullptr};
     int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
     if (result < 0) {
@@ -867,6 +894,10 @@ void MpvPlayer::onRenderUpdate(void* ctx) {
             return;
         }
 
+        // Flush GPU pipeline to ensure NanoVG's previous frame is complete
+        // before mpv starts a new GXM scene on the shared context
+        flushGxmPipeline();
+
         uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
         if (flags & MPV_RENDER_UPDATE_FRAME) {
             int result = mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
@@ -874,6 +905,10 @@ void MpvPlayer::onRenderUpdate(void* ctx) {
                 brls::Logger::error("MpvPlayer: GXM render failed: {}", mpv_error_string(result));
             }
             mpv_render_context_report_swap(player->m_mpvRenderCtx);
+
+            // Flush again after mpv render so its GXM operations complete
+            // before NanoVG begins the next frame
+            flushGxmPipeline();
         }
     });
 }
@@ -935,6 +970,10 @@ bool MpvPlayer::initRenderContext() {
         {MPV_RENDER_PARAM_GXM_INIT_PARAMS, &gxm_params},
         {MPV_RENDER_PARAM_INVALID, nullptr},
     };
+
+    // Flush the GPU pipeline before sharing the GXM context with mpv.
+    // mpv's decoder threads will use this context, and GXM is not thread-safe.
+    flushGxmPipeline();
 
     // Create render context
     brls::Logger::info("MpvPlayer: Calling mpv_render_context_create...");
@@ -1025,6 +1064,9 @@ void MpvPlayer::cleanupRenderContext() {
 #ifdef __vita__
     // Signal that render is no longer ready FIRST (atomic, visible to mpv thread immediately)
     m_renderReady.store(false);
+
+    // Flush GPU pipeline before freeing GXM resources
+    flushGxmPipeline();
 
     {
         // Lock the render mutex to ensure no in-flight render callback is accessing
