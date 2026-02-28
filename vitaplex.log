@@ -1,0 +1,1074 @@
+16:00:01.025 [INFO] Log file initialized: ux0:data/VitaPlex/vitaplex.log
+16:00:01.615 [INFO] DownloadsManager: Loading saved state...
+16:00:01.616 [INFO] DownloadsManager: Initialized at ux0:data/VitaPlex/downloads
+16:00:01.616 [INFO] VitaPlex 2.0.0 initializing...
+16:00:01.617 [DEBUG] sceIoMkdir result: -0x7ffeffef
+16:00:01.618 [INFO] Loading saved settings...
+16:00:01.618 [DEBUG] loadSettings: Opening ux0:data/VitaPlex/settings.json
+16:00:01.620 [DEBUG] loadSettings: File size = 653
+16:00:01.622 [DEBUG] loadSettings: Read 653 bytes
+16:00:01.628 [INFO] loadSettings: authToken=(set), serverUrl=http://192.168.1.28:32400, username=(empty)
+16:00:01.643 [INFO] Settings loaded successfully
+16:00:01.648 [INFO] Settings load result: success
+16:00:01.653 [INFO] Applied theme: Dark
+16:00:01.659 [INFO] Debug logging enabled
+16:00:01.668 [INFO] Application::run - isLoggedIn=true, serverUrl=http://192.168.1.28:32400
+16:00:01.677 [INFO] Restoring saved session...
+16:00:01.687 [INFO] Connecting to server: http://192.168.1.28:32400
+16:00:01.700 [DEBUG] Connection timeout: 30 seconds
+16:00:01.712 [DEBUG] HTTP GET http://192.168.1.28:32400/?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:06.329 [DEBUG] HTTP response: 200 (9410 bytes)
+16:00:06.335 [INFO] Connected to: openmediavault
+16:00:06.342 [DEBUG] HTTP GET http://192.168.1.28:32400/livetv/dvrs?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:06.373 [DEBUG] HTTP response: 200 (8664 bytes)
+16:00:06.382 [INFO] Live TV availability check: available
+16:00:06.393 [INFO] Restored session and connected to server
+16:00:06.404 [DEBUG] MainActivity created
+16:00:06.415 [DEBUG] Adding an inputs block token (tokens=1)
+16:00:06.446 [DEBUG] MainActivity content available
+16:00:06.453 [DEBUG] fetchLibrarySections: serverUrl=http://192.168.1.28:32400, hasToken=true
+16:00:06.460 [DEBUG] Fetching: http://192.168.1.28:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:06.469 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:06.492 [DEBUG] HTTP response: 200 (5503 bytes)
+16:00:06.502 [DEBUG] Response: 200 - 5503 bytes
+16:00:06.513 [DEBUG] Response body: {"MediaContainer":{"size":11,"allowSync":false,"title1":"Plex Library","Directory":[{"allowSync":true,"filters":true,"refreshing":false,"key":"12","type":"movie","title":"3D Movies","agent":"tv.plex.agents.movie","scanner":"Plex Movie","language":"en-US","metadataAgentProviderGroupId":1,"uuid":"6cd2f30a-ef3d-4dac-8c8e-0404418f3ce1","updatedAt":1767703430,"createdAt":1753322285,"scannedAt":1767703375,"content":true,"directory":true,"contentChangedAt":3550580492361197975,"hidden":2,"Location":[{"i
+16:00:06.525 [DEBUG] Found section: 3D Movies (movie)
+16:00:06.530 [DEBUG] Found section: DVR Movies (movie)
+16:00:06.536 [DEBUG] Found section: Movies (movie)
+16:00:06.543 [DEBUG] Found section: DVR TV Shows (show)
+16:00:06.552 [DEBUG] Found section: TV Shows (show)
+16:00:06.561 [DEBUG] Found section: CD Music (artist)
+16:00:06.572 [DEBUG] Found section: Nick's Music (artist)
+16:00:06.583 [DEBUG] Found section: Colorized Photos (photo)
+16:00:06.594 [DEBUG] Found section: Photos (photo)
+16:00:06.600 [DEBUG] Found section: Photos 2.0 (photo)
+16:00:06.605 [DEBUG] Found section: Home Videos (movie)
+16:00:06.612 [INFO] Found 11 library sections
+16:00:06.622 [DEBUG] MainActivity: Dynamic sidebar width: 242px
+16:00:06.643 [DEBUG] MainActivity: Loading libraries to sidebar...
+16:00:06.656 [DEBUG] fetchLibrarySections: serverUrl=http://192.168.1.28:32400, hasToken=true
+16:00:06.667 [DEBUG] Fetching: http://192.168.1.28:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:06.679 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:06.696 [DEBUG] HTTP response: 200 (5503 bytes)
+16:00:06.701 [DEBUG] Response: 200 - 5503 bytes
+16:00:06.708 [DEBUG] Response body: {"MediaContainer":{"size":11,"allowSync":false,"title1":"Plex Library","Directory":[{"allowSync":true,"filters":true,"refreshing":false,"key":"12","type":"movie","title":"3D Movies","agent":"tv.plex.agents.movie","scanner":"Plex Movie","language":"en-US","metadataAgentProviderGroupId":1,"uuid":"6cd2f30a-ef3d-4dac-8c8e-0404418f3ce1","updatedAt":1767703430,"createdAt":1753322285,"scannedAt":1767703375,"content":true,"directory":true,"contentChangedAt":3550580492361197975,"hidden":2,"Location":[{"i
+16:00:06.717 [DEBUG] Found section: 3D Movies (movie)
+16:00:06.726 [DEBUG] Found section: DVR Movies (movie)
+16:00:06.736 [DEBUG] Found section: Movies (movie)
+16:00:06.747 [DEBUG] Found section: DVR TV Shows (show)
+16:00:06.759 [DEBUG] Found section: TV Shows (show)
+16:00:06.764 [DEBUG] Found section: CD Music (artist)
+16:00:06.770 [DEBUG] Found section: Nick's Music (artist)
+16:00:06.779 [DEBUG] Found section: Colorized Photos (photo)
+16:00:06.788 [DEBUG] Found section: Photos (photo)
+16:00:06.801 [DEBUG] Found section: Photos 2.0 (photo)
+16:00:06.812 [DEBUG] Found section: Home Videos (movie)
+16:00:06.821 [INFO] Found 11 library sections
+16:00:06.827 [INFO] MainActivity: Got 11 library sections
+16:00:06.836 [DEBUG] MainActivity: Hiding library: 3D Movies
+16:00:06.845 [DEBUG] MainActivity: Hiding library: DVR Movies
+16:00:06.870 [DEBUG] MainActivity: Added sidebar tab for library: Movies
+16:00:06.894 [DEBUG] MainActivity: Added sidebar tab for library: DVR TV Shows
+16:00:06.912 [DEBUG] MainActivity: Added sidebar tab for library: TV Shows
+16:00:06.917 [DEBUG] MainActivity: Hiding library: CD Music
+16:00:06.939 [DEBUG] MainActivity: Added sidebar tab for library: Nick's Music
+16:00:06.948 [DEBUG] MainActivity: Hiding library: Colorized Photos
+16:00:06.960 [DEBUG] MainActivity: Hiding library: Photos
+16:00:06.972 [DEBUG] MainActivity: Hiding library: Photos 2.0
+16:00:06.981 [DEBUG] MainActivity: Hiding library: Home Videos
+16:00:07.136 [DEBUG] HomeTab: Loading content...
+16:00:07.145 [DEBUG] HomeTab::loadContent - Starting async load
+16:00:07.154 [DEBUG] HomeTab: Fetching continue watching (async)...
+16:00:07.155 [DEBUG] HomeTab: Fetching library sections for recently added...
+16:00:07.155 [DEBUG] HomeTab: Async content loading started
+16:00:07.166 [DEBUG] fetchContinueWatching: serverUrl=http://192.168.1.28:32400
+16:00:07.178 [DEBUG] fetchLibrarySections: serverUrl=http://192.168.1.28:32400, hasToken=true
+16:00:07.193 [DEBUG] HTTP GET http://192.168.1.28:32400/hubs/continueWatching?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:07.202 [DEBUG] Fetching: http://192.168.1.28:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:07.205 [DEBUG] Giving focus to brls::SidebarItem
+16:00:07.223 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:07.235 [DEBUG] Hiding brls::Box
+16:00:07.249 [DEBUG] push activity to the stack
+16:00:07.258 [DEBUG] Showing brls::Box
+16:00:07.302 [DEBUG] HTTP response: 200 (5503 bytes)
+16:00:07.313 [DEBUG] Response: 200 - 5503 bytes
+16:00:07.324 [DEBUG] Response body: {"MediaContainer":{"size":11,"allowSync":false,"title1":"Plex Library","Directory":[{"allowSync":true,"filters":true,"refreshing":false,"key":"12","type":"movie","title":"3D Movies","agent":"tv.plex.agents.movie","scanner":"Plex Movie","language":"en-US","metadataAgentProviderGroupId":1,"uuid":"6cd2f30a-ef3d-4dac-8c8e-0404418f3ce1","updatedAt":1767703430,"createdAt":1753322285,"scannedAt":1767703375,"content":true,"directory":true,"contentChangedAt":3550580492361197975,"hidden":2,"Location":[{"i
+16:00:07.333 [DEBUG] Found section: 3D Movies (movie)
+16:00:07.339 [DEBUG] Found section: DVR Movies (movie)
+16:00:07.348 [DEBUG] Found section: Movies (movie)
+16:00:07.357 [DEBUG] Found section: DVR TV Shows (show)
+16:00:07.370 [DEBUG] Found section: TV Shows (show)
+16:00:07.374 [DEBUG] HTTP response: 200 (16502 bytes)
+16:00:07.381 [DEBUG] Found section: CD Music (artist)
+16:00:07.390 [DEBUG] ContinueWatching response: 200 - 16502 bytes
+16:00:07.396 [DEBUG] Found section: Nick's Music (artist)
+16:00:07.409 [INFO] Found 3 continue watching items
+16:00:07.414 [DEBUG] Found section: Colorized Photos (photo)
+16:00:07.426 [INFO] HomeTab: Got 3 continue watching items
+16:00:07.437 [DEBUG] Found section: Photos (photo)
+16:00:07.452 [DEBUG] Found section: Photos 2.0 (photo)
+16:00:07.461 [DEBUG] Found section: Home Videos (movie)
+16:00:07.470 [INFO] Found 11 library sections
+16:00:07.482 [DEBUG] HomeTab: Skipping hidden library: 3D Movies
+16:00:07.493 [DEBUG] HomeTab: Skipping hidden library: DVR Movies
+16:00:07.502 [DEBUG] fetchSectionRecentlyAdded: section=2
+16:00:07.508 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections/2/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:07.527 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16681%2Fthumb%2F1770800250&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:07.537 [DEBUG] Removing an inputs block token (tokens=0)
+16:00:07.692 [DEBUG] HTTP response: 200 (236122 bytes)
+16:00:07.702 [DEBUG] RecentlyAdded response: 200 - 236122 bytes
+16:00:07.713 [DEBUG] HTTP response: 200 (23324 bytes)
+16:00:07.723 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3899%2Fthumb%2F1770887034&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:07.810 [INFO] Found 100 recently added items in section 2
+16:00:07.822 [DEBUG] fetchSectionRecentlyAdded: section=6
+16:00:07.829 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections/6/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:07.864 [DEBUG] HTTP response: 200 (14419 bytes)
+16:00:07.874 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16795%2Fthumb%2F1762824101&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:07.997 [DEBUG] HTTP response: 200 (238916 bytes)
+16:00:07.998 [DEBUG] HTTP response: 200 (20764 bytes)
+16:00:08.009 [DEBUG] RecentlyAdded response: 200 - 238916 bytes
+16:00:08.100 [INFO] Found 100 recently added items in section 6
+16:00:08.110 [DEBUG] fetchSectionRecentlyAdded: section=3
+16:00:08.121 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections/3/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:08.710 [DEBUG] HTTP response: 200 (276510 bytes)
+16:00:08.716 [DEBUG] RecentlyAdded response: 200 - 276510 bytes
+16:00:08.804 [INFO] Found 100 recently added items in section 3
+16:00:08.814 [DEBUG] HomeTab: Skipping hidden library: CD Music
+16:00:08.825 [DEBUG] fetchSectionRecentlyAdded: section=4
+16:00:08.837 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections/4/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:08.927 [DEBUG] HTTP response: 200 (50407 bytes)
+16:00:08.936 [DEBUG] RecentlyAdded response: 200 - 50407 bytes
+16:00:08.963 [INFO] Found 25 recently added items in section 4
+16:00:08.975 [DEBUG] HomeTab: Skipping hidden library: Colorized Photos
+16:00:08.985 [DEBUG] HomeTab: Skipping hidden library: Photos
+16:00:08.991 [DEBUG] HomeTab: Skipping hidden library: Photos 2.0
+16:00:09.000 [DEBUG] HomeTab: Skipping hidden library: Home Videos
+16:00:09.010 [INFO] HomeTab: Got 20 movies, 20 shows, 20 music items
+16:00:09.521 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F17001%2Fthumb%2F1770019456&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:09.676 [DEBUG] HTTP response: 200 (20789 bytes)
+16:00:09.683 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16679%2Fthumb%2F1770800250&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:09.903 [DEBUG] HTTP response: 200 (17076 bytes)
+16:00:09.915 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16676%2Fthumb%2F1770800249&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:10.020 [DEBUG] HTTP response: 200 (18908 bytes)
+16:00:10.027 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16660%2Fthumb%2F1768118446&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:10.151 [DEBUG] HTTP response: 200 (19479 bytes)
+16:00:10.162 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16022%2Fthumb%2F1770371025&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:10.429 [DEBUG] HTTP response: 200 (16535 bytes)
+16:00:10.442 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15620%2Fthumb%2F1770800248&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:10.752 [DEBUG] HTTP response: 200 (13790 bytes)
+16:00:10.760 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15610%2Fthumb%2F1768208687&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:10.852 [DEBUG] HTTP response: 200 (14982 bytes)
+16:00:10.865 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1640%2Fthumb%2F1771140667&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:10.937 [DEBUG] HTTP response: 200 (19225 bytes)
+16:00:10.944 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2384%2Fthumb%2F1770800237&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:11.034 [DEBUG] HTTP response: 200 (27301 bytes)
+16:00:11.047 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2385%2Fthumb%2F1770800237&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:11.184 [DEBUG] HTTP response: 200 (19385 bytes)
+16:00:11.192 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2348%2Fthumb%2F1770800235&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:11.312 [DEBUG] HTTP response: 200 (16074 bytes)
+16:00:11.324 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2859%2Fthumb%2F1770887021&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:11.437 [DEBUG] HTTP response: 200 (13467 bytes)
+16:00:11.444 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1300%2Fthumb%2F1770887011&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:11.650 [DEBUG] HTTP response: 200 (18707 bytes)
+16:00:11.662 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F23%2Fthumb%2F1770800215&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:11.765 [DEBUG] HTTP response: 200 (22517 bytes)
+16:00:12.273 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1961%2Fthumb%2F1771234283&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:12.509 [DEBUG] HTTP response: 200 (17550 bytes)
+16:00:12.521 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2536%2Fthumb%2F1770800243&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:12.664 [DEBUG] HTTP response: 200 (20841 bytes)
+16:00:12.672 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F190%2Fthumb%2F1771579528&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:12.837 [DEBUG] HTTP response: 200 (24444 bytes)
+16:00:12.850 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2960%2Fthumb%2F1770887028&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:13.181 [DEBUG] HTTP response: 200 (24192 bytes)
+16:00:13.189 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1949%2Fthumb%2F1771234281&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:13.517 [DEBUG] HTTP response: 200 (22975 bytes)
+16:00:13.530 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:13.723 [DEBUG] HTTP response: 200 (22158 bytes)
+16:00:13.730 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:13.755 [DEBUG] HTTP response: 200 (22158 bytes)
+16:00:13.768 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15590%2Fthumb%2F1751591089&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:14.281 [DEBUG] HTTP response: 200 (17350 bytes)
+16:00:14.289 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:14.344 [DEBUG] HTTP response: 200 (22158 bytes)
+16:00:14.357 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:14.384 [DEBUG] HTTP response: 200 (22158 bytes)
+16:00:14.394 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:14.451 [DEBUG] HTTP response: 200 (22158 bytes)
+16:00:14.463 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:14.487 [DEBUG] HTTP response: 200 (22158 bytes)
+16:00:14.498 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15590%2Fthumb%2F1751591089&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:14.522 [DEBUG] HTTP response: 200 (17350 bytes)
+16:00:14.529 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:14.551 [DEBUG] HTTP response: 200 (22158 bytes)
+16:00:14.564 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:14.605 [DEBUG] HTTP response: 200 (22158 bytes)
+16:00:14.614 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F17256%2Fthumb%2F1768867651&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:14.749 [DEBUG] HTTP response: 200 (15340 bytes)
+16:00:14.762 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15590%2Fthumb%2F1751591089&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:14.788 [DEBUG] HTTP response: 200 (17350 bytes)
+16:00:14.798 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:14.826 [DEBUG] HTTP response: 200 (22158 bytes)
+16:00:14.833 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:14.855 [DEBUG] HTTP response: 200 (22158 bytes)
+16:00:14.867 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:14.897 [DEBUG] HTTP response: 200 (22158 bytes)
+16:00:14.905 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:14.926 [DEBUG] HTTP response: 200 (22158 bytes)
+16:00:14.940 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:14.971 [DEBUG] HTTP response: 200 (22158 bytes)
+16:00:14.982 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:15.060 [DEBUG] HTTP response: 200 (22158 bytes)
+16:00:15.072 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:15.148 [DEBUG] HTTP response: 200 (22158 bytes)
+16:00:15.159 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:15.303 [DEBUG] HTTP response: 200 (22158 bytes)
+16:00:15.311 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F17088%2Fthumb%2F1766776492&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:15.466 [DEBUG] HTTP response: 200 (15940 bytes)
+16:00:15.480 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16920%2Fthumb%2F1764562211&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:15.547 [DEBUG] HTTP response: 200 (8111 bytes)
+16:00:15.558 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16017%2Fthumb%2F1765270453&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:15.664 [DEBUG] HTTP response: 200 (10886 bytes)
+16:00:15.672 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15864%2Fthumb%2F1764582343&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:15.749 [DEBUG] HTTP response: 200 (6376 bytes)
+16:00:15.761 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15815%2Fthumb%2F1769590304&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:15.855 [DEBUG] HTTP response: 200 (94970 bytes)
+16:00:15.869 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15755%2Fthumb%2F1768900927&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:15.948 [DEBUG] HTTP response: 200 (9548 bytes)
+16:00:15.955 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15453%2Fthumb%2F1740819387&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:16.020 [DEBUG] HTTP response: 200 (11283 bytes)
+16:00:16.033 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15425%2Fthumb%2F1762937433&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:16.113 [DEBUG] HTTP response: 200 (13112 bytes)
+16:00:16.123 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F14714%2Fthumb%2F1738135656&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:16.919 [DEBUG] HTTP response: 200 (133358 bytes)
+16:00:16.932 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F13076%2Fthumb%2F1770198221&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:17.482 [DEBUG] HTTP response: 200 (15974 bytes)
+16:00:17.496 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F13068%2Fthumb%2F1763715500&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:17.576 [DEBUG] HTTP response: 200 (15676 bytes)
+16:00:17.587 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F13067%2Fthumb%2F1734491189&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:17.681 [DEBUG] HTTP response: 200 (45923 bytes)
+16:00:17.691 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F13042%2Fthumb%2F1754814868&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:17.799 [DEBUG] HTTP response: 200 (80208 bytes)
+16:00:17.816 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F8631%2Fthumb%2F1763370875&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:17.902 [DEBUG] HTTP response: 200 (11261 bytes)
+16:00:17.913 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F8254%2Fthumb%2F1764582204&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:18.094 [DEBUG] HTTP response: 200 (6207 bytes)
+16:00:18.101 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F8232%2Fthumb%2F1763976532&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:18.238 [DEBUG] HTTP response: 200 (13810 bytes)
+16:00:18.252 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F8214%2Fthumb%2F1764582210&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:18.723 [DEBUG] HTTP response: 200 (10653 bytes)
+16:00:18.735 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F8193%2Fthumb%2F1764582230&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:18.810 [DEBUG] HTTP response: 200 (13051 bytes)
+16:00:18.821 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F8175%2Fthumb%2F1763976640&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:18.907 [DEBUG] HTTP response: 200 (9960 bytes)
+16:00:18.914 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F8160%2Fthumb%2F1734486316&width=220&height=220&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:18.988 [DEBUG] HTTP response: 200 (16790 bytes)
+16:00:22.639 [DEBUG] Giving focus to vitaplex::MediaItemCell
+16:00:25.575 [DEBUG] Giving focus to vitaplex::MediaItemCell
+16:00:25.996 [DEBUG] Giving focus to vitaplex::MediaItemCell
+16:00:26.261 [DEBUG] Giving focus to vitaplex::MediaItemCell
+16:00:26.552 [DEBUG] Giving focus to vitaplex::MediaItemCell
+16:00:27.296 [DEBUG] Giving focus to vitaplex::MediaItemCell
+16:00:27.760 [DEBUG] Giving focus to vitaplex::MediaItemCell
+16:00:28.092 [DEBUG] Giving focus to vitaplex::MediaItemCell
+16:00:30.557 [DEBUG] Giving focus to brls::SidebarItem
+16:00:31.799 [DEBUG] LibrarySectionTab: Created for section 2 (Movies) type=
+16:00:31.810 [DEBUG] LibrarySectionTab::loadContent - section: 2 (async)
+16:00:31.820 [DEBUG] fetchLibraryContent: section=2
+16:00:31.820 [DEBUG] Fetching collections for section: 2
+16:00:31.820 [DEBUG] Fetching genre items for section: 2
+16:00:31.829 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections/2/all?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:31.836 [DEBUG] Giving focus to brls::SidebarItem
+16:00:31.842 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections/2/all?type=18&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:31.852 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections/2/genre?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:31.954 [DEBUG] HTTP response: 200 (425 bytes)
+16:00:31.960 [INFO] Found 0 collections for section 2
+16:00:31.973 [INFO] LibrarySectionTab: Got 0 collections for section 2
+16:00:31.993 [DEBUG] HTTP response: 200 (2981 bytes)
+16:00:32.002 [INFO] Found 28 genre items for section 2
+16:00:32.013 [INFO] LibrarySectionTab: Got 28 genres for section 2
+16:00:32.697 [DEBUG] HTTP response: 200 (871992 bytes)
+16:00:32.704 [DEBUG] Response: 200 - 871992 bytes
+16:00:32.929 [INFO] Found 376 items in library section 2
+16:00:32.935 [INFO] LibrarySectionTab: Got 376 items for section 2
+16:00:33.008 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F22%2Fthumb%2F1770798675&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:33.150 [DEBUG] HTTP response: 200 (20954 bytes)
+16:00:33.700 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2425%2Fthumb%2F1770800238&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:33.769 [DEBUG] HTTP response: 200 (18251 bytes)
+16:00:33.783 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F27%2Fthumb%2F1770800215&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:33.891 [DEBUG] HTTP response: 200 (9930 bytes)
+16:00:33.903 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2980%2Fthumb%2F1770887029&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:33.997 [DEBUG] HTTP response: 200 (25702 bytes)
+16:00:34.114 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F24%2Fthumb%2F1768118411&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:34.515 [DEBUG] HTTP response: 200 (17912 bytes)
+16:00:34.523 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F89%2Fthumb%2F1771579523&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:34.638 [DEBUG] HTTP response: 200 (25802 bytes)
+16:00:34.647 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F94%2Fthumb%2F1771579523&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:34.782 [DEBUG] HTTP response: 200 (20401 bytes)
+16:00:34.796 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F91%2Fthumb%2F1771579523&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:34.892 [DEBUG] HTTP response: 200 (25867 bytes)
+16:00:34.906 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F98%2Fthumb%2F1768900975&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:34.998 [DEBUG] HTTP response: 200 (9093 bytes)
+16:00:35.009 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F73%2Fthumb%2F1771579522&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:35.095 [DEBUG] HTTP response: 200 (21078 bytes)
+16:00:35.218 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F102%2Fthumb%2F1771579525&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:35.327 [DEBUG] HTTP response: 200 (32511 bytes)
+16:00:35.336 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F100%2Fthumb%2F1771579524&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:35.400 [DEBUG] HTTP response: 200 (19999 bytes)
+16:00:35.408 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F104%2Fthumb%2F1771579525&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:35.498 [DEBUG] HTTP response: 200 (20383 bytes)
+16:00:36.013 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F109%2Fthumb%2F1768900977&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:36.113 [DEBUG] HTTP response: 200 (13614 bytes)
+16:00:36.127 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F126%2Fthumb%2F1771579526&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:36.191 [DEBUG] HTTP response: 200 (17517 bytes)
+16:00:36.203 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F155%2Fthumb%2F1771579526&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:36.335 [DEBUG] HTTP response: 200 (23132 bytes)
+16:00:36.346 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F156%2Fthumb%2F1768900978&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:36.534 [DEBUG] HTTP response: 200 (24423 bytes)
+16:00:36.542 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F184%2Fthumb%2F1771579527&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:36.732 [DEBUG] HTTP response: 200 (17382 bytes)
+16:00:36.740 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F200%2Fthumb%2F1758175387&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:36.797 [DEBUG] HTTP response: 200 (25901 bytes)
+16:00:36.799 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F97%2Fthumb%2F1771579524&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:36.949 [DEBUG] HTTP response: 200 (19309 bytes)
+16:00:37.039 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F872%2Fthumb%2F1770887004&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:37.141 [DEBUG] HTTP response: 200 (23548 bytes)
+16:00:37.151 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F84%2Fthumb%2F1771579522&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:37.252 [DEBUG] HTTP response: 200 (19567 bytes)
+16:00:37.265 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F185%2Fthumb%2F1768900979&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:37.802 [DEBUG] HTTP response: 200 (19696 bytes)
+16:00:37.809 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F199%2Fthumb%2F1771579528&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:37.911 [DEBUG] HTTP response: 200 (27224 bytes)
+16:00:37.921 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F28%2Fthumb%2F1771579521&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:38.060 [DEBUG] HTTP response: 200 (20848 bytes)
+16:00:38.072 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F468%2Fthumb%2F1768118423&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:38.375 [DEBUG] HTTP response: 200 (21695 bytes)
+16:00:38.388 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F238%2Fthumb%2F1770800216&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:38.518 [DEBUG] HTTP response: 200 (21257 bytes)
+16:00:38.524 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F250%2Fthumb%2F1770800217&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:38.616 [DEBUG] HTTP response: 200 (15429 bytes)
+16:00:38.625 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F248%2Fthumb%2F1770800216&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:38.736 [DEBUG] HTTP response: 200 (23259 bytes)
+16:00:38.748 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F321%2Fthumb%2F1770800222&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:38.893 [DEBUG] HTTP response: 200 (12007 bytes)
+16:00:38.971 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F254%2Fthumb%2F1768118414&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:39.398 [DEBUG] HTTP response: 200 (23066 bytes)
+16:00:39.405 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F555%2Fthumb%2F1770886997&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:39.470 [DEBUG] HTTP response: 200 (23935 bytes)
+16:00:39.480 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F266%2Fthumb%2F1770800218&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:39.633 [DEBUG] HTTP response: 200 (17995 bytes)
+16:00:39.645 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F279%2Fthumb%2F1770800219&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:39.733 [DEBUG] HTTP response: 200 (19657 bytes)
+16:00:39.746 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F317%2Fthumb%2F1770800221&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:39.809 [DEBUG] HTTP response: 200 (24397 bytes)
+16:00:39.816 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F255%2Fthumb%2F1770800217&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:39.916 [DEBUG] HTTP response: 200 (18804 bytes)
+16:00:39.938 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F264%2Fthumb%2F1770800218&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:40.633 [DEBUG] HTTP response: 200 (20021 bytes)
+16:00:40.646 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F267%2Fthumb%2F1768118415&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:41.674 [DEBUG] HTTP response: 200 (17794 bytes)
+16:00:41.681 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F268%2Fthumb%2F1770800219&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:41.788 [DEBUG] HTTP response: 200 (19473 bytes)
+16:00:41.798 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F275%2Fthumb%2F1770800219&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:41.862 [DEBUG] HTTP response: 200 (17356 bytes)
+16:00:41.875 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F276%2Fthumb%2F1770800219&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:41.963 [DEBUG] HTTP response: 200 (23743 bytes)
+16:00:41.970 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F298%2Fthumb%2F1770800220&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:42.052 [DEBUG] HTTP response: 200 (26014 bytes)
+16:00:42.143 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F308%2Fthumb%2F1770800220&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:42.211 [DEBUG] HTTP response: 200 (18415 bytes)
+16:00:42.224 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F299%2Fthumb%2F1770800220&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:42.361 [DEBUG] HTTP response: 200 (24490 bytes)
+16:00:42.368 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F311%2Fthumb%2F1770800221&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:42.470 [DEBUG] HTTP response: 200 (19597 bytes)
+16:00:42.480 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F315%2Fthumb%2F1768118418&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:42.571 [DEBUG] HTTP response: 200 (21062 bytes)
+16:00:42.584 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F554%2Fthumb%2F1770886997&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:42.662 [DEBUG] HTTP response: 200 (21044 bytes)
+16:00:42.669 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F215%2Fthumb%2F1770800216&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:42.808 [DEBUG] HTTP response: 200 (19688 bytes)
+16:00:42.818 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F322%2Fthumb%2F1736452854&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:42.875 [DEBUG] HTTP response: 200 (19425 bytes)
+16:00:42.887 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2426%2Fthumb%2F1770800239&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:42.987 [DEBUG] HTTP response: 200 (18369 bytes)
+16:00:42.994 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F326%2Fthumb%2F1770800222&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:43.088 [DEBUG] HTTP response: 200 (20479 bytes)
+16:00:43.098 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F328%2Fthumb%2F1770800222&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:43.188 [DEBUG] HTTP response: 200 (21792 bytes)
+16:00:43.217 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F350%2Fthumb%2F1770800223&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:43.328 [DEBUG] HTTP response: 200 (22906 bytes)
+16:00:43.335 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F372%2Fthumb%2F1770800224&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:43.416 [DEBUG] HTTP response: 200 (16315 bytes)
+16:00:43.427 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F351%2Fthumb%2F1770800223&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:43.566 [DEBUG] HTTP response: 200 (16208 bytes)
+16:00:43.572 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F383%2Fthumb%2F1768118420&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:43.745 [DEBUG] HTTP response: 200 (17067 bytes)
+16:00:43.755 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F237%2Fthumb%2F1768118412&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:43.824 [DEBUG] HTTP response: 200 (11044 bytes)
+16:00:43.837 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F397%2Fthumb%2F1770800224&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:43.929 [DEBUG] HTTP response: 200 (13483 bytes)
+16:00:43.936 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F398%2Fthumb%2F1765523463&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:44.241 [DEBUG] HTTP response: 200 (15861 bytes)
+16:00:44.253 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F416%2Fthumb%2F1770800225&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:44.320 [DEBUG] HTTP response: 200 (14383 bytes)
+16:00:44.326 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F417%2Fthumb%2F1770800226&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:44.415 [DEBUG] HTTP response: 200 (15248 bytes)
+16:00:44.425 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15641%2Fthumb%2F1753322038&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:44.512 [DEBUG] HTTP response: 200 (12584 bytes)
+16:00:44.525 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F420%2Fthumb%2F1770800226&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:44.608 [DEBUG] HTTP response: 200 (18809 bytes)
+16:00:44.618 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2433%2Fthumb%2F1770800239&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:44.723 [DEBUG] HTTP response: 200 (27044 bytes)
+16:00:44.736 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2427%2Fthumb%2F1765523477&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:44.858 [DEBUG] HTTP response: 200 (18516 bytes)
+16:00:44.865 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2988%2Fthumb%2F1768208684&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:44.966 [DEBUG] HTTP response: 200 (22942 bytes)
+16:00:44.977 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F455%2Fthumb%2F1765523465&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:45.103 [DEBUG] HTTP response: 200 (25522 bytes)
+16:00:45.111 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F454%2Fthumb%2F1765523464&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:45.191 [DEBUG] HTTP response: 200 (27036 bytes)
+16:00:45.202 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F508%2Fthumb%2F1770800229&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:45.293 [DEBUG] HTTP response: 200 (25362 bytes)
+16:00:45.306 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2314%2Fthumb%2F1768118428&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:45.429 [DEBUG] HTTP response: 200 (21500 bytes)
+16:00:45.440 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F495%2Fthumb%2F1768118424&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:45.538 [DEBUG] HTTP response: 200 (16946 bytes)
+16:00:45.551 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F509%2Fthumb%2F1770800229&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:45.681 [DEBUG] HTTP response: 200 (24509 bytes)
+16:00:45.692 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F512%2Fthumb%2F1768118425&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:45.876 [DEBUG] HTTP response: 200 (21898 bytes)
+16:00:45.889 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1808%2Fthumb%2F1768293598&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:46.059 [DEBUG] HTTP response: 200 (22366 bytes)
+16:00:46.069 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F496%2Fthumb%2F1770800228&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:46.160 [DEBUG] HTTP response: 200 (22484 bytes)
+16:00:46.173 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F515%2Fthumb%2F1770800230&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:46.471 [DEBUG] HTTP response: 200 (24615 bytes)
+16:00:46.482 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F517%2Fthumb%2F1770800230&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:46.718 [DEBUG] HTTP response: 200 (18510 bytes)
+16:00:46.732 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F526%2Fthumb%2F1768118426&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:47.327 [DEBUG] HTTP response: 200 (19141 bytes)
+16:00:47.840 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F532%2Fthumb%2F1770800231&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:47.925 [DEBUG] HTTP response: 200 (22972 bytes)
+16:00:47.939 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F534%2Fthumb%2F1770800231&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:47.991 [DEBUG] HTTP response: 200 (12402 bytes)
+16:00:48.001 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3023%2Fthumb%2F1770887029&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:48.112 [DEBUG] HTTP response: 200 (29961 bytes)
+16:00:48.126 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F498%2Fthumb%2F1768118424&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:48.215 [DEBUG] HTTP response: 200 (24088 bytes)
+16:00:48.226 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F594%2Fthumb%2F1770886999&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:48.313 [DEBUG] HTTP response: 200 (21110 bytes)
+16:00:48.327 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F588%2Fthumb%2F1770886999&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:48.438 [DEBUG] HTTP response: 200 (22716 bytes)
+16:00:48.448 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2435%2Fthumb%2F1770800240&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:48.556 [DEBUG] HTTP response: 200 (15208 bytes)
+16:00:48.562 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2434%2Fthumb%2F1770800240&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:48.720 [DEBUG] HTTP response: 200 (17564 bytes)
+16:00:48.731 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F595%2Fthumb%2F1770887000&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:48.823 [DEBUG] HTTP response: 200 (19062 bytes)
+16:00:48.831 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F561%2Fthumb%2F1757659960&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:49.218 [DEBUG] HTTP response: 200 (19868 bytes)
+16:00:49.231 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F640%2Fthumb%2F1770887000&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:49.368 [DEBUG] HTTP response: 200 (15760 bytes)
+16:00:49.378 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F609%2Fthumb%2F1770887000&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:49.439 [DEBUG] HTTP response: 200 (16491 bytes)
+16:00:49.453 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F718%2Fthumb%2F1770887002&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:49.539 [DEBUG] HTTP response: 200 (16770 bytes)
+16:00:49.549 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F693%2Fthumb%2F1770887001&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:49.635 [DEBUG] HTTP response: 200 (15062 bytes)
+16:00:49.643 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F663%2Fthumb%2F1770887001&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:49.740 [DEBUG] HTTP response: 200 (20314 bytes)
+16:00:49.753 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F666%2Fthumb%2F1770887001&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:49.894 [DEBUG] HTTP response: 200 (16921 bytes)
+16:00:49.902 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F585%2Fthumb%2F1770886998&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:50.049 [DEBUG] HTTP response: 200 (15410 bytes)
+16:00:50.062 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F720%2Fthumb%2F1770887002&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:50.190 [DEBUG] HTTP response: 200 (19406 bytes)
+16:00:50.201 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2467%2Fthumb%2F1768118438&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:50.291 [DEBUG] HTTP response: 200 (20238 bytes)
+16:00:50.298 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F721%2Fthumb%2F1770887003&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:50.560 [DEBUG] HTTP response: 200 (18434 bytes)
+16:00:50.571 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F723%2Fthumb%2F1770887003&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:50.662 [DEBUG] HTTP response: 200 (10114 bytes)
+16:00:50.669 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2315%2Fthumb%2F1770800233&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:50.755 [DEBUG] HTTP response: 200 (19507 bytes)
+16:00:50.777 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F725%2Fthumb%2F1768293586&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:50.861 [DEBUG] HTTP response: 200 (18908 bytes)
+16:00:50.871 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F724%2Fthumb%2F1770887003&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:51.027 [DEBUG] HTTP response: 200 (18112 bytes)
+16:00:51.035 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F726%2Fthumb%2F1770887004&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:51.132 [DEBUG] HTTP response: 200 (17780 bytes)
+16:00:51.145 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2468%2Fthumb%2F1768118438&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:51.212 [DEBUG] HTTP response: 200 (15367 bytes)
+16:00:51.223 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F751%2Fthumb%2F1770623355&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:51.347 [DEBUG] HTTP response: 200 (17518 bytes)
+16:00:51.354 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F867%2Fthumb%2F1770623358&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:51.488 [DEBUG] HTTP response: 200 (15516 bytes)
+16:00:51.501 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F752%2Fthumb%2F1770623356&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:51.615 [DEBUG] HTTP response: 200 (15579 bytes)
+16:00:51.626 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F765%2Fthumb%2F1767952650&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:51.696 [DEBUG] HTTP response: 200 (14429 bytes)
+16:00:51.703 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F766%2Fthumb%2F1770623356&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:51.787 [DEBUG] HTTP response: 200 (19693 bytes)
+16:00:51.801 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F767%2Fthumb%2F1736455787&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:51.855 [DEBUG] HTTP response: 200 (13502 bytes)
+16:00:51.865 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F780%2Fthumb%2F1768636407&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:51.951 [DEBUG] HTTP response: 200 (21782 bytes)
+16:00:51.959 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F813%2Fthumb%2F1770623357&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:52.050 [DEBUG] HTTP response: 200 (14307 bytes)
+16:00:52.057 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F815%2Fthumb%2F1770623357&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:52.232 [DEBUG] HTTP response: 200 (25528 bytes)
+16:00:52.246 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F824%2Fthumb%2F1770623357&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:52.337 [DEBUG] HTTP response: 200 (21080 bytes)
+16:00:52.348 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F848%2Fthumb%2F1770623358&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:52.509 [DEBUG] HTTP response: 200 (16714 bytes)
+16:00:52.516 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F866%2Fthumb%2F1770623358&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:52.702 [DEBUG] HTTP response: 200 (19443 bytes)
+16:00:52.716 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2316%2Fthumb%2F1770800233&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:52.783 [DEBUG] HTTP response: 200 (19817 bytes)
+16:00:52.794 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F888%2Fthumb%2F1770887005&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:53.049 [DEBUG] HTTP response: 200 (32175 bytes)
+16:00:53.058 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F922%2Fthumb%2F1770887006&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:53.220 [DEBUG] HTTP response: 200 (26896 bytes)
+16:00:53.228 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F923%2Fthumb%2F1770887006&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:53.347 [DEBUG] HTTP response: 200 (25516 bytes)
+16:00:53.361 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F903%2Fthumb%2F1768208672&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:53.452 [DEBUG] HTTP response: 200 (19947 bytes)
+16:00:53.463 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F920%2Fthumb%2F1768208672&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:53.631 [DEBUG] HTTP response: 200 (26940 bytes)
+16:00:53.639 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F967%2Fthumb%2F1770800232&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:53.776 [DEBUG] HTTP response: 200 (21915 bytes)
+16:00:53.784 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2533%2Fthumb%2F1770800242&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:53.905 [DEBUG] HTTP response: 200 (14222 bytes)
+16:00:53.918 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2530%2Fthumb%2F1770800241&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:54.071 [DEBUG] HTTP response: 200 (14240 bytes)
+16:00:54.081 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2532%2Fthumb%2F1770800242&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:54.179 [DEBUG] HTTP response: 200 (16432 bytes)
+16:00:54.187 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F968%2Fthumb%2F1770887006&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:54.757 [DEBUG] HTTP response: 200 (22178 bytes)
+16:00:54.765 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F886%2Fthumb%2F1736455790&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:54.831 [DEBUG] HTTP response: 200 (26953 bytes)
+16:00:54.845 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F969%2Fthumb%2F1770887007&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:54.996 [DEBUG] HTTP response: 200 (21141 bytes)
+16:00:55.007 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F971%2Fthumb%2F1770887007&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:55.076 [DEBUG] HTTP response: 200 (13087 bytes)
+16:00:55.084 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F972%2Fthumb%2F1770887008&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:55.139 [DEBUG] HTTP response: 200 (19527 bytes)
+16:00:55.147 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F997%2Fthumb%2F1770887008&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:55.222 [DEBUG] HTTP response: 200 (18652 bytes)
+16:00:55.235 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F998%2Fthumb%2F1770019436&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:55.469 [DEBUG] HTTP response: 200 (17706 bytes)
+16:00:55.481 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1021%2Fthumb%2F1770019436&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:55.651 [DEBUG] HTTP response: 200 (18712 bytes)
+16:00:55.656 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1053%2Fthumb%2F1770019436&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:55.781 [DEBUG] HTTP response: 200 (23152 bytes)
+16:00:55.790 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1054%2Fthumb%2F1770019437&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:55.853 [DEBUG] HTTP response: 200 (16575 bytes)
+16:00:55.860 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1133%2Fthumb%2F1770019439&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:55.999 [DEBUG] HTTP response: 200 (20862 bytes)
+16:00:56.013 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1079%2Fthumb%2F1770019437&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:56.160 [DEBUG] HTTP response: 200 (21069 bytes)
+16:00:56.174 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1112%2Fthumb%2F1767348010&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:56.344 [DEBUG] HTTP response: 200 (24230 bytes)
+16:00:56.356 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1080%2Fthumb%2F1767348009&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:56.635 [DEBUG] HTTP response: 200 (21668 bytes)
+16:00:56.646 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1089%2Fthumb%2F1770019438&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:56.844 [DEBUG] HTTP response: 200 (22363 bytes)
+16:00:56.852 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1086%2Fthumb%2F1770019438&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:57.110 [DEBUG] HTTP response: 200 (22363 bytes)
+16:00:57.118 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1211%2Fthumb%2F1770019442&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:57.278 [DEBUG] HTTP response: 200 (22215 bytes)
+16:00:57.292 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1209%2Fthumb%2F1767348013&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:58.689 [DEBUG] HTTP response: 200 (18410 bytes)
+16:00:58.702 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2535%2Fthumb%2F1770800242&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:58.780 [DEBUG] HTTP response: 200 (26812 bytes)
+16:00:58.792 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1134%2Fthumb%2F1770019439&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:58.855 [DEBUG] HTTP response: 200 (23347 bytes)
+16:00:58.857 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1150%2Fthumb%2F1767348011&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:58.928 [DEBUG] HTTP response: 200 (20968 bytes)
+16:00:58.930 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1151%2Fthumb%2F1770019440&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:59.059 [DEBUG] HTTP response: 200 (18125 bytes)
+16:00:59.067 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2580%2Fthumb%2F1765523483&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:59.480 [DEBUG] HTTP response: 200 (20755 bytes)
+16:00:59.490 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2577%2Fthumb%2F1770800243&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:59.779 [DEBUG] HTTP response: 200 (20231 bytes)
+16:00:59.792 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2579%2Fthumb%2F1768118441&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:00:59.918 [DEBUG] HTTP response: 200 (17536 bytes)
+16:00:59.925 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1175%2Fthumb%2F1767348012&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:00.016 [DEBUG] HTTP response: 200 (16317 bytes)
+16:01:00.025 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1176%2Fthumb%2F1770019440&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:00.082 [DEBUG] HTTP response: 200 (13892 bytes)
+16:01:00.093 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F722%2Fthumb%2F1770887003&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:00.596 [DEBUG] HTTP response: 200 (22254 bytes)
+16:01:00.609 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1202%2Fthumb%2F1770019441&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:00.696 [DEBUG] HTTP response: 200 (17863 bytes)
+16:01:00.703 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2640%2Fthumb%2F1770800245&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:00.831 [DEBUG] HTTP response: 200 (24043 bytes)
+16:01:00.841 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2602%2Fthumb%2F1768118441&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:00.905 [DEBUG] HTTP response: 200 (20079 bytes)
+16:01:00.917 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F13077%2Fthumb%2F1768208687&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:00.993 [DEBUG] HTTP response: 200 (15331 bytes)
+16:01:01.006 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2603%2Fthumb%2F1770800245&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:01.150 [DEBUG] HTTP response: 200 (16221 bytes)
+16:01:01.158 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1217%2Fthumb%2F1770887008&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:01.258 [DEBUG] HTTP response: 200 (23373 bytes)
+16:01:01.268 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1219%2Fthumb%2F1770887009&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:01.350 [DEBUG] HTTP response: 200 (19745 bytes)
+16:01:01.362 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1218%2Fthumb%2F1770887009&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:01.565 [DEBUG] HTTP response: 200 (19333 bytes)
+16:01:01.578 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1231%2Fthumb%2F1766221241&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:01.933 [DEBUG] HTTP response: 200 (23607 bytes)
+16:01:01.940 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1279%2Fthumb%2F1770887010&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:02.135 [DEBUG] HTTP response: 200 (26977 bytes)
+16:01:02.145 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1280%2Fthumb%2F1770887010&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:02.599 [DEBUG] HTTP response: 200 (25498 bytes)
+16:01:02.612 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1287%2Fthumb%2F1770887011&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:02.849 [DEBUG] HTTP response: 200 (27216 bytes)
+16:01:02.856 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1299%2Fthumb%2F1770887011&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:02.973 [DEBUG] HTTP response: 200 (17766 bytes)
+16:01:02.983 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1278%2Fthumb%2F1770887010&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:03.154 [DEBUG] HTTP response: 200 (19892 bytes)
+16:01:03.166 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1276%2Fthumb%2F1770887009&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:03.267 [DEBUG] HTTP response: 200 (22262 bytes)
+16:01:03.274 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2641%2Fthumb%2F1768118443&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:03.396 [DEBUG] HTTP response: 200 (21219 bytes)
+16:01:03.406 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1337%2Fthumb%2F1770887012&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:03.560 [DEBUG] HTTP response: 200 (22418 bytes)
+16:01:03.573 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1338%2Fthumb%2F1765699112&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:03.722 [DEBUG] HTTP response: 200 (16568 bytes)
+16:01:03.729 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1339%2Fthumb%2F1768293592&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:03.971 [DEBUG] HTTP response: 200 (20638 bytes)
+16:01:03.982 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1361%2Fthumb%2F1770887014&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:04.546 [DEBUG] HTTP response: 200 (21151 bytes)
+16:01:04.559 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1362%2Fthumb%2F1768293592&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:04.657 [DEBUG] HTTP response: 200 (15432 bytes)
+16:01:04.664 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1301%2Fthumb%2F1770887012&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:05.026 [DEBUG] HTTP response: 200 (26847 bytes)
+16:01:05.037 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1406%2Fthumb%2F1770887014&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:05.104 [DEBUG] HTTP response: 200 (16344 bytes)
+16:01:05.116 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1407%2Fthumb%2F1765699114&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:05.171 [DEBUG] HTTP response: 200 (22733 bytes)
+16:01:05.178 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1336%2Fthumb%2F1770887012&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:05.310 [DEBUG] HTTP response: 200 (27293 bytes)
+16:01:05.321 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1436%2Fthumb%2F1760345540&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:05.431 [DEBUG] HTTP response: 200 (12012 bytes)
+16:01:05.443 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1432%2Fthumb%2F1768293593&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:05.655 [DEBUG] HTTP response: 200 (17604 bytes)
+16:01:05.663 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1451%2Fthumb%2F1770887016&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:05.811 [DEBUG] HTTP response: 200 (11306 bytes)
+16:01:05.823 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1455%2Fthumb%2F1770887016&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:05.924 [DEBUG] HTTP response: 200 (27661 bytes)
+16:01:05.931 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1453%2Fthumb%2F1770887016&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:06.019 [DEBUG] HTTP response: 200 (20840 bytes)
+16:01:06.030 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1467%2Fthumb%2F1770887017&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:06.124 [DEBUG] HTTP response: 200 (20684 bytes)
+16:01:06.137 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1537%2Fthumb%2F1770887018&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:06.234 [DEBUG] HTTP response: 200 (24153 bytes)
+16:01:06.244 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2424%2Fthumb%2F1770800238&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:06.374 [DEBUG] HTTP response: 200 (20384 bytes)
+16:01:06.387 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1524%2Fthumb%2F1765699116&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:06.539 [DEBUG] HTTP response: 200 (13874 bytes)
+16:01:06.546 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1525%2Fthumb%2F1770887017&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:06.627 [DEBUG] HTTP response: 200 (21250 bytes)
+16:01:06.638 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1542%2Fthumb%2F1770887018&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:07.173 [DEBUG] HTTP response: 200 (17138 bytes)
+16:01:07.180 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2676%2Fthumb%2F1770800246&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:07.276 [DEBUG] HTTP response: 200 (26938 bytes)
+16:01:07.286 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2317%2Fthumb%2F1770800234&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:07.486 [DEBUG] HTTP response: 200 (16488 bytes)
+16:01:07.499 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2347%2Fthumb%2F1770800234&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:07.584 [DEBUG] HTTP response: 200 (16793 bytes)
+16:01:07.591 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1561%2Fthumb%2F1765699118&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:07.654 [DEBUG] HTTP response: 200 (19797 bytes)
+16:01:07.668 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1821%2Fthumb%2F1770887020&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:07.762 [DEBUG] HTTP response: 200 (20447 bytes)
+16:01:07.769 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2684%2Fthumb%2F1770800246&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:07.820 [DEBUG] HTTP response: 200 (18559 bytes)
+16:01:07.830 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2677%2Fthumb%2F1770800246&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:07.962 [DEBUG] HTTP response: 200 (20075 bytes)
+16:01:07.970 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1538%2Fthumb%2F1770887018&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:08.140 [DEBUG] HTTP response: 200 (26321 bytes)
+16:01:08.151 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1563%2Fthumb%2F1768293597&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:08.537 [DEBUG] HTTP response: 200 (16574 bytes)
+16:01:08.544 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2753%2Fthumb%2F1770800247&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:08.727 [DEBUG] HTTP response: 200 (20669 bytes)
+16:01:08.738 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3024%2Fthumb%2F1770887030&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:08.833 [DEBUG] HTTP response: 200 (21938 bytes)
+16:01:08.840 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2756%2Fthumb%2F1770800248&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:09.018 [DEBUG] HTTP response: 200 (18003 bytes)
+16:01:09.028 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2755%2Fthumb%2F1770800247&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:09.131 [DEBUG] HTTP response: 200 (21089 bytes)
+16:01:09.139 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2754%2Fthumb%2F1770800247&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:09.323 [DEBUG] HTTP response: 200 (17549 bytes)
+16:01:09.334 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2826%2Fthumb%2F1770800248&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:09.552 [DEBUG] HTTP response: 200 (21356 bytes)
+16:01:09.559 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1565%2Fthumb%2F1770887019&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:09.696 [DEBUG] HTTP response: 200 (17233 bytes)
+16:01:09.707 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2828%2Fthumb%2F1768208675&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:09.903 [DEBUG] HTTP response: 200 (15505 bytes)
+16:01:09.910 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2829%2Fthumb%2F1770887021&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:09.965 [DEBUG] HTTP response: 200 (15309 bytes)
+16:01:09.976 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1613%2Fthumb%2F1771140666&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:10.087 [DEBUG] HTTP response: 200 (23034 bytes)
+16:01:10.094 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1614%2Fthumb%2F1771140666&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:10.167 [DEBUG] HTTP response: 200 (17325 bytes)
+16:01:10.177 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1588%2Fthumb%2F1765872005&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:10.368 [DEBUG] HTTP response: 200 (20664 bytes)
+16:01:10.375 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1589%2Fthumb%2F1771140665&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:10.574 [DEBUG] HTTP response: 200 (19377 bytes)
+16:01:10.586 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1615%2Fthumb%2F1771140667&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:10.689 [DEBUG] HTTP response: 200 (15943 bytes)
+16:01:10.697 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1641%2Fthumb%2F1771140668&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:10.823 [DEBUG] HTTP response: 200 (12594 bytes)
+16:01:10.836 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1660%2Fthumb%2F1768468213&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:11.081 [DEBUG] HTTP response: 200 (28938 bytes)
+16:01:11.091 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1662%2Fthumb%2F1771140668&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:11.165 [DEBUG] HTTP response: 200 (16462 bytes)
+16:01:11.179 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1683%2Fthumb%2F1736453144&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:11.242 [DEBUG] HTTP response: 200 (20369 bytes)
+16:01:11.253 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1699%2Fthumb%2F1768468215&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:11.374 [DEBUG] HTTP response: 200 (19140 bytes)
+16:01:11.382 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1684%2Fthumb%2F1768468214&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:11.446 [DEBUG] HTTP response: 200 (20044 bytes)
+16:01:11.459 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1685%2Fthumb%2F1771140669&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:11.560 [DEBUG] HTTP response: 200 (22407 bytes)
+16:01:11.568 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1700%2Fthumb%2F1771140670&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:11.659 [DEBUG] HTTP response: 200 (23316 bytes)
+16:01:11.673 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1736%2Fthumb%2F1771140670&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:11.788 [DEBUG] HTTP response: 200 (26609 bytes)
+16:01:11.799 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1764%2Fthumb%2F1768468215&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:11.970 [DEBUG] HTTP response: 200 (14606 bytes)
+16:01:11.977 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1765%2Fthumb%2F1768468216&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:12.095 [DEBUG] HTTP response: 200 (19895 bytes)
+16:01:12.106 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1787%2Fthumb%2F1763279491&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:12.195 [DEBUG] HTTP response: 200 (24772 bytes)
+16:01:12.203 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1789%2Fthumb%2F1771140671&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:12.328 [DEBUG] HTTP response: 200 (18744 bytes)
+16:01:12.341 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1601%2Fthumb%2F1771140666&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:12.482 [DEBUG] HTTP response: 200 (20737 bytes)
+16:01:12.492 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3025%2Fthumb%2F1770887030&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:12.574 [DEBUG] HTTP response: 200 (23968 bytes)
+16:01:12.586 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1810%2Fthumb%2F1771140672&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:12.703 [DEBUG] HTTP response: 200 (17314 bytes)
+16:01:12.716 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1826%2Fthumb%2F1771140673&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:12.852 [DEBUG] HTTP response: 200 (25250 bytes)
+16:01:12.861 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1823%2Fthumb%2F1771140672&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:12.954 [DEBUG] HTTP response: 200 (25502 bytes)
+16:01:12.967 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1805%2Fthumb%2F1768468217&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:13.047 [DEBUG] HTTP response: 200 (20631 bytes)
+16:01:13.060 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1827%2Fthumb%2F1768641065&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:13.219 [DEBUG] HTTP response: 200 (17409 bytes)
+16:01:13.228 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2884%2Fthumb%2F1770887022&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:13.300 [DEBUG] HTTP response: 200 (20692 bytes)
+16:01:13.312 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1828%2Fthumb%2F1768641065&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:13.521 [DEBUG] HTTP response: 200 (17586 bytes)
+16:01:13.534 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2885%2Fthumb%2F1770887022&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:13.644 [DEBUG] HTTP response: 200 (16856 bytes)
+16:01:13.653 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2886%2Fthumb%2F1770887022&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:13.771 [DEBUG] HTTP response: 200 (19211 bytes)
+16:01:13.784 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1829%2Fthumb%2F1771234275&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:14.360 [DEBUG] HTTP response: 200 (19120 bytes)
+16:01:14.372 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1830%2Fthumb%2F1765959836&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:14.518 [DEBUG] HTTP response: 200 (15356 bytes)
+16:01:14.527 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2889%2Fthumb%2F1765615914&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:14.723 [DEBUG] HTTP response: 200 (19881 bytes)
+16:01:14.735 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1838%2Fthumb%2F1771234277&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:14.860 [DEBUG] HTTP response: 200 (22759 bytes)
+16:01:14.873 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1926%2Fthumb%2F1768641074&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:14.995 [DEBUG] HTTP response: 200 (17952 bytes)
+16:01:15.004 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1925%2Fthumb%2F1771234280&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:15.087 [DEBUG] HTTP response: 200 (15644 bytes)
+16:01:15.099 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1844%2Fthumb%2F1771234277&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:15.273 [DEBUG] HTTP response: 200 (20051 bytes)
+16:01:15.287 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1927%2Fthumb%2F1736453182&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:15.367 [DEBUG] HTTP response: 200 (23929 bytes)
+16:01:15.377 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1928%2Fthumb%2F1771579530&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:15.470 [DEBUG] HTTP response: 200 (23469 bytes)
+16:01:15.478 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1931%2Fthumb%2F1768641075&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:15.575 [DEBUG] HTTP response: 200 (20428 bytes)
+16:01:15.589 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1845%2Fthumb%2F1771234278&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:15.693 [DEBUG] HTTP response: 200 (23258 bytes)
+16:01:15.706 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1847%2Fthumb%2F1768641069&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:15.794 [DEBUG] HTTP response: 200 (22982 bytes)
+16:01:15.805 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1832%2Fthumb%2F1771234276&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:15.897 [DEBUG] HTTP response: 200 (16731 bytes)
+16:01:15.905 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1858%2Fthumb%2F1768641070&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:17.184 [DEBUG] HTTP response: 200 (22147 bytes)
+16:01:17.198 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1932%2Fthumb%2F1736453193&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:17.256 [DEBUG] HTTP response: 200 (20484 bytes)
+16:01:17.269 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1861%2Fthumb%2F1771234279&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:17.346 [DEBUG] HTTP response: 200 (21631 bytes)
+16:01:17.357 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1860%2Fthumb%2F1768641070&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:17.432 [DEBUG] HTTP response: 200 (21345 bytes)
+16:01:17.440 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1837%2Fthumb%2F1771234277&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:17.534 [DEBUG] HTTP response: 200 (19511 bytes)
+16:01:17.549 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1889%2Fthumb%2F1771234279&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:17.630 [DEBUG] HTTP response: 200 (15050 bytes)
+16:01:17.643 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1891%2Fthumb%2F1771234280&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:17.723 [DEBUG] HTTP response: 200 (20404 bytes)
+16:01:17.734 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2890%2Fthumb%2F1770887023&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:17.857 [DEBUG] HTTP response: 200 (21639 bytes)
+16:01:17.865 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1947%2Fthumb%2F1771234281&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:17.956 [DEBUG] HTTP response: 200 (23218 bytes)
+16:01:17.971 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3028%2Fthumb%2F1770887031&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:18.048 [DEBUG] HTTP response: 200 (21610 bytes)
+16:01:18.061 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1949%2Fthumb%2F1771234281&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:18.097 [DEBUG] HTTP response: 200 (22975 bytes)
+16:01:18.108 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1950%2Fthumb%2F1771234282&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:18.303 [DEBUG] HTTP response: 200 (21301 bytes)
+16:01:18.314 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1951%2Fthumb%2F1768641076&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:18.509 [DEBUG] HTTP response: 200 (18278 bytes)
+16:01:18.518 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1961%2Fthumb%2F1771234283&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:18.555 [DEBUG] HTTP response: 200 (17550 bytes)
+16:01:18.563 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1962%2Fthumb%2F1771234283&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:18.654 [DEBUG] HTTP response: 200 (28386 bytes)
+16:01:18.668 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1963%2Fthumb%2F1771234283&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:18.824 [DEBUG] HTTP response: 200 (17971 bytes)
+16:01:18.838 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2891%2Fthumb%2F1768208678&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:18.931 [DEBUG] HTTP response: 200 (16909 bytes)
+16:01:18.942 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1965%2Fthumb%2F1763281305&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:19.085 [DEBUG] HTTP response: 200 (20578 bytes)
+16:01:19.096 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2058%2Fthumb%2F1770019444&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:19.259 [DEBUG] HTTP response: 200 (18784 bytes)
+16:01:19.267 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2896%2Fthumb%2F1758524246&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:19.428 [DEBUG] HTTP response: 200 (30683 bytes)
+16:01:19.437 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2895%2Fthumb%2F1755851414&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:19.546 [DEBUG] HTTP response: 200 (18940 bytes)
+16:01:19.560 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2898%2Fthumb%2F1770887024&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:19.644 [DEBUG] HTTP response: 200 (25068 bytes)
+16:01:19.657 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2011%2Fthumb%2F1767348014&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:19.776 [DEBUG] HTTP response: 200 (22301 bytes)
+16:01:19.788 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2059%2Fthumb%2F1770019445&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:19.882 [DEBUG] HTTP response: 200 (32404 bytes)
+16:01:19.884 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2088%2Fthumb%2F1767348018&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:19.953 [DEBUG] HTTP response: 200 (24519 bytes)
+16:01:19.955 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2089%2Fthumb%2F1770019446&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:20.053 [DEBUG] HTTP response: 200 (32007 bytes)
+16:01:20.062 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2067%2Fthumb%2F1770019445&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:20.453 [DEBUG] HTTP response: 200 (4008 bytes)
+16:01:20.462 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2090%2Fthumb%2F1770019446&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:20.564 [DEBUG] HTTP response: 200 (22567 bytes)
+16:01:20.575 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2060%2Fthumb%2F1770019445&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:20.974 [DEBUG] HTTP response: 200 (30762 bytes)
+16:01:20.982 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2087%2Fthumb%2F1770019446&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:21.070 [DEBUG] HTTP response: 200 (30617 bytes)
+16:01:21.080 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2012%2Fthumb%2F1770019443&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:21.254 [DEBUG] HTTP response: 200 (27805 bytes)
+16:01:21.267 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2903%2Fthumb%2F1770887025&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:21.383 [DEBUG] HTTP response: 200 (14474 bytes)
+16:01:21.394 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F42%2Fthumb%2F1771140663&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:21.486 [DEBUG] HTTP response: 200 (18148 bytes)
+16:01:21.493 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2904%2Fthumb%2F1770887025&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:21.579 [DEBUG] HTTP response: 200 (15927 bytes)
+16:01:21.588 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2304%2Fthumb%2F1770019455&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:21.693 [DEBUG] HTTP response: 200 (24884 bytes)
+16:01:21.706 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2092%2Fthumb%2F1770019447&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:21.823 [DEBUG] HTTP response: 200 (22164 bytes)
+16:01:21.834 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2094%2Fthumb%2F1770019447&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:21.922 [DEBUG] HTTP response: 200 (20100 bytes)
+16:01:21.930 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2095%2Fthumb%2F1770019448&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:22.094 [DEBUG] HTTP response: 200 (18849 bytes)
+16:01:22.103 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2106%2Fthumb%2F1770019448&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:22.204 [DEBUG] HTTP response: 200 (21936 bytes)
+16:01:22.216 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2107%2Fthumb%2F1767348021&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:22.307 [DEBUG] HTTP response: 200 (18064 bytes)
+16:01:22.318 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2126%2Fthumb%2F1770019449&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:22.456 [DEBUG] HTTP response: 200 (19490 bytes)
+16:01:22.463 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2127%2Fthumb%2F1770019449&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:22.615 [DEBUG] HTTP response: 200 (20500 bytes)
+16:01:22.626 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2128%2Fthumb%2F1770019449&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:22.708 [DEBUG] HTTP response: 200 (16131 bytes)
+16:01:22.720 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2165%2Fthumb%2F1770019450&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:22.786 [DEBUG] HTTP response: 200 (22248 bytes)
+16:01:22.793 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2203%2Fthumb%2F1770019451&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:22.876 [DEBUG] HTTP response: 200 (27230 bytes)
+16:01:22.886 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2196%2Fthumb%2F1770019450&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:23.048 [DEBUG] HTTP response: 200 (25629 bytes)
+16:01:23.061 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2202%2Fthumb%2F1770019451&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:23.395 [DEBUG] HTTP response: 200 (30436 bytes)
+16:01:23.402 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F17001%2Fthumb%2F1770019456&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:23.433 [DEBUG] HTTP response: 200 (20789 bytes)
+16:01:23.443 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2204%2Fthumb%2F1770019451&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:23.529 [DEBUG] HTTP response: 200 (14878 bytes)
+16:01:23.541 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2244%2Fthumb%2F1770019452&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:23.704 [DEBUG] HTTP response: 200 (16706 bytes)
+16:01:23.711 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F63%2Fthumb%2F1771140664&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:23.836 [DEBUG] HTTP response: 200 (14588 bytes)
+16:01:23.846 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2245%2Fthumb%2F1767348025&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:23.942 [DEBUG] HTTP response: 200 (18336 bytes)
+16:01:23.954 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2247%2Fthumb%2F1770019452&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:24.040 [DEBUG] HTTP response: 200 (20718 bytes)
+16:01:24.047 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2039%2Fthumb%2F1770019443&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:24.151 [DEBUG] HTTP response: 200 (18710 bytes)
+16:01:24.161 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2043%2Fthumb%2F1770019443&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:24.356 [DEBUG] HTTP response: 200 (21280 bytes)
+16:01:24.369 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2044%2Fthumb%2F1770019444&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:24.563 [DEBUG] HTTP response: 200 (18600 bytes)
+16:01:24.571 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2045%2Fthumb%2F1770019444&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:24.659 [DEBUG] HTTP response: 200 (18739 bytes)
+16:01:24.669 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2248%2Fthumb%2F1770019453&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:24.766 [DEBUG] HTTP response: 200 (21736 bytes)
+16:01:24.779 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2278%2Fthumb%2F1770019454&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:24.855 [DEBUG] HTTP response: 200 (16988 bytes)
+16:01:24.863 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2276%2Fthumb%2F1770019453&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:24.976 [DEBUG] HTTP response: 200 (22720 bytes)
+16:01:24.989 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2302%2Fthumb%2F1767348028&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:25.080 [DEBUG] HTTP response: 200 (23556 bytes)
+16:01:25.087 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2279%2Fthumb%2F1770019454&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:25.166 [DEBUG] HTTP response: 200 (26464 bytes)
+16:01:25.177 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2280%2Fthumb%2F1758271273&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:25.244 [DEBUG] HTTP response: 200 (29775 bytes)
+16:01:25.256 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2303%2Fthumb%2F1770019455&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:25.345 [DEBUG] HTTP response: 200 (27970 bytes)
+16:01:25.355 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2373%2Fthumb%2F1770800235&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:25.480 [DEBUG] HTTP response: 200 (24862 bytes)
+16:01:25.493 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2375%2Fthumb%2F1770800236&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:25.580 [DEBUG] HTTP response: 200 (16001 bytes)
+16:01:25.587 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F65%2Fthumb%2F1771579522&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:25.715 [DEBUG] HTTP response: 200 (21617 bytes)
+16:01:25.727 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2377%2Fthumb%2F1770800236&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:25.883 [DEBUG] HTTP response: 200 (23597 bytes)
+16:01:26.391 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2376%2Fthumb%2F1770800236&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:26.605 [DEBUG] HTTP response: 200 (25868 bytes)
+16:01:26.616 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15620%2Fthumb%2F1770800248&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:26.640 [DEBUG] HTTP response: 200 (13790 bytes)
+16:01:26.652 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2384%2Fthumb%2F1770800237&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:26.699 [DEBUG] HTTP response: 200 (27301 bytes)
+16:01:26.708 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2348%2Fthumb%2F1770800235&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:26.738 [DEBUG] HTTP response: 200 (16074 bytes)
+16:01:26.751 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2385%2Fthumb%2F1770800237&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:26.798 [DEBUG] HTTP response: 200 (19385 bytes)
+16:01:26.805 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2386%2Fthumb%2F1770800237&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:26.938 [DEBUG] HTTP response: 200 (22414 bytes)
+16:01:26.949 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3029%2Fthumb%2F1770887031&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:27.062 [DEBUG] HTTP response: 200 (17350 bytes)
+16:01:27.069 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1661%2Fthumb%2F1771579529&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:27.145 [DEBUG] HTTP response: 200 (14731 bytes)
+16:01:27.156 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2946%2Fthumb%2F1768208681&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:27.243 [DEBUG] HTTP response: 200 (17914 bytes)
+16:01:27.250 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2313%2Fthumb%2F1770800232&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:27.363 [DEBUG] HTTP response: 200 (18985 bytes)
+16:01:27.374 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2349%2Fthumb%2F1770800235&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:27.728 [DEBUG] HTTP response: 200 (19846 bytes)
+16:01:27.735 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15642%2Fthumb%2F1769590822&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:27.826 [DEBUG] HTTP response: 200 (21188 bytes)
+16:01:27.838 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2947%2Fthumb%2F1770887027&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:28.037 [DEBUG] HTTP response: 200 (21166 bytes)
+16:01:28.045 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2948%2Fthumb%2F1770887027&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:28.287 [DEBUG] HTTP response: 200 (17465 bytes)
+16:01:28.298 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2960%2Fthumb%2F1770887028&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:28.371 [DEBUG] HTTP response: 200 (24192 bytes)
+16:01:28.379 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2978%2Fthumb%2F1770887028&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:28.583 [DEBUG] HTTP response: 200 (27466 bytes)
+16:01:28.595 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2961%2Fthumb%2F1770887028&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:28.856 [DEBUG] HTTP response: 200 (31711 bytes)
+16:01:28.864 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3030%2Fthumb%2F1770887031&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:28.928 [DEBUG] HTTP response: 200 (24808 bytes)
+16:01:28.940 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2979%2Fthumb%2F1768208684&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:29.224 [DEBUG] HTTP response: 200 (14146 bytes)
+16:01:29.232 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3031%2Fthumb%2F1771579530&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:29.469 [DEBUG] HTTP response: 200 (23005 bytes)
+16:01:29.481 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2905%2Fthumb%2F1768208680&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:29.683 [DEBUG] HTTP response: 200 (20472 bytes)
+16:01:29.690 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2260%2Fthumb%2F1770019453&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:29.747 [DEBUG] HTTP response: 200 (23062 bytes)
+16:01:29.759 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3062%2Fthumb%2F1771579531&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:29.921 [DEBUG] HTTP response: 200 (20925 bytes)
+16:01:29.929 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3032%2Fthumb%2F1771579530&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:30.260 [DEBUG] HTTP response: 200 (21333 bytes)
+16:01:30.273 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F64%2Fthumb%2F1766048255&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:30.537 [DEBUG] HTTP response: 200 (22073 bytes)
+16:01:30.548 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3156%2Fthumb%2F1771579533&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:30.702 [DEBUG] HTTP response: 200 (22406 bytes)
+16:01:30.715 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3064%2Fthumb%2F1771579531&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:31.720 [DEBUG] HTTP response: 200 (21993 bytes)
+16:01:31.732 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3063%2Fthumb%2F1771579531&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:32.019 [DEBUG] HTTP response: 200 (14567 bytes)
+16:01:32.026 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3066%2Fthumb%2F1771579532&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:32.165 [DEBUG] HTTP response: 200 (15998 bytes)
+16:01:32.178 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3065%2Fthumb%2F1771579532&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:32.538 [DEBUG] HTTP response: 200 (16724 bytes)
+16:01:32.547 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2942%2Fthumb%2F1770887026&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:32.614 [DEBUG] HTTP response: 200 (20578 bytes)
+16:01:32.628 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3117%2Fthumb%2F1771579532&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:32.810 [DEBUG] HTTP response: 200 (14968 bytes)
+16:01:32.820 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2944%2Fthumb%2F1770887026&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:32.921 [DEBUG] HTTP response: 200 (22720 bytes)
+16:01:32.928 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3120%2Fthumb%2F1771579533&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:32.979 [DEBUG] HTTP response: 200 (9893 bytes)
+16:01:32.991 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3118%2Fthumb%2F1771579533&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:33.059 [DEBUG] HTTP response: 200 (22545 bytes)
+16:01:33.067 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3119%2Fthumb%2F1770623359&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:33.131 [DEBUG] HTTP response: 200 (26294 bytes)
+16:01:33.144 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3192%2Fthumb%2F1771579536&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:33.226 [DEBUG] HTTP response: 200 (14448 bytes)
+16:01:33.236 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3157%2Fthumb%2F1771579534&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:33.372 [DEBUG] HTTP response: 200 (21461 bytes)
+16:01:33.379 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3158%2Fthumb%2F1768900986&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:33.495 [DEBUG] HTTP response: 200 (21872 bytes)
+16:01:33.508 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3180%2Fthumb%2F1771579535&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:33.669 [DEBUG] HTTP response: 200 (20158 bytes)
+16:01:33.680 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3191%2Fthumb%2F1771579536&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:33.810 [DEBUG] HTTP response: 200 (20648 bytes)
+16:01:33.817 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3159%2Fthumb%2F1768900987&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:33.914 [DEBUG] HTTP response: 200 (18419 bytes)
+16:01:33.928 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3194%2Fthumb%2F1771579536&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:34.034 [DEBUG] HTTP response: 200 (14956 bytes)
+16:01:34.044 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3196%2Fthumb%2F1771579536&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:34.150 [DEBUG] HTTP response: 200 (21645 bytes)
+16:01:34.158 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3197%2Fthumb%2F1771579537&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:34.256 [DEBUG] HTTP response: 200 (22731 bytes)
+16:01:34.269 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3198%2Fthumb%2F1771579537&width=220&height=330&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:34.397 [DEBUG] HTTP response: 200 (19644 bytes)
+16:01:42.932 [DEBUG] Giving focus to brls::Button
+16:01:46.355 [DEBUG] Giving focus to vitaplex::MediaItemCell
+16:01:47.733 [DEBUG] Giving focus to vitaplex::MediaItemCell
+16:01:48.136 [DEBUG] Giving focus to vitaplex::MediaItemCell
+16:01:48.539 [DEBUG] Giving focus to vitaplex::MediaItemCell
+16:01:48.923 [DEBUG] Giving focus to brls::Button
+16:01:49.544 [DEBUG] Giving focus to vitaplex::MediaItemCell
+16:01:50.565 [DEBUG] Adding an inputs block token (tokens=1)
+16:01:50.565 [DEBUG] HTTP GET http://192.168.1.28:32400/library/metadata/22?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:50.571 [DEBUG] Pushing vitaplex::MediaItemCell to the focus stack
+16:01:50.696 [DEBUG] Giving focus to brls::Button
+16:01:50.703 [DEBUG] Hiding vitaplex::MediaDetailView
+16:01:50.713 [DEBUG] push activity to the stack
+16:01:50.725 [DEBUG] Showing vitaplex::MediaDetailView
+16:01:50.784 [DEBUG] HTTP response: 200 (12825 bytes)
+16:01:50.795 [DEBUG] fetchMediaDetails: partPath=/library/parts/34/1727971958/file.mp4
+16:01:50.807 [DEBUG] fetchMediaDetails: partSize=3898631095
+16:01:50.892 [DEBUG] loadDetails: partPath available, download enabled
+16:01:50.901 [DEBUG] Removing an inputs block token (tokens=0)
+16:01:50.914 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F22%2Fthumb%2F1770798675&width=400&height=600&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:51.079 [DEBUG] HTTP response: 200 (54545 bytes)
+16:01:54.209 [DEBUG] Giving focus to brls::Button
+16:01:54.559 [DEBUG] Giving focus to brls::Button
+16:01:54.893 [DEBUG] PlayerActivity created for media: 22
+16:01:54.902 [DEBUG] Adding an inputs block token (tokens=1)
+16:01:54.915 [DEBUG] Pushing brls::Button to the focus stack
+16:01:54.986 [DEBUG] PlayerActivity content available
+16:01:54.998 [DEBUG] HTTP GET http://192.168.1.28:32400/library/metadata/22?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:55.095 [DEBUG] HTTP response: 200 (12825 bytes)
+16:01:55.104 [DEBUG] fetchMediaDetails: partPath=/library/parts/34/1727971958/file.mp4
+16:01:55.114 [DEBUG] fetchMediaDetails: partSize=3898631095
+16:01:55.130 [INFO] PlayerActivity: Media type detection - audio: false, type: 1
+16:01:55.136 [DEBUG] getTranscodeUrl: ratingKey=22, offsetMs=0
+16:01:55.147 [DEBUG] HTTP GET http://192.168.1.28:32400/library/metadata/22?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+16:01:55.299 [DEBUG] HTTP response: 200 (12825 bytes)
+16:01:55.309 [DEBUG] getTranscodeUrl: partKey=/library/parts/34/1727971958/file.mp4
+16:01:55.322 [DEBUG] getTranscodeUrl: isAudio=false
+16:01:55.331 [INFO] getTranscodeUrl: Transcode URL = http://192.168.1.28:32400/video/:/transcode/universal/start.mp4?path=%2Flibrary%2Fmetadata%2F22&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&videoBitrate=2000&videoCodec=h264&maxWidth=960&maxHeight=544&audioCodec=aac&audioChannels=2&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk&X-Plex-Client-Identifier=VitaPlex&X-Plex-Product=VitaPlex&X-Plex-Version=1.0.0&X-Plex-Platform=PlayStation%20Vita&X-Plex-Device=PS%20Vita&session=1772312515
+16:01:55.342 [DEBUG] MpvPlayer: Initializing libmpv...
+16:01:55.402 [DEBUG] MpvPlayer: mpv context created
+16:01:55.410 [INFO] MpvPlayer: Initializing in video mode
+16:01:55.423 [DEBUG] MpvPlayer: Calling mpv_initialize...
+16:01:55.447 [DEBUG] MpvPlayer: mpv_initialize succeeded
+16:01:55.456 [INFO] MpvPlayer: Creating GXM render context...
+16:01:55.469 [INFO] MpvPlayer: GXM context acquired, setting up render params...
+16:01:55.479 [INFO] MpvPlayer: Setting up MPV render params with API type: gxm
+16:01:55.489 [INFO] MpvPlayer: Calling mpv_render_context_create...
+16:01:55.506 [INFO] MpvPlayer: GXM render context created successfully!
+16:01:55.558 [INFO] MpvPlayer: GXM render context created successfully (960x544)
+16:01:55.571 [INFO] MpvPlayer: Initialized successfully
+16:01:55.578 [DEBUG] PlayerActivity: Calling player.loadUrl...
+16:01:55.588 [INFO] MpvPlayer: Loading URL: http://192.168.1.28:32400/video/:/transcode/universal/start.mp4?path=%2Flibrary%2Fmetadata%2F22&mediaIndex=0&partIndex=0&protocol=http&fastSeek=1&directPlay=0&directStream=0&videoBitrate=2000&videoCodec=h264&maxWidth=960&maxHeight=544&audioCodec=aac&audioChannels=2&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk&X-Plex-Client-Identifier=VitaPlex&X-Plex-Product=VitaPlex&X-Plex-Version=1.0.0&X-Plex-Platform=PlayStation%20Vita&X-Plex-Device=PS%20Vita&session=1772312515
+16:01:55.602 [DEBUG] MpvPlayer: Sending loadfile command...
+16:01:55.611 [DEBUG] MpvPlayer: loadfile command queued successfully (result=0)
