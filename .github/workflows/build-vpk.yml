@@ -1,0 +1,46 @@
+name: Build VPK
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build-vita:
+    runs-on: ubuntu-latest
+    container:
+      image: vitasdk/vitasdk:latest
+
+    steps:
+      - name: Install build requirements
+        run: |
+          apk update
+          apk add cmake ninja git zstd tar pkgconf
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        env:
+          BASE_URL: https://github.com/dragonflylee/switchfin/releases/download/vita-packages
+        run: |
+          for pkg in mbedtls-3.6.5-1 curl-8.16.0-2 ffmpeg-n6.0-3 mpv-0.36.0-3; do
+            wget "$BASE_URL/${pkg}-arm.tar.xz"
+          done
+          vdpm libass harfbuzz fribidi freetype libpng libwebp $PWD/*-arm.tar.xz
+          git config --system --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build
+        run: |
+          cmake -B build -G Ninja
+          cmake --build build
+
+      - name: Upload VPK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitaSuwayomi-${{ github.run_number }}
+          path: build/VitaSuwayomi.vpk
