@@ -8,7 +8,8 @@
 
 namespace vitaplex {
 
-MediaItemCell::MediaItemCell() {
+MediaItemCell::MediaItemCell()
+    : m_alive(std::make_shared<std::atomic<bool>>(true)) {
     this->setAxis(brls::Axis::COLUMN);
     this->setJustifyContent(brls::JustifyContent::FLEX_START);
     this->setAlignItems(brls::AlignItems::CENTER);
@@ -53,6 +54,13 @@ MediaItemCell::MediaItemCell() {
     m_progressBar->setColor(nvgRGBA(229, 160, 13, 255)); // Plex orange
     m_progressBar->setVisibility(brls::Visibility::GONE);
     this->addView(m_progressBar);
+}
+
+MediaItemCell::~MediaItemCell() {
+    // Signal to any in-flight async image loads that this cell is destroyed
+    if (m_alive) {
+        m_alive->store(false);
+    }
 }
 
 void MediaItemCell::setItem(const MediaItem& item) {
@@ -128,8 +136,9 @@ void MediaItemCell::loadThumbnail() {
                     m_item.mediaType == MediaType::MUSIC_ALBUM ||
                     m_item.mediaType == MediaType::MUSIC_TRACK);
 
-    int width = isMusic ? 220 : 220;
-    int height = isMusic ? 220 : 330;
+    // Request at display size to save memory on Vita (110x165 portrait, 110x110 square)
+    int width = isMusic ? 110 : 110;
+    int height = isMusic ? 110 : 165;
 
     // For episodes, prefer grandparentThumb (show poster) if available
     std::string thumbPath = m_item.thumb;
@@ -141,9 +150,9 @@ void MediaItemCell::loadThumbnail() {
 
     std::string url = client.getThumbnailUrl(thumbPath, width, height);
 
-    ImageLoader::loadAsync(url, [this](brls::Image* image) {
+    ImageLoader::loadAsync(url, [](brls::Image* image) {
         // Image loaded callback
-    }, m_thumbnailImage);
+    }, m_thumbnailImage, m_alive);
 }
 
 brls::View* MediaItemCell::create() {

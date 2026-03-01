@@ -18,7 +18,7 @@
 namespace vitaplex {
 
 MediaDetailView::MediaDetailView(const MediaItem& item)
-    : m_item(item), m_alive(std::make_shared<bool>(true)) {
+    : m_item(item), m_alive(std::make_shared<std::atomic<bool>>(true)) {
 
     this->setAxis(brls::Axis::COLUMN);
     this->setJustifyContent(brls::JustifyContent::FLEX_START);
@@ -235,7 +235,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
 
 MediaDetailView::~MediaDetailView() {
     if (m_alive) {
-        *m_alive = false;
+        m_alive->store(false);
     }
     brls::Logger::debug("MediaDetailView: Destroyed");
 }
@@ -320,9 +320,9 @@ void MediaDetailView::loadDetails() {
 
                 PlexClient& client = PlexClient::getInstance();
                 std::string url = client.getThumbnailUrl(thumb, width, height);
-                ImageLoader::loadAsync(url, [this](brls::Image* image) {
+                ImageLoader::loadAsync(url, [](brls::Image* image) {
                     // Image loaded
-                }, m_posterImage);
+                }, m_posterImage, m_alive);
             }
 
             // Load children if applicable
@@ -560,7 +560,7 @@ void MediaDetailView::onDownload() {
 
         // Track the rating key to update button when done
         std::string ratingKey = m_item.ratingKey;
-        std::weak_ptr<bool> aliveWeak = m_alive;
+        std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
 
         // Set progress callback with speed display
         DownloadsManager::getInstance().setProgressCallback(

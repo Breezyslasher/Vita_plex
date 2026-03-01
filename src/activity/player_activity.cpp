@@ -136,11 +136,18 @@ void PlayerActivity::onContentAvailable() {
 void PlayerActivity::willDisappear(bool resetState) {
     brls::Activity::willDisappear(resetState);
 
-    // Mark as destroying to prevent timer callbacks
+    // Mark as destroying to prevent timer and image loader callbacks
     m_destroying = true;
+    if (m_alive) {
+        m_alive->store(false);
+    }
 
     // Stop update timer first
     m_updateTimer.stop();
+
+    // Clear any pending deferred init (user backed out before timer fired)
+    m_pendingPlayUrl.clear();
+    m_pendingPlayTitle.clear();
 
     // Hide video view
     if (videoView) {
@@ -223,7 +230,7 @@ void PlayerActivity::loadFromQueue() {
         std::string thumbUrl = client.getThumbnailUrl(track->thumb, 300, 300);
         ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {
             // Art loaded
-        }, albumArt);
+        }, albumArt, m_alive);
         albumArt->setVisibility(brls::Visibility::VISIBLE);
     }
 
@@ -238,21 +245,18 @@ void PlayerActivity::loadFromQueue() {
         return;
     }
 
+    // Cancel in-flight image loads and free cache to reclaim memory for MPV.
+    // This prevents stale async callbacks from writing to freed brls::Image* pointers.
+    ImageLoader::cancelAll();
+    ImageLoader::clearCache();
+
     MpvPlayer& player = MpvPlayer::getInstance();
 
     // Set audio-only mode BEFORE initializing
     player.setAudioOnly(true);
 
-    // Initialize player if needed
-    if (!player.isInitialized()) {
-        if (!player.init()) {
-            brls::Logger::error("Failed to initialize MPV player");
-            m_loadingMedia = false;
-            return;
-        }
-    }
-
     // Download audio to local file (HTTP workaround for Vita)
+    // This uses HttpClient (libcurl), not MPV, so it's safe during activity transition.
     std::string playUrl = url;
 
     if (url.find("http://") == 0) {
@@ -327,7 +331,17 @@ void PlayerActivity::loadFromQueue() {
         playUrl = tempPath;
     }
 
-    // Load the URL
+    if (!player.isInitialized()) {
+        // Defer MPV init + load to after activity transition completes
+        m_pendingPlayUrl = playUrl;
+        m_pendingPlayTitle = track->title;
+        m_pendingIsAudio = true;
+        m_isPlaying = true;
+        m_loadingMedia = false;
+        return;
+    }
+
+    // Player already initialized (track change) - load immediately
     if (!player.loadUrl(playUrl, track->title)) {
         brls::Logger::error("Failed to load URL: {}", playUrl);
         m_loadingMedia = false;
@@ -373,20 +387,28 @@ void PlayerActivity::loadMedia() {
 
         brls::Logger::info("PlayerActivity: File type detection - audio: {}", isAudioFile);
 
+        // Cancel in-flight image loads and free cache to reclaim memory for MPV
+        ImageLoader::cancelAll();
+        ImageLoader::clearCache();
+
         MpvPlayer& player = MpvPlayer::getInstance();
 
         // Set audio-only mode BEFORE initializing (to skip render context)
         player.setAudioOnly(isAudioFile);
 
         if (!player.isInitialized()) {
-            if (!player.init()) {
-                brls::Logger::error("Failed to initialize MPV player");
-                m_loadingMedia = false;
-                return;
-            }
+            // Defer MPV init + load to after activity transition completes.
+            // initRenderContext() creates GXM resources and loadUrl() spawns
+            // decoder threads that use the shared GXM context - both conflict
+            // with NanoVG drawing during the borealis show phase.
+            m_pendingPlayUrl = m_directFilePath;
+            m_pendingPlayTitle = "Test File";
+            m_pendingIsAudio = isAudioFile;
+            m_loadingMedia = false;
+            return;
         }
 
-        // Load direct file
+        // Player already initialized - load immediately
         if (!player.loadUrl(m_directFilePath, "Test File")) {
             brls::Logger::error("Failed to load direct file: {}", m_directFilePath);
             m_loadingMedia = false;
@@ -425,17 +447,27 @@ void PlayerActivity::loadMedia() {
             titleLabel->setText(title);
         }
 
+        // Cancel in-flight image loads and free cache to reclaim memory for MPV
+        ImageLoader::cancelAll();
+        ImageLoader::clearCache();
+
         MpvPlayer& player = MpvPlayer::getInstance();
 
-        if (!player.isInitialized()) {
-            if (!player.init()) {
-                brls::Logger::error("Failed to initialize MPV player");
-                m_loadingMedia = false;
-                return;
-            }
+        // Resume from saved viewOffset
+        if (download->viewOffset > 0) {
+            m_pendingSeek = download->viewOffset / 1000.0;
         }
 
-        // Load local file
+        if (!player.isInitialized()) {
+            // Defer MPV init + load to after activity transition completes
+            m_pendingPlayUrl = download->localPath;
+            m_pendingPlayTitle = download->title;
+            m_pendingIsAudio = false;
+            m_loadingMedia = false;
+            return;
+        }
+
+        // Player already initialized - load immediately
         if (!player.loadUrl(download->localPath, download->title)) {
             brls::Logger::error("Failed to load local file: {}", download->localPath);
             m_loadingMedia = false;
@@ -446,11 +478,6 @@ void PlayerActivity::loadMedia() {
         if (videoView) {
             videoView->setVisibility(brls::Visibility::VISIBLE);
             videoView->setVideoVisible(true);
-        }
-
-        // Resume from saved viewOffset
-        if (download->viewOffset > 0) {
-            m_pendingSeek = download->viewOffset / 1000.0;
         }
 
         m_isPlaying = true;
@@ -487,7 +514,7 @@ void PlayerActivity::loadMedia() {
                     photoImage->setVisibility(brls::Visibility::VISIBLE);
                     ImageLoader::loadAsync(photoUrl, [](brls::Image* image) {
                         // Photo loaded
-                    }, photoImage);
+                    }, photoImage, m_alive);
                 }
 
                 // Hide player controls for photos
@@ -509,19 +536,18 @@ void PlayerActivity::loadMedia() {
         // Get transcode URL for video/audio (forces Plex to convert to Vita-compatible format)
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, item.viewOffset)) {
+            // Cancel in-flight image loads and free cache memory before initializing MPV.
+            // The Vita only has 256MB and MPV needs substantial memory for video decoding.
+            // cancelAll() increments the generation counter so any pending brls::sync
+            // callbacks from image downloads will be safely skipped, preventing
+            // use-after-free when those callbacks try to write to destroyed views.
+            ImageLoader::cancelAll();
+            ImageLoader::clearCache();
+
             MpvPlayer& player = MpvPlayer::getInstance();
 
             // Set audio-only mode BEFORE initializing
             player.setAudioOnly(isAudioContent);
-
-            // Initialize player if needed
-            if (!player.isInitialized()) {
-                if (!player.init()) {
-                    brls::Logger::error("Failed to initialize MPV player");
-                    m_loadingMedia = false;
-                    return;
-                }
-            }
 
             // MPV's HTTP handling crashes on Vita when loading network URLs directly.
             // Workaround: Download audio to local file first, then play the local file.
@@ -607,31 +633,35 @@ void PlayerActivity::loadMedia() {
                 playUrl = tempPath;
             }
 
-            // Load the URL using async command
-            // loadUrl returns false if a command is already pending (prevents rapid clicks)
-            brls::Logger::debug("PlayerActivity: Calling player.loadUrl...");
-            if (!player.loadUrl(playUrl, item.title)) {
-                brls::Logger::error("Failed to load URL: {}", playUrl);
-                m_loadingMedia = false;
-                return;
+            if (!player.isInitialized()) {
+                // Defer MPV init + load to after activity transition completes.
+                // initRenderContext() creates GXM resources (framebuffer, render target)
+                // and loadUrl() spawns decoder threads that use the shared GXM context
+                // via hwdec=vita-copy. Both conflict with NanoVG drawing during the
+                // borealis activity show phase, causing a consistent SIGSEGV.
+                brls::Logger::info("PlayerActivity: Deferring MPV init to after activity transition");
+                m_pendingPlayUrl = playUrl;
+                m_pendingPlayTitle = item.title;
+                m_pendingIsAudio = isAudioContent;
+            } else {
+                // Player already initialized (e.g., mode didn't change) - load immediately
+                brls::Logger::debug("PlayerActivity: Calling player.loadUrl...");
+                if (!player.loadUrl(playUrl, item.title)) {
+                    brls::Logger::error("Failed to load URL: {}", playUrl);
+                    m_loadingMedia = false;
+                    return;
+                }
+
+                // Show video view only for video content
+                if (videoView && !isAudioContent) {
+                    videoView->setVisibility(brls::Visibility::VISIBLE);
+                    videoView->setVideoVisible(true);
+                    brls::Logger::debug("Video view enabled");
+                }
+
+                m_isPlaying = true;
+                brls::Logger::debug("PlayerActivity: loadMedia completed successfully for Plex stream");
             }
-            brls::Logger::debug("PlayerActivity: player.loadUrl returned successfully");
-
-            // Note: Don't call play() here - MPV auto-starts playback when file is loaded
-            // Calling play() while in LOADING state can cause crashes on Vita
-
-            // Show video view only for video content
-            if (videoView && !isAudioContent) {
-                videoView->setVisibility(brls::Visibility::VISIBLE);
-                videoView->setVideoVisible(true);
-                brls::Logger::debug("Video view enabled");
-            }
-
-            // Note: viewOffset is passed to transcode URL, so Plex handles resume position
-            // No need for m_pendingSeek for remote playback
-
-            m_isPlaying = true;
-            brls::Logger::debug("PlayerActivity: loadMedia completed successfully for Plex stream");
         } else {
             brls::Logger::error("Failed to get transcode URL for: {}", m_mediaKey);
         }
@@ -645,10 +675,46 @@ void PlayerActivity::updateProgress() {
     // Don't update if destroying or showing photo
     if (m_destroying || m_isPhoto) return;
 
+    // Deferred MPV initialization: perform the init + loadUrl that was postponed
+    // during onContentAvailable(). By now the activity transition is complete and
+    // NanoVG has finished its draw cycle, so it's safe to create GXM render
+    // resources and start MPV's decoder threads without conflicting with NanoVG.
+    if (!m_pendingPlayUrl.empty()) {
+        std::string url = m_pendingPlayUrl;
+        std::string title = m_pendingPlayTitle;
+        bool isAudio = m_pendingIsAudio;
+        m_pendingPlayUrl.clear();
+        m_pendingPlayTitle.clear();
+
+        brls::Logger::info("PlayerActivity: Performing deferred MPV init...");
+
+        MpvPlayer& player = MpvPlayer::getInstance();
+        player.setAudioOnly(isAudio);
+
+        if (!player.isInitialized()) {
+            if (!player.init()) {
+                brls::Logger::error("PlayerActivity: Deferred MPV init failed");
+                return;
+            }
+        }
+
+        if (player.loadUrl(url, title)) {
+            if (videoView && !isAudio) {
+                videoView->setVisibility(brls::Visibility::VISIBLE);
+                videoView->setVideoVisible(true);
+                brls::Logger::debug("Video view enabled (deferred)");
+            }
+            m_isPlaying = true;
+            brls::Logger::info("PlayerActivity: Deferred load started successfully");
+        } else {
+            brls::Logger::error("PlayerActivity: Deferred loadUrl failed");
+        }
+        return;
+    }
+
     MpvPlayer& player = MpvPlayer::getInstance();
 
     if (!player.isInitialized()) {
-        brls::Logger::debug("PlayerActivity::updateProgress: player not initialized");
         return;
     }
 

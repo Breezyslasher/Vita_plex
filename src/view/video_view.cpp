@@ -23,6 +23,13 @@ void VideoView::draw(NVGcontext* vg, float x, float y, float width, float height
 
     MpvPlayer& player = MpvPlayer::getInstance();
 
+    // Don't try to draw video while player is still loading.
+    // During loading, MPV's decoder threads may use the shared GXM context
+    // for initialization, and drawing the uninitialized video texture could crash.
+    if (player.isLoading()) {
+        return;
+    }
+
     // Note: Rendering happens in MpvPlayer's onRenderUpdate callback via brls::sync()
     // We just display the already-rendered NanoVG texture here
 

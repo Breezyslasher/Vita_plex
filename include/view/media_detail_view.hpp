@@ -7,6 +7,7 @@
 
 #include <borealis.hpp>
 #include <memory>
+#include <atomic>
 #include "app/plex_client.hpp"
 
 namespace vitaplex {
@@ -57,7 +58,7 @@ private:
     brls::Box* m_soundtracksContent = nullptr;
 
     // Shared alive flag to prevent async callbacks from accessing destroyed view
-    std::shared_ptr<bool> m_alive;
+    std::shared_ptr<std::atomic<bool>> m_alive;
 };
 
 } // namespace vitaplex

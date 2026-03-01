@@ -9,6 +9,8 @@
 #include <borealis/core/timer.hpp>
 #include <string>
 #include <vector>
+#include <memory>
+#include <atomic>
 
 // Forward declarations
 namespace vitaplex {
@@ -65,6 +67,17 @@ private:
     bool m_loadingMedia = false;   // Flag to prevent rapid re-entry of loadMedia
     double m_pendingSeek = 0.0;    // Pending seek position (set when resuming)
     brls::RepeatingTimer m_updateTimer;
+
+    // Deferred MPV init: URL and title are stored here during onContentAvailable()
+    // and loaded in the first updateProgress() call. This prevents GXM context
+    // conflicts between MPV's render context creation / decoder threads and
+    // NanoVG during the borealis activity show phase.
+    std::string m_pendingPlayUrl;
+    std::string m_pendingPlayTitle;
+    bool m_pendingIsAudio = false;
+
+    // Alive flag for async image loads - prevents use-after-free when activity is destroyed
+    std::shared_ptr<std::atomic<bool>> m_alive = std::make_shared<std::atomic<bool>>(true);
 
     BRLS_BIND(brls::Box, playerContainer, "player/container");
     BRLS_BIND(brls::Label, titleLabel, "player/title");

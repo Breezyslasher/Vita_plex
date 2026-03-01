@@ -6,6 +6,8 @@
 #pragma once
 
 #include <string>
+#include <atomic>
+#include <mutex>
 
 #ifdef __vita__
 #include <mpv/client.h>
@@ -129,6 +131,9 @@ public:
     void update();
     void render();
 
+    // Flush GPU pipeline to serialize GXM access between MPV and NanoVG
+    static void flushGpu();
+
     // Check if render context is available (video mode vs audio-only)
     bool hasRenderContext() const { return m_mpvRenderCtx != nullptr; }
 
@@ -166,7 +171,7 @@ private:
     std::string m_errorMessage;
     std::string m_currentUrl;
     bool m_subtitlesVisible = true;
-    bool m_stopping = false;        // Shutdown in progress
+    std::atomic<bool> m_stopping{false};        // Shutdown in progress (accessed from mpv thread)
     bool m_commandPending = false;  // Async command pending
     bool m_audioOnly = false;       // Audio-only mode (no video decoding)
 
@@ -178,7 +183,11 @@ private:
     mpv_render_param m_mpvParams[2] = {};  // Render params for mpv_render_context_render
     int m_videoWidth = 960;
     int m_videoHeight = 544;
-    bool m_renderReady = false;         // Flag for when frame is ready
+    std::atomic<bool> m_renderReady{false};     // Flag for when render context is ready (accessed from mpv thread)
+
+    // Mutex to protect GXM render resources from concurrent access
+    // (mpv's render update callback fires from its decoder thread)
+    std::mutex m_renderMutex;
 
     // Static callback for render updates (called from MPV thread)
     static void onRenderUpdate(void* ctx);
