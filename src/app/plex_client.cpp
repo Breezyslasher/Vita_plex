@@ -1728,11 +1728,13 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
         // Matches switchfin's Vita config (proven to work on Vita's MPV):
         // - HLS: segmented streaming, no moov atom issues
         // - TS container: works with HLS protocol
+        // - AAC only: MP3 in MPEG-TS causes "unspecified frame size" probe
+        //   failure with Vita's mp3_vita decoder, leading to A/V desync
         // - H.264 level 4.0 max, 720p max (Vita hardware limits)
         profileExtra = "add-transcode-target(type=videoProfile"
                        "&context=streaming&protocol=hls"
                        "&container=mpegts&videoCodec=h264"
-                       "&audioCodec=aac,mp3"
+                       "&audioCodec=aac"
                        "&subtitleCodec=srt)"
                        "+add-limitation(scope=videoCodec&scopeName=h264"
                        "&type=upperBound&name=video.level&value=40)"

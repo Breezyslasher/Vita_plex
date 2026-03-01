@@ -176,8 +176,16 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "demuxer-max-bytes", "1MiB");
         mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "512KiB");
     } else {
-        // Video: disable cache to conserve memory (Vita has 256MB)
-        mpv_set_option_string(m_mpv, "cache", "no");
+        // Video: HLS streaming needs cache to buffer .ts segments.
+        // Without cache, the HLS demuxer can't properly download and
+        // queue segments, leading to crashes on the first frame.
+        mpv_set_option_string(m_mpv, "cache", "yes");
+        mpv_set_option_string(m_mpv, "demuxer-max-bytes", "2MiB");
+        mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "512KiB");
+        // HLS-specific: give the demuxer more time to probe codec parameters.
+        // Fixes "Could not find codec parameters" warnings with TS streams.
+        mpv_set_option_string(m_mpv, "demuxer-lavf-analyzeduration", "10");
+        mpv_set_option_string(m_mpv, "demuxer-lavf-probesize", "10000000");
     }
 #else
     mpv_set_option_string(m_mpv, "cache", "yes");
