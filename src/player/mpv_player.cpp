@@ -25,6 +25,12 @@
 #include <mutex>
 #include <vector>
 
+#ifdef __vita__
+// Defined in patches/psv_platform.cpp - throttles the borealis main loop
+// to ~30fps during audio-only playback so the ao_vita thread gets more CPU.
+extern "C" void vitaplex_set_audio_playback_active(bool active);
+#endif
+
 namespace vitaplex {
 
 #ifdef __vita__
@@ -117,6 +123,11 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "video", "no");
         mpv_set_option_string(m_mpv, "audio-display", "no");  // Don't try to show album art
         mpv_set_option_string(m_mpv, "hwdec", "no");
+#ifdef __vita__
+        // Explicitly select the Vita audio output driver (from switchfin's mpv build).
+        // Without this, mpv auto-selects and may not pick the optimal driver.
+        mpv_set_option_string(m_mpv, "ao", "vita");
+#endif
     } else {
         // Video mode: use libmpv for video output - we'll create a render context
         brls::Logger::info("MpvPlayer: Initializing in video mode");
@@ -171,16 +182,13 @@ bool MpvPlayer::init() {
 
 #ifdef __vita__
     if (m_audioOnly) {
-        // Audio streaming: the Plex transcoder takes 1-2s to start up.
-        // Without enough pre-buffering, MPV plays the initial data burst,
-        // then stalls waiting for the transcoder to catch up - causing a
-        // brief silence ~1 second into playback.
+        // Audio streaming: cache enough data to cover the Plex transcoder
+        // startup delay (1-2s) and any brief network stalls.
         mpv_set_option_string(m_mpv, "cache", "yes");
         mpv_set_option_string(m_mpv, "cache-secs", "10");
-        // Wait until 5s of audio is buffered before starting/resuming.
-        // This covers the transcoder startup delay and network jitter.
+        // Pre-buffer 3 seconds before starting/resuming after a stall.
         mpv_set_option_string(m_mpv, "cache-pause-initial", "yes");
-        mpv_set_option_string(m_mpv, "cache-pause-wait", "5");
+        mpv_set_option_string(m_mpv, "cache-pause-wait", "3");
         mpv_set_option_string(m_mpv, "demuxer-max-bytes", "2MiB");
         mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "512KiB");
     } else {
@@ -311,6 +319,9 @@ void MpvPlayer::shutdown() {
         brls::Logger::debug("MpvPlayer: Shutting down");
 
         m_stopping.store(true);
+#ifdef __vita__
+        vitaplex_set_audio_playback_active(false);
+#endif
 
         // Clean up render context first (locks m_renderMutex to wait for in-flight renders)
         cleanupRenderContext();
@@ -666,6 +677,16 @@ void MpvPlayer::setState(MpvPlayerState newState) {
     if (m_state != newState) {
         brls::Logger::debug("MpvPlayer: State change: {} -> {}", (int)m_state, (int)newState);
         m_state = newState;
+#ifdef __vita__
+        // Throttle the borealis main loop during audio-only playback.
+        // The music player screen is mostly static so 30fps is fine,
+        // and the freed CPU time prevents ao_vita audio underruns.
+        if (m_audioOnly) {
+            bool playing = (newState == MpvPlayerState::PLAYING ||
+                           newState == MpvPlayerState::BUFFERING);
+            vitaplex_set_audio_playback_active(playing);
+        }
+#endif
         brls::Logger::debug("MpvPlayer::setState assignment done");
     }
     brls::Logger::debug("MpvPlayer::setState exiting");

@@ -23,9 +23,23 @@ limitations under the License.
 #include <psp2/system_param.h>
 #include <sys/unistd.h>
 
+#include <psp2/kernel/threadmgr.h>
+#include <atomic>
+
 #include <borealis/core/application.hpp>
 #include <borealis/core/logger.hpp>
 #include <borealis/platforms/psv/psv_platform.hpp>
+
+// When true, mainLoopIteration yields CPU time to audio threads by sleeping.
+// Set by MpvPlayer during audio-only playback so the 60fps NanoVG rendering
+// doesn't starve the ao_vita audio output thread (which has only ~42ms of
+// hardware buffer at 48kHz).
+static std::atomic<bool> s_audioPlaybackActive{false};
+
+extern "C" void vitaplex_set_audio_playback_active(bool active)
+{
+    s_audioPlaybackActive.store(active);
+}
 
 namespace brls
 {
@@ -139,7 +153,13 @@ bool PsvPlatform::mainLoopIteration()
     // SDL mode - call parent SDLPlatform
     return SDLPlatform::mainLoopIteration();
 #else
-    // GXM mode - no SDL, just return true
+    // GXM mode: during audio-only playback the screen is mostly static
+    // (only the progress bar updates once per second). Yield CPU time
+    // so the ao_vita audio thread can feed the hardware without underruns.
+    // ~33ms sleep gives ~30fps which is plenty for a static music player UI.
+    if (s_audioPlaybackActive.load(std::memory_order_relaxed)) {
+        sceKernelDelayThread(33000);  // 33ms -> ~30fps
+    }
     return true;
 #endif
 }
