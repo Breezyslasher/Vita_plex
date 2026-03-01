@@ -30,10 +30,17 @@ public:
     // Cancel all pending loads (invalidates in-flight callbacks via generation counter)
     static void cancelAll();
 
+    // Pause/resume image loading. While paused, new loadAsync calls are no-ops
+    // and in-flight async loads skip the HTTP request. Use when entering playback
+    // to stop background thumbnail fetches from competing with media streaming.
+    static void setPaused(bool paused);
+    static bool isPaused();
+
 private:
     static std::map<std::string, std::vector<uint8_t>> s_cache;
     static std::mutex s_cacheMutex;
     static std::atomic<uint64_t> s_generation;
+    static std::atomic<bool> s_paused;
 };
 
 } // namespace vitaplex

@@ -63,6 +63,13 @@ brls::View* PlayerActivity::createContentView() {
 void PlayerActivity::onContentAvailable() {
     brls::Logger::debug("PlayerActivity content available");
 
+    // Cancel pending background thumbnail loads (HomeTab, MediaDetailView)
+    // to free up network bandwidth for media streaming.
+    // We don't setPaused(true) here yet because music queue mode needs to
+    // load album art first. setPaused is called later in loadMedia/loadFromQueue
+    // right before MPV starts streaming.
+    ImageLoader::cancelAll();
+
     // Load media details
     if (m_isQueueMode) {
         loadFromQueue();
@@ -135,6 +142,9 @@ void PlayerActivity::onContentAvailable() {
 
 void PlayerActivity::willDisappear(bool resetState) {
     brls::Activity::willDisappear(resetState);
+
+    // Re-enable background thumbnail loading now that playback is ending
+    ImageLoader::setPaused(false);
 
     // Mark as destroying to prevent timer and image loader callbacks
     m_destroying = true;
@@ -224,13 +234,16 @@ void PlayerActivity::loadFromQueue() {
     // Update queue info display
     updateQueueDisplay();
 
-    // Load album art
+    // Load album art - temporarily unpause the image loader for this one load
     if (albumArt && !track->thumb.empty()) {
         PlexClient& client = PlexClient::getInstance();
         std::string thumbUrl = client.getThumbnailUrl(track->thumb, 300, 300);
+        bool wasPaused = ImageLoader::isPaused();
+        if (wasPaused) ImageLoader::setPaused(false);
         ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {
             // Art loaded
         }, albumArt, m_alive);
+        if (wasPaused) ImageLoader::setPaused(true);
         albumArt->setVisibility(brls::Visibility::VISIBLE);
     }
 
@@ -245,8 +258,8 @@ void PlayerActivity::loadFromQueue() {
         return;
     }
 
-    // Cancel in-flight image loads and free cache to reclaim memory for MPV.
-    // This prevents stale async callbacks from writing to freed brls::Image* pointers.
+    // Pause image loading and free cache to reclaim memory for MPV.
+    ImageLoader::setPaused(true);
     ImageLoader::cancelAll();
     ImageLoader::clearCache();
 
@@ -387,7 +400,8 @@ void PlayerActivity::loadMedia() {
 
         brls::Logger::info("PlayerActivity: File type detection - audio: {}", isAudioFile);
 
-        // Cancel in-flight image loads and free cache to reclaim memory for MPV
+        // Pause image loading and free cache to reclaim memory for MPV
+        ImageLoader::setPaused(true);
         ImageLoader::cancelAll();
         ImageLoader::clearCache();
 
@@ -447,7 +461,8 @@ void PlayerActivity::loadMedia() {
             titleLabel->setText(title);
         }
 
-        // Cancel in-flight image loads and free cache to reclaim memory for MPV
+        // Pause image loading and free cache to reclaim memory for MPV
+        ImageLoader::setPaused(true);
         ImageLoader::cancelAll();
         ImageLoader::clearCache();
 
@@ -536,11 +551,10 @@ void PlayerActivity::loadMedia() {
         // Get transcode URL for video/audio (forces Plex to convert to Vita-compatible format)
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, item.viewOffset)) {
-            // Cancel in-flight image loads and free cache memory before initializing MPV.
-            // The Vita only has 256MB and MPV needs substantial memory for video decoding.
-            // cancelAll() increments the generation counter so any pending brls::sync
-            // callbacks from image downloads will be safely skipped, preventing
-            // use-after-free when those callbacks try to write to destroyed views.
+            // Pause image loading and free cache memory before initializing MPV.
+            // This stops background thumbnail fetches from competing with media
+            // streaming, and frees memory (Vita only has 256MB).
+            ImageLoader::setPaused(true);
             ImageLoader::cancelAll();
             ImageLoader::clearCache();
 
