@@ -110,6 +110,11 @@ add_executable(${PROJECT_NAME} ${APP_SOURCES})
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${APP_INCLUDES})
 
+# Wrap pthread_create to enforce a minimum 512KB stack size.
+# Vita's default pthread stack is only 32KB, which is too small for MPV's
+# software H.264 decoder threads (causes stack overflow crash).
+target_link_options(${PROJECT_NAME} PRIVATE "-Wl,--wrap=pthread_create")
+
 # Link libraries - borealis + app platform libs from toolchain
 # Order matters: libraries that PROVIDE symbols must come AFTER libraries that NEED them
 target_link_libraries(${PROJECT_NAME}

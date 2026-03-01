@@ -124,7 +124,9 @@ bool MpvPlayer::init() {
 
 #ifdef __vita__
         // Vita-specific settings from switchfin
-        mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
+        // Use 2 decoder threads for software decode. More threads require
+        // more stack memory (each pthread gets 512KB via our wrapper).
+        mpv_set_option_string(m_mpv, "vd-lavc-threads", "2");
         mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "all");
         mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
 

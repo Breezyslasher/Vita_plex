@@ -7,6 +7,48 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <pthread.h>
+
+/*
+ * pthread_create wrapper: enforce minimum 512KB stack for all threads.
+ *
+ * Vita's default pthread stack is only 32KB, which is far too small for
+ * software H.264 decoding in libavcodec. With hwdec=no, MPV's decoder
+ * threads overflow the 32KB stack (crash dump shows SP 2720 bytes below
+ * stack base), crashing the app.
+ *
+ * We use the linker's --wrap feature to intercept all pthread_create calls
+ * (including from statically-linked MPV/ffmpeg) and ensure a minimum stack
+ * size of 512KB.
+ */
+#define VITAPLEX_MIN_THREAD_STACK (512 * 1024)
+
+extern int __real_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
+                                 void *(*start_routine)(void *), void *arg);
+
+int __wrap_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
+                          void *(*start_routine)(void *), void *arg) {
+    pthread_attr_t patched_attr;
+    const pthread_attr_t *use_attr = attr;
+
+    if (attr == NULL) {
+        /* No attributes given - create one with our minimum stack size */
+        pthread_attr_init(&patched_attr);
+        pthread_attr_setstacksize(&patched_attr, VITAPLEX_MIN_THREAD_STACK);
+        use_attr = &patched_attr;
+    } else {
+        /* Attributes given - bump stack size if below minimum */
+        size_t cur = 0;
+        pthread_attr_getstacksize(attr, &cur);
+        if (cur < VITAPLEX_MIN_THREAD_STACK) {
+            patched_attr = *attr;
+            pthread_attr_setstacksize(&patched_attr, VITAPLEX_MIN_THREAD_STACK);
+            use_attr = &patched_attr;
+        }
+    }
+
+    return __real_pthread_create(thread, use_attr, start_routine, arg);
+}
 
 /* Thread-safe stdio locking stubs - Vita is single-threaded for stdio anyway */
 void flockfile(FILE *filehandle) {
