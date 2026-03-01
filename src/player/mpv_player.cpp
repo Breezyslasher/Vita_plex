@@ -170,9 +170,15 @@ bool MpvPlayer::init() {
     // ========================================
 
 #ifdef __vita__
-    // Switchfin disables cache for Vita due to limited memory
-    // MPV handles HTTP buffering internally
-    mpv_set_option_string(m_mpv, "cache", "no");
+    if (m_audioOnly) {
+        // Audio streaming needs cache enabled for network playback
+        mpv_set_option_string(m_mpv, "cache", "yes");
+        mpv_set_option_string(m_mpv, "demuxer-max-bytes", "1MiB");
+        mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "512KiB");
+    } else {
+        // Video: disable cache to conserve memory (Vita has 256MB)
+        mpv_set_option_string(m_mpv, "cache", "no");
+    }
 #else
     mpv_set_option_string(m_mpv, "cache", "yes");
     mpv_set_option_string(m_mpv, "demuxer-max-bytes", "4MiB");
@@ -197,7 +203,8 @@ bool MpvPlayer::init() {
         "X-Plex-Version: 1.0.0,"
         "X-Plex-Platform: PlayStation Vita,"
         "X-Plex-Device: PS Vita,"
-        "X-Plex-Client-Profile-Name: Generic");
+        "X-Plex-Client-Profile-Name: Generic,"
+        "X-Plex-Device-Name: PS Vita");
 
     // Note: demuxer-lavf-probe-info and force-seekable caused crashes on Vita
     // Keep options minimal for compatibility
