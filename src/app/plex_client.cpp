@@ -1720,10 +1720,13 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
                        "&context=streaming&protocol=http"
                        "&container=mp3&audioCodec=mp3)";
     } else {
-        // Video: transcode to mp4/h264/aac via HTTP
+        // Video: transcode to mkv/h264/aac via HTTP.
+        // MKV is better than MP4 for HTTP streaming because it doesn't
+        // require the moov atom to be seekable (mp4 caused "unrecognized
+        // file format" on Vita's ffmpeg).
         profileExtra = "add-transcode-target(type=videoProfile"
                        "&context=streaming&protocol=http"
-                       "&container=mp4&videoCodec=h264"
+                       "&container=mkv&videoCodec=h264"
                        "&audioCodec=aac,ac3"
                        "&subtitleCodec=srt)"
                        "+add-limitation(scope=videoCodec&scopeName=h264"
@@ -1778,8 +1781,8 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     startQuery += "&X-Plex-Client-Profile-Name=Generic";
     startQuery += "&X-Plex-Client-Profile-Extra=" + HttpClient::urlEncode(profileExtra);
 
-    // Use mp4 for video (widely supported), mp3 for audio
-    const char* container = isAudio ? "mp3" : "mp4";
+    // MKV for video (streamable without moov atom), mp3 for audio
+    const char* container = isAudio ? "mp3" : "mkv";
     snprintf(buf, sizeof(buf), "/%s/:/transcode/universal/start.%s?", transcodeType, container);
     url = m_serverUrl + buf + startQuery;
     brls::Logger::info("getTranscodeUrl: Transcode URL = {}", url);
