@@ -124,12 +124,16 @@ bool MpvPlayer::init() {
 
 #ifdef __vita__
         // Vita-specific settings from switchfin
-        mpv_set_option_string(m_mpv, "vd-lavc-threads", "2");
+        mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
         mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "all");
         mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
 
-        // Use Vita hardware decoding (from switchfin)
-        mpv_set_option_string(m_mpv, "hwdec", "vita-copy");
+        // Disable hardware decoding. vita-copy uses the shared GXM immediate
+        // context from its decoder thread, which races with NanoVG on the main
+        // thread and causes a deterministic crash at eboot+0x161b0. Software
+        // decoding keeps all GXM usage on the main thread (via the render
+        // callback + brls::sync), eliminating the threading conflict.
+        mpv_set_option_string(m_mpv, "hwdec", "no");
 
         // GXM-specific settings from switchfin
         mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
