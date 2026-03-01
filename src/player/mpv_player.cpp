@@ -135,9 +135,11 @@ bool MpvPlayer::init() {
 
 #ifdef __vita__
         // Vita-specific settings from switchfin
-        // Use 2 decoder threads for software decode. More threads require
-        // more stack memory (each pthread gets 512KB via our wrapper).
-        mpv_set_option_string(m_mpv, "vd-lavc-threads", "2");
+        // Use single decoder thread for software decode. 2 threads doubled
+        // stack + buffer memory and caused UDF #0xFF abort on first frame.
+        // Each pthread gets 512KB stack which isn't enough for concurrent
+        // H.264 decode at 960x540.
+        mpv_set_option_string(m_mpv, "vd-lavc-threads", "1");
         mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "all");
         mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
 
@@ -151,6 +153,12 @@ bool MpvPlayer::init() {
         // GXM-specific settings from switchfin
         mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
         mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
+
+        // Drop frames instead of crashing when CPU can't keep up with
+        // software decode. Without this, decode overload causes abort().
+        mpv_set_option_string(m_mpv, "framedrop", "decoder+vo");
+        // Sync to audio clock - drop video frames as needed to stay in sync
+        mpv_set_option_string(m_mpv, "video-sync", "audio");
 #else
         mpv_set_option_string(m_mpv, "hwdec", "no");
 #endif
@@ -198,6 +206,10 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "cache", "yes");
         mpv_set_option_string(m_mpv, "demuxer-max-bytes", "2MiB");
         mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "512KiB");
+        // Pre-buffer before starting decode to prevent the decoder from
+        // being starved of data on the first frame (which causes abort).
+        mpv_set_option_string(m_mpv, "cache-pause-initial", "yes");
+        mpv_set_option_string(m_mpv, "cache-pause-wait", "3");
         // HLS-specific: give the demuxer more time to probe codec parameters.
         // Fixes "Could not find codec parameters" warnings with TS streams.
         // Keep probesize conservative (2MB) - the Vita only has 192MB heap total
