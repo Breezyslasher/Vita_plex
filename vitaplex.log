@@ -1,287 +1,367 @@
-14:39:13.479 [INFO] Log file initialized: ux0:data/VitaPlex/vitaplex.log
-14:39:14.078 [DEBUG] DownloadsManager: No saved state found
-14:39:14.079 [INFO] DownloadsManager: Initialized at ux0:data/VitaPlex/downloads
-14:39:14.079 [INFO] VitaPlex 2.0.0 initializing...
-14:39:14.081 [DEBUG] sceIoMkdir result: -0x7ffeffef
-14:39:14.081 [INFO] Loading saved settings...
-14:39:14.081 [DEBUG] loadSettings: Opening ux0:data/VitaPlex/settings.json
-14:39:14.083 [DEBUG] loadSettings: File size = 699
-14:39:14.085 [DEBUG] loadSettings: Read 699 bytes
-14:39:14.091 [INFO] loadSettings: authToken=(set), serverUrl=https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400, username=(empty)
-14:39:14.101 [INFO] Settings loaded successfully
-14:39:14.110 [INFO] Settings load result: success
-14:39:14.121 [INFO] Applied theme: Dark
-14:39:14.132 [INFO] Debug logging enabled
-14:39:14.142 [INFO] Application::run - isLoggedIn=true, serverUrl=https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400
-14:39:14.147 [INFO] Restoring saved session...
-14:39:14.153 [INFO] Connecting to server: https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400
-14:39:14.162 [DEBUG] Connection timeout: 30 seconds
-14:39:14.171 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:14.927 [DEBUG] HTTP response: 200 (9410 bytes)
-14:39:14.937 [INFO] Connected to: openmediavault
-14:39:14.949 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/livetv/dvrs?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:15.073 [DEBUG] HTTP response: 200 (8664 bytes)
-14:39:15.078 [INFO] Live TV availability check: available
-14:39:15.085 [INFO] Restored session and connected to server
-14:39:15.093 [DEBUG] MainActivity created
-14:39:15.102 [DEBUG] Adding an inputs block token (tokens=1)
-14:39:15.137 [DEBUG] MainActivity content available
-14:39:15.150 [DEBUG] fetchLibrarySections: serverUrl=https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400, hasToken=true
-14:39:15.162 [DEBUG] Fetching: https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:15.169 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:15.282 [DEBUG] HTTP response: 200 (5503 bytes)
-14:39:15.288 [DEBUG] Response: 200 - 5503 bytes
-14:39:15.296 [DEBUG] Response body: {"MediaContainer":{"size":11,"allowSync":false,"title1":"Plex Library","Directory":[{"allowSync":true,"filters":true,"refreshing":false,"key":"12","type":"movie","title":"3D Movies","agent":"tv.plex.agents.movie","scanner":"Plex Movie","language":"en-US","metadataAgentProviderGroupId":1,"uuid":"6cd2f30a-ef3d-4dac-8c8e-0404418f3ce1","updatedAt":1767703430,"createdAt":1753322285,"scannedAt":1767703375,"content":true,"directory":true,"contentChangedAt":3550580492361197975,"hidden":2,"Location":[{"i
-14:39:15.306 [DEBUG] Found section: 3D Movies (movie)
-14:39:15.317 [DEBUG] Found section: DVR Movies (movie)
-14:39:15.327 [DEBUG] Found section: Movies (movie)
-14:39:15.339 [DEBUG] Found section: DVR TV Shows (show)
-14:39:15.347 [DEBUG] Found section: TV Shows (show)
-14:39:15.352 [DEBUG] Found section: CD Music (artist)
-14:39:15.358 [DEBUG] Found section: Nick's Music (artist)
-14:39:15.366 [DEBUG] Found section: Colorized Photos (photo)
-14:39:15.376 [DEBUG] Found section: Photos (photo)
-14:39:15.386 [DEBUG] Found section: Photos 2.0 (photo)
-14:39:15.397 [DEBUG] Found section: Home Videos (movie)
-14:39:15.408 [INFO] Found 11 library sections
-14:39:15.417 [DEBUG] MainActivity: Dynamic sidebar width: 242px
-14:39:15.435 [DEBUG] MainActivity: Loading libraries to sidebar...
-14:39:15.443 [DEBUG] fetchLibrarySections: serverUrl=https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400, hasToken=true
-14:39:15.452 [DEBUG] Fetching: https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:15.461 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:15.745 [DEBUG] HTTP response: 200 (5503 bytes)
-14:39:15.756 [DEBUG] Response: 200 - 5503 bytes
-14:39:15.767 [DEBUG] Response body: {"MediaContainer":{"size":11,"allowSync":false,"title1":"Plex Library","Directory":[{"allowSync":true,"filters":true,"refreshing":false,"key":"12","type":"movie","title":"3D Movies","agent":"tv.plex.agents.movie","scanner":"Plex Movie","language":"en-US","metadataAgentProviderGroupId":1,"uuid":"6cd2f30a-ef3d-4dac-8c8e-0404418f3ce1","updatedAt":1767703430,"createdAt":1753322285,"scannedAt":1767703375,"content":true,"directory":true,"contentChangedAt":3550580492361197975,"hidden":2,"Location":[{"i
-14:39:15.775 [DEBUG] Found section: 3D Movies (movie)
-14:39:15.781 [DEBUG] Found section: DVR Movies (movie)
-14:39:15.788 [DEBUG] Found section: Movies (movie)
-14:39:15.798 [DEBUG] Found section: DVR TV Shows (show)
-14:39:15.809 [DEBUG] Found section: TV Shows (show)
-14:39:15.820 [DEBUG] Found section: CD Music (artist)
-14:39:15.828 [DEBUG] Found section: Nick's Music (artist)
-14:39:15.833 [DEBUG] Found section: Colorized Photos (photo)
-14:39:15.841 [DEBUG] Found section: Photos (photo)
-14:39:15.851 [DEBUG] Found section: Photos 2.0 (photo)
-14:39:15.861 [DEBUG] Found section: Home Videos (movie)
-14:39:15.873 [INFO] Found 11 library sections
-14:39:15.881 [INFO] MainActivity: Got 11 library sections
-14:39:15.887 [DEBUG] MainActivity: Hiding library: 3D Movies
-14:39:15.895 [DEBUG] MainActivity: Hiding library: DVR Movies
-14:39:15.916 [DEBUG] MainActivity: Added sidebar tab for library: Movies
-14:39:15.940 [DEBUG] MainActivity: Added sidebar tab for library: DVR TV Shows
-14:39:15.963 [DEBUG] MainActivity: Added sidebar tab for library: TV Shows
-14:39:15.968 [DEBUG] MainActivity: Hiding library: CD Music
-14:39:15.987 [DEBUG] MainActivity: Added sidebar tab for library: Nick's Music
-14:39:15.995 [DEBUG] MainActivity: Hiding library: Colorized Photos
-14:39:16.004 [DEBUG] MainActivity: Hiding library: Photos
-14:39:16.015 [DEBUG] MainActivity: Hiding library: Photos 2.0
-14:39:16.027 [DEBUG] MainActivity: Hiding library: Home Videos
-14:39:16.186 [DEBUG] HomeTab: Loading content...
-14:39:16.192 [DEBUG] HomeTab::loadContent - Starting async load
-14:39:16.201 [DEBUG] HomeTab: Fetching continue watching (async)...
-14:39:16.202 [DEBUG] HomeTab: Fetching library sections for recently added...
-14:39:16.202 [DEBUG] HomeTab: Async content loading started
-14:39:16.210 [DEBUG] fetchContinueWatching: serverUrl=https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400
-14:39:16.221 [DEBUG] fetchLibrarySections: serverUrl=https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400, hasToken=true
-14:39:16.240 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/hubs/continueWatching?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:16.246 [DEBUG] Fetching: https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:16.251 [DEBUG] Giving focus to brls::SidebarItem
-14:39:16.263 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:16.274 [DEBUG] Hiding brls::Box
-14:39:16.293 [DEBUG] push activity to the stack
-14:39:16.299 [DEBUG] Showing brls::Box
-14:39:16.445 [DEBUG] HTTP response: 200 (16502 bytes)
-14:39:16.453 [DEBUG] ContinueWatching response: 200 - 16502 bytes
-14:39:16.481 [DEBUG] HTTP response: 200 (5503 bytes)
-14:39:16.495 [INFO] Found 3 continue watching items
-14:39:16.497 [DEBUG] Response: 200 - 5503 bytes
-14:39:16.505 [INFO] HomeTab: Got 3 continue watching items
-14:39:16.514 [DEBUG] Response body: {"MediaContainer":{"size":11,"allowSync":false,"title1":"Plex Library","Directory":[{"allowSync":true,"filters":true,"refreshing":false,"key":"12","type":"movie","title":"3D Movies","agent":"tv.plex.agents.movie","scanner":"Plex Movie","language":"en-US","metadataAgentProviderGroupId":1,"uuid":"6cd2f30a-ef3d-4dac-8c8e-0404418f3ce1","updatedAt":1767703430,"createdAt":1753322285,"scannedAt":1767703375,"content":true,"directory":true,"contentChangedAt":3550580492361197975,"hidden":2,"Location":[{"i
-14:39:16.536 [DEBUG] Found section: 3D Movies (movie)
-14:39:16.544 [DEBUG] Found section: DVR Movies (movie)
-14:39:16.550 [DEBUG] Found section: Movies (movie)
-14:39:16.558 [DEBUG] Found section: DVR TV Shows (show)
-14:39:16.566 [DEBUG] Found section: TV Shows (show)
-14:39:16.577 [DEBUG] Found section: CD Music (artist)
-14:39:16.589 [DEBUG] Found section: Nick's Music (artist)
-14:39:16.598 [DEBUG] Found section: Colorized Photos (photo)
-14:39:16.604 [DEBUG] Found section: Photos (photo)
-14:39:16.608 [DEBUG] Removing an inputs block token (tokens=0)
-14:39:16.613 [DEBUG] Found section: Photos 2.0 (photo)
-14:39:16.635 [DEBUG] Found section: Home Videos (movie)
-14:39:16.644 [INFO] Found 11 library sections
-14:39:16.652 [DEBUG] HomeTab: Skipping hidden library: 3D Movies
-14:39:16.661 [DEBUG] HomeTab: Skipping hidden library: DVR Movies
-14:39:16.673 [DEBUG] fetchSectionRecentlyAdded: section=2
-14:39:16.685 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections/2/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:16.981 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16681%2Fthumb%2F1770800250&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:17.186 [DEBUG] HTTP response: 200 (7513 bytes)
-14:39:17.186 [DEBUG] HTTP response: 200 (236122 bytes)
-14:39:17.196 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3899%2Fthumb%2F1770887034&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:17.207 [DEBUG] RecentlyAdded response: 200 - 236122 bytes
-14:39:17.319 [DEBUG] HTTP response: 200 (4280 bytes)
-14:39:17.329 [INFO] Found 100 recently added items in section 2
-14:39:17.329 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16795%2Fthumb%2F1762824101&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:17.340 [DEBUG] fetchSectionRecentlyAdded: section=6
-14:39:17.358 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections/6/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:17.587 [DEBUG] HTTP response: 200 (7332 bytes)
-14:39:17.865 [DEBUG] HTTP response: 200 (238824 bytes)
-14:39:17.876 [DEBUG] RecentlyAdded response: 200 - 238824 bytes
-14:39:17.964 [INFO] Found 100 recently added items in section 6
-14:39:17.971 [DEBUG] fetchSectionRecentlyAdded: section=3
-14:39:17.977 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections/3/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:18.519 [DEBUG] HTTP response: 200 (276510 bytes)
-14:39:18.531 [DEBUG] RecentlyAdded response: 200 - 276510 bytes
-14:39:18.624 [INFO] Found 100 recently added items in section 3
-14:39:18.631 [DEBUG] HomeTab: Skipping hidden library: CD Music
-14:39:18.638 [DEBUG] fetchSectionRecentlyAdded: section=4
-14:39:18.647 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections/4/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:18.811 [DEBUG] HTTP response: 200 (50461 bytes)
-14:39:18.823 [DEBUG] RecentlyAdded response: 200 - 50461 bytes
-14:39:18.848 [INFO] Found 25 recently added items in section 4
-14:39:18.857 [DEBUG] HomeTab: Skipping hidden library: Colorized Photos
-14:39:18.866 [DEBUG] HomeTab: Skipping hidden library: Photos
-14:39:18.878 [DEBUG] HomeTab: Skipping hidden library: Photos 2.0
-14:39:18.888 [DEBUG] HomeTab: Skipping hidden library: Home Videos
-14:39:18.893 [INFO] HomeTab: Got 10 movies, 10 shows, 10 music items
-14:39:19.097 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F17001%2Fthumb%2F1770019456&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:19.267 [DEBUG] HTTP response: 200 (6672 bytes)
-14:39:19.279 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16679%2Fthumb%2F1770800250&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:19.387 [DEBUG] HTTP response: 200 (5759 bytes)
-14:39:19.394 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16676%2Fthumb%2F1770800249&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:19.518 [DEBUG] HTTP response: 200 (6172 bytes)
-14:39:19.530 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16660%2Fthumb%2F1768118446&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:19.637 [DEBUG] HTTP response: 200 (6407 bytes)
-14:39:19.645 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16022%2Fthumb%2F1770371025&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:19.826 [DEBUG] HTTP response: 200 (5266 bytes)
-14:39:20.339 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15620%2Fthumb%2F1770800248&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:20.439 [DEBUG] HTTP response: 200 (5074 bytes)
-14:39:20.446 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15610%2Fthumb%2F1768208687&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:20.540 [DEBUG] HTTP response: 200 (4910 bytes)
-14:39:20.552 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1640%2Fthumb%2F1771140667&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:20.654 [DEBUG] HTTP response: 200 (6267 bytes)
-14:39:20.661 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2384%2Fthumb%2F1770800237&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:20.814 [DEBUG] HTTP response: 200 (8148 bytes)
-14:39:20.826 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:20.937 [DEBUG] HTTP response: 200 (7260 bytes)
-14:39:20.944 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:21.039 [DEBUG] HTTP response: 200 (7260 bytes)
-14:39:21.051 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:21.154 [DEBUG] HTTP response: 200 (7260 bytes)
-14:39:21.161 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15590%2Fthumb%2F1751591089&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:21.257 [DEBUG] HTTP response: 200 (5563 bytes)
-14:39:21.269 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:21.393 [DEBUG] HTTP response: 200 (7260 bytes)
-14:39:21.440 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:21.553 [DEBUG] HTTP response: 200 (7260 bytes)
-14:39:21.565 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:21.679 [DEBUG] HTTP response: 200 (7260 bytes)
-14:39:21.686 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:21.786 [DEBUG] HTTP response: 200 (7260 bytes)
-14:39:21.799 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15590%2Fthumb%2F1751591089&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:21.885 [DEBUG] HTTP response: 200 (5563 bytes)
-14:39:21.895 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:22.041 [DEBUG] HTTP response: 200 (7260 bytes)
-14:39:22.048 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F17088%2Fthumb%2F1766776492&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:22.146 [DEBUG] HTTP response: 200 (5223 bytes)
-14:39:22.157 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16920%2Fthumb%2F1764562211&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:22.867 [DEBUG] HTTP response: 200 (2512 bytes)
-14:39:22.874 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16017%2Fthumb%2F1765270453&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:24.156 [DEBUG] HTTP response: 200 (3055 bytes)
-14:39:24.168 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15864%2Fthumb%2F1764582343&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:24.677 [DEBUG] HTTP response: 200 (2238 bytes)
-14:39:24.687 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15815%2Fthumb%2F1769590304&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:25.968 [DEBUG] HTTP response: 200 (25774 bytes)
-14:39:25.983 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15755%2Fthumb%2F1772357213&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:26.097 [DEBUG] HTTP response: 200 (3244 bytes)
-14:39:26.107 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15453%2Fthumb%2F1740819387&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:26.214 [DEBUG] HTTP response: 200 (3947 bytes)
-14:39:26.220 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15425%2Fthumb%2F1762937433&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:26.400 [DEBUG] HTTP response: 200 (4150 bytes)
-14:39:26.412 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F14714%2Fthumb%2F1738135656&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:26.513 [DEBUG] HTTP response: 200 (36124 bytes)
-14:39:26.522 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F13076%2Fthumb%2F1770198221&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:26.619 [DEBUG] HTTP response: 200 (5471 bytes)
-14:39:27.246 [DEBUG] Giving focus to vitaplex::MediaItemCell
-14:39:28.041 [DEBUG] Giving focus to vitaplex::MediaItemCell
-14:39:28.336 [DEBUG] Giving focus to vitaplex::MediaItemCell
-14:39:28.594 [DEBUG] Adding an inputs block token (tokens=1)
-14:39:28.594 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/metadata/16681?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:28.601 [DEBUG] Pushing vitaplex::MediaItemCell to the focus stack
-14:39:28.643 [DEBUG] Giving focus to brls::Button
-14:39:28.649 [DEBUG] Hiding vitaplex::MediaDetailView
-14:39:28.659 [DEBUG] push activity to the stack
-14:39:28.672 [DEBUG] Showing vitaplex::MediaDetailView
-14:39:28.714 [DEBUG] Removing an inputs block token (tokens=0)
-14:39:28.803 [DEBUG] HTTP response: 200 (22878 bytes)
-14:39:28.818 [DEBUG] fetchMediaDetails: partPath=/library/parts/19779/1760220985/file.mp4
-14:39:28.825 [DEBUG] fetchMediaDetails: partSize=2539474482
-14:39:28.864 [DEBUG] loadDetails: partPath available, download enabled
-14:39:29.133 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16681%2Fthumb%2F1770800250&width=400&height=600&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:29.271 [DEBUG] HTTP response: 200 (62052 bytes)
-14:39:29.791 [DEBUG] PlayerActivity created for media: 16681
-14:39:29.804 [DEBUG] Adding an inputs block token (tokens=1)
-14:39:29.813 [DEBUG] Pushing brls::Button to the focus stack
-14:39:29.886 [DEBUG] PlayerActivity content available
-14:39:29.900 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/metadata/16681?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:30.193 [DEBUG] HTTP response: 200 (22878 bytes)
-14:39:30.206 [DEBUG] fetchMediaDetails: partPath=/library/parts/19779/1760220985/file.mp4
-14:39:30.218 [DEBUG] fetchMediaDetails: partSize=2539474482
-14:39:30.230 [INFO] PlayerActivity: Media type detection - audio: false, type: 1
-14:39:30.240 [DEBUG] getTranscodeUrl: ratingKey=16681, offsetMs=116000
-14:39:30.253 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/metadata/16681?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:30.387 [DEBUG] HTTP response: 200 (22878 bytes)
-14:39:30.396 [DEBUG] getTranscodeUrl: partKey=/library/parts/19779/1760220985/file.mp4
-14:39:30.410 [DEBUG] getTranscodeUrl: isAudio=false
-14:39:30.419 [INFO] getTranscodeUrl: Calling decision endpoint...
-14:39:30.429 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/video/:/transcode/universal/decision?path=%2Flibrary%2Fmetadata%2F16681&mediaIndex=0&partIndex=0&directPlay=0&directStream=1&directStreamAudio=1&hasMDE=1&location=lan&audioBoost=100&audioChannelCount=2&protocol=hls&videoBitrate=2000&videoResolution=960x544&videoQuality=100&subtitles=auto&offset=116.0&session=1772393970&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
-14:39:30.722 [DEBUG] HTTP response: 200 (20954 bytes)
-14:39:30.728 [INFO] getTranscodeUrl: Decision response: 200 body: {"MediaContainer":{"size":1,"allowSync":"1","directPlayDecisionCode":3000,"directPlayDecisionText":"App cannot direct play this item. Direct play is disabled.","generalDecisionCode":1001,"generalDecisionText":"Direct play not available; Conversion OK.","identifier":"com.plexapp.plugins.library","librarySectionID":"2","librarySectionTitle":"Movies","librarySectionUUID":"50949730-080c-4a79-b331-9ee4671c0e06","mediaTagPrefix":"/system/bundle/media/flags/","mediaTagVersion":"1758205129","resourceSes
-14:39:30.738 [INFO] getTranscodeUrl: Transcode URL = https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/video/:/transcode/universal/start.m3u8?path=%2Flibrary%2Fmetadata%2F16681&mediaIndex=0&partIndex=0&directPlay=0&directStream=1&directStreamAudio=1&hasMDE=1&location=lan&audioBoost=100&audioChannelCount=2&protocol=hls&videoBitrate=2000&videoResolution=960x544&videoQuality=100&subtitles=auto&offset=116.0&session=1772393970&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk&X-Plex-Client-Identifier=VitaPlex&X-Plex-Product=VitaPlex&X-Plex-Version=1.0.0&X-Plex-Platform=PlayStation%20Vita&X-Plex-Device=PS%20Vita&X-Plex-Device-Name=PS%20Vita&X-Plex-Client-Profile-Name=Generic&X-Plex-Client-Profile-Extra=add-transcode-target%28type%3DvideoProfile%26context%3Dstreaming%26protocol%3Dhls%26container%3Dmpegts%26videoCodec%3Dh264%26audioCodec%3Daac%26subtitleCodec%3Dsrt%29%2Badd-limitation%28scope%3DvideoCodec%26scopeName%3Dh264%26type%3DupperBound%26name%3Dvideo.level%26value%3D40%29%2Badd-limitation%28scope%3DvideoCodec%26scopeName%3Dh264%26type%3DupperBound%26name%3Dvideo.width%26value%3D1280%29%2Badd-limitation%28scope%3DvideoCodec%26scopeName%3Dh264%26type%3DupperBound%26name%3Dvideo.height%26value%3D720%29
-14:39:30.762 [INFO] ImageLoader: Paused - new thumbnail loads disabled
-14:39:30.772 [INFO] PlayerActivity: Deferring MPV init to after activity transition
-14:39:30.783 [DEBUG] PlayerActivity: loadMedia exiting
-14:39:30.793 [DEBUG] Giving focus to brls::Rectangle
-14:39:30.805 [DEBUG] Hiding brls::Box (id="player/container")
-14:39:30.815 [DEBUG] push activity to the stack
-14:39:30.825 [DEBUG] Showing brls::Box (id="player/container")
-14:39:30.839 [INFO] PlayerActivity: Performing deferred MPV init (phase 1: create context)...
-14:39:30.848 [DEBUG] MpvPlayer: Initializing libmpv...
-14:39:30.905 [DEBUG] MpvPlayer: mpv context created
-14:39:30.918 [INFO] MpvPlayer: Initializing in video mode
-14:39:30.930 [DEBUG] MpvPlayer: Calling mpv_initialize...
-14:39:30.959 [DEBUG] MpvPlayer: mpv_initialize succeeded
-14:39:30.965 [INFO] MpvPlayer: Creating GXM render context...
-14:39:30.975 [INFO] MpvPlayer: GXM context acquired, setting up render params...
-14:39:30.989 [INFO] MpvPlayer: Setting up MPV render params with API type: gxm
-14:39:30.998 [INFO] MpvPlayer: Calling mpv_render_context_create...
-14:39:31.013 [INFO] MpvPlayer: GXM render context created successfully!
-14:39:31.077 [INFO] MpvPlayer: GXM render context created successfully (960x544)
-14:39:31.088 [INFO] MpvPlayer: Initialized successfully
-14:39:31.113 [INFO] PlayerActivity: Deferred MPV load (phase 2: loadUrl)...
-14:39:31.120 [INFO] MpvPlayer: Loading URL: https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/video/:/transcode/universal/start.m3u8?path=%2Flibrary%2Fmetadata%2F16681&mediaIndex=0&partIndex=0&directPlay=0&directStream=1&directStreamAudio=1&hasMDE=1&location=lan&audioBoost=100&audioChannelCount=2&protocol=hls&videoBitrate=2000&videoResolution=960x544&videoQuality=100&subtitles=auto&offset=116.0&session=1772393970&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk&X-Plex-Client-Identifier=VitaPlex&X-Plex-Product=VitaPlex&X-Plex-Version=1.0.0&X-Plex-Platform=PlayStation%20Vita&X-Plex-Device=PS%20Vita&X-Plex-Device-Name=PS%20Vita&X-Plex-Client-Profile-Name=Generic&X-Plex-Client-Profile-Extra=add-transcode-target%28type%3DvideoProfile%26context%3Dstreaming%26protocol%3Dhls%26container%3Dmpegts%26videoCodec%3Dh264%26audioCodec%3Daac%26subtitleCodec%3Dsrt%29%2Badd-limitation%28scope%3DvideoCodec%26scopeName%3Dh264%26type%3DupperBound%26name%3Dvideo.level%26value%3D40%29%2Badd-limitation%28scope%3DvideoCodec%26scopeName%3Dh264%26type%3DupperBound%26name%3Dvideo.width%26value%3D1280%29%2Badd-limitation%28scope%3DvideoCodec%26scopeName%3Dh264%26type%3DupperBound%26name%3Dvideo.height%26value%3D720%29
-14:39:31.143 [DEBUG] MpvPlayer: Sending loadfile command...
-14:39:31.152 [DEBUG] MpvPlayer: loadfile command queued successfully (result=0)
-14:39:31.163 [DEBUG] MpvPlayer: About to call setState(LOADING)...
-14:39:31.173 [DEBUG] MpvPlayer::setState entered with newState=1
-14:39:31.183 [DEBUG] MpvPlayer: State change: 0 -> 1
-14:39:31.196 [DEBUG] MpvPlayer::setState assignment done
-14:39:31.205 [DEBUG] MpvPlayer::setState exiting
-14:39:31.215 [DEBUG] MpvPlayer: setState done, about to return true
-14:39:31.231 [DEBUG] Video view enabled (deferred)
-14:39:31.238 [INFO] PlayerActivity: Deferred load started successfully
-14:39:31.248 [DEBUG] Removing an inputs block token (tokens=0)
-14:39:31.843 [DEBUG] MpvPlayer: EVENT_IDLE
-14:39:31.853 [DEBUG] MpvPlayer::setState entered with newState=0
-14:39:31.866 [DEBUG] MpvPlayer: State change: 1 -> 0
-14:39:31.876 [DEBUG] MpvPlayer::setState assignment done
-14:39:31.886 [DEBUG] MpvPlayer::setState exiting
-14:39:31.898 [DEBUG] MpvPlayer: EVENT_COMMAND_REPLY id=1 error=0
-14:39:31.909 [DEBUG] MpvPlayer: EVENT_START_FILE
-14:39:31.922 [DEBUG] MpvPlayer::setState entered with newState=1
-14:39:31.932 [DEBUG] MpvPlayer: State change: 0 -> 1
-14:39:31.943 [DEBUG] MpvPlayer::setState assignment done
-14:39:31.954 [DEBUG] MpvPlayer::setState exiting
-14:39:31.964 [DEBUG] MpvPlayer: core-idle = true
-14:39:35.847 [INFO] MpvPlayer: EVENT_FILE_LOADED
-14:39:35.856 [INFO] MpvPlayer: Enabling render callback
+15:15:13.842 [INFO] Log file initialized: ux0:data/VitaPlex/vitaplex.log
+15:15:14.430 [DEBUG] DownloadsManager: No saved state found
+15:15:14.430 [INFO] DownloadsManager: Initialized at ux0:data/VitaPlex/downloads
+15:15:14.431 [INFO] VitaPlex 2.0.0 initializing...
+15:15:14.432 [DEBUG] sceIoMkdir result: -0x7ffeffef
+15:15:14.433 [INFO] Loading saved settings...
+15:15:14.433 [DEBUG] loadSettings: Opening ux0:data/VitaPlex/settings.json
+15:15:14.435 [DEBUG] loadSettings: File size = 699
+15:15:14.437 [DEBUG] loadSettings: Read 699 bytes
+15:15:14.446 [INFO] loadSettings: authToken=(set), serverUrl=https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400, username=(empty)
+15:15:14.452 [INFO] Settings loaded successfully
+15:15:14.457 [INFO] Settings load result: success
+15:15:14.463 [INFO] Applied theme: Dark
+15:15:14.472 [INFO] Debug logging enabled
+15:15:14.481 [INFO] Application::run - isLoggedIn=true, serverUrl=https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400
+15:15:14.491 [INFO] Restoring saved session...
+15:15:14.504 [INFO] Connecting to server: https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400
+15:15:14.516 [DEBUG] Connection timeout: 30 seconds
+15:15:14.521 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:14.707 [DEBUG] HTTP response: 200 (9410 bytes)
+15:15:14.714 [INFO] Connected to: openmediavault
+15:15:14.723 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/livetv/dvrs?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:14.950 [DEBUG] HTTP response: 200 (8664 bytes)
+15:15:14.960 [INFO] Live TV availability check: available
+15:15:14.973 [INFO] Restored session and connected to server
+15:15:14.984 [DEBUG] MainActivity created
+15:15:14.989 [DEBUG] Adding an inputs block token (tokens=1)
+15:15:15.020 [DEBUG] MainActivity content available
+15:15:15.029 [DEBUG] fetchLibrarySections: serverUrl=https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400, hasToken=true
+15:15:15.038 [DEBUG] Fetching: https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:15.047 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:15.219 [DEBUG] HTTP response: 200 (5503 bytes)
+15:15:15.230 [DEBUG] Response: 200 - 5503 bytes
+15:15:15.241 [DEBUG] Response body: {"MediaContainer":{"size":11,"allowSync":false,"title1":"Plex Library","Directory":[{"allowSync":true,"filters":true,"refreshing":false,"key":"12","type":"movie","title":"3D Movies","agent":"tv.plex.agents.movie","scanner":"Plex Movie","language":"en-US","metadataAgentProviderGroupId":1,"uuid":"6cd2f30a-ef3d-4dac-8c8e-0404418f3ce1","updatedAt":1767703430,"createdAt":1753322285,"scannedAt":1767703375,"content":true,"directory":true,"contentChangedAt":3550580492361197975,"hidden":2,"Location":[{"i
+15:15:15.247 [DEBUG] Found section: 3D Movies (movie)
+15:15:15.252 [DEBUG] Found section: DVR Movies (movie)
+15:15:15.259 [DEBUG] Found section: Movies (movie)
+15:15:15.268 [DEBUG] Found section: DVR TV Shows (show)
+15:15:15.277 [DEBUG] Found section: TV Shows (show)
+15:15:15.288 [DEBUG] Found section: CD Music (artist)
+15:15:15.299 [DEBUG] Found section: Nick's Music (artist)
+15:15:15.311 [DEBUG] Found section: Colorized Photos (photo)
+15:15:15.316 [DEBUG] Found section: Photos (photo)
+15:15:15.322 [DEBUG] Found section: Photos 2.0 (photo)
+15:15:15.329 [DEBUG] Found section: Home Videos (movie)
+15:15:15.338 [INFO] Found 11 library sections
+15:15:15.348 [DEBUG] MainActivity: Dynamic sidebar width: 242px
+15:15:15.371 [DEBUG] MainActivity: Loading libraries to sidebar...
+15:15:15.385 [DEBUG] fetchLibrarySections: serverUrl=https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400, hasToken=true
+15:15:15.396 [DEBUG] Fetching: https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:15.402 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:15.557 [DEBUG] HTTP response: 200 (5503 bytes)
+15:15:15.564 [DEBUG] Response: 200 - 5503 bytes
+15:15:15.573 [DEBUG] Response body: {"MediaContainer":{"size":11,"allowSync":false,"title1":"Plex Library","Directory":[{"allowSync":true,"filters":true,"refreshing":false,"key":"12","type":"movie","title":"3D Movies","agent":"tv.plex.agents.movie","scanner":"Plex Movie","language":"en-US","metadataAgentProviderGroupId":1,"uuid":"6cd2f30a-ef3d-4dac-8c8e-0404418f3ce1","updatedAt":1767703430,"createdAt":1753322285,"scannedAt":1767703375,"content":true,"directory":true,"contentChangedAt":3550580492361197975,"hidden":2,"Location":[{"i
+15:15:15.582 [DEBUG] Found section: 3D Movies (movie)
+15:15:15.594 [DEBUG] Found section: DVR Movies (movie)
+15:15:15.606 [DEBUG] Found section: Movies (movie)
+15:15:15.615 [DEBUG] Found section: DVR TV Shows (show)
+15:15:15.620 [DEBUG] Found section: TV Shows (show)
+15:15:15.630 [DEBUG] Found section: CD Music (artist)
+15:15:15.639 [DEBUG] Found section: Nick's Music (artist)
+15:15:15.651 [DEBUG] Found section: Colorized Photos (photo)
+15:15:15.663 [DEBUG] Found section: Photos (photo)
+15:15:15.672 [DEBUG] Found section: Photos 2.0 (photo)
+15:15:15.678 [DEBUG] Found section: Home Videos (movie)
+15:15:15.687 [INFO] Found 11 library sections
+15:15:15.696 [INFO] MainActivity: Got 11 library sections
+15:15:15.708 [DEBUG] MainActivity: Hiding library: 3D Movies
+15:15:15.720 [DEBUG] MainActivity: Hiding library: DVR Movies
+15:15:15.741 [DEBUG] MainActivity: Added sidebar tab for library: Movies
+15:15:15.759 [DEBUG] MainActivity: Added sidebar tab for library: DVR TV Shows
+15:15:15.780 [DEBUG] MainActivity: Added sidebar tab for library: TV Shows
+15:15:15.789 [DEBUG] MainActivity: Hiding library: CD Music
+15:15:15.814 [DEBUG] MainActivity: Added sidebar tab for library: Nick's Music
+15:15:15.882 [DEBUG] MainActivity: Hiding library: Colorized Photos
+15:15:15.887 [DEBUG] MainActivity: Hiding library: Photos
+15:15:15.893 [DEBUG] MainActivity: Hiding library: Photos 2.0
+15:15:15.903 [DEBUG] MainActivity: Hiding library: Home Videos
+15:15:16.063 [DEBUG] HomeTab: Loading content...
+15:15:16.073 [DEBUG] HomeTab::loadContent - Starting async load
+15:15:16.086 [DEBUG] HomeTab: Fetching continue watching (async)...
+15:15:16.088 [DEBUG] HomeTab: Fetching library sections for recently added...
+15:15:16.088 [DEBUG] HomeTab: Async content loading started
+15:15:16.094 [DEBUG] fetchContinueWatching: serverUrl=https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400
+15:15:16.100 [DEBUG] fetchLibrarySections: serverUrl=https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400, hasToken=true
+15:15:16.118 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/hubs/continueWatching?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:16.128 [DEBUG] Giving focus to brls::SidebarItem
+15:15:16.131 [DEBUG] Fetching: https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:16.152 [DEBUG] Hiding brls::Box
+15:15:16.157 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:16.166 [DEBUG] push activity to the stack
+15:15:16.188 [DEBUG] Showing brls::Box
+15:15:16.214 [ERROR] HTTP error: SSL connect error
+15:15:16.220 [DEBUG] ContinueWatching response: 0 - 0 bytes
+15:15:16.225 [ERROR] Failed to fetch continue watching: 0
+15:15:16.235 [ERROR] HomeTab: Failed to fetch continue watching
+15:15:16.398 [DEBUG] HTTP response: 200 (5503 bytes)
+15:15:16.409 [DEBUG] Response: 200 - 5503 bytes
+15:15:16.419 [DEBUG] Removing an inputs block token (tokens=0)
+15:15:16.421 [DEBUG] Response body: {"MediaContainer":{"size":11,"allowSync":false,"title1":"Plex Library","Directory":[{"allowSync":true,"filters":true,"refreshing":false,"key":"12","type":"movie","title":"3D Movies","agent":"tv.plex.agents.movie","scanner":"Plex Movie","language":"en-US","metadataAgentProviderGroupId":1,"uuid":"6cd2f30a-ef3d-4dac-8c8e-0404418f3ce1","updatedAt":1767703430,"createdAt":1753322285,"scannedAt":1767703375,"content":true,"directory":true,"contentChangedAt":3550580492361197975,"hidden":2,"Location":[{"i
+15:15:16.435 [DEBUG] Found section: 3D Movies (movie)
+15:15:16.445 [DEBUG] Found section: DVR Movies (movie)
+15:15:16.454 [DEBUG] Found section: Movies (movie)
+15:15:16.466 [DEBUG] Found section: DVR TV Shows (show)
+15:15:16.477 [DEBUG] Found section: TV Shows (show)
+15:15:16.486 [DEBUG] Found section: CD Music (artist)
+15:15:16.493 [DEBUG] Found section: Nick's Music (artist)
+15:15:16.503 [DEBUG] Found section: Colorized Photos (photo)
+15:15:16.515 [DEBUG] Found section: Photos (photo)
+15:15:16.527 [DEBUG] Found section: Photos 2.0 (photo)
+15:15:16.533 [DEBUG] Found section: Home Videos (movie)
+15:15:16.541 [INFO] Found 11 library sections
+15:15:16.551 [DEBUG] HomeTab: Skipping hidden library: 3D Movies
+15:15:16.562 [DEBUG] HomeTab: Skipping hidden library: DVR Movies
+15:15:16.573 [DEBUG] fetchSectionRecentlyAdded: section=2
+15:15:16.579 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections/2/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:17.091 [DEBUG] HTTP response: 200 (236122 bytes)
+15:15:17.101 [DEBUG] RecentlyAdded response: 200 - 236122 bytes
+15:15:17.215 [INFO] Found 100 recently added items in section 2
+15:15:17.222 [DEBUG] fetchSectionRecentlyAdded: section=6
+15:15:17.228 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections/6/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:17.509 [DEBUG] HTTP response: 200 (238824 bytes)
+15:15:17.520 [DEBUG] RecentlyAdded response: 200 - 238824 bytes
+15:15:17.608 [INFO] Found 100 recently added items in section 6
+15:15:17.615 [DEBUG] fetchSectionRecentlyAdded: section=3
+15:15:17.621 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections/3/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:17.910 [DEBUG] HTTP response: 200 (276510 bytes)
+15:15:17.922 [DEBUG] RecentlyAdded response: 200 - 276510 bytes
+15:15:18.015 [INFO] Found 100 recently added items in section 3
+15:15:18.022 [DEBUG] HomeTab: Skipping hidden library: CD Music
+15:15:18.029 [DEBUG] fetchSectionRecentlyAdded: section=4
+15:15:18.038 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections/4/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:18.216 [DEBUG] HTTP response: 200 (50461 bytes)
+15:15:18.228 [DEBUG] RecentlyAdded response: 200 - 50461 bytes
+15:15:18.253 [INFO] Found 25 recently added items in section 4
+15:15:18.262 [DEBUG] HomeTab: Skipping hidden library: Colorized Photos
+15:15:18.271 [DEBUG] HomeTab: Skipping hidden library: Photos
+15:15:18.283 [DEBUG] HomeTab: Skipping hidden library: Photos 2.0
+15:15:18.294 [DEBUG] HomeTab: Skipping hidden library: Home Videos
+15:15:18.299 [INFO] HomeTab: Got 10 movies, 10 shows, 10 music items
+15:15:18.344 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F17001%2Fthumb%2F1770019456&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:18.674 [DEBUG] HTTP response: 200 (6672 bytes)
+15:15:19.187 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16681%2Fthumb%2F1770800250&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:19.334 [DEBUG] HTTP response: 200 (7513 bytes)
+15:15:19.341 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16679%2Fthumb%2F1770800250&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:19.444 [DEBUG] HTTP response: 200 (5759 bytes)
+15:15:19.455 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16676%2Fthumb%2F1770800249&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:19.570 [DEBUG] HTTP response: 200 (6172 bytes)
+15:15:19.576 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16660%2Fthumb%2F1768118446&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:19.783 [DEBUG] HTTP response: 200 (6407 bytes)
+15:15:19.793 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16022%2Fthumb%2F1770371025&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:19.960 [DEBUG] HTTP response: 200 (5266 bytes)
+15:15:19.971 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15620%2Fthumb%2F1770800248&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:20.082 [DEBUG] HTTP response: 200 (5074 bytes)
+15:15:20.092 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15610%2Fthumb%2F1768208687&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:20.208 [DEBUG] HTTP response: 200 (4910 bytes)
+15:15:20.272 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1640%2Fthumb%2F1771140667&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:20.367 [DEBUG] HTTP response: 200 (6267 bytes)
+15:15:20.377 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2384%2Fthumb%2F1770800237&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:20.483 [DEBUG] HTTP response: 200 (8148 bytes)
+15:15:20.494 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:20.585 [DEBUG] HTTP response: 200 (7260 bytes)
+15:15:20.595 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:20.737 [DEBUG] HTTP response: 200 (7260 bytes)
+15:15:20.748 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:20.881 [DEBUG] HTTP response: 200 (7260 bytes)
+15:15:20.891 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15590%2Fthumb%2F1751591089&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:21.092 [DEBUG] HTTP response: 200 (5563 bytes)
+15:15:21.103 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:21.199 [DEBUG] HTTP response: 200 (7260 bytes)
+15:15:21.209 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:21.322 [DEBUG] HTTP response: 200 (7260 bytes)
+15:15:21.333 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:21.427 [DEBUG] HTTP response: 200 (7260 bytes)
+15:15:21.437 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:21.537 [DEBUG] HTTP response: 200 (7260 bytes)
+15:15:21.549 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15590%2Fthumb%2F1751591089&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:21.658 [DEBUG] HTTP response: 200 (5563 bytes)
+15:15:21.668 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15540%2Fthumb%2F1750955550&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:21.829 [DEBUG] HTTP response: 200 (7260 bytes)
+15:15:21.836 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F17088%2Fthumb%2F1766776492&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:21.943 [DEBUG] HTTP response: 200 (5223 bytes)
+15:15:21.955 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16920%2Fthumb%2F1764562211&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:22.110 [DEBUG] HTTP response: 200 (2512 bytes)
+15:15:22.117 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16017%2Fthumb%2F1765270453&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:22.237 [DEBUG] HTTP response: 200 (3055 bytes)
+15:15:22.250 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15864%2Fthumb%2F1764582343&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:22.498 [DEBUG] HTTP response: 200 (2238 bytes)
+15:15:22.508 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15815%2Fthumb%2F1769590304&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:22.650 [DEBUG] HTTP response: 200 (25774 bytes)
+15:15:22.657 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15755%2Fthumb%2F1772357213&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:22.777 [DEBUG] HTTP response: 200 (3244 bytes)
+15:15:22.788 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15453%2Fthumb%2F1740819387&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:22.934 [DEBUG] HTTP response: 200 (3947 bytes)
+15:15:22.942 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15425%2Fthumb%2F1762937433&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:23.052 [DEBUG] HTTP response: 200 (4150 bytes)
+15:15:23.064 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F14714%2Fthumb%2F1738135656&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:23.199 [DEBUG] HTTP response: 200 (36124 bytes)
+15:15:23.210 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F13076%2Fthumb%2F1770198221&width=110&height=110&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:23.379 [DEBUG] HTTP response: 200 (5471 bytes)
+15:15:23.574 [DEBUG] LibrarySectionTab: Created for section 2 (Movies) type=
+15:15:23.580 [DEBUG] LibrarySectionTab::loadContent - section: 2 (async)
+15:15:23.591 [DEBUG] fetchLibraryContent: section=2
+15:15:23.592 [DEBUG] Fetching collections for section: 2
+15:15:23.594 [DEBUG] Fetching genre items for section: 2
+15:15:23.603 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections/2/all?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:23.610 [DEBUG] Giving focus to brls::SidebarItem
+15:15:23.612 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections/2/all?type=18&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:23.622 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections/2/genre?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:24.585 [DEBUG] HTTP response: 200 (425 bytes)
+15:15:24.598 [INFO] Found 0 collections for section 2
+15:15:24.605 [INFO] LibrarySectionTab: Got 0 collections for section 2
+15:15:24.610 [DEBUG] HTTP response: 200 (2981 bytes)
+15:15:24.621 [DEBUG] HTTP response: 200 (871992 bytes)
+15:15:24.683 [INFO] Found 28 genre items for section 2
+15:15:24.688 [DEBUG] Response: 200 - 871992 bytes
+15:15:24.699 [INFO] LibrarySectionTab: Got 28 genres for section 2
+15:15:24.712 [DEBUG] HomeTab: Loading content...
+15:15:24.728 [DEBUG] HomeTab::loadContent - Starting async load
+15:15:24.741 [DEBUG] HomeTab: Fetching continue watching (async)...
+15:15:24.742 [DEBUG] HomeTab: Fetching library sections for recently added...
+15:15:24.742 [DEBUG] HomeTab: Async content loading started
+15:15:24.748 [DEBUG] fetchContinueWatching: serverUrl=https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400
+15:15:24.758 [DEBUG] fetchLibrarySections: serverUrl=https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400, hasToken=true
+15:15:24.778 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/hubs/continueWatching?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:24.788 [DEBUG] Fetching: https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:24.807 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:24.790 [DEBUG] Giving focus to brls::SidebarItem
+15:15:24.854 [DEBUG] LibrarySectionTab: Destroyed for section 2
+15:15:25.098 [INFO] Found 376 items in library section 2
+15:15:25.109 [INFO] LibrarySectionTab: Got 376 items for section 2
+15:15:25.133 [DEBUG] HTTP response: 200 (16502 bytes)
+15:15:25.140 [DEBUG] ContinueWatching response: 200 - 16502 bytes
+15:15:25.161 [INFO] Found 3 continue watching items
+15:15:25.184 [INFO] HomeTab: Got 3 continue watching items
+15:15:25.351 [DEBUG] LibrarySectionTab: Tab destroyed, skipping UI update
+15:15:25.380 [DEBUG] HTTP response: 200 (5503 bytes)
+15:15:25.393 [DEBUG] Response: 200 - 5503 bytes
+15:15:25.400 [DEBUG] Response body: {"MediaContainer":{"size":11,"allowSync":false,"title1":"Plex Library","Directory":[{"allowSync":true,"filters":true,"refreshing":false,"key":"12","type":"movie","title":"3D Movies","agent":"tv.plex.agents.movie","scanner":"Plex Movie","language":"en-US","metadataAgentProviderGroupId":1,"uuid":"6cd2f30a-ef3d-4dac-8c8e-0404418f3ce1","updatedAt":1767703430,"createdAt":1753322285,"scannedAt":1767703375,"content":true,"directory":true,"contentChangedAt":3550580492361197975,"hidden":2,"Location":[{"i
+15:15:25.410 [DEBUG] Found section: 3D Movies (movie)
+15:15:25.423 [DEBUG] Found section: DVR Movies (movie)
+15:15:25.430 [DEBUG] Found section: Movies (movie)
+15:15:25.433 [DEBUG] Found section: DVR TV Shows (show)
+15:15:25.446 [DEBUG] Found section: TV Shows (show)
+15:15:25.455 [DEBUG] Found section: CD Music (artist)
+15:15:25.465 [DEBUG] Found section: Nick's Music (artist)
+15:15:25.478 [DEBUG] Found section: Colorized Photos (photo)
+15:15:25.488 [DEBUG] Found section: Photos (photo)
+15:15:25.497 [DEBUG] Found section: Photos 2.0 (photo)
+15:15:25.510 [DEBUG] Found section: Home Videos (movie)
+15:15:25.520 [INFO] Found 11 library sections
+15:15:25.530 [DEBUG] HomeTab: Skipping hidden library: 3D Movies
+15:15:25.543 [DEBUG] HomeTab: Skipping hidden library: DVR Movies
+15:15:25.552 [DEBUG] fetchSectionRecentlyAdded: section=2
+15:15:25.562 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections/2/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:25.838 [DEBUG] HTTP response: 200 (236122 bytes)
+15:15:25.845 [DEBUG] RecentlyAdded response: 200 - 236122 bytes
+15:15:25.901 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3899%2Fthumb%2F1770887034&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:25.958 [INFO] Found 100 recently added items in section 2
+15:15:25.966 [DEBUG] fetchSectionRecentlyAdded: section=6
+15:15:25.977 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections/6/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:26.039 [DEBUG] HTTP response: 200 (4280 bytes)
+15:15:26.052 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16795%2Fthumb%2F1762824101&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:26.195 [DEBUG] HTTP response: 200 (7332 bytes)
+15:15:26.270 [DEBUG] HTTP response: 200 (238824 bytes)
+15:15:26.280 [DEBUG] RecentlyAdded response: 200 - 238824 bytes
+15:15:26.370 [INFO] Found 100 recently added items in section 6
+15:15:26.378 [DEBUG] fetchSectionRecentlyAdded: section=3
+15:15:26.389 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections/3/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:26.470 [DEBUG] Giving focus to vitaplex::MediaItemCell
+15:15:26.750 [DEBUG] HTTP response: 200 (276510 bytes)
+15:15:26.762 [DEBUG] RecentlyAdded response: 200 - 276510 bytes
+15:15:26.854 [INFO] Found 100 recently added items in section 3
+15:15:26.865 [DEBUG] HomeTab: Skipping hidden library: CD Music
+15:15:26.877 [DEBUG] fetchSectionRecentlyAdded: section=4
+15:15:26.887 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/sections/4/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:27.116 [DEBUG] Adding an inputs block token (tokens=1)
+15:15:27.116 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/metadata/16681?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:27.127 [DEBUG] Pushing vitaplex::MediaItemCell to the focus stack
+15:15:27.147 [DEBUG] HTTP response: 200 (50461 bytes)
+15:15:27.159 [DEBUG] RecentlyAdded response: 200 - 50461 bytes
+15:15:27.168 [DEBUG] Giving focus to brls::Button
+15:15:27.183 [DEBUG] Hiding vitaplex::MediaDetailView
+15:15:27.189 [INFO] Found 25 recently added items in section 4
+15:15:27.192 [DEBUG] push activity to the stack
+15:15:27.204 [DEBUG] HomeTab: Skipping hidden library: Colorized Photos
+15:15:27.214 [DEBUG] Showing vitaplex::MediaDetailView
+15:15:27.223 [DEBUG] HomeTab: Skipping hidden library: Photos
+15:15:27.246 [DEBUG] HomeTab: Skipping hidden library: Photos 2.0
+15:15:27.256 [DEBUG] HomeTab: Skipping hidden library: Home Videos
+15:15:27.259 [DEBUG] Removing an inputs block token (tokens=0)
+15:15:27.269 [INFO] HomeTab: Got 10 movies, 10 shows, 10 music items
+15:15:27.331 [DEBUG] HTTP response: 200 (22878 bytes)
+15:15:27.345 [DEBUG] fetchMediaDetails: partPath=/library/parts/19779/1760220985/file.mp4
+15:15:27.354 [DEBUG] fetchMediaDetails: partSize=2539474482
+15:15:28.861 [DEBUG] loadDetails: partPath available, download enabled
+15:15:29.204 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16681%2Fthumb%2F1770800250&width=400&height=600&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:29.397 [DEBUG] HTTP response: 200 (62052 bytes)
+15:15:30.650 [DEBUG] Giving focus to brls::Button
+15:15:31.001 [DEBUG] Giving focus to brls::Button
+15:15:31.384 [DEBUG] PlayerActivity created for media: 16681
+15:15:31.395 [DEBUG] Adding an inputs block token (tokens=1)
+15:15:31.404 [DEBUG] Pushing brls::Button to the focus stack
+15:15:31.536 [DEBUG] PlayerActivity content available
+15:15:31.545 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/metadata/16681?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:31.653 [DEBUG] HTTP response: 200 (22878 bytes)
+15:15:31.669 [DEBUG] fetchMediaDetails: partPath=/library/parts/19779/1760220985/file.mp4
+15:15:31.675 [DEBUG] fetchMediaDetails: partSize=2539474482
+15:15:31.690 [INFO] PlayerActivity: Media type detection - audio: false, type: 1
+15:15:31.697 [DEBUG] getTranscodeUrl: ratingKey=16681, offsetMs=116000
+15:15:31.707 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/library/metadata/16681?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:31.887 [DEBUG] HTTP response: 200 (22878 bytes)
+15:15:31.895 [DEBUG] getTranscodeUrl: partKey=/library/parts/19779/1760220985/file.mp4
+15:15:31.909 [DEBUG] getTranscodeUrl: isAudio=false
+15:15:31.918 [INFO] getTranscodeUrl: Calling decision endpoint...
+15:15:31.929 [DEBUG] HTTP GET https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/video/:/transcode/universal/decision?path=%2Flibrary%2Fmetadata%2F16681&mediaIndex=0&partIndex=0&directPlay=0&directStream=1&directStreamAudio=1&hasMDE=1&location=lan&audioBoost=100&audioChannelCount=2&protocol=hls&videoBitrate=2000&videoResolution=960x544&videoQuality=100&subtitles=auto&offset=116.0&session=1772396131&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+15:15:32.176 [DEBUG] HTTP response: 200 (20954 bytes)
+15:15:32.186 [INFO] getTranscodeUrl: Decision response: 200 body: {"MediaContainer":{"size":1,"allowSync":"1","directPlayDecisionCode":3000,"directPlayDecisionText":"App cannot direct play this item. Direct play is disabled.","generalDecisionCode":1001,"generalDecisionText":"Direct play not available; Conversion OK.","identifier":"com.plexapp.plugins.library","librarySectionID":"2","librarySectionTitle":"Movies","librarySectionUUID":"50949730-080c-4a79-b331-9ee4671c0e06","mediaTagPrefix":"/system/bundle/media/flags/","mediaTagVersion":"1758205129","resourceSes
+15:15:32.199 [INFO] getTranscodeUrl: Transcode URL = https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/video/:/transcode/universal/start.m3u8?path=%2Flibrary%2Fmetadata%2F16681&mediaIndex=0&partIndex=0&directPlay=0&directStream=1&directStreamAudio=1&hasMDE=1&location=lan&audioBoost=100&audioChannelCount=2&protocol=hls&videoBitrate=2000&videoResolution=960x544&videoQuality=100&subtitles=auto&offset=116.0&session=1772396131&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk&X-Plex-Client-Identifier=VitaPlex&X-Plex-Product=VitaPlex&X-Plex-Version=1.0.0&X-Plex-Platform=PlayStation%20Vita&X-Plex-Device=PS%20Vita&X-Plex-Device-Name=PS%20Vita&X-Plex-Client-Profile-Name=Generic&X-Plex-Client-Profile-Extra=add-transcode-target%28type%3DvideoProfile%26context%3Dstreaming%26protocol%3Dhls%26container%3Dmpegts%26videoCodec%3Dh264%26audioCodec%3Daac%26subtitleCodec%3Dsrt%29%2Badd-limitation%28scope%3DvideoCodec%26scopeName%3Dh264%26type%3DupperBound%26name%3Dvideo.level%26value%3D40%29%2Badd-limitation%28scope%3DvideoCodec%26scopeName%3Dh264%26type%3DupperBound%26name%3Dvideo.width%26value%3D1280%29%2Badd-limitation%28scope%3DvideoCodec%26scopeName%3Dh264%26type%3DupperBound%26name%3Dvideo.height%26value%3D720%29
+15:15:32.222 [INFO] ImageLoader: Paused - new thumbnail loads disabled
+15:15:32.231 [INFO] PlayerActivity: Deferring MPV init to after activity transition
+15:15:32.241 [DEBUG] PlayerActivity: loadMedia exiting
+15:15:32.256 [DEBUG] Giving focus to brls::Rectangle
+15:15:32.265 [DEBUG] Hiding brls::Box (id="player/container")
+15:15:32.278 [DEBUG] push activity to the stack
+15:15:32.288 [DEBUG] Showing brls::Box (id="player/container")
+15:15:32.311 [DEBUG] Removing an inputs block token (tokens=0)
+15:15:32.368 [INFO] PlayerActivity: Performing deferred MPV init (phase 1: create context)...
+15:15:32.378 [DEBUG] MpvPlayer: Initializing libmpv...
+15:15:32.443 [DEBUG] MpvPlayer: mpv context created
+15:15:32.445 [INFO] MpvPlayer: Initializing in video mode
+15:15:32.449 [DEBUG] MpvPlayer: Calling mpv_initialize...
+15:15:32.467 [DEBUG] MpvPlayer: mpv_initialize succeeded
+15:15:32.467 [INFO] MpvPlayer: Creating GXM render context...
+15:15:32.468 [INFO] MpvPlayer: GXM context acquired, setting up render params...
+15:15:32.468 [INFO] MpvPlayer: Setting up MPV render params with API type: gxm
+15:15:32.469 [INFO] MpvPlayer: Calling mpv_render_context_create...
+15:15:32.476 [INFO] MpvPlayer: GXM render context created successfully!
+15:15:32.535 [INFO] MpvPlayer: GXM render context created successfully (960x544)
+15:15:32.544 [INFO] MpvPlayer: Initialized successfully
+15:15:32.555 [INFO] PlayerActivity: Deferred MPV load (phase 2: loadUrl)...
+15:15:32.563 [INFO] MpvPlayer: Loading URL: https://192-168-1-28.09c113df05c24c7ea99633ad3deae42f.plex.direct:32400/video/:/transcode/universal/start.m3u8?path=%2Flibrary%2Fmetadata%2F16681&mediaIndex=0&partIndex=0&directPlay=0&directStream=1&directStreamAudio=1&hasMDE=1&location=lan&audioBoost=100&audioChannelCount=2&protocol=hls&videoBitrate=2000&videoResolution=960x544&videoQuality=100&subtitles=auto&offset=116.0&session=1772396131&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk&X-Plex-Client-Identifier=VitaPlex&X-Plex-Product=VitaPlex&X-Plex-Version=1.0.0&X-Plex-Platform=PlayStation%20Vita&X-Plex-Device=PS%20Vita&X-Plex-Device-Name=PS%20Vita&X-Plex-Client-Profile-Name=Generic&X-Plex-Client-Profile-Extra=add-transcode-target%28type%3DvideoProfile%26context%3Dstreaming%26protocol%3Dhls%26container%3Dmpegts%26videoCodec%3Dh264%26audioCodec%3Daac%26subtitleCodec%3Dsrt%29%2Badd-limitation%28scope%3DvideoCodec%26scopeName%3Dh264%26type%3DupperBound%26name%3Dvideo.level%26value%3D40%29%2Badd-limitation%28scope%3DvideoCodec%26scopeName%3Dh264%26type%3DupperBound%26name%3Dvideo.width%26value%3D1280%29%2Badd-limitation%28scope%3DvideoCodec%26scopeName%3Dh264%26type%3DupperBound%26name%3Dvideo.height%26value%3D720%29
+15:15:32.588 [DEBUG] MpvPlayer: Sending loadfile command...
+15:15:32.590 [DEBUG] MpvPlayer: loadfile command queued successfully (result=0)
+15:15:32.595 [DEBUG] MpvPlayer: About to call setState(LOADING)...
+15:15:32.601 [DEBUG] MpvPlayer::setState entered with newState=1
+15:15:32.608 [DEBUG] MpvPlayer: State change: 0 -> 1
+15:15:32.617 [DEBUG] MpvPlayer::setState assignment done
+15:15:32.627 [DEBUG] MpvPlayer::setState exiting
+15:15:32.638 [DEBUG] MpvPlayer: setState done, about to return true
+15:15:32.653 [DEBUG] Video view enabled (deferred)
+15:15:32.662 [INFO] PlayerActivity: Deferred load started successfully
+15:15:33.369 [DEBUG] MpvPlayer: EVENT_IDLE
+15:15:33.375 [DEBUG] MpvPlayer::setState entered with newState=0
+15:15:33.383 [DEBUG] MpvPlayer: State change: 1 -> 0
+15:15:33.392 [DEBUG] MpvPlayer::setState assignment done
+15:15:33.402 [DEBUG] MpvPlayer::setState exiting
+15:15:33.413 [DEBUG] MpvPlayer: EVENT_COMMAND_REPLY id=1 error=0
+15:15:33.424 [DEBUG] MpvPlayer: EVENT_START_FILE
+15:15:33.434 [DEBUG] MpvPlayer::setState entered with newState=1
+15:15:33.439 [DEBUG] MpvPlayer: State change: 0 -> 1
+15:15:33.445 [DEBUG] MpvPlayer::setState assignment done
+15:15:33.453 [DEBUG] MpvPlayer::setState exiting
+15:15:33.462 [DEBUG] MpvPlayer: core-idle = true
+15:15:36.372 [INFO] MpvPlayer: EVENT_FILE_LOADED
+15:15:36.384 [INFO] MpvPlayer: Enabling render callback
+15:15:36.395 [INFO] MpvPlayer: Render callback enabled
