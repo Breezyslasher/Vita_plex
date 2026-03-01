@@ -1657,7 +1657,8 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
         brls::Logger::info("getTranscodeUrl: Using direct audio URL = {}", url);
     } else {
         // For video: Use the universal transcode API.
-        // Parameters match official Plex for Kodi client (plexinc/plex-for-kodi).
+        // Per official Plex API (developer.plex.tv/pms), X-Plex-* params
+        // must be sent as HTTP headers (in=header), not query params.
         std::string metadataPath = "/library/metadata/" + ratingKey;
         std::string encodedPath = HttpClient::urlEncode(metadataPath);
 
@@ -1678,25 +1679,25 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
         snprintf(sessionBuf, sizeof(sessionBuf), "%lu", (unsigned long)time(nullptr));
         std::string sessionId = sessionBuf;
 
-        // Build query string matching Plex for Kodi's HTTP transcode format
+        // Build query string with ONLY query-type parameters (per official API spec).
+        // X-Plex-* parameters go as HTTP headers, not in the query string.
         std::string queryParams;
         queryParams += "path=" + encodedPath;
         queryParams += "&mediaIndex=0&partIndex=0";
         queryParams += "&protocol=http";
-        queryParams += "&copyts=1";
         queryParams += "&directPlay=0&directStream=1";
         queryParams += "&hasMDE=1";
         queryParams += "&location=lan";
-        queryParams += "&mediaBufferSize=20971";
 
         char buf[128];
-        snprintf(buf, sizeof(buf), "&maxVideoBitrate=%d", bitrate);
+        snprintf(buf, sizeof(buf), "&videoBitrate=%d", bitrate);
         queryParams += buf;
         snprintf(buf, sizeof(buf), "&videoResolution=%s", resolution);
         queryParams += buf;
         queryParams += "&videoQuality=100";
         queryParams += "&audioBoost=100";
         queryParams += "&subtitles=auto";
+        queryParams += "&audioChannelCount=2";
 
         // Resume offset (in seconds)
         if (offsetMs > 0) {
@@ -1704,19 +1705,13 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
             queryParams += buf;
         }
 
-        // Use the Generic built-in profile (recommended by Plex API docs)
-        queryParams += "&X-Plex-Client-Profile-Name=Generic";
-
-        // Client identification (X-Plex-Client-Identifier is REQUIRED)
-        queryParams += "&X-Plex-Token=" + m_authToken;
-        queryParams += "&X-Plex-Client-Identifier=VitaPlex";
-        queryParams += "&X-Plex-Product=VitaPlex";
-        queryParams += "&X-Plex-Version=1.0.0";
-        queryParams += "&X-Plex-Platform=PlayStation%20Vita";
-        queryParams += "&X-Plex-Device=PS%20Vita";
+        // Session ID (transcodeSessionId per spec)
         queryParams += "&session=" + sessionId;
 
-        // Step 1: Call /decision to set up the transcode session
+        // Auth token (can be query param or header)
+        queryParams += "&X-Plex-Token=" + m_authToken;
+
+        // Step 1: Call /decision with X-Plex-* as HTTP headers (per official spec)
         std::string decisionUrl = m_serverUrl + "/video/:/transcode/universal/decision?" + queryParams;
         brls::Logger::info("getTranscodeUrl: Calling decision endpoint...");
 
@@ -1725,6 +1720,14 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
         decisionReq.url = decisionUrl;
         decisionReq.method = "GET";
         decisionReq.headers["Accept"] = "application/json";
+        // Per official API: X-Plex-Client-Identifier is REQUIRED, in=header
+        decisionReq.headers["X-Plex-Client-Identifier"] = "VitaPlex";
+        decisionReq.headers["X-Plex-Product"] = "VitaPlex";
+        decisionReq.headers["X-Plex-Version"] = "1.0.0";
+        decisionReq.headers["X-Plex-Platform"] = "PlayStation Vita";
+        decisionReq.headers["X-Plex-Device"] = "PS Vita";
+        // Use Generic profile (recommended by official API for custom clients)
+        decisionReq.headers["X-Plex-Client-Profile-Name"] = "Generic";
         HttpResponse decisionResp = decisionClient.request(decisionReq);
 
         brls::Logger::info("getTranscodeUrl: Decision response: {} body: {}",
@@ -1735,8 +1738,17 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
                                  decisionResp.statusCode);
         }
 
-        // Step 2: Build the /start URL for MPV to stream (mkv for HTTP protocol)
-        url = m_serverUrl + "/video/:/transcode/universal/start.mkv?" + queryParams;
+        // Step 2: Build the /start URL for MPV to stream.
+        // For MPV, we must include X-Plex-* as query params since MPV's
+        // http-header-fields option will also send them as headers.
+        std::string startQuery = queryParams;
+        startQuery += "&X-Plex-Client-Identifier=VitaPlex";
+        startQuery += "&X-Plex-Product=VitaPlex";
+        startQuery += "&X-Plex-Version=1.0.0";
+        startQuery += "&X-Plex-Platform=PlayStation%20Vita";
+        startQuery += "&X-Plex-Device=PS%20Vita";
+        startQuery += "&X-Plex-Client-Profile-Name=Generic";
+        url = m_serverUrl + "/video/:/transcode/universal/start.mkv?" + startQuery;
         brls::Logger::info("getTranscodeUrl: Transcode URL = {}", url);
     }
 

@@ -188,6 +188,17 @@ bool MpvPlayer::init() {
     // User agent for Plex compatibility
     mpv_set_option_string(m_mpv, "user-agent", PLEX_CLIENT_NAME "/" PLEX_CLIENT_VERSION);
 
+    // Per official Plex API (developer.plex.tv/pms), X-Plex-Client-Identifier
+    // is a REQUIRED HTTP header (in=header). Set it here so MPV sends it
+    // when streaming from Plex transcode endpoints.
+    mpv_set_option_string(m_mpv, "http-header-fields",
+        "X-Plex-Client-Identifier: VitaPlex,"
+        "X-Plex-Product: VitaPlex,"
+        "X-Plex-Version: 1.0.0,"
+        "X-Plex-Platform: PlayStation Vita,"
+        "X-Plex-Device: PS Vita,"
+        "X-Plex-Client-Profile-Name: Generic");
+
     // Note: demuxer-lavf-probe-info and force-seekable caused crashes on Vita
     // Keep options minimal for compatibility
 
