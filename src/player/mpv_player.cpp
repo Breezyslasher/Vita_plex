@@ -760,27 +760,16 @@ void MpvPlayer::eventMainLoop() {
                 // between MPV's threads and NanoVG during the loading phase.
                 if (m_mpvRenderCtx && !m_renderReady.load()) {
                     brls::Logger::info("MpvPlayer: Enabling render callback");
-                    // Flush twice with a sync barrier to ensure all pending GXM
-                    // operations from both NanoVG and mpv's decoder init are
-                    // fully retired before we enable frame rendering.
+                    // Flush GXM to retire any pending NanoVG operations before
+                    // enabling the render callback. The actual first frame will
+                    // be rendered by onRenderUpdate() via brls::sync(), which
+                    // correctly serializes GXM access on the main thread.
+                    // Do NOT call mpv_render_context_render() here — this runs
+                    // on mpv's event thread and would race with both the decoder
+                    // thread and NanoVG, causing a GXM assertion (UDF #0xFF).
                     flushGxmPipeline();
-                    // Do an initial "dummy" render check so mpv's internal
-                    // GXM state is fully initialized before the real callback.
-                    {
-                        std::lock_guard<std::mutex> lock(m_renderMutex);
-                        uint64_t flags = mpv_render_context_update(m_mpvRenderCtx);
-                        if (flags & MPV_RENDER_UPDATE_FRAME) {
-                            flushGxmPipeline();
-                            int result = mpv_render_context_render(m_mpvRenderCtx, m_mpvParams);
-                            if (result < 0) {
-                                brls::Logger::error("MpvPlayer: Initial render failed: {}", mpv_error_string(result));
-                            }
-                            mpv_render_context_report_swap(m_mpvRenderCtx);
-                            flushGxmPipeline();
-                        }
-                    }
-                    brls::Logger::info("MpvPlayer: Render callback enabled");
                     m_renderReady.store(true);
+                    brls::Logger::info("MpvPlayer: Render callback enabled");
                 }
 #endif
                 // Don't transition to PLAYING yet - wait for playback to actually start
