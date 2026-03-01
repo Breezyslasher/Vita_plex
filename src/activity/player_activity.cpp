@@ -675,10 +675,12 @@ void PlayerActivity::updateProgress() {
     // Don't update if destroying or showing photo
     if (m_destroying || m_isPhoto) return;
 
-    // Deferred MPV initialization: perform the init + loadUrl that was postponed
-    // during onContentAvailable(). By now the activity transition is complete and
-    // NanoVG has finished its draw cycle, so it's safe to create GXM render
-    // resources and start MPV's decoder threads without conflicting with NanoVG.
+    // Deferred MPV initialization (Phase 1 of 2):
+    // Create MPV and its GXM render context, but do NOT call loadUrl yet.
+    // loadUrl spawns decoder threads that use the shared GXM context via
+    // hwdec=vita-copy. If the decoder thread starts before NanoVG has drawn
+    // at least one clean frame after initRenderContext(), the concurrent GXM
+    // access crashes. So we schedule loadUrl via brls::sync for the NEXT frame.
     if (!m_pendingPlayUrl.empty()) {
         std::string url = m_pendingPlayUrl;
         std::string title = m_pendingPlayTitle;
@@ -686,7 +688,7 @@ void PlayerActivity::updateProgress() {
         m_pendingPlayUrl.clear();
         m_pendingPlayTitle.clear();
 
-        brls::Logger::info("PlayerActivity: Performing deferred MPV init...");
+        brls::Logger::info("PlayerActivity: Performing deferred MPV init (phase 1: create context)...");
 
         MpvPlayer& player = MpvPlayer::getInstance();
         player.setAudioOnly(isAudio);
@@ -698,17 +700,36 @@ void PlayerActivity::updateProgress() {
             }
         }
 
-        if (player.loadUrl(url, title)) {
-            if (videoView && !isAudio) {
-                videoView->setVisibility(brls::Visibility::VISIBLE);
-                videoView->setVideoVisible(true);
-                brls::Logger::debug("Video view enabled (deferred)");
+        // Phase 2: schedule loadUrl for the NEXT main-loop iteration.
+        // brls::sync callbacks execute between frames, so NanoVG will draw one
+        // complete frame with the freshly-created GXM state before the decoder
+        // thread gets a chance to touch the shared GXM context.
+        auto alive = m_alive;
+        brls::sync([this, url, title, isAudio, alive]() {
+            if (!alive->load() || m_destroying) return;
+
+            brls::Logger::info("PlayerActivity: Deferred MPV load (phase 2: loadUrl)...");
+
+            MpvPlayer& player = MpvPlayer::getInstance();
+
+#ifdef __vita__
+            // Flush GXM pipeline before loadfile to ensure NanoVG's previous
+            // frame is fully retired from the GPU before the decoder starts.
+            MpvPlayer::flushGpu();
+#endif
+
+            if (player.loadUrl(url, title)) {
+                if (videoView && !isAudio) {
+                    videoView->setVisibility(brls::Visibility::VISIBLE);
+                    videoView->setVideoVisible(true);
+                    brls::Logger::debug("Video view enabled (deferred)");
+                }
+                m_isPlaying = true;
+                brls::Logger::info("PlayerActivity: Deferred load started successfully");
+            } else {
+                brls::Logger::error("PlayerActivity: Deferred loadUrl failed");
             }
-            m_isPlaying = true;
-            brls::Logger::info("PlayerActivity: Deferred load started successfully");
-        } else {
-            brls::Logger::error("PlayerActivity: Deferred loadUrl failed");
-        }
+        });
         return;
     }
 
