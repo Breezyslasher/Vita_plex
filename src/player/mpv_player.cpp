@@ -23,6 +23,7 @@
 #include <cstdlib>
 #include <clocale>
 #include <mutex>
+#include <vector>
 
 namespace vitaplex {
 
@@ -1013,8 +1014,12 @@ bool MpvPlayer::initRenderContext() {
     m_videoHeight = DISPLAY_HEIGHT;
     int texture_stride = ALIGN(m_videoWidth, 8);
 
-    // Create NanoVG image
-    m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, nullptr);
+    // Create NanoVG image with zeroed (black) pixel data.
+    // Passing nullptr would leave the GXM texture uninitialized, which can cause
+    // a GPU fault if NanoVG's draw pipeline touches it before MPV renders a frame.
+    size_t pixelDataSize = (size_t)m_videoWidth * m_videoHeight * 4;
+    std::vector<unsigned char> blackPixels(pixelDataSize, 0);
+    m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, blackPixels.data());
     if (m_nvgImage == 0) {
         brls::Logger::error("MpvPlayer: Failed to create NanoVG image");
         mpv_render_context_free(m_mpvRenderCtx);
@@ -1074,6 +1079,15 @@ bool MpvPlayer::initRenderContext() {
     // render callback doesn't use the shared GXM context during the loading phase
     // (which would conflict with NanoVG on the main thread).
     mpv_render_context_set_update_callback(m_mpvRenderCtx, onRenderUpdate, this);
+
+    // Flush the GXM pipeline after all resource creation to ensure:
+    // 1. mpv_render_context_create's shader patcher ops are fully committed
+    // 2. The framebuffer's render target and surfaces are finalized
+    // 3. The NanoVG texture upload (black pixels) is complete
+    // Without this flush, the next NanoVG draw frame can hit stale/conflicting
+    // GXM state left behind by the render context and framebuffer creation.
+    flushGxmPipeline();
+
     brls::Logger::info("MpvPlayer: GXM render context created successfully ({}x{})", m_videoWidth, m_videoHeight);
     return true;
 #else
