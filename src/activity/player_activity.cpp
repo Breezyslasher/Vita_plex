@@ -17,7 +17,7 @@ namespace vitaplex {
 
 // Base temp file path for streaming audio (MPV's HTTP handling crashes on Vita)
 // Extension will be added dynamically based on the actual file type
-static const std::string TEMP_AUDIO_BASE = "ux0:data/vitaplex/temp_stream";
+
 
 PlayerActivity::PlayerActivity(const std::string& mediaKey)
     : m_mediaKey(mediaKey), m_isLocalFile(false) {
@@ -62,6 +62,13 @@ brls::View* PlayerActivity::createContentView() {
 
 void PlayerActivity::onContentAvailable() {
     brls::Logger::debug("PlayerActivity content available");
+
+    // Cancel pending background thumbnail loads (HomeTab, MediaDetailView)
+    // to free up network bandwidth for media streaming.
+    // We don't setPaused(true) here yet because music queue mode needs to
+    // load album art first. setPaused is called later in loadMedia/loadFromQueue
+    // right before MPV starts streaming.
+    ImageLoader::cancelAll();
 
     // Load media details
     if (m_isQueueMode) {
@@ -135,6 +142,9 @@ void PlayerActivity::onContentAvailable() {
 
 void PlayerActivity::willDisappear(bool resetState) {
     brls::Activity::willDisappear(resetState);
+
+    // Re-enable background thumbnail loading now that playback is ending
+    ImageLoader::setPaused(false);
 
     // Mark as destroying to prevent timer and image loader callbacks
     m_destroying = true;
@@ -224,13 +234,16 @@ void PlayerActivity::loadFromQueue() {
     // Update queue info display
     updateQueueDisplay();
 
-    // Load album art
+    // Load album art - temporarily unpause the image loader for this one load
     if (albumArt && !track->thumb.empty()) {
         PlexClient& client = PlexClient::getInstance();
         std::string thumbUrl = client.getThumbnailUrl(track->thumb, 300, 300);
+        bool wasPaused = ImageLoader::isPaused();
+        if (wasPaused) ImageLoader::setPaused(false);
         ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {
             // Art loaded
         }, albumArt, m_alive);
+        if (wasPaused) ImageLoader::setPaused(true);
         albumArt->setVisibility(brls::Visibility::VISIBLE);
     }
 
@@ -245,8 +258,8 @@ void PlayerActivity::loadFromQueue() {
         return;
     }
 
-    // Cancel in-flight image loads and free cache to reclaim memory for MPV.
-    // This prevents stale async callbacks from writing to freed brls::Image* pointers.
+    // Pause image loading and free cache to reclaim memory for MPV.
+    ImageLoader::setPaused(true);
     ImageLoader::cancelAll();
     ImageLoader::clearCache();
 
@@ -255,85 +268,10 @@ void PlayerActivity::loadFromQueue() {
     // Set audio-only mode BEFORE initializing
     player.setAudioOnly(true);
 
-    // Download audio to local file (HTTP workaround for Vita)
-    // This uses HttpClient (libcurl), not MPV, so it's safe during activity transition.
-    std::string playUrl = url;
-
-    if (url.find("http://") == 0) {
-        brls::Logger::info("PlayerActivity: Downloading audio stream to local file...");
-
-        // Show loading message
-        if (titleLabel) {
-            titleLabel->setText("Loading audio...");
-        }
-
-        // Extract file extension from URL
-        std::string ext = ".mp3";
-        size_t queryPos = url.find('?');
-        std::string urlPath = (queryPos != std::string::npos) ? url.substr(0, queryPos) : url;
-        size_t dotPos = urlPath.rfind('.');
-        if (dotPos != std::string::npos) {
-            ext = urlPath.substr(dotPos);
-        }
-
-        std::string tempPath = TEMP_AUDIO_BASE + ext;
-
-        std::ofstream tempFile(tempPath, std::ios::binary);
-        if (!tempFile.is_open()) {
-            brls::Logger::error("Failed to create temp file: {}", tempPath);
-            m_loadingMedia = false;
-            return;
-        }
-
-        int64_t totalBytes = 0;
-        int64_t downloadedBytes = 0;
-        int lastProgressPercent = -1;
-
-        HttpClient httpClient;
-        bool downloadSuccess = httpClient.downloadFile(url,
-            [&tempFile, &downloadedBytes, &totalBytes, &lastProgressPercent, this](const char* data, size_t size) -> bool {
-                tempFile.write(data, size);
-                downloadedBytes += size;
-
-                if (totalBytes > 0) {
-                    int percent = (int)((downloadedBytes * 100) / totalBytes);
-                    if (percent != lastProgressPercent && titleLabel) {
-                        lastProgressPercent = percent;
-                        char progressText[64];
-                        snprintf(progressText, sizeof(progressText), "Loading audio... %d%%", percent);
-                        brls::sync([this, progressText]() {
-                            if (titleLabel) titleLabel->setText(progressText);
-                        });
-                    }
-                }
-
-                return tempFile.good();
-            },
-            [&totalBytes](int64_t size) {
-                totalBytes = size;
-            }
-        );
-
-        tempFile.close();
-
-        if (!downloadSuccess) {
-            brls::Logger::error("Failed to download audio stream");
-            m_loadingMedia = false;
-            return;
-        }
-
-        // Restore title after download
-        if (titleLabel) {
-            titleLabel->setText(track->title);
-        }
-
-        brls::Logger::info("PlayerActivity: Audio downloaded ({} bytes)", downloadedBytes);
-        playUrl = tempPath;
-    }
-
+    // Stream audio directly via MPV (transcode API returns mp3 stream)
     if (!player.isInitialized()) {
         // Defer MPV init + load to after activity transition completes
-        m_pendingPlayUrl = playUrl;
+        m_pendingPlayUrl = url;
         m_pendingPlayTitle = track->title;
         m_pendingIsAudio = true;
         m_isPlaying = true;
@@ -342,8 +280,8 @@ void PlayerActivity::loadFromQueue() {
     }
 
     // Player already initialized (track change) - load immediately
-    if (!player.loadUrl(playUrl, track->title)) {
-        brls::Logger::error("Failed to load URL: {}", playUrl);
+    if (!player.loadUrl(url, track->title)) {
+        brls::Logger::error("Failed to load URL: {}", url);
         m_loadingMedia = false;
         return;
     }
@@ -387,7 +325,8 @@ void PlayerActivity::loadMedia() {
 
         brls::Logger::info("PlayerActivity: File type detection - audio: {}", isAudioFile);
 
-        // Cancel in-flight image loads and free cache to reclaim memory for MPV
+        // Pause image loading and free cache to reclaim memory for MPV
+        ImageLoader::setPaused(true);
         ImageLoader::cancelAll();
         ImageLoader::clearCache();
 
@@ -447,7 +386,8 @@ void PlayerActivity::loadMedia() {
             titleLabel->setText(title);
         }
 
-        // Cancel in-flight image loads and free cache to reclaim memory for MPV
+        // Pause image loading and free cache to reclaim memory for MPV
+        ImageLoader::setPaused(true);
         ImageLoader::cancelAll();
         ImageLoader::clearCache();
 
@@ -536,11 +476,10 @@ void PlayerActivity::loadMedia() {
         // Get transcode URL for video/audio (forces Plex to convert to Vita-compatible format)
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, item.viewOffset)) {
-            // Cancel in-flight image loads and free cache memory before initializing MPV.
-            // The Vita only has 256MB and MPV needs substantial memory for video decoding.
-            // cancelAll() increments the generation counter so any pending brls::sync
-            // callbacks from image downloads will be safely skipped, preventing
-            // use-after-free when those callbacks try to write to destroyed views.
+            // Pause image loading and free cache memory before initializing MPV.
+            // This stops background thumbnail fetches from competing with media
+            // streaming, and frees memory (Vita only has 256MB).
+            ImageLoader::setPaused(true);
             ImageLoader::cancelAll();
             ImageLoader::clearCache();
 
@@ -549,90 +488,7 @@ void PlayerActivity::loadMedia() {
             // Set audio-only mode BEFORE initializing
             player.setAudioOnly(isAudioContent);
 
-            // MPV's HTTP handling crashes on Vita when loading network URLs directly.
-            // Workaround: Download audio to local file first, then play the local file.
-            // This uses libcurl (via HttpClient) which handles HTTP correctly on Vita.
-            std::string playUrl = url;
-
-            if (isAudioContent && url.find("http://") == 0) {
-                brls::Logger::info("PlayerActivity: Downloading audio stream to local file (HTTP workaround)...");
-
-                // Show loading message in title
-                if (titleLabel) {
-                    titleLabel->setText("Loading audio...");
-                }
-
-                // Extract file extension from URL (e.g., .mp3, .m4a, .ogg, .flac)
-                std::string ext = ".mp3";  // Default extension
-                size_t queryPos = url.find('?');
-                std::string urlPath = (queryPos != std::string::npos) ? url.substr(0, queryPos) : url;
-                size_t dotPos = urlPath.rfind('.');
-                if (dotPos != std::string::npos) {
-                    ext = urlPath.substr(dotPos);
-                }
-
-                // Build temp file path with correct extension
-                std::string tempPath = TEMP_AUDIO_BASE + ext;
-
-                // Open temp file for writing
-                std::ofstream tempFile(tempPath, std::ios::binary);
-                if (!tempFile.is_open()) {
-                    brls::Logger::error("Failed to create temp file: {}", tempPath);
-                    if (titleLabel) titleLabel->setText("Error: Cannot create temp file");
-                    m_loadingMedia = false;
-                    return;
-                }
-
-                // Track download progress
-                int64_t totalBytes = 0;
-                int64_t downloadedBytes = 0;
-                int lastProgressPercent = -1;
-
-                // Download the stream with progress updates
-                HttpClient httpClient;
-                bool downloadSuccess = httpClient.downloadFile(url,
-                    [&tempFile, &downloadedBytes, &totalBytes, &lastProgressPercent, this](const char* data, size_t size) -> bool {
-                        tempFile.write(data, size);
-                        downloadedBytes += size;
-
-                        // Update progress display (only when percentage changes to reduce overhead)
-                        if (totalBytes > 0) {
-                            int percent = (int)((downloadedBytes * 100) / totalBytes);
-                            if (percent != lastProgressPercent && titleLabel) {
-                                lastProgressPercent = percent;
-                                char progressText[64];
-                                snprintf(progressText, sizeof(progressText), "Loading audio... %d%%", percent);
-                                brls::sync([this, progressText]() {
-                                    if (titleLabel) titleLabel->setText(progressText);
-                                });
-                            }
-                        }
-
-                        return tempFile.good();
-                    },
-                    [&totalBytes](int64_t size) {
-                        totalBytes = size;
-                    }
-                );
-
-                tempFile.close();
-
-                if (!downloadSuccess) {
-                    brls::Logger::error("Failed to download audio stream");
-                    if (titleLabel) titleLabel->setText("Error: Download failed");
-                    m_loadingMedia = false;
-                    return;
-                }
-
-                // Restore title after download
-                if (titleLabel) {
-                    titleLabel->setText(item.title);
-                }
-
-                brls::Logger::info("PlayerActivity: Audio downloaded ({} bytes), playing local file", downloadedBytes);
-                playUrl = tempPath;
-            }
-
+            // Stream directly via MPV (transcode API returns mp4/mp3 stream)
             if (!player.isInitialized()) {
                 // Defer MPV init + load to after activity transition completes.
                 // initRenderContext() creates GXM resources (framebuffer, render target)
@@ -640,14 +496,14 @@ void PlayerActivity::loadMedia() {
                 // via hwdec=vita-copy. Both conflict with NanoVG drawing during the
                 // borealis activity show phase, causing a consistent SIGSEGV.
                 brls::Logger::info("PlayerActivity: Deferring MPV init to after activity transition");
-                m_pendingPlayUrl = playUrl;
+                m_pendingPlayUrl = url;
                 m_pendingPlayTitle = item.title;
                 m_pendingIsAudio = isAudioContent;
             } else {
                 // Player already initialized (e.g., mode didn't change) - load immediately
                 brls::Logger::debug("PlayerActivity: Calling player.loadUrl...");
-                if (!player.loadUrl(playUrl, item.title)) {
-                    brls::Logger::error("Failed to load URL: {}", playUrl);
+                if (!player.loadUrl(url, item.title)) {
+                    brls::Logger::error("Failed to load URL: {}", url);
                     m_loadingMedia = false;
                     return;
                 }

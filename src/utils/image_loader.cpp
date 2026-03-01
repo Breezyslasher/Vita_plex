@@ -10,10 +10,27 @@ namespace vitaplex {
 std::map<std::string, std::vector<uint8_t>> ImageLoader::s_cache;
 std::mutex ImageLoader::s_cacheMutex;
 std::atomic<uint64_t> ImageLoader::s_generation{0};
+std::atomic<bool> ImageLoader::s_paused{false};
+
+void ImageLoader::setPaused(bool paused) {
+    s_paused.store(paused);
+    if (paused) {
+        brls::Logger::info("ImageLoader: Paused - new thumbnail loads disabled");
+    } else {
+        brls::Logger::info("ImageLoader: Resumed - thumbnail loads re-enabled");
+    }
+}
+
+bool ImageLoader::isPaused() {
+    return s_paused.load();
+}
 
 void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
                             brls::Image* target, std::shared_ptr<std::atomic<bool>> alive) {
     if (url.empty() || !target || !alive) return;
+
+    // Skip new loads while paused (playback in progress)
+    if (s_paused.load()) return;
 
     // Capture the current generation so stale callbacks are skipped after cancelAll()
     uint64_t gen = s_generation.load();
@@ -32,8 +49,8 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
 
     // Load asynchronously
     brls::async([url, callback, target, alive, gen]() {
-        // Check if cancelled before making the HTTP request
-        if (!alive->load() || gen != s_generation.load()) return;
+        // Check if cancelled or paused before making the HTTP request
+        if (!alive->load() || gen != s_generation.load() || s_paused.load()) return;
 
         HttpClient client;
         HttpResponse resp = client.get(url);
