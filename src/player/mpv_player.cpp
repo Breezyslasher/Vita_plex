@@ -345,6 +345,12 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
     // Mark command as pending
     m_commandPending = true;
 
+#ifdef __vita__
+    // Disable render callback during loading to prevent GXM context conflicts.
+    // Will be re-enabled in FILE_LOADED event handler.
+    m_renderReady.store(false);
+#endif
+
     // Use simple loadfile command - options are already set globally during init()
     // Format: loadfile <url> [flags]
     // Note: Per-file options (5th arg) require different format and aren't well supported
@@ -369,17 +375,6 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
         return false;
     }
     brls::Logger::debug("MpvPlayer: loadfile command queued successfully (result={})", result);
-
-#ifdef __vita__
-    // After queueing loadfile, MPV's decoder threads will start initializing
-    // GXM resources (shader compilation, buffer allocation). Give them time
-    // to finish before NanoVG resumes rendering on the shared GXM context.
-    // GXM is NOT thread-safe - concurrent access causes crashes.
-    if (m_mpvRenderCtx) {
-        sceKernelDelayThread(50000);  // 50ms for MPV threads to start
-        flushGxmPipeline();
-    }
-#endif
 
     brls::Logger::debug("MpvPlayer: About to call setState(LOADING)...");
     setState(MpvPlayerState::LOADING);
@@ -636,16 +631,6 @@ void MpvPlayer::setState(MpvPlayerState newState) {
 void MpvPlayer::update() {
     if (!m_mpv || m_stopping) return;
 
-#ifdef __vita__
-    // During loading/buffering, MPV's decoder threads may be actively using
-    // GXM for shader compilation and buffer allocation. Flush GPU to ensure
-    // their work is complete before the main thread processes events or
-    // NanoVG draws the next frame.
-    if ((m_state == MpvPlayerState::LOADING || m_state == MpvPlayerState::BUFFERING) && m_mpvRenderCtx) {
-        flushGxmPipeline();
-    }
-#endif
-
     // Process events (matching switchfin's eventMainLoop)
     eventMainLoop();
 
@@ -692,6 +677,17 @@ void MpvPlayer::eventMainLoop() {
             case MPV_EVENT_FILE_LOADED:
                 brls::Logger::info("MpvPlayer: EVENT_FILE_LOADED");
                 m_commandPending = false;
+#ifdef __vita__
+                // Now that the file is loaded and decoders are initialized,
+                // enable the render callback so MPV can display frames.
+                // This is deferred from init to avoid GXM context conflicts
+                // between MPV's threads and NanoVG during the loading phase.
+                if (m_mpvRenderCtx && !m_renderReady.load()) {
+                    brls::Logger::info("MpvPlayer: Enabling render callback");
+                    flushGxmPipeline();
+                    m_renderReady.store(true);
+                }
+#endif
                 // Don't transition to PLAYING yet - wait for playback to actually start
                 break;
 
@@ -1072,10 +1068,11 @@ bool MpvPlayer::initRenderContext() {
     m_mpvParams[0] = {MPV_RENDER_PARAM_GXM_FBO, &m_mpvFbo};
     m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
 
-    // Set up render update callback (using switchfin's approach with brls::sync)
-    // NOTE: m_renderReady must be set BEFORE registering the callback, because the
-    // callback checks m_renderReady and will skip rendering if it's false.
-    m_renderReady.store(true);
+    // Register the render update callback but keep m_renderReady=false.
+    // The callback checks m_renderReady and will skip rendering until it's true.
+    // We defer setting m_renderReady=true until FILE_LOADED event, so MPV's
+    // render callback doesn't use the shared GXM context during the loading phase
+    // (which would conflict with NanoVG on the main thread).
     mpv_render_context_set_update_callback(m_mpvRenderCtx, onRenderUpdate, this);
     brls::Logger::info("MpvPlayer: GXM render context created successfully ({}x{})", m_videoWidth, m_videoHeight);
     return true;

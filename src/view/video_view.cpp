@@ -17,23 +17,18 @@ void VideoView::draw(NVGcontext* vg, float x, float y, float width, float height
     // Draw parent first
     brls::Box::draw(vg, x, y, width, height, style, ctx);
 
-#ifdef __vita__
-    // Flush GPU before any video-related NanoVG drawing to ensure MPV's
-    // decoder threads have finished their GXM operations. GXM is NOT
-    // thread-safe, so we must serialize access at frame boundaries.
-    {
-        MpvPlayer& player = MpvPlayer::getInstance();
-        if (player.hasRenderContext() && !player.isIdle()) {
-            MpvPlayer::flushGpu();
-        }
-    }
-#endif
-
     if (!m_videoVisible) {
         return;
     }
 
     MpvPlayer& player = MpvPlayer::getInstance();
+
+    // Don't try to draw video while player is still loading.
+    // During loading, MPV's decoder threads may use the shared GXM context
+    // for initialization, and drawing the uninitialized video texture could crash.
+    if (player.isLoading()) {
+        return;
+    }
 
     // Note: Rendering happens in MpvPlayer's onRenderUpdate callback via brls::sync()
     // We just display the already-rendered NanoVG texture here
