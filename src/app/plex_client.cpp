@@ -1656,69 +1656,90 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
         url = m_serverUrl + partKey + "?X-Plex-Token=" + m_authToken;
         brls::Logger::info("getTranscodeUrl: Using direct audio URL = {}", url);
     } else {
-        // For video: Use transcode endpoint with metadata path
-        // Per Plex API docs, path should be /library/metadata/{ratingKey}
+        // For video: Use the universal transcode API (per Plex OpenAPI spec).
+        // Parameters must match the spec exactly - invalid params cause HTTP 400.
         std::string metadataPath = "/library/metadata/" + ratingKey;
         std::string encodedPath = HttpClient::urlEncode(metadataPath);
 
-        url = m_serverUrl;
-        url += "/video/:/transcode/universal/start.mp4?";
-        url += "path=" + encodedPath;
-        url += "&mediaIndex=0&partIndex=0";
-        url += "&protocol=http";
-        url += "&fastSeek=1";
-        url += "&directPlay=0&directStream=0";  // Force transcode
-
         // Get quality settings
         AppSettings& settings = Application::getInstance().getSettings();
-        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : 4000;
-        int maxWidth = 960;   // Vita screen width
-        int maxHeight = 544;  // Vita screen height
+        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : 2000;
 
-        // Adjust resolution based on quality setting
+        // Determine resolution based on bitrate
+        const char* resolution = "960x544";  // Vita native
         if (bitrate >= 8000) {
-            maxWidth = 1280;
-            maxHeight = 720;
-        } else if (bitrate >= 2000) {
-            maxWidth = 960;
-            maxHeight = 544;
-        } else {
-            maxWidth = 640;
-            maxHeight = 360;
+            resolution = "1280x720";
+        } else if (bitrate < 2000) {
+            resolution = "640x360";
         }
 
-        char bitrateStr[64];
-        snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
-        url += bitrateStr;
-        url += "&videoCodec=h264";
+        // Generate a unique session ID
+        char sessionBuf[32];
+        snprintf(sessionBuf, sizeof(sessionBuf), "%lu", (unsigned long)time(nullptr));
+        std::string sessionId = sessionBuf;
 
-        char resStr[64];
-        snprintf(resStr, sizeof(resStr), "&maxWidth=%d&maxHeight=%d", maxWidth, maxHeight);
-        url += resStr;
+        // Build the common query string (shared by /decision and /start)
+        // Only use parameters defined in the Plex OpenAPI spec.
+        std::string queryParams;
+        queryParams += "path=" + encodedPath;
+        queryParams += "&mediaIndex=0&partIndex=0";
+        queryParams += "&protocol=http";
+        queryParams += "&directPlay=0&directStream=1";
+        queryParams += "&hasMDE=1";
+        queryParams += "&location=lan";
 
-        // Audio settings - stereo AAC
-        url += "&audioCodec=aac&audioChannels=2";
+        char buf[128];
+        snprintf(buf, sizeof(buf), "&videoBitrate=%d", bitrate);
+        queryParams += buf;
+        snprintf(buf, sizeof(buf), "&videoResolution=%s", resolution);
+        queryParams += buf;
+        queryParams += "&videoQuality=100";
+        queryParams += "&audioBoost=100";
+        queryParams += "&audioChannelCount=2";
+        queryParams += "&subtitles=auto";
 
-        // Add resume offset if specified (in seconds for video)
+        // Resume offset (in seconds)
         if (offsetMs > 0) {
-            char offsetStr[32];
-            snprintf(offsetStr, sizeof(offsetStr), "&offset=%.1f", offsetMs / 1000.0);
-            url += offsetStr;
+            snprintf(buf, sizeof(buf), "&offset=%.1f", offsetMs / 1000.0);
+            queryParams += buf;
         }
 
-        // Add authentication and client identification
-        url += "&X-Plex-Token=" + m_authToken;
-        url += "&X-Plex-Client-Identifier=VitaPlex";
-        url += "&X-Plex-Product=VitaPlex";
-        url += "&X-Plex-Version=1.0.0";
-        url += "&X-Plex-Platform=PlayStation%20Vita";
-        url += "&X-Plex-Device=PS%20Vita";
+        // Client profile: tell Plex what codecs we support for transcoding output
+        std::string profileExtra =
+            "add-transcode-target(type=videoProfile&context=streaming&protocol=http"
+            "&container=mp4&videoCodec=h264&audioCodec=aac)";
+        queryParams += "&X-Plex-Client-Profile-Extra=" + HttpClient::urlEncode(profileExtra);
 
-        // Generate a session ID for this transcode request
-        char sessionId[32];
-        snprintf(sessionId, sizeof(sessionId), "&session=%lu", (unsigned long)time(nullptr));
-        url += sessionId;
+        // Client identification (X-Plex-Client-Identifier is REQUIRED per spec)
+        queryParams += "&X-Plex-Token=" + m_authToken;
+        queryParams += "&X-Plex-Client-Identifier=VitaPlex";
+        queryParams += "&X-Plex-Product=VitaPlex";
+        queryParams += "&X-Plex-Version=1.0.0";
+        queryParams += "&X-Plex-Platform=PlayStation%20Vita";
+        queryParams += "&X-Plex-Device=PS%20Vita";
+        queryParams += "&session=" + sessionId;
 
+        // Step 1: Call the /decision endpoint to set up the transcode session.
+        // Per Plex API, this must be called before /start to authorize the session.
+        std::string decisionUrl = m_serverUrl + "/video/:/transcode/universal/decision?" + queryParams;
+        brls::Logger::info("getTranscodeUrl: Calling decision endpoint...");
+        brls::Logger::debug("getTranscodeUrl: Decision URL = {}", decisionUrl);
+
+        HttpClient decisionClient;
+        HttpRequest decisionReq;
+        decisionReq.url = decisionUrl;
+        decisionReq.method = "GET";
+        decisionReq.headers["Accept"] = "application/json";
+        HttpResponse decisionResp = decisionClient.request(decisionReq);
+
+        brls::Logger::info("getTranscodeUrl: Decision response: {}", decisionResp.statusCode);
+        if (decisionResp.statusCode != 200) {
+            brls::Logger::warning("getTranscodeUrl: Decision returned {}, trying start anyway",
+                                 decisionResp.statusCode);
+        }
+
+        // Step 2: Build the /start URL for MPV to stream
+        url = m_serverUrl + "/video/:/transcode/universal/start.mp4?" + queryParams;
         brls::Logger::info("getTranscodeUrl: Transcode URL = {}", url);
     }
 
