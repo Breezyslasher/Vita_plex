@@ -171,10 +171,16 @@ bool MpvPlayer::init() {
 
 #ifdef __vita__
     if (m_audioOnly) {
-        // Audio streaming: enable cache and buffer enough data before starting
-        // playback so the audio pipeline doesn't starve mid-stream.
+        // Audio streaming: the Plex transcoder takes 1-2s to start up.
+        // Without enough pre-buffering, MPV plays the initial data burst,
+        // then stalls waiting for the transcoder to catch up - causing a
+        // brief silence ~1 second into playback.
         mpv_set_option_string(m_mpv, "cache", "yes");
-        mpv_set_option_string(m_mpv, "cache-secs", "10");       // buffer 10s before starting
+        mpv_set_option_string(m_mpv, "cache-secs", "10");
+        // Wait until 5s of audio is buffered before starting/resuming.
+        // This covers the transcoder startup delay and network jitter.
+        mpv_set_option_string(m_mpv, "cache-pause-initial", "yes");
+        mpv_set_option_string(m_mpv, "cache-pause-wait", "5");
         mpv_set_option_string(m_mpv, "demuxer-max-bytes", "2MiB");
         mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "512KiB");
     } else {
