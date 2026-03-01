@@ -184,8 +184,10 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "512KiB");
         // HLS-specific: give the demuxer more time to probe codec parameters.
         // Fixes "Could not find codec parameters" warnings with TS streams.
-        mpv_set_option_string(m_mpv, "demuxer-lavf-analyzeduration", "10");
-        mpv_set_option_string(m_mpv, "demuxer-lavf-probesize", "10000000");
+        // Keep probesize conservative (2MB) - the Vita only has 192MB heap total
+        // and 10MB probesize was causing excessive memory pressure during HLS init.
+        mpv_set_option_string(m_mpv, "demuxer-lavf-analyzeduration", "5");
+        mpv_set_option_string(m_mpv, "demuxer-lavf-probesize", "2000000");
     }
 #else
     mpv_set_option_string(m_mpv, "cache", "yes");
