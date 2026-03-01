@@ -154,14 +154,14 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "volume-max", "150");
 
 #ifdef __vita__
-    // Audio-specific optimizations for Vita
     if (m_audioOnly) {
-        // Pre-buffer more audio to prevent stuttering during playback
-        mpv_set_option_string(m_mpv, "audio-buffer", "0.5");  // 500ms audio buffer
+        // Larger audio buffer to absorb network jitter and CPU stalls.
+        // 500ms was too small and caused choppy playback; 1.5s gives
+        // enough runway to mask brief stalls on Vita's slow CPU.
+        mpv_set_option_string(m_mpv, "audio-buffer", "1.5");
 
-        // Demuxer settings for smoother audio
-        mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "5");  // Read 5 seconds ahead
-        mpv_set_option_string(m_mpv, "demuxer-max-bytes", "512KiB");  // Allow some buffering for audio
+        // Read ahead aggressively so the demuxer always has data ready
+        mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "15");
     }
 #endif
 
@@ -171,9 +171,11 @@ bool MpvPlayer::init() {
 
 #ifdef __vita__
     if (m_audioOnly) {
-        // Audio streaming needs cache enabled for network playback
+        // Audio streaming: enable cache and buffer enough data before starting
+        // playback so the audio pipeline doesn't starve mid-stream.
         mpv_set_option_string(m_mpv, "cache", "yes");
-        mpv_set_option_string(m_mpv, "demuxer-max-bytes", "1MiB");
+        mpv_set_option_string(m_mpv, "cache-secs", "10");       // buffer 10s before starting
+        mpv_set_option_string(m_mpv, "demuxer-max-bytes", "2MiB");
         mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "512KiB");
     } else {
         // Video: HLS streaming needs cache to buffer .ts segments.
@@ -719,7 +721,26 @@ void MpvPlayer::eventMainLoop() {
                 // between MPV's threads and NanoVG during the loading phase.
                 if (m_mpvRenderCtx && !m_renderReady.load()) {
                     brls::Logger::info("MpvPlayer: Enabling render callback");
+                    // Flush twice with a sync barrier to ensure all pending GXM
+                    // operations from both NanoVG and mpv's decoder init are
+                    // fully retired before we enable frame rendering.
                     flushGxmPipeline();
+                    // Do an initial "dummy" render check so mpv's internal
+                    // GXM state is fully initialized before the real callback.
+                    {
+                        std::lock_guard<std::mutex> lock(m_renderMutex);
+                        uint64_t flags = mpv_render_context_update(m_mpvRenderCtx);
+                        if (flags & MPV_RENDER_UPDATE_FRAME) {
+                            flushGxmPipeline();
+                            int result = mpv_render_context_render(m_mpvRenderCtx, m_mpvParams);
+                            if (result < 0) {
+                                brls::Logger::error("MpvPlayer: Initial render failed: {}", mpv_error_string(result));
+                            }
+                            mpv_render_context_report_swap(m_mpvRenderCtx);
+                            flushGxmPipeline();
+                        }
+                    }
+                    brls::Logger::info("MpvPlayer: Render callback enabled");
                     m_renderReady.store(true);
                 }
 #endif
