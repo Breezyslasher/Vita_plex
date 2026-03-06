@@ -966,8 +966,14 @@ void vitaRenderVideoFrame(void* ctx) {
     }
     uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
     if (flags & MPV_RENDER_UPDATE_FRAME) {
+        // Flush before: ensure NanoVG's previous frame GPU work is complete
+        // before mpv starts a new GXM scene on the shared context.
+        flushGxmPipeline();
         mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
         mpv_render_context_report_swap(player->m_mpvRenderCtx);
+        // Flush after: ensure mpv's GXM render is fully committed before
+        // NanoVG begins its scene in the same main loop iteration.
+        flushGxmPipeline();
     }
 }
 
