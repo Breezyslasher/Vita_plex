@@ -1859,7 +1859,22 @@ void PlexClient::checkLiveTVAvailability() {
 
 bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
     HttpClient client;
-    std::string url = buildApiUrl("/livetv/sessions");
+
+    // First get DVR ID if we don't have it
+    if (m_dvrId.empty()) {
+        checkLiveTVAvailability();
+    }
+
+    // Use DVR channels endpoint to get actual TV channels
+    // GET /livetv/dvrs/{dvrId} returns DVR info with channels
+    std::string url;
+    if (!m_dvrId.empty()) {
+        url = buildApiUrl("/livetv/dvrs/" + m_dvrId);
+    } else {
+        // Fallback to sessions endpoint (only shows active sessions)
+        url = buildApiUrl("/livetv/sessions");
+    }
+
     HttpRequest req;
     req.url = url;
     req.method = "GET";
@@ -1873,11 +1888,18 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
 
     channels.clear();
 
-    // Parse channels from response
+    // Parse channels from response - look for channel entries with channelNumber
     size_t pos = 0;
-    while ((pos = resp.body.find("\"ratingKey\"", pos)) != std::string::npos) {
+    while ((pos = resp.body.find("\"channelNumber\"", pos)) != std::string::npos) {
         size_t objStart = resp.body.rfind('{', pos);
         if (objStart == std::string::npos) {
+            pos++;
+            continue;
+        }
+
+        // Check we haven't already parsed this object
+        std::string beforeSection = resp.body.substr(objStart, pos - objStart);
+        if (beforeSection.find("\"channelNumber\"") != std::string::npos) {
             pos++;
             continue;
         }
@@ -1899,14 +1921,23 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
         channel.thumb = extractJsonValue(obj, "thumb");
         channel.callSign = extractJsonValue(obj, "callSign");
         channel.channelNumber = extractJsonInt(obj, "channelNumber");
-        channel.currentProgram = extractJsonValue(obj, "title");  // Current playing title
+        channel.channelIdentifier = extractJsonValue(obj, "channelIdentifier");
+        if (channel.channelIdentifier.empty()) {
+            channel.channelIdentifier = extractJsonValue(obj, "slug");
+        }
 
-        if (!channel.ratingKey.empty()) {
+        if (channel.channelNumber > 0 || !channel.ratingKey.empty()) {
             channels.push_back(channel);
         }
 
         pos = objEnd;
     }
+
+    // Sort by channel number
+    std::sort(channels.begin(), channels.end(),
+              [](const LiveTVChannel& a, const LiveTVChannel& b) {
+                  return a.channelNumber < b.channelNumber;
+              });
 
     brls::Logger::info("fetchLiveTVChannels: Found {} channels", channels.size());
     return true;
@@ -1959,9 +1990,9 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
         // Try alternative: /media/subscriptions/scheduled
         brls::Logger::debug("fetchEPGGrid: /livetv/epg failed, trying grid endpoint");
 
-        // Try with the DVR key
+        // Try with the DVR key - dvrKey is the numeric ID (e.g., "40")
         if (!dvrKey.empty()) {
-            epgUrl = buildApiUrl(dvrKey + "/grid?");
+            epgUrl = buildApiUrl("/livetv/dvrs/" + dvrKey + "/grid");
         } else {
             epgUrl = buildApiUrl("/livetv/grid");
         }
@@ -2017,6 +2048,11 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
         channel.thumb = extractJsonValue(channelObj, "thumb");
         channel.callSign = extractJsonValue(channelObj, "callSign");
         channel.channelNumber = extractJsonInt(channelObj, "channelNumber");
+        // Channel identifier for DVR tuning (e.g., "2.1")
+        channel.channelIdentifier = extractJsonValue(channelObj, "channelIdentifier");
+        if (channel.channelIdentifier.empty()) {
+            channel.channelIdentifier = extractJsonValue(channelObj, "slug");
+        }
 
         // Look for program info in the channel object
         // Programs may be in "Media" array or directly as program fields

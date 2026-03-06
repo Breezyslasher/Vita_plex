@@ -476,10 +476,13 @@ void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
     brls::Logger::info("LiveTVTab: Selected channel: {} ({})", channel.title, channel.channelNumber);
 
     // Tune the Live TV channel and get HLS stream URL
-    // Use the channel's ratingKey as the channel identifier for tuning
-    std::string channelKey = channel.ratingKey;
+    // The DVR tune API expects the channel identifier (e.g., "2.1"), not the ratingKey
+    std::string channelKey = channel.channelIdentifier;
     if (channelKey.empty()) {
         channelKey = std::to_string(channel.channelNumber);
+    }
+    if (channelKey == "0" && !channel.ratingKey.empty()) {
+        channelKey = channel.ratingKey;  // Last resort fallback
     }
 
     asyncRun([this, channel, channelKey]() {

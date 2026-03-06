@@ -34,15 +34,25 @@ extern "C" void vitaplex_set_audio_playback_active(bool active);
 namespace vitaplex {
 
 #ifdef __vita__
+// Cached GXM context pointer - set once during initRenderContext to avoid
+// expensive dynamic_cast + getWindow() on every frame's flush calls.
+static SceGxmContext* s_cachedGxmContext = nullptr;
+
 // Flush the GXM GPU pipeline to ensure it's idle before mpv uses the shared
 // GXM context. GXM is NOT thread-safe, so mpv's decoder threads and the main
 // thread's NanoVG rendering must not use the GPU concurrently.
 static void flushGxmPipeline() {
+    if (s_cachedGxmContext) {
+        sceGxmFinish(s_cachedGxmContext);
+        return;
+    }
+    // Fallback: look up the context (first call or if not cached yet)
     brls::PsvVideoContext* videoContext = dynamic_cast<brls::PsvVideoContext*>(
         brls::Application::getPlatform()->getVideoContext());
     if (videoContext) {
         NVGXMwindow* gxm = videoContext->getWindow();
         if (gxm && gxm->context) {
+            s_cachedGxmContext = gxm->context;
             sceGxmFinish(gxm->context);
         }
     }
@@ -136,6 +146,9 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "vd-lavc-threads", "1");
         mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "all");
         mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
+        // Limit H.264 reference frames to reduce memory usage.
+        // Each ref frame at 960x540 YUV420 = ~777KB. Default can be up to 16.
+        mpv_set_option_string(m_mpv, "vd-lavc-o", "refcounted_frames=0");
 
         // Disable hardware decoding. vita-copy uses the shared GXM immediate
         // context from its decoder thread, which races with NanoVG on the main
@@ -964,6 +977,13 @@ void vitaRenderVideoFrame(void* ctx) {
         player->m_stopping.load()) {
         return;
     }
+
+    // Verify FBO resources are still valid before attempting render
+    if (!player->m_gxmFramebuffer || !player->m_mpvFbo.render_target ||
+        !player->m_mpvFbo.color_surface) {
+        return;
+    }
+
     uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
     if (flags & MPV_RENDER_UPDATE_FRAME) {
         // Flush before: ensure NanoVG's previous frame GPU work is complete
@@ -1194,6 +1214,9 @@ void MpvPlayer::cleanupRenderContext() {
         m_mpvParams[0] = {MPV_RENDER_PARAM_INVALID, nullptr};
         m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
     }
+
+    // Final flush to ensure all freed resources are no longer in use by GPU
+    flushGxmPipeline();
 #endif
 }
 

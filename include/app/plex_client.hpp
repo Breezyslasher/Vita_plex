@@ -129,6 +129,7 @@ struct LiveTVChannel {
     std::string thumb;
     std::string callSign;
     int channelNumber = 0;
+    std::string channelIdentifier;  // Channel ID for DVR tuning (e.g., "2.1")
     std::string currentProgram;
     std::string nextProgram;
     int64_t programStart = 0;
