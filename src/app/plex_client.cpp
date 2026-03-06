@@ -1664,7 +1664,6 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     std::string queryParams;
     queryParams += "path=" + encodedPath;
     queryParams += "&mediaIndex=0&partIndex=0";
-    queryParams += "&protocol=http";
     queryParams += "&directPlay=0&directStream=1";
     queryParams += "&directStreamAudio=1";
     queryParams += "&hasMDE=1";
@@ -1675,10 +1674,15 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     char buf[256];
 
     if (isAudio) {
-        // Audio: use musicBitrate (per official API spec parameter)
+        // Audio: HTTP progressive download of mp3
+        queryParams += "&protocol=http";
         queryParams += "&musicBitrate=320";
     } else {
-        // Video: resolution and bitrate settings
+        // Video: HLS (HTTP Live Streaming) with TS segments.
+        // This matches switchfin's proven Vita configuration:
+        // protocol=hls, container=mpegts, codec=h264, level<=4.0, max 720p
+        queryParams += "&protocol=hls";
+
         AppSettings& settings = Application::getInstance().getSettings();
         int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : 2000;
 
@@ -1720,14 +1724,20 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
                        "&context=streaming&protocol=http"
                        "&container=mp3&audioCodec=mp3)";
     } else {
-        // Video: transcode to mp4/h264/aac via HTTP
+        // Video: HLS with MPEG-TS segments, h264+aac.
+        // Matches switchfin's Vita config (proven to work on Vita's MPV):
+        // - HLS: segmented streaming, no moov atom issues
+        // - TS container: works with HLS protocol
+        // - AAC only: MP3 in MPEG-TS causes "unspecified frame size" probe
+        //   failure with Vita's mp3_vita decoder, leading to A/V desync
+        // - H.264 level 4.0 max, 720p max (Vita hardware limits)
         profileExtra = "add-transcode-target(type=videoProfile"
-                       "&context=streaming&protocol=http"
-                       "&container=mp4&videoCodec=h264"
-                       "&audioCodec=aac,ac3"
+                       "&context=streaming&protocol=hls"
+                       "&container=mpegts&videoCodec=h264"
+                       "&audioCodec=aac"
                        "&subtitleCodec=srt)"
                        "+add-limitation(scope=videoCodec&scopeName=h264"
-                       "&type=upperBound&name=video.level&value=41)"
+                       "&type=upperBound&name=video.level&value=40)"
                        "+add-limitation(scope=videoCodec&scopeName=h264"
                        "&type=upperBound&name=video.width&value=1280)"
                        "+add-limitation(scope=videoCodec&scopeName=h264"
@@ -1778,8 +1788,8 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     startQuery += "&X-Plex-Client-Profile-Name=Generic";
     startQuery += "&X-Plex-Client-Profile-Extra=" + HttpClient::urlEncode(profileExtra);
 
-    // Use mp4 for video (widely supported), mp3 for audio
-    const char* container = isAudio ? "mp3" : "mp4";
+    // HLS playlist for video (m3u8), mp3 for audio
+    const char* container = isAudio ? "mp3" : "m3u8";
     snprintf(buf, sizeof(buf), "/%s/:/transcode/universal/start.%s?", transcodeType, container);
     url = m_serverUrl + buf + startQuery;
     brls::Logger::info("getTranscodeUrl: Transcode URL = {}", url);

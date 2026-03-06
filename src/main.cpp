@@ -84,7 +84,10 @@ static bool initVitaSystem() {
     sceSysmoduleLoadModule(SCE_SYSMODULE_SSL);
     sceSysmoduleLoadModule(SCE_SYSMODULE_HTTP);
     sceSysmoduleLoadModule(SCE_SYSMODULE_HTTPS);
-    sceSysmoduleLoadModule(SCE_SYSMODULE_AVPLAYER);
+    // SceAvPlayer intentionally NOT loaded - we use MPV/libmpv for playback.
+    // Loading SceAvPlayer pulls in SceMp4 as a dependency, and "Mp4Demux Critical"
+    // appears in crash dumps during HLS playback, suggesting a conflict with
+    // MPV's FFmpeg-based demuxer using the same SceAvcodec/SceVideodec resources.
     sceSysmoduleLoadModule(SCE_SYSMODULE_IME);
     sceSysmoduleLoadModule(SCE_SYSMODULE_PGF);
 

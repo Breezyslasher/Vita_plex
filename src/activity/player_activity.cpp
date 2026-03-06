@@ -473,6 +473,22 @@ void PlayerActivity::loadMedia() {
         brls::Logger::info("PlayerActivity: Media type detection - audio: {}, type: {}",
                           isAudioContent, (int)item.mediaType);
 
+        // Show album art for audio content (before we pause the image loader)
+        if (isAudioContent && albumArt) {
+            // Try track thumb, then album (parent) thumb, then artist (grandparent) thumb
+            std::string artPath = item.thumb;
+            if (artPath.empty()) artPath = item.parentThumb;
+            if (artPath.empty()) artPath = item.grandparentThumb;
+
+            if (!artPath.empty()) {
+                std::string thumbUrl = client.getThumbnailUrl(artPath, 300, 300);
+                ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {
+                    // Art loaded
+                }, albumArt, m_alive);
+                albumArt->setVisibility(brls::Visibility::VISIBLE);
+            }
+        }
+
         // Get transcode URL for video/audio (forces Plex to convert to Vita-compatible format)
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, item.viewOffset)) {

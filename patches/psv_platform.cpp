@@ -23,9 +23,41 @@ limitations under the License.
 #include <psp2/system_param.h>
 #include <sys/unistd.h>
 
+#include <psp2/kernel/threadmgr.h>
+#include <atomic>
+
 #include <borealis/core/application.hpp>
 #include <borealis/core/logger.hpp>
 #include <borealis/platforms/psv/psv_platform.hpp>
+
+// When true, mainLoopIteration yields CPU time to audio threads by sleeping.
+// Set by MpvPlayer during audio-only playback so the 60fps NanoVG rendering
+// doesn't starve the ao_vita audio output thread (which has only ~42ms of
+// hardware buffer at 48kHz).
+static std::atomic<bool> s_audioPlaybackActive{false};
+
+extern "C" void vitaplex_set_audio_playback_active(bool active)
+{
+    s_audioPlaybackActive.store(active);
+}
+
+// Video render hook - called at the start of mainLoopIteration(), BEFORE
+// NanoVG/GXM touches the GPU. This ensures mpv renders its frame to the
+// offscreen FBO without conflicting with NanoVG's active GXM scene.
+static void (*s_videoRenderFunc)(void*) = nullptr;
+static void* s_videoRenderCtx = nullptr;
+static std::atomic<bool> s_videoFrameReady{false};
+
+extern "C" void vitaplex_set_video_render_hook(void (*func)(void*), void* ctx)
+{
+    s_videoRenderFunc = func;
+    s_videoRenderCtx = ctx;
+}
+
+extern "C" void vitaplex_signal_video_frame()
+{
+    s_videoFrameReady.store(true, std::memory_order_release);
+}
 
 namespace brls
 {
@@ -132,6 +164,13 @@ void PsvPlatform::createWindow(std::string windowTitle, uint32_t windowWidth, ui
 
 bool PsvPlatform::mainLoopIteration()
 {
+    // Render pending video frame BEFORE NanoVG touches GXM.
+    // This guarantees no active GXM scene when mpv renders.
+    if (s_videoFrameReady.load(std::memory_order_acquire) && s_videoRenderFunc) {
+        s_videoFrameReady.store(false, std::memory_order_relaxed);
+        s_videoRenderFunc(s_videoRenderCtx);
+    }
+
     if (this->suspendDisabled) {
         sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT);
     }
@@ -139,7 +178,13 @@ bool PsvPlatform::mainLoopIteration()
     // SDL mode - call parent SDLPlatform
     return SDLPlatform::mainLoopIteration();
 #else
-    // GXM mode - no SDL, just return true
+    // GXM mode: during audio-only playback the screen is mostly static
+    // (only the progress bar updates once per second). Yield CPU time
+    // so the ao_vita audio thread can feed the hardware without underruns.
+    // ~33ms sleep gives ~30fps which is plenty for a static music player UI.
+    if (s_audioPlaybackActive.load(std::memory_order_relaxed)) {
+        sceKernelDelayThread(33000);  // 33ms -> ~30fps
+    }
     return true;
 #endif
 }
