@@ -96,6 +96,10 @@ void Application::pushPlayerActivity(const std::string& mediaKey) {
     brls::Application::pushActivity(new PlayerActivity(mediaKey));
 }
 
+void Application::pushLiveTVPlayerActivity(const std::string& streamUrl, const std::string& channelTitle) {
+    brls::Application::pushActivity(PlayerActivity::createForStream(streamUrl, channelTitle));
+}
+
 void Application::applyTheme() {
     brls::ThemeVariant variant;
 

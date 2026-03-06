@@ -38,6 +38,15 @@ PlayerActivity* PlayerActivity::createForDirectFile(const std::string& filePath)
     return activity;
 }
 
+PlayerActivity* PlayerActivity::createForStream(const std::string& streamUrl, const std::string& title) {
+    PlayerActivity* activity = new PlayerActivity("", false);
+    activity->m_isDirectFile = true;  // Use direct file path for stream URLs too
+    activity->m_directFilePath = streamUrl;
+    activity->m_streamTitle = title;
+    brls::Logger::info("PlayerActivity created for stream: {} ({})", title, streamUrl);
+    return activity;
+}
+
 PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tracks, int startIndex) {
     PlayerActivity* activity = new PlayerActivity("", false);
     activity->m_isQueueMode = true;
@@ -84,6 +93,11 @@ void PlayerActivity::onContentAvailable() {
             // Seek to position
             MpvPlayer& player = MpvPlayer::getInstance();
             double duration = player.getDuration();
+            if (duration <= 0 && m_isQueueMode) {
+                const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
+                if (track && track->duration > 0)
+                    duration = (double)track->duration;
+            }
             player.seekTo(duration * progress);
         });
     }
@@ -302,14 +316,19 @@ void PlayerActivity::loadMedia() {
     if (m_isDirectFile) {
         brls::Logger::info("PlayerActivity: Playing direct file: {}", m_directFilePath);
 
-        // Extract filename from path
-        size_t lastSlash = m_directFilePath.find_last_of("/\\");
-        std::string filename = (lastSlash != std::string::npos)
-            ? m_directFilePath.substr(lastSlash + 1)
-            : m_directFilePath;
+        // Use stream title if set, otherwise extract filename from path
+        std::string displayTitle;
+        if (!m_streamTitle.empty()) {
+            displayTitle = m_streamTitle;
+        } else {
+            size_t lastSlash = m_directFilePath.find_last_of("/\\");
+            displayTitle = (lastSlash != std::string::npos)
+                ? m_directFilePath.substr(lastSlash + 1)
+                : m_directFilePath;
+        }
 
         if (titleLabel) {
-            titleLabel->setText(filename);
+            titleLabel->setText(displayTitle);
         }
 
         // Detect if this is an audio file
@@ -341,14 +360,15 @@ void PlayerActivity::loadMedia() {
             // decoder threads that use the shared GXM context - both conflict
             // with NanoVG drawing during the borealis show phase.
             m_pendingPlayUrl = m_directFilePath;
-            m_pendingPlayTitle = "Test File";
+            m_pendingPlayTitle = m_streamTitle.empty() ? "Test File" : m_streamTitle;
             m_pendingIsAudio = isAudioFile;
             m_loadingMedia = false;
             return;
         }
 
         // Player already initialized - load immediately
-        if (!player.loadUrl(m_directFilePath, "Test File")) {
+        std::string loadTitle = m_streamTitle.empty() ? "Test File" : m_streamTitle;
+        if (!player.loadUrl(m_directFilePath, loadTitle)) {
             brls::Logger::error("Failed to load direct file: {}", m_directFilePath);
             m_loadingMedia = false;
             return;
@@ -627,6 +647,15 @@ void PlayerActivity::updateProgress() {
 
     double position = player.getPosition();
     double duration = player.getDuration();
+
+    // Fallback: use Plex server-provided duration when mpv can't determine it
+    // (common with streamed/transcoded audio where the demuxer lacks full metadata)
+    if (duration <= 0 && m_isQueueMode) {
+        const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
+        if (track && track->duration > 0) {
+            duration = (double)track->duration;
+        }
+    }
 
     if (duration > 0) {
         if (progressSlider) {

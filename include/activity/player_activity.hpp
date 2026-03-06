@@ -32,6 +32,9 @@ public:
     // Play direct file path (for debug/testing)
     static PlayerActivity* createForDirectFile(const std::string& filePath);
 
+    // Play a direct stream URL (for Live TV HLS streams)
+    static PlayerActivity* createForStream(const std::string& streamUrl, const std::string& title);
+
     // Play from queue (album, playlist, etc.)
     static PlayerActivity* createWithQueue(const std::vector<MediaItem>& tracks, int startIndex = 0);
 
@@ -57,7 +60,8 @@ private:
     void updateQueueDisplay();      // Update UI with queue info
 
     std::string m_mediaKey;
-    std::string m_directFilePath;  // For direct file playback (debug)
+    std::string m_directFilePath;  // For direct file playback (debug) or stream URL
+    std::string m_streamTitle;     // Title for stream playback (Live TV)
     bool m_isPlaying = false;
     bool m_isPhoto = false;
     bool m_isLocalFile = false;    // Playing from local download

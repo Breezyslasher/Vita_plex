@@ -1833,6 +1833,27 @@ void PlexClient::checkLiveTVAvailability() {
     // If we get a 200 response (even with empty DVR list), Live TV is configured
     // A 404 or error means Live TV is not set up
     m_hasLiveTV = (resp.statusCode == 200);
+
+    // Extract DVR ID for tuning channels later
+    if (m_hasLiveTV && !resp.body.empty()) {
+        // Look for "key" field like "/livetv/dvrs/1" or just an integer id
+        std::string key = extractJsonValue(resp.body, "key");
+        if (!key.empty()) {
+            // Extract numeric ID from key path like "/livetv/dvrs/1"
+            size_t lastSlash = key.rfind('/');
+            if (lastSlash != std::string::npos) {
+                m_dvrId = key.substr(lastSlash + 1);
+            } else {
+                m_dvrId = key;
+            }
+        }
+        if (m_dvrId.empty()) {
+            // Try "id" field
+            m_dvrId = extractJsonValue(resp.body, "id");
+        }
+        brls::Logger::info("Live TV DVR ID: {}", m_dvrId.empty() ? "(none)" : m_dvrId);
+    }
+
     brls::Logger::info("Live TV availability check: {}", m_hasLiveTV ? "available" : "not available");
 }
 
@@ -2042,6 +2063,108 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
 
     brls::Logger::info("fetchEPGGrid: Got {} channels with program info", channelsWithPrograms.size());
     return !channelsWithPrograms.empty();
+}
+
+bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl) {
+    brls::Logger::info("tuneLiveTVChannel: channelKey={}", channelKey);
+
+    // Need a DVR ID to tune. If we don't have one, try to fetch it.
+    if (m_dvrId.empty()) {
+        checkLiveTVAvailability();
+        if (m_dvrId.empty()) {
+            // Fall back to "1" as default DVR ID (most common single-DVR setup)
+            m_dvrId = "1";
+            brls::Logger::warning("tuneLiveTVChannel: No DVR ID found, using default '{}'", m_dvrId);
+        }
+    }
+
+    HttpClient client;
+
+    // Step 1: Tune the channel
+    // POST /livetv/dvrs/{dvrId}/channels/{channel}/tune
+    std::string tuneUrl = buildApiUrl("/livetv/dvrs/" + m_dvrId + "/channels/" + channelKey + "/tune");
+    HttpRequest tuneReq;
+    tuneReq.url = tuneUrl;
+    tuneReq.method = "POST";
+    tuneReq.headers["Accept"] = "application/json";
+    tuneReq.timeout = 15;
+
+    HttpResponse tuneResp = client.request(tuneReq);
+
+    if (tuneResp.statusCode != 200) {
+        brls::Logger::error("tuneLiveTVChannel: Tune failed with status {}", tuneResp.statusCode);
+        return false;
+    }
+
+    brls::Logger::debug("tuneLiveTVChannel: Tune response ({} bytes): {}",
+                        tuneResp.body.length(),
+                        tuneResp.body.substr(0, 500));
+
+    // Step 2: Extract sessionId and consumerId from tune response
+    // Response should contain session info with these fields
+    std::string sessionId = extractJsonValue(tuneResp.body, "sessionId");
+    if (sessionId.empty()) {
+        // Try alternative field names
+        sessionId = extractJsonValue(tuneResp.body, "key");
+        if (!sessionId.empty()) {
+            // key might be "/livetv/sessions/{id}" — extract the ID
+            size_t lastSlash = sessionId.rfind('/');
+            if (lastSlash != std::string::npos) {
+                sessionId = sessionId.substr(lastSlash + 1);
+            }
+        }
+    }
+    if (sessionId.empty()) {
+        sessionId = extractJsonValue(tuneResp.body, "ratingKey");
+    }
+
+    std::string consumerId = extractJsonValue(tuneResp.body, "consumerId");
+    if (consumerId.empty()) {
+        // Some Plex versions use "mediaSubscriptionId" or default to "0"
+        consumerId = extractJsonValue(tuneResp.body, "mediaSubscriptionId");
+    }
+    if (consumerId.empty()) {
+        consumerId = "0";  // Default consumer ID
+    }
+
+    if (sessionId.empty()) {
+        brls::Logger::error("tuneLiveTVChannel: Could not extract session ID from tune response");
+        // Try to get it from /livetv/sessions
+        std::string sessUrl = buildApiUrl("/livetv/sessions");
+        HttpRequest sessReq;
+        sessReq.url = sessUrl;
+        sessReq.method = "GET";
+        sessReq.headers["Accept"] = "application/json";
+        HttpResponse sessResp = client.request(sessReq);
+
+        if (sessResp.statusCode == 200) {
+            // Get the most recent session
+            sessionId = extractJsonValue(sessResp.body, "ratingKey");
+            if (sessionId.empty()) {
+                sessionId = extractJsonValue(sessResp.body, "key");
+                if (!sessionId.empty()) {
+                    size_t lastSlash = sessionId.rfind('/');
+                    if (lastSlash != std::string::npos) {
+                        sessionId = sessionId.substr(lastSlash + 1);
+                    }
+                }
+            }
+        }
+    }
+
+    if (sessionId.empty()) {
+        brls::Logger::error("tuneLiveTVChannel: Failed to get session ID");
+        return false;
+    }
+
+    brls::Logger::info("tuneLiveTVChannel: sessionId={}, consumerId={}", sessionId, consumerId);
+
+    // Step 3: Build the HLS stream URL
+    // GET /livetv/sessions/{sessionId}/{consumerId}/index.m3u8
+    streamUrl = buildApiUrl("/livetv/sessions/" + sessionId + "/" + consumerId + "/index.m3u8");
+
+    brls::Logger::info("tuneLiveTVChannel: Stream URL = {}", streamUrl);
+    return true;
 }
 
 std::string PlexClient::getThumbnailUrl(const std::string& thumb, int width, int height) {
