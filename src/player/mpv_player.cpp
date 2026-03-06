@@ -289,7 +289,7 @@ bool MpvPlayer::init() {
 
     mpv_observe_property(m_mpv, 1, "core-idle", MPV_FORMAT_FLAG);
     mpv_observe_property(m_mpv, 2, "pause", MPV_FORMAT_FLAG);
-    mpv_observe_property(m_mpv, 3, "duration", MPV_FORMAT_INT64);
+    mpv_observe_property(m_mpv, 3, "duration", MPV_FORMAT_DOUBLE);
     mpv_observe_property(m_mpv, 4, "playback-time", MPV_FORMAT_DOUBLE);
     mpv_observe_property(m_mpv, 5, "cache-speed", MPV_FORMAT_INT64);
     mpv_observe_property(m_mpv, 6, "paused-for-cache", MPV_FORMAT_FLAG);
@@ -618,9 +618,9 @@ double MpvPlayer::getPosition() const {
 double MpvPlayer::getDuration() const {
     if (!m_mpv) return 0.0;
 
-    int64_t dur = 0;
-    mpv_get_property(m_mpv, "duration", MPV_FORMAT_INT64, &dur);
-    return (double)dur;
+    double dur = 0.0;
+    mpv_get_property(m_mpv, "duration", MPV_FORMAT_DOUBLE, &dur);
+    return dur;
 }
 
 double MpvPlayer::getPercentPosition() const {
@@ -731,26 +731,27 @@ void MpvPlayer::eventMainLoop() {
             case MPV_EVENT_FILE_LOADED:
                 brls::Logger::info("MpvPlayer: EVENT_FILE_LOADED");
                 m_commandPending = false;
-#ifdef __vita__
-                // Now that the file is loaded and decoders are initialized,
-                // enable the render callback so MPV can display frames.
-                // This is deferred from init to avoid GXM context conflicts
-                // between MPV's threads and NanoVG during the loading phase.
-                if (m_mpvRenderCtx && !m_renderReady.load()) {
-                    brls::Logger::info("MpvPlayer: Enabling render callback");
-                    // Enable the render callback. onRenderUpdate() will handle
-                    // actual rendering via brls::sync() on the main thread.
-                    // No GXM flush needed here — switchfin doesn't flush either.
-                    m_renderReady.store(true);
-                    brls::Logger::info("MpvPlayer: Render callback enabled");
-                }
-#endif
-                // Don't transition to PLAYING yet - wait for playback to actually start
+                // Don't enable rendering here - wait for PLAYBACK_RESTART when
+                // the first decoded frame is actually ready. Enabling at FILE_LOADED
+                // caused crashes because mpv's GXM decoder hasn't produced a frame yet.
                 break;
 
             case MPV_EVENT_PLAYBACK_RESTART:
                 brls::Logger::debug("MpvPlayer: EVENT_PLAYBACK_RESTART");
                 m_commandPending = false;
+#ifdef __vita__
+                // Enable rendering now that the first decoded frame is ready.
+                // This is deferred from init/FILE_LOADED to ensure mpv's GXM
+                // decoder has actually produced a frame before we try to render.
+                // Flush the GXM pipeline first to ensure no stale GPU state
+                // from NanoVG conflicts with mpv's first render.
+                if (m_mpvRenderCtx && !m_renderReady.load()) {
+                    brls::Logger::info("MpvPlayer: Enabling render callback (first frame ready)");
+                    flushGxmPipeline();
+                    m_renderReady.store(true);
+                    brls::Logger::info("MpvPlayer: Render callback enabled");
+                }
+#endif
                 // Now safe to say we're playing
                 if (m_state == MpvPlayerState::LOADING || m_state == MpvPlayerState::BUFFERING) {
                     int paused = 0;
@@ -843,8 +844,8 @@ void MpvPlayer::handlePropertyChange(mpv_event_property* prop, uint64_t id) {
             break;
 
         case 3: // duration
-            if (prop->format == MPV_FORMAT_INT64 && prop->data) {
-                m_playbackInfo.duration = (double)(*(int64_t*)prop->data);
+            if (prop->format == MPV_FORMAT_DOUBLE && prop->data) {
+                m_playbackInfo.duration = *(double*)prop->data;
             }
             break;
 
