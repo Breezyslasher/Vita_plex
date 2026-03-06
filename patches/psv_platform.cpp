@@ -41,6 +41,24 @@ extern "C" void vitaplex_set_audio_playback_active(bool active)
     s_audioPlaybackActive.store(active);
 }
 
+// Video render hook - called at the start of mainLoopIteration(), BEFORE
+// NanoVG/GXM touches the GPU. This ensures mpv renders its frame to the
+// offscreen FBO without conflicting with NanoVG's active GXM scene.
+static void (*s_videoRenderFunc)(void*) = nullptr;
+static void* s_videoRenderCtx = nullptr;
+static std::atomic<bool> s_videoFrameReady{false};
+
+extern "C" void vitaplex_set_video_render_hook(void (*func)(void*), void* ctx)
+{
+    s_videoRenderFunc = func;
+    s_videoRenderCtx = ctx;
+}
+
+extern "C" void vitaplex_signal_video_frame()
+{
+    s_videoFrameReady.store(true, std::memory_order_release);
+}
+
 namespace brls
 {
 
@@ -146,6 +164,13 @@ void PsvPlatform::createWindow(std::string windowTitle, uint32_t windowWidth, ui
 
 bool PsvPlatform::mainLoopIteration()
 {
+    // Render pending video frame BEFORE NanoVG touches GXM.
+    // This guarantees no active GXM scene when mpv renders.
+    if (s_videoFrameReady.load(std::memory_order_acquire) && s_videoRenderFunc) {
+        s_videoFrameReady.store(false, std::memory_order_relaxed);
+        s_videoRenderFunc(s_videoRenderCtx);
+    }
+
     if (this->suspendDisabled) {
         sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DEFAULT);
     }

@@ -150,6 +150,9 @@ public:
     int getVideoWidth() const { return 960; }
     int getVideoHeight() const { return 544; }
 
+    // Allow the mainLoopIteration render hook to access private members
+    friend void vitaRenderVideoFrame(void* ctx);
+
 private:
     MpvPlayer() = default;
     ~MpvPlayer();

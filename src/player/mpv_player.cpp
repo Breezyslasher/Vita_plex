@@ -116,18 +116,12 @@ bool MpvPlayer::init() {
     // ========================================
 
     if (m_audioOnly) {
-        // Audio-only mode: disable all video processing
+        // Audio-only mode: matches Vita_abs config (simpler, works better for audio)
         brls::Logger::info("MpvPlayer: Initializing in audio-only mode");
-        mpv_set_option_string(m_mpv, "vo", "null");
-        mpv_set_option_string(m_mpv, "vid", "no");
         mpv_set_option_string(m_mpv, "video", "no");
-        mpv_set_option_string(m_mpv, "audio-display", "no");  // Don't try to show album art
-        mpv_set_option_string(m_mpv, "hwdec", "no");
-#ifdef __vita__
-        // Explicitly select the Vita audio output driver (from switchfin's mpv build).
-        // Without this, mpv auto-selects and may not pick the optimal driver.
-        mpv_set_option_string(m_mpv, "ao", "vita");
-#endif
+        mpv_set_option_string(m_mpv, "vo", "null");
+        mpv_set_option_string(m_mpv, "aid", "auto");
+        mpv_set_option_string(m_mpv, "vid", "no");
     } else {
         // Video mode: use libmpv for video output - we'll create a render context
         brls::Logger::info("MpvPlayer: Initializing in video mode");
@@ -172,33 +166,17 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "volume", "100");
     mpv_set_option_string(m_mpv, "volume-max", "150");
 
-#ifdef __vita__
-    if (m_audioOnly) {
-        // Larger audio buffer to absorb network jitter and CPU stalls.
-        // 500ms was too small and caused choppy playback; 1.5s gives
-        // enough runway to mask brief stalls on Vita's slow CPU.
-        mpv_set_option_string(m_mpv, "audio-buffer", "1.5");
-
-        // Read ahead aggressively so the demuxer always has data ready
-        mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "15");
-    }
-#endif
-
     // ========================================
     // Cache and demuxer settings
     // ========================================
 
 #ifdef __vita__
     if (m_audioOnly) {
-        // Audio streaming: cache enough data to cover the Plex transcoder
-        // startup delay (1-2s) and any brief network stalls.
+        // Audio cache: matches Vita_abs config (simpler defaults work better)
         mpv_set_option_string(m_mpv, "cache", "yes");
-        mpv_set_option_string(m_mpv, "cache-secs", "10");
-        // Pre-buffer 3 seconds before starting/resuming after a stall.
-        mpv_set_option_string(m_mpv, "cache-pause-initial", "yes");
-        mpv_set_option_string(m_mpv, "cache-pause-wait", "3");
         mpv_set_option_string(m_mpv, "demuxer-max-bytes", "2MiB");
         mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "512KiB");
+        mpv_set_option_string(m_mpv, "cache-secs", "10");
     } else {
         // Video: HLS streaming needs cache to buffer .ts segments.
         // Without cache, the HLS demuxer can't properly download and
@@ -272,7 +250,7 @@ bool MpvPlayer::init() {
     // Request log messages for debugging
     // ========================================
 
-    mpv_request_log_messages(m_mpv, "warn");  // Use warn level to reduce log spam on Vita
+    mpv_request_log_messages(m_mpv, "info");  // Match Vita_abs log level
 
     // ========================================
     // Initialize MPV
@@ -973,28 +951,35 @@ void MpvPlayer::updatePlaybackInfo() {
 }
 
 #ifdef __vita__
-// Callback for mpv render context when a new frame is ready.
-// Matches switchfin's pattern: brls::sync schedules rendering on the main thread
-// between NanoVG frames, giving MPV exclusive GXM access during that window.
-// No sceGxmFinish or mutex needed — switchfin doesn't use them either.
+// Video render hook functions - defined in patches/psv_platform.cpp
+extern "C" void vitaplex_signal_video_frame();
+extern "C" void vitaplex_set_video_render_hook(void (*func)(void*), void* ctx);
+
+// Called from mainLoopIteration() BEFORE NanoVG touches GXM.
+// This guarantees no active GXM scene conflicts with mpv's rendering.
+static void vitaRenderVideoFrame(void* ctx) {
+    MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
+    if (!player || !player->m_renderReady.load() || !player->m_mpvRenderCtx ||
+        player->m_stopping.load()) {
+        return;
+    }
+    uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
+    if (flags & MPV_RENDER_UPDATE_FRAME) {
+        mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
+        mpv_render_context_report_swap(player->m_mpvRenderCtx);
+    }
+}
+
+// mpv render update callback - called from mpv's decoder thread when a new
+// frame is ready. Instead of using brls::sync() (which may execute during
+// NanoVG's GXM scene), we signal a flag that mainLoopIteration() checks
+// at the very start of each iteration, before any GXM operations.
 void MpvPlayer::onRenderUpdate(void* ctx) {
     MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
     if (!player || player->m_stopping.load() || !player->m_renderReady.load()) {
         return;
     }
-
-    brls::sync([player]() {
-        if (!player->m_renderReady.load() || !player->m_mpvRenderCtx ||
-            player->m_stopping.load()) {
-            return;
-        }
-
-        uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
-        if (flags & MPV_RENDER_UPDATE_FRAME) {
-            mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
-            mpv_render_context_report_swap(player->m_mpvRenderCtx);
-        }
-    });
+    vitaplex_signal_video_frame();
 }
 #endif
 
@@ -1142,6 +1127,10 @@ bool MpvPlayer::initRenderContext() {
     // (which would conflict with NanoVG on the main thread).
     mpv_render_context_set_update_callback(m_mpvRenderCtx, onRenderUpdate, this);
 
+    // Register the mainLoopIteration render hook so video frames are rendered
+    // at the start of each iteration, before NanoVG touches GXM.
+    vitaplex_set_video_render_hook(vitaRenderVideoFrame, this);
+
     // Flush the GXM pipeline after all resource creation to ensure:
     // 1. mpv_render_context_create's shader patcher ops are fully committed
     // 2. The framebuffer's render target and surfaces are finalized
@@ -1162,6 +1151,9 @@ void MpvPlayer::cleanupRenderContext() {
 #ifdef __vita__
     // Signal that render is no longer ready FIRST (atomic, visible to mpv thread immediately)
     m_renderReady.store(false);
+
+    // Unregister the mainLoopIteration render hook before freeing resources
+    vitaplex_set_video_render_hook(nullptr, nullptr);
 
     // Flush GPU pipeline before freeing GXM resources
     flushGxmPipeline();
