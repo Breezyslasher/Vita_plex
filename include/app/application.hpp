@@ -105,6 +105,7 @@ public:
     void pushLoginActivity();
     void pushMainActivity();
     void pushPlayerActivity(const std::string& mediaKey);
+    void pushLiveTVPlayerActivity(const std::string& streamUrl, const std::string& channelTitle);
 
     // Authentication state
     bool isLoggedIn() const { return !m_authToken.empty(); }

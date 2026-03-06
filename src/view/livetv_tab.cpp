@@ -475,8 +475,35 @@ void LiveTVTab::loadRecordings() {
 void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
     brls::Logger::info("LiveTVTab: Selected channel: {} ({})", channel.title, channel.channelNumber);
 
-    // Start playing the channel
-    Application::getInstance().pushPlayerActivity(channel.ratingKey);
+    // Tune the Live TV channel and get HLS stream URL
+    // Use the channel's ratingKey as the channel identifier for tuning
+    std::string channelKey = channel.ratingKey;
+    if (channelKey.empty()) {
+        channelKey = std::to_string(channel.channelNumber);
+    }
+
+    asyncRun([this, channel, channelKey]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::string streamUrl;
+
+        if (client.tuneLiveTVChannel(channelKey, streamUrl)) {
+            brls::Logger::info("LiveTVTab: Got stream URL for channel {}", channel.title);
+            brls::sync([streamUrl, channel]() {
+                std::string title = channel.title;
+                if (!channel.currentProgram.empty()) {
+                    title += " - " + channel.currentProgram;
+                }
+                Application::getInstance().pushLiveTVPlayerActivity(streamUrl, title);
+            });
+        } else {
+            brls::Logger::error("LiveTVTab: Failed to tune channel {}", channel.title);
+            brls::sync([channel]() {
+                brls::Dialog* dialog = new brls::Dialog("Failed to tune channel: " + channel.title);
+                dialog->addButton("OK", [dialog]() { dialog->close(); });
+                dialog->open();
+            });
+        }
+    });
 }
 
 void LiveTVTab::onProgramSelected(const GuideProgram& program, const LiveTVChannel& channel) {
@@ -493,7 +520,7 @@ void LiveTVTab::onProgramSelected(const GuideProgram& program, const LiveTVChann
 
     dialog->addButton("Watch Now", [this, channel, dialog]() {
         dialog->close();
-        Application::getInstance().pushPlayerActivity(channel.ratingKey);
+        onChannelSelected(channel);
     });
 
     dialog->addButton("Record", [this, program, channel, dialog]() {

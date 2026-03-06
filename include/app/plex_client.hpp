@@ -229,6 +229,7 @@ public:
     // Live TV
     bool fetchLiveTVChannels(std::vector<LiveTVChannel>& channels);
     bool fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, int hoursAhead = 4);
+    bool tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl);
     bool hasLiveTV() const { return m_hasLiveTV; }
 
     // Thumbnail URL
@@ -259,6 +260,7 @@ private:
     std::string m_serverUrl;
     PlexServer m_currentServer;
     bool m_hasLiveTV = false;
+    std::string m_dvrId;  // DVR ID for Live TV tuning
 };
 
 } // namespace vitaplex
