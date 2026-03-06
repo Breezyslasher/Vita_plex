@@ -957,7 +957,7 @@ extern "C" void vitaplex_set_video_render_hook(void (*func)(void*), void* ctx);
 
 // Called from mainLoopIteration() BEFORE NanoVG touches GXM.
 // This guarantees no active GXM scene conflicts with mpv's rendering.
-static void vitaRenderVideoFrame(void* ctx) {
+void vitaRenderVideoFrame(void* ctx) {
     MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
     if (!player || !player->m_renderReady.load() || !player->m_mpvRenderCtx ||
         player->m_stopping.load()) {
