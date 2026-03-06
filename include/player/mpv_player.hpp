@@ -21,10 +21,10 @@ typedef struct mpv_event_property mpv_event_property;
 typedef struct mpv_render_context mpv_render_context;
 #endif
 
+namespace vitaplex {
+
 // Forward declaration for friend access (defined in mpv_player.cpp, called from mainLoopIteration)
 void vitaRenderVideoFrame(void* ctx);
-
-namespace vitaplex {
 
 // Player states
 enum class MpvPlayerState {
@@ -154,7 +154,7 @@ public:
     int getVideoHeight() const { return 544; }
 
     // Allow the mainLoopIteration render hook to access private members
-    friend void ::vitaRenderVideoFrame(void* ctx);
+    friend void vitaRenderVideoFrame(void* ctx);
 
 private:
     MpvPlayer() = default;
