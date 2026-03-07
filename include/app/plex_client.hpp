@@ -253,6 +253,21 @@ public:
     bool fetchStreams(const std::string& ratingKey, std::vector<PlexStream>& streams, int& partId);
     bool setStreamSelection(int partId, int audioStreamID = -1, int subtitleStreamID = -1);
 
+    // Subtitle search (Plex API: GET /library/metadata/{id}/subtitles)
+    struct SubtitleResult {
+        int id = 0;
+        std::string key;          // URL key to select this subtitle
+        std::string codec;        // e.g., "srt"
+        std::string displayTitle; // Human-readable title
+        std::string language;     // Language name
+        std::string languageCode; // Language code (e.g., "eng")
+        std::string provider;     // e.g., "opensubtitles"
+    };
+    bool searchSubtitles(const std::string& ratingKey, const std::string& language,
+                         std::vector<SubtitleResult>& results);
+    bool selectSearchedSubtitle(const std::string& ratingKey, int partId,
+                                const std::string& subtitleKey);
+
     // Live TV
     bool fetchLiveTVChannels(std::vector<LiveTVChannel>& channels);
     bool fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, int hoursAhead = 4);

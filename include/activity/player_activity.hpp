@@ -106,8 +106,10 @@ private:
     void showTrackOverlay(TrackSelectMode mode);
     void hideTrackOverlay();
     void populateTrackList(TrackSelectMode mode);
+    void populateSubtitleSearchResults();
     void selectTrack(TrackSelectMode mode, int index);  // index into filtered list, -1 = off for subs
     void fetchPlexStreams();
+    std::vector<PlexClient::SubtitleResult> m_subtitleSearchResults;
 
     BRLS_BIND(brls::Box, playerContainer, "player/container");
     BRLS_BIND(brls::Label, titleLabel, "player/title");

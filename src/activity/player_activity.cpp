@@ -10,6 +10,7 @@
 #include "utils/image_loader.hpp"
 #include "utils/http_client.hpp"
 #include "view/video_view.hpp"
+#include <algorithm>
 #include <fstream>
 #include <sys/stat.h>
 
@@ -885,6 +886,14 @@ void PlayerActivity::showTrackOverlay(TrackSelectMode mode) {
 
     if (trackOverlay) {
         trackOverlay->setVisibility(brls::Visibility::VISIBLE);
+        // Register B button to dismiss overlay
+        trackOverlay->registerAction("Back", brls::ControllerButton::BUTTON_B, [this](brls::View* view) {
+            hideTrackOverlay();
+            if (audioBtn) {
+                brls::Application::giveFocus(audioBtn);
+            }
+            return true;
+        });
     }
 }
 
@@ -904,19 +913,19 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
     // Set title
     switch (mode) {
         case TrackSelectMode::AUDIO:
-            trackOverlayTitle->setText("Select Audio Track");
+            trackOverlayTitle->setText("Audio Tracks");
             break;
         case TrackSelectMode::SUBTITLE:
-            trackOverlayTitle->setText("Select Subtitle Track");
+            trackOverlayTitle->setText("Subtitles");
             break;
         case TrackSelectMode::VIDEO:
-            trackOverlayTitle->setText("Select Video Track");
+            trackOverlayTitle->setText("Video Tracks");
             break;
         default:
             return;
     }
 
-    // Try to get tracks from MPV first (always available during playback)
+    // Get tracks from MPV (always available during playback)
     MpvPlayer& player = MpvPlayer::getInstance();
     std::string mpvType;
     if (mode == TrackSelectMode::AUDIO) mpvType = "audio";
@@ -928,14 +937,17 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
     // Also fetch Plex streams for display titles (if not already cached)
     fetchPlexStreams();
 
+    int plexStreamType = (mode == TrackSelectMode::VIDEO) ? 1 :
+                         (mode == TrackSelectMode::AUDIO) ? 2 : 3;
+
     // For subtitles, add "Off" option first
     if (mode == TrackSelectMode::SUBTITLE) {
         brls::Box* item = new brls::Box();
         item->setAxis(brls::Axis::ROW);
         item->setJustifyContent(brls::JustifyContent::FLEX_START);
         item->setAlignItems(brls::AlignItems::CENTER);
-        item->setPaddingTop(8);
-        item->setPaddingBottom(8);
+        item->setPaddingTop(10);
+        item->setPaddingBottom(10);
         item->setPaddingLeft(12);
         item->setPaddingRight(12);
         item->setCornerRadius(4);
@@ -955,17 +967,13 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         trackList->addView(item);
     }
 
-    // Build track items from MPV track list
+    // Build track items from MPV track list, matched with Plex metadata
     for (size_t i = 0; i < mpvTracks.size(); i++) {
         const auto& track = mpvTracks[i];
 
-        // Build display string
+        // Build display string - try Plex metadata first for richer info
         std::string displayStr;
-
-        // Try to find matching Plex stream for better display title
         bool foundPlex = false;
-        int plexStreamType = (mode == TrackSelectMode::VIDEO) ? 1 :
-                             (mode == TrackSelectMode::AUDIO) ? 2 : 3;
 
         // Match by index position within same type
         int typeIndex = 0;
@@ -984,9 +992,10 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
 
         if (!foundPlex) {
             // Fallback: build from MPV info
-            displayStr = "Track " + std::to_string(track.id);
             if (!track.lang.empty()) {
-                displayStr += " (" + track.lang + ")";
+                displayStr = track.lang;
+            } else {
+                displayStr = "Track " + std::to_string(track.id);
             }
             if (!track.title.empty()) {
                 displayStr += " - " + track.title;
@@ -996,17 +1005,12 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
             }
         }
 
-        // Add selected indicator
-        if (track.selected) {
-            displayStr = "> " + displayStr;
-        }
-
         brls::Box* item = new brls::Box();
         item->setAxis(brls::Axis::ROW);
         item->setJustifyContent(brls::JustifyContent::FLEX_START);
         item->setAlignItems(brls::AlignItems::CENTER);
-        item->setPaddingTop(8);
-        item->setPaddingBottom(8);
+        item->setPaddingTop(10);
+        item->setPaddingBottom(10);
         item->setPaddingLeft(12);
         item->setPaddingRight(12);
         item->setCornerRadius(4);
@@ -1014,10 +1018,14 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
 
         if (track.selected) {
             item->setBackgroundColor(nvgRGBA(80, 80, 200, 100));
+            item->setBorderColor(nvgRGB(100, 130, 255));
+            item->setBorderThickness(1);
         }
 
+        // Selected indicator + label
+        std::string prefix = track.selected ? "> " : "  ";
         brls::Label* label = new brls::Label();
-        label->setText(displayStr);
+        label->setText(prefix + displayStr);
         label->setFontSize(16);
         label->setTextColor(track.selected ? nvgRGB(150, 200, 255) : nvgRGB(220, 220, 220));
         item->addView(label);
@@ -1031,14 +1039,200 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         trackList->addView(item);
     }
 
+    // For subtitles, add "Search for Subtitles" option at the bottom
+    if (mode == TrackSelectMode::SUBTITLE && !m_mediaKey.empty()) {
+        // Add separator
+        brls::Box* sep = new brls::Box();
+        sep->setWidth(376);  // track list width (400) minus padding (24)
+        sep->setHeight(1);
+        sep->setBackgroundColor(nvgRGBA(255, 255, 255, 40));
+        sep->setMarginTop(6);
+        sep->setMarginBottom(6);
+        trackList->addView(sep);
+
+        brls::Box* searchItem = new brls::Box();
+        searchItem->setAxis(brls::Axis::ROW);
+        searchItem->setJustifyContent(brls::JustifyContent::FLEX_START);
+        searchItem->setAlignItems(brls::AlignItems::CENTER);
+        searchItem->setPaddingTop(10);
+        searchItem->setPaddingBottom(10);
+        searchItem->setPaddingLeft(12);
+        searchItem->setPaddingRight(12);
+        searchItem->setCornerRadius(4);
+        searchItem->setFocusable(true);
+        searchItem->setBackgroundColor(nvgRGBA(60, 120, 60, 80));
+
+        brls::Label* searchLabel = new brls::Label();
+        searchLabel->setText("Search for Subtitles...");
+        searchLabel->setFontSize(16);
+        searchLabel->setTextColor(nvgRGB(140, 230, 140));
+        searchItem->addView(searchLabel);
+
+        searchItem->registerClickAction([this](brls::View* view) {
+            populateSubtitleSearchResults();
+            return true;
+        });
+        searchItem->addGestureRecognizer(new brls::TapGestureRecognizer(searchItem));
+        trackList->addView(searchItem);
+    }
+
     // If no tracks found, show message
-    if (mpvTracks.empty()) {
+    if (mpvTracks.empty() && mode != TrackSelectMode::SUBTITLE) {
         brls::Label* label = new brls::Label();
         label->setText("No tracks available");
         label->setFontSize(16);
         label->setTextColor(nvgRGB(180, 180, 180));
         label->setMargins(12, 12, 12, 12);
         trackList->addView(label);
+    }
+}
+
+void PlayerActivity::populateSubtitleSearchResults() {
+    if (!trackList || !trackOverlayTitle) return;
+
+    trackOverlayTitle->setText("Searching Subtitles...");
+    trackList->clearViews();
+
+    // Add a loading label
+    brls::Label* loadingLabel = new brls::Label();
+    loadingLabel->setText("Searching for subtitles...");
+    loadingLabel->setFontSize(16);
+    loadingLabel->setTextColor(nvgRGB(180, 180, 180));
+    loadingLabel->setMargins(12, 12, 12, 12);
+    trackList->addView(loadingLabel);
+
+    // Search for subtitles from Plex (queries OpenSubtitles, etc.)
+    PlexClient& client = PlexClient::getInstance();
+    std::vector<PlexClient::SubtitleResult> results;
+
+    if (!client.searchSubtitles(m_mediaKey, "en", results) || results.empty()) {
+        trackList->clearViews();
+        trackOverlayTitle->setText("Subtitle Search");
+
+        brls::Label* noResults = new brls::Label();
+        noResults->setText("No subtitles found");
+        noResults->setFontSize(16);
+        noResults->setTextColor(nvgRGB(180, 180, 180));
+        noResults->setMargins(12, 12, 12, 12);
+        trackList->addView(noResults);
+
+        // Add back button
+        brls::Box* backItem = new brls::Box();
+        backItem->setAxis(brls::Axis::ROW);
+        backItem->setJustifyContent(brls::JustifyContent::FLEX_START);
+        backItem->setAlignItems(brls::AlignItems::CENTER);
+        backItem->setPaddingTop(10);
+        backItem->setPaddingBottom(10);
+        backItem->setPaddingLeft(12);
+        backItem->setPaddingRight(12);
+        backItem->setCornerRadius(4);
+        backItem->setFocusable(true);
+
+        brls::Label* backLabel = new brls::Label();
+        backLabel->setText("< Back to Subtitles");
+        backLabel->setFontSize(16);
+        backLabel->setTextColor(nvgRGB(150, 200, 255));
+        backItem->addView(backLabel);
+
+        backItem->registerClickAction([this](brls::View* view) {
+            populateTrackList(TrackSelectMode::SUBTITLE);
+            return true;
+        });
+        backItem->addGestureRecognizer(new brls::TapGestureRecognizer(backItem));
+        trackList->addView(backItem);
+        return;
+    }
+
+    // Store results for selection
+    m_subtitleSearchResults = results;
+
+    trackList->clearViews();
+    trackOverlayTitle->setText("Subtitle Search Results");
+
+    // Back button at top
+    brls::Box* backItem = new brls::Box();
+    backItem->setAxis(brls::Axis::ROW);
+    backItem->setJustifyContent(brls::JustifyContent::FLEX_START);
+    backItem->setAlignItems(brls::AlignItems::CENTER);
+    backItem->setPaddingTop(10);
+    backItem->setPaddingBottom(10);
+    backItem->setPaddingLeft(12);
+    backItem->setPaddingRight(12);
+    backItem->setCornerRadius(4);
+    backItem->setFocusable(true);
+
+    brls::Label* backLabel = new brls::Label();
+    backLabel->setText("< Back to Subtitles");
+    backLabel->setFontSize(16);
+    backLabel->setTextColor(nvgRGB(150, 200, 255));
+    backItem->addView(backLabel);
+
+    backItem->registerClickAction([this](brls::View* view) {
+        populateTrackList(TrackSelectMode::SUBTITLE);
+        return true;
+    });
+    backItem->addGestureRecognizer(new brls::TapGestureRecognizer(backItem));
+    trackList->addView(backItem);
+
+    // Add separator
+    brls::Box* sep = new brls::Box();
+    sep->setWidth(376);  // track list width (400) minus padding (24)
+    sep->setHeight(1);
+    sep->setBackgroundColor(nvgRGBA(255, 255, 255, 40));
+    sep->setMarginTop(4);
+    sep->setMarginBottom(4);
+    trackList->addView(sep);
+
+    // Show up to 15 results to avoid overflow on Vita's small screen
+    size_t maxResults = std::min(results.size(), (size_t)15);
+    for (size_t i = 0; i < maxResults; i++) {
+        const auto& sub = results[i];
+
+        std::string displayStr = sub.displayTitle;
+        if (displayStr.empty()) {
+            displayStr = sub.language;
+            if (!sub.codec.empty()) displayStr += " [" + sub.codec + "]";
+        }
+        if (!sub.provider.empty()) {
+            displayStr += " (" + sub.provider + ")";
+        }
+
+        brls::Box* item = new brls::Box();
+        item->setAxis(brls::Axis::ROW);
+        item->setJustifyContent(brls::JustifyContent::FLEX_START);
+        item->setAlignItems(brls::AlignItems::CENTER);
+        item->setPaddingTop(10);
+        item->setPaddingBottom(10);
+        item->setPaddingLeft(12);
+        item->setPaddingRight(12);
+        item->setCornerRadius(4);
+        item->setFocusable(true);
+
+        brls::Label* label = new brls::Label();
+        label->setText(displayStr);
+        label->setFontSize(14);
+        label->setTextColor(nvgRGB(220, 220, 220));
+        item->addView(label);
+
+        size_t idx = i;
+        item->registerClickAction([this, idx](brls::View* view) {
+            if (idx < m_subtitleSearchResults.size()) {
+                const auto& sub = m_subtitleSearchResults[idx];
+                PlexClient& client = PlexClient::getInstance();
+                if (client.selectSearchedSubtitle(m_mediaKey, m_partId, sub.key)) {
+                    MpvPlayer& player = MpvPlayer::getInstance();
+                    player.showOSD("Subtitle selected: " + sub.displayTitle, 2.0);
+                    // Re-fetch streams to pick up the new subtitle
+                    m_streamsLoaded = false;
+                } else {
+                    MpvPlayer::getInstance().showOSD("Failed to select subtitle", 2.0);
+                }
+            }
+            hideTrackOverlay();
+            return true;
+        });
+        item->addGestureRecognizer(new brls::TapGestureRecognizer(item));
+        trackList->addView(item);
     }
 }
 

@@ -605,7 +605,9 @@ std::vector<MpvPlayer::TrackInfo> MpvPlayer::getTrackList(const std::string& typ
         char prop[64];
 
         snprintf(prop, sizeof(prop), "track-list/%lld/id", (long long)i);
-        mpv_get_property(m_mpv, prop, MPV_FORMAT_INT64, &info.id);
+        int64_t tmpId = 0;
+        mpv_get_property(m_mpv, prop, MPV_FORMAT_INT64, &tmpId);
+        info.id = static_cast<int>(tmpId);
 
         snprintf(prop, sizeof(prop), "track-list/%lld/type", (long long)i);
         char* val = mpv_get_property_string(m_mpv, prop);

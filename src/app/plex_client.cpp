@@ -1722,6 +1722,102 @@ bool PlexClient::setStreamSelection(int partId, int audioStreamID, int subtitleS
     return true;
 }
 
+bool PlexClient::searchSubtitles(const std::string& ratingKey, const std::string& language,
+                                  std::vector<SubtitleResult>& results) {
+    HttpClient client;
+    std::string endpoint = "/library/metadata/" + ratingKey + "/subtitles?language=" + language;
+    std::string url = buildApiUrl(endpoint);
+
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("searchSubtitles: Failed: {}", resp.statusCode);
+        return false;
+    }
+
+    results.clear();
+
+    // Find Metadata array in response
+    size_t metaPos = resp.body.find("\"Metadata\"");
+    if (metaPos == std::string::npos) {
+        brls::Logger::info("searchSubtitles: No results found");
+        return true;
+    }
+
+    size_t arrayStart = resp.body.find('[', metaPos);
+    if (arrayStart == std::string::npos) return true;
+
+    int bracketCount = 1;
+    size_t arrayEnd = arrayStart + 1;
+    while (bracketCount > 0 && arrayEnd < resp.body.length()) {
+        if (resp.body[arrayEnd] == '[') bracketCount++;
+        else if (resp.body[arrayEnd] == ']') bracketCount--;
+        arrayEnd++;
+    }
+
+    std::string metaArray = resp.body.substr(arrayStart, arrayEnd - arrayStart);
+
+    size_t objPos = 0;
+    while ((objPos = metaArray.find('{', objPos)) != std::string::npos) {
+        int braceCount = 1;
+        size_t objEnd = objPos + 1;
+        while (braceCount > 0 && objEnd < metaArray.length()) {
+            if (metaArray[objEnd] == '{') braceCount++;
+            else if (metaArray[objEnd] == '}') braceCount--;
+            objEnd++;
+        }
+
+        std::string obj = metaArray.substr(objPos, objEnd - objPos);
+
+        SubtitleResult sub;
+        sub.id = extractJsonInt(obj, "id");
+        sub.key = extractJsonValue(obj, "key");
+        sub.codec = extractJsonValue(obj, "codec");
+        sub.displayTitle = extractJsonValue(obj, "displayTitle");
+        sub.language = extractJsonValue(obj, "language");
+        sub.languageCode = extractJsonValue(obj, "languageCode");
+        sub.provider = extractJsonValue(obj, "provider");
+
+        if (!sub.key.empty()) {
+            results.push_back(sub);
+            brls::Logger::debug("searchSubtitles: {} - {} [{}]",
+                               sub.displayTitle, sub.language, sub.provider);
+        }
+
+        objPos = objEnd;
+    }
+
+    brls::Logger::info("searchSubtitles: Found {} results for ratingKey {}", results.size(), ratingKey);
+    return true;
+}
+
+bool PlexClient::selectSearchedSubtitle(const std::string& ratingKey, int partId,
+                                         const std::string& subtitleKey) {
+    // Plex API: PUT /library/metadata/{id}/subtitles?key={subtitleKey}
+    HttpClient client;
+    std::string endpoint = "/library/metadata/" + ratingKey + "/subtitles";
+    std::string url = buildApiUrl(endpoint);
+    url += "&key=" + subtitleKey;
+    url += "&partId=" + std::to_string(partId);
+
+    HttpRequest req;
+    req.url = url;
+    req.method = "PUT";
+    HttpResponse resp = client.request(req);
+
+    if (resp.statusCode != 200 && resp.statusCode != 201) {
+        brls::Logger::error("selectSearchedSubtitle: Failed: {}", resp.statusCode);
+        return false;
+    }
+
+    brls::Logger::info("selectSearchedSubtitle: Selected subtitle key={}", subtitleKey);
+    return true;
+}
+
 bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url, int offsetMs) {
     brls::Logger::debug("getTranscodeUrl: ratingKey={}, offsetMs={}", ratingKey, offsetMs);
 
