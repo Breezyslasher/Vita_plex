@@ -41,7 +41,7 @@ HomeTab::HomeTab() {
     continueLabel->setMarginBottom(10);
     m_scrollContent->addView(continueLabel);
 
-    m_continueWatchingRow = createMediaRow(&m_continueWatchingContent);
+    m_continueWatchingRow = createMediaRow();
     m_scrollContent->addView(m_continueWatchingRow);
 
     // Recently Added Movies section
@@ -52,7 +52,7 @@ HomeTab::HomeTab() {
     moviesLabel->setMarginTop(15);
     m_scrollContent->addView(moviesLabel);
 
-    m_moviesRow = createMediaRow(&m_moviesContent);
+    m_moviesRow = createMediaRow();
     m_scrollContent->addView(m_moviesRow);
 
     // Recently Added TV Shows section
@@ -63,7 +63,7 @@ HomeTab::HomeTab() {
     showsLabel->setMarginTop(15);
     m_scrollContent->addView(showsLabel);
 
-    m_showsRow = createMediaRow(&m_showsContent);
+    m_showsRow = createMediaRow();
     m_scrollContent->addView(m_showsRow);
 
     // Recently Added Music section
@@ -74,7 +74,7 @@ HomeTab::HomeTab() {
     musicLabel->setMarginTop(15);
     m_scrollContent->addView(musicLabel);
 
-    m_musicRow = createMediaRow(&m_musicContent);
+    m_musicRow = createMediaRow();
     m_scrollContent->addView(m_musicRow);
 
     m_scrollView->setContentView(m_scrollContent);
@@ -85,30 +85,17 @@ HomeTab::HomeTab() {
     loadContent();
 }
 
-brls::HScrollingFrame* HomeTab::createMediaRow(brls::Box** contentOut) {
-    auto* scrollFrame = new brls::HScrollingFrame();
-    scrollFrame->setHeight(180);
-    scrollFrame->setMarginBottom(10);
-
-    auto* content = new brls::Box();
-    content->setAxis(brls::Axis::ROW);
-    content->setJustifyContent(brls::JustifyContent::FLEX_START);
-    content->setAlignItems(brls::AlignItems::CENTER);
-
-    scrollFrame->setContentView(content);
-
-    // Return content box via output parameter
-    if (contentOut) {
-        *contentOut = content;
-    }
-
-    return scrollFrame;
+HorizontalScrollRow* HomeTab::createMediaRow() {
+    auto* row = new HorizontalScrollRow();
+    row->setHeight(210);
+    row->setMarginBottom(10);
+    return row;
 }
 
-void HomeTab::populateRow(brls::Box* rowContent, const std::vector<MediaItem>& items) {
-    if (!rowContent) return;
+void HomeTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>& items) {
+    if (!row) return;
 
-    rowContent->clearViews();
+    row->clearViews();
 
     for (const auto& item : items) {
         auto* cell = new MediaItemCell();
@@ -122,7 +109,7 @@ void HomeTab::populateRow(brls::Box* rowContent, const std::vector<MediaItem>& i
         });
         cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
 
-        rowContent->addView(cell);
+        row->addView(cell);
     }
 
     // Add placeholder if empty
@@ -131,7 +118,7 @@ void HomeTab::populateRow(brls::Box* rowContent, const std::vector<MediaItem>& i
         placeholder->setText("No items");
         placeholder->setFontSize(16);
         placeholder->setMarginLeft(10);
-        rowContent->addView(placeholder);
+        row->addView(placeholder);
     }
 }
 
@@ -172,7 +159,8 @@ void HomeTab::loadContent() {
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
                 m_continueWatching = items;
-                populateRow(m_continueWatchingContent, m_continueWatching);
+                populateRow(m_continueWatchingRow, m_continueWatching);
+                setupNavigationRoutes();
             });
         } else {
             brls::Logger::error("HomeTab: Failed to fetch continue watching");
@@ -247,14 +235,51 @@ void HomeTab::loadContent() {
             m_recentShows = shows;
             m_recentMusic = music;
 
-            populateRow(m_moviesContent, m_recentMovies);
-            populateRow(m_showsContent, m_recentShows);
-            populateRow(m_musicContent, m_recentMusic);
+            populateRow(m_moviesRow, m_recentMovies);
+            populateRow(m_showsRow, m_recentShows);
+            populateRow(m_musicRow, m_recentMusic);
+            setupNavigationRoutes();
         });
     });
 
     m_loaded = true;
     brls::Logger::debug("HomeTab: Async content loading started");
+}
+
+void HomeTab::setupNavigationRoutes() {
+    // Collect all non-empty rows (those with actual MediaItemCell children)
+    std::vector<HorizontalScrollRow*> rows;
+    auto addIfPopulated = [&rows](HorizontalScrollRow* row) {
+        if (!row) return;
+        auto& children = row->getChildren();
+        if (!children.empty() && dynamic_cast<MediaItemCell*>(children[0]) != nullptr)
+            rows.push_back(row);
+    };
+
+    addIfPopulated(m_continueWatchingRow);
+    addIfPopulated(m_moviesRow);
+    addIfPopulated(m_showsRow);
+    addIfPopulated(m_musicRow);
+
+    if (rows.empty()) return;
+
+    // Wire up UP/DOWN navigation between rows
+    for (size_t r = 0; r < rows.size(); r++) {
+        auto& children = rows[r]->getChildren();
+        brls::View* firstAbove = (r > 0) ? rows[r - 1]->getChildren()[0] : nullptr;
+        brls::View* firstBelow = (r + 1 < rows.size()) ? rows[r + 1]->getChildren()[0] : nullptr;
+
+        for (auto* child : children) {
+            if (firstAbove) {
+                child->setCustomNavigationRoute(brls::FocusDirection::UP, firstAbove);
+            }
+            if (firstBelow) {
+                child->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstBelow);
+            }
+        }
+    }
+
+    brls::Logger::debug("HomeTab: Navigation routes set up for {} rows", rows.size());
 }
 
 void HomeTab::onItemSelected(const MediaItem& item) {

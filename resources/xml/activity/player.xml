@@ -97,7 +97,7 @@
             horizontalAlign="center"
             marginBottom="8"/>
 
-        <!-- Touch-friendly control buttons row -->
+        <!-- Control buttons row: centered with nice spacing -->
         <brls:Box
             width="100%"
             axis="row"
@@ -107,20 +107,20 @@
             <!-- Audio track / Shuffle button -->
             <brls:Box
                 id="player/audio_btn"
-                width="48"
+                width="44"
                 height="44"
                 axis="row"
                 justifyContent="center"
                 alignItems="center"
-                cornerRadius="8"
-                backgroundColor="#40FFFFFF"
-                marginRight="10"
+                cornerRadius="22"
+                backgroundColor="#30FFFFFF"
+                marginRight="20"
                 focusable="true"
                 visibility="gone">
                 <brls:Image
                     id="player/audio_icon"
-                    width="24"
-                    height="24"
+                    width="22"
+                    height="22"
                     image="@res/icons/translate.png"
                     scalingType="fit"/>
             </brls:Box>
@@ -129,13 +129,13 @@
             <brls:Box
                 id="player/rewind_btn"
                 width="48"
-                height="44"
+                height="48"
                 axis="row"
                 justifyContent="center"
                 alignItems="center"
-                cornerRadius="8"
-                backgroundColor="#40FFFFFF"
-                marginRight="10"
+                cornerRadius="24"
+                backgroundColor="#30FFFFFF"
+                marginRight="24"
                 focusable="true">
                 <brls:Image
                     id="player/rewind_icon"
@@ -145,22 +145,21 @@
                     scalingType="fit"/>
             </brls:Box>
 
-            <!-- Play/Pause button -->
+            <!-- Play/Pause button - larger and centered -->
             <brls:Box
                 id="player/play_btn"
-                width="56"
-                height="44"
+                width="64"
+                height="64"
                 axis="row"
                 justifyContent="center"
                 alignItems="center"
-                cornerRadius="8"
-                backgroundColor="#60E5A00D"
-                marginRight="10"
+                cornerRadius="32"
+                backgroundColor="#40FFFFFF"
                 focusable="true">
                 <brls:Image
                     id="player/play_pause_icon"
-                    width="24"
-                    height="24"
+                    width="32"
+                    height="32"
                     image="@res/icons/pause.png"
                     scalingType="fit"/>
             </brls:Box>
@@ -169,13 +168,13 @@
             <brls:Box
                 id="player/forward_btn"
                 width="48"
-                height="44"
+                height="48"
                 axis="row"
                 justifyContent="center"
                 alignItems="center"
-                cornerRadius="8"
-                backgroundColor="#40FFFFFF"
-                marginRight="10"
+                cornerRadius="24"
+                backgroundColor="#30FFFFFF"
+                marginLeft="24"
                 focusable="true">
                 <brls:Image
                     id="player/forward_icon"
@@ -188,19 +187,20 @@
             <!-- Subtitle / Repeat button -->
             <brls:Box
                 id="player/sub_btn"
-                width="48"
+                width="44"
                 height="44"
                 axis="row"
                 justifyContent="center"
                 alignItems="center"
-                cornerRadius="8"
-                backgroundColor="#40FFFFFF"
+                cornerRadius="22"
+                backgroundColor="#30FFFFFF"
+                marginLeft="20"
                 focusable="true"
                 visibility="gone">
                 <brls:Image
                     id="player/sub_icon"
-                    width="24"
-                    height="24"
+                    width="22"
+                    height="22"
                     image="@res/icons/subtitles.png"
                     scalingType="fit"/>
             </brls:Box>

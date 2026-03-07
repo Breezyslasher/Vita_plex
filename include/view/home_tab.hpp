@@ -10,6 +10,7 @@
 #include <atomic>
 #include "app/plex_client.hpp"
 #include "view/recycling_grid.hpp"
+#include "view/horizontal_scroll_row.hpp"
 
 namespace vitaplex {
 
@@ -26,8 +27,9 @@ private:
     void onItemSelected(const MediaItem& item);
 
     // Helper to create a media row with horizontal scrolling
-    brls::HScrollingFrame* createMediaRow(brls::Box** contentOut);
-    void populateRow(brls::Box* rowContent, const std::vector<MediaItem>& items);
+    HorizontalScrollRow* createMediaRow();
+    void populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>& items);
+    void setupNavigationRoutes();
 
     // Vertical scroll container
     brls::ScrollingFrame* m_scrollView = nullptr;
@@ -36,20 +38,16 @@ private:
     brls::Label* m_titleLabel = nullptr;
 
     // Continue Watching section
-    brls::HScrollingFrame* m_continueWatchingRow = nullptr;
-    brls::Box* m_continueWatchingContent = nullptr;
+    HorizontalScrollRow* m_continueWatchingRow = nullptr;
 
     // Recently Added Movies section
-    brls::HScrollingFrame* m_moviesRow = nullptr;
-    brls::Box* m_moviesContent = nullptr;
+    HorizontalScrollRow* m_moviesRow = nullptr;
 
     // Recently Added TV Shows section
-    brls::HScrollingFrame* m_showsRow = nullptr;
-    brls::Box* m_showsContent = nullptr;
+    HorizontalScrollRow* m_showsRow = nullptr;
 
     // Recently Added Music section
-    brls::HScrollingFrame* m_musicRow = nullptr;
-    brls::Box* m_musicContent = nullptr;
+    HorizontalScrollRow* m_musicRow = nullptr;
 
     std::vector<MediaItem> m_continueWatching;
     std::vector<MediaItem> m_recentMovies;
