@@ -342,8 +342,8 @@ void PlayerActivity::willDisappear(bool resetState) {
     // Only try to save progress if player is in a valid state
     if (player.isInitialized() && (player.isPlaying() || player.isPaused())) {
         double position = player.getPosition();
-        if (position > 0) {
-            int timeMs = (int)(position * 1000);
+        if (position > 0 || m_transcodeBaseOffsetMs > 0) {
+            int timeMs = m_transcodeBaseOffsetMs + (int)(position * 1000);
 
             if (m_isLocalFile) {
                 // Save progress for downloaded media
@@ -671,6 +671,7 @@ void PlayerActivity::loadMedia() {
         // Get transcode URL for video/audio (forces Plex to convert to Vita-compatible format)
         // Only resume from viewOffset if resumePlayback is enabled
         int resumeOffset = Application::getInstance().getSettings().resumePlayback ? item.viewOffset : 0;
+        m_transcodeBaseOffsetMs = resumeOffset;
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, resumeOffset)) {
             // Pause image loading and free cache memory before initializing MPV.
@@ -1381,7 +1382,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                 // but we seek to the current position to avoid restarting.
                 {
                     double currentPos = player.getPosition();
-                    int offsetMs = static_cast<int>(currentPos * 1000);
+                    int offsetMs = m_transcodeBaseOffsetMs + static_cast<int>(currentPos * 1000);
                     PlexClient& client = PlexClient::getInstance();
                     // Stop existing transcode session so Plex doesn't keep
                     // serving old audio segments
@@ -1390,6 +1391,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                     if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
                         brls::Logger::info("selectTrack: Reloading audio at offset={}ms", offsetMs);
                         player.showOSD("Switching: " + displayTitle, 2.0);
+                        m_transcodeBaseOffsetMs = offsetMs;
                         player.loadUrl(newUrl, "");
                     }
                 }
@@ -1413,13 +1415,14 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                 // Reload transcode so Plex stops sending subtitles
                 {
                     double currentPos = player.getPosition();
-                    int offsetMs = static_cast<int>(currentPos * 1000);
+                    int offsetMs = m_transcodeBaseOffsetMs + static_cast<int>(currentPos * 1000);
                     PlexClient& client = PlexClient::getInstance();
                     client.stopTranscode();
                     std::string newUrl;
                     if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
                         brls::Logger::info("selectTrack: Reloading subs off at offset={}ms", offsetMs);
                         player.showOSD("Subtitles off", 2.0);
+                        m_transcodeBaseOffsetMs = offsetMs;
                         player.loadUrl(newUrl, "");
                     }
                 }
@@ -1441,13 +1444,14 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                 // Reload transcode so Plex serves the new subtitle stream
                 {
                     double currentPos = player.getPosition();
-                    int offsetMs = static_cast<int>(currentPos * 1000);
+                    int offsetMs = m_transcodeBaseOffsetMs + static_cast<int>(currentPos * 1000);
                     PlexClient& client = PlexClient::getInstance();
                     client.stopTranscode();
                     std::string newUrl;
                     if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
                         brls::Logger::info("selectTrack: Reloading subs at offset={}ms", offsetMs);
                         player.showOSD("Switching: " + displayTitle, 2.0);
+                        m_transcodeBaseOffsetMs = offsetMs;
                         player.loadUrl(newUrl, "");
                     }
                 }
