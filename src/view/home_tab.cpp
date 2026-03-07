@@ -6,6 +6,7 @@
 #include "view/media_item_cell.hpp"
 #include "view/media_detail_view.hpp"
 #include "app/application.hpp"
+#include "utils/image_loader.hpp"
 #include "utils/async.hpp"
 
 namespace vitaplex {
@@ -135,8 +136,21 @@ void HomeTab::populateRow(brls::Box* rowContent, const std::vector<MediaItem>& i
     }
 }
 
+HomeTab::~HomeTab() {
+    if (m_alive) { *m_alive = false; }
+}
+
+void HomeTab::willDisappear(bool resetState) {
+    brls::Box::willDisappear(resetState);
+    // Invalidate alive flag so pending async callbacks bail out
+    if (m_alive) *m_alive = false;
+    ImageLoader::cancelAll();
+}
+
 void HomeTab::onFocusGained() {
     brls::Box::onFocusGained();
+    // Re-create alive flag so new async callbacks work (old ones still bail out)
+    m_alive = std::make_shared<bool>(true);
 
     if (!m_loaded) {
         loadContent();
@@ -147,7 +161,7 @@ void HomeTab::loadContent() {
     brls::Logger::debug("HomeTab::loadContent - Starting async load");
 
     // Load continue watching asynchronously
-    asyncRun([this]() {
+    asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         brls::Logger::debug("HomeTab: Fetching continue watching (async)...");
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
@@ -155,7 +169,9 @@ void HomeTab::loadContent() {
         if (client.fetchContinueWatching(items)) {
             brls::Logger::info("HomeTab: Got {} continue watching items", items.size());
 
-            brls::sync([this, items]() {
+            brls::sync([this, items, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
                 m_continueWatching = items;
                 populateRow(m_continueWatchingContent, m_continueWatching);
             });
@@ -165,7 +181,7 @@ void HomeTab::loadContent() {
     });
 
     // Load recently added by fetching from library sections
-    asyncRun([this]() {
+    asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         brls::Logger::debug("HomeTab: Fetching library sections for recently added...");
         PlexClient& client = PlexClient::getInstance();
 
@@ -224,7 +240,10 @@ void HomeTab::loadContent() {
                            movies.size(), shows.size(), music.size());
 
         // Update UI on main thread
-        brls::sync([this, movies, shows, music]() {
+        brls::sync([this, movies, shows, music, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+
             m_recentMovies = movies;
             m_recentShows = shows;
             m_recentMusic = music;

@@ -6,6 +6,7 @@
 #include "view/media_item_cell.hpp"
 #include "view/media_detail_view.hpp"
 #include "app/application.hpp"
+#include "utils/image_loader.hpp"
 #include "utils/async.hpp"
 
 namespace vitaplex {
@@ -50,8 +51,19 @@ LibraryTab::LibraryTab() {
     loadSections();
 }
 
+LibraryTab::~LibraryTab() {
+    if (m_alive) { *m_alive = false; }
+}
+
+void LibraryTab::willDisappear(bool resetState) {
+    brls::Box::willDisappear(resetState);
+    if (m_alive) *m_alive = false;
+    ImageLoader::cancelAll();
+}
+
 void LibraryTab::onFocusGained() {
     brls::Box::onFocusGained();
+    m_alive = std::make_shared<bool>(true);
 
     if (!m_loaded) {
         loadSections();
@@ -75,7 +87,7 @@ static bool isLibraryHidden(const std::string& key, const std::string& hiddenLib
 void LibraryTab::loadSections() {
     brls::Logger::debug("LibraryTab::loadSections - Starting async load");
 
-    asyncRun([this]() {
+    asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         brls::Logger::debug("LibraryTab: Fetching library sections (async)...");
         PlexClient& client = PlexClient::getInstance();
         std::vector<LibrarySection> sections;
@@ -97,7 +109,9 @@ void LibraryTab::loadSections() {
             }
 
             // Update UI on main thread
-            brls::sync([this, visibleSections]() {
+            brls::sync([this, visibleSections, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
                 m_sections = visibleSections;
                 m_sectionsBox->clearViews();
 
@@ -127,7 +141,9 @@ void LibraryTab::loadSections() {
             });
         } else {
             brls::Logger::error("LibraryTab: Failed to fetch sections");
-            brls::sync([this]() {
+            brls::sync([this, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
                 m_loaded = true;
             });
         }
@@ -138,7 +154,7 @@ void LibraryTab::loadContent(const std::string& sectionKey) {
     brls::Logger::debug("LibraryTab::loadContent - section: {} (async)", sectionKey);
 
     std::string key = sectionKey;  // Capture by value
-    asyncRun([this, key]() {
+    asyncRun([this, key, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
@@ -146,7 +162,9 @@ void LibraryTab::loadContent(const std::string& sectionKey) {
             brls::Logger::info("LibraryTab: Got {} items for section {}", items.size(), key);
 
             // Update UI on main thread
-            brls::sync([this, items]() {
+            brls::sync([this, items, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
                 m_items = items;
                 m_contentGrid->setDataSource(m_items);
             });

@@ -104,6 +104,16 @@ void PlayerActivity::onContentAvailable() {
         });
     }
 
+    // Register tap gesture on container to toggle controls (like Suwayomi reader)
+    if (playerContainer) {
+        playerContainer->addGestureRecognizer(new brls::TapGestureRecognizer(
+            [this](brls::TapGestureStatus status, brls::Sound* soundToPlay) {
+                if (status.state == brls::GestureState::END) {
+                    toggleControls();
+                }
+            }));
+    }
+
     // Register controller actions
     this->registerAction("Play/Pause", brls::ControllerButton::BUTTON_A, [this](brls::View* view) {
         togglePlayPause();
@@ -112,6 +122,12 @@ void PlayerActivity::onContentAvailable() {
 
     this->registerAction("Back", brls::ControllerButton::BUTTON_B, [this](brls::View* view) {
         brls::Application::popActivity();
+        return true;
+    });
+
+    // Toggle controls with Y and Start (like Suwayomi reader)
+    this->registerAction("Toggle Controls", brls::ControllerButton::BUTTON_START, [this](brls::View* view) {
+        toggleControls();
         return true;
     });
 
@@ -145,6 +161,12 @@ void PlayerActivity::onContentAvailable() {
 
         this->registerAction("Forward", brls::ControllerButton::BUTTON_RB, [this](brls::View* view) {
             seek(10);
+            return true;
+        });
+
+        // Y toggles controls in non-queue mode (queue mode uses Y for repeat)
+        this->registerAction("Toggle Controls", brls::ControllerButton::BUTTON_Y, [this](brls::View* view) {
+            toggleControls();
             return true;
         });
     }
@@ -822,6 +844,38 @@ void PlayerActivity::updateQueueDisplay() {
 
         queueLabel->setText(queueInfo);
         queueLabel->setVisibility(brls::Visibility::VISIBLE);
+    }
+}
+
+// Controls visibility toggle (like Suwayomi reader settings show/hide)
+
+void PlayerActivity::toggleControls() {
+    if (m_controlsVisible) {
+        hideControls();
+    } else {
+        showControls();
+    }
+}
+
+void PlayerActivity::showControls() {
+    m_controlsVisible = true;
+    if (controlsBox) {
+        controlsBox->setAlpha(1.0f);
+        controlsBox->setVisibility(brls::Visibility::VISIBLE);
+    }
+    if (titleLabel) {
+        titleLabel->setVisibility(brls::Visibility::VISIBLE);
+    }
+}
+
+void PlayerActivity::hideControls() {
+    // Don't hide controls for photos
+    if (m_isPhoto) return;
+
+    m_controlsVisible = false;
+    if (controlsBox) {
+        controlsBox->setAlpha(0.0f);
+        controlsBox->setVisibility(brls::Visibility::GONE);
     }
 }
 

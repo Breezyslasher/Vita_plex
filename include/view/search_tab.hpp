@@ -6,6 +6,7 @@
 #pragma once
 
 #include <borealis.hpp>
+#include <memory>
 #include "app/plex_client.hpp"
 #include "view/recycling_grid.hpp"
 
@@ -14,8 +15,10 @@ namespace vitaplex {
 class SearchTab : public brls::Box {
 public:
     SearchTab();
+    ~SearchTab();
 
     void onFocusGained() override;
+    void willDisappear(bool resetState) override;
 
 private:
     void performSearch(const std::string& query);
@@ -50,6 +53,10 @@ private:
     std::vector<MediaItem> m_shows;
     std::vector<MediaItem> m_episodes;
     std::vector<MediaItem> m_music;
+
+    // Alive flag + generation counter for crash prevention
+    std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
+    int m_loadGeneration = 0;
 };
 
 } // namespace vitaplex

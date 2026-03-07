@@ -22,12 +22,16 @@ public:
 
     void onFocusGained() override;
     void onFocusLost() override;
+    void draw(NVGcontext* vg, float x, float y, float width, float height,
+              brls::Style style, brls::FrameContext* ctx) override;
 
     static brls::View* create();
 
 private:
     void loadThumbnail();
     void updateFocusInfo(bool focused);
+
+    bool m_pressed = false;  // Touch press feedback overlay
 
     MediaItem m_item;
     std::string m_originalTitle;  // Store original truncated title

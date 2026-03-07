@@ -23,11 +23,13 @@ private:
     void loadDetails();
     void loadChildren();
     void loadMusicCategories();
+    void loadTrackList();              // Load tracks in vertical list (like Suwayomi chapters)
     void onPlay(bool resume = false);
     void onDownload();
     void showDownloadOptions();
     void downloadAll();
     void downloadUnwatched(int maxCount = -1);
+    void toggleDescription();          // Collapse/expand description
 
     brls::HScrollingFrame* createMediaRow(const std::string& title, brls::Box** contentOut);
 
@@ -48,6 +50,13 @@ private:
     brls::Button* m_resumeButton = nullptr;
     brls::Button* m_downloadButton = nullptr;
     brls::Box* m_childrenBox = nullptr;
+
+    // Track list for albums (vertical list like Suwayomi chapter list)
+    brls::Box* m_trackListBox = nullptr;
+
+    // Collapsible description
+    bool m_descriptionExpanded = false;
+    std::string m_fullDescription;
 
     // Music category rows for artists
     brls::Box* m_musicCategoriesBox = nullptr;

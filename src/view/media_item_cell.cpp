@@ -159,13 +159,36 @@ brls::View* MediaItemCell::create() {
     return new MediaItemCell();
 }
 
+void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float height,
+                          brls::Style style, brls::FrameContext* ctx) {
+    brls::Box::draw(vg, x, y, width, height, style, ctx);
+
+    // Touch press feedback overlay (like Suwayomi MangaItemCell)
+    if (m_pressed) {
+        nvgBeginPath(vg);
+        nvgRoundedRect(vg, x, y, width, height, 8);
+        nvgFillColor(vg, nvgRGBA(0, 0, 0, 80));
+        nvgFill(vg);
+    }
+}
+
 void MediaItemCell::onFocusGained() {
     brls::Box::onFocusGained();
+    // Focused background color (like Suwayomi's getFocusedRowBg)
+    this->setBackgroundColor(nvgRGBA(60, 60, 80, 255));
+    // Selection border
+    this->setBorderColor(nvgRGBA(229, 160, 13, 255));  // Plex orange
+    this->setBorderThickness(2.0f);
     updateFocusInfo(true);
 }
 
 void MediaItemCell::onFocusLost() {
     brls::Box::onFocusLost();
+    // Restore default background
+    this->setBackgroundColor(nvgRGBA(50, 50, 50, 255));
+    this->setBorderColor(nvgRGBA(0, 0, 0, 0));
+    this->setBorderThickness(0.0f);
+    m_pressed = false;
     updateFocusInfo(false);
 }
 
@@ -234,6 +257,23 @@ void MediaItemCell::updateFocusInfo(bool focused) {
                 m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
             }
             m_titleLabel->setText(m_item.title);
+        } else {
+            m_titleLabel->setText(m_originalTitle);
+            m_descriptionLabel->setVisibility(brls::Visibility::GONE);
+        }
+    } else if (m_item.mediaType == MediaType::MUSIC_ALBUM ||
+               m_item.mediaType == MediaType::MUSIC_ARTIST) {
+        // Show full title and year for music items on focus
+        if (focused) {
+            m_titleLabel->setText(m_item.title);
+            std::string info;
+            if (m_item.year > 0) {
+                info = std::to_string(m_item.year);
+            }
+            if (!info.empty()) {
+                m_descriptionLabel->setText(info);
+                m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
+            }
         } else {
             m_titleLabel->setText(m_originalTitle);
             m_descriptionLabel->setVisibility(brls::Visibility::GONE);

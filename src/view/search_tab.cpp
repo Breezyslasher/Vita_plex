@@ -6,6 +6,8 @@
 #include "view/media_detail_view.hpp"
 #include "view/media_item_cell.hpp"
 #include "app/application.hpp"
+#include "utils/image_loader.hpp"
+#include "utils/async.hpp"
 
 namespace vitaplex {
 
@@ -138,8 +140,20 @@ SearchTab::SearchTab() {
     this->addView(m_scrollView);
 }
 
+SearchTab::~SearchTab() {
+    if (m_alive) *m_alive = false;
+}
+
+void SearchTab::willDisappear(bool resetState) {
+    brls::Box::willDisappear(resetState);
+    if (m_alive) *m_alive = false;
+    m_loadGeneration++;
+    ImageLoader::cancelAll();
+}
+
 void SearchTab::onFocusGained() {
     brls::Box::onFocusGained();
+    m_alive = std::make_shared<bool>(true);
 
     // Focus search label
     if (m_searchLabel) {
@@ -190,74 +204,94 @@ void SearchTab::performSearch(const std::string& query) {
         return;
     }
 
-    PlexClient& client = PlexClient::getInstance();
+    m_resultsLabel->setText("Searching...");
 
-    if (client.search(query, m_results)) {
-        m_resultsLabel->setText("Found " + std::to_string(m_results.size()) + " results");
+    // Run search async with alive guard and generation counter
+    int gen = ++m_loadGeneration;
+    asyncRun([this, query, gen, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> results;
 
-        // Organize results by type - separate shows from episodes
-        m_movies.clear();
-        m_shows.clear();
-        m_episodes.clear();
-        m_music.clear();
+        bool success = client.search(query, results);
 
-        for (const auto& item : m_results) {
-            if (item.mediaType == MediaType::MOVIE) {
-                m_movies.push_back(item);
-            } else if (item.mediaType == MediaType::SHOW || item.mediaType == MediaType::SEASON) {
-                // Shows and seasons go to TV Shows row
-                m_shows.push_back(item);
-            } else if (item.mediaType == MediaType::EPISODE) {
-                // Episodes get their own row
-                m_episodes.push_back(item);
-            } else if (item.mediaType == MediaType::MUSIC_ARTIST ||
-                       item.mediaType == MediaType::MUSIC_ALBUM ||
-                       item.mediaType == MediaType::MUSIC_TRACK) {
-                m_music.push_back(item);
+        brls::sync([this, success, results, gen, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+            if (gen != m_loadGeneration) return;  // Stale result
+
+            if (success) {
+                m_results = results;
+
+                // Organize results by type
+                m_movies.clear();
+                m_shows.clear();
+                m_episodes.clear();
+                m_music.clear();
+
+                for (const auto& item : m_results) {
+                    if (item.mediaType == MediaType::MOVIE) {
+                        m_movies.push_back(item);
+                    } else if (item.mediaType == MediaType::SHOW || item.mediaType == MediaType::SEASON) {
+                        m_shows.push_back(item);
+                    } else if (item.mediaType == MediaType::EPISODE) {
+                        m_episodes.push_back(item);
+                    } else if (item.mediaType == MediaType::MUSIC_ARTIST ||
+                               item.mediaType == MediaType::MUSIC_ALBUM ||
+                               item.mediaType == MediaType::MUSIC_TRACK) {
+                        m_music.push_back(item);
+                    }
+                }
+
+                // Show result count per type (like Suwayomi source grouping)
+                m_resultsLabel->setText("Found " + std::to_string(m_results.size()) + " results");
+
+                // Update rows with count in header labels
+                if (!m_movies.empty()) {
+                    m_moviesLabel->setText("Movies (" + std::to_string(m_movies.size()) + ")");
+                    m_moviesLabel->setVisibility(brls::Visibility::VISIBLE);
+                    m_moviesRow->setVisibility(brls::Visibility::VISIBLE);
+                    populateRow(m_moviesContent, m_movies);
+                } else {
+                    m_moviesLabel->setVisibility(brls::Visibility::GONE);
+                    m_moviesRow->setVisibility(brls::Visibility::GONE);
+                }
+
+                if (!m_shows.empty()) {
+                    m_showsLabel->setText("TV Shows (" + std::to_string(m_shows.size()) + ")");
+                    m_showsLabel->setVisibility(brls::Visibility::VISIBLE);
+                    m_showsRow->setVisibility(brls::Visibility::VISIBLE);
+                    populateRow(m_showsContent, m_shows);
+                } else {
+                    m_showsLabel->setVisibility(brls::Visibility::GONE);
+                    m_showsRow->setVisibility(brls::Visibility::GONE);
+                }
+
+                if (!m_episodes.empty()) {
+                    m_episodesLabel->setText("Episodes (" + std::to_string(m_episodes.size()) + ")");
+                    m_episodesLabel->setVisibility(brls::Visibility::VISIBLE);
+                    m_episodesRow->setVisibility(brls::Visibility::VISIBLE);
+                    populateRow(m_episodesContent, m_episodes);
+                } else {
+                    m_episodesLabel->setVisibility(brls::Visibility::GONE);
+                    m_episodesRow->setVisibility(brls::Visibility::GONE);
+                }
+
+                if (!m_music.empty()) {
+                    m_musicLabel->setText("Music (" + std::to_string(m_music.size()) + ")");
+                    m_musicLabel->setVisibility(brls::Visibility::VISIBLE);
+                    m_musicRow->setVisibility(brls::Visibility::VISIBLE);
+                    populateRow(m_musicContent, m_music);
+                } else {
+                    m_musicLabel->setVisibility(brls::Visibility::GONE);
+                    m_musicRow->setVisibility(brls::Visibility::GONE);
+                }
+
+            } else {
+                m_resultsLabel->setText("Search failed");
+                m_results.clear();
             }
-        }
-
-        // Update rows visibility and content using stored label references
-        if (!m_movies.empty()) {
-            m_moviesLabel->setVisibility(brls::Visibility::VISIBLE);
-            m_moviesRow->setVisibility(brls::Visibility::VISIBLE);
-            populateRow(m_moviesContent, m_movies);
-        } else {
-            m_moviesLabel->setVisibility(brls::Visibility::GONE);
-            m_moviesRow->setVisibility(brls::Visibility::GONE);
-        }
-
-        if (!m_shows.empty()) {
-            m_showsLabel->setVisibility(brls::Visibility::VISIBLE);
-            m_showsRow->setVisibility(brls::Visibility::VISIBLE);
-            populateRow(m_showsContent, m_shows);
-        } else {
-            m_showsLabel->setVisibility(brls::Visibility::GONE);
-            m_showsRow->setVisibility(brls::Visibility::GONE);
-        }
-
-        if (!m_episodes.empty()) {
-            m_episodesLabel->setVisibility(brls::Visibility::VISIBLE);
-            m_episodesRow->setVisibility(brls::Visibility::VISIBLE);
-            populateRow(m_episodesContent, m_episodes);
-        } else {
-            m_episodesLabel->setVisibility(brls::Visibility::GONE);
-            m_episodesRow->setVisibility(brls::Visibility::GONE);
-        }
-
-        if (!m_music.empty()) {
-            m_musicLabel->setVisibility(brls::Visibility::VISIBLE);
-            m_musicRow->setVisibility(brls::Visibility::VISIBLE);
-            populateRow(m_musicContent, m_music);
-        } else {
-            m_musicLabel->setVisibility(brls::Visibility::GONE);
-            m_musicRow->setVisibility(brls::Visibility::GONE);
-        }
-
-    } else {
-        m_resultsLabel->setText("Search failed");
-        m_results.clear();
-    }
+        });
+    });
 }
 
 void SearchTab::onItemSelected(const MediaItem& item) {
