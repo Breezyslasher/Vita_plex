@@ -68,6 +68,7 @@ struct AppSettings {
     bool showSubtitles = true;
     SubtitleSize subtitleSize = SubtitleSize::MEDIUM;
     int seekInterval = 10;  // seconds
+    int controlsAutoHideSeconds = 5;  // Auto-hide player controls after inactivity (0 = never)
 
     // Transcode Settings
     VideoQuality videoQuality = VideoQuality::QUALITY_480P;

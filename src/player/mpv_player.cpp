@@ -724,13 +724,18 @@ void MpvPlayer::setState(MpvPlayerState newState) {
     if (m_state != newState) {
         brls::Logger::debug("MpvPlayer: State change: {} -> {}", (int)m_state, (int)newState);
         m_state = newState;
+
+        // Prevent screen from turning off during playback
+        bool playing = (newState == MpvPlayerState::PLAYING ||
+                       newState == MpvPlayerState::BUFFERING);
+        brls::Application::getPlatform()->disableScreenDimming(playing,
+            "MpvPlayer", "VitaPlex");
+
 #ifdef __vita__
         // Throttle the borealis main loop during audio-only playback.
         // The music player screen is mostly static so 30fps is fine,
         // and the freed CPU time prevents ao_vita audio underruns.
         if (m_audioOnly) {
-            bool playing = (newState == MpvPlayerState::PLAYING ||
-                           newState == MpvPlayerState::BUFFERING);
             vitaplex_set_audio_playback_active(playing);
         }
 #endif
