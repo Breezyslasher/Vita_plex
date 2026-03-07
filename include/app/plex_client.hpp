@@ -279,6 +279,12 @@ public:
     // Thumbnail URL
     std::string getThumbnailUrl(const std::string& thumb, int width = 300, int height = 450);
 
+    // Re-authentication: check token validity with plex.tv
+    bool validateToken();
+
+    // Handle 401/unauthorized - clears auth state and triggers login redirect
+    void handleUnauthorized();
+
     // Configuration
     void setAuthToken(const std::string& token) { m_authToken = token; }
     const std::string& getAuthToken() const { return m_authToken; }
@@ -299,6 +305,12 @@ private:
     int extractXmlAttr(const std::string& xml, const std::string& attr);
     std::string extractXmlAttrStr(const std::string& xml, const std::string& attr);
     void checkLiveTVAvailability();
+
+    // Returns true if status code is an auth error (401)
+    bool isAuthError(int statusCode) const { return statusCode == 401; }
+
+    // Track whether we already triggered reauth to avoid loops
+    bool m_reauthTriggered = false;
 
     std::string m_authToken;
     std::string m_serverUrl;

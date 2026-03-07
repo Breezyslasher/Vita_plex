@@ -172,6 +172,7 @@ bool PlexClient::login(const std::string& username, const std::string& password)
         m_authToken = extractJsonValue(resp.body, "authToken");
         if (!m_authToken.empty()) {
             brls::Logger::info("Login successful");
+            m_reauthTriggered = false;  // Reset reauth guard on successful login
             Application::getInstance().setAuthToken(m_authToken);
             return true;
         }
@@ -230,6 +231,7 @@ bool PlexClient::checkPin(PinAuth& pinAuth) {
 
         if (!pinAuth.authToken.empty()) {
             m_authToken = pinAuth.authToken;
+            m_reauthTriggered = false;  // Reset reauth guard on successful login
             Application::getInstance().setAuthToken(m_authToken);
             brls::Logger::info("PIN authenticated successfully");
             return true;
@@ -240,10 +242,55 @@ bool PlexClient::checkPin(PinAuth& pinAuth) {
 }
 
 bool PlexClient::refreshToken() {
-    // JWT token refresh not yet implemented
-    // Legacy tokens don't expire, so this is only needed for JWT auth
-    brls::Logger::info("Token refresh not available (using legacy auth)");
+    // Legacy Plex tokens don't expire, but they can be revoked.
+    // Validate the current token against plex.tv; if invalid, trigger reauth.
+    if (validateToken()) {
+        brls::Logger::info("Token is still valid");
+        return true;
+    }
+    brls::Logger::error("Token validation failed - token may have been revoked");
     return false;
+}
+
+bool PlexClient::validateToken() {
+    if (m_authToken.empty()) return false;
+
+    // Check token validity by hitting plex.tv/api/v2/user
+    HttpClient client;
+    HttpRequest req;
+    req.url = "https://plex.tv/api/v2/user";
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    req.headers["X-Plex-Token"] = m_authToken;
+    req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+    req.timeout = 10;
+
+    HttpResponse resp = client.request(req);
+
+    if (resp.statusCode == 200) {
+        return true;
+    }
+
+    brls::Logger::error("Token validation returned status {}", resp.statusCode);
+    return false;
+}
+
+void PlexClient::handleUnauthorized() {
+    if (m_reauthTriggered) {
+        // Already handling reauth, don't recurse
+        return;
+    }
+    m_reauthTriggered = true;
+
+    brls::Logger::error("Authentication failed (401) - clearing session and redirecting to login");
+
+    // Clear auth state
+    logout();
+
+    // Redirect to login on the UI thread
+    brls::sync([]() {
+        Application::getInstance().pushLoginActivity();
+    });
 }
 
 bool PlexClient::fetchServers(std::vector<PlexServer>& servers) {
@@ -268,6 +315,7 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers) {
 
     if (resp.statusCode != 200) {
         brls::Logger::error("Failed to fetch servers: {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
     }
 
@@ -422,6 +470,7 @@ bool PlexClient::connectToServer(const std::string& url) {
 void PlexClient::logout() {
     m_authToken.clear();
     m_serverUrl.clear();
+    m_reauthTriggered = false;
     Application::getInstance().setAuthToken("");
     Application::getInstance().setServerUrl("");
 }
@@ -444,6 +493,9 @@ bool PlexClient::fetchLibrarySections(std::vector<LibrarySection>& sections) {
 
     if (resp.statusCode != 200) {
         brls::Logger::error("Failed to fetch sections: {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) {
+            handleUnauthorized();
+        }
         if (!resp.body.empty()) {
             brls::Logger::debug("Body: {}", resp.body.substr(0, 500));
         }
@@ -524,6 +576,7 @@ bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<
 
     if (resp.statusCode != 200) {
         brls::Logger::error("Failed to fetch content: {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
     }
 
@@ -593,6 +646,7 @@ bool PlexClient::fetchSectionRecentlyAdded(const std::string& sectionKey, std::v
 
     if (resp.statusCode != 200) {
         brls::Logger::error("Failed to fetch recently added: {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
     }
 
@@ -666,6 +720,7 @@ bool PlexClient::fetchChildren(const std::string& ratingKey, std::vector<MediaIt
 
     if (resp.statusCode != 200) {
         brls::Logger::error("Failed to fetch children: {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
     }
 
@@ -742,7 +797,10 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
     req.headers["Accept"] = "application/json";
     HttpResponse resp = client.request(req);
 
-    if (resp.statusCode != 200) return false;
+    if (resp.statusCode != 200) {
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
+        return false;
+    }
 
     item.ratingKey = extractJsonValue(resp.body, "ratingKey");
     item.title = extractJsonValue(resp.body, "title");
@@ -816,6 +874,7 @@ bool PlexClient::fetchHubs(std::vector<Hub>& hubs) {
 
     if (resp.statusCode != 200) {
         brls::Logger::error("Failed to fetch hubs: {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
     }
 
@@ -914,6 +973,7 @@ bool PlexClient::fetchContinueWatching(std::vector<MediaItem>& items) {
 
     if (resp.statusCode != 200) {
         brls::Logger::error("Failed to fetch continue watching: {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
     }
 
@@ -987,6 +1047,7 @@ bool PlexClient::fetchRecentlyAdded(std::vector<MediaItem>& items) {
 
     if (resp.statusCode != 200) {
         brls::Logger::error("Failed to fetch recently added: {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
     }
 
@@ -1141,6 +1202,7 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
 
     if (resp.statusCode != 200) {
         brls::Logger::error("Search failed: {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
     }
 
@@ -1574,6 +1636,7 @@ bool PlexClient::getPlaybackUrl(const std::string& ratingKey, std::string& url) 
 
     if (resp.statusCode != 200) {
         brls::Logger::error("getPlaybackUrl: Failed to fetch metadata: {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
     }
 
