@@ -51,6 +51,12 @@ private:
     void togglePlayPause();
     void seek(int seconds);
 
+    // Controls visibility toggle (like Suwayomi reader settings)
+    void toggleControls();
+    void showControls();
+    void hideControls();
+    bool m_controlsVisible = true;
+
     // Queue controls
     void playNext();
     void playPrevious();

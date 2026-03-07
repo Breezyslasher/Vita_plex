@@ -6,6 +6,8 @@
 #pragma once
 
 #include <borealis.hpp>
+#include <memory>
+#include <atomic>
 #include "app/plex_client.hpp"
 #include "view/recycling_grid.hpp"
 
@@ -14,8 +16,10 @@ namespace vitaplex {
 class HomeTab : public brls::Box {
 public:
     HomeTab();
+    ~HomeTab();
 
     void onFocusGained() override;
+    void willDisappear(bool resetState) override;
 
 private:
     void loadContent();
@@ -52,6 +56,9 @@ private:
     std::vector<MediaItem> m_recentShows;
     std::vector<MediaItem> m_recentMusic;
     bool m_loaded = false;
+
+    // Alive flag for crash prevention on quick tab switching
+    std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 };
 
 } // namespace vitaplex

@@ -5,6 +5,7 @@
 #include "view/media_detail_view.hpp"
 #include "view/media_item_cell.hpp"
 #include "view/progress_dialog.hpp"
+#include "activity/player_activity.hpp"
 #include "app/application.hpp"
 #include "app/downloads_manager.hpp"
 #include "utils/image_loader.hpp"
@@ -178,30 +179,45 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
 
     rightBox->addView(metaBox);
 
-    // Summary
+    // Summary (collapsible - shows 2 lines by default, L to expand)
+    m_summaryLabel = new brls::Label();
+    m_summaryLabel->setFontSize(16);
+    m_summaryLabel->setMarginBottom(20);
+
     if (!m_item.summary.empty()) {
-        m_summaryLabel = new brls::Label();
-        m_summaryLabel->setText(m_item.summary);
-        m_summaryLabel->setFontSize(16);
-        m_summaryLabel->setMarginBottom(20);
-        rightBox->addView(m_summaryLabel);
+        m_fullDescription = m_item.summary;
+        m_descriptionExpanded = false;
+
+        // Show first ~80 chars (approximately 2 lines) when collapsed
+        std::string truncatedDesc = m_fullDescription;
+        if (truncatedDesc.length() > 80) {
+            truncatedDesc = truncatedDesc.substr(0, 77) + "... [L]";
+        }
+        m_summaryLabel->setText(truncatedDesc);
+    } else {
+        m_fullDescription = "";
+        m_summaryLabel->setText("");
     }
+    rightBox->addView(m_summaryLabel);
+
+    // Register L trigger for description toggle
+    this->registerAction("Summary", brls::ControllerButton::BUTTON_LB, [this](brls::View* view) {
+        toggleDescription();
+        return true;
+    });
 
     topRow->addView(rightBox);
     m_mainContent->addView(topRow);
 
-    // Children container (for shows/seasons/albums - but NOT artists)
+    // Children container (for shows/seasons - horizontal cards)
     if (m_item.mediaType == MediaType::SHOW ||
-        m_item.mediaType == MediaType::SEASON ||
-        m_item.mediaType == MediaType::MUSIC_ALBUM) {
+        m_item.mediaType == MediaType::SEASON) {
 
         auto* childrenLabel = new brls::Label();
         if (m_item.mediaType == MediaType::SHOW) {
             childrenLabel->setText("Seasons");
-        } else if (m_item.mediaType == MediaType::SEASON) {
-            childrenLabel->setText("Episodes");
         } else {
-            childrenLabel->setText("Tracks");
+            childrenLabel->setText("Episodes");
         }
         childrenLabel->setFontSize(20);
         childrenLabel->setMarginBottom(10);
@@ -217,6 +233,21 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
 
         childrenScroll->setContentView(m_childrenBox);
         m_mainContent->addView(childrenScroll);
+    }
+
+    // Track list for albums (vertical list like Suwayomi chapter list)
+    if (m_item.mediaType == MediaType::MUSIC_ALBUM) {
+        auto* tracksLabel = new brls::Label();
+        tracksLabel->setText("Tracks");
+        tracksLabel->setFontSize(20);
+        tracksLabel->setMarginBottom(10);
+        m_mainContent->addView(tracksLabel);
+
+        m_trackListBox = new brls::Box();
+        m_trackListBox->setAxis(brls::Axis::COLUMN);
+        m_trackListBox->setJustifyContent(brls::JustifyContent::FLEX_START);
+        m_trackListBox->setAlignItems(brls::AlignItems::STRETCH);
+        m_mainContent->addView(m_trackListBox);
     }
 
     // Music categories container for artists
@@ -325,9 +356,22 @@ void MediaDetailView::loadDetails() {
                 }, m_posterImage, m_alive);
             }
 
+            // Update description if full details loaded
+            if (!m_item.summary.empty() && m_summaryLabel) {
+                m_fullDescription = m_item.summary;
+                m_descriptionExpanded = false;
+                std::string truncatedDesc = m_fullDescription;
+                if (truncatedDesc.length() > 80) {
+                    truncatedDesc = truncatedDesc.substr(0, 77) + "... [L]";
+                }
+                m_summaryLabel->setText(truncatedDesc);
+            }
+
             // Load children if applicable
             if (m_item.mediaType == MediaType::MUSIC_ARTIST) {
                 loadMusicCategories();
+            } else if (m_item.mediaType == MediaType::MUSIC_ALBUM) {
+                loadTrackList();
             } else {
                 loadChildren();
             }
@@ -950,6 +994,117 @@ void MediaDetailView::downloadUnwatched(int maxCount) {
             });
         });
     });
+}
+
+void MediaDetailView::loadTrackList() {
+    if (!m_trackListBox) return;
+
+    asyncRun([this]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> tracks;
+
+        if (!client.fetchChildren(m_item.ratingKey, tracks)) {
+            brls::Logger::error("Failed to fetch tracks for album");
+            return;
+        }
+
+        std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+
+        brls::sync([this, tracks, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !alive->load()) return;
+
+            m_trackListBox->clearViews();
+            m_children = tracks;
+
+            for (size_t i = 0; i < tracks.size(); i++) {
+                const auto& track = tracks[i];
+
+                // Create a row for each track (like Suwayomi ChapterCell)
+                auto* row = new brls::Box();
+                row->setAxis(brls::Axis::ROW);
+                row->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
+                row->setAlignItems(brls::AlignItems::CENTER);
+                row->setHeight(50);
+                row->setPadding(8, 14, 8, 14);
+                row->setMarginBottom(4);
+                row->setCornerRadius(8);
+                row->setBackgroundColor(nvgRGBA(50, 50, 60, 200));
+                row->setFocusable(true);
+
+                // Left side: track number + title
+                auto* leftBox = new brls::Box();
+                leftBox->setAxis(brls::Axis::ROW);
+                leftBox->setAlignItems(brls::AlignItems::CENTER);
+                leftBox->setGrow(1.0f);
+
+                auto* trackNum = new brls::Label();
+                trackNum->setFontSize(14);
+                trackNum->setMarginRight(12);
+                trackNum->setTextColor(nvgRGBA(150, 150, 150, 255));
+                if (track.index > 0) {
+                    trackNum->setText(std::to_string(track.index));
+                } else {
+                    trackNum->setText(std::to_string(i + 1));
+                }
+                leftBox->addView(trackNum);
+
+                auto* titleLabel = new brls::Label();
+                titleLabel->setFontSize(14);
+                titleLabel->setText(track.title);
+                leftBox->addView(titleLabel);
+
+                row->addView(leftBox);
+
+                // Right side: duration
+                if (track.duration > 0) {
+                    auto* durLabel = new brls::Label();
+                    durLabel->setFontSize(12);
+                    durLabel->setTextColor(nvgRGBA(150, 150, 150, 255));
+                    int totalSec = track.duration / 1000;
+                    int min = totalSec / 60;
+                    int sec = totalSec % 60;
+                    char durStr[16];
+                    snprintf(durStr, sizeof(durStr), "%d:%02d", min, sec);
+                    durLabel->setText(durStr);
+                    row->addView(durLabel);
+                }
+
+                // Click to play track (with queue for all album tracks)
+                MediaItem capturedTrack = track;
+                row->registerClickAction([this, capturedTrack, i](brls::View* view) {
+                    // Play album starting from this track using queue
+                    if (!m_children.empty()) {
+                        auto* playerActivity = PlayerActivity::createWithQueue(m_children, (int)i);
+                        brls::Application::pushActivity(playerActivity);
+                    } else {
+                        Application::getInstance().pushPlayerActivity(capturedTrack.ratingKey);
+                    }
+                    return true;
+                });
+
+                m_trackListBox->addView(row);
+            }
+        });
+    });
+}
+
+void MediaDetailView::toggleDescription() {
+    if (!m_summaryLabel || m_fullDescription.empty()) return;
+
+    m_descriptionExpanded = !m_descriptionExpanded;
+
+    if (m_descriptionExpanded) {
+        // Show full description
+        m_summaryLabel->setText(m_fullDescription + " [L]");
+    } else {
+        // Show truncated description (first ~80 chars / 2 lines)
+        std::string truncatedDesc = m_fullDescription;
+        if (truncatedDesc.length() > 80) {
+            truncatedDesc = truncatedDesc.substr(0, 77) + "... [L]";
+        }
+        m_summaryLabel->setText(truncatedDesc);
+    }
 }
 
 } // namespace vitaplex

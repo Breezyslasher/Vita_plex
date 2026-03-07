@@ -126,8 +126,19 @@ LiveTVTab::LiveTVTab() {
     loadChannels();
 }
 
+LiveTVTab::~LiveTVTab() {
+    if (m_alive) { *m_alive = false; }
+}
+
+void LiveTVTab::willDisappear(bool resetState) {
+    brls::Box::willDisappear(resetState);
+    if (m_alive) *m_alive = false;
+    ImageLoader::cancelAll();
+}
+
 void LiveTVTab::onFocusGained() {
     brls::Box::onFocusGained();
+    m_alive = std::make_shared<bool>(true);
 
     if (!m_loaded) {
         loadChannels();
@@ -149,7 +160,7 @@ std::string LiveTVTab::formatTime(int64_t timestamp) {
 }
 
 void LiveTVTab::loadChannels() {
-    asyncRun([this]() {
+    asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         brls::Logger::debug("LiveTVTab: Fetching EPG data (async)...");
         PlexClient& client = PlexClient::getInstance();
 
@@ -159,7 +170,9 @@ void LiveTVTab::loadChannels() {
         if (success) {
             brls::Logger::info("LiveTVTab: Got {} channels with EPG", channels.size());
 
-            brls::sync([this, channels]() {
+            brls::sync([this, channels, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
                 m_channels = channels;
                 m_channelsContent->clearViews();
 
@@ -223,7 +236,9 @@ void LiveTVTab::loadChannels() {
             });
         } else {
             brls::Logger::error("LiveTVTab: Failed to fetch EPG data");
-            brls::sync([this]() {
+            brls::sync([this, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
                 m_channelsContent->clearViews();
                 auto* errorLabel = new brls::Label();
                 errorLabel->setText("Failed to load Live TV");
@@ -483,13 +498,16 @@ void LiveTVTab::loadGuide() {
 }
 
 void LiveTVTab::loadRecordings() {
-    asyncRun([this]() {
+    asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         brls::Logger::debug("LiveTVTab: Fetching DVR recordings...");
 
         // TODO: Implement fetchDVRRecordings in PlexClient
         // For now, just clear the DVR section
 
-        brls::sync([this]() {
+        brls::sync([this, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+
             m_dvrContent->clearViews();
 
             auto* placeholder = new brls::Label();
@@ -513,7 +531,7 @@ void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
         channelKey = channel.ratingKey;  // Last resort fallback
     }
 
-    asyncRun([this, channel, channelKey]() {
+    asyncRun([this, channel, channelKey, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         PlexClient& client = PlexClient::getInstance();
         std::string streamUrl;
 

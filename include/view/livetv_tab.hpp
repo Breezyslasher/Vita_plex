@@ -6,6 +6,7 @@
 #pragma once
 
 #include <borealis.hpp>
+#include <memory>
 #include "app/plex_client.hpp"
 
 namespace vitaplex {
@@ -40,8 +41,10 @@ struct DVRRecording {
 class LiveTVTab : public brls::Box {
 public:
     LiveTVTab();
+    ~LiveTVTab();
 
     void onFocusGained() override;
+    void willDisappear(bool resetState) override;
 
 private:
     void loadChannels();
@@ -83,6 +86,9 @@ private:
     int64_t m_guideStartTime = 0;  // Current time rounded to 30 min
     int m_hoursToShow = 4;         // Hours of programming to show
     bool m_loaded = false;
+
+    // Alive flag for crash prevention on quick tab switching
+    std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 };
 
 } // namespace vitaplex
