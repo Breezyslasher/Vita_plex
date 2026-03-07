@@ -5,8 +5,19 @@
     height="100%"
     axis="column"
     justifyContent="flexEnd"
-    alignItems="stretch"
-    padding="20">
+    alignItems="stretch">
+
+    <!-- Video display area - fills entire screen -->
+    <vitaplex:VideoView
+        id="player/video"
+        width="100%"
+        height="100%"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        positionRight="0"
+        positionBottom="0"
+        visibility="gone"/>
 
     <!-- Photo display area (for photos) -->
     <brls:Image
@@ -14,14 +25,6 @@
         width="100%"
         height="100%"
         scalingType="fit"
-        visibility="gone"
-        grow="1"/>
-
-    <!-- Video display area -->
-    <vitaplex:VideoView
-        id="player/video"
-        width="100%"
-        height="100%"
         visibility="gone"
         grow="1"/>
 
@@ -41,7 +44,7 @@
             visibility="gone"/>
     </brls:Box>
 
-    <!-- Controls overlay -->
+    <!-- Controls overlay - positioned at bottom -->
     <brls:Box
         id="player/controls"
         width="100%"
@@ -49,7 +52,10 @@
         alignItems="stretch"
         padding="15"
         backgroundColor="#80000000"
-        cornerRadius="8">
+        cornerRadius="8"
+        marginLeft="20"
+        marginRight="20"
+        marginBottom="20">
 
         <!-- Title -->
         <brls:Label

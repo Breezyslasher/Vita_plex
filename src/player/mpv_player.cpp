@@ -138,27 +138,11 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "vo", "libmpv");
 
 #ifdef __vita__
-        // Vita-specific settings from switchfin
+        // Vita-specific settings matching switchfin exactly
         mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
-        mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "all");
-        mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
-
-        // Disable hardware decoding. vita-copy uses the shared GXM immediate
-        // context from its decoder thread, which races with NanoVG on the main
-        // thread and causes a deterministic crash at eboot+0x161b0. Software
-        // decoding keeps all GXM usage on the main thread (via the render
-        // callback + brls::sync), eliminating the threading conflict.
-        mpv_set_option_string(m_mpv, "hwdec", "no");
-
-        // GXM-specific settings from switchfin
         mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
         mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
-
-        // Drop frames instead of crashing when CPU can't keep up with
-        // software decode. Without this, decode overload causes abort().
-        mpv_set_option_string(m_mpv, "framedrop", "decoder+vo");
-        // Sync to audio clock - drop video frames as needed to stay in sync
-        mpv_set_option_string(m_mpv, "video-sync", "audio");
+        mpv_set_option_string(m_mpv, "hwdec", "no");
 #else
         mpv_set_option_string(m_mpv, "hwdec", "no");
 #endif
@@ -405,15 +389,6 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
     // Format: loadfile <url> [flags]
     // Note: Per-file options (5th arg) require different format and aren't well supported
     brls::Logger::debug("MpvPlayer: Sending loadfile command...");
-
-#ifdef __vita__
-    // Flush GPU pipeline before loadfile. When mpv processes the loadfile command,
-    // it spawns decoder threads that use the shared GXM context. If NanoVG's GPU
-    // operations are still in flight, the concurrent GXM access crashes Thread 6.
-    if (m_mpvRenderCtx) {
-        flushGxmPipeline();
-    }
-#endif
 
     const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", nullptr};
     int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
@@ -965,6 +940,9 @@ void MpvPlayer::onRenderUpdate(void* ctx) {
     if (!player || player->m_stopping.load() || !player->m_renderReady.load()) {
         return;
     }
+    // Match switchfin exactly: sync callback calls update + render + report_swap
+    // No flushGxmPipeline() — switchfin doesn't do it, and sceGxmFinish() can
+    // interfere with the scene lifecycle causing black frames.
     brls::sync([player]() {
         if (!player || player->m_stopping.load() || !player->m_renderReady.load() ||
             !player->m_mpvRenderCtx) {
@@ -972,9 +950,6 @@ void MpvPlayer::onRenderUpdate(void* ctx) {
         }
         uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
         if (flags & MPV_RENDER_UPDATE_FRAME) {
-            // Flush NanoVG's in-flight GXM commands before mpv uses the
-            // shared GXM context, preventing concurrent GPU access crashes.
-            flushGxmPipeline();
             mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
             mpv_render_context_report_swap(player->m_mpvRenderCtx);
         }
@@ -1106,13 +1081,12 @@ bool MpvPlayer::initRenderContext() {
     m_mpvFbo.depth_stencil_surface = &fbo->gxm_depth_stencil_surface;
     m_mpvFbo.w = m_videoWidth;
     m_mpvFbo.h = m_videoHeight;
-    m_mpvFbo.format = SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_RGBA;
+    // Note: switchfin does NOT set mpv_fbo.format — it's zero-initialized
 
-    // Set up render params array for use in callbacks (matching switchfin)
-    m_flipY = 0;
-    m_mpvParams[0] = {MPV_RENDER_PARAM_FLIP_Y, &m_flipY};
-    m_mpvParams[1] = {MPV_RENDER_PARAM_GXM_FBO, &m_mpvFbo};
-    m_mpvParams[2] = {MPV_RENDER_PARAM_INVALID, nullptr};
+    // Set up render params array for use in callbacks (matching switchfin exactly)
+    // Note: switchfin does NOT use FLIP_Y — only GXM_FBO + INVALID terminator
+    m_mpvParams[0] = {MPV_RENDER_PARAM_GXM_FBO, &m_mpvFbo};
+    m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
 
     // Register the render update callback (matching switchfin).
     // The callback uses brls::sync() to queue rendering on the main thread.
