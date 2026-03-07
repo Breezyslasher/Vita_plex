@@ -889,18 +889,31 @@ void PlayerActivity::showTrackOverlay(TrackSelectMode mode) {
         // Register B button to dismiss overlay
         trackOverlay->registerAction("Back", brls::ControllerButton::BUTTON_B, [this](brls::View* view) {
             hideTrackOverlay();
-            if (audioBtn) {
-                brls::Application::giveFocus(audioBtn);
-            }
             return true;
         });
+
+        // Give focus to the currently selected track item for controller navigation
+        if (trackList && !trackList->getChildren().empty()) {
+            int idx = std::min(m_selectedTrackIndex, (int)trackList->getChildren().size() - 1);
+            if (idx < 0) idx = 0;
+            brls::Application::giveFocus(trackList->getChildren()[idx]);
+        }
     }
 }
 
 void PlayerActivity::hideTrackOverlay() {
+    TrackSelectMode prevMode = m_trackSelectMode;
     m_trackSelectMode = TrackSelectMode::NONE;
     if (trackOverlay) {
         trackOverlay->setVisibility(brls::Visibility::GONE);
+    }
+    // Restore focus to the appropriate button
+    if (prevMode == TrackSelectMode::SUBTITLE && subBtn) {
+        brls::Application::giveFocus(subBtn);
+    } else if (prevMode == TrackSelectMode::VIDEO && videoBtn) {
+        brls::Application::giveFocus(videoBtn);
+    } else if (audioBtn) {
+        brls::Application::giveFocus(audioBtn);
     }
 }
 
@@ -909,6 +922,7 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
 
     // Clear existing items
     trackList->clearViews();
+    m_selectedTrackIndex = 0;
 
     // Set title
     switch (mode) {
@@ -999,6 +1013,8 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
                 item->setBackgroundColor(nvgRGBA(80, 80, 200, 100));
                 item->setBorderColor(nvgRGB(100, 130, 255));
                 item->setBorderThickness(1);
+                // Track index for focus when overlay opens
+                m_selectedTrackIndex = static_cast<int>(trackList->getChildren().size());
             }
 
             std::string prefix = ps.selected ? "> " : "  ";
@@ -1115,7 +1131,11 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         searchItem->addView(searchLabel);
 
         searchItem->registerClickAction([this](brls::View* view) {
-            populateSubtitleSearchResults();
+            // Defer to next frame to avoid destroying the clicked view
+            // while its click handler is still on the call stack
+            brls::sync([this]() {
+                populateSubtitleSearchResults();
+            });
             return true;
         });
         searchItem->addGestureRecognizer(new brls::TapGestureRecognizer(searchItem));
@@ -1250,19 +1270,17 @@ void PlayerActivity::populateSubtitleSearchResults() {
         label->setTextColor(nvgRGB(220, 220, 220));
         item->addView(label);
 
-        size_t idx = i;
-        item->registerClickAction([this, idx](brls::View* view) {
-            if (idx < m_subtitleSearchResults.size()) {
-                const auto& sub = m_subtitleSearchResults[idx];
-                PlexClient& client = PlexClient::getInstance();
-                if (client.selectSearchedSubtitle(m_mediaKey, m_partId, sub.key)) {
-                    MpvPlayer& player = MpvPlayer::getInstance();
-                    player.showOSD("Subtitle selected: " + sub.displayTitle, 2.0);
-                    // Re-fetch streams to pick up the new subtitle
-                    m_streamsLoaded = false;
-                } else {
-                    MpvPlayer::getInstance().showOSD("Failed to select subtitle", 2.0);
-                }
+        // Capture key and title by value to avoid referencing vector after potential invalidation
+        std::string subKey = sub.key;
+        std::string subTitle = sub.displayTitle;
+        item->registerClickAction([this, subKey, subTitle](brls::View* view) {
+            PlexClient& client = PlexClient::getInstance();
+            brls::Logger::debug("Subtitle click: key={}", subKey);
+            if (client.selectSearchedSubtitle(m_mediaKey, m_partId, subKey)) {
+                MpvPlayer::getInstance().showOSD("Subtitle: " + subTitle, 2.0);
+                m_streamsLoaded = false;
+            } else {
+                MpvPlayer::getInstance().showOSD("Failed to select subtitle", 2.0);
             }
             hideTrackOverlay();
             return true;
@@ -1282,7 +1300,6 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
         case TrackSelectMode::AUDIO:
             if (hasPlexStreams && m_partId > 0) {
                 // trackId is a Plex stream ID - tell Plex server to switch audio
-                // Find display title for OSD
                 std::string displayTitle = "Audio track " + std::to_string(trackId);
                 for (const auto& ps : m_plexStreams) {
                     if (ps.id == trackId) {
@@ -1291,11 +1308,28 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                     }
                 }
                 PlexClient::getInstance().setStreamSelection(m_partId, trackId, -1);
-                player.showOSD(displayTitle, 1.5);
                 // Mark the newly selected stream in our cached data
                 for (auto& ps : m_plexStreams) {
                     if (ps.streamType == 2) {
                         ps.selected = (ps.id == trackId);
+                    }
+                }
+                // Stop the current transcode and start a new one at the same
+                // position so Plex re-muxes with the newly selected audio track.
+                // HLS only contains the selected audio, so a reload is needed,
+                // but we seek to the current position to avoid restarting.
+                {
+                    double currentPos = player.getPosition();
+                    int offsetMs = static_cast<int>(currentPos * 1000);
+                    PlexClient& client = PlexClient::getInstance();
+                    // Stop existing transcode session so Plex doesn't keep
+                    // serving old audio segments
+                    client.stopTranscode();
+                    std::string newUrl;
+                    if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
+                        brls::Logger::info("selectTrack: Reloading audio at offset={}ms", offsetMs);
+                        player.showOSD("Switching: " + displayTitle, 2.0);
+                        player.loadUrl(newUrl, "");
                     }
                 }
             } else {

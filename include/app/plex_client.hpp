@@ -245,6 +245,7 @@ public:
     // Playback
     bool getPlaybackUrl(const std::string& ratingKey, std::string& url);
     bool getTranscodeUrl(const std::string& ratingKey, std::string& url, int offsetMs = 0);
+    void stopTranscode();  // Stop the current transcode session
     bool updatePlayProgress(const std::string& ratingKey, int timeMs);
     bool markAsWatched(const std::string& ratingKey);
     bool markAsUnwatched(const std::string& ratingKey);
@@ -300,6 +301,7 @@ private:
 
     std::string m_authToken;
     std::string m_serverUrl;
+    std::string m_lastSessionId;  // Last transcode session ID for stop/restart
     PlexServer m_currentServer;
     bool m_hasLiveTV = false;
     std::string m_dvrId;  // DVR ID for Live TV tuning
