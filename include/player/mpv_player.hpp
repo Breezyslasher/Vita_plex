@@ -23,7 +23,6 @@ typedef struct mpv_render_context mpv_render_context;
 
 namespace vitaplex {
 
-
 // Player states
 enum class MpvPlayerState {
     IDLE,
@@ -151,8 +150,6 @@ public:
     int getVideoWidth() const { return 960; }
     int getVideoHeight() const { return 544; }
 
-    // Allow the mainLoopIteration render hook to access private members
-
 private:
     MpvPlayer() = default;
     ~MpvPlayer();
@@ -183,11 +180,15 @@ private:
     int m_nvgImage = 0;                 // NanoVG image handle for display
     void* m_gxmFramebuffer = nullptr;   // GXM framebuffer structure
     mpv_gxm_fbo m_mpvFbo = {};          // MPV GXM FBO parameters
-    int m_flipY = 0;                    // Flip Y flag for render params
-    mpv_render_param m_mpvParams[3] = {};  // Render params for mpv_render_context_render
+    int m_flipY = 1;                    // Flip Y for correct orientation (matching switchfin)
+    mpv_render_param m_mpvParams[3] = {};  // Render params: FLIP_Y + GXM_FBO + INVALID
     int m_videoWidth = 960;
     int m_videoHeight = 544;
     std::atomic<bool> m_renderReady{false};     // Flag for when render context is ready (accessed from mpv thread)
+
+    // Mutex to protect GXM render resources from concurrent access
+    // (mpv's render update callback fires from its decoder thread)
+    std::mutex m_renderMutex;
 
     // Static callback for render updates (called from MPV thread)
     static void onRenderUpdate(void* ctx);

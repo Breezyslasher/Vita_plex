@@ -121,6 +121,14 @@ struct Hub {
     bool more = false;
 };
 
+// A single EPG program entry
+struct ChannelProgram {
+    std::string title;
+    std::string summary;
+    int64_t startTime = 0;
+    int64_t endTime = 0;
+};
+
 // Live TV Channel
 struct LiveTVChannel {
     std::string ratingKey;
@@ -134,6 +142,7 @@ struct LiveTVChannel {
     std::string nextProgram;
     int64_t programStart = 0;
     int64_t programEnd = 0;
+    std::vector<ChannelProgram> programs;  // All programs in EPG window, sorted by start time
 };
 
 // Genre/Category item with key for filtering
@@ -264,6 +273,7 @@ private:
     std::string m_dvrId;  // DVR ID for Live TV tuning
     std::vector<std::string> m_deviceIds;  // Device IDs from DVR for channel listing
     std::string m_lineupUri;  // Lineup URI from DVR for EPG channel listing
+    std::string m_epgProviderKey;  // EPG provider key for grid queries (e.g., "tv.plex.providers.epg.cloud:2-...")
 };
 
 } // namespace vitaplex

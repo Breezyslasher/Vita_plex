@@ -606,12 +606,6 @@ void PlayerActivity::updateProgress() {
 
             MpvPlayer& player = MpvPlayer::getInstance();
 
-#ifdef __vita__
-            // Flush GXM pipeline before loadfile to ensure NanoVG's previous
-            // frame is fully retired from the GPU before the decoder starts.
-            MpvPlayer::flushGpu();
-#endif
-
             if (player.loadUrl(url, title)) {
                 if (videoView && !isAudio) {
                     videoView->setVisibility(brls::Visibility::VISIBLE);

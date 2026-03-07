@@ -1909,10 +1909,76 @@ void PlexClient::checkLiveTVAvailability() {
         }
     }
 
-    brls::Logger::info("Live TV availability check: {} (devices: {}, lineup: {})",
+    // Fetch EPG provider key from /media/providers for grid queries
+    if (m_hasLiveTV && m_epgProviderKey.empty()) {
+        HttpRequest provReq;
+        provReq.url = buildApiUrl("/media/providers");
+        provReq.method = "GET";
+        provReq.headers["Accept"] = "application/json";
+        provReq.timeout = 10;
+
+        HttpResponse provResp = client.request(provReq);
+        if (provResp.statusCode == 200 && !provResp.body.empty()) {
+            brls::Logger::debug("media/providers response (first 2000): {}",
+                                provResp.body.substr(0, 2000));
+
+            // Look for EPG provider identifiers
+            // Common patterns: "tv.plex.providers.epg.cloud", "tv.plex.providers.epg.xmltv"
+            // The provider key is used as prefix: /{key}/grid?type=4
+            std::vector<std::string> epgPrefixes = {
+                "tv.plex.providers.epg.cloud",
+                "tv.plex.providers.epg.xmltv",
+                "tv.plex.providers.epg"
+            };
+
+            for (const auto& prefix : epgPrefixes) {
+                size_t pos = provResp.body.find(prefix);
+                if (pos != std::string::npos) {
+                    // Find the full identifier (may include ":2-xxx" suffix)
+                    // It's usually in an "identifier" or "key" field value
+                    // Try to extract the full string token containing this prefix
+                    size_t strStart = provResp.body.rfind('"', pos);
+                    if (strStart != std::string::npos) {
+                        size_t strEnd = provResp.body.find('"', pos);
+                        if (strEnd != std::string::npos) {
+                            m_epgProviderKey = provResp.body.substr(strStart + 1, strEnd - strStart - 1);
+                            // Strip leading slash if present
+                            if (!m_epgProviderKey.empty() && m_epgProviderKey[0] == '/') {
+                                m_epgProviderKey = m_epgProviderKey.substr(1);
+                            }
+                            brls::Logger::info("Live TV EPG provider key: {}", m_epgProviderKey);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Also try to find "grid" feature key directly
+            if (m_epgProviderKey.empty()) {
+                size_t gridPos = provResp.body.find("\"grid\"");
+                if (gridPos != std::string::npos) {
+                    // Look backwards for the provider's identifier/key
+                    // Find the nearest "identifier" field before this position
+                    size_t searchRegion = (gridPos > 500) ? gridPos - 500 : 0;
+                    std::string region = provResp.body.substr(searchRegion, gridPos - searchRegion);
+                    std::string provId = extractJsonValue(region, "identifier");
+                    if (provId.empty()) {
+                        provId = extractJsonValue(region, "machineIdentifier");
+                    }
+                    if (!provId.empty()) {
+                        m_epgProviderKey = provId;
+                        brls::Logger::info("Live TV EPG provider key (from grid feature): {}", m_epgProviderKey);
+                    }
+                }
+            }
+        }
+    }
+
+    brls::Logger::info("Live TV availability check: {} (devices: {}, lineup: {}, epg: {})",
                         m_hasLiveTV ? "available" : "not available",
                         m_deviceIds.size(),
-                        m_lineupUri.empty() ? "(none)" : "set");
+                        m_lineupUri.empty() ? "(none)" : "set",
+                        m_epgProviderKey.empty() ? "(none)" : m_epgProviderKey);
 }
 
 bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
@@ -2206,12 +2272,12 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
 bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, int hoursAhead) {
     brls::Logger::debug("fetchEPGGrid: fetching {} hours of programming", hoursAhead);
 
-    // Ensure we have DVR info with device IDs
+    // Ensure we have DVR info with device IDs and EPG provider key
     if (m_dvrId.empty() && m_deviceIds.empty()) {
         checkLiveTVAvailability();
     }
 
-    // First get channel list, then try to overlay program info
+    // First get channel list
     if (!fetchLiveTVChannels(channelsWithPrograms)) {
         return false;
     }
@@ -2220,70 +2286,222 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
         return false;
     }
 
-    // Try to get EPG/program data to overlay on channels
+    // Get current time as epoch for grid query
+    time_t now = time(nullptr);
+    time_t endTime = now + (hoursAhead * 3600);
+
     HttpClient client;
     HttpRequest req;
     req.method = "GET";
     req.headers["Accept"] = "application/json";
     req.timeout = 30;
 
-    // Try /livetv/dvrs/{id}/reloadGuide then fetch guide data
-    // For now, the channels themselves are the main value — EPG data is a bonus
-    // Try /livetv/epg/channels with lineup for program info
-    if (!m_lineupUri.empty()) {
-        std::string epgUrl = buildApiUrl("/livetv/epg/channels");
-        epgUrl += "&lineup=" + m_lineupUri;
-        req.url = epgUrl;
+    // Strategy 1: Use /{epgProviderKey}/grid endpoint (official Plex API)
+    // This returns program data in a grid format with beginsAt/endsAt timestamps
+    bool gotProgramData = false;
 
-        HttpResponse resp = client.request(req);
-        if (resp.statusCode == 200 && !resp.body.empty()) {
-            brls::Logger::debug("fetchEPGGrid: Got EPG data ({} bytes)", resp.body.length());
-            // Try to match program data to channels
-            for (auto& channel : channelsWithPrograms) {
-                // Search for this channel's data by channelNumber or identifier
-                std::string searchKey = channel.channelIdentifier.empty()
-                    ? std::to_string(channel.channelNumber)
-                    : channel.channelIdentifier;
+    if (!m_epgProviderKey.empty()) {
+        // Query grid for TV shows (type=4) and movies (type=1)
+        for (int gridType : {4, 1}) {
+            std::string gridUrl = buildApiUrl("/" + m_epgProviderKey + "/grid");
+            gridUrl += "&type=" + std::to_string(gridType);
+            gridUrl += "&beginsAt%3C=" + std::to_string(endTime);
+            gridUrl += "&endsAt%3E=" + std::to_string(now);
+            req.url = gridUrl;
 
-                size_t chanPos = resp.body.find("\"" + searchKey + "\"");
-                if (chanPos == std::string::npos && !channel.callSign.empty()) {
-                    chanPos = resp.body.find("\"" + channel.callSign + "\"");
-                }
+            brls::Logger::debug("fetchEPGGrid: Trying grid endpoint: {}", gridUrl);
+            HttpResponse resp = client.request(req);
+            if (resp.statusCode == 200 && !resp.body.empty()) {
+                brls::Logger::debug("fetchEPGGrid: Grid response ({} bytes, type={}), first 1000: {}",
+                                    resp.body.length(), gridType, resp.body.substr(0, 1000));
 
-                if (chanPos != std::string::npos) {
-                    // Find the enclosing object
-                    size_t objStart = resp.body.rfind('{', chanPos);
-                    if (objStart != std::string::npos) {
-                        int braceCount = 1;
-                        size_t objEnd = objStart + 1;
-                        while (braceCount > 0 && objEnd < resp.body.length()) {
-                            if (resp.body[objEnd] == '{') braceCount++;
-                            else if (resp.body[objEnd] == '}') braceCount--;
-                            objEnd++;
+                // Parse grid data. Response structure:
+                // {"MediaContainer":{"Metadata":[
+                //   {"title":"Show Name","grandparentTitle":"Series","type":"episode",
+                //    "Media":[{"channelCallSign":"KDKADT4","channelIdentifier":"...",
+                //              "beginsAt":1234,"endsAt":5678,...}]},
+                //   ...
+                // ]}}
+                // Title is on the Metadata object; beginsAt/endsAt/channelCallSign are
+                // inside the Media array items.
+
+                // Find the "Metadata" array
+                size_t metaArrayPos = resp.body.find("\"Metadata\"");
+                if (metaArrayPos == std::string::npos) continue;
+
+                // Find the opening bracket of the Metadata array
+                size_t arrayStart = resp.body.find('[', metaArrayPos);
+                if (arrayStart == std::string::npos) continue;
+
+                // Iterate through top-level objects in the Metadata array
+                size_t pos = arrayStart + 1;
+                while (pos < resp.body.length()) {
+                    // Skip whitespace and commas
+                    while (pos < resp.body.length() && (resp.body[pos] == ' ' || resp.body[pos] == ',' ||
+                           resp.body[pos] == '\n' || resp.body[pos] == '\r' || resp.body[pos] == '\t')) {
+                        pos++;
+                    }
+                    if (pos >= resp.body.length() || resp.body[pos] == ']') break;
+                    if (resp.body[pos] != '{') { pos++; continue; }
+
+                    // Extract this Metadata object by tracking brace depth
+                    size_t objStart = pos;
+                    int braceCount = 1;
+                    pos++;
+                    while (braceCount > 0 && pos < resp.body.length()) {
+                        if (resp.body[pos] == '{') braceCount++;
+                        else if (resp.body[pos] == '}') braceCount--;
+                        pos++;
+                    }
+                    std::string metaObj = resp.body.substr(objStart, pos - objStart);
+
+                    // Extract program title from the Metadata object
+                    // For episodes: use "grandparentTitle: title" format
+                    // For movies: just use "title"
+                    std::string progTitle = extractJsonValue(metaObj, "title");
+                    std::string grandparentTitle = extractJsonValue(metaObj, "grandparentTitle");
+                    if (progTitle.empty()) continue;
+
+                    // For TV episodes, show "Series: Episode Title"
+                    std::string displayTitle;
+                    if (!grandparentTitle.empty() && gridType == 4) {
+                        displayTitle = grandparentTitle + ": " + progTitle;
+                    } else {
+                        displayTitle = progTitle;
+                    }
+
+                    // Check onAir flag (some entries may not be currently airing)
+                    std::string onAir = extractJsonValue(metaObj, "onAir");
+
+                    // Find channel info and timing from the Media array inside this Metadata
+                    size_t mediaPos = metaObj.find("\"Media\"");
+                    if (mediaPos == std::string::npos) continue;
+
+                    // Find Media array objects and extract channel + timing info
+                    size_t mediaArrayStart = metaObj.find('[', mediaPos);
+                    if (mediaArrayStart == std::string::npos) continue;
+
+                    size_t mPos = mediaArrayStart + 1;
+                    while (mPos < metaObj.length()) {
+                        // Find next Media object
+                        size_t mObjStart = metaObj.find('{', mPos);
+                        if (mObjStart == std::string::npos || mObjStart >= metaObj.length()) break;
+
+                        int mBraceCount = 1;
+                        size_t mObjEnd = mObjStart + 1;
+                        while (mBraceCount > 0 && mObjEnd < metaObj.length()) {
+                            if (metaObj[mObjEnd] == '{') mBraceCount++;
+                            else if (metaObj[mObjEnd] == '}') mBraceCount--;
+                            mObjEnd++;
                         }
-                        std::string chanObj = resp.body.substr(objStart, objEnd - objStart);
+                        std::string mediaObj = metaObj.substr(mObjStart, mObjEnd - mObjStart);
+                        mPos = mObjEnd;
 
-                        // Extract program info
-                        size_t programPos = chanObj.find("\"Program\"");
-                        if (programPos == std::string::npos) programPos = chanObj.find("\"program\"");
-                        if (programPos == std::string::npos) programPos = chanObj.find("\"Media\"");
+                        // Extract timing from Media object
+                        std::string beginsAtStr = extractJsonValue(mediaObj, "beginsAt");
+                        std::string endsAtStr = extractJsonValue(mediaObj, "endsAt");
+                        if (beginsAtStr.empty() || endsAtStr.empty()) continue;
 
-                        if (programPos != std::string::npos) {
-                            std::string programSection = chanObj.substr(programPos);
-                            channel.currentProgram = extractJsonValue(programSection, "title");
+                        int64_t progStart = atoll(beginsAtStr.c_str());
+                        int64_t progEnd = atoll(endsAtStr.c_str());
 
-                            std::string beginsAt = extractJsonValue(programSection, "beginsAt");
-                            std::string endsAt = extractJsonValue(programSection, "endsAt");
-                            if (!beginsAt.empty()) channel.programStart = atoll(beginsAt.c_str());
-                            if (!endsAt.empty()) channel.programEnd = atoll(endsAt.c_str());
+                        // Skip programs that have already ended
+                        if (progEnd < (int64_t)now) continue;
+
+                        // Extract channel identifiers from Media object
+                        std::string chanCallSign = extractJsonValue(mediaObj, "channelCallSign");
+                        std::string chanShortTitle = extractJsonValue(mediaObj, "channelShortTitle");
+                        std::string chanId = extractJsonValue(mediaObj, "channelIdentifier");
+
+                        // Match to our channel list
+                        for (auto& channel : channelsWithPrograms) {
+                            bool matched = false;
+
+                            // Match by callSign — grid may have suffix (e.g., "KDKADT4" vs "KDKADT")
+                            // Use prefix matching: channel.callSign is a prefix of grid's channelCallSign
+                            if (!chanCallSign.empty() && !channel.callSign.empty()) {
+                                if (chanCallSign == channel.callSign ||
+                                    (chanCallSign.length() > channel.callSign.length() &&
+                                     chanCallSign.substr(0, channel.callSign.length()) == channel.callSign)) {
+                                    matched = true;
+                                }
+                            }
+
+                            // Match by channelIdentifier containing the channel's key
+                            if (!matched && !chanId.empty() && !channel.key.empty()) {
+                                if (chanId == channel.key || chanId.find(channel.key) != std::string::npos) {
+                                    matched = true;
+                                }
+                            }
+
+                            // Match by channel short title
+                            if (!matched && !chanShortTitle.empty() && !channel.title.empty()) {
+                                if (chanShortTitle == channel.title) {
+                                    matched = true;
+                                }
+                            }
+
+                            if (matched) {
+                                // Add to programs list (we'll sort later)
+                                ChannelProgram prog;
+                                prog.title = displayTitle;
+                                prog.startTime = progStart;
+                                prog.endTime = progEnd;
+                                // Avoid duplicate programs (same title+start)
+                                bool duplicate = false;
+                                for (const auto& existing : channel.programs) {
+                                    if (existing.startTime == progStart && existing.title == displayTitle) {
+                                        duplicate = true;
+                                        break;
+                                    }
+                                }
+                                if (!duplicate) {
+                                    channel.programs.push_back(prog);
+                                    gotProgramData = true;
+                                }
+
+                                // Also populate legacy current/next fields
+                                if (progStart <= (int64_t)now && progEnd > (int64_t)now) {
+                                    if (channel.currentProgram.empty()) {
+                                        channel.currentProgram = displayTitle;
+                                        channel.programStart = progStart;
+                                        channel.programEnd = progEnd;
+                                    }
+                                } else if (progStart >= (int64_t)now) {
+                                    if (channel.nextProgram.empty()) {
+                                        channel.nextProgram = displayTitle;
+                                    }
+                                }
+                                break;
+                            }
                         }
+
+                        // Check if we hit the end of the Media array
+                        size_t nextComma = metaObj.find_first_of(",]", mPos);
+                        if (nextComma != std::string::npos && metaObj[nextComma] == ']') break;
                     }
                 }
+            } else {
+                brls::Logger::debug("fetchEPGGrid: Grid endpoint returned {} for type={}",
+                                    resp.statusCode, gridType);
             }
         }
     }
 
-    brls::Logger::info("fetchEPGGrid: Got {} channels with program info", channelsWithPrograms.size());
+    // DVR grid endpoint (/livetv/dvrs/{id}/grid) is not a real endpoint — skip it
+
+    // Sort each channel's programs by start time
+    int programCount = 0;
+    for (auto& ch : channelsWithPrograms) {
+        if (!ch.programs.empty()) {
+            std::sort(ch.programs.begin(), ch.programs.end(),
+                      [](const ChannelProgram& a, const ChannelProgram& b) {
+                          return a.startTime < b.startTime;
+                      });
+            programCount++;
+        }
+    }
+    brls::Logger::info("fetchEPGGrid: Got {} channels, {} with program info", channelsWithPrograms.size(), programCount);
     return !channelsWithPrograms.empty();
 }
 

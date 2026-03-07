@@ -6,6 +6,7 @@
 #include "app/application.hpp"
 #include "utils/async.hpp"
 #include "utils/image_loader.hpp"
+#include <algorithm>
 #include <ctime>
 
 namespace vitaplex {
@@ -324,34 +325,100 @@ void LiveTVTab::buildEPGGrid() {
         programsBox->setAlignItems(brls::AlignItems::STRETCH);
         programsBox->setGrow(1.0f);
 
-        // If we have program info, create program blocks
-        if (!channel.currentProgram.empty() && channel.programStart > 0) {
-            // Calculate program position and width
-            int64_t progStart = channel.programStart;
-            int64_t progEnd = channel.programEnd > 0 ? channel.programEnd : progStart + 1800;
-
-            // Clamp to visible range
-            if (progStart < m_guideStartTime) progStart = m_guideStartTime;
-
+        // If we have program data, create program blocks for all programs
+        if (!channel.programs.empty()) {
             int64_t guideEndTime = m_guideStartTime + (m_hoursToShow * 3600);
-            if (progEnd > guideEndTime) progEnd = guideEndTime;
+            int64_t lastEndTime = m_guideStartTime;  // Track position for gaps
 
-            // Program cell
-            int startOffset = (int)((progStart - m_guideStartTime) / 1800);
-            int duration = (int)((progEnd - progStart) / 1800);
-            if (duration < 1) duration = 1;
+            for (size_t pi = 0; pi < channel.programs.size(); pi++) {
+                const auto& prog = channel.programs[pi];
 
-            int cellWidth = duration * TIME_SLOT_WIDTH;
+                // Skip programs entirely outside visible range
+                if (prog.endTime <= m_guideStartTime || prog.startTime >= guideEndTime) continue;
 
-            // Add empty space before program if needed
+                // Clamp to visible range
+                int64_t visStart = std::max(prog.startTime, m_guideStartTime);
+                int64_t visEnd = std::min(prog.endTime > 0 ? prog.endTime : visStart + 1800, guideEndTime);
+
+                // Add gap spacer if there's a gap before this program
+                if (visStart > lastEndTime) {
+                    int gapPixels = (int)((visStart - lastEndTime) * TIME_SLOT_WIDTH / 1800);
+                    if (gapPixels > 0) {
+                        auto* spacer = new brls::Box();
+                        spacer->setWidth(gapPixels);
+                        spacer->setHeight(ROW_HEIGHT - 4);
+                        programsBox->addView(spacer);
+                    }
+                }
+
+                // Calculate width based on duration
+                int64_t durationSec = visEnd - visStart;
+                int cellWidth = (int)(durationSec * TIME_SLOT_WIDTH / 1800);
+                if (cellWidth < 40) cellWidth = 40;  // Minimum width
+
+                // Determine color: currently airing = brighter
+                time_t now = time(nullptr);
+                bool isCurrently = (prog.startTime <= (int64_t)now && prog.endTime > (int64_t)now);
+                NVGcolor bgColor = isCurrently
+                    ? nvgRGBA(60, 80, 100, 255)   // Current: brighter blue
+                    : nvgRGBA(50, 60, 80, 255);   // Upcoming: darker
+
+                auto* progCell = new brls::Box();
+                progCell->setAxis(brls::Axis::COLUMN);
+                progCell->setWidth(cellWidth);
+                progCell->setHeight(ROW_HEIGHT - 4);
+                progCell->setPadding(4);
+                progCell->setMargins(2, 2, 2, 2);
+                progCell->setBackgroundColor(bgColor);
+                progCell->setCornerRadius(4);
+                progCell->setFocusable(true);
+
+                auto* progTitle = new brls::Label();
+                std::string title = prog.title;
+                int maxChars = cellWidth / 8;
+                if (maxChars < 4) maxChars = 4;
+                if ((int)title.length() > maxChars) title = title.substr(0, maxChars - 2) + "..";
+                progTitle->setText(title);
+                progTitle->setFontSize(11);
+                progCell->addView(progTitle);
+
+                // Show time range
+                auto* timeRange = new brls::Label();
+                timeRange->setText(formatTime(prog.startTime) + "-" + formatTime(prog.endTime));
+                timeRange->setFontSize(9);
+                timeRange->setMarginTop(2);
+                progCell->addView(timeRange);
+
+                GuideProgram gp;
+                gp.title = prog.title;
+                gp.startTime = prog.startTime;
+                gp.endTime = prog.endTime;
+
+                progCell->registerClickAction([this, gp, capturedChannel](brls::View* view) {
+                    onProgramSelected(gp, capturedChannel);
+                    return true;
+                });
+
+                programsBox->addView(progCell);
+                lastEndTime = visEnd;
+            }
+        } else if (!channel.currentProgram.empty() && channel.programStart > 0) {
+            // Fallback: use legacy current/next program fields
+            int64_t progStart = std::max(channel.programStart, m_guideStartTime);
+            int64_t guideEndTime = m_guideStartTime + (m_hoursToShow * 3600);
+            int64_t progEnd = std::min(channel.programEnd > 0 ? channel.programEnd : progStart + 1800, guideEndTime);
+
+            int startOffset = (int)((progStart - m_guideStartTime) * TIME_SLOT_WIDTH / 1800);
+            int cellWidth = (int)((progEnd - progStart) * TIME_SLOT_WIDTH / 1800);
+            if (cellWidth < 40) cellWidth = 40;
+
             if (startOffset > 0) {
                 auto* spacer = new brls::Box();
-                spacer->setWidth(startOffset * TIME_SLOT_WIDTH);
+                spacer->setWidth(startOffset);
                 spacer->setHeight(ROW_HEIGHT - 4);
                 programsBox->addView(spacer);
             }
 
-            // Current program cell
             auto* progCell = new brls::Box();
             progCell->setAxis(brls::Axis::COLUMN);
             progCell->setWidth(cellWidth);
@@ -370,52 +437,13 @@ void LiveTVTab::buildEPGGrid() {
             progTitle->setFontSize(11);
             progCell->addView(progTitle);
 
-            // Show time range
             auto* timeRange = new brls::Label();
-            timeRange->setText(formatTime(channel.programStart) + " - " + formatTime(channel.programEnd));
+            timeRange->setText(formatTime(channel.programStart) + "-" + formatTime(channel.programEnd));
             timeRange->setFontSize(9);
             timeRange->setMarginTop(2);
             progCell->addView(timeRange);
 
-            GuideProgram prog;
-            prog.title = channel.currentProgram;
-            prog.startTime = channel.programStart;
-            prog.endTime = channel.programEnd;
-
-            progCell->registerClickAction([this, prog, capturedChannel](brls::View* view) {
-                onProgramSelected(prog, capturedChannel);
-                return true;
-            });
-
             programsBox->addView(progCell);
-
-            // Next program if available
-            if (!channel.nextProgram.empty()) {
-                auto* nextCell = new brls::Box();
-                nextCell->setAxis(brls::Axis::COLUMN);
-                nextCell->setWidth(TIME_SLOT_WIDTH);  // Default 30 min width
-                nextCell->setHeight(ROW_HEIGHT - 4);
-                nextCell->setPadding(4);
-                nextCell->setMargins(2, 2, 2, 2);
-                nextCell->setBackgroundColor(nvgRGBA(50, 60, 80, 255));
-                nextCell->setCornerRadius(4);
-                nextCell->setFocusable(true);
-
-                auto* nextTitle = new brls::Label();
-                std::string nextT = channel.nextProgram;
-                if (nextT.length() > 12) nextT = nextT.substr(0, 11) + "..";
-                nextTitle->setText(nextT);
-                nextTitle->setFontSize(11);
-                nextCell->addView(nextTitle);
-
-                auto* upNextLabel = new brls::Label();
-                upNextLabel->setText("Up Next");
-                upNextLabel->setFontSize(9);
-                upNextLabel->setMarginTop(2);
-                nextCell->addView(upNextLabel);
-
-                programsBox->addView(nextCell);
-            }
         } else {
             // No program data - show placeholder across the grid
             for (int i = 0; i < totalSlots; i++) {
