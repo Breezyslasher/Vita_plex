@@ -264,6 +264,7 @@ private:
     std::string m_dvrId;  // DVR ID for Live TV tuning
     std::vector<std::string> m_deviceIds;  // Device IDs from DVR for channel listing
     std::string m_lineupUri;  // Lineup URI from DVR for EPG channel listing
+    std::string m_epgProviderKey;  // EPG provider key for grid queries (e.g., "tv.plex.providers.epg.cloud:2-...")
 };
 
 } // namespace vitaplex
