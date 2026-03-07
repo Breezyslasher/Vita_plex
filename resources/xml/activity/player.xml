@@ -44,6 +44,78 @@
             visibility="gone"/>
     </brls:Box>
 
+    <!-- Center transport controls overlay - absolutely positioned in center of screen -->
+    <brls:Box
+        id="player/center_controls"
+        width="100%"
+        height="100%"
+        axis="row"
+        justifyContent="center"
+        alignItems="center"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        positionRight="0"
+        positionBottom="0">
+
+        <!-- Rewind / Previous button -->
+        <brls:Box
+            id="player/rewind_btn"
+            width="80"
+            height="80"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="40"
+            marginRight="36"
+            focusable="true">
+            <brls:Image
+                id="player/rewind_icon"
+                width="44"
+                height="44"
+                image="@res/icons/rewind-10.png"
+                scalingType="fit"/>
+        </brls:Box>
+
+        <!-- Play/Pause button - larger and centered -->
+        <brls:Box
+            id="player/play_btn"
+            width="110"
+            height="110"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="55"
+            focusable="true">
+            <brls:Image
+                id="player/play_pause_icon"
+                width="56"
+                height="56"
+                image="@res/icons/pause.png"
+                scalingType="fit"/>
+        </brls:Box>
+
+        <!-- Forward / Next button -->
+        <brls:Box
+            id="player/forward_btn"
+            width="80"
+            height="80"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="40"
+            marginLeft="36"
+            focusable="true">
+            <brls:Image
+                id="player/forward_icon"
+                width="44"
+                height="44"
+                image="@res/icons/fast-forward-10.png"
+                scalingType="fit"/>
+        </brls:Box>
+
+    </brls:Box>
+
     <!-- Controls overlay - positioned at bottom -->
     <brls:Box
         id="player/controls"
@@ -97,7 +169,7 @@
             horizontalAlign="center"
             marginBottom="8"/>
 
-        <!-- Control buttons row: centered with nice spacing -->
+        <!-- Audio/Sub/Video buttons row at bottom -->
         <brls:Box
             width="100%"
             axis="row"
@@ -107,105 +179,101 @@
             <!-- Audio track / Shuffle button -->
             <brls:Box
                 id="player/audio_btn"
-                width="44"
-                height="44"
-                axis="row"
-                justifyContent="center"
-                alignItems="center"
-                cornerRadius="22"
-                backgroundColor="#30FFFFFF"
-                marginRight="20"
-                focusable="true"
-                visibility="gone">
-                <brls:Image
-                    id="player/audio_icon"
-                    width="22"
-                    height="22"
-                    image="@res/icons/translate.png"
-                    scalingType="fit"/>
-            </brls:Box>
-
-            <!-- Rewind / Previous button -->
-            <brls:Box
-                id="player/rewind_btn"
-                width="48"
-                height="48"
-                axis="row"
-                justifyContent="center"
-                alignItems="center"
-                cornerRadius="24"
-                backgroundColor="#30FFFFFF"
-                marginRight="24"
-                focusable="true">
-                <brls:Image
-                    id="player/rewind_icon"
-                    width="24"
-                    height="24"
-                    image="@res/icons/rewind-10.png"
-                    scalingType="fit"/>
-            </brls:Box>
-
-            <!-- Play/Pause button - larger and centered -->
-            <brls:Box
-                id="player/play_btn"
                 width="64"
                 height="64"
                 axis="row"
                 justifyContent="center"
                 alignItems="center"
                 cornerRadius="32"
-                backgroundColor="#40FFFFFF"
-                focusable="true">
+                marginRight="16"
+                focusable="true"
+                visibility="gone">
                 <brls:Image
-                    id="player/play_pause_icon"
-                    width="32"
-                    height="32"
-                    image="@res/icons/pause.png"
-                    scalingType="fit"/>
-            </brls:Box>
-
-            <!-- Forward / Next button -->
-            <brls:Box
-                id="player/forward_btn"
-                width="48"
-                height="48"
-                axis="row"
-                justifyContent="center"
-                alignItems="center"
-                cornerRadius="24"
-                backgroundColor="#30FFFFFF"
-                marginLeft="24"
-                focusable="true">
-                <brls:Image
-                    id="player/forward_icon"
-                    width="24"
-                    height="24"
-                    image="@res/icons/fast-forward-10.png"
+                    id="player/audio_icon"
+                    width="34"
+                    height="34"
+                    image="@res/icons/translate.png"
                     scalingType="fit"/>
             </brls:Box>
 
             <!-- Subtitle / Repeat button -->
             <brls:Box
                 id="player/sub_btn"
-                width="44"
-                height="44"
+                width="64"
+                height="64"
                 axis="row"
                 justifyContent="center"
                 alignItems="center"
-                cornerRadius="22"
-                backgroundColor="#30FFFFFF"
-                marginLeft="20"
+                cornerRadius="32"
+                marginLeft="16"
+                marginRight="16"
                 focusable="true"
                 visibility="gone">
                 <brls:Image
                     id="player/sub_icon"
-                    width="22"
-                    height="22"
+                    width="34"
+                    height="34"
                     image="@res/icons/subtitles.png"
                     scalingType="fit"/>
             </brls:Box>
 
+            <!-- Video track button -->
+            <brls:Box
+                id="player/video_btn"
+                width="64"
+                height="64"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="32"
+                marginLeft="16"
+                focusable="true"
+                visibility="gone">
+                <brls:Image
+                    id="player/video_icon"
+                    width="34"
+                    height="34"
+                    image="@res/icons/video-image.png"
+                    scalingType="fit"/>
+            </brls:Box>
+
         </brls:Box>
+
+    </brls:Box>
+
+    <!-- Track selection overlay - semi-transparent list -->
+    <brls:Box
+        id="player/track_overlay"
+        width="100%"
+        height="100%"
+        axis="column"
+        justifyContent="center"
+        alignItems="center"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        positionRight="0"
+        positionBottom="0"
+        backgroundColor="#CC000000"
+        visibility="gone">
+
+        <!-- Overlay title -->
+        <brls:Label
+            id="player/track_overlay_title"
+            text="Select Track"
+            fontSize="22"
+            textColor="#FFFFFF"
+            marginBottom="12"/>
+
+        <!-- Track list container -->
+        <brls:Box
+            id="player/track_list"
+            width="400"
+            axis="column"
+            alignItems="stretch"
+            backgroundColor="#E0222222"
+            cornerRadius="8"
+            padding="8"/>
 
     </brls:Box>
 

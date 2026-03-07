@@ -577,6 +577,73 @@ void MpvPlayer::cycleAudio() {
     mpv_command_async(m_mpv, 0, cmd);
 }
 
+void MpvPlayer::setVideoTrack(int track) {
+    if (!m_mpv || m_stopping) return;
+
+    int64_t vid = track;
+    mpv_set_property_async(m_mpv, 0, "vid", MPV_FORMAT_INT64, &vid);
+}
+
+void MpvPlayer::disableSubtitles() {
+    if (!m_mpv || m_stopping) return;
+
+    const char* val = "no";
+    mpv_set_property_async(m_mpv, 0, "sid", MPV_FORMAT_STRING, &val);
+}
+
+std::vector<MpvPlayer::TrackInfo> MpvPlayer::getTrackList(const std::string& type) const {
+    std::vector<TrackInfo> tracks;
+    if (!m_mpv) return tracks;
+
+    // Get the track count
+    int64_t count = 0;
+    if (mpv_get_property(m_mpv, "track-list/count", MPV_FORMAT_INT64, &count) < 0)
+        return tracks;
+
+    for (int64_t i = 0; i < count; i++) {
+        TrackInfo info;
+        char prop[64];
+
+        snprintf(prop, sizeof(prop), "track-list/%lld/id", (long long)i);
+        int64_t tmpId = 0;
+        mpv_get_property(m_mpv, prop, MPV_FORMAT_INT64, &tmpId);
+        info.id = static_cast<int>(tmpId);
+
+        snprintf(prop, sizeof(prop), "track-list/%lld/type", (long long)i);
+        char* val = mpv_get_property_string(m_mpv, prop);
+        if (val) { info.type = val; mpv_free(val); }
+
+        // Filter by type if specified
+        if (!type.empty() && info.type != type) continue;
+
+        snprintf(prop, sizeof(prop), "track-list/%lld/title", (long long)i);
+        val = mpv_get_property_string(m_mpv, prop);
+        if (val) { info.title = val; mpv_free(val); }
+
+        snprintf(prop, sizeof(prop), "track-list/%lld/lang", (long long)i);
+        val = mpv_get_property_string(m_mpv, prop);
+        if (val) { info.lang = val; mpv_free(val); }
+
+        snprintf(prop, sizeof(prop), "track-list/%lld/codec", (long long)i);
+        val = mpv_get_property_string(m_mpv, prop);
+        if (val) { info.codec = val; mpv_free(val); }
+
+        snprintf(prop, sizeof(prop), "track-list/%lld/selected", (long long)i);
+        int sel = 0;
+        mpv_get_property(m_mpv, prop, MPV_FORMAT_FLAG, &sel);
+        info.selected = (sel != 0);
+
+        snprintf(prop, sizeof(prop), "track-list/%lld/default", (long long)i);
+        int def = 0;
+        mpv_get_property(m_mpv, prop, MPV_FORMAT_FLAG, &def);
+        info.isDefault = (def != 0);
+
+        tracks.push_back(info);
+    }
+
+    return tracks;
+}
+
 void MpvPlayer::setSubtitleDelay(double seconds) {
     if (!m_mpv || m_stopping) return;
 
