@@ -761,6 +761,7 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
     // Episode info
     item.grandparentTitle = extractJsonValue(resp.body, "grandparentTitle");
     item.parentTitle = extractJsonValue(resp.body, "parentTitle");
+    item.parentRatingKey = extractJsonValue(resp.body, "parentRatingKey");
     item.index = extractJsonInt(resp.body, "index");
     item.parentIndex = extractJsonInt(resp.body, "parentIndex");
 
@@ -1936,10 +1937,20 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     std::string sessionId = sessionBuf;
 
     // Build query string with query-type parameters (per official API spec)
+    AppSettings& settings = Application::getInstance().getSettings();
+
     std::string queryParams;
     queryParams += "path=" + encodedPath;
     queryParams += "&mediaIndex=0&partIndex=0";
-    queryParams += "&directPlay=0&directStream=1";
+
+    // directPlay/directStream based on settings
+    if (settings.directPlay && !settings.forceTranscode) {
+        queryParams += "&directPlay=1&directStream=1";
+    } else if (settings.forceTranscode) {
+        queryParams += "&directPlay=0&directStream=0";
+    } else {
+        queryParams += "&directPlay=0&directStream=1";
+    }
     queryParams += "&directStreamAudio=1";
     queryParams += "&hasMDE=1";
     queryParams += "&location=lan";
@@ -1958,7 +1969,6 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
         // protocol=hls, container=mpegts, codec=h264, level<=4.0, max 720p
         queryParams += "&protocol=hls";
 
-        AppSettings& settings = Application::getInstance().getSettings();
         int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : 2000;
 
         const char* resolution = "960x544";  // Vita native
@@ -1973,7 +1983,13 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
         snprintf(buf, sizeof(buf), "&videoResolution=%s", resolution);
         queryParams += buf;
         queryParams += "&videoQuality=100";
-        queryParams += "&subtitles=auto";
+
+        // Subtitle handling based on settings
+        if (!settings.showSubtitles) {
+            queryParams += "&subtitles=none";
+        } else {
+            queryParams += "&subtitles=auto";
+        }
     }
 
     // Resume offset (in seconds)

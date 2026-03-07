@@ -94,22 +94,6 @@ void SettingsTab::createUISection() {
         });
     m_contentBox->addView(m_themeSelector);
 
-    // Show clock toggle
-    m_clockToggle = new brls::BooleanCell();
-    m_clockToggle->init("Show Clock", settings.showClock, [&settings](bool value) {
-        settings.showClock = value;
-        Application::getInstance().saveSettings();
-    });
-    m_contentBox->addView(m_clockToggle);
-
-    // Animations toggle
-    m_animationsToggle = new brls::BooleanCell();
-    m_animationsToggle->init("Enable Animations", settings.animationsEnabled, [&settings](bool value) {
-        settings.animationsEnabled = value;
-        Application::getInstance().saveSettings();
-    });
-    m_contentBox->addView(m_animationsToggle);
-
     // Debug logging toggle
     m_debugLogToggle = new brls::BooleanCell();
     m_debugLogToggle->init("Debug Logging", settings.debugLogging, [&settings](bool value) {
@@ -309,14 +293,6 @@ void SettingsTab::createTranscodeSection() {
     });
     m_contentBox->addView(m_forceTranscodeToggle);
 
-    // Burn subtitles toggle
-    m_burnSubtitlesToggle = new brls::BooleanCell();
-    m_burnSubtitlesToggle->init("Burn Subtitles", settings.burnSubtitles, [&settings](bool value) {
-        settings.burnSubtitles = value;
-        Application::getInstance().saveSettings();
-    });
-    m_contentBox->addView(m_burnSubtitlesToggle);
-
     // Direct play toggle
     m_directPlayToggle = new brls::BooleanCell();
     m_directPlayToggle->init("Try Direct Play First", settings.directPlay, [&settings](bool value) {
@@ -324,6 +300,19 @@ void SettingsTab::createTranscodeSection() {
         Application::getInstance().saveSettings();
     });
     m_contentBox->addView(m_directPlayToggle);
+
+    // Connection timeout selector
+    m_connectionTimeoutSelector = new brls::SelectorCell();
+    m_connectionTimeoutSelector->init("Connection Timeout",
+        {"30 seconds", "60 seconds", "120 seconds", "180 seconds", "300 seconds"},
+        settings.connectionTimeout == 30 ? 0 :
+        settings.connectionTimeout == 60 ? 1 :
+        settings.connectionTimeout == 120 ? 2 :
+        settings.connectionTimeout == 300 ? 4 : 3,
+        [this](int index) {
+            onConnectionTimeoutChanged(index);
+        });
+    m_contentBox->addView(m_connectionTimeoutSelector);
 }
 
 void SettingsTab::createDownloadsSection() {
@@ -335,33 +324,6 @@ void SettingsTab::createDownloadsSection() {
     header->setTitle("Downloads");
     m_contentBox->addView(header);
 
-    // Auto-start downloads toggle
-    m_autoStartDownloadsToggle = new brls::BooleanCell();
-    m_autoStartDownloadsToggle->init("Auto-Start Downloads", settings.autoStartDownloads, [&settings](bool value) {
-        settings.autoStartDownloads = value;
-        Application::getInstance().saveSettings();
-    });
-    m_contentBox->addView(m_autoStartDownloadsToggle);
-
-    // WiFi only toggle
-    m_wifiOnlyToggle = new brls::BooleanCell();
-    m_wifiOnlyToggle->init("Download Over WiFi Only", settings.downloadOverWifiOnly, [&settings](bool value) {
-        settings.downloadOverWifiOnly = value;
-        Application::getInstance().saveSettings();
-    });
-    m_contentBox->addView(m_wifiOnlyToggle);
-
-    // Concurrent downloads selector
-    m_concurrentDownloadsSelector = new brls::SelectorCell();
-    m_concurrentDownloadsSelector->init("Max Concurrent Downloads",
-        {"1", "2", "3"},
-        settings.maxConcurrentDownloads - 1,
-        [&settings](int index) {
-            settings.maxConcurrentDownloads = index + 1;
-            Application::getInstance().saveSettings();
-        });
-    m_contentBox->addView(m_concurrentDownloadsSelector);
-
     // Delete after watch toggle
     m_deleteAfterWatchToggle = new brls::BooleanCell();
     m_deleteAfterWatchToggle->init("Delete After Watching", settings.deleteAfterWatch, [&settings](bool value) {
@@ -369,14 +331,6 @@ void SettingsTab::createDownloadsSection() {
         Application::getInstance().saveSettings();
     });
     m_contentBox->addView(m_deleteAfterWatchToggle);
-
-    // Sync progress toggle
-    m_syncProgressToggle = new brls::BooleanCell();
-    m_syncProgressToggle->init("Sync Progress on Connect", settings.syncProgressOnConnect, [&settings](bool value) {
-        settings.syncProgressOnConnect = value;
-        Application::getInstance().saveSettings();
-    });
-    m_contentBox->addView(m_syncProgressToggle);
 
     // Clear all downloads
     m_clearDownloadsCell = new brls::DetailCell();
@@ -541,6 +495,21 @@ void SettingsTab::onSubtitleSizeChanged(int index) {
     AppSettings& settings = app.getSettings();
 
     settings.subtitleSize = static_cast<SubtitleSize>(index);
+    app.saveSettings();
+}
+
+void SettingsTab::onConnectionTimeoutChanged(int index) {
+    Application& app = Application::getInstance();
+    AppSettings& settings = app.getSettings();
+
+    switch (index) {
+        case 0: settings.connectionTimeout = 30; break;
+        case 1: settings.connectionTimeout = 60; break;
+        case 2: settings.connectionTimeout = 120; break;
+        case 3: settings.connectionTimeout = 180; break;
+        case 4: settings.connectionTimeout = 300; break;
+    }
+
     app.saveSettings();
 }
 

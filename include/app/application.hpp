@@ -49,8 +49,6 @@ enum class SubtitleSize {
 struct AppSettings {
     // UI Settings
     AppTheme theme = AppTheme::DARK;
-    bool showClock = true;
-    bool animationsEnabled = true;
     bool debugLogging = true;  // Enable debug logging
 
     // Layout Settings
@@ -74,7 +72,6 @@ struct AppSettings {
     // Transcode Settings
     VideoQuality videoQuality = VideoQuality::QUALITY_480P;
     bool forceTranscode = false;
-    bool burnSubtitles = true;  // Burn subtitles into video for Vita compatibility
     int maxBitrate = 2000;      // kbps
 
     // Network Settings
@@ -82,11 +79,7 @@ struct AppSettings {
     bool directPlay = false;     // Try direct play first
 
     // Download Settings
-    bool autoStartDownloads = true;    // Start downloads automatically after queueing
-    bool downloadOverWifiOnly = false; // Only download when on WiFi
-    int maxConcurrentDownloads = 1;    // Max concurrent downloads
     bool deleteAfterWatch = false;     // Auto-delete after fully watched
-    bool syncProgressOnConnect = true; // Sync offline progress when connected
 };
 
 /**
