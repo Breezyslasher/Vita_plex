@@ -70,7 +70,7 @@
             text=""
             fontSize="16"
             textColor="#AAAAAA"
-            marginBottom="10"
+            marginBottom="5"
             visibility="gone"/>
 
         <!-- Queue info (track X of Y, shuffle/repeat status) -->
@@ -79,7 +79,7 @@
             text=""
             fontSize="12"
             textColor="#888888"
-            marginBottom="10"
+            marginBottom="8"
             visibility="gone"/>
 
         <!-- Progress slider -->
@@ -87,14 +87,55 @@
             id="player/progress"
             width="100%"
             height="30"
-            marginBottom="10"/>
+            marginBottom="5"/>
 
-        <!-- Time display -->
-        <brls:Label
-            id="player/time"
-            text="00:00 / 00:00"
-            fontSize="14"
-            horizontalAlign="center"/>
+        <!-- Time + control buttons row -->
+        <brls:Box
+            width="100%"
+            axis="row"
+            justifyContent="spaceBetween"
+            alignItems="center">
+
+            <!-- Time display (left) -->
+            <brls:Label
+                id="player/time"
+                text="00:00 / 00:00"
+                fontSize="14"/>
+
+            <!-- Control buttons (right) -->
+            <brls:Box
+                id="player/buttons"
+                axis="row"
+                alignItems="center">
+
+                <!-- Play/Pause indicator -->
+                <brls:Label
+                    id="player/play_pause_label"
+                    text="[A] Pause"
+                    fontSize="12"
+                    textColor="#CCCCCC"
+                    marginRight="15"/>
+
+                <!-- Audio track cycle -->
+                <brls:Label
+                    id="player/audio_label"
+                    text="[X] Audio"
+                    fontSize="12"
+                    textColor="#CCCCCC"
+                    marginRight="15"
+                    visibility="gone"/>
+
+                <!-- Subtitle toggle -->
+                <brls:Label
+                    id="player/sub_label"
+                    text="[Y] Subs"
+                    fontSize="12"
+                    textColor="#CCCCCC"
+                    visibility="gone"/>
+
+            </brls:Box>
+
+        </brls:Box>
 
     </brls:Box>
 

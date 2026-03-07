@@ -164,11 +164,33 @@ void PlayerActivity::onContentAvailable() {
             return true;
         });
 
-        // Y toggles controls in non-queue mode (queue mode uses Y for repeat)
-        this->registerAction("Toggle Controls", brls::ControllerButton::BUTTON_Y, [this](brls::View* view) {
-            toggleControls();
+        // X = cycle audio track, Y = cycle subtitle track (for video playback)
+        this->registerAction("Audio Track", brls::ControllerButton::BUTTON_X, [this](brls::View* view) {
+            cycleAudioTrack();
             return true;
         });
+
+        this->registerAction("Subtitle", brls::ControllerButton::BUTTON_Y, [this](brls::View* view) {
+            cycleSubtitleTrack();
+            return true;
+        });
+    }
+
+    // Show mode-specific button labels
+    if (m_isQueueMode) {
+        // Queue mode: X=Shuffle, Y=Repeat, LB/RB=Prev/Next
+        if (audioTrackLabel) {
+            audioTrackLabel->setText("[X] Shuffle");
+            audioTrackLabel->setVisibility(brls::Visibility::VISIBLE);
+        }
+        if (subtitleLabel) {
+            subtitleLabel->setText("[Y] Repeat");
+            subtitleLabel->setVisibility(brls::Visibility::VISIBLE);
+        }
+    } else {
+        // Video mode: X=Audio Track, Y=Subtitles, LB/RB=Seek
+        if (audioTrackLabel) audioTrackLabel->setVisibility(brls::Visibility::VISIBLE);
+        if (subtitleLabel) subtitleLabel->setVisibility(brls::Visibility::VISIBLE);
     }
 
     // Start update timer
@@ -635,6 +657,7 @@ void PlayerActivity::updateProgress() {
                     brls::Logger::debug("Video view enabled (deferred)");
                 }
                 m_isPlaying = true;
+                updatePlayPauseLabel();
                 brls::Logger::info("PlayerActivity: Deferred load started successfully");
             } else {
                 brls::Logger::error("PlayerActivity: Deferred loadUrl failed");
@@ -695,6 +718,13 @@ void PlayerActivity::updateProgress() {
         }
     }
 
+    // Keep play/pause label in sync with actual player state
+    bool actuallyPlaying = player.isPlaying();
+    if (actuallyPlaying != m_isPlaying) {
+        m_isPlaying = actuallyPlaying;
+        updatePlayPauseLabel();
+    }
+
     // Check if playback ended (only if we were actually playing)
     if (m_isPlaying && player.hasEnded()) {
         m_isPlaying = false;  // Prevent multiple triggers
@@ -719,6 +749,25 @@ void PlayerActivity::togglePlayPause() {
         player.play();
         m_isPlaying = true;
     }
+    updatePlayPauseLabel();
+}
+
+void PlayerActivity::updatePlayPauseLabel() {
+    if (playPauseLabel) {
+        playPauseLabel->setText(m_isPlaying ? "[A] Pause" : "[A] Play");
+    }
+}
+
+void PlayerActivity::cycleAudioTrack() {
+    MpvPlayer& player = MpvPlayer::getInstance();
+    player.cycleAudio();
+    player.showOSD("Audio track changed", 1.5);
+}
+
+void PlayerActivity::cycleSubtitleTrack() {
+    MpvPlayer& player = MpvPlayer::getInstance();
+    player.cycleSubtitle();
+    player.showOSD("Subtitle track changed", 1.5);
 }
 
 void PlayerActivity::seek(int seconds) {

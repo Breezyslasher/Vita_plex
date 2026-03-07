@@ -224,7 +224,8 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_mainContent->addView(childrenLabel);
 
         auto* childrenScroll = new brls::HScrollingFrame();
-        childrenScroll->setHeight(180);
+        // Episodes use landscape cells (160x130), seasons use portrait (120x180)
+        childrenScroll->setHeight(m_item.mediaType == MediaType::SEASON ? 140 : 180);
         childrenScroll->setMarginBottom(20);
 
         m_childrenBox = new brls::Box();
@@ -235,7 +236,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_mainContent->addView(childrenScroll);
     }
 
-    // Track list for albums (vertical list like Suwayomi chapter list)
+    // Track list for albums (vertical scrollable list like Suwayomi chapter list)
     if (m_item.mediaType == MediaType::MUSIC_ALBUM) {
         auto* tracksLabel = new brls::Label();
         tracksLabel->setText("Tracks");
@@ -243,11 +244,17 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         tracksLabel->setMarginBottom(10);
         m_mainContent->addView(tracksLabel);
 
+        // Scrollable container for track list (like Suwayomi RecyclerFrame wrapper)
+        m_trackScrollView = new brls::ScrollingFrame();
+        m_trackScrollView->setGrow(1.0f);
+
         m_trackListBox = new brls::Box();
         m_trackListBox->setAxis(brls::Axis::COLUMN);
         m_trackListBox->setJustifyContent(brls::JustifyContent::FLEX_START);
         m_trackListBox->setAlignItems(brls::AlignItems::STRETCH);
-        m_mainContent->addView(m_trackListBox);
+
+        m_trackScrollView->setContentView(m_trackListBox);
+        m_mainContent->addView(m_trackScrollView);
     }
 
     // Music categories container for artists
@@ -390,8 +397,15 @@ void MediaDetailView::loadChildren() {
         for (const auto& child : m_children) {
             auto* cell = new MediaItemCell();
             cell->setItem(child);
-            cell->setWidth(120);
-            cell->setHeight(150);
+
+            // Episodes get wider landscape cells, seasons/other get portrait
+            if (child.mediaType == MediaType::EPISODE) {
+                cell->setWidth(160);
+                cell->setHeight(130);
+            } else {
+                cell->setWidth(120);
+                cell->setHeight(180);
+            }
             cell->setMarginRight(10);
 
             cell->registerClickAction([this, child](brls::View* view) {

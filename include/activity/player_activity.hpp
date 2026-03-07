@@ -90,6 +90,11 @@ private:
     // Alive flag for async image loads - prevents use-after-free when activity is destroyed
     std::shared_ptr<std::atomic<bool>> m_alive = std::make_shared<std::atomic<bool>>(true);
 
+    // Track cycling
+    void cycleAudioTrack();
+    void cycleSubtitleTrack();
+    void updatePlayPauseLabel();
+
     BRLS_BIND(brls::Box, playerContainer, "player/container");
     BRLS_BIND(brls::Label, titleLabel, "player/title");
     BRLS_BIND(brls::Label, artistLabel, "player/artist");
@@ -100,6 +105,9 @@ private:
     BRLS_BIND(brls::Image, photoImage, "player/photo");
     BRLS_BIND(brls::Image, albumArt, "player/album_art");
     BRLS_BIND(VideoView, videoView, "player/video");
+    BRLS_BIND(brls::Label, playPauseLabel, "player/play_pause_label");
+    BRLS_BIND(brls::Label, audioTrackLabel, "player/audio_label");
+    BRLS_BIND(brls::Label, subtitleLabel, "player/sub_label");
 };
 
 } // namespace vitaplex

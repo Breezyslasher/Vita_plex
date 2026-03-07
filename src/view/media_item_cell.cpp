@@ -68,15 +68,21 @@ void MediaItemCell::setItem(const MediaItem& item) {
 
     // Adjust thumbnail size based on media type
     // Music (albums, artists, tracks) use square covers
+    // Episodes use landscape stills (episode thumbnail)
     // Movies, TV shows use portrait posters
     bool isMusic = (item.mediaType == MediaType::MUSIC_ARTIST ||
                     item.mediaType == MediaType::MUSIC_ALBUM ||
                     item.mediaType == MediaType::MUSIC_TRACK);
+    bool isEpisode = (item.mediaType == MediaType::EPISODE);
 
     if (isMusic) {
         // Square album art
         m_thumbnailImage->setWidth(110);
         m_thumbnailImage->setHeight(110);
+    } else if (isEpisode) {
+        // Landscape episode still
+        m_thumbnailImage->setWidth(140);
+        m_thumbnailImage->setHeight(80);
     } else {
         // Portrait poster
         m_thumbnailImage->setWidth(110);
@@ -118,7 +124,8 @@ void MediaItemCell::setItem(const MediaItem& item) {
     // Show progress bar for items with view offset
     if (m_progressBar && item.viewOffset > 0 && item.duration > 0) {
         float progress = (float)item.viewOffset / (float)item.duration;
-        m_progressBar->setWidth(110 * progress);
+        float barWidth = isEpisode ? 140.0f : 110.0f;
+        m_progressBar->setWidth(barWidth * progress);
         m_progressBar->setVisibility(brls::Visibility::VISIBLE);
     }
 
@@ -131,18 +138,25 @@ void MediaItemCell::loadThumbnail() {
 
     PlexClient& client = PlexClient::getInstance();
 
-    // Use square dimensions for music, portrait for movies/TV
+    // Use square dimensions for music, landscape for episodes, portrait for movies/TV
     bool isMusic = (m_item.mediaType == MediaType::MUSIC_ARTIST ||
                     m_item.mediaType == MediaType::MUSIC_ALBUM ||
                     m_item.mediaType == MediaType::MUSIC_TRACK);
+    bool isEpisode = (m_item.mediaType == MediaType::EPISODE);
 
-    // Request at display size to save memory on Vita (110x165 portrait, 110x110 square)
-    int width = isMusic ? 110 : 110;
-    int height = isMusic ? 110 : 165;
+    int width, height;
+    if (isMusic) {
+        width = 110; height = 110;
+    } else if (isEpisode) {
+        width = 280; height = 160;  // Landscape episode still (2x display for quality)
+    } else {
+        width = 110; height = 165;
+    }
 
-    // For episodes, prefer grandparentThumb (show poster) if available
+    // For episodes, use episode's own thumb (episode still) - landscape format
+    // Fall back to grandparentThumb (show poster) only if episode thumb is missing
     std::string thumbPath = m_item.thumb;
-    if (m_item.mediaType == MediaType::EPISODE && !m_item.grandparentThumb.empty()) {
+    if (isEpisode && thumbPath.empty() && !m_item.grandparentThumb.empty()) {
         thumbPath = m_item.grandparentThumb;
     }
 

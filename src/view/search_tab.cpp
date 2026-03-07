@@ -107,7 +107,7 @@ SearchTab::SearchTab() {
     m_scrollContent->addView(m_episodesLabel);
 
     m_episodesRow = new brls::HScrollingFrame();
-    m_episodesRow->setHeight(180);
+    m_episodesRow->setHeight(145);  // Shorter for landscape episode cells
     m_episodesRow->setMarginBottom(15);
     m_episodesRow->setVisibility(brls::Visibility::GONE);
 
@@ -169,8 +169,20 @@ void SearchTab::populateRow(brls::Box* rowContent, const std::vector<MediaItem>&
     for (const auto& item : items) {
         auto* cell = new MediaItemCell();
         cell->setItem(item);
-        cell->setWidth(120);
-        cell->setHeight(170);
+
+        // Use type-appropriate cell sizes
+        if (item.mediaType == MediaType::EPISODE) {
+            cell->setWidth(160);
+            cell->setHeight(130);
+        } else if (item.mediaType == MediaType::MUSIC_ARTIST ||
+                   item.mediaType == MediaType::MUSIC_ALBUM ||
+                   item.mediaType == MediaType::MUSIC_TRACK) {
+            cell->setWidth(120);
+            cell->setHeight(150);
+        } else {
+            cell->setWidth(120);
+            cell->setHeight(170);
+        }
         cell->setMarginRight(10);
 
         MediaItem capturedItem = item;
