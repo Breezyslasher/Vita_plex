@@ -18,6 +18,7 @@ public:
     ~MusicTab() override;
 
     void onFocusGained() override;
+    void willDisappear(bool resetState) override;
 
 private:
     void loadSections();

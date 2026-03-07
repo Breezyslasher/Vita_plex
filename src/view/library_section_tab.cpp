@@ -6,6 +6,7 @@
 #include "view/media_item_cell.hpp"
 #include "view/media_detail_view.hpp"
 #include "app/application.hpp"
+#include "utils/image_loader.hpp"
 #include "utils/async.hpp"
 
 namespace vitaplex {
@@ -105,8 +106,15 @@ LibrarySectionTab::~LibrarySectionTab() {
     brls::Logger::debug("LibrarySectionTab: Destroyed for section {}", m_sectionKey);
 }
 
+void LibrarySectionTab::willDisappear(bool resetState) {
+    brls::Box::willDisappear(resetState);
+    if (m_alive) *m_alive = false;
+    ImageLoader::cancelAll();
+}
+
 void LibrarySectionTab::onFocusGained() {
     brls::Box::onFocusGained();
+    m_alive = std::make_shared<bool>(true);
 
     if (!m_loaded) {
         loadContent();

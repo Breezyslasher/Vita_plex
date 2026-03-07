@@ -8,6 +8,7 @@
 #include "app/application.hpp"
 #include "app/music_queue.hpp"
 #include "activity/player_activity.hpp"
+#include "utils/image_loader.hpp"
 #include "utils/async.hpp"
 
 namespace vitaplex {
@@ -151,8 +152,15 @@ brls::Box* MusicTab::createHorizontalRow(const std::string& title) {
     return rowBox;
 }
 
+void MusicTab::willDisappear(bool resetState) {
+    brls::Box::willDisappear(resetState);
+    if (m_alive) *m_alive = false;
+    ImageLoader::cancelAll();
+}
+
 void MusicTab::onFocusGained() {
     brls::Box::onFocusGained();
+    m_alive = std::make_shared<bool>(true);
 
     if (!m_loaded) {
         loadSections();
