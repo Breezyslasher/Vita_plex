@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<brls:Box
+    id="manga_item/container"
+    width="140"
+    height="235"
+    axis="column"
+    focusable="true"
+    marginRight="15"
+    marginBottom="15">
+
+    <!-- Thumbnail with badge overlay -->
+    <brls:Box
+        width="140"
+        height="180"
+        position="relative">
+
+        <!-- Cover image -->
+        <brls:Image
+            id="manga_item/thumbnail"
+            width="140"
+            height="180"
+            scalingType="fill"
+            cornerRadius="6"
+            backgroundColor="#2d2d44"/>
+
+        <!-- Unread badge (top-right corner) -->
+        <brls:Box
+            id="manga_item/badge_container"
+            width="30"
+            height="20"
+            position="absolute"
+            positionTop="5"
+            positionRight="5"
+            cornerRadius="10"
+            backgroundColor="#ff4444"
+            justifyContent="center"
+            alignItems="center">
+            <brls:Label
+                id="manga_item/unread_badge"
+                text="0"
+                fontSize="11"
+                textColor="#ffffff"
+                horizontalAlign="center"/>
+        </brls:Box>
+
+        <!-- Download indicator (bottom-left corner) -->
+        <brls:Box
+            id="manga_item/download_indicator"
+            width="24"
+            height="24"
+            position="absolute"
+            positionBottom="5"
+            positionLeft="5"
+            cornerRadius="12"
+            backgroundColor="#00aa00"
+            justifyContent="center"
+            alignItems="center"
+            visibility="gone">
+            <brls:Label
+                text="DL"
+                fontSize="9"
+                textColor="#ffffff"/>
+        </brls:Box>
+
+    </brls:Box>
+
+    <!-- Title (up to 2 lines for longer titles) -->
+    <brls:Label
+        id="manga_item/title"
+        text="Manga Title"
+        width="140"
+        fontSize="12"
+        marginTop="5"
+        horizontalAlign="left"/>
+
+    <!-- Subtitle (author/chapters) -->
+    <brls:Label
+        id="manga_item/subtitle"
+        text=""
+        width="140"
+        fontSize="10"
+        textColor="#a0a0a0"
+        singleLine="true"
+        horizontalAlign="left"/>
+
+</brls:Box>
