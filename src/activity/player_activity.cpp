@@ -1147,6 +1147,11 @@ void PlayerActivity::populateSubtitleSearchResults() {
     if (!trackList || !trackOverlayTitle) return;
 
     trackOverlayTitle->setText("Searching Subtitles...");
+
+    // Give focus to trackList parent before clearing to avoid destroying focused view
+    if (trackOverlay)
+        brls::Application::giveFocus(trackOverlay);
+
     trackList->clearViews();
 
     // Add a loading label
@@ -1191,7 +1196,9 @@ void PlayerActivity::populateSubtitleSearchResults() {
         backItem->addView(backLabel);
 
         backItem->registerClickAction([this](brls::View* view) {
-            populateTrackList(TrackSelectMode::SUBTITLE);
+            brls::sync([this]() {
+                populateTrackList(TrackSelectMode::SUBTITLE);
+            });
             return true;
         });
         backItem->addGestureRecognizer(new brls::TapGestureRecognizer(backItem));
@@ -1201,6 +1208,10 @@ void PlayerActivity::populateSubtitleSearchResults() {
 
     // Store results for selection
     m_subtitleSearchResults = results;
+
+    // Give focus to trackList parent before clearing to avoid destroying focused view
+    if (trackOverlay)
+        brls::Application::giveFocus(trackOverlay);
 
     trackList->clearViews();
     trackOverlayTitle->setText("Subtitle Search Results");
@@ -1224,7 +1235,9 @@ void PlayerActivity::populateSubtitleSearchResults() {
     backItem->addView(backLabel);
 
     backItem->registerClickAction([this](brls::View* view) {
-        populateTrackList(TrackSelectMode::SUBTITLE);
+        brls::sync([this]() {
+            populateTrackList(TrackSelectMode::SUBTITLE);
+        });
         return true;
     });
     backItem->addGestureRecognizer(new brls::TapGestureRecognizer(backItem));
@@ -1287,6 +1300,11 @@ void PlayerActivity::populateSubtitleSearchResults() {
         });
         item->addGestureRecognizer(new brls::TapGestureRecognizer(item));
         trackList->addView(item);
+    }
+
+    // Give focus to first item in the results list
+    if (!trackList->getChildren().empty()) {
+        brls::Application::giveFocus(trackList->getChildren()[0]);
     }
 }
 
