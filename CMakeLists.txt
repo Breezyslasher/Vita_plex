@@ -248,6 +248,18 @@ vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
     FILE resources/icons/subtitles.png resources/icons/subtitles.png
     FILE resources/icons/video-image.png resources/icons/video-image.png
     FILE resources/icons/translate.png resources/icons/translate.png
+    FILE resources/icons/fast-forward-5.png resources/icons/fast-forward-5.png
+    FILE resources/icons/fast-forward-10.png resources/icons/fast-forward-10.png
+    FILE resources/icons/fast-forward-15.png resources/icons/fast-forward-15.png
+    FILE resources/icons/fast-forward-30.png resources/icons/fast-forward-30.png
+    FILE resources/icons/fast-forward-45.png resources/icons/fast-forward-45.png
+    FILE resources/icons/fast-forward-60.png resources/icons/fast-forward-60.png
+    FILE resources/icons/rewind-5.png resources/icons/rewind-5.png
+    FILE resources/icons/rewind-10.png resources/icons/rewind-10.png
+    FILE resources/icons/rewind-15.png resources/icons/rewind-15.png
+    FILE resources/icons/rewind-30.png resources/icons/rewind-30.png
+    FILE resources/icons/rewind-45.png resources/icons/rewind-45.png
+    FILE resources/icons/rewind-60.png resources/icons/rewind-60.png
 
     # Images
     FILE resources/images/circle_button.png resources/images/circle_button.png

@@ -141,7 +141,7 @@
                     id="player/rewind_icon"
                     width="24"
                     height="24"
-                    image="@res/icons/skip-previous.png"
+                    image="@res/icons/rewind-10.png"
                     scalingType="fit"/>
             </brls:Box>
 
@@ -181,7 +181,7 @@
                     id="player/forward_icon"
                     width="24"
                     height="24"
-                    image="@res/icons/skip-next.png"
+                    image="@res/icons/fast-forward-10.png"
                     scalingType="fit"/>
             </brls:Box>
 

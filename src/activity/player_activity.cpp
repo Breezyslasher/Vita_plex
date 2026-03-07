@@ -211,8 +211,9 @@ void PlayerActivity::onContentAvailable() {
 
     // Show mode-specific icons and wire touch
     if (m_isQueueMode) {
-        // Queue mode: skip-previous / play / skip-next icons
-        // Audio/Sub buttons not needed for queue mode (shuffle/repeat via controller)
+        // Queue mode: use skip-previous / skip-next icons for prev/next track
+        if (rewindIcon) rewindIcon->setImageFromRes("icons/skip-previous.png");
+        if (forwardIcon) forwardIcon->setImageFromRes("icons/skip-next.png");
 
         if (audioBtn) {
             audioBtn->setVisibility(brls::Visibility::VISIBLE);
@@ -231,7 +232,11 @@ void PlayerActivity::onContentAvailable() {
             subBtn->addGestureRecognizer(new brls::TapGestureRecognizer(subBtn));
         }
     } else {
-        // Video mode: translate icon for audio, subtitles icon for subs
+        // Video mode: rewind-10 / fast-forward-10 icons for seeking
+        if (rewindIcon) rewindIcon->setImageFromRes("icons/rewind-10.png");
+        if (forwardIcon) forwardIcon->setImageFromRes("icons/fast-forward-10.png");
+
+        // translate icon for audio, subtitles icon for subs
         if (audioBtn) {
             audioBtn->setVisibility(brls::Visibility::VISIBLE);
             if (audioIcon) {
