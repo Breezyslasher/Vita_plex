@@ -174,6 +174,19 @@ struct PlaylistItem {
     MediaItem media;             // The actual media item (track)
 };
 
+// Stream info from Plex metadata (audio/video/subtitle streams within a Part)
+struct PlexStream {
+    int id = 0;              // Stream ID (for Plex API stream selection)
+    int streamType = 0;      // 1=video, 2=audio, 3=subtitle
+    std::string codec;       // e.g., "h264", "aac", "srt"
+    std::string displayTitle; // Human-readable title (e.g., "English (AAC Stereo)")
+    std::string language;     // Language name (e.g., "English")
+    std::string languageCode; // Language code (e.g., "eng")
+    bool selected = false;    // Currently selected stream
+    int channels = 0;         // Audio channels
+    std::string title;        // Track title if any
+};
+
 /**
  * Plex API Client singleton
  */
@@ -235,6 +248,10 @@ public:
     bool updatePlayProgress(const std::string& ratingKey, int timeMs);
     bool markAsWatched(const std::string& ratingKey);
     bool markAsUnwatched(const std::string& ratingKey);
+
+    // Stream selection (Plex API: PUT /library/parts/{partId})
+    bool fetchStreams(const std::string& ratingKey, std::vector<PlexStream>& streams, int& partId);
+    bool setStreamSelection(int partId, int audioStreamID = -1, int subtitleStreamID = -1);
 
     // Live TV
     bool fetchLiveTVChannels(std::vector<LiveTVChannel>& channels);

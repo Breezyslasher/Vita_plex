@@ -94,14 +94,30 @@ public:
     bool isMuted() const;
     void toggleMute();
 
+    // Track info (from MPV's track-list)
+    struct TrackInfo {
+        int id = 0;              // MPV track ID
+        std::string type;        // "video", "audio", "sub"
+        std::string title;       // Track title (if any)
+        std::string lang;        // Language code (e.g., "eng")
+        std::string codec;       // Codec name (e.g., "h264", "aac")
+        bool selected = false;   // Currently selected
+        bool isDefault = false;
+    };
+
     // Tracks
     void setSubtitleTrack(int track);
     void setAudioTrack(int track);
+    void setVideoTrack(int track);
     void cycleSubtitle();
     void cycleAudio();
     void toggleSubtitles();
     void setSubtitleDelay(double seconds);
     void setAudioDelay(double seconds);
+    void disableSubtitles();
+
+    // Get available tracks by type
+    std::vector<TrackInfo> getTrackList(const std::string& type = "") const;
 
     // State
     MpvPlayerState getState() const { return m_state; }

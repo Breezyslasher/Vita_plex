@@ -169,7 +169,7 @@
             horizontalAlign="center"
             marginBottom="8"/>
 
-        <!-- Audio/Sub buttons row at bottom -->
+        <!-- Audio/Sub/Video buttons row at bottom -->
         <brls:Box
             width="100%"
             axis="row"
@@ -185,7 +185,7 @@
                 justifyContent="center"
                 alignItems="center"
                 cornerRadius="32"
-                marginRight="24"
+                marginRight="16"
                 focusable="true"
                 visibility="gone">
                 <brls:Image
@@ -205,7 +205,8 @@
                 justifyContent="center"
                 alignItems="center"
                 cornerRadius="32"
-                marginLeft="24"
+                marginLeft="16"
+                marginRight="16"
                 focusable="true"
                 visibility="gone">
                 <brls:Image
@@ -216,7 +217,63 @@
                     scalingType="fit"/>
             </brls:Box>
 
+            <!-- Video track button -->
+            <brls:Box
+                id="player/video_btn"
+                width="64"
+                height="64"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="32"
+                marginLeft="16"
+                focusable="true"
+                visibility="gone">
+                <brls:Image
+                    id="player/video_icon"
+                    width="34"
+                    height="34"
+                    image="@res/icons/video-image.png"
+                    scalingType="fit"/>
+            </brls:Box>
+
         </brls:Box>
+
+    </brls:Box>
+
+    <!-- Track selection overlay - semi-transparent list -->
+    <brls:Box
+        id="player/track_overlay"
+        width="100%"
+        height="100%"
+        axis="column"
+        justifyContent="center"
+        alignItems="center"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        positionRight="0"
+        positionBottom="0"
+        backgroundColor="#CC000000"
+        visibility="gone">
+
+        <!-- Overlay title -->
+        <brls:Label
+            id="player/track_overlay_title"
+            text="Select Track"
+            fontSize="22"
+            textColor="#FFFFFF"
+            marginBottom="12"/>
+
+        <!-- Track list container -->
+        <brls:Box
+            id="player/track_list"
+            width="400"
+            axis="column"
+            alignItems="stretch"
+            backgroundColor="#E0222222"
+            cornerRadius="8"
+            padding="8"/>
 
     </brls:Box>
 

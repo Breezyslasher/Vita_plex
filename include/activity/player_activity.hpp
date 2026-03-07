@@ -11,6 +11,7 @@
 #include <vector>
 #include <memory>
 #include <atomic>
+#include "app/plex_client.hpp"
 
 // Forward declarations
 namespace vitaplex {
@@ -95,6 +96,19 @@ private:
     void cycleSubtitleTrack();
     void updatePlayPauseLabel();
 
+    // Track selection overlay
+    enum class TrackSelectMode { NONE, AUDIO, SUBTITLE, VIDEO };
+    TrackSelectMode m_trackSelectMode = TrackSelectMode::NONE;
+    std::vector<PlexStream> m_plexStreams;  // Cached streams from Plex
+    int m_partId = 0;                       // Plex part ID for stream selection
+    bool m_streamsLoaded = false;
+
+    void showTrackOverlay(TrackSelectMode mode);
+    void hideTrackOverlay();
+    void populateTrackList(TrackSelectMode mode);
+    void selectTrack(TrackSelectMode mode, int index);  // index into filtered list, -1 = off for subs
+    void fetchPlexStreams();
+
     BRLS_BIND(brls::Box, playerContainer, "player/container");
     BRLS_BIND(brls::Label, titleLabel, "player/title");
     BRLS_BIND(brls::Label, artistLabel, "player/artist");
@@ -116,6 +130,11 @@ private:
     BRLS_BIND(brls::Box, forwardBtn, "player/forward_btn");
     BRLS_BIND(brls::Box, audioBtn, "player/audio_btn");
     BRLS_BIND(brls::Box, subBtn, "player/sub_btn");
+    BRLS_BIND(brls::Box, videoBtn, "player/video_btn");
+    BRLS_BIND(brls::Image, videoIcon, "player/video_icon");
+    BRLS_BIND(brls::Box, trackOverlay, "player/track_overlay");
+    BRLS_BIND(brls::Label, trackOverlayTitle, "player/track_overlay_title");
+    BRLS_BIND(brls::Box, trackList, "player/track_list");
 };
 
 } // namespace vitaplex
