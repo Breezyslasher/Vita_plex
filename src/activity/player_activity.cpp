@@ -980,6 +980,10 @@ void PlayerActivity::showControls() {
         controlsBox->setAlpha(1.0f);
         controlsBox->setVisibility(brls::Visibility::VISIBLE);
     }
+    if (centerControls) {
+        centerControls->setAlpha(1.0f);
+        centerControls->setVisibility(brls::Visibility::VISIBLE);
+    }
     if (titleLabel) {
         titleLabel->setVisibility(brls::Visibility::VISIBLE);
     }
@@ -993,6 +997,10 @@ void PlayerActivity::hideControls() {
     if (controlsBox) {
         controlsBox->setAlpha(0.0f);
         controlsBox->setVisibility(brls::Visibility::GONE);
+    }
+    if (centerControls) {
+        centerControls->setAlpha(0.0f);
+        centerControls->setVisibility(brls::Visibility::GONE);
     }
 }
 

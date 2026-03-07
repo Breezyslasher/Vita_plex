@@ -102,6 +102,7 @@ private:
     BRLS_BIND(brls::Label, queueLabel, "player/queue_info");
     BRLS_BIND(brls::Slider, progressSlider, "player/progress");
     BRLS_BIND(brls::Box, controlsBox, "player/controls");
+    BRLS_BIND(brls::Box, centerControls, "player/center_controls");
     BRLS_BIND(brls::Image, photoImage, "player/photo");
     BRLS_BIND(brls::Image, albumArt, "player/album_art");
     BRLS_BIND(VideoView, videoView, "player/video");
