@@ -262,6 +262,8 @@ private:
     PlexServer m_currentServer;
     bool m_hasLiveTV = false;
     std::string m_dvrId;  // DVR ID for Live TV tuning
+    std::vector<std::string> m_deviceIds;  // Device IDs from DVR for channel listing
+    std::string m_lineupUri;  // Lineup URI from DVR for EPG channel listing
 };
 
 } // namespace vitaplex

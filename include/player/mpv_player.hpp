@@ -23,8 +23,6 @@ typedef struct mpv_render_context mpv_render_context;
 
 namespace vitaplex {
 
-// Forward declaration for friend access (defined in mpv_player.cpp, called from mainLoopIteration)
-void vitaRenderVideoFrame(void* ctx);
 
 // Player states
 enum class MpvPlayerState {
@@ -154,7 +152,6 @@ public:
     int getVideoHeight() const { return 544; }
 
     // Allow the mainLoopIteration render hook to access private members
-    friend void vitaRenderVideoFrame(void* ctx);
 
 private:
     MpvPlayer() = default;
@@ -190,10 +187,6 @@ private:
     int m_videoWidth = 960;
     int m_videoHeight = 544;
     std::atomic<bool> m_renderReady{false};     // Flag for when render context is ready (accessed from mpv thread)
-
-    // Mutex to protect GXM render resources from concurrent access
-    // (mpv's render update callback fires from its decoder thread)
-    std::mutex m_renderMutex;
 
     // Static callback for render updates (called from MPV thread)
     static void onRenderUpdate(void* ctx);
