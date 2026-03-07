@@ -29,33 +29,20 @@
 // Defined in patches/psv_platform.cpp - throttles the borealis main loop
 // to ~30fps during audio-only playback so the ao_vita thread gets more CPU.
 extern "C" void vitaplex_set_audio_playback_active(bool active);
-// Video render hook - kept for potential future use but not currently used.
-// We now use brls::sync() like switchfin (runs AFTER nvgEndFrame, no conflict).
-extern "C" void vitaplex_set_video_render_hook(void (*func)(void*), void* ctx);
 #endif
 
 namespace vitaplex {
 
 #ifdef __vita__
-// Cached GXM context pointer - set once during initRenderContext to avoid
-// expensive dynamic_cast + getWindow() on every frame's flush calls.
-static SceGxmContext* s_cachedGxmContext = nullptr;
-
 // Flush the GXM GPU pipeline to ensure it's idle before mpv uses the shared
 // GXM context. GXM is NOT thread-safe, so mpv's decoder threads and the main
 // thread's NanoVG rendering must not use the GPU concurrently.
 static void flushGxmPipeline() {
-    if (s_cachedGxmContext) {
-        sceGxmFinish(s_cachedGxmContext);
-        return;
-    }
-    // Fallback: look up the context (first call or if not cached yet)
     brls::PsvVideoContext* videoContext = dynamic_cast<brls::PsvVideoContext*>(
         brls::Application::getPlatform()->getVideoContext());
     if (videoContext) {
         NVGXMwindow* gxm = videoContext->getWindow();
         if (gxm && gxm->context) {
-            s_cachedGxmContext = gxm->context;
             sceGxmFinish(gxm->context);
         }
     }
@@ -129,27 +116,36 @@ bool MpvPlayer::init() {
     // ========================================
 
     if (m_audioOnly) {
-        // Audio-only mode: matches Vita_abs config (simpler, works better for audio)
+        // Audio-only mode: disable all video processing
         brls::Logger::info("MpvPlayer: Initializing in audio-only mode");
-        mpv_set_option_string(m_mpv, "video", "no");
         mpv_set_option_string(m_mpv, "vo", "null");
-        mpv_set_option_string(m_mpv, "aid", "auto");
         mpv_set_option_string(m_mpv, "vid", "no");
+        mpv_set_option_string(m_mpv, "video", "no");
+        mpv_set_option_string(m_mpv, "audio-display", "no");  // Don't try to show album art
+        mpv_set_option_string(m_mpv, "hwdec", "no");
     } else {
         // Video mode: use libmpv for video output - we'll create a render context
         brls::Logger::info("MpvPlayer: Initializing in video mode");
         mpv_set_option_string(m_mpv, "vo", "libmpv");
 
 #ifdef __vita__
-        // Vita-specific settings matching switchfin exactly
-        mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
-        mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
-        mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
-        mpv_set_option_string(m_mpv, "hwdec", "no");
-        // Low quality decoding - Vita has limited CPU, skip loop filter
-        // and use fast decode path to reduce crash risk from decoder overload
+        // Vita-specific settings from switchfin
+        // Use 2 decoder threads for software decode. More threads require
+        // more stack memory (each pthread gets 512KB via our wrapper).
+        mpv_set_option_string(m_mpv, "vd-lavc-threads", "2");
         mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "all");
         mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
+
+        // Disable hardware decoding. vita-copy uses the shared GXM immediate
+        // context from its decoder thread, which races with NanoVG on the main
+        // thread and causes a deterministic crash at eboot+0x161b0. Software
+        // decoding keeps all GXM usage on the main thread (via the render
+        // callback + brls::sync), eliminating the threading conflict.
+        mpv_set_option_string(m_mpv, "hwdec", "no");
+
+        // GXM-specific settings from switchfin
+        mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
+        mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
 #else
         mpv_set_option_string(m_mpv, "hwdec", "no");
 #endif
@@ -163,20 +159,30 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "volume", "100");
     mpv_set_option_string(m_mpv, "volume-max", "150");
 
+#ifdef __vita__
+    // Audio-specific optimizations for Vita
+    if (m_audioOnly) {
+        // Pre-buffer more audio to prevent stuttering during playback
+        mpv_set_option_string(m_mpv, "audio-buffer", "0.5");  // 500ms audio buffer
+
+        // Demuxer settings for smoother audio
+        mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "5");  // Read 5 seconds ahead
+        mpv_set_option_string(m_mpv, "demuxer-max-bytes", "512KiB");  // Allow some buffering for audio
+    }
+#endif
+
     // ========================================
     // Cache and demuxer settings
     // ========================================
 
 #ifdef __vita__
     if (m_audioOnly) {
-        // Audio cache: matches Vita_abs config (simpler defaults work better)
+        // Audio streaming needs cache enabled for network playback
         mpv_set_option_string(m_mpv, "cache", "yes");
-        mpv_set_option_string(m_mpv, "demuxer-max-bytes", "2MiB");
+        mpv_set_option_string(m_mpv, "demuxer-max-bytes", "1MiB");
         mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "512KiB");
-        mpv_set_option_string(m_mpv, "cache-secs", "10");
     } else {
-        // Video: match switchfin - no cache on PSV to reduce memory pressure.
-        // The Vita has very limited RAM and cache buffers compete with decoder.
+        // Video: disable cache to conserve memory (Vita has 256MB)
         mpv_set_option_string(m_mpv, "cache", "no");
     }
 #else
@@ -234,7 +240,7 @@ bool MpvPlayer::init() {
     // Request log messages for debugging
     // ========================================
 
-    mpv_request_log_messages(m_mpv, "info");  // Match Vita_abs log level
+    mpv_request_log_messages(m_mpv, "warn");  // Use warn level to reduce log spam on Vita
 
     // ========================================
     // Initialize MPV
@@ -383,6 +389,15 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
     // Format: loadfile <url> [flags]
     // Note: Per-file options (5th arg) require different format and aren't well supported
     brls::Logger::debug("MpvPlayer: Sending loadfile command...");
+
+#ifdef __vita__
+    // Flush GPU pipeline before loadfile. When mpv processes the loadfile command,
+    // it spawns decoder threads that use the shared GXM context. If NanoVG's GPU
+    // operations are still in flight, the concurrent GXM access crashes Thread 6.
+    if (m_mpvRenderCtx) {
+        flushGxmPipeline();
+    }
+#endif
 
     const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", nullptr};
     int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
@@ -706,25 +721,23 @@ void MpvPlayer::eventMainLoop() {
             case MPV_EVENT_FILE_LOADED:
                 brls::Logger::info("MpvPlayer: EVENT_FILE_LOADED");
                 m_commandPending = false;
-                // Don't enable rendering here - wait for PLAYBACK_RESTART when
-                // the first decoded frame is actually ready. Enabling at FILE_LOADED
-                // caused crashes because mpv's GXM decoder hasn't produced a frame yet.
+#ifdef __vita__
+                // Now that the file is loaded and decoders are initialized,
+                // enable the render callback so MPV can display frames.
+                // This is deferred from init to avoid GXM context conflicts
+                // between MPV's threads and NanoVG during the loading phase.
+                if (m_mpvRenderCtx && !m_renderReady.load()) {
+                    brls::Logger::info("MpvPlayer: Enabling render callback");
+                    flushGxmPipeline();
+                    m_renderReady.store(true);
+                }
+#endif
+                // Don't transition to PLAYING yet - wait for playback to actually start
                 break;
 
             case MPV_EVENT_PLAYBACK_RESTART:
                 brls::Logger::debug("MpvPlayer: EVENT_PLAYBACK_RESTART");
                 m_commandPending = false;
-#ifdef __vita__
-                // Enable rendering now that the first decoded frame is ready.
-                // This is deferred from init/FILE_LOADED to ensure mpv's GXM
-                // decoder has actually produced a frame before we try to render.
-                // Flush the GXM pipeline first to ensure no stale GPU state
-                // from NanoVG conflicts with mpv's first render.
-                if (m_mpvRenderCtx && !m_renderReady.load()) {
-                    brls::Logger::info("MpvPlayer: Enabling render callback (first frame ready)");
-                    m_renderReady.store(true);
-                }
-#endif
                 // Now safe to say we're playing
                 if (m_state == MpvPlayerState::LOADING || m_state == MpvPlayerState::BUFFERING) {
                     int paused = 0;
@@ -925,22 +938,42 @@ void MpvPlayer::updatePlaybackInfo() {
 }
 
 #ifdef __vita__
-// mpv render update callback - called from mpv's decoder thread when a new
-// frame is ready. Uses brls::sync() to queue rendering on the main thread
-// during borealis's sync queue processing (matching switchfin exactly).
-// brls::sync() callbacks run AFTER nvgEndFrame(), so there's no GXM scene
-// conflict with NanoVG rendering.
+// Callback for mpv render context when a new frame is ready
+// Uses brls::sync() to render on main thread OUTSIDE of draw phase (like switchfin)
 void MpvPlayer::onRenderUpdate(void* ctx) {
     MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
     if (!player || player->m_stopping.load() || !player->m_renderReady.load()) {
         return;
     }
+
+    // Schedule render on main thread - brls::sync executes between frames, not during draw
     brls::sync([player]() {
-        if (player->m_stopping.load() || !player->m_mpvRenderCtx) return;
+        // Lock the render mutex to prevent concurrent access to GXM resources
+        // (cleanupRenderContext also locks this mutex before freeing resources)
+        std::lock_guard<std::mutex> lock(player->m_renderMutex);
+
+        // Double-check state inside sync+lock in case player was destroyed between
+        // when brls::sync was called and when this lambda actually executes
+        if (!player->m_renderReady.load() || !player->m_mpvRenderCtx ||
+            !player->m_gxmFramebuffer || player->m_stopping.load()) {
+            return;
+        }
+
+        // Flush GPU pipeline to ensure NanoVG's previous frame is complete
+        // before mpv starts a new GXM scene on the shared context
+        flushGxmPipeline();
+
         uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
         if (flags & MPV_RENDER_UPDATE_FRAME) {
-            mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
+            int result = mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
+            if (result < 0) {
+                brls::Logger::error("MpvPlayer: GXM render failed: {}", mpv_error_string(result));
+            }
             mpv_render_context_report_swap(player->m_mpvRenderCtx);
+
+            // Flush again after mpv render so its GXM operations complete
+            // before NanoVG begins the next frame
+            flushGxmPipeline();
         }
     });
 }
@@ -1003,6 +1036,10 @@ bool MpvPlayer::initRenderContext() {
         {MPV_RENDER_PARAM_INVALID, nullptr},
     };
 
+    // Flush the GPU pipeline before sharing the GXM context with mpv.
+    // mpv's decoder threads will use this context, and GXM is not thread-safe.
+    flushGxmPipeline();
+
     // Create render context
     brls::Logger::info("MpvPlayer: Calling mpv_render_context_create...");
     int result = mpv_render_context_create(&m_mpvRenderCtx, m_mpv, params);
@@ -1020,8 +1057,12 @@ bool MpvPlayer::initRenderContext() {
     m_videoHeight = DISPLAY_HEIGHT;
     int texture_stride = ALIGN(m_videoWidth, 8);
 
-    // Create NanoVG image (matching switchfin - nullptr for data, mpv will fill it)
-    m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, nullptr);
+    // Create NanoVG image with zeroed (black) pixel data.
+    // Passing nullptr would leave the GXM texture uninitialized, which can cause
+    // a GPU fault if NanoVG's draw pipeline touches it before MPV renders a frame.
+    size_t pixelDataSize = (size_t)m_videoWidth * m_videoHeight * 4;
+    std::vector<unsigned char> blackPixels(pixelDataSize, 0);
+    m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, blackPixels.data());
     if (m_nvgImage == 0) {
         brls::Logger::error("MpvPlayer: Failed to create NanoVG image");
         mpv_render_context_free(m_mpvRenderCtx);
@@ -1064,32 +1105,32 @@ bool MpvPlayer::initRenderContext() {
 
     m_gxmFramebuffer = fbo;
 
-    // Set up MPV FBO parameters (matching switchfin)
+    // Set up MPV FBO parameters
     m_mpvFbo.render_target = fbo->gxm_render_target;
     m_mpvFbo.color_surface = &fbo->gxm_color_surfaces[0].surface;
     m_mpvFbo.depth_stencil_surface = &fbo->gxm_depth_stencil_surface;
     m_mpvFbo.w = m_videoWidth;
     m_mpvFbo.h = m_videoHeight;
-    // Note: switchfin does NOT set mpv_fbo.format — it's zero-initialized
 
-    // Set up render params array for use in callbacks (matching switchfin exactly)
-    // Note: switchfin does NOT use FLIP_Y — only GXM_FBO + INVALID terminator
+    // Set up render params array for use in callbacks (like switchfin)
     m_mpvParams[0] = {MPV_RENDER_PARAM_GXM_FBO, &m_mpvFbo};
     m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
 
-    // Register the mpv render update callback. When mpv has a new frame,
-    // onRenderUpdate() queues the render via brls::sync() (matching switchfin).
-    // brls::sync() callbacks run AFTER nvgEndFrame() in the main loop,
-    // so there's no GXM scene conflict with NanoVG rendering.
-    // m_renderReady starts false and is set true at PLAYBACK_RESTART when
-    // the first decoded frame is actually ready.
+    // Register the render update callback but keep m_renderReady=false.
+    // The callback checks m_renderReady and will skip rendering until it's true.
+    // We defer setting m_renderReady=true until FILE_LOADED event, so MPV's
+    // render callback doesn't use the shared GXM context during the loading phase
+    // (which would conflict with NanoVG on the main thread).
     mpv_render_context_set_update_callback(m_mpvRenderCtx, onRenderUpdate, this);
 
-    // Log all the FBO and render param details for debugging
-    brls::Logger::info("MpvPlayer: FBO setup: render_target={}, color_surface={}, depth_stencil={}",
-                        (void*)m_mpvFbo.render_target, (void*)m_mpvFbo.color_surface,
-                        (void*)m_mpvFbo.depth_stencil_surface);
-    brls::Logger::info("MpvPlayer: FBO dimensions: {}x{}", m_mpvFbo.w, m_mpvFbo.h);
+    // Flush the GXM pipeline after all resource creation to ensure:
+    // 1. mpv_render_context_create's shader patcher ops are fully committed
+    // 2. The framebuffer's render target and surfaces are finalized
+    // 3. The NanoVG texture upload (black pixels) is complete
+    // Without this flush, the next NanoVG draw frame can hit stale/conflicting
+    // GXM state left behind by the render context and framebuffer creation.
+    flushGxmPipeline();
+
     brls::Logger::info("MpvPlayer: GXM render context created successfully ({}x{})", m_videoWidth, m_videoHeight);
     return true;
 #else
@@ -1103,34 +1144,38 @@ void MpvPlayer::cleanupRenderContext() {
     // Signal that render is no longer ready FIRST (atomic, visible to mpv thread immediately)
     m_renderReady.store(false);
 
-    // Unregister the video render hook so it won't call into freed resources
-    vitaplex_set_video_render_hook(nullptr, nullptr);
+    // Flush GPU pipeline before freeing GXM resources
+    flushGxmPipeline();
 
-    if (m_mpvRenderCtx) {
-        brls::Logger::debug("MpvPlayer: Cleaning up GXM render context");
-        mpv_render_context_free(m_mpvRenderCtx);
-        m_mpvRenderCtx = nullptr;
+    {
+        // Lock the render mutex to ensure no in-flight render callback is accessing
+        // GXM resources while we free them
+        std::lock_guard<std::mutex> lock(m_renderMutex);
+
+        if (m_mpvRenderCtx) {
+            brls::Logger::debug("MpvPlayer: Cleaning up GXM render context");
+            mpv_render_context_free(m_mpvRenderCtx);
+            m_mpvRenderCtx = nullptr;
+        }
+
+        // Clean up GXM framebuffer
+        if (m_gxmFramebuffer) {
+            gxmDeleteFramebuffer(static_cast<NVGXMframebuffer*>(m_gxmFramebuffer));
+            m_gxmFramebuffer = nullptr;
+        }
+
+        // Clean up NanoVG image
+        NVGcontext* vg = brls::Application::getNVGContext();
+        if (m_nvgImage && vg) {
+            nvgDeleteImage(vg, m_nvgImage);
+            m_nvgImage = 0;
+        }
+
+        // Reset FBO and render params
+        m_mpvFbo = {};
+        m_mpvParams[0] = {MPV_RENDER_PARAM_INVALID, nullptr};
+        m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
     }
-
-    // Clean up GXM framebuffer
-    if (m_gxmFramebuffer) {
-        gxmDeleteFramebuffer(static_cast<NVGXMframebuffer*>(m_gxmFramebuffer));
-        m_gxmFramebuffer = nullptr;
-    }
-
-    // Clean up NanoVG image
-    NVGcontext* vg = brls::Application::getNVGContext();
-    if (m_nvgImage && vg) {
-        nvgDeleteImage(vg, m_nvgImage);
-        m_nvgImage = 0;
-    }
-
-    // Reset FBO and render params
-    m_mpvFbo = {};
-    m_mpvParams[0] = {MPV_RENDER_PARAM_INVALID, nullptr};
-    m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
-    m_mpvParams[2] = {MPV_RENDER_PARAM_INVALID, nullptr};
-
 #endif
 }
 
