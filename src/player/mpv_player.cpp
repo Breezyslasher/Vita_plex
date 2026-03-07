@@ -721,18 +721,7 @@ void MpvPlayer::eventMainLoop() {
             case MPV_EVENT_FILE_LOADED:
                 brls::Logger::info("MpvPlayer: EVENT_FILE_LOADED");
                 m_commandPending = false;
-#ifdef __vita__
-                // Now that the file is loaded and decoders are initialized,
-                // enable the render callback so MPV can display frames.
-                // This is deferred from init to avoid GXM context conflicts
-                // between MPV's threads and NanoVG during the loading phase.
-                if (m_mpvRenderCtx && !m_renderReady.load()) {
-                    brls::Logger::info("MpvPlayer: Enabling render callback");
-                    flushGxmPipeline();
-                    m_renderReady.store(true);
-                }
-#endif
-                // Don't transition to PLAYING yet - wait for playback to actually start
+                // Don't transition to PLAYING yet - wait for PLAYBACK_RESTART
                 break;
 
             case MPV_EVENT_PLAYBACK_RESTART:
@@ -938,42 +927,27 @@ void MpvPlayer::updatePlaybackInfo() {
 }
 
 #ifdef __vita__
-// Callback for mpv render context when a new frame is ready
-// Uses brls::sync() to render on main thread OUTSIDE of draw phase (like switchfin)
+// Callback for mpv render context when a new frame is ready.
+// Matches switchfin: always queue via brls::sync(), never drop the signal.
+// brls::sync() callbacks run AFTER nvgEndFrame() so there's no GXM conflict.
 void MpvPlayer::onRenderUpdate(void* ctx) {
     MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
-    if (!player || player->m_stopping.load() || !player->m_renderReady.load()) {
+    if (!player || player->m_stopping.load()) {
         return;
     }
 
-    // Schedule render on main thread - brls::sync executes between frames, not during draw
+    // Always queue render on main thread (matching switchfin exactly).
+    // Do NOT check m_renderReady here — dropping signals before FILE_LOADED
+    // causes mpv to stop sending update callbacks, resulting in a black screen.
     brls::sync([player]() {
-        // Lock the render mutex to prevent concurrent access to GXM resources
-        // (cleanupRenderContext also locks this mutex before freeing resources)
-        std::lock_guard<std::mutex> lock(player->m_renderMutex);
-
-        // Double-check state inside sync+lock in case player was destroyed between
-        // when brls::sync was called and when this lambda actually executes
-        if (!player->m_renderReady.load() || !player->m_mpvRenderCtx ||
-            !player->m_gxmFramebuffer || player->m_stopping.load()) {
+        if (player->m_stopping.load() || !player->m_mpvRenderCtx) {
             return;
         }
 
-        // Flush GPU pipeline to ensure NanoVG's previous frame is complete
-        // before mpv starts a new GXM scene on the shared context
-        flushGxmPipeline();
-
         uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
         if (flags & MPV_RENDER_UPDATE_FRAME) {
-            int result = mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
-            if (result < 0) {
-                brls::Logger::error("MpvPlayer: GXM render failed: {}", mpv_error_string(result));
-            }
+            mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
             mpv_render_context_report_swap(player->m_mpvRenderCtx);
-
-            // Flush again after mpv render so its GXM operations complete
-            // before NanoVG begins the next frame
-            flushGxmPipeline();
         }
     });
 }
