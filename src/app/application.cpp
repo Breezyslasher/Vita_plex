@@ -244,8 +244,6 @@ bool Application::loadSettings() {
 
     // Load UI settings
     m_settings.theme = static_cast<AppTheme>(extractInt("theme"));
-    m_settings.showClock = extractBool("showClock", true);
-    m_settings.animationsEnabled = extractBool("animationsEnabled", true);
     m_settings.debugLogging = extractBool("debugLogging", true);
 
     // Load layout settings
@@ -307,8 +305,6 @@ bool Application::saveSettings() {
 
     // UI settings
     json += "  \"theme\": " + std::to_string(static_cast<int>(m_settings.theme)) + ",\n";
-    json += "  \"showClock\": " + std::string(m_settings.showClock ? "true" : "false") + ",\n";
-    json += "  \"animationsEnabled\": " + std::string(m_settings.animationsEnabled ? "true" : "false") + ",\n";
     json += "  \"debugLogging\": " + std::string(m_settings.debugLogging ? "true" : "false") + ",\n";
 
     // Layout settings

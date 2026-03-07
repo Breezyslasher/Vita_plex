@@ -3,6 +3,7 @@
  */
 
 #include "activity/player_activity.hpp"
+#include "app/application.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/music_queue.hpp"
@@ -161,12 +162,14 @@ void PlayerActivity::onContentAvailable() {
     } else {
         // Standard seek for non-queue playback
         this->registerAction("Rewind", brls::ControllerButton::BUTTON_LB, [this](brls::View* view) {
-            seek(-10);
+            int interval = Application::getInstance().getSettings().seekInterval;
+            seek(-interval);
             return true;
         });
 
         this->registerAction("Forward", brls::ControllerButton::BUTTON_RB, [this](brls::View* view) {
-            seek(10);
+            int interval = Application::getInstance().getSettings().seekInterval;
+            seek(interval);
             return true;
         });
 
@@ -196,7 +199,8 @@ void PlayerActivity::onContentAvailable() {
             if (m_isQueueMode) {
                 playPrevious();
             } else {
-                seek(-10);
+                int interval = Application::getInstance().getSettings().seekInterval;
+                seek(-interval);
             }
             return true;
         });
@@ -208,7 +212,8 @@ void PlayerActivity::onContentAvailable() {
             if (m_isQueueMode) {
                 playNext();
             } else {
-                seek(10);
+                int interval = Application::getInstance().getSettings().seekInterval;
+                seek(interval);
             }
             return true;
         });
@@ -248,9 +253,12 @@ void PlayerActivity::onContentAvailable() {
             subBtn->addGestureRecognizer(new brls::TapGestureRecognizer(subBtn));
         }
     } else {
-        // Video mode: rewind-10 / fast-forward-10 icons for seeking
-        if (rewindIcon) rewindIcon->setImageFromRes("icons/rewind-10.png");
-        if (forwardIcon) forwardIcon->setImageFromRes("icons/fast-forward-10.png");
+        // Video mode: seek icons matching the configured interval
+        int seekSec = Application::getInstance().getSettings().seekInterval;
+        std::string rewindRes = "icons/rewind-" + std::to_string(seekSec) + ".png";
+        std::string fwdRes = "icons/fast-forward-" + std::to_string(seekSec) + ".png";
+        if (rewindIcon) rewindIcon->setImageFromRes(rewindRes);
+        if (forwardIcon) forwardIcon->setImageFromRes(fwdRes);
 
         // Audio track button - shows track selection overlay
         if (audioBtn) {
@@ -558,8 +566,8 @@ void PlayerActivity::loadMedia() {
 
         MpvPlayer& player = MpvPlayer::getInstance();
 
-        // Resume from saved viewOffset
-        if (download->viewOffset > 0) {
+        // Resume from saved viewOffset if resumePlayback is enabled
+        if (Application::getInstance().getSettings().resumePlayback && download->viewOffset > 0) {
             m_pendingSeek = download->viewOffset / 1000.0;
         }
 
@@ -595,6 +603,12 @@ void PlayerActivity::loadMedia() {
     MediaItem item;
 
     if (client.fetchMediaDetails(m_mediaKey, item)) {
+        // Store media type and episode info for auto-play-next
+        m_mediaType = item.mediaType;
+        if (item.mediaType == MediaType::EPISODE) {
+            m_episodeIndex = item.index;
+            m_parentRatingKey = item.parentRatingKey;
+        }
         if (titleLabel) {
             std::string title = item.title;
             if (item.mediaType == MediaType::EPISODE) {
@@ -655,8 +669,10 @@ void PlayerActivity::loadMedia() {
         }
 
         // Get transcode URL for video/audio (forces Plex to convert to Vita-compatible format)
+        // Only resume from viewOffset if resumePlayback is enabled
+        int resumeOffset = Application::getInstance().getSettings().resumePlayback ? item.viewOffset : 0;
         std::string url;
-        if (client.getTranscodeUrl(m_mediaKey, url, item.viewOffset)) {
+        if (client.getTranscodeUrl(m_mediaKey, url, resumeOffset)) {
             // Pause image loading and free cache memory before initializing MPV.
             // This stops background thumbnail fetches from competing with media
             // streaming, and frees memory (Vita only has 256MB).
@@ -833,6 +849,33 @@ void PlayerActivity::updateProgress() {
             MusicQueue::getInstance().onTrackEnded();
         } else {
             PlexClient::getInstance().markAsWatched(m_mediaKey);
+
+            // Delete downloaded file after watching if setting is enabled
+            if (m_isLocalFile && Application::getInstance().getSettings().deleteAfterWatch) {
+                DownloadsManager::getInstance().deleteDownload(m_mediaKey);
+                brls::Logger::info("PlayerActivity: Auto-deleted download after watch: {}", m_mediaKey);
+            }
+
+            // Auto-play next episode if enabled and this is an episode
+            if (Application::getInstance().getSettings().autoPlayNext
+                && m_mediaType == MediaType::EPISODE
+                && !m_parentRatingKey.empty()
+                && !m_isLocalFile) {
+                // Fetch siblings (episodes in the same season)
+                std::vector<MediaItem> episodes;
+                if (PlexClient::getInstance().fetchChildren(m_parentRatingKey, episodes)) {
+                    // Find next episode by index
+                    for (const auto& ep : episodes) {
+                        if (ep.index == m_episodeIndex + 1) {
+                            brls::Logger::info("PlayerActivity: Auto-playing next episode: {}", ep.title);
+                            brls::Application::popActivity();
+                            Application::getInstance().pushPlayerActivity(ep.ratingKey);
+                            return;
+                        }
+                    }
+                }
+            }
+
             brls::Application::popActivity();
         }
     }

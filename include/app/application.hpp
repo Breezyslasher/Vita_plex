@@ -49,8 +49,6 @@ enum class SubtitleSize {
 struct AppSettings {
     // UI Settings
     AppTheme theme = AppTheme::DARK;
-    bool showClock = true;
-    bool animationsEnabled = true;
     bool debugLogging = true;  // Enable debug logging
 
     // Layout Settings

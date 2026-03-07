@@ -50,6 +50,7 @@ struct MediaItem {
     std::string parentTitle;
     std::string grandparentThumb;  // Series/show poster for episodes
     std::string parentThumb;       // Season poster for episodes
+    std::string parentRatingKey;   // Season ratingKey (for auto-play-next)
     int parentIndex = 0;
     int index = 0;
     int seasonNumber = 0;

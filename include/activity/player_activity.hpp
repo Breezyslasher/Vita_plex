@@ -69,6 +69,9 @@ private:
     std::string m_mediaKey;
     std::string m_directFilePath;  // For direct file playback (debug) or stream URL
     std::string m_streamTitle;     // Title for stream playback (Live TV)
+    MediaType m_mediaType = MediaType::UNKNOWN;  // Type of media being played
+    std::string m_parentRatingKey;  // Season/album ratingKey for auto-play-next
+    int m_episodeIndex = 0;         // Episode index within season for auto-play-next
     bool m_isPlaying = false;
     bool m_isPhoto = false;
     bool m_isLocalFile = false;    // Playing from local download

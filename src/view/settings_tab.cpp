@@ -94,22 +94,6 @@ void SettingsTab::createUISection() {
         });
     m_contentBox->addView(m_themeSelector);
 
-    // Show clock toggle
-    m_clockToggle = new brls::BooleanCell();
-    m_clockToggle->init("Show Clock", settings.showClock, [&settings](bool value) {
-        settings.showClock = value;
-        Application::getInstance().saveSettings();
-    });
-    m_contentBox->addView(m_clockToggle);
-
-    // Animations toggle
-    m_animationsToggle = new brls::BooleanCell();
-    m_animationsToggle->init("Enable Animations", settings.animationsEnabled, [&settings](bool value) {
-        settings.animationsEnabled = value;
-        Application::getInstance().saveSettings();
-    });
-    m_contentBox->addView(m_animationsToggle);
-
     // Debug logging toggle
     m_debugLogToggle = new brls::BooleanCell();
     m_debugLogToggle->init("Debug Logging", settings.debugLogging, [&settings](bool value) {
