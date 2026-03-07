@@ -176,7 +176,7 @@ void LiveTVTab::loadChannels() {
 
                     // Channel number
                     auto* numLabel = new brls::Label();
-                    numLabel->setText(std::to_string(channel.channelNumber));
+                    numLabel->setText(!channel.channelIdentifier.empty() ? channel.channelIdentifier : std::to_string(channel.channelNumber));
                     numLabel->setFontSize(20);
                     card->addView(numLabel);
 
@@ -296,7 +296,7 @@ void LiveTVTab::buildEPGGrid() {
         channelCol->setJustifyContent(brls::JustifyContent::CENTER);
 
         auto* chNumLabel = new brls::Label();
-        chNumLabel->setText(std::to_string(channel.channelNumber));
+        chNumLabel->setText(!channel.channelIdentifier.empty() ? channel.channelIdentifier : std::to_string(channel.channelNumber));
         chNumLabel->setFontSize(14);
         channelCol->addView(chNumLabel);
 
@@ -476,10 +476,13 @@ void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
     brls::Logger::info("LiveTVTab: Selected channel: {} ({})", channel.title, channel.channelNumber);
 
     // Tune the Live TV channel and get HLS stream URL
-    // Use the channel's ratingKey as the channel identifier for tuning
-    std::string channelKey = channel.ratingKey;
+    // The DVR tune API expects the channel identifier (e.g., "2.1"), not the ratingKey
+    std::string channelKey = channel.channelIdentifier;
     if (channelKey.empty()) {
         channelKey = std::to_string(channel.channelNumber);
+    }
+    if (channelKey == "0" && !channel.ratingKey.empty()) {
+        channelKey = channel.ratingKey;  // Last resort fallback
     }
 
     asyncRun([this, channel, channelKey]() {

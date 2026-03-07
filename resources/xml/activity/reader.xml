@@ -1,0 +1,397 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- NOBORU-style Reader UI -->
+<brls:Box
+    id="reader/container"
+    width="100%"
+    height="100%"
+    axis="column"
+    justifyContent="center"
+    alignItems="center"
+    backgroundColor="#1a1a2e">
+
+    <!-- Main page display area (single page mode) -->
+    <RotatableImage
+        id="reader/page_image"
+        width="100%"
+        height="100%"
+        grow="1"/>
+
+    <!-- Preview page (positive swipe direction) - hidden by default -->
+    <RotatableImage
+        id="reader/preview_image"
+        width="100%"
+        height="100%"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        visibility="gone"/>
+
+    <!-- Preview page (negative swipe direction) - hidden by default -->
+    <RotatableImage
+        id="reader/preview_image_b"
+        width="100%"
+        height="100%"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        visibility="gone"/>
+
+    <!-- Webtoon continuous scroll view - hidden by default, shown in webtoon mode -->
+    <WebtoonScrollView
+        id="reader/webtoon_scroll"
+        width="100%"
+        height="100%"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        visibility="gone"/>
+
+    <!-- Transition page (shown between chapters, hidden by default) -->
+    <RotatableBox
+        id="reader/transition_box"
+        width="100%"
+        height="100%"
+        axis="column"
+        justifyContent="center"
+        alignItems="center"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        visibility="gone">
+
+        <brls:Label
+            id="reader/transition_line1"
+            text=""
+            fontSize="22"
+            textColor="#dcdcdc"
+            horizontalAlign="center"
+            width="80%"
+            marginBottom="12"/>
+
+        <brls:Box
+            width="300"
+            height="1"
+            backgroundColor="#96969664"
+            marginBottom="12"/>
+
+        <brls:Label
+            id="reader/transition_line2"
+            text=""
+            fontSize="18"
+            textColor="#b4b4b4"
+            horizontalAlign="center"
+            width="80%"
+            marginBottom="16"/>
+
+        <!-- Preview of the next/previous chapter's page -->
+        <brls:Image
+            id="reader/transition_preview"
+            width="200"
+            height="280"
+            scalingType="fit"
+            visibility="gone"/>
+    </RotatableBox>
+
+    <!-- Page counter overlay (top-right, auto-hides, rotates with content) -->
+    <RotatableLabel
+        id="reader/page_counter"
+        width="80"
+        height="40"
+        positionType="absolute"
+        positionTop="10"
+        positionRight="10"
+        visibility="visible"/>
+
+    <!-- Top bar overlay (80px, NOBORU style) -->
+    <brls:Box
+        id="reader/top_bar"
+        width="100%"
+        height="80"
+        axis="row"
+        justifyContent="spaceBetween"
+        alignItems="center"
+        paddingLeft="20"
+        paddingRight="20"
+        backgroundColor="#16213eE8"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        visibility="gone">
+
+        <!-- Back button -->
+        <brls:Button
+            id="reader/back_btn"
+            style="borderless"
+            width="44"
+            height="44"
+            marginRight="15">
+            <brls:Image
+                width="24"
+                height="24"
+                image="@res/icons/back.png"
+                scalingType="fit"/>
+        </brls:Button>
+
+        <!-- Title area (manga + chapter) -->
+        <brls:Box
+            axis="column"
+            justifyContent="center"
+            alignItems="flexStart"
+            grow="1">
+
+            <brls:Label
+                id="reader/manga_label"
+                text="Manga Title"
+                fontSize="16"
+                textColor="#ffffff"
+                singleLine="true"
+                marginBottom="2"/>
+
+            <brls:Label
+                id="reader/chapter_label"
+                text="Chapter 1"
+                fontSize="13"
+                textColor="#a0a0a0"
+                singleLine="true"/>
+        </brls:Box>
+
+        <!-- Settings button (gear icon) -->
+        <brls:Button
+            id="reader/settings_btn"
+            style="borderless"
+            width="36"
+            height="36"
+            marginLeft="10">
+            <brls:Image
+                width="24"
+                height="24"
+                image="@res/icons/options.png"
+                scalingType="fit"/>
+        </brls:Button>
+
+    </brls:Box>
+
+    <!-- Settings overlay panel (hidden by default) -->
+    <brls:Box
+        id="reader/settings_overlay"
+        width="100%"
+        height="100%"
+        axis="column"
+        justifyContent="center"
+        alignItems="center"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        backgroundColor="#00000080"
+        visibility="gone">
+
+        <!-- Settings panel box -->
+        <brls:Box
+            id="reader/settings_panel"
+            width="400"
+            height="auto"
+            axis="column"
+            justifyContent="flexStart"
+            alignItems="stretch"
+            backgroundColor="#16213eF0"
+            cornerRadius="8"
+            paddingTop="15"
+            paddingBottom="15"
+            paddingLeft="20"
+            paddingRight="20">
+
+            <!-- Title -->
+            <brls:Label
+                text="Settings"
+                fontSize="18"
+                textColor="#ffffff"
+                horizontalAlign="center"
+                marginBottom="15"/>
+
+            <!-- Format button (Manga/Webtoon) -->
+            <brls:Button
+                id="reader/settings_format_btn"
+                style="bordered"
+                width="100%"
+                height="40"
+                marginBottom="10">
+                <brls:Label
+                    id="reader/settings_format_label"
+                    text="Manga"
+                    fontSize="14"
+                    textColor="#ffffff"
+                    horizontalAlign="center"
+                    width="100%"/>
+            </brls:Button>
+
+            <!-- Direction button -->
+            <brls:Button
+                id="reader/settings_dir_btn"
+                style="bordered"
+                width="100%"
+                height="40"
+                marginBottom="10">
+                <brls:Label
+                    id="reader/settings_dir_label"
+                    text="Right to Left"
+                    fontSize="14"
+                    textColor="#ffffff"
+                    horizontalAlign="center"
+                    width="100%"/>
+            </brls:Button>
+
+            <!-- Rotation button -->
+            <brls:Button
+                id="reader/settings_rot_btn"
+                style="bordered"
+                width="100%"
+                height="40"
+                marginBottom="10">
+                <brls:Label
+                    id="reader/settings_rot_label"
+                    text="0°"
+                    fontSize="14"
+                    textColor="#ffffff"
+                    horizontalAlign="center"
+                    width="100%"/>
+            </brls:Button>
+
+            <!-- Scale button -->
+            <brls:Button
+                id="reader/settings_scale_btn"
+                style="bordered"
+                width="100%"
+                height="40"
+                marginBottom="15">
+                <brls:Label
+                    id="reader/settings_scale_label"
+                    text="Fit Screen"
+                    fontSize="14"
+                    textColor="#ffffff"
+                    horizontalAlign="center"
+                    width="100%"/>
+            </brls:Button>
+
+            <!-- Reset to Defaults button -->
+            <brls:Button
+                id="reader/settings_reset_btn"
+                style="bordered"
+                width="100%"
+                height="40"
+                marginBottom="10">
+                <brls:Label
+                    id="reader/settings_reset_label"
+                    text="Reset to Defaults"
+                    fontSize="14"
+                    textColor="#ff6b6b"
+                    horizontalAlign="center"
+                    width="100%"/>
+            </brls:Button>
+
+            <!-- Close hint -->
+            <brls:Label
+                text="Press ○ or tap outside to close"
+                fontSize="12"
+                textColor="#808080"
+                horizontalAlign="center"/>
+
+        </brls:Box>
+    </brls:Box>
+
+    <!-- Bottom bar overlay (80px, NOBORU style) -->
+    <brls:Box
+        id="reader/bottom_bar"
+        width="100%"
+        height="80"
+        axis="column"
+        justifyContent="center"
+        alignItems="stretch"
+        paddingLeft="20"
+        paddingRight="20"
+        paddingTop="8"
+        paddingBottom="8"
+        backgroundColor="#16213eE8"
+        positionType="absolute"
+        positionBottom="0"
+        positionLeft="0"
+        visibility="gone">
+
+        <!-- Navigation row: Prev Chapter | Slider | Next Chapter -->
+        <brls:Box
+            width="100%"
+            axis="row"
+            justifyContent="spaceBetween"
+            alignItems="center"
+            marginBottom="6">
+
+            <!-- Previous chapter button -->
+            <brls:Button
+                id="reader/prev_chapter"
+                style="borderless"
+                width="44"
+                height="44">
+                <brls:Image
+                    width="20"
+                    height="20"
+                    image="@res/icons/left.png"
+                    scalingType="fit"/>
+            </brls:Button>
+
+            <!-- Page slider with blue accent -->
+            <brls:Slider
+                id="reader/page_slider"
+                height="28"
+                grow="1"
+                marginLeft="15"
+                marginRight="15"/>
+
+            <!-- Next chapter button -->
+            <brls:Button
+                id="reader/next_chapter"
+                style="borderless"
+                width="44"
+                height="44">
+                <brls:Image
+                    width="20"
+                    height="20"
+                    image="@res/icons/right.png"
+                    scalingType="fit"/>
+            </brls:Button>
+
+        </brls:Box>
+
+        <!-- Progress info row -->
+        <brls:Box
+            width="100%"
+            axis="row"
+            justifyContent="spaceBetween"
+            alignItems="center">
+
+            <!-- Chapter progress -->
+            <brls:Label
+                id="reader/chapter_progress"
+                text="Ch. 1 of 100"
+                fontSize="12"
+                textColor="#808080"/>
+
+            <!-- Page progress (centered) -->
+            <brls:Label
+                id="reader/slider_page_label"
+                text="Page 1 of 20"
+                fontSize="12"
+                textColor="#4a9fff"
+                horizontalAlign="center"
+                grow="1"/>
+
+            <!-- Reading direction indicator -->
+            <brls:Label
+                id="reader/direction_label"
+                text="RTL"
+                fontSize="12"
+                textColor="#808080"/>
+
+        </brls:Box>
+
+    </brls:Box>
+
+</brls:Box>

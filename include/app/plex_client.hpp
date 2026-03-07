@@ -129,6 +129,7 @@ struct LiveTVChannel {
     std::string thumb;
     std::string callSign;
     int channelNumber = 0;
+    std::string channelIdentifier;  // Channel ID for DVR tuning (e.g., "2.1")
     std::string currentProgram;
     std::string nextProgram;
     int64_t programStart = 0;
@@ -261,6 +262,8 @@ private:
     PlexServer m_currentServer;
     bool m_hasLiveTV = false;
     std::string m_dvrId;  // DVR ID for Live TV tuning
+    std::vector<std::string> m_deviceIds;  // Device IDs from DVR for channel listing
+    std::string m_lineupUri;  // Lineup URI from DVR for EPG channel listing
 };
 
 } // namespace vitaplex

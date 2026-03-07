@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<brls:Box
+    id="chapter_item/container"
+    width="100%"
+    height="60"
+    axis="row"
+    justifyContent="spaceBetween"
+    alignItems="center"
+    paddingLeft="15"
+    paddingRight="15"
+    focusable="true"
+    marginBottom="2">
+
+    <!-- Left side: chapter info -->
+    <brls:Box
+        axis="column"
+        grow="1">
+
+        <!-- Chapter name -->
+        <brls:Label
+            id="chapter_item/name"
+            text="Chapter 1"
+            fontSize="14"
+            singleLine="true"/>
+
+        <!-- Chapter details row -->
+        <brls:Box
+            axis="row"
+            alignItems="center"
+            marginTop="2">
+
+            <!-- Scanlator -->
+            <brls:Label
+                id="chapter_item/scanlator"
+                text=""
+                fontSize="11"
+                textColor="#a0a0a0"
+                singleLine="true"
+                marginRight="10"/>
+
+            <!-- Upload date -->
+            <brls:Label
+                id="chapter_item/date"
+                text=""
+                fontSize="11"
+                textColor="#a0a0a0"/>
+
+        </brls:Box>
+
+    </brls:Box>
+
+    <!-- Right side: status indicators -->
+    <brls:Box
+        axis="row"
+        alignItems="center">
+
+        <!-- Page progress -->
+        <brls:Label
+            id="chapter_item/progress"
+            text=""
+            fontSize="11"
+            textColor="#a0a0a0"
+            marginRight="10"/>
+
+        <!-- Downloaded indicator -->
+        <brls:Box
+            id="chapter_item/downloaded"
+            width="20"
+            height="20"
+            cornerRadius="10"
+            backgroundColor="#00aa00"
+            justifyContent="center"
+            alignItems="center"
+            visibility="gone"
+            marginRight="5">
+            <brls:Label
+                text="DL"
+                fontSize="8"
+                textColor="#ffffff"/>
+        </brls:Box>
+
+        <!-- Bookmark indicator -->
+        <brls:Box
+            id="chapter_item/bookmarked"
+            width="20"
+            height="20"
+            cornerRadius="10"
+            backgroundColor="#ffaa00"
+            justifyContent="center"
+            alignItems="center"
+            visibility="gone">
+            <brls:Label
+                text="BM"
+                fontSize="8"
+                textColor="#ffffff"/>
+        </brls:Box>
+
+    </brls:Box>
+
+</brls:Box>

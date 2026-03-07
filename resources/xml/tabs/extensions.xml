@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<brls:Box
+    id="extensions/container"
+    width="100%"
+    height="100%"
+    axis="column"
+    paddingTop="20"
+    paddingLeft="30"
+    paddingRight="30">
+
+    <!-- Title row with refresh button -->
+    <brls:Box
+        id="extensions/titleRow"
+        height="40"
+        axis="row"
+        justifyContent="spaceBetween"
+        alignItems="center"
+        marginBottom="15">
+
+        <brls:Label
+            id="extensions/title"
+            text="Extensions"
+            fontSize="24"/>
+
+        <!-- Refresh button placeholder - created programmatically -->
+        <brls:Box
+            id="extensions/buttonBox"
+            axis="row"
+            alignItems="center"/>
+
+    </brls:Box>
+
+    <!-- Extensions list -->
+    <brls:ScrollingFrame
+        id="extensions/scroll"
+        grow="1">
+
+        <brls:Box
+            id="extensions/list"
+            grow="1"
+            axis="column"/>
+
+    </brls:ScrollingFrame>
+
+</brls:Box>

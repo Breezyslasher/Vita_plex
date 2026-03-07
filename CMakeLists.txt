@@ -186,16 +186,75 @@ vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
     FILE ${BOREALIS_DIR}/resources/i18n/en-US/hints.json resources/i18n/en-US/hints.json
     FILE resources/i18n/en-US/main.json resources/i18n/en-US/main.json
 
-    # App resources
+    # App resources - XML layouts
     FILE resources/xml/activity/main.xml resources/xml/activity/main.xml
     FILE resources/xml/activity/login.xml resources/xml/activity/login.xml
     FILE resources/xml/activity/player.xml resources/xml/activity/player.xml
+    FILE resources/xml/activity/reader.xml resources/xml/activity/reader.xml
     FILE resources/xml/tabs/home.xml resources/xml/tabs/home.xml
     FILE resources/xml/tabs/library.xml resources/xml/tabs/library.xml
     FILE resources/xml/tabs/search.xml resources/xml/tabs/search.xml
     FILE resources/xml/tabs/settings.xml resources/xml/tabs/settings.xml
+    FILE resources/xml/tabs/extensions.xml resources/xml/tabs/extensions.xml
     FILE resources/xml/view/media_detail.xml resources/xml/view/media_detail.xml
     FILE resources/xml/view/media_item.xml resources/xml/view/media_item.xml
+    FILE resources/xml/view/chapter_item.xml resources/xml/view/chapter_item.xml
+    FILE resources/xml/view/manga_detail.xml resources/xml/view/manga_detail.xml
+    FILE resources/xml/view/manga_item.xml resources/xml/view/manga_item.xml
+
+    # Icons
+    FILE resources/icons/a.png resources/icons/a.png
+    FILE resources/icons/az.png resources/icons/az.png
+    FILE resources/icons/back.png resources/icons/back.png
+    FILE resources/icons/book-arrow-down.png resources/icons/book-arrow-down.png
+    FILE resources/icons/book-multiple.png resources/icons/book-multiple.png
+    FILE resources/icons/book-open-page-variant.png resources/icons/book-open-page-variant.png
+    FILE resources/icons/checkbox.png resources/icons/checkbox.png
+    FILE resources/icons/checkbox_checked.png resources/icons/checkbox_checked.png
+    FILE resources/icons/checkbox_crossed.png resources/icons/checkbox_crossed.png
+    FILE resources/icons/circle.png resources/icons/circle.png
+    FILE resources/icons/cross.png resources/icons/cross.png
+    FILE resources/icons/download.png resources/icons/download.png
+    FILE resources/icons/filter-menu-outline.png resources/icons/filter-menu-outline.png
+    FILE resources/icons/format-list-group.png resources/icons/format-list-group.png
+    FILE resources/icons/hide.png resources/icons/hide.png
+    FILE resources/icons/history.png resources/icons/history.png
+    FILE resources/icons/hot.png resources/icons/hot.png
+    FILE resources/icons/import.png resources/icons/import.png
+    FILE resources/icons/left.png resources/icons/left.png
+    FILE resources/icons/menu.png resources/icons/menu.png
+    FILE resources/icons/mini_star.png resources/icons/mini_star.png
+    FILE resources/icons/options.png resources/icons/options.png
+    FILE resources/icons/radio.png resources/icons/radio.png
+    FILE resources/icons/radio_checked.png resources/icons/radio_checked.png
+    FILE resources/icons/refresh.png resources/icons/refresh.png
+    FILE resources/icons/right.png resources/icons/right.png
+    FILE resources/icons/search.png resources/icons/search.png
+    FILE resources/icons/show.png resources/icons/show.png
+    FILE resources/icons/sort-1-9.png resources/icons/sort-1-9.png
+    FILE resources/icons/sort-9-1.png resources/icons/sort-9-1.png
+    FILE resources/icons/sort-calendar-ascending.png resources/icons/sort-calendar-ascending.png
+    FILE resources/icons/sort-calendar-descending.png resources/icons/sort-calendar-descending.png
+    FILE resources/icons/sort-clock-ascending.png resources/icons/sort-clock-ascending.png
+    FILE resources/icons/sort-clock-descending.png resources/icons/sort-clock-descending.png
+    FILE resources/icons/star.png resources/icons/star.png
+    FILE resources/icons/tag.png resources/icons/tag.png
+    FILE resources/icons/web.png resources/icons/web.png
+    FILE resources/icons/za.png resources/icons/za.png
+
+    # Images
+    FILE resources/images/circle_button.png resources/images/circle_button.png
+    FILE resources/images/cross_button.png resources/images/cross_button.png
+    FILE resources/images/dpad.png resources/images/dpad.png
+    FILE resources/images/gradient.png resources/images/gradient.png
+    FILE resources/images/l_button.png resources/images/l_button.png
+    FILE resources/images/logo-small.png resources/images/logo-small.png
+    FILE resources/images/logo.png resources/images/logo.png
+    FILE resources/images/r_button.png resources/images/r_button.png
+    FILE resources/images/select_button.png resources/images/select_button.png
+    FILE resources/images/square_button.png resources/images/square_button.png
+    FILE resources/images/start_button.png resources/images/start_button.png
+    FILE resources/images/triangle_button.png resources/images/triangle_button.png
 
     # Fonts (using simpler DejaVu fonts for Vita compatibility)
     FILE resources/font/font.ttf resources/font/font.ttf
