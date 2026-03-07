@@ -30,6 +30,7 @@ private:
     void onQualityChanged(int index);
     void onSubtitleSizeChanged(int index);
     void onSeekIntervalChanged(int index);
+    void onControlsAutoHideChanged(int index);
     void onConnectionTimeoutChanged(int index);
     void onManageHiddenLibraries();
     void onManageSidebarOrder();
@@ -62,6 +63,7 @@ private:
     brls::BooleanCell* m_subtitlesToggle = nullptr;
     brls::SelectorCell* m_subtitleSizeSelector = nullptr;
     brls::SelectorCell* m_seekIntervalSelector = nullptr;
+    brls::SelectorCell* m_controlsAutoHideSelector = nullptr;
 
     // Transcode section
     brls::SelectorCell* m_qualitySelector = nullptr;

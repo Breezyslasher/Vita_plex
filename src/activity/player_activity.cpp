@@ -94,6 +94,7 @@ void PlayerActivity::onContentAvailable() {
         progressSlider->getProgressEvent()->subscribe([this](float progress) {
             // Skip if this is a programmatic update (not user interaction)
             if (m_updatingSlider) return;
+            resetControlsIdleTimer();
             // Seek to position
             MpvPlayer& player = MpvPlayer::getInstance();
             double duration = player.getDuration();
@@ -111,6 +112,7 @@ void PlayerActivity::onContentAvailable() {
         playerContainer->addGestureRecognizer(new brls::TapGestureRecognizer(
             [this](brls::TapGestureStatus status, brls::Sound* soundToPlay) {
                 if (status.state == brls::GestureState::END) {
+                    resetControlsIdleTimer();
                     toggleControls();
                 }
             }));
@@ -118,11 +120,13 @@ void PlayerActivity::onContentAvailable() {
 
     // Register controller actions
     this->registerAction("Play/Pause", brls::ControllerButton::BUTTON_A, [this](brls::View* view) {
+        resetControlsIdleTimer();
         togglePlayPause();
         return true;
     });
 
     this->registerAction("Back", brls::ControllerButton::BUTTON_B, [this](brls::View* view) {
+        resetControlsIdleTimer();
         // If track overlay is showing, dismiss it instead of leaving player
         if (m_trackSelectMode != TrackSelectMode::NONE) {
             hideTrackOverlay();
@@ -162,12 +166,14 @@ void PlayerActivity::onContentAvailable() {
     } else {
         // Standard seek for non-queue playback
         this->registerAction("Rewind", brls::ControllerButton::BUTTON_LB, [this](brls::View* view) {
+            resetControlsIdleTimer();
             int interval = Application::getInstance().getSettings().seekInterval;
             seek(-interval);
             return true;
         });
 
         this->registerAction("Forward", brls::ControllerButton::BUTTON_RB, [this](brls::View* view) {
+            resetControlsIdleTimer();
             int interval = Application::getInstance().getSettings().seekInterval;
             seek(interval);
             return true;
@@ -175,11 +181,13 @@ void PlayerActivity::onContentAvailable() {
 
         // X = cycle audio track, Y = cycle subtitle track (for video playback)
         this->registerAction("Audio Track", brls::ControllerButton::BUTTON_X, [this](brls::View* view) {
+            resetControlsIdleTimer();
             cycleAudioTrack();
             return true;
         });
 
         this->registerAction("Subtitle", brls::ControllerButton::BUTTON_Y, [this](brls::View* view) {
+            resetControlsIdleTimer();
             cycleSubtitleTrack();
             return true;
         });
@@ -831,6 +839,15 @@ void PlayerActivity::updateProgress() {
             snprintf(timeStr, sizeof(timeStr), "%02d:%02d / %02d:%02d",
                      posMin, posSec, durMin, durSec);
             timeLabel->setText(timeStr);
+        }
+    }
+
+    // Auto-hide controls after inactivity
+    int autoHide = Application::getInstance().getSettings().controlsAutoHideSeconds;
+    if (autoHide > 0 && m_controlsVisible && !m_isPhoto) {
+        m_controlsIdleSeconds++;
+        if (m_controlsIdleSeconds >= autoHide) {
+            hideControls();
         }
     }
 
@@ -1610,8 +1627,13 @@ void PlayerActivity::toggleControls() {
     }
 }
 
+void PlayerActivity::resetControlsIdleTimer() {
+    m_controlsIdleSeconds = 0;
+}
+
 void PlayerActivity::showControls() {
     m_controlsVisible = true;
+    resetControlsIdleTimer();
     if (controlsBox) {
         controlsBox->setAlpha(1.0f);
         controlsBox->setVisibility(brls::Visibility::VISIBLE);

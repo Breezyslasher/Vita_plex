@@ -56,7 +56,9 @@ private:
     void toggleControls();
     void showControls();
     void hideControls();
+    void resetControlsIdleTimer();  // Reset inactivity timer on user input
     bool m_controlsVisible = true;
+    int m_controlsIdleSeconds = 0;  // Seconds since last user interaction
 
     // Queue controls
     void playNext();

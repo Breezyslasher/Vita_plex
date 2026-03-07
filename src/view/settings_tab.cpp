@@ -264,6 +264,19 @@ void SettingsTab::createPlaybackSection() {
             onSeekIntervalChanged(index);
         });
     m_contentBox->addView(m_seekIntervalSelector);
+
+    // Controls auto-hide selector
+    m_controlsAutoHideSelector = new brls::SelectorCell();
+    m_controlsAutoHideSelector->init("Controls Auto-Hide",
+        {"Never", "3 seconds", "5 seconds", "10 seconds", "15 seconds"},
+        settings.controlsAutoHideSeconds == 0 ? 0 :
+        settings.controlsAutoHideSeconds == 3 ? 1 :
+        settings.controlsAutoHideSeconds == 5 ? 2 :
+        settings.controlsAutoHideSeconds == 10 ? 3 : 4,
+        [this](int index) {
+            onControlsAutoHideChanged(index);
+        });
+    m_contentBox->addView(m_controlsAutoHideSelector);
 }
 
 void SettingsTab::createTranscodeSection() {
@@ -523,6 +536,21 @@ void SettingsTab::onSeekIntervalChanged(int index) {
         case 2: settings.seekInterval = 15; break;
         case 3: settings.seekInterval = 30; break;
         case 4: settings.seekInterval = 60; break;
+    }
+
+    app.saveSettings();
+}
+
+void SettingsTab::onControlsAutoHideChanged(int index) {
+    Application& app = Application::getInstance();
+    AppSettings& settings = app.getSettings();
+
+    switch (index) {
+        case 0: settings.controlsAutoHideSeconds = 0; break;
+        case 1: settings.controlsAutoHideSeconds = 3; break;
+        case 2: settings.controlsAutoHideSeconds = 5; break;
+        case 3: settings.controlsAutoHideSeconds = 10; break;
+        case 4: settings.controlsAutoHideSeconds = 15; break;
     }
 
     app.saveSettings();
