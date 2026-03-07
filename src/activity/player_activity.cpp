@@ -1403,8 +1403,6 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
         case TrackSelectMode::SUBTITLE:
             if (trackId < 0) {
                 // Disable subtitles
-                player.disableSubtitles();
-                player.showOSD("Subtitles off", 1.5);
                 if (m_partId > 0) {
                     PlexClient::getInstance().setStreamSelection(m_partId, -1, 0);
                 }
@@ -1412,8 +1410,21 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                 for (auto& ps : m_plexStreams) {
                     if (ps.streamType == 3) ps.selected = false;
                 }
+                // Reload transcode so Plex stops sending subtitles
+                {
+                    double currentPos = player.getPosition();
+                    int offsetMs = static_cast<int>(currentPos * 1000);
+                    PlexClient& client = PlexClient::getInstance();
+                    client.stopTranscode();
+                    std::string newUrl;
+                    if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
+                        brls::Logger::info("selectTrack: Reloading subs off at offset={}ms", offsetMs);
+                        player.showOSD("Subtitles off", 2.0);
+                        player.loadUrl(newUrl, "");
+                    }
+                }
             } else if (hasPlexStreams && m_partId > 0) {
-                // trackId is a Plex stream ID
+                // trackId is a Plex stream ID - tell Plex server to switch subtitle
                 std::string displayTitle = "Subtitle " + std::to_string(trackId);
                 for (const auto& ps : m_plexStreams) {
                     if (ps.id == trackId) {
@@ -1422,10 +1433,22 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                     }
                 }
                 PlexClient::getInstance().setStreamSelection(m_partId, -1, trackId);
-                player.showOSD(displayTitle, 1.5);
                 for (auto& ps : m_plexStreams) {
                     if (ps.streamType == 3) {
                         ps.selected = (ps.id == trackId);
+                    }
+                }
+                // Reload transcode so Plex serves the new subtitle stream
+                {
+                    double currentPos = player.getPosition();
+                    int offsetMs = static_cast<int>(currentPos * 1000);
+                    PlexClient& client = PlexClient::getInstance();
+                    client.stopTranscode();
+                    std::string newUrl;
+                    if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
+                        brls::Logger::info("selectTrack: Reloading subs at offset={}ms", offsetMs);
+                        player.showOSD("Switching: " + displayTitle, 2.0);
+                        player.loadUrl(newUrl, "");
                     }
                 }
             } else {
