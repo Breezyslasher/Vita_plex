@@ -925,20 +925,25 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
             return;
     }
 
-    // Get tracks from MPV (always available during playback)
-    MpvPlayer& player = MpvPlayer::getInstance();
-    std::string mpvType;
-    if (mode == TrackSelectMode::AUDIO) mpvType = "audio";
-    else if (mode == TrackSelectMode::SUBTITLE) mpvType = "sub";
-    else if (mode == TrackSelectMode::VIDEO) mpvType = "video";
-
-    auto mpvTracks = player.getTrackList(mpvType);
-
-    // Also fetch Plex streams for display titles (if not already cached)
+    // Fetch Plex streams (if not already cached) - these have all tracks
     fetchPlexStreams();
 
     int plexStreamType = (mode == TrackSelectMode::VIDEO) ? 1 :
                          (mode == TrackSelectMode::AUDIO) ? 2 : 3;
+
+    // Collect Plex streams of the requested type
+    std::vector<const PlexStream*> plexTracksOfType;
+    for (const auto& ps : m_plexStreams) {
+        if (ps.streamType == plexStreamType) {
+            plexTracksOfType.push_back(&ps);
+        }
+    }
+
+    // For audio and subtitle modes, use Plex streams as the primary source
+    // because HLS transcoding only muxes the selected track into the stream,
+    // so MPV only sees 1 audio track. Plex metadata has all available tracks.
+    bool usePlexStreams = (mode == TrackSelectMode::AUDIO || mode == TrackSelectMode::SUBTITLE)
+                         && !plexTracksOfType.empty();
 
     // For subtitles, add "Off" option first
     if (mode == TrackSelectMode::SUBTITLE) {
@@ -967,31 +972,64 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         trackList->addView(item);
     }
 
-    // Build track items from MPV track list, matched with Plex metadata
-    for (size_t i = 0; i < mpvTracks.size(); i++) {
-        const auto& track = mpvTracks[i];
+    if (usePlexStreams) {
+        // Build track items from Plex streams (shows ALL available tracks)
+        for (size_t i = 0; i < plexTracksOfType.size(); i++) {
+            const auto& ps = *plexTracksOfType[i];
 
-        // Build display string - try Plex metadata first for richer info
-        std::string displayStr;
-        bool foundPlex = false;
-
-        // Match by index position within same type
-        int typeIndex = 0;
-        for (const auto& ps : m_plexStreams) {
-            if (ps.streamType == plexStreamType) {
-                if (typeIndex == (int)i) {
-                    if (!ps.displayTitle.empty()) {
-                        displayStr = ps.displayTitle;
-                        foundPlex = true;
-                    }
-                    break;
-                }
-                typeIndex++;
+            std::string displayStr = ps.displayTitle;
+            if (displayStr.empty()) {
+                displayStr = ps.language;
+                if (displayStr.empty()) displayStr = "Track " + std::to_string(i + 1);
+                if (!ps.codec.empty()) displayStr += " [" + ps.codec + "]";
             }
-        }
 
-        if (!foundPlex) {
-            // Fallback: build from MPV info
+            brls::Box* item = new brls::Box();
+            item->setAxis(brls::Axis::ROW);
+            item->setJustifyContent(brls::JustifyContent::FLEX_START);
+            item->setAlignItems(brls::AlignItems::CENTER);
+            item->setPaddingTop(10);
+            item->setPaddingBottom(10);
+            item->setPaddingLeft(12);
+            item->setPaddingRight(12);
+            item->setCornerRadius(4);
+            item->setFocusable(true);
+
+            if (ps.selected) {
+                item->setBackgroundColor(nvgRGBA(80, 80, 200, 100));
+                item->setBorderColor(nvgRGB(100, 130, 255));
+                item->setBorderThickness(1);
+            }
+
+            std::string prefix = ps.selected ? "> " : "  ";
+            brls::Label* label = new brls::Label();
+            label->setText(prefix + displayStr);
+            label->setFontSize(16);
+            label->setTextColor(ps.selected ? nvgRGB(150, 200, 255) : nvgRGB(220, 220, 220));
+            item->addView(label);
+
+            int plexStreamId = ps.id;
+            item->registerClickAction([this, mode, plexStreamId](brls::View* view) {
+                selectTrack(mode, plexStreamId);
+                return true;
+            });
+            item->addGestureRecognizer(new brls::TapGestureRecognizer(item));
+            trackList->addView(item);
+        }
+    } else {
+        // Fallback: use MPV track list (for video tracks, or when no Plex data)
+        MpvPlayer& player = MpvPlayer::getInstance();
+        std::string mpvType;
+        if (mode == TrackSelectMode::AUDIO) mpvType = "audio";
+        else if (mode == TrackSelectMode::SUBTITLE) mpvType = "sub";
+        else if (mode == TrackSelectMode::VIDEO) mpvType = "video";
+
+        auto mpvTracks = player.getTrackList(mpvType);
+
+        for (size_t i = 0; i < mpvTracks.size(); i++) {
+            const auto& track = mpvTracks[i];
+
+            std::string displayStr;
             if (!track.lang.empty()) {
                 displayStr = track.lang;
             } else {
@@ -1003,40 +1041,48 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
             if (!track.codec.empty()) {
                 displayStr += " [" + track.codec + "]";
             }
+
+            brls::Box* item = new brls::Box();
+            item->setAxis(brls::Axis::ROW);
+            item->setJustifyContent(brls::JustifyContent::FLEX_START);
+            item->setAlignItems(brls::AlignItems::CENTER);
+            item->setPaddingTop(10);
+            item->setPaddingBottom(10);
+            item->setPaddingLeft(12);
+            item->setPaddingRight(12);
+            item->setCornerRadius(4);
+            item->setFocusable(true);
+
+            if (track.selected) {
+                item->setBackgroundColor(nvgRGBA(80, 80, 200, 100));
+                item->setBorderColor(nvgRGB(100, 130, 255));
+                item->setBorderThickness(1);
+            }
+
+            std::string prefix = track.selected ? "> " : "  ";
+            brls::Label* label = new brls::Label();
+            label->setText(prefix + displayStr);
+            label->setFontSize(16);
+            label->setTextColor(track.selected ? nvgRGB(150, 200, 255) : nvgRGB(220, 220, 220));
+            item->addView(label);
+
+            int trackId = track.id;
+            item->registerClickAction([this, mode, trackId](brls::View* view) {
+                selectTrack(mode, trackId);
+                return true;
+            });
+            item->addGestureRecognizer(new brls::TapGestureRecognizer(item));
+            trackList->addView(item);
         }
 
-        brls::Box* item = new brls::Box();
-        item->setAxis(brls::Axis::ROW);
-        item->setJustifyContent(brls::JustifyContent::FLEX_START);
-        item->setAlignItems(brls::AlignItems::CENTER);
-        item->setPaddingTop(10);
-        item->setPaddingBottom(10);
-        item->setPaddingLeft(12);
-        item->setPaddingRight(12);
-        item->setCornerRadius(4);
-        item->setFocusable(true);
-
-        if (track.selected) {
-            item->setBackgroundColor(nvgRGBA(80, 80, 200, 100));
-            item->setBorderColor(nvgRGB(100, 130, 255));
-            item->setBorderThickness(1);
+        if (mpvTracks.empty() && mode != TrackSelectMode::SUBTITLE) {
+            brls::Label* label = new brls::Label();
+            label->setText("No tracks available");
+            label->setFontSize(16);
+            label->setTextColor(nvgRGB(180, 180, 180));
+            label->setMargins(12, 12, 12, 12);
+            trackList->addView(label);
         }
-
-        // Selected indicator + label
-        std::string prefix = track.selected ? "> " : "  ";
-        brls::Label* label = new brls::Label();
-        label->setText(prefix + displayStr);
-        label->setFontSize(16);
-        label->setTextColor(track.selected ? nvgRGB(150, 200, 255) : nvgRGB(220, 220, 220));
-        item->addView(label);
-
-        int trackId = track.id;
-        item->registerClickAction([this, mode, trackId](brls::View* view) {
-            selectTrack(mode, trackId);
-            return true;
-        });
-        item->addGestureRecognizer(new brls::TapGestureRecognizer(item));
-        trackList->addView(item);
     }
 
     // For subtitles, add "Search for Subtitles" option at the bottom
@@ -1074,16 +1120,6 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         });
         searchItem->addGestureRecognizer(new brls::TapGestureRecognizer(searchItem));
         trackList->addView(searchItem);
-    }
-
-    // If no tracks found, show message
-    if (mpvTracks.empty() && mode != TrackSelectMode::SUBTITLE) {
-        brls::Label* label = new brls::Label();
-        label->setText("No tracks available");
-        label->setFontSize(16);
-        label->setTextColor(nvgRGB(180, 180, 180));
-        label->setMargins(12, 12, 12, 12);
-        trackList->addView(label);
     }
 }
 
@@ -1239,31 +1275,33 @@ void PlayerActivity::populateSubtitleSearchResults() {
 void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
     MpvPlayer& player = MpvPlayer::getInstance();
 
+    // Check if we have Plex streams - if so, trackId is a Plex stream ID
+    bool hasPlexStreams = !m_plexStreams.empty();
+
     switch (mode) {
         case TrackSelectMode::AUDIO:
-            player.setAudioTrack(trackId);
-            player.showOSD("Audio track " + std::to_string(trackId), 1.5);
-            // Also tell Plex server about the selection
-            if (m_partId > 0) {
-                // Find the Plex stream ID for this MPV track
-                int plexId = -1;
-                auto mpvTracks = player.getTrackList("audio");
-                for (size_t i = 0; i < mpvTracks.size(); i++) {
-                    if (mpvTracks[i].id == trackId) {
-                        // Find matching Plex stream by index
-                        int pi = 0;
-                        for (const auto& ps : m_plexStreams) {
-                            if (ps.streamType == 2) {
-                                if (pi == (int)i) { plexId = ps.id; break; }
-                                pi++;
-                            }
-                        }
+            if (hasPlexStreams && m_partId > 0) {
+                // trackId is a Plex stream ID - tell Plex server to switch audio
+                // Find display title for OSD
+                std::string displayTitle = "Audio track " + std::to_string(trackId);
+                for (const auto& ps : m_plexStreams) {
+                    if (ps.id == trackId) {
+                        displayTitle = ps.displayTitle;
                         break;
                     }
                 }
-                if (plexId > 0) {
-                    PlexClient::getInstance().setStreamSelection(m_partId, plexId, -1);
+                PlexClient::getInstance().setStreamSelection(m_partId, trackId, -1);
+                player.showOSD(displayTitle, 1.5);
+                // Mark the newly selected stream in our cached data
+                for (auto& ps : m_plexStreams) {
+                    if (ps.streamType == 2) {
+                        ps.selected = (ps.id == trackId);
+                    }
                 }
+            } else {
+                // Fallback: trackId is an MPV track ID
+                player.setAudioTrack(trackId);
+                player.showOSD("Audio track " + std::to_string(trackId), 1.5);
             }
             break;
 
@@ -1275,28 +1313,30 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                 if (m_partId > 0) {
                     PlexClient::getInstance().setStreamSelection(m_partId, -1, 0);
                 }
-            } else {
-                player.setSubtitleTrack(trackId);
-                player.showOSD("Subtitle track " + std::to_string(trackId), 1.5);
-                if (m_partId > 0) {
-                    int plexId = -1;
-                    auto mpvTracks = player.getTrackList("sub");
-                    for (size_t i = 0; i < mpvTracks.size(); i++) {
-                        if (mpvTracks[i].id == trackId) {
-                            int pi = 0;
-                            for (const auto& ps : m_plexStreams) {
-                                if (ps.streamType == 3) {
-                                    if (pi == (int)i) { plexId = ps.id; break; }
-                                    pi++;
-                                }
-                            }
-                            break;
-                        }
-                    }
-                    if (plexId > 0) {
-                        PlexClient::getInstance().setStreamSelection(m_partId, -1, plexId);
+                // Clear selection in cache
+                for (auto& ps : m_plexStreams) {
+                    if (ps.streamType == 3) ps.selected = false;
+                }
+            } else if (hasPlexStreams && m_partId > 0) {
+                // trackId is a Plex stream ID
+                std::string displayTitle = "Subtitle " + std::to_string(trackId);
+                for (const auto& ps : m_plexStreams) {
+                    if (ps.id == trackId) {
+                        displayTitle = ps.displayTitle;
+                        break;
                     }
                 }
+                PlexClient::getInstance().setStreamSelection(m_partId, -1, trackId);
+                player.showOSD(displayTitle, 1.5);
+                for (auto& ps : m_plexStreams) {
+                    if (ps.streamType == 3) {
+                        ps.selected = (ps.id == trackId);
+                    }
+                }
+            } else {
+                // Fallback: trackId is an MPV track ID
+                player.setSubtitleTrack(trackId);
+                player.showOSD("Subtitle track " + std::to_string(trackId), 1.5);
             }
             break;
 

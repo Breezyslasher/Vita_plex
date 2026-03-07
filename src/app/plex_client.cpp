@@ -1741,16 +1741,50 @@ bool PlexClient::searchSubtitles(const std::string& ratingKey, const std::string
 
     results.clear();
 
-    // Find Metadata array in response
+    brls::Logger::debug("searchSubtitles: Response {} bytes, first 500: {}",
+                       resp.body.size(), resp.body.substr(0, 500));
+
+    // Try to find the subtitle entries array - Plex uses different keys depending on version
+    // Try "Metadata", "MediaContainer", or look for arrays with "key" fields
+    size_t arrayStart = std::string::npos;
+
+    // Try "Metadata" key first
     size_t metaPos = resp.body.find("\"Metadata\"");
-    if (metaPos == std::string::npos) {
-        brls::Logger::info("searchSubtitles: No results found");
+    if (metaPos != std::string::npos) {
+        arrayStart = resp.body.find('[', metaPos);
+    }
+
+    // Try "Stream" key (some Plex versions return streams)
+    if (arrayStart == std::string::npos) {
+        size_t streamPos = resp.body.find("\"Stream\"");
+        if (streamPos != std::string::npos) {
+            arrayStart = resp.body.find('[', streamPos);
+        }
+    }
+
+    // Try to find any JSON array that contains subtitle data
+    if (arrayStart == std::string::npos) {
+        // Look for first array in the response that contains "key" fields
+        size_t searchPos = 0;
+        while (searchPos < resp.body.size()) {
+            size_t arrPos = resp.body.find('[', searchPos);
+            if (arrPos == std::string::npos) break;
+            // Check if this array contains subtitle-like objects
+            size_t keyCheck = resp.body.find("\"key\"", arrPos);
+            if (keyCheck != std::string::npos && keyCheck < arrPos + 500) {
+                arrayStart = arrPos;
+                break;
+            }
+            searchPos = arrPos + 1;
+        }
+    }
+
+    if (arrayStart == std::string::npos) {
+        brls::Logger::info("searchSubtitles: No subtitle array found in response");
         return true;
     }
 
-    size_t arrayStart = resp.body.find('[', metaPos);
-    if (arrayStart == std::string::npos) return true;
-
+    // Find the matching closing bracket
     int bracketCount = 1;
     size_t arrayEnd = arrayStart + 1;
     while (bracketCount > 0 && arrayEnd < resp.body.length()) {
@@ -1781,6 +1815,14 @@ bool PlexClient::searchSubtitles(const std::string& ratingKey, const std::string
         sub.language = extractJsonValue(obj, "language");
         sub.languageCode = extractJsonValue(obj, "languageCode");
         sub.provider = extractJsonValue(obj, "provider");
+
+        // Also try alternate field names
+        if (sub.displayTitle.empty()) {
+            sub.displayTitle = extractJsonValue(obj, "title");
+        }
+        if (sub.provider.empty()) {
+            sub.provider = extractJsonValue(obj, "providerTitle");
+        }
 
         if (!sub.key.empty()) {
             results.push_back(sub);
