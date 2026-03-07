@@ -190,7 +190,6 @@ private:
 
     // Static callback for render updates (called from MPV thread)
     static void onRenderUpdate(void* ctx);
-    static void doVideoRender(void* ctx);
 #endif
 };
 

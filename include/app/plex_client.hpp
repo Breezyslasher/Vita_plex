@@ -121,6 +121,14 @@ struct Hub {
     bool more = false;
 };
 
+// A single EPG program entry
+struct ChannelProgram {
+    std::string title;
+    std::string summary;
+    int64_t startTime = 0;
+    int64_t endTime = 0;
+};
+
 // Live TV Channel
 struct LiveTVChannel {
     std::string ratingKey;
@@ -134,6 +142,7 @@ struct LiveTVChannel {
     std::string nextProgram;
     int64_t programStart = 0;
     int64_t programEnd = 0;
+    std::vector<ChannelProgram> programs;  // All programs in EPG window, sorted by start time
 };
 
 // Genre/Category item with key for filtering

@@ -2415,9 +2415,6 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
 
                         // Match to our channel list
                         for (auto& channel : channelsWithPrograms) {
-                            // Skip if channel already has both current and next program
-                            if (!channel.currentProgram.empty() && !channel.nextProgram.empty()) continue;
-
                             bool matched = false;
 
                             // Match by callSign — grid may have suffix (e.g., "KDKADT4" vs "KDKADT")
@@ -2445,17 +2442,32 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
                             }
 
                             if (matched) {
-                                // Currently airing program
+                                // Add to programs list (we'll sort later)
+                                ChannelProgram prog;
+                                prog.title = displayTitle;
+                                prog.startTime = progStart;
+                                prog.endTime = progEnd;
+                                // Avoid duplicate programs (same title+start)
+                                bool duplicate = false;
+                                for (const auto& existing : channel.programs) {
+                                    if (existing.startTime == progStart && existing.title == displayTitle) {
+                                        duplicate = true;
+                                        break;
+                                    }
+                                }
+                                if (!duplicate) {
+                                    channel.programs.push_back(prog);
+                                    gotProgramData = true;
+                                }
+
+                                // Also populate legacy current/next fields
                                 if (progStart <= (int64_t)now && progEnd > (int64_t)now) {
                                     if (channel.currentProgram.empty()) {
                                         channel.currentProgram = displayTitle;
                                         channel.programStart = progStart;
                                         channel.programEnd = progEnd;
-                                        gotProgramData = true;
                                     }
-                                }
-                                // Upcoming program (starts after now, or starts after current ends)
-                                else if (progStart >= (int64_t)now) {
+                                } else if (progStart >= (int64_t)now) {
                                     if (channel.nextProgram.empty()) {
                                         channel.nextProgram = displayTitle;
                                     }
@@ -2478,9 +2490,16 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
 
     // DVR grid endpoint (/livetv/dvrs/{id}/grid) is not a real endpoint — skip it
 
+    // Sort each channel's programs by start time
     int programCount = 0;
-    for (const auto& ch : channelsWithPrograms) {
-        if (!ch.currentProgram.empty()) programCount++;
+    for (auto& ch : channelsWithPrograms) {
+        if (!ch.programs.empty()) {
+            std::sort(ch.programs.begin(), ch.programs.end(),
+                      [](const ChannelProgram& a, const ChannelProgram& b) {
+                          return a.startTime < b.startTime;
+                      });
+            programCount++;
+        }
     }
     brls::Logger::info("fetchEPGGrid: Got {} channels, {} with program info", channelsWithPrograms.size(), programCount);
     return !channelsWithPrograms.empty();

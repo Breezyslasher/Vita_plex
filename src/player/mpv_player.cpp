@@ -29,10 +29,9 @@
 // Defined in patches/psv_platform.cpp - throttles the borealis main loop
 // to ~30fps during audio-only playback so the ao_vita thread gets more CPU.
 extern "C" void vitaplex_set_audio_playback_active(bool active);
-// Video render hook - renders mpv frame BEFORE NanoVG/GXM scene starts.
-// This avoids GXM scene conflicts that crash when rendering during brls::sync().
+// Video render hook - kept for potential future use but not currently used.
+// We now use brls::sync() like switchfin (runs AFTER nvgEndFrame, no conflict).
 extern "C" void vitaplex_set_video_render_hook(void (*func)(void*), void* ctx);
-extern "C" void vitaplex_signal_video_frame();
 #endif
 
 namespace vitaplex {
@@ -147,6 +146,10 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
         mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
         mpv_set_option_string(m_mpv, "hwdec", "no");
+        // Low quality decoding - Vita has limited CPU, skip loop filter
+        // and use fast decode path to reduce crash risk from decoder overload
+        mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "all");
+        mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
 #else
         mpv_set_option_string(m_mpv, "hwdec", "no");
 #endif
@@ -172,22 +175,9 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "512KiB");
         mpv_set_option_string(m_mpv, "cache-secs", "10");
     } else {
-        // Video: HLS streaming needs cache to buffer .ts segments.
-        // Without cache, the HLS demuxer can't properly download and
-        // queue segments, leading to crashes on the first frame.
-        mpv_set_option_string(m_mpv, "cache", "yes");
-        mpv_set_option_string(m_mpv, "demuxer-max-bytes", "2MiB");
-        mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "512KiB");
-        // Pre-buffer before starting decode to prevent the decoder from
-        // being starved of data on the first frame (which causes abort).
-        mpv_set_option_string(m_mpv, "cache-pause-initial", "yes");
-        mpv_set_option_string(m_mpv, "cache-pause-wait", "3");
-        // HLS-specific: give the demuxer more time to probe codec parameters.
-        // Fixes "Could not find codec parameters" warnings with TS streams.
-        // Keep probesize conservative (2MB) - the Vita only has 192MB heap total
-        // and 10MB probesize was causing excessive memory pressure during HLS init.
-        mpv_set_option_string(m_mpv, "demuxer-lavf-analyzeduration", "5");
-        mpv_set_option_string(m_mpv, "demuxer-lavf-probesize", "2000000");
+        // Video: match switchfin - no cache on PSV to reduce memory pressure.
+        // The Vita has very limited RAM and cache buffers compete with decoder.
+        mpv_set_option_string(m_mpv, "cache", "no");
     }
 #else
     mpv_set_option_string(m_mpv, "cache", "yes");
@@ -936,35 +926,23 @@ void MpvPlayer::updatePlaybackInfo() {
 
 #ifdef __vita__
 // mpv render update callback - called from mpv's decoder thread when a new
-// frame is ready. Signals the video render hook in psv_platform.cpp to
-// perform the actual render at the start of the next mainLoopIteration(),
-// BEFORE NanoVG/GXM begins its scene. This prevents GXM scene conflicts
-// that would crash if we rendered via brls::sync() (which runs during the
-// NanoVG frame).
+// frame is ready. Uses brls::sync() to queue rendering on the main thread
+// during borealis's sync queue processing (matching switchfin exactly).
+// brls::sync() callbacks run AFTER nvgEndFrame(), so there's no GXM scene
+// conflict with NanoVG rendering.
 void MpvPlayer::onRenderUpdate(void* ctx) {
     MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
     if (!player || player->m_stopping.load() || !player->m_renderReady.load()) {
         return;
     }
-    // Signal that a video frame is ready. The render hook in psv_platform.cpp
-    // will call doVideoRender() at the start of the next main loop iteration,
-    // before NanoVG/GXM starts its scene.
-    vitaplex_signal_video_frame();
-}
-
-// Called by the video render hook in psv_platform.cpp at the start of
-// mainLoopIteration(), BEFORE NanoVG/GXM touches the GPU.
-void MpvPlayer::doVideoRender(void* ctx) {
-    MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
-    if (!player || player->m_stopping.load() || !player->m_renderReady.load() ||
-        !player->m_mpvRenderCtx) {
-        return;
-    }
-    uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
-    if (flags & MPV_RENDER_UPDATE_FRAME) {
-        mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
-        mpv_render_context_report_swap(player->m_mpvRenderCtx);
-    }
+    brls::sync([player]() {
+        if (player->m_stopping.load() || !player->m_mpvRenderCtx) return;
+        uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
+        if (flags & MPV_RENDER_UPDATE_FRAME) {
+            mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
+            mpv_render_context_report_swap(player->m_mpvRenderCtx);
+        }
+    });
 }
 #endif
 
@@ -1099,14 +1077,10 @@ bool MpvPlayer::initRenderContext() {
     m_mpvParams[0] = {MPV_RENDER_PARAM_GXM_FBO, &m_mpvFbo};
     m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
 
-    // Register the video render hook so frames render BEFORE NanoVG/GXM scene.
-    // doVideoRender() is called at the start of mainLoopIteration() in
-    // psv_platform.cpp, before NanoVG begins its GXM scene.
-    vitaplex_set_video_render_hook(doVideoRender, this);
-
     // Register the mpv render update callback. When mpv has a new frame,
-    // onRenderUpdate() signals the render hook (via vitaplex_signal_video_frame)
-    // which will call doVideoRender() on the next main loop iteration.
+    // onRenderUpdate() queues the render via brls::sync() (matching switchfin).
+    // brls::sync() callbacks run AFTER nvgEndFrame() in the main loop,
+    // so there's no GXM scene conflict with NanoVG rendering.
     // m_renderReady starts false and is set true at PLAYBACK_RESTART when
     // the first decoded frame is actually ready.
     mpv_render_context_set_update_callback(m_mpvRenderCtx, onRenderUpdate, this);
