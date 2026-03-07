@@ -113,8 +113,6 @@ void HomeTab::populateRow(brls::Box* rowContent, const std::vector<MediaItem>& i
     for (const auto& item : items) {
         auto* cell = new MediaItemCell();
         cell->setItem(item);
-        cell->setWidth(120);
-        cell->setHeight(170);
         cell->setMarginRight(10);
 
         MediaItem capturedItem = item;
@@ -122,6 +120,7 @@ void HomeTab::populateRow(brls::Box* rowContent, const std::vector<MediaItem>& i
             onItemSelected(capturedItem);
             return true;
         });
+        cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
 
         rowContent->addView(cell);
     }

@@ -108,6 +108,13 @@ private:
     BRLS_BIND(brls::Label, playPauseLabel, "player/play_pause_label");
     BRLS_BIND(brls::Label, audioTrackLabel, "player/audio_label");
     BRLS_BIND(brls::Label, subtitleLabel, "player/sub_label");
+    BRLS_BIND(brls::Box, playBtn, "player/play_btn");
+    BRLS_BIND(brls::Box, rewindBtn, "player/rewind_btn");
+    BRLS_BIND(brls::Box, forwardBtn, "player/forward_btn");
+    BRLS_BIND(brls::Box, audioBtn, "player/audio_btn");
+    BRLS_BIND(brls::Box, subBtn, "player/sub_btn");
+    BRLS_BIND(brls::Label, rewindLabel, "player/rewind_label");
+    BRLS_BIND(brls::Label, forwardLabel, "player/forward_label");
 };
 
 } // namespace vitaplex

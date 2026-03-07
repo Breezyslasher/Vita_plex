@@ -82,57 +82,122 @@
             marginBottom="8"
             visibility="gone"/>
 
-        <!-- Progress slider -->
+        <!-- Progress slider (taller for easier touch) -->
         <brls:Slider
             id="player/progress"
             width="100%"
-            height="30"
+            height="40"
             marginBottom="5"/>
 
-        <!-- Time + control buttons row -->
+        <!-- Time display -->
+        <brls:Label
+            id="player/time"
+            text="00:00 / 00:00"
+            fontSize="14"
+            horizontalAlign="center"
+            marginBottom="8"/>
+
+        <!-- Touch-friendly control buttons row -->
         <brls:Box
             width="100%"
             axis="row"
-            justifyContent="spaceBetween"
+            justifyContent="center"
             alignItems="center">
 
-            <!-- Time display (left) -->
-            <brls:Label
-                id="player/time"
-                text="00:00 / 00:00"
-                fontSize="14"/>
-
-            <!-- Control buttons (right) -->
+            <!-- Audio track / Shuffle button -->
             <brls:Box
-                id="player/buttons"
+                id="player/audio_btn"
+                width="80"
+                height="44"
                 axis="row"
-                alignItems="center">
-
-                <!-- Play/Pause indicator -->
-                <brls:Label
-                    id="player/play_pause_label"
-                    text="[A] Pause"
-                    fontSize="12"
-                    textColor="#CCCCCC"
-                    marginRight="15"/>
-
-                <!-- Audio track cycle -->
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="8"
+                backgroundColor="#40FFFFFF"
+                marginRight="10"
+                focusable="true"
+                visibility="gone">
                 <brls:Label
                     id="player/audio_label"
-                    text="[X] Audio"
-                    fontSize="12"
-                    textColor="#CCCCCC"
-                    marginRight="15"
-                    visibility="gone"/>
+                    text="Audio"
+                    fontSize="13"
+                    textColor="#CCCCCC"/>
+            </brls:Box>
 
-                <!-- Subtitle toggle -->
+            <!-- Rewind / Previous button -->
+            <brls:Box
+                id="player/rewind_btn"
+                width="56"
+                height="44"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="8"
+                backgroundColor="#40FFFFFF"
+                marginRight="10"
+                focusable="true">
+                <brls:Label
+                    id="player/rewind_label"
+                    text="<<"
+                    fontSize="18"
+                    textColor="#CCCCCC"/>
+            </brls:Box>
+
+            <!-- Play/Pause button -->
+            <brls:Box
+                id="player/play_btn"
+                width="72"
+                height="44"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="8"
+                backgroundColor="#60E5A00D"
+                marginRight="10"
+                focusable="true">
+                <brls:Label
+                    id="player/play_pause_label"
+                    text="Pause"
+                    fontSize="15"
+                    textColor="#FFFFFF"/>
+            </brls:Box>
+
+            <!-- Forward / Next button -->
+            <brls:Box
+                id="player/forward_btn"
+                width="56"
+                height="44"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="8"
+                backgroundColor="#40FFFFFF"
+                marginRight="10"
+                focusable="true">
+                <brls:Label
+                    id="player/forward_label"
+                    text=">>"
+                    fontSize="18"
+                    textColor="#CCCCCC"/>
+            </brls:Box>
+
+            <!-- Subtitle / Repeat button -->
+            <brls:Box
+                id="player/sub_btn"
+                width="80"
+                height="44"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="8"
+                backgroundColor="#40FFFFFF"
+                focusable="true"
+                visibility="gone">
                 <brls:Label
                     id="player/sub_label"
-                    text="[Y] Subs"
-                    fontSize="12"
-                    textColor="#CCCCCC"
-                    visibility="gone"/>
-
+                    text="Subs"
+                    fontSize="13"
+                    textColor="#CCCCCC"/>
             </brls:Box>
 
         </brls:Box>

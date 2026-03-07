@@ -176,21 +176,86 @@ void PlayerActivity::onContentAvailable() {
         });
     }
 
-    // Show mode-specific button labels
+    // Wire up touch buttons with tap gesture recognizers
+    if (playBtn) {
+        playBtn->registerClickAction([this](brls::View* view) {
+            togglePlayPause();
+            return true;
+        });
+        playBtn->addGestureRecognizer(new brls::TapGestureRecognizer(playBtn));
+    }
+
+    if (rewindBtn) {
+        rewindBtn->registerClickAction([this](brls::View* view) {
+            if (m_isQueueMode) {
+                playPrevious();
+            } else {
+                seek(-10);
+            }
+            return true;
+        });
+        rewindBtn->addGestureRecognizer(new brls::TapGestureRecognizer(rewindBtn));
+    }
+
+    if (forwardBtn) {
+        forwardBtn->registerClickAction([this](brls::View* view) {
+            if (m_isQueueMode) {
+                playNext();
+            } else {
+                seek(10);
+            }
+            return true;
+        });
+        forwardBtn->addGestureRecognizer(new brls::TapGestureRecognizer(forwardBtn));
+    }
+
+    // Show mode-specific button labels and wire touch
     if (m_isQueueMode) {
-        // Queue mode: X=Shuffle, Y=Repeat, LB/RB=Prev/Next
-        if (audioTrackLabel) {
-            audioTrackLabel->setText("[X] Shuffle");
-            audioTrackLabel->setVisibility(brls::Visibility::VISIBLE);
+        // Queue mode: left=Shuffle, right=Repeat, center=Prev/Play/Next
+        if (audioTrackLabel) audioTrackLabel->setText("Shuffle");
+        if (subtitleLabel) subtitleLabel->setText("Repeat");
+        if (rewindLabel) rewindLabel->setText("|<<");
+        if (forwardLabel) forwardLabel->setText(">>|");
+
+        if (audioBtn) {
+            audioBtn->setVisibility(brls::Visibility::VISIBLE);
+            audioBtn->registerClickAction([this](brls::View* view) {
+                toggleShuffle();
+                return true;
+            });
+            audioBtn->addGestureRecognizer(new brls::TapGestureRecognizer(audioBtn));
         }
-        if (subtitleLabel) {
-            subtitleLabel->setText("[Y] Repeat");
-            subtitleLabel->setVisibility(brls::Visibility::VISIBLE);
+        if (subBtn) {
+            subBtn->setVisibility(brls::Visibility::VISIBLE);
+            subBtn->registerClickAction([this](brls::View* view) {
+                toggleRepeat();
+                return true;
+            });
+            subBtn->addGestureRecognizer(new brls::TapGestureRecognizer(subBtn));
         }
     } else {
-        // Video mode: X=Audio Track, Y=Subtitles, LB/RB=Seek
-        if (audioTrackLabel) audioTrackLabel->setVisibility(brls::Visibility::VISIBLE);
-        if (subtitleLabel) subtitleLabel->setVisibility(brls::Visibility::VISIBLE);
+        // Video mode: left=Audio, right=Subs, center=Rew/Play/Fwd
+        if (audioTrackLabel) audioTrackLabel->setText("Audio");
+        if (subtitleLabel) subtitleLabel->setText("Subs");
+        if (rewindLabel) rewindLabel->setText("-10s");
+        if (forwardLabel) forwardLabel->setText("+10s");
+
+        if (audioBtn) {
+            audioBtn->setVisibility(brls::Visibility::VISIBLE);
+            audioBtn->registerClickAction([this](brls::View* view) {
+                cycleAudioTrack();
+                return true;
+            });
+            audioBtn->addGestureRecognizer(new brls::TapGestureRecognizer(audioBtn));
+        }
+        if (subBtn) {
+            subBtn->setVisibility(brls::Visibility::VISIBLE);
+            subBtn->registerClickAction([this](brls::View* view) {
+                cycleSubtitleTrack();
+                return true;
+            });
+            subBtn->addGestureRecognizer(new brls::TapGestureRecognizer(subBtn));
+        }
     }
 
     // Start update timer
@@ -754,7 +819,7 @@ void PlayerActivity::togglePlayPause() {
 
 void PlayerActivity::updatePlayPauseLabel() {
     if (playPauseLabel) {
-        playPauseLabel->setText(m_isPlaying ? "[A] Pause" : "[A] Play");
+        playPauseLabel->setText(m_isPlaying ? "Pause" : "Play");
     }
 }
 

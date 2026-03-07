@@ -79,14 +79,23 @@ void MediaItemCell::setItem(const MediaItem& item) {
         // Square album art
         m_thumbnailImage->setWidth(110);
         m_thumbnailImage->setHeight(110);
+        // Adjust box to fit square art + text
+        this->setWidth(120);
+        this->setHeight(150);
     } else if (isEpisode) {
         // Landscape episode still
         m_thumbnailImage->setWidth(140);
         m_thumbnailImage->setHeight(80);
+        // Adjust box to fit landscape image + text
+        this->setWidth(150);
+        this->setHeight(125);
     } else {
         // Portrait poster
         m_thumbnailImage->setWidth(110);
         m_thumbnailImage->setHeight(165);
+        // Adjust box to fit portrait poster + text
+        this->setWidth(120);
+        this->setHeight(200);
     }
 
     // Set title

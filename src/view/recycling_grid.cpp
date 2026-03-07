@@ -50,8 +50,6 @@ void RecyclingGrid::rebuildGrid() {
 
         auto* cell = new MediaItemCell();
         cell->setItem(m_items[i]);
-        cell->setWidth(140);
-        cell->setHeight(200);
         cell->setMarginRight(10);
 
         int index = (int)i;
