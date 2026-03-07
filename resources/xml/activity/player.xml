@@ -58,26 +58,6 @@
         positionRight="0"
         positionBottom="0">
 
-        <!-- Audio track / Shuffle button -->
-        <brls:Box
-            id="player/audio_btn"
-            width="44"
-            height="44"
-            axis="row"
-            justifyContent="center"
-            alignItems="center"
-            cornerRadius="22"
-            marginRight="20"
-            focusable="true"
-            visibility="gone">
-            <brls:Image
-                id="player/audio_icon"
-                width="22"
-                height="22"
-                image="@res/icons/translate.png"
-                scalingType="fit"/>
-        </brls:Box>
-
         <!-- Rewind / Previous button -->
         <brls:Box
             id="player/rewind_btn"
@@ -134,29 +114,9 @@
                 scalingType="fit"/>
         </brls:Box>
 
-        <!-- Subtitle / Repeat button -->
-        <brls:Box
-            id="player/sub_btn"
-            width="44"
-            height="44"
-            axis="row"
-            justifyContent="center"
-            alignItems="center"
-            cornerRadius="22"
-            marginLeft="20"
-            focusable="true"
-            visibility="gone">
-            <brls:Image
-                id="player/sub_icon"
-                width="22"
-                height="22"
-                image="@res/icons/subtitles.png"
-                scalingType="fit"/>
-        </brls:Box>
-
     </brls:Box>
 
-    <!-- Controls overlay - positioned at bottom (progress, time, title only) -->
+    <!-- Controls overlay - positioned at bottom -->
     <brls:Box
         id="player/controls"
         width="100%"
@@ -206,7 +166,57 @@
             id="player/time"
             text="00:00 / 00:00"
             fontSize="14"
-            horizontalAlign="center"/>
+            horizontalAlign="center"
+            marginBottom="8"/>
+
+        <!-- Audio/Sub buttons row at bottom -->
+        <brls:Box
+            width="100%"
+            axis="row"
+            justifyContent="center"
+            alignItems="center">
+
+            <!-- Audio track / Shuffle button -->
+            <brls:Box
+                id="player/audio_btn"
+                width="44"
+                height="44"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="22"
+                marginRight="20"
+                focusable="true"
+                visibility="gone">
+                <brls:Image
+                    id="player/audio_icon"
+                    width="22"
+                    height="22"
+                    image="@res/icons/translate.png"
+                    scalingType="fit"/>
+            </brls:Box>
+
+            <!-- Subtitle / Repeat button -->
+            <brls:Box
+                id="player/sub_btn"
+                width="44"
+                height="44"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="22"
+                marginLeft="20"
+                focusable="true"
+                visibility="gone">
+                <brls:Image
+                    id="player/sub_icon"
+                    width="22"
+                    height="22"
+                    image="@res/icons/subtitles.png"
+                    scalingType="fit"/>
+            </brls:Box>
+
+        </brls:Box>
 
     </brls:Box>
 
