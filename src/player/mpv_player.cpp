@@ -29,6 +29,10 @@
 // Defined in patches/psv_platform.cpp - throttles the borealis main loop
 // to ~30fps during audio-only playback so the ao_vita thread gets more CPU.
 extern "C" void vitaplex_set_audio_playback_active(bool active);
+// Video render hook - renders mpv frame BEFORE NanoVG/GXM scene starts.
+// This avoids GXM scene conflicts that crash when rendering during brls::sync().
+extern "C" void vitaplex_set_video_render_hook(void (*func)(void*), void* ctx);
+extern "C" void vitaplex_signal_video_frame();
 #endif
 
 namespace vitaplex {
@@ -931,29 +935,36 @@ void MpvPlayer::updatePlaybackInfo() {
 }
 
 #ifdef __vita__
-// Video render hook functions - defined in patches/psv_platform.cpp
 // mpv render update callback - called from mpv's decoder thread when a new
-// frame is ready. Uses brls::sync() to queue rendering on the main thread
-// during borealis's sync queue processing (matching switchfin exactly).
+// frame is ready. Signals the video render hook in psv_platform.cpp to
+// perform the actual render at the start of the next mainLoopIteration(),
+// BEFORE NanoVG/GXM begins its scene. This prevents GXM scene conflicts
+// that would crash if we rendered via brls::sync() (which runs during the
+// NanoVG frame).
 void MpvPlayer::onRenderUpdate(void* ctx) {
     MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
     if (!player || player->m_stopping.load() || !player->m_renderReady.load()) {
         return;
     }
-    // Match switchfin exactly: sync callback calls update + render + report_swap
-    // No flushGxmPipeline() — switchfin doesn't do it, and sceGxmFinish() can
-    // interfere with the scene lifecycle causing black frames.
-    brls::sync([player]() {
-        if (!player || player->m_stopping.load() || !player->m_renderReady.load() ||
-            !player->m_mpvRenderCtx) {
-            return;
-        }
-        uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
-        if (flags & MPV_RENDER_UPDATE_FRAME) {
-            mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
-            mpv_render_context_report_swap(player->m_mpvRenderCtx);
-        }
-    });
+    // Signal that a video frame is ready. The render hook in psv_platform.cpp
+    // will call doVideoRender() at the start of the next main loop iteration,
+    // before NanoVG/GXM starts its scene.
+    vitaplex_signal_video_frame();
+}
+
+// Called by the video render hook in psv_platform.cpp at the start of
+// mainLoopIteration(), BEFORE NanoVG/GXM touches the GPU.
+void MpvPlayer::doVideoRender(void* ctx) {
+    MpvPlayer* player = static_cast<MpvPlayer*>(ctx);
+    if (!player || player->m_stopping.load() || !player->m_renderReady.load() ||
+        !player->m_mpvRenderCtx) {
+        return;
+    }
+    uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
+    if (flags & MPV_RENDER_UPDATE_FRAME) {
+        mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
+        mpv_render_context_report_swap(player->m_mpvRenderCtx);
+    }
 }
 #endif
 
@@ -1088,8 +1099,14 @@ bool MpvPlayer::initRenderContext() {
     m_mpvParams[0] = {MPV_RENDER_PARAM_GXM_FBO, &m_mpvFbo};
     m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
 
-    // Register the render update callback (matching switchfin).
-    // The callback uses brls::sync() to queue rendering on the main thread.
+    // Register the video render hook so frames render BEFORE NanoVG/GXM scene.
+    // doVideoRender() is called at the start of mainLoopIteration() in
+    // psv_platform.cpp, before NanoVG begins its GXM scene.
+    vitaplex_set_video_render_hook(doVideoRender, this);
+
+    // Register the mpv render update callback. When mpv has a new frame,
+    // onRenderUpdate() signals the render hook (via vitaplex_signal_video_frame)
+    // which will call doVideoRender() on the next main loop iteration.
     // m_renderReady starts false and is set true at PLAYBACK_RESTART when
     // the first decoded frame is actually ready.
     mpv_render_context_set_update_callback(m_mpvRenderCtx, onRenderUpdate, this);
@@ -1111,6 +1128,9 @@ void MpvPlayer::cleanupRenderContext() {
 #ifdef __vita__
     // Signal that render is no longer ready FIRST (atomic, visible to mpv thread immediately)
     m_renderReady.store(false);
+
+    // Unregister the video render hook so it won't call into freed resources
+    vitaplex_set_video_render_hook(nullptr, nullptr);
 
     if (m_mpvRenderCtx) {
         brls::Logger::debug("MpvPlayer: Cleaning up GXM render context");

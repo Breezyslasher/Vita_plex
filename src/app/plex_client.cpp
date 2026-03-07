@@ -2405,8 +2405,8 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
                         int64_t progStart = atoll(beginsAtStr.c_str());
                         int64_t progEnd = atoll(endsAtStr.c_str());
 
-                        // Check if currently airing
-                        if (progStart > (int64_t)now || progEnd < (int64_t)now) continue;
+                        // Skip programs that have already ended
+                        if (progEnd < (int64_t)now) continue;
 
                         // Extract channel identifiers from Media object
                         std::string chanCallSign = extractJsonValue(mediaObj, "channelCallSign");
@@ -2415,7 +2415,8 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
 
                         // Match to our channel list
                         for (auto& channel : channelsWithPrograms) {
-                            if (!channel.currentProgram.empty()) continue;
+                            // Skip if channel already has both current and next program
+                            if (!channel.currentProgram.empty() && !channel.nextProgram.empty()) continue;
 
                             bool matched = false;
 
@@ -2444,10 +2445,21 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
                             }
 
                             if (matched) {
-                                channel.currentProgram = displayTitle;
-                                channel.programStart = progStart;
-                                channel.programEnd = progEnd;
-                                gotProgramData = true;
+                                // Currently airing program
+                                if (progStart <= (int64_t)now && progEnd > (int64_t)now) {
+                                    if (channel.currentProgram.empty()) {
+                                        channel.currentProgram = displayTitle;
+                                        channel.programStart = progStart;
+                                        channel.programEnd = progEnd;
+                                        gotProgramData = true;
+                                    }
+                                }
+                                // Upcoming program (starts after now, or starts after current ends)
+                                else if (progStart >= (int64_t)now) {
+                                    if (channel.nextProgram.empty()) {
+                                        channel.nextProgram = displayTitle;
+                                    }
+                                }
                                 break;
                             }
                         }
