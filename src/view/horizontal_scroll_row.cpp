@@ -94,60 +94,16 @@ void HorizontalScrollRow::scrollToView(brls::View* targetView) {
 }
 
 brls::View* HorizontalScrollRow::getNextFocus(brls::FocusDirection direction, brls::View* currentView) {
-    // For LEFT/RIGHT, use index-based navigation instead of spatial lookup.
-    // Spatial lookup fails because children are translated off-screen via
-    // setTranslationX() for scrolling, which confuses position-based focus finding.
-    if (direction == brls::FocusDirection::LEFT || direction == brls::FocusDirection::RIGHT) {
-        auto& children = this->getChildren();
-        if (children.empty()) return nullptr;
+    // Get the default next focus from borealis
+    brls::View* nextFocus = brls::Box::getNextFocus(direction, currentView);
 
-        // Find the index of the currently focused child
-        int currentIndex = -1;
-        for (size_t i = 0; i < children.size(); i++) {
-            if (children[i] == currentView) {
-                currentIndex = (int)i;
-                break;
-            }
-        }
-
-        if (currentIndex < 0) {
-            // currentView not a direct child - try the default
-            return brls::Box::getNextFocus(direction, currentView);
-        }
-
-        int nextIndex = currentIndex + (direction == brls::FocusDirection::RIGHT ? 1 : -1);
-
-        if (nextIndex < 0 || nextIndex >= (int)children.size()) {
-            // At boundary - return nullptr so focus bubbles up to parent
-            // (e.g. sidebar for LEFT at first item)
-            return nullptr;
-        }
-
-        brls::View* nextFocus = children[nextIndex];
+    // If navigating left/right within this row, scroll to keep focused view visible
+    if (nextFocus && (direction == brls::FocusDirection::LEFT || direction == brls::FocusDirection::RIGHT)) {
         brls::sync([this, nextFocus]() {
             scrollToView(nextFocus);
         });
-        return nextFocus;
     }
 
-    // For UP/DOWN, let borealis find the target (respects custom navigation routes).
-    // Then scroll to make the target visible, since it may be off-screen due to
-    // setTranslationX() scrolling.
-    brls::View* nextFocus = brls::Box::getNextFocus(direction, currentView);
-    if (nextFocus) {
-        // If the target is a child of THIS row (focus coming into this row from
-        // above/below), scroll to make it visible. Reset to first item since
-        // custom routes point to children[0] which may be scrolled off.
-        auto& children = this->getChildren();
-        for (auto* child : children) {
-            if (child == nextFocus) {
-                brls::sync([this, nextFocus]() {
-                    scrollToView(nextFocus);
-                });
-                break;
-            }
-        }
-    }
     return nextFocus;
 }
 

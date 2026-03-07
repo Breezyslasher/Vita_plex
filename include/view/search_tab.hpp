@@ -25,7 +25,6 @@ private:
     void performSearch(const std::string& query);
     void onItemSelected(const MediaItem& item);
     void populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>& items);
-    void setupNavigationRoutes();
 
     brls::Label* m_titleLabel = nullptr;
     brls::Label* m_searchLabel = nullptr;

@@ -20,6 +20,7 @@ HomeTab::HomeTab() {
     // Create vertical scrolling container for the entire tab
     m_scrollView = new brls::ScrollingFrame();
     m_scrollView->setGrow(1.0f);
+    m_scrollView->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
 
     m_scrollContent = new brls::Box();
     m_scrollContent->setAxis(brls::Axis::COLUMN);
@@ -160,7 +161,6 @@ void HomeTab::loadContent() {
                 if (!alive || !*alive) return;
                 m_continueWatching = items;
                 populateRow(m_continueWatchingRow, m_continueWatching);
-                setupNavigationRoutes();
             });
         } else {
             brls::Logger::error("HomeTab: Failed to fetch continue watching");
@@ -238,48 +238,11 @@ void HomeTab::loadContent() {
             populateRow(m_moviesRow, m_recentMovies);
             populateRow(m_showsRow, m_recentShows);
             populateRow(m_musicRow, m_recentMusic);
-            setupNavigationRoutes();
         });
     });
 
     m_loaded = true;
     brls::Logger::debug("HomeTab: Async content loading started");
-}
-
-void HomeTab::setupNavigationRoutes() {
-    // Collect all non-empty rows (those with actual MediaItemCell children)
-    std::vector<HorizontalScrollRow*> rows;
-    auto addIfPopulated = [&rows](HorizontalScrollRow* row) {
-        if (!row) return;
-        auto& children = row->getChildren();
-        if (!children.empty() && dynamic_cast<MediaItemCell*>(children[0]) != nullptr)
-            rows.push_back(row);
-    };
-
-    addIfPopulated(m_continueWatchingRow);
-    addIfPopulated(m_moviesRow);
-    addIfPopulated(m_showsRow);
-    addIfPopulated(m_musicRow);
-
-    if (rows.empty()) return;
-
-    // Wire up UP/DOWN navigation between rows
-    for (size_t r = 0; r < rows.size(); r++) {
-        auto& children = rows[r]->getChildren();
-        brls::View* firstAbove = (r > 0) ? rows[r - 1]->getChildren()[0] : nullptr;
-        brls::View* firstBelow = (r + 1 < rows.size()) ? rows[r + 1]->getChildren()[0] : nullptr;
-
-        for (auto* child : children) {
-            if (firstAbove) {
-                child->setCustomNavigationRoute(brls::FocusDirection::UP, firstAbove);
-            }
-            if (firstBelow) {
-                child->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstBelow);
-            }
-        }
-    }
-
-    brls::Logger::debug("HomeTab: Navigation routes set up for {} rows", rows.size());
 }
 
 void HomeTab::onItemSelected(const MediaItem& item) {

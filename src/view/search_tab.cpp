@@ -54,6 +54,7 @@ SearchTab::SearchTab() {
     // Scrollable content for results
     m_scrollView = new brls::ScrollingFrame();
     m_scrollView->setGrow(1.0f);
+    m_scrollView->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
 
     m_scrollContent = new brls::Box();
     m_scrollContent->setAxis(brls::Axis::COLUMN);
@@ -162,52 +163,6 @@ void SearchTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaIte
     }
 }
 
-void SearchTab::setupNavigationRoutes() {
-    // Collect visible rows with content
-    std::vector<HorizontalScrollRow*> rows;
-
-    auto addIfVisible = [&rows](HorizontalScrollRow* row) {
-        if (row && row->getVisibility() == brls::Visibility::VISIBLE &&
-            !row->getChildren().empty()) {
-            rows.push_back(row);
-        }
-    };
-
-    addIfVisible(m_moviesRow);
-    addIfVisible(m_showsRow);
-    addIfVisible(m_episodesRow);
-    addIfVisible(m_musicRow);
-
-    if (rows.empty()) return;
-
-    // Wire first row UP to search label
-    for (auto* child : rows[0]->getChildren()) {
-        child->setCustomNavigationRoute(brls::FocusDirection::UP, m_searchLabel);
-    }
-
-    // Wire search label DOWN to first row's first item
-    m_searchLabel->setCustomNavigationRoute(brls::FocusDirection::DOWN,
-        rows[0]->getChildren()[0]);
-
-    // Wire UP/DOWN between rows
-    for (size_t r = 0; r < rows.size(); r++) {
-        auto& children = rows[r]->getChildren();
-        brls::View* firstAbove = (r > 0) ? rows[r - 1]->getChildren()[0] : nullptr;
-        brls::View* firstBelow = (r + 1 < rows.size()) ? rows[r + 1]->getChildren()[0] : nullptr;
-
-        for (auto* child : children) {
-            if (r > 0 && firstAbove) {
-                child->setCustomNavigationRoute(brls::FocusDirection::UP, firstAbove);
-            }
-            if (firstBelow) {
-                child->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstBelow);
-            }
-        }
-    }
-
-    brls::Logger::debug("SearchTab: Navigation routes set up for {} rows", rows.size());
-}
-
 void SearchTab::performSearch(const std::string& query) {
     if (query.empty()) {
         m_resultsLabel->setText("");
@@ -310,9 +265,6 @@ void SearchTab::performSearch(const std::string& query) {
                     m_musicLabel->setVisibility(brls::Visibility::GONE);
                     m_musicRow->setVisibility(brls::Visibility::GONE);
                 }
-
-                // Set up focus navigation between result rows
-                setupNavigationRoutes();
 
             } else {
                 m_resultsLabel->setText("Search failed");
