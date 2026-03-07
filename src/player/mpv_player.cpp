@@ -1079,16 +1079,18 @@ bool MpvPlayer::initRenderContext() {
 
     m_gxmFramebuffer = fbo;
 
-    // Set up MPV FBO parameters
+    // Set up MPV FBO parameters (matching switchfin exactly)
     m_mpvFbo.render_target = fbo->gxm_render_target;
     m_mpvFbo.color_surface = &fbo->gxm_color_surfaces[0].surface;
     m_mpvFbo.depth_stencil_surface = &fbo->gxm_depth_stencil_surface;
     m_mpvFbo.w = m_videoWidth;
     m_mpvFbo.h = m_videoHeight;
+    m_mpvFbo.format = SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_RGBA;  // Must match NanoVG texture format
 
-    // Set up render params array for use in callbacks (like switchfin)
-    m_mpvParams[0] = {MPV_RENDER_PARAM_GXM_FBO, &m_mpvFbo};
-    m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
+    // Set up render params array (matching switchfin: FLIP_Y + GXM_FBO + terminator)
+    m_mpvParams[0] = {MPV_RENDER_PARAM_FLIP_Y, &m_flipY};
+    m_mpvParams[1] = {MPV_RENDER_PARAM_GXM_FBO, &m_mpvFbo};
+    m_mpvParams[2] = {MPV_RENDER_PARAM_INVALID, nullptr};
 
     // Register the render update callback but keep m_renderReady=false.
     // The callback checks m_renderReady and will skip rendering until it's true.
@@ -1149,6 +1151,7 @@ void MpvPlayer::cleanupRenderContext() {
         m_mpvFbo = {};
         m_mpvParams[0] = {MPV_RENDER_PARAM_INVALID, nullptr};
         m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
+        m_mpvParams[2] = {MPV_RENDER_PARAM_INVALID, nullptr};
     }
 #endif
 }
