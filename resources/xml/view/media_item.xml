@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <brls:Box
-    width="140"
-    height="200"
+    width="auto"
+    height="auto"
     axis="column"
     alignItems="center"
     padding="5"

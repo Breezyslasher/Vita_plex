@@ -164,11 +164,101 @@ void PlayerActivity::onContentAvailable() {
             return true;
         });
 
-        // Y toggles controls in non-queue mode (queue mode uses Y for repeat)
-        this->registerAction("Toggle Controls", brls::ControllerButton::BUTTON_Y, [this](brls::View* view) {
-            toggleControls();
+        // X = cycle audio track, Y = cycle subtitle track (for video playback)
+        this->registerAction("Audio Track", brls::ControllerButton::BUTTON_X, [this](brls::View* view) {
+            cycleAudioTrack();
             return true;
         });
+
+        this->registerAction("Subtitle", brls::ControllerButton::BUTTON_Y, [this](brls::View* view) {
+            cycleSubtitleTrack();
+            return true;
+        });
+    }
+
+    // Wire up touch buttons with tap gesture recognizers
+    if (playBtn) {
+        playBtn->registerClickAction([this](brls::View* view) {
+            togglePlayPause();
+            return true;
+        });
+        playBtn->addGestureRecognizer(new brls::TapGestureRecognizer(playBtn));
+    }
+
+    if (rewindBtn) {
+        rewindBtn->registerClickAction([this](brls::View* view) {
+            if (m_isQueueMode) {
+                playPrevious();
+            } else {
+                seek(-10);
+            }
+            return true;
+        });
+        rewindBtn->addGestureRecognizer(new brls::TapGestureRecognizer(rewindBtn));
+    }
+
+    if (forwardBtn) {
+        forwardBtn->registerClickAction([this](brls::View* view) {
+            if (m_isQueueMode) {
+                playNext();
+            } else {
+                seek(10);
+            }
+            return true;
+        });
+        forwardBtn->addGestureRecognizer(new brls::TapGestureRecognizer(forwardBtn));
+    }
+
+    // Show mode-specific icons and wire touch
+    if (m_isQueueMode) {
+        // Queue mode: use skip-previous / skip-next icons for prev/next track
+        if (rewindIcon) rewindIcon->setImageFromRes("icons/skip-previous.png");
+        if (forwardIcon) forwardIcon->setImageFromRes("icons/skip-next.png");
+
+        if (audioBtn) {
+            audioBtn->setVisibility(brls::Visibility::VISIBLE);
+            audioBtn->registerClickAction([this](brls::View* view) {
+                toggleShuffle();
+                return true;
+            });
+            audioBtn->addGestureRecognizer(new brls::TapGestureRecognizer(audioBtn));
+        }
+        if (subBtn) {
+            subBtn->setVisibility(brls::Visibility::VISIBLE);
+            subBtn->registerClickAction([this](brls::View* view) {
+                toggleRepeat();
+                return true;
+            });
+            subBtn->addGestureRecognizer(new brls::TapGestureRecognizer(subBtn));
+        }
+    } else {
+        // Video mode: rewind-10 / fast-forward-10 icons for seeking
+        if (rewindIcon) rewindIcon->setImageFromRes("icons/rewind-10.png");
+        if (forwardIcon) forwardIcon->setImageFromRes("icons/fast-forward-10.png");
+
+        // translate icon for audio, subtitles icon for subs
+        if (audioBtn) {
+            audioBtn->setVisibility(brls::Visibility::VISIBLE);
+            if (audioIcon) {
+                audioIcon->setImageFromRes("icons/translate.png");
+            }
+            audioBtn->registerClickAction([this](brls::View* view) {
+                cycleAudioTrack();
+                return true;
+            });
+            audioBtn->addGestureRecognizer(new brls::TapGestureRecognizer(audioBtn));
+        }
+        if (subBtn) {
+            subBtn->setVisibility(brls::Visibility::VISIBLE);
+            if (subtitleIcon) {
+                subtitleIcon->setImageFromRes("icons/subtitles.png");
+            }
+            subBtn->registerClickAction([this](brls::View* view) {
+                cycleSubtitleTrack();
+                return true;
+            });
+            subBtn->addGestureRecognizer(new brls::TapGestureRecognizer(subBtn));
+        }
     }
 
     // Start update timer
@@ -635,6 +725,7 @@ void PlayerActivity::updateProgress() {
                     brls::Logger::debug("Video view enabled (deferred)");
                 }
                 m_isPlaying = true;
+                updatePlayPauseLabel();
                 brls::Logger::info("PlayerActivity: Deferred load started successfully");
             } else {
                 brls::Logger::error("PlayerActivity: Deferred loadUrl failed");
@@ -695,6 +786,13 @@ void PlayerActivity::updateProgress() {
         }
     }
 
+    // Keep play/pause label in sync with actual player state
+    bool actuallyPlaying = player.isPlaying();
+    if (actuallyPlaying != m_isPlaying) {
+        m_isPlaying = actuallyPlaying;
+        updatePlayPauseLabel();
+    }
+
     // Check if playback ended (only if we were actually playing)
     if (m_isPlaying && player.hasEnded()) {
         m_isPlaying = false;  // Prevent multiple triggers
@@ -719,6 +817,25 @@ void PlayerActivity::togglePlayPause() {
         player.play();
         m_isPlaying = true;
     }
+    updatePlayPauseLabel();
+}
+
+void PlayerActivity::updatePlayPauseLabel() {
+    if (playPauseIcon) {
+        playPauseIcon->setImageFromRes(m_isPlaying ? "icons/pause.png" : "icons/play.png");
+    }
+}
+
+void PlayerActivity::cycleAudioTrack() {
+    MpvPlayer& player = MpvPlayer::getInstance();
+    player.cycleAudio();
+    player.showOSD("Audio track changed", 1.5);
+}
+
+void PlayerActivity::cycleSubtitleTrack() {
+    MpvPlayer& player = MpvPlayer::getInstance();
+    player.cycleSubtitle();
+    player.showOSD("Subtitle track changed", 1.5);
 }
 
 void PlayerActivity::seek(int seconds) {

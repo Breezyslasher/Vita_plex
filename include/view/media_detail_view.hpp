@@ -51,7 +51,8 @@ private:
     brls::Button* m_downloadButton = nullptr;
     brls::Box* m_childrenBox = nullptr;
 
-    // Track list for albums (vertical list like Suwayomi chapter list)
+    // Track list for albums (vertical scrollable list like Suwayomi chapter list)
+    brls::ScrollingFrame* m_trackScrollView = nullptr;
     brls::Box* m_trackListBox = nullptr;
 
     // Collapsible description

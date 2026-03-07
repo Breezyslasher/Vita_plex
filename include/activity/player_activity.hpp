@@ -90,6 +90,11 @@ private:
     // Alive flag for async image loads - prevents use-after-free when activity is destroyed
     std::shared_ptr<std::atomic<bool>> m_alive = std::make_shared<std::atomic<bool>>(true);
 
+    // Track cycling
+    void cycleAudioTrack();
+    void cycleSubtitleTrack();
+    void updatePlayPauseLabel();
+
     BRLS_BIND(brls::Box, playerContainer, "player/container");
     BRLS_BIND(brls::Label, titleLabel, "player/title");
     BRLS_BIND(brls::Label, artistLabel, "player/artist");
@@ -100,6 +105,16 @@ private:
     BRLS_BIND(brls::Image, photoImage, "player/photo");
     BRLS_BIND(brls::Image, albumArt, "player/album_art");
     BRLS_BIND(VideoView, videoView, "player/video");
+    BRLS_BIND(brls::Image, playPauseIcon, "player/play_pause_icon");
+    BRLS_BIND(brls::Image, audioIcon, "player/audio_icon");
+    BRLS_BIND(brls::Image, subtitleIcon, "player/sub_icon");
+    BRLS_BIND(brls::Image, rewindIcon, "player/rewind_icon");
+    BRLS_BIND(brls::Image, forwardIcon, "player/forward_icon");
+    BRLS_BIND(brls::Box, playBtn, "player/play_btn");
+    BRLS_BIND(brls::Box, rewindBtn, "player/rewind_btn");
+    BRLS_BIND(brls::Box, forwardBtn, "player/forward_btn");
+    BRLS_BIND(brls::Box, audioBtn, "player/audio_btn");
+    BRLS_BIND(brls::Box, subBtn, "player/sub_btn");
 };
 
 } // namespace vitaplex

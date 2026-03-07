@@ -76,22 +76,26 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_playButton = new brls::Button();
         m_playButton->setText("Play");
         m_playButton->setWidth(200);
+        m_playButton->setHeight(44);
         m_playButton->setMarginTop(20);
         m_playButton->registerClickAction([this](brls::View* view) {
             onPlay(false);
             return true;
         });
+        m_playButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_playButton));
         leftBox->addView(m_playButton);
 
         if (m_item.viewOffset > 0) {
             m_resumeButton = new brls::Button();
             m_resumeButton->setText("Resume");
             m_resumeButton->setWidth(200);
+            m_resumeButton->setHeight(44);
             m_resumeButton->setMarginTop(10);
             m_resumeButton->registerClickAction([this](brls::View* view) {
                 onPlay(true);
                 return true;
             });
+            m_resumeButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_resumeButton));
             leftBox->addView(m_resumeButton);
         }
 
@@ -108,11 +112,13 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             }
 
             m_downloadButton->setWidth(200);
+            m_downloadButton->setHeight(44);
             m_downloadButton->setMarginTop(10);
             m_downloadButton->registerClickAction([this](brls::View* view) {
                 onDownload();
                 return true;
             });
+            m_downloadButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_downloadButton));
             leftBox->addView(m_downloadButton);
         }
     }
@@ -126,11 +132,13 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_downloadButton = new brls::Button();
         m_downloadButton->setText("Download...");
         m_downloadButton->setWidth(200);
+        m_downloadButton->setHeight(44);
         m_downloadButton->setMarginTop(10);
         m_downloadButton->registerClickAction([this](brls::View* view) {
             showDownloadOptions();
             return true;
         });
+        m_downloadButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_downloadButton));
         leftBox->addView(m_downloadButton);
     }
 
@@ -206,6 +214,14 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         return true;
     });
 
+    // Make summary tappable for touch (tap to expand/collapse)
+    m_summaryLabel->setFocusable(true);
+    m_summaryLabel->registerClickAction([this](brls::View* view) {
+        toggleDescription();
+        return true;
+    });
+    m_summaryLabel->addGestureRecognizer(new brls::TapGestureRecognizer(m_summaryLabel));
+
     topRow->addView(rightBox);
     m_mainContent->addView(topRow);
 
@@ -224,7 +240,8 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_mainContent->addView(childrenLabel);
 
         auto* childrenScroll = new brls::HScrollingFrame();
-        childrenScroll->setHeight(180);
+        // Episodes use landscape cells (~150x125), seasons use portrait (~120x200)
+        childrenScroll->setHeight(m_item.mediaType == MediaType::SEASON ? 135 : 210);
         childrenScroll->setMarginBottom(20);
 
         m_childrenBox = new brls::Box();
@@ -235,7 +252,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_mainContent->addView(childrenScroll);
     }
 
-    // Track list for albums (vertical list like Suwayomi chapter list)
+    // Track list for albums (vertical scrollable list like Suwayomi chapter list)
     if (m_item.mediaType == MediaType::MUSIC_ALBUM) {
         auto* tracksLabel = new brls::Label();
         tracksLabel->setText("Tracks");
@@ -243,11 +260,17 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         tracksLabel->setMarginBottom(10);
         m_mainContent->addView(tracksLabel);
 
+        // Scrollable container for track list (like Suwayomi RecyclerFrame wrapper)
+        m_trackScrollView = new brls::ScrollingFrame();
+        m_trackScrollView->setGrow(1.0f);
+
         m_trackListBox = new brls::Box();
         m_trackListBox->setAxis(brls::Axis::COLUMN);
         m_trackListBox->setJustifyContent(brls::JustifyContent::FLEX_START);
         m_trackListBox->setAlignItems(brls::AlignItems::STRETCH);
-        m_mainContent->addView(m_trackListBox);
+
+        m_trackScrollView->setContentView(m_trackListBox);
+        m_mainContent->addView(m_trackScrollView);
     }
 
     // Music categories container for artists
@@ -390,8 +413,6 @@ void MediaDetailView::loadChildren() {
         for (const auto& child : m_children) {
             auto* cell = new MediaItemCell();
             cell->setItem(child);
-            cell->setWidth(120);
-            cell->setHeight(150);
             cell->setMarginRight(10);
 
             cell->registerClickAction([this, child](brls::View* view) {
@@ -400,6 +421,7 @@ void MediaDetailView::loadChildren() {
                 brls::Application::pushActivity(new brls::Activity(detailView));
                 return true;
             });
+            cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
 
             m_childrenBox->addView(cell);
         }
@@ -463,8 +485,6 @@ void MediaDetailView::loadMusicCategories() {
                 for (const auto& item : items) {
                     auto* cell = new MediaItemCell();
                     cell->setItem(item);
-                    cell->setWidth(120);
-                    cell->setHeight(150);
                     cell->setMarginRight(10);
 
                     MediaItem capturedItem = item;
@@ -473,6 +493,7 @@ void MediaDetailView::loadMusicCategories() {
                         brls::Application::pushActivity(new brls::Activity(detailView));
                         return true;
                     });
+                    cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
 
                     content->addView(cell);
                 }
@@ -674,104 +695,51 @@ void MediaDetailView::showDownloadOptions() {
     optionsBox->setAxis(brls::Axis::COLUMN);
     optionsBox->setPadding(20);
 
+    // Helper to create touch-friendly dialog buttons
+    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
+        auto* btn = new brls::Button();
+        btn->setText(text);
+        btn->setHeight(44);
+        btn->setMarginBottom(10);
+        btn->registerClickAction(action);
+        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+        optionsBox->addView(btn);
+    };
+
     // Different options based on media type
     if (m_item.mediaType == MediaType::SHOW) {
-        // Show options: Download all seasons, download unwatched
-        auto* downloadAllBtn = new brls::Button();
-        downloadAllBtn->setText("Download All Episodes");
-        downloadAllBtn->setMarginBottom(10);
-        downloadAllBtn->registerClickAction([this, dialog](brls::View*) {
-            dialog->dismiss();
-            downloadAll();
-            return true;
+        addDialogButton("Download All Episodes", [this, dialog](brls::View*) {
+            dialog->dismiss(); downloadAll(); return true;
         });
-        optionsBox->addView(downloadAllBtn);
-
-        auto* downloadUnwatchedBtn = new brls::Button();
-        downloadUnwatchedBtn->setText("Download Unwatched");
-        downloadUnwatchedBtn->setMarginBottom(10);
-        downloadUnwatchedBtn->registerClickAction([this, dialog](brls::View*) {
-            dialog->dismiss();
-            downloadUnwatched();
-            return true;
+        addDialogButton("Download Unwatched", [this, dialog](brls::View*) {
+            dialog->dismiss(); downloadUnwatched(); return true;
         });
-        optionsBox->addView(downloadUnwatchedBtn);
-
-        auto* downloadNext5Btn = new brls::Button();
-        downloadNext5Btn->setText("Download Next 5 Unwatched");
-        downloadNext5Btn->setMarginBottom(10);
-        downloadNext5Btn->registerClickAction([this, dialog](brls::View*) {
-            dialog->dismiss();
-            downloadUnwatched(5);
-            return true;
+        addDialogButton("Download Next 5 Unwatched", [this, dialog](brls::View*) {
+            dialog->dismiss(); downloadUnwatched(5); return true;
         });
-        optionsBox->addView(downloadNext5Btn);
-
     } else if (m_item.mediaType == MediaType::SEASON) {
-        // Season options: Download all episodes, download unwatched
-        auto* downloadAllBtn = new brls::Button();
-        downloadAllBtn->setText("Download All Episodes");
-        downloadAllBtn->setMarginBottom(10);
-        downloadAllBtn->registerClickAction([this, dialog](brls::View*) {
-            dialog->dismiss();
-            downloadAll();
-            return true;
+        addDialogButton("Download All Episodes", [this, dialog](brls::View*) {
+            dialog->dismiss(); downloadAll(); return true;
         });
-        optionsBox->addView(downloadAllBtn);
-
-        auto* downloadUnwatchedBtn = new brls::Button();
-        downloadUnwatchedBtn->setText("Download Unwatched");
-        downloadUnwatchedBtn->setMarginBottom(10);
-        downloadUnwatchedBtn->registerClickAction([this, dialog](brls::View*) {
-            dialog->dismiss();
-            downloadUnwatched();
-            return true;
+        addDialogButton("Download Unwatched", [this, dialog](brls::View*) {
+            dialog->dismiss(); downloadUnwatched(); return true;
         });
-        optionsBox->addView(downloadUnwatchedBtn);
-
-        auto* downloadNext3Btn = new brls::Button();
-        downloadNext3Btn->setText("Download Next 3 Unwatched");
-        downloadNext3Btn->setMarginBottom(10);
-        downloadNext3Btn->registerClickAction([this, dialog](brls::View*) {
-            dialog->dismiss();
-            downloadUnwatched(3);
-            return true;
+        addDialogButton("Download Next 3 Unwatched", [this, dialog](brls::View*) {
+            dialog->dismiss(); downloadUnwatched(3); return true;
         });
-        optionsBox->addView(downloadNext3Btn);
-
     } else if (m_item.mediaType == MediaType::MUSIC_ALBUM) {
-        // Album options: Download all tracks
-        auto* downloadAlbumBtn = new brls::Button();
-        downloadAlbumBtn->setText("Download Album");
-        downloadAlbumBtn->setMarginBottom(10);
-        downloadAlbumBtn->registerClickAction([this, dialog](brls::View*) {
-            dialog->dismiss();
-            downloadAll();
-            return true;
+        addDialogButton("Download Album", [this, dialog](brls::View*) {
+            dialog->dismiss(); downloadAll(); return true;
         });
-        optionsBox->addView(downloadAlbumBtn);
-
     } else if (m_item.mediaType == MediaType::MUSIC_ARTIST) {
-        // Artist options: Download all albums
-        auto* downloadAllBtn = new brls::Button();
-        downloadAllBtn->setText("Download All Albums");
-        downloadAllBtn->setMarginBottom(10);
-        downloadAllBtn->registerClickAction([this, dialog](brls::View*) {
-            dialog->dismiss();
-            downloadAll();
-            return true;
+        addDialogButton("Download All Albums", [this, dialog](brls::View*) {
+            dialog->dismiss(); downloadAll(); return true;
         });
-        optionsBox->addView(downloadAllBtn);
     }
 
-    // Cancel button
-    auto* cancelBtn = new brls::Button();
-    cancelBtn->setText("Cancel");
-    cancelBtn->registerClickAction([dialog](brls::View*) {
-        dialog->dismiss();
-        return true;
+    addDialogButton("Cancel", [dialog](brls::View*) {
+        dialog->dismiss(); return true;
     });
-    optionsBox->addView(cancelBtn);
 
     dialog->addView(optionsBox);
     brls::Application::pushActivity(new brls::Activity(dialog));
@@ -1025,8 +993,8 @@ void MediaDetailView::loadTrackList() {
                 row->setAxis(brls::Axis::ROW);
                 row->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
                 row->setAlignItems(brls::AlignItems::CENTER);
-                row->setHeight(50);
-                row->setPadding(8, 14, 8, 14);
+                row->setHeight(56);
+                row->setPadding(10, 16, 10, 16);
                 row->setMarginBottom(4);
                 row->setCornerRadius(8);
                 row->setBackgroundColor(nvgRGBA(50, 50, 60, 200));
@@ -1082,6 +1050,7 @@ void MediaDetailView::loadTrackList() {
                     }
                     return true;
                 });
+                row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
 
                 m_trackListBox->addView(row);
             }
