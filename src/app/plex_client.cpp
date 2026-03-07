@@ -2294,7 +2294,6 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     if (m_dvrId.empty()) {
         checkLiveTVAvailability();
         if (m_dvrId.empty()) {
-            // Fall back to "1" as default DVR ID (most common single-DVR setup)
             m_dvrId = "1";
             brls::Logger::warning("tuneLiveTVChannel: No DVR ID found, using default '{}'", m_dvrId);
         }
@@ -2302,34 +2301,94 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
 
     HttpClient client;
 
-    // Step 1: Tune the channel
-    // POST /livetv/dvrs/{dvrId}/channels/{channel}/tune
+    // Step 1: Tune the channel via POST /livetv/dvrs/{dvrId}/channels/{channel}/tune
     std::string tuneUrl = buildApiUrl("/livetv/dvrs/" + m_dvrId + "/channels/" + channelKey + "/tune");
     HttpRequest tuneReq;
     tuneReq.url = tuneUrl;
     tuneReq.method = "POST";
     tuneReq.headers["Accept"] = "application/json";
+    tuneReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+    tuneReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+    tuneReq.headers["X-Plex-Version"] = "1.0.0";
+    tuneReq.headers["X-Plex-Platform"] = "PlayStation Vita";
+    tuneReq.headers["X-Plex-Device"] = "PS Vita";
+    tuneReq.headers["X-Plex-Device-Name"] = "PS Vita";
     tuneReq.timeout = 15;
 
+    brls::Logger::debug("tuneLiveTVChannel: POST {}", tuneUrl);
     HttpResponse tuneResp = client.request(tuneReq);
 
     if (tuneResp.statusCode != 200) {
-        brls::Logger::error("tuneLiveTVChannel: Tune failed with status {}", tuneResp.statusCode);
+        brls::Logger::error("tuneLiveTVChannel: Tune failed with status {} body: {}",
+                            tuneResp.statusCode, tuneResp.body.substr(0, 500));
+
+        // Fallback: Try to use Plex transcode/universal decision endpoint for live TV
+        // This works by treating the live TV channel as a regular media item
+        brls::Logger::info("tuneLiveTVChannel: Trying transcode/universal fallback...");
+
+        std::string decisionUrl = buildApiUrl(
+            "/video/:/transcode/universal/decision?"
+            "path=%2Flivetv%2Fdvrs%2F" + m_dvrId + "%2Fchannels%2F" + channelKey +
+            "&mediaIndex=0&partIndex=0"
+            "&directPlay=0&directStream=1&directStreamAudio=1"
+            "&hasMDE=1&location=lan"
+            "&audioBoost=100&audioChannelCount=2"
+            "&protocol=hls&videoBitrate=2000&videoResolution=960x544&videoQuality=100"
+            "&subtitles=none"
+            "&X-Plex-Client-Identifier=" + std::string(PLEX_CLIENT_ID) +
+            "&X-Plex-Product=" + std::string(PLEX_CLIENT_NAME) +
+            "&X-Plex-Version=1.0.0"
+            "&X-Plex-Platform=PlayStation%20Vita"
+            "&X-Plex-Device=PS%20Vita"
+            "&X-Plex-Device-Name=PS%20Vita");
+
+        HttpRequest decReq;
+        decReq.url = decisionUrl;
+        decReq.method = "GET";
+        decReq.headers["Accept"] = "application/json";
+        decReq.timeout = 15;
+
+        brls::Logger::debug("tuneLiveTVChannel: Decision URL: {}", decisionUrl);
+        HttpResponse decResp = client.request(decReq);
+
+        if (decResp.statusCode == 200) {
+            brls::Logger::debug("tuneLiveTVChannel: Decision response ({} bytes): {}",
+                                decResp.body.length(), decResp.body.substr(0, 500));
+
+            // Build stream URL using the same pattern as video playback
+            streamUrl = buildApiUrl(
+                "/video/:/transcode/universal/start.m3u8?"
+                "path=%2Flivetv%2Fdvrs%2F" + m_dvrId + "%2Fchannels%2F" + channelKey +
+                "&mediaIndex=0&partIndex=0"
+                "&directPlay=0&directStream=1&directStreamAudio=1"
+                "&hasMDE=1&location=lan"
+                "&audioBoost=100&audioChannelCount=2"
+                "&protocol=hls&videoBitrate=2000&videoResolution=960x544&videoQuality=100"
+                "&subtitles=none"
+                "&X-Plex-Client-Identifier=" + std::string(PLEX_CLIENT_ID) +
+                "&X-Plex-Product=" + std::string(PLEX_CLIENT_NAME) +
+                "&X-Plex-Version=1.0.0"
+                "&X-Plex-Platform=PlayStation%20Vita"
+                "&X-Plex-Device=PS%20Vita"
+                "&X-Plex-Device-Name=PS%20Vita");
+
+            brls::Logger::info("tuneLiveTVChannel: Stream URL (transcode) = {}", streamUrl);
+            return true;
+        }
+
+        brls::Logger::error("tuneLiveTVChannel: Decision fallback also failed: {} body: {}",
+                            decResp.statusCode, decResp.body.substr(0, 500));
         return false;
     }
 
     brls::Logger::debug("tuneLiveTVChannel: Tune response ({} bytes): {}",
-                        tuneResp.body.length(),
-                        tuneResp.body.substr(0, 500));
+                        tuneResp.body.length(), tuneResp.body.substr(0, 500));
 
     // Step 2: Extract sessionId and consumerId from tune response
-    // Response should contain session info with these fields
     std::string sessionId = extractJsonValue(tuneResp.body, "sessionId");
     if (sessionId.empty()) {
-        // Try alternative field names
         sessionId = extractJsonValue(tuneResp.body, "key");
         if (!sessionId.empty()) {
-            // key might be "/livetv/sessions/{id}" — extract the ID
             size_t lastSlash = sessionId.rfind('/');
             if (lastSlash != std::string::npos) {
                 sessionId = sessionId.substr(lastSlash + 1);
@@ -2342,11 +2401,10 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
 
     std::string consumerId = extractJsonValue(tuneResp.body, "consumerId");
     if (consumerId.empty()) {
-        // Some Plex versions use "mediaSubscriptionId" or default to "0"
         consumerId = extractJsonValue(tuneResp.body, "mediaSubscriptionId");
     }
     if (consumerId.empty()) {
-        consumerId = "0";  // Default consumer ID
+        consumerId = "0";
     }
 
     if (sessionId.empty()) {
@@ -2360,7 +2418,6 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
         HttpResponse sessResp = client.request(sessReq);
 
         if (sessResp.statusCode == 200) {
-            // Get the most recent session
             sessionId = extractJsonValue(sessResp.body, "ratingKey");
             if (sessionId.empty()) {
                 sessionId = extractJsonValue(sessResp.body, "key");
@@ -2382,7 +2439,6 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     brls::Logger::info("tuneLiveTVChannel: sessionId={}, consumerId={}", sessionId, consumerId);
 
     // Step 3: Build the HLS stream URL
-    // GET /livetv/sessions/{sessionId}/{consumerId}/index.m3u8
     streamUrl = buildApiUrl("/livetv/sessions/" + sessionId + "/" + consumerId + "/index.m3u8");
 
     brls::Logger::info("tuneLiveTVChannel: Stream URL = {}", streamUrl);
