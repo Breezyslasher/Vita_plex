@@ -94,18 +94,44 @@ void HorizontalScrollRow::scrollToView(brls::View* targetView) {
 }
 
 brls::View* HorizontalScrollRow::getNextFocus(brls::FocusDirection direction, brls::View* currentView) {
-    brls::View* nextFocus = brls::Box::getNextFocus(direction, currentView);
+    // For LEFT/RIGHT, use index-based navigation instead of spatial lookup.
+    // Spatial lookup fails because children are translated off-screen via
+    // setTranslationX() for scrolling, which confuses position-based focus finding.
+    if (direction == brls::FocusDirection::LEFT || direction == brls::FocusDirection::RIGHT) {
+        auto& children = this->getChildren();
+        if (children.empty()) return nullptr;
 
-    // If navigating left/right within this row, scroll to keep focused view visible
-    if (nextFocus && (direction == brls::FocusDirection::LEFT || direction == brls::FocusDirection::RIGHT)) {
+        // Find the index of the currently focused child
+        int currentIndex = -1;
+        for (size_t i = 0; i < children.size(); i++) {
+            if (children[i] == currentView) {
+                currentIndex = (int)i;
+                break;
+            }
+        }
+
+        if (currentIndex < 0) {
+            // currentView not a direct child - try the default
+            return brls::Box::getNextFocus(direction, currentView);
+        }
+
+        int nextIndex = currentIndex + (direction == brls::FocusDirection::RIGHT ? 1 : -1);
+
+        if (nextIndex < 0 || nextIndex >= (int)children.size()) {
+            // At boundary - return nullptr so focus bubbles up to parent
+            // (e.g. sidebar for LEFT at first item)
+            return nullptr;
+        }
+
+        brls::View* nextFocus = children[nextIndex];
         brls::sync([this, nextFocus]() {
             scrollToView(nextFocus);
         });
+        return nextFocus;
     }
 
-    // If no next focus found for LEFT/RIGHT, return nullptr so borealis
-    // bubbles up to parent (e.g. sidebar for LEFT at first item)
-    return nextFocus;
+    // For UP/DOWN, delegate to parent which handles custom navigation routes
+    return brls::Box::getNextFocus(direction, currentView);
 }
 
 } // namespace vitaplex

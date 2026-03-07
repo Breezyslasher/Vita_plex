@@ -130,12 +130,23 @@ void MediaItemCell::setItem(const MediaItem& item) {
         }
     }
 
-    // Show progress bar for items with view offset
-    if (m_progressBar && item.viewOffset > 0 && item.duration > 0) {
-        float progress = (float)item.viewOffset / (float)item.duration;
-        float barWidth = isEpisode ? 140.0f : 110.0f;
-        m_progressBar->setWidth(barWidth * progress);
-        m_progressBar->setVisibility(brls::Visibility::VISIBLE);
+    // Show progress bar only for items with meaningful watch progress
+    // Require at least 1% watched and at least 30 seconds of viewOffset
+    // to avoid showing bars for items that were barely started or have stale data
+    if (m_progressBar) {
+        if (item.viewOffset > 30000 && item.duration > 0) {
+            float progress = (float)item.viewOffset / (float)item.duration;
+            // Only show if between 1% and 95% (fully watched items shouldn't show bar)
+            if (progress > 0.01f && progress < 0.95f) {
+                float barWidth = isEpisode ? 140.0f : 110.0f;
+                m_progressBar->setWidth(std::min(barWidth * progress, barWidth));
+                m_progressBar->setVisibility(brls::Visibility::VISIBLE);
+            } else {
+                m_progressBar->setVisibility(brls::Visibility::GONE);
+            }
+        } else {
+            m_progressBar->setVisibility(brls::Visibility::GONE);
+        }
     }
 
     // Load thumbnail
