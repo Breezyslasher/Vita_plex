@@ -4,6 +4,7 @@
 
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
+#include "app/downloads_manager.hpp"
 #include "activity/login_activity.hpp"
 #include "activity/main_activity.hpp"
 #include "activity/player_activity.hpp"
@@ -61,6 +62,9 @@ void Application::run() {
         // Use connectToServer to properly initialize (including Live TV check)
         if (PlexClient::getInstance().connectToServer(m_serverUrl)) {
             brls::Logger::info("Restored session and connected to server");
+            // Bidirectional sync: push local offline progress, pull server progress
+            DownloadsManager::getInstance().init();
+            DownloadsManager::getInstance().syncProgressBidirectional();
             pushMainActivity();
         } else {
             brls::Logger::error("Failed to connect to saved server, showing login");
@@ -275,6 +279,9 @@ bool Application::loadSettings() {
     if (m_settings.connectionTimeout <= 0) m_settings.connectionTimeout = 180; // 3 minutes default
     m_settings.directPlay = extractBool("directPlay", false);
 
+    // Load download settings
+    m_settings.deleteAfterWatch = extractBool("deleteAfterWatch", false);
+
     brls::Logger::info("Settings loaded successfully");
     return !m_authToken.empty();
 #else
@@ -330,7 +337,10 @@ bool Application::saveSettings() {
 
     // Network settings
     json += "  \"connectionTimeout\": " + std::to_string(m_settings.connectionTimeout) + ",\n";
-    json += "  \"directPlay\": " + std::string(m_settings.directPlay ? "true" : "false") + "\n";
+    json += "  \"directPlay\": " + std::string(m_settings.directPlay ? "true" : "false") + ",\n";
+
+    // Download settings
+    json += "  \"deleteAfterWatch\": " + std::string(m_settings.deleteAfterWatch ? "true" : "false") + "\n";
 
     json += "}\n";
 

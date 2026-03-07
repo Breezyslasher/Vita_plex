@@ -30,6 +30,7 @@ private:
     void onQualityChanged(int index);
     void onSubtitleSizeChanged(int index);
     void onSeekIntervalChanged(int index);
+    void onConnectionTimeoutChanged(int index);
     void onManageHiddenLibraries();
     void onManageSidebarOrder();
 
@@ -70,12 +71,11 @@ private:
     brls::BooleanCell* m_burnSubtitlesToggle = nullptr;
     brls::BooleanCell* m_directPlayToggle = nullptr;
 
+    // Transcode section (continued)
+    brls::SelectorCell* m_connectionTimeoutSelector = nullptr;
+
     // Downloads section
-    brls::BooleanCell* m_autoStartDownloadsToggle = nullptr;
-    brls::BooleanCell* m_wifiOnlyToggle = nullptr;
-    brls::SelectorCell* m_concurrentDownloadsSelector = nullptr;
     brls::BooleanCell* m_deleteAfterWatchToggle = nullptr;
-    brls::BooleanCell* m_syncProgressToggle = nullptr;
     brls::DetailCell* m_clearDownloadsCell = nullptr;
 };
 

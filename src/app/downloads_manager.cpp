@@ -270,6 +270,51 @@ void DownloadsManager::syncProgressToServer() {
     saveState();
 }
 
+void DownloadsManager::syncProgressFromServer() {
+    std::vector<std::string> ratingKeys;
+
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& item : m_downloads) {
+            if (item.state == DownloadState::COMPLETED) {
+                ratingKeys.push_back(item.ratingKey);
+            }
+        }
+    }
+
+    if (ratingKeys.empty()) return;
+
+    brls::Logger::info("DownloadsManager: Pulling server progress for {} items", ratingKeys.size());
+
+    PlexClient& client = PlexClient::getInstance();
+    for (const auto& key : ratingKeys) {
+        MediaItem serverItem;
+        if (client.fetchMediaDetails(key, serverItem) && serverItem.viewOffset > 0) {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            for (auto& d : m_downloads) {
+                if (d.ratingKey == key) {
+                    // Use whichever progress is further ahead
+                    if (serverItem.viewOffset > d.viewOffset) {
+                        brls::Logger::info("DownloadsManager: Updated local progress for {} from {}ms to {}ms (from server)",
+                                          d.title, d.viewOffset, serverItem.viewOffset);
+                        d.viewOffset = serverItem.viewOffset;
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    saveState();
+}
+
+void DownloadsManager::syncProgressBidirectional() {
+    brls::Logger::info("DownloadsManager: Starting bidirectional progress sync");
+    syncProgressToServer();
+    syncProgressFromServer();
+    brls::Logger::info("DownloadsManager: Bidirectional sync complete");
+}
+
 void DownloadsManager::downloadItem(DownloadItem& item) {
     brls::Logger::info("DownloadsManager: Starting download of {}", item.title);
 

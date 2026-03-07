@@ -91,6 +91,12 @@ public:
     // Sync all offline progress to server (call when online)
     void syncProgressToServer();
 
+    // Pull server progress for downloaded items (call when online)
+    void syncProgressFromServer();
+
+    // Bidirectional sync: push local then pull server progress
+    void syncProgressBidirectional();
+
     // Save/load state to persistent storage
     void saveState();
     void loadState();
