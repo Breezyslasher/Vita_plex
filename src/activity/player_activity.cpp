@@ -892,9 +892,11 @@ void PlayerActivity::showTrackOverlay(TrackSelectMode mode) {
             return true;
         });
 
-        // Give focus to the first item in the track list for controller navigation
+        // Give focus to the currently selected track item for controller navigation
         if (trackList && !trackList->getChildren().empty()) {
-            brls::Application::giveFocus(trackList->getChildren()[0]);
+            int idx = std::min(m_selectedTrackIndex, (int)trackList->getChildren().size() - 1);
+            if (idx < 0) idx = 0;
+            brls::Application::giveFocus(trackList->getChildren()[idx]);
         }
     }
 }
@@ -920,6 +922,7 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
 
     // Clear existing items
     trackList->clearViews();
+    m_selectedTrackIndex = 0;
 
     // Set title
     switch (mode) {
@@ -1010,6 +1013,8 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
                 item->setBackgroundColor(nvgRGBA(80, 80, 200, 100));
                 item->setBorderColor(nvgRGB(100, 130, 255));
                 item->setBorderThickness(1);
+                // Track index for focus when overlay opens
+                m_selectedTrackIndex = static_cast<int>(trackList->getChildren().size());
             }
 
             std::string prefix = ps.selected ? "> " : "  ";
@@ -1126,7 +1131,11 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         searchItem->addView(searchLabel);
 
         searchItem->registerClickAction([this](brls::View* view) {
-            populateSubtitleSearchResults();
+            // Defer to next frame to avoid destroying the clicked view
+            // while its click handler is still on the call stack
+            brls::sync([this]() {
+                populateSubtitleSearchResults();
+            });
             return true;
         });
         searchItem->addGestureRecognizer(new brls::TapGestureRecognizer(searchItem));
@@ -1299,23 +1308,27 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                     }
                 }
                 PlexClient::getInstance().setStreamSelection(m_partId, trackId, -1);
-                player.showOSD("Switching: " + displayTitle, 2.0);
                 // Mark the newly selected stream in our cached data
                 for (auto& ps : m_plexStreams) {
                     if (ps.streamType == 2) {
                         ps.selected = (ps.id == trackId);
                     }
                 }
-                // Reload the transcode URL so MPV gets the new audio track
-                // The HLS stream only contains the selected audio, so we must
-                // get a fresh transcode URL from Plex after changing selection
+                // Stop the current transcode and start a new one at the same
+                // position so Plex re-muxes with the newly selected audio track.
+                // HLS only contains the selected audio, so a reload is needed,
+                // but we seek to the current position to avoid restarting.
                 {
                     double currentPos = player.getPosition();
                     int offsetMs = static_cast<int>(currentPos * 1000);
-                    std::string newUrl;
                     PlexClient& client = PlexClient::getInstance();
+                    // Stop existing transcode session so Plex doesn't keep
+                    // serving old audio segments
+                    client.stopTranscode();
+                    std::string newUrl;
                     if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
-                        brls::Logger::info("selectTrack: Reloading with new audio, offset={}ms", offsetMs);
+                        brls::Logger::info("selectTrack: Reloading audio at offset={}ms", offsetMs);
+                        player.showOSD("Switching: " + displayTitle, 2.0);
                         player.loadUrl(newUrl, "");
                     }
                 }

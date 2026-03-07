@@ -1865,6 +1865,21 @@ bool PlexClient::selectSearchedSubtitle(const std::string& ratingKey, int partId
     return true;
 }
 
+void PlexClient::stopTranscode() {
+    if (m_lastSessionId.empty()) return;
+
+    HttpClient client;
+    std::string url = buildApiUrl("/video/:/transcode/universal/stop?session=" + m_lastSessionId);
+
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    HttpResponse resp = client.request(req);
+
+    brls::Logger::debug("stopTranscode: session={} status={}", m_lastSessionId, resp.statusCode);
+    m_lastSessionId.clear();
+}
+
 bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url, int offsetMs) {
     brls::Logger::debug("getTranscodeUrl: ratingKey={}, offsetMs={}", ratingKey, offsetMs);
 
@@ -1968,6 +1983,7 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     }
 
     // Session ID
+    m_lastSessionId = sessionId;
     queryParams += "&session=" + sessionId;
 
     // Auth token
