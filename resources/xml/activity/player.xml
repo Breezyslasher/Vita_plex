@@ -61,18 +61,18 @@
         <!-- Rewind / Previous button -->
         <brls:Box
             id="player/rewind_btn"
-            width="48"
-            height="48"
+            width="80"
+            height="80"
             axis="row"
             justifyContent="center"
             alignItems="center"
-            cornerRadius="24"
-            marginRight="24"
+            cornerRadius="40"
+            marginRight="36"
             focusable="true">
             <brls:Image
                 id="player/rewind_icon"
-                width="24"
-                height="24"
+                width="44"
+                height="44"
                 image="@res/icons/rewind-10.png"
                 scalingType="fit"/>
         </brls:Box>
@@ -80,17 +80,17 @@
         <!-- Play/Pause button - larger and centered -->
         <brls:Box
             id="player/play_btn"
-            width="64"
-            height="64"
+            width="110"
+            height="110"
             axis="row"
             justifyContent="center"
             alignItems="center"
-            cornerRadius="32"
+            cornerRadius="55"
             focusable="true">
             <brls:Image
                 id="player/play_pause_icon"
-                width="32"
-                height="32"
+                width="56"
+                height="56"
                 image="@res/icons/pause.png"
                 scalingType="fit"/>
         </brls:Box>
@@ -98,18 +98,18 @@
         <!-- Forward / Next button -->
         <brls:Box
             id="player/forward_btn"
-            width="48"
-            height="48"
+            width="80"
+            height="80"
             axis="row"
             justifyContent="center"
             alignItems="center"
-            cornerRadius="24"
-            marginLeft="24"
+            cornerRadius="40"
+            marginLeft="36"
             focusable="true">
             <brls:Image
                 id="player/forward_icon"
-                width="24"
-                height="24"
+                width="44"
+                height="44"
                 image="@res/icons/fast-forward-10.png"
                 scalingType="fit"/>
         </brls:Box>
@@ -179,19 +179,19 @@
             <!-- Audio track / Shuffle button -->
             <brls:Box
                 id="player/audio_btn"
-                width="44"
-                height="44"
+                width="64"
+                height="64"
                 axis="row"
                 justifyContent="center"
                 alignItems="center"
-                cornerRadius="22"
-                marginRight="20"
+                cornerRadius="32"
+                marginRight="24"
                 focusable="true"
                 visibility="gone">
                 <brls:Image
                     id="player/audio_icon"
-                    width="22"
-                    height="22"
+                    width="34"
+                    height="34"
                     image="@res/icons/translate.png"
                     scalingType="fit"/>
             </brls:Box>
@@ -199,19 +199,19 @@
             <!-- Subtitle / Repeat button -->
             <brls:Box
                 id="player/sub_btn"
-                width="44"
-                height="44"
+                width="64"
+                height="64"
                 axis="row"
                 justifyContent="center"
                 alignItems="center"
-                cornerRadius="22"
-                marginLeft="20"
+                cornerRadius="32"
+                marginLeft="24"
                 focusable="true"
                 visibility="gone">
                 <brls:Image
                     id="player/sub_icon"
-                    width="22"
-                    height="22"
+                    width="34"
+                    height="34"
                     image="@res/icons/subtitles.png"
                     scalingType="fit"/>
             </brls:Box>
