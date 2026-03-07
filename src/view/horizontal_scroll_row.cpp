@@ -130,8 +130,25 @@ brls::View* HorizontalScrollRow::getNextFocus(brls::FocusDirection direction, br
         return nextFocus;
     }
 
-    // For UP/DOWN, delegate to parent which handles custom navigation routes
-    return brls::Box::getNextFocus(direction, currentView);
+    // For UP/DOWN, let borealis find the target (respects custom navigation routes).
+    // Then scroll to make the target visible, since it may be off-screen due to
+    // setTranslationX() scrolling.
+    brls::View* nextFocus = brls::Box::getNextFocus(direction, currentView);
+    if (nextFocus) {
+        // If the target is a child of THIS row (focus coming into this row from
+        // above/below), scroll to make it visible. Reset to first item since
+        // custom routes point to children[0] which may be scrolled off.
+        auto& children = this->getChildren();
+        for (auto* child : children) {
+            if (child == nextFocus) {
+                brls::sync([this, nextFocus]() {
+                    scrollToView(nextFocus);
+                });
+                break;
+            }
+        }
+    }
+    return nextFocus;
 }
 
 } // namespace vitaplex
