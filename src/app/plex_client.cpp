@@ -1839,17 +1839,22 @@ bool PlexClient::searchSubtitles(const std::string& ratingKey, const std::string
 
 bool PlexClient::selectSearchedSubtitle(const std::string& ratingKey, int partId,
                                          const std::string& subtitleKey) {
-    // Plex API: PUT /library/metadata/{id}/subtitles?key={subtitleKey}
+    // Plex API: PUT /library/metadata/{id}/subtitles
+    //   with key and partId as query parameters
+    brls::Logger::debug("selectSearchedSubtitle: ratingKey={} partId={} key={}", ratingKey, partId, subtitleKey);
+
     HttpClient client;
-    std::string endpoint = "/library/metadata/" + ratingKey + "/subtitles";
+    std::string endpoint = "/library/metadata/" + ratingKey + "/subtitles"
+                          + "?key=" + HttpClient::urlEncode(subtitleKey)
+                          + "&partId=" + std::to_string(partId);
     std::string url = buildApiUrl(endpoint);
-    url += "&key=" + subtitleKey;
-    url += "&partId=" + std::to_string(partId);
 
     HttpRequest req;
     req.url = url;
     req.method = "PUT";
     HttpResponse resp = client.request(req);
+
+    brls::Logger::debug("selectSearchedSubtitle: response status={}", resp.statusCode);
 
     if (resp.statusCode != 200 && resp.statusCode != 201) {
         brls::Logger::error("selectSearchedSubtitle: Failed: {}", resp.statusCode);

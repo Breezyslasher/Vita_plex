@@ -889,18 +889,29 @@ void PlayerActivity::showTrackOverlay(TrackSelectMode mode) {
         // Register B button to dismiss overlay
         trackOverlay->registerAction("Back", brls::ControllerButton::BUTTON_B, [this](brls::View* view) {
             hideTrackOverlay();
-            if (audioBtn) {
-                brls::Application::giveFocus(audioBtn);
-            }
             return true;
         });
+
+        // Give focus to the first item in the track list for controller navigation
+        if (trackList && !trackList->getChildren().empty()) {
+            brls::Application::giveFocus(trackList->getChildren()[0]);
+        }
     }
 }
 
 void PlayerActivity::hideTrackOverlay() {
+    TrackSelectMode prevMode = m_trackSelectMode;
     m_trackSelectMode = TrackSelectMode::NONE;
     if (trackOverlay) {
         trackOverlay->setVisibility(brls::Visibility::GONE);
+    }
+    // Restore focus to the appropriate button
+    if (prevMode == TrackSelectMode::SUBTITLE && subBtn) {
+        brls::Application::giveFocus(subBtn);
+    } else if (prevMode == TrackSelectMode::VIDEO && videoBtn) {
+        brls::Application::giveFocus(videoBtn);
+    } else if (audioBtn) {
+        brls::Application::giveFocus(audioBtn);
     }
 }
 
@@ -1250,19 +1261,17 @@ void PlayerActivity::populateSubtitleSearchResults() {
         label->setTextColor(nvgRGB(220, 220, 220));
         item->addView(label);
 
-        size_t idx = i;
-        item->registerClickAction([this, idx](brls::View* view) {
-            if (idx < m_subtitleSearchResults.size()) {
-                const auto& sub = m_subtitleSearchResults[idx];
-                PlexClient& client = PlexClient::getInstance();
-                if (client.selectSearchedSubtitle(m_mediaKey, m_partId, sub.key)) {
-                    MpvPlayer& player = MpvPlayer::getInstance();
-                    player.showOSD("Subtitle selected: " + sub.displayTitle, 2.0);
-                    // Re-fetch streams to pick up the new subtitle
-                    m_streamsLoaded = false;
-                } else {
-                    MpvPlayer::getInstance().showOSD("Failed to select subtitle", 2.0);
-                }
+        // Capture key and title by value to avoid referencing vector after potential invalidation
+        std::string subKey = sub.key;
+        std::string subTitle = sub.displayTitle;
+        item->registerClickAction([this, subKey, subTitle](brls::View* view) {
+            PlexClient& client = PlexClient::getInstance();
+            brls::Logger::debug("Subtitle click: key={}", subKey);
+            if (client.selectSearchedSubtitle(m_mediaKey, m_partId, subKey)) {
+                MpvPlayer::getInstance().showOSD("Subtitle: " + subTitle, 2.0);
+                m_streamsLoaded = false;
+            } else {
+                MpvPlayer::getInstance().showOSD("Failed to select subtitle", 2.0);
             }
             hideTrackOverlay();
             return true;
@@ -1282,7 +1291,6 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
         case TrackSelectMode::AUDIO:
             if (hasPlexStreams && m_partId > 0) {
                 // trackId is a Plex stream ID - tell Plex server to switch audio
-                // Find display title for OSD
                 std::string displayTitle = "Audio track " + std::to_string(trackId);
                 for (const auto& ps : m_plexStreams) {
                     if (ps.id == trackId) {
@@ -1291,11 +1299,24 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                     }
                 }
                 PlexClient::getInstance().setStreamSelection(m_partId, trackId, -1);
-                player.showOSD(displayTitle, 1.5);
+                player.showOSD("Switching: " + displayTitle, 2.0);
                 // Mark the newly selected stream in our cached data
                 for (auto& ps : m_plexStreams) {
                     if (ps.streamType == 2) {
                         ps.selected = (ps.id == trackId);
+                    }
+                }
+                // Reload the transcode URL so MPV gets the new audio track
+                // The HLS stream only contains the selected audio, so we must
+                // get a fresh transcode URL from Plex after changing selection
+                {
+                    double currentPos = player.getPosition();
+                    int offsetMs = static_cast<int>(currentPos * 1000);
+                    std::string newUrl;
+                    PlexClient& client = PlexClient::getInstance();
+                    if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
+                        brls::Logger::info("selectTrack: Reloading with new audio, offset={}ms", offsetMs);
+                        player.loadUrl(newUrl, "");
                     }
                 }
             } else {
