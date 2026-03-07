@@ -313,6 +313,12 @@ void PlayerActivity::onContentAvailable() {
         updateProgress();
     });
     m_updateTimer.start(1000); // Update every second
+
+    // Start with controls hidden if auto-hide is enabled
+    int autoHide = Application::getInstance().getSettings().controlsAutoHideSeconds;
+    if (autoHide > 0 && !m_isPhoto) {
+        hideControls();
+    }
 }
 
 void PlayerActivity::willDisappear(bool resetState) {
