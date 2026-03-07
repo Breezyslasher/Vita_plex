@@ -107,7 +107,7 @@
             <!-- Audio track / Shuffle button -->
             <brls:Box
                 id="player/audio_btn"
-                width="80"
+                width="48"
                 height="44"
                 axis="row"
                 justifyContent="center"
@@ -117,17 +117,18 @@
                 marginRight="10"
                 focusable="true"
                 visibility="gone">
-                <brls:Label
-                    id="player/audio_label"
-                    text="Audio"
-                    fontSize="13"
-                    textColor="#CCCCCC"/>
+                <brls:Image
+                    id="player/audio_icon"
+                    width="24"
+                    height="24"
+                    image="@res/icons/translate.png"
+                    scalingType="fit"/>
             </brls:Box>
 
             <!-- Rewind / Previous button -->
             <brls:Box
                 id="player/rewind_btn"
-                width="56"
+                width="48"
                 height="44"
                 axis="row"
                 justifyContent="center"
@@ -136,17 +137,18 @@
                 backgroundColor="#40FFFFFF"
                 marginRight="10"
                 focusable="true">
-                <brls:Label
-                    id="player/rewind_label"
-                    text="<<"
-                    fontSize="18"
-                    textColor="#CCCCCC"/>
+                <brls:Image
+                    id="player/rewind_icon"
+                    width="24"
+                    height="24"
+                    image="@res/icons/skip-previous.png"
+                    scalingType="fit"/>
             </brls:Box>
 
             <!-- Play/Pause button -->
             <brls:Box
                 id="player/play_btn"
-                width="72"
+                width="56"
                 height="44"
                 axis="row"
                 justifyContent="center"
@@ -155,17 +157,18 @@
                 backgroundColor="#60E5A00D"
                 marginRight="10"
                 focusable="true">
-                <brls:Label
-                    id="player/play_pause_label"
-                    text="Pause"
-                    fontSize="15"
-                    textColor="#FFFFFF"/>
+                <brls:Image
+                    id="player/play_pause_icon"
+                    width="24"
+                    height="24"
+                    image="@res/icons/pause.png"
+                    scalingType="fit"/>
             </brls:Box>
 
             <!-- Forward / Next button -->
             <brls:Box
                 id="player/forward_btn"
-                width="56"
+                width="48"
                 height="44"
                 axis="row"
                 justifyContent="center"
@@ -174,17 +177,18 @@
                 backgroundColor="#40FFFFFF"
                 marginRight="10"
                 focusable="true">
-                <brls:Label
-                    id="player/forward_label"
-                    text=">>"
-                    fontSize="18"
-                    textColor="#CCCCCC"/>
+                <brls:Image
+                    id="player/forward_icon"
+                    width="24"
+                    height="24"
+                    image="@res/icons/skip-next.png"
+                    scalingType="fit"/>
             </brls:Box>
 
             <!-- Subtitle / Repeat button -->
             <brls:Box
                 id="player/sub_btn"
-                width="80"
+                width="48"
                 height="44"
                 axis="row"
                 justifyContent="center"
@@ -193,11 +197,12 @@
                 backgroundColor="#40FFFFFF"
                 focusable="true"
                 visibility="gone">
-                <brls:Label
-                    id="player/sub_label"
-                    text="Subs"
-                    fontSize="13"
-                    textColor="#CCCCCC"/>
+                <brls:Image
+                    id="player/sub_icon"
+                    width="24"
+                    height="24"
+                    image="@res/icons/subtitles.png"
+                    scalingType="fit"/>
             </brls:Box>
 
         </brls:Box>

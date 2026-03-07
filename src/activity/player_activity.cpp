@@ -209,13 +209,10 @@ void PlayerActivity::onContentAvailable() {
         forwardBtn->addGestureRecognizer(new brls::TapGestureRecognizer(forwardBtn));
     }
 
-    // Show mode-specific button labels and wire touch
+    // Show mode-specific icons and wire touch
     if (m_isQueueMode) {
-        // Queue mode: left=Shuffle, right=Repeat, center=Prev/Play/Next
-        if (audioTrackLabel) audioTrackLabel->setText("Shuffle");
-        if (subtitleLabel) subtitleLabel->setText("Repeat");
-        if (rewindLabel) rewindLabel->setText("|<<");
-        if (forwardLabel) forwardLabel->setText(">>|");
+        // Queue mode: skip-previous / play / skip-next icons
+        // Audio/Sub buttons not needed for queue mode (shuffle/repeat via controller)
 
         if (audioBtn) {
             audioBtn->setVisibility(brls::Visibility::VISIBLE);
@@ -234,14 +231,12 @@ void PlayerActivity::onContentAvailable() {
             subBtn->addGestureRecognizer(new brls::TapGestureRecognizer(subBtn));
         }
     } else {
-        // Video mode: left=Audio, right=Subs, center=Rew/Play/Fwd
-        if (audioTrackLabel) audioTrackLabel->setText("Audio");
-        if (subtitleLabel) subtitleLabel->setText("Subs");
-        if (rewindLabel) rewindLabel->setText("-10s");
-        if (forwardLabel) forwardLabel->setText("+10s");
-
+        // Video mode: translate icon for audio, subtitles icon for subs
         if (audioBtn) {
             audioBtn->setVisibility(brls::Visibility::VISIBLE);
+            if (audioIcon) {
+                audioIcon->setImageFromRes("icons/translate.png");
+            }
             audioBtn->registerClickAction([this](brls::View* view) {
                 cycleAudioTrack();
                 return true;
@@ -250,6 +245,9 @@ void PlayerActivity::onContentAvailable() {
         }
         if (subBtn) {
             subBtn->setVisibility(brls::Visibility::VISIBLE);
+            if (subtitleIcon) {
+                subtitleIcon->setImageFromRes("icons/subtitles.png");
+            }
             subBtn->registerClickAction([this](brls::View* view) {
                 cycleSubtitleTrack();
                 return true;
@@ -818,8 +816,8 @@ void PlayerActivity::togglePlayPause() {
 }
 
 void PlayerActivity::updatePlayPauseLabel() {
-    if (playPauseLabel) {
-        playPauseLabel->setText(m_isPlaying ? "Pause" : "Play");
+    if (playPauseIcon) {
+        playPauseIcon->setImageFromRes(m_isPlaying ? "icons/pause.png" : "icons/play.png");
     }
 }
 

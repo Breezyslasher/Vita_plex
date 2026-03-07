@@ -241,6 +241,13 @@ vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
     FILE resources/icons/tag.png resources/icons/tag.png
     FILE resources/icons/web.png resources/icons/web.png
     FILE resources/icons/za.png resources/icons/za.png
+    FILE resources/icons/play.png resources/icons/play.png
+    FILE resources/icons/pause.png resources/icons/pause.png
+    FILE resources/icons/skip-next.png resources/icons/skip-next.png
+    FILE resources/icons/skip-previous.png resources/icons/skip-previous.png
+    FILE resources/icons/subtitles.png resources/icons/subtitles.png
+    FILE resources/icons/video-image.png resources/icons/video-image.png
+    FILE resources/icons/translate.png resources/icons/translate.png
 
     # Images
     FILE resources/images/circle_button.png resources/images/circle_button.png
