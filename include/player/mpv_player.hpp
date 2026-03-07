@@ -183,7 +183,8 @@ private:
     int m_nvgImage = 0;                 // NanoVG image handle for display
     void* m_gxmFramebuffer = nullptr;   // GXM framebuffer structure
     mpv_gxm_fbo m_mpvFbo = {};          // MPV GXM FBO parameters
-    mpv_render_param m_mpvParams[2] = {};  // Render params for mpv_render_context_render
+    int m_flipY = 0;                    // Flip Y flag for render params
+    mpv_render_param m_mpvParams[3] = {};  // Render params for mpv_render_context_render
     int m_videoWidth = 960;
     int m_videoHeight = 544;
     std::atomic<bool> m_renderReady{false};     // Flag for when render context is ready (accessed from mpv thread)

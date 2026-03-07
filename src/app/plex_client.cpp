@@ -2015,6 +2015,59 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
                 pos = objEnd;
             }
         }
+
+        // If still empty, try "channelVcn" field (EPG /livetv/epg/channels endpoint uses this)
+        if (out.empty()) {
+            pos = 0;
+            while ((pos = body.find("\"channelVcn\"", pos)) != std::string::npos) {
+                size_t objStart = body.rfind('{', pos);
+                if (objStart == std::string::npos) { pos++; continue; }
+
+                std::string beforeSection = body.substr(objStart, pos - objStart);
+                if (beforeSection.find("\"channelVcn\"") != std::string::npos) { pos++; continue; }
+
+                int braceCount = 1;
+                size_t objEnd = objStart + 1;
+                while (braceCount > 0 && objEnd < body.length()) {
+                    if (body[objEnd] == '{') braceCount++;
+                    else if (body[objEnd] == '}') braceCount--;
+                    objEnd++;
+                }
+
+                std::string obj = body.substr(objStart, objEnd - objStart);
+
+                LiveTVChannel channel;
+                channel.key = extractJsonValue(obj, "key");
+                channel.title = extractJsonValue(obj, "title");
+                channel.thumb = extractJsonValue(obj, "thumb");
+                channel.callSign = extractJsonValue(obj, "callSign");
+
+                // Parse channelVcn "X.Y" -> channelNumber as X*10+Y for sorting
+                std::string vcn = extractJsonValue(obj, "channelVcn");
+                if (!vcn.empty()) {
+                    size_t dotPos = vcn.find('.');
+                    if (dotPos != std::string::npos) {
+                        int major = atoi(vcn.substr(0, dotPos).c_str());
+                        int minor = atoi(vcn.substr(dotPos + 1).c_str());
+                        channel.channelNumber = major * 10 + minor;
+                    } else {
+                        channel.channelNumber = atoi(vcn.c_str()) * 10;
+                    }
+                }
+
+                // Use "identifier" field as channelIdentifier (used for tuning)
+                channel.channelIdentifier = extractJsonValue(obj, "identifier");
+                if (channel.channelIdentifier.empty()) {
+                    channel.channelIdentifier = vcn;
+                }
+
+                if (channel.channelNumber > 0 || !channel.title.empty()) {
+                    out.push_back(channel);
+                }
+
+                pos = objEnd;
+            }
+        }
     };
 
     HttpRequest req;

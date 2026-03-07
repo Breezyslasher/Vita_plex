@@ -972,6 +972,9 @@ void MpvPlayer::onRenderUpdate(void* ctx) {
         }
         uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
         if (flags & MPV_RENDER_UPDATE_FRAME) {
+            // Flush NanoVG's in-flight GXM commands before mpv uses the
+            // shared GXM context, preventing concurrent GPU access crashes.
+            flushGxmPipeline();
             mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
             mpv_render_context_report_swap(player->m_mpvRenderCtx);
         }
@@ -1097,16 +1100,19 @@ bool MpvPlayer::initRenderContext() {
 
     m_gxmFramebuffer = fbo;
 
-    // Set up MPV FBO parameters
+    // Set up MPV FBO parameters (matching switchfin)
     m_mpvFbo.render_target = fbo->gxm_render_target;
     m_mpvFbo.color_surface = &fbo->gxm_color_surfaces[0].surface;
     m_mpvFbo.depth_stencil_surface = &fbo->gxm_depth_stencil_surface;
     m_mpvFbo.w = m_videoWidth;
     m_mpvFbo.h = m_videoHeight;
+    m_mpvFbo.format = SCE_GXM_TEXTURE_FORMAT_U8U8U8U8_RGBA;
 
-    // Set up render params array for use in callbacks (like switchfin)
-    m_mpvParams[0] = {MPV_RENDER_PARAM_GXM_FBO, &m_mpvFbo};
-    m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
+    // Set up render params array for use in callbacks (matching switchfin)
+    m_flipY = 0;
+    m_mpvParams[0] = {MPV_RENDER_PARAM_FLIP_Y, &m_flipY};
+    m_mpvParams[1] = {MPV_RENDER_PARAM_GXM_FBO, &m_mpvFbo};
+    m_mpvParams[2] = {MPV_RENDER_PARAM_INVALID, nullptr};
 
     // Register the render update callback (matching switchfin).
     // The callback uses brls::sync() to queue rendering on the main thread.
@@ -1155,6 +1161,7 @@ void MpvPlayer::cleanupRenderContext() {
     m_mpvFbo = {};
     m_mpvParams[0] = {MPV_RENDER_PARAM_INVALID, nullptr};
     m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
+    m_mpvParams[2] = {MPV_RENDER_PARAM_INVALID, nullptr};
 
 #endif
 }

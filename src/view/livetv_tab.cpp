@@ -176,7 +176,7 @@ void LiveTVTab::loadChannels() {
 
                     // Channel number
                     auto* numLabel = new brls::Label();
-                    numLabel->setText(std::to_string(channel.channelNumber));
+                    numLabel->setText(!channel.channelIdentifier.empty() ? channel.channelIdentifier : std::to_string(channel.channelNumber));
                     numLabel->setFontSize(20);
                     card->addView(numLabel);
 
@@ -296,7 +296,7 @@ void LiveTVTab::buildEPGGrid() {
         channelCol->setJustifyContent(brls::JustifyContent::CENTER);
 
         auto* chNumLabel = new brls::Label();
-        chNumLabel->setText(std::to_string(channel.channelNumber));
+        chNumLabel->setText(!channel.channelIdentifier.empty() ? channel.channelIdentifier : std::to_string(channel.channelNumber));
         chNumLabel->setFontSize(14);
         channelCol->addView(chNumLabel);
 
