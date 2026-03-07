@@ -293,14 +293,6 @@ void SettingsTab::createTranscodeSection() {
     });
     m_contentBox->addView(m_forceTranscodeToggle);
 
-    // Burn subtitles toggle
-    m_burnSubtitlesToggle = new brls::BooleanCell();
-    m_burnSubtitlesToggle->init("Burn Subtitles", settings.burnSubtitles, [&settings](bool value) {
-        settings.burnSubtitles = value;
-        Application::getInstance().saveSettings();
-    });
-    m_contentBox->addView(m_burnSubtitlesToggle);
-
     // Direct play toggle
     m_directPlayToggle = new brls::BooleanCell();
     m_directPlayToggle->init("Try Direct Play First", settings.directPlay, [&settings](bool value) {

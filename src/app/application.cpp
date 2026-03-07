@@ -268,7 +268,6 @@ bool Application::loadSettings() {
     // Load transcode settings
     m_settings.videoQuality = static_cast<VideoQuality>(extractInt("videoQuality"));
     m_settings.forceTranscode = extractBool("forceTranscode", false);
-    m_settings.burnSubtitles = extractBool("burnSubtitles", true);
     m_settings.maxBitrate = extractInt("maxBitrate");
     if (m_settings.maxBitrate <= 0) m_settings.maxBitrate = 2000;
 
@@ -328,7 +327,6 @@ bool Application::saveSettings() {
     // Transcode settings
     json += "  \"videoQuality\": " + std::to_string(static_cast<int>(m_settings.videoQuality)) + ",\n";
     json += "  \"forceTranscode\": " + std::string(m_settings.forceTranscode ? "true" : "false") + ",\n";
-    json += "  \"burnSubtitles\": " + std::string(m_settings.burnSubtitles ? "true" : "false") + ",\n";
     json += "  \"maxBitrate\": " + std::to_string(m_settings.maxBitrate) + ",\n";
 
     // Network settings

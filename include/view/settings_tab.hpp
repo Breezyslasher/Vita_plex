@@ -66,7 +66,6 @@ private:
     // Transcode section
     brls::SelectorCell* m_qualitySelector = nullptr;
     brls::BooleanCell* m_forceTranscodeToggle = nullptr;
-    brls::BooleanCell* m_burnSubtitlesToggle = nullptr;
     brls::BooleanCell* m_directPlayToggle = nullptr;
 
     // Transcode section (continued)

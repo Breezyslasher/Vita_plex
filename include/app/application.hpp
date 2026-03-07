@@ -72,7 +72,6 @@ struct AppSettings {
     // Transcode Settings
     VideoQuality videoQuality = VideoQuality::QUALITY_480P;
     bool forceTranscode = false;
-    bool burnSubtitles = true;  // Burn subtitles into video for Vita compatibility
     int maxBitrate = 2000;      // kbps
 
     // Network Settings

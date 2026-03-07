@@ -1987,17 +1987,6 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
         // Subtitle handling based on settings
         if (!settings.showSubtitles) {
             queryParams += "&subtitles=none";
-        } else if (settings.burnSubtitles) {
-            queryParams += "&subtitles=burn";
-            // Map subtitle size to Plex subtitle size parameter (0-300, default 100)
-            int subSize = 100;
-            switch (settings.subtitleSize) {
-                case SubtitleSize::SMALL:  subSize = 50;  break;
-                case SubtitleSize::MEDIUM: subSize = 100; break;
-                case SubtitleSize::LARGE:  subSize = 150; break;
-            }
-            snprintf(buf, sizeof(buf), "&subtitleSize=%d", subSize);
-            queryParams += buf;
         } else {
             queryParams += "&subtitles=auto";
         }
