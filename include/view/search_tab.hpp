@@ -9,6 +9,7 @@
 #include <memory>
 #include "app/plex_client.hpp"
 #include "view/recycling_grid.hpp"
+#include "view/horizontal_scroll_row.hpp"
 
 namespace vitaplex {
 
@@ -23,7 +24,8 @@ public:
 private:
     void performSearch(const std::string& query);
     void onItemSelected(const MediaItem& item);
-    void populateRow(brls::Box* rowContent, const std::vector<MediaItem>& items);
+    void populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>& items);
+    void setupNavigationRoutes();
 
     brls::Label* m_titleLabel = nullptr;
     brls::Label* m_searchLabel = nullptr;
@@ -35,17 +37,13 @@ private:
 
     // Category labels and rows
     brls::Label* m_moviesLabel = nullptr;
-    brls::HScrollingFrame* m_moviesRow = nullptr;
-    brls::Box* m_moviesContent = nullptr;
+    HorizontalScrollRow* m_moviesRow = nullptr;
     brls::Label* m_showsLabel = nullptr;
-    brls::HScrollingFrame* m_showsRow = nullptr;
-    brls::Box* m_showsContent = nullptr;
+    HorizontalScrollRow* m_showsRow = nullptr;
     brls::Label* m_episodesLabel = nullptr;
-    brls::HScrollingFrame* m_episodesRow = nullptr;
-    brls::Box* m_episodesContent = nullptr;
+    HorizontalScrollRow* m_episodesRow = nullptr;
     brls::Label* m_musicLabel = nullptr;
-    brls::HScrollingFrame* m_musicRow = nullptr;
-    brls::Box* m_musicContent = nullptr;
+    HorizontalScrollRow* m_musicRow = nullptr;
 
     std::string m_searchQuery;
     std::vector<MediaItem> m_results;

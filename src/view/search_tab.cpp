@@ -68,15 +68,10 @@ SearchTab::SearchTab() {
     m_moviesLabel->setVisibility(brls::Visibility::GONE);
     m_scrollContent->addView(m_moviesLabel);
 
-    m_moviesRow = new brls::HScrollingFrame();
-    m_moviesRow->setHeight(180);
+    m_moviesRow = new HorizontalScrollRow();
+    m_moviesRow->setHeight(210);
     m_moviesRow->setMarginBottom(15);
     m_moviesRow->setVisibility(brls::Visibility::GONE);
-
-    m_moviesContent = new brls::Box();
-    m_moviesContent->setAxis(brls::Axis::ROW);
-    m_moviesContent->setJustifyContent(brls::JustifyContent::FLEX_START);
-    m_moviesRow->setContentView(m_moviesContent);
     m_scrollContent->addView(m_moviesRow);
 
     // TV Shows row
@@ -87,18 +82,13 @@ SearchTab::SearchTab() {
     m_showsLabel->setVisibility(brls::Visibility::GONE);
     m_scrollContent->addView(m_showsLabel);
 
-    m_showsRow = new brls::HScrollingFrame();
-    m_showsRow->setHeight(180);
+    m_showsRow = new HorizontalScrollRow();
+    m_showsRow->setHeight(210);
     m_showsRow->setMarginBottom(15);
     m_showsRow->setVisibility(brls::Visibility::GONE);
-
-    m_showsContent = new brls::Box();
-    m_showsContent->setAxis(brls::Axis::ROW);
-    m_showsContent->setJustifyContent(brls::JustifyContent::FLEX_START);
-    m_showsRow->setContentView(m_showsContent);
     m_scrollContent->addView(m_showsRow);
 
-    // Episodes row (separate from TV Shows)
+    // Episodes row
     m_episodesLabel = new brls::Label();
     m_episodesLabel->setText("Episodes");
     m_episodesLabel->setFontSize(20);
@@ -106,15 +96,10 @@ SearchTab::SearchTab() {
     m_episodesLabel->setVisibility(brls::Visibility::GONE);
     m_scrollContent->addView(m_episodesLabel);
 
-    m_episodesRow = new brls::HScrollingFrame();
-    m_episodesRow->setHeight(145);  // Shorter for landscape episode cells
+    m_episodesRow = new HorizontalScrollRow();
+    m_episodesRow->setHeight(145);
     m_episodesRow->setMarginBottom(15);
     m_episodesRow->setVisibility(brls::Visibility::GONE);
-
-    m_episodesContent = new brls::Box();
-    m_episodesContent->setAxis(brls::Axis::ROW);
-    m_episodesContent->setJustifyContent(brls::JustifyContent::FLEX_START);
-    m_episodesRow->setContentView(m_episodesContent);
     m_scrollContent->addView(m_episodesRow);
 
     // Music row
@@ -125,15 +110,10 @@ SearchTab::SearchTab() {
     m_musicLabel->setVisibility(brls::Visibility::GONE);
     m_scrollContent->addView(m_musicLabel);
 
-    m_musicRow = new brls::HScrollingFrame();
+    m_musicRow = new HorizontalScrollRow();
     m_musicRow->setHeight(160);
     m_musicRow->setMarginBottom(15);
     m_musicRow->setVisibility(brls::Visibility::GONE);
-
-    m_musicContent = new brls::Box();
-    m_musicContent->setAxis(brls::Axis::ROW);
-    m_musicContent->setJustifyContent(brls::JustifyContent::FLEX_START);
-    m_musicRow->setContentView(m_musicContent);
     m_scrollContent->addView(m_musicRow);
 
     m_scrollView->setContentView(m_scrollContent);
@@ -161,28 +141,14 @@ void SearchTab::onFocusGained() {
     }
 }
 
-void SearchTab::populateRow(brls::Box* rowContent, const std::vector<MediaItem>& items) {
-    if (!rowContent) return;
+void SearchTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>& items) {
+    if (!row) return;
 
-    rowContent->clearViews();
+    row->clearViews();
 
     for (const auto& item : items) {
         auto* cell = new MediaItemCell();
         cell->setItem(item);
-
-        // Use type-appropriate cell sizes
-        if (item.mediaType == MediaType::EPISODE) {
-            cell->setWidth(160);
-            cell->setHeight(130);
-        } else if (item.mediaType == MediaType::MUSIC_ARTIST ||
-                   item.mediaType == MediaType::MUSIC_ALBUM ||
-                   item.mediaType == MediaType::MUSIC_TRACK) {
-            cell->setWidth(120);
-            cell->setHeight(150);
-        } else {
-            cell->setWidth(120);
-            cell->setHeight(170);
-        }
         cell->setMarginRight(10);
 
         MediaItem capturedItem = item;
@@ -190,9 +156,56 @@ void SearchTab::populateRow(brls::Box* rowContent, const std::vector<MediaItem>&
             onItemSelected(capturedItem);
             return true;
         });
+        cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
 
-        rowContent->addView(cell);
+        row->addView(cell);
     }
+}
+
+void SearchTab::setupNavigationRoutes() {
+    // Collect visible rows with content
+    std::vector<HorizontalScrollRow*> rows;
+
+    auto addIfVisible = [&rows](HorizontalScrollRow* row) {
+        if (row && row->getVisibility() == brls::Visibility::VISIBLE &&
+            !row->getChildren().empty()) {
+            rows.push_back(row);
+        }
+    };
+
+    addIfVisible(m_moviesRow);
+    addIfVisible(m_showsRow);
+    addIfVisible(m_episodesRow);
+    addIfVisible(m_musicRow);
+
+    if (rows.empty()) return;
+
+    // Wire first row UP to search label
+    for (auto* child : rows[0]->getChildren()) {
+        child->setCustomNavigationRoute(brls::FocusDirection::UP, m_searchLabel);
+    }
+
+    // Wire search label DOWN to first row's first item
+    m_searchLabel->setCustomNavigationRoute(brls::FocusDirection::DOWN,
+        rows[0]->getChildren()[0]);
+
+    // Wire UP/DOWN between rows
+    for (size_t r = 0; r < rows.size(); r++) {
+        auto& children = rows[r]->getChildren();
+        brls::View* firstAbove = (r > 0) ? rows[r - 1]->getChildren()[0] : nullptr;
+        brls::View* firstBelow = (r + 1 < rows.size()) ? rows[r + 1]->getChildren()[0] : nullptr;
+
+        for (auto* child : children) {
+            if (r > 0 && firstAbove) {
+                child->setCustomNavigationRoute(brls::FocusDirection::UP, firstAbove);
+            }
+            if (firstBelow) {
+                child->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstBelow);
+            }
+        }
+    }
+
+    brls::Logger::debug("SearchTab: Navigation routes set up for {} rows", rows.size());
 }
 
 void SearchTab::performSearch(const std::string& query) {
@@ -262,7 +275,7 @@ void SearchTab::performSearch(const std::string& query) {
                     m_moviesLabel->setText("Movies (" + std::to_string(m_movies.size()) + ")");
                     m_moviesLabel->setVisibility(brls::Visibility::VISIBLE);
                     m_moviesRow->setVisibility(brls::Visibility::VISIBLE);
-                    populateRow(m_moviesContent, m_movies);
+                    populateRow(m_moviesRow, m_movies);
                 } else {
                     m_moviesLabel->setVisibility(brls::Visibility::GONE);
                     m_moviesRow->setVisibility(brls::Visibility::GONE);
@@ -272,7 +285,7 @@ void SearchTab::performSearch(const std::string& query) {
                     m_showsLabel->setText("TV Shows (" + std::to_string(m_shows.size()) + ")");
                     m_showsLabel->setVisibility(brls::Visibility::VISIBLE);
                     m_showsRow->setVisibility(brls::Visibility::VISIBLE);
-                    populateRow(m_showsContent, m_shows);
+                    populateRow(m_showsRow, m_shows);
                 } else {
                     m_showsLabel->setVisibility(brls::Visibility::GONE);
                     m_showsRow->setVisibility(brls::Visibility::GONE);
@@ -282,7 +295,7 @@ void SearchTab::performSearch(const std::string& query) {
                     m_episodesLabel->setText("Episodes (" + std::to_string(m_episodes.size()) + ")");
                     m_episodesLabel->setVisibility(brls::Visibility::VISIBLE);
                     m_episodesRow->setVisibility(brls::Visibility::VISIBLE);
-                    populateRow(m_episodesContent, m_episodes);
+                    populateRow(m_episodesRow, m_episodes);
                 } else {
                     m_episodesLabel->setVisibility(brls::Visibility::GONE);
                     m_episodesRow->setVisibility(brls::Visibility::GONE);
@@ -292,11 +305,14 @@ void SearchTab::performSearch(const std::string& query) {
                     m_musicLabel->setText("Music (" + std::to_string(m_music.size()) + ")");
                     m_musicLabel->setVisibility(brls::Visibility::VISIBLE);
                     m_musicRow->setVisibility(brls::Visibility::VISIBLE);
-                    populateRow(m_musicContent, m_music);
+                    populateRow(m_musicRow, m_music);
                 } else {
                     m_musicLabel->setVisibility(brls::Visibility::GONE);
                     m_musicRow->setVisibility(brls::Visibility::GONE);
                 }
+
+                // Set up focus navigation between result rows
+                setupNavigationRoutes();
 
             } else {
                 m_resultsLabel->setText("Search failed");
