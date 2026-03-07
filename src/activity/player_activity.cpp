@@ -90,6 +90,8 @@ void PlayerActivity::onContentAvailable() {
     if (progressSlider) {
         progressSlider->setProgress(0.0f);
         progressSlider->getProgressEvent()->subscribe([this](float progress) {
+            // Skip if this is a programmatic update (not user interaction)
+            if (m_updatingSlider) return;
             // Seek to position
             MpvPlayer& player = MpvPlayer::getInstance();
             double duration = player.getDuration();
@@ -659,7 +661,9 @@ void PlayerActivity::updateProgress() {
 
     if (duration > 0) {
         if (progressSlider) {
+            m_updatingSlider = true;
             progressSlider->setProgress((float)(position / duration));
+            m_updatingSlider = false;
         }
 
         if (timeLabel) {
