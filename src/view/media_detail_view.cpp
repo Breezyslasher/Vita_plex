@@ -252,7 +252,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_mainContent->addView(childrenScroll);
     }
 
-    // Track list for albums (vertical list, scrolls with main content)
+    // Track list for albums (vertical list with nested scrolling)
     if (m_item.mediaType == MediaType::MUSIC_ALBUM) {
         auto* tracksLabel = new brls::Label();
         tracksLabel->setText("Tracks");
@@ -260,13 +260,17 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         tracksLabel->setMarginBottom(10);
         m_mainContent->addView(tracksLabel);
 
-        // Add tracks directly to main content (no nested scroll view)
+        // Wrap track list in its own ScrollingFrame so only tracks scroll
+        auto* trackScroll = new brls::ScrollingFrame();
+        trackScroll->setGrow(1.0f);
+
         m_trackListBox = new brls::Box();
         m_trackListBox->setAxis(brls::Axis::COLUMN);
         m_trackListBox->setJustifyContent(brls::JustifyContent::FLEX_START);
         m_trackListBox->setAlignItems(brls::AlignItems::STRETCH);
 
-        m_mainContent->addView(m_trackListBox);
+        trackScroll->setContentView(m_trackListBox);
+        m_mainContent->addView(trackScroll);
     }
 
     // Music categories container for artists
@@ -276,8 +280,13 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_mainContent->addView(m_musicCategoriesBox);
     }
 
-    m_scrollView->setContentView(m_mainContent);
-    this->addView(m_scrollView);
+    if (m_item.mediaType == MediaType::MUSIC_ALBUM) {
+        // For albums: no outer scroll - top info is fixed, only track list scrolls
+        this->addView(m_mainContent);
+    } else {
+        m_scrollView->setContentView(m_mainContent);
+        this->addView(m_scrollView);
+    }
 
     // Load full details
     loadDetails();

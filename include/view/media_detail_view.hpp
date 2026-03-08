@@ -51,7 +51,7 @@ private:
     brls::Button* m_downloadButton = nullptr;
     brls::Box* m_childrenBox = nullptr;
 
-    // Track list for albums (vertical list within main scroll content)
+    // Track list for albums (vertical list with its own nested scroll)
     brls::Box* m_trackListBox = nullptr;
 
     // Collapsible description
