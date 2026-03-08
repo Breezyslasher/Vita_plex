@@ -316,6 +316,15 @@ void PlayerActivity::onContentAvailable() {
         }
     }
 
+    // Wire up skip button for intro/credits
+    if (skipBtn) {
+        skipBtn->registerClickAction([this](brls::View* view) {
+            skipToMarkerEnd();
+            return true;
+        });
+        skipBtn->addGestureRecognizer(new brls::TapGestureRecognizer(skipBtn));
+    }
+
     // Start update timer
     m_updateTimer.setCallback([this]() {
         updateProgress();
@@ -635,6 +644,12 @@ void PlayerActivity::loadMedia() {
             m_episodeIndex = item.index;
             m_parentRatingKey = item.parentRatingKey;
         }
+
+        // Store markers for intro/credits skip
+        m_markers = item.markers;
+        if (!m_markers.empty()) {
+            brls::Logger::info("PlayerActivity: Loaded {} markers for {}", m_markers.size(), item.title);
+        }
         if (titleLabel) {
             std::string title = item.title;
             if (item.mediaType == MediaType::EPISODE) {
@@ -865,6 +880,12 @@ void PlayerActivity::updateProgress() {
                      posMin, posSec, durMin, durSec);
             timeLabel->setText(timeStr);
         }
+    }
+
+    // Update skip intro/credits button
+    if (!m_markers.empty() && duration > 0) {
+        double posMs = (m_transcodeBaseOffsetMs + position * 1000.0);
+        updateSkipButton(posMs);
     }
 
     // Auto-hide controls after inactivity
@@ -1644,6 +1665,94 @@ void PlayerActivity::updateQueueDisplay() {
 
 // Controls visibility toggle (like Suwayomi reader settings show/hide)
 
+void PlayerActivity::updateSkipButton(double positionMs) {
+    AppSettings& settings = Application::getInstance().getSettings();
+
+    // Check if we're inside any marker region
+    std::string activeType;
+    int activeEnd = 0;
+    for (const auto& marker : m_markers) {
+        if (positionMs >= marker.startTimeMs && positionMs < marker.endTimeMs) {
+            activeType = marker.type;
+            activeEnd = marker.endTimeMs;
+            break;
+        }
+    }
+
+    if (!activeType.empty()) {
+        // We're inside a marker region
+        bool isIntro = (activeType == "intro");
+        bool autoSkip = isIntro ? settings.autoSkipIntro : settings.autoSkipCredits;
+        bool& alreadySkipped = isIntro ? m_introSkipped : m_creditsSkipped;
+
+        if (autoSkip && !alreadySkipped) {
+            // Auto-skip: seek to end of marker
+            alreadySkipped = true;
+            double seekToSec = (activeEnd - m_transcodeBaseOffsetMs) / 1000.0;
+            if (seekToSec > 0) {
+                MpvPlayer::getInstance().seekTo(seekToSec);
+                brls::Logger::info("PlayerActivity: Auto-skipped {} to {}ms", activeType, activeEnd);
+                // Hide skip button
+                if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
+                m_skipButtonVisible = false;
+                m_activeMarkerType.clear();
+            }
+            return;
+        }
+
+        // Manual skip mode: show button
+        if (m_activeMarkerType != activeType) {
+            // Entering a new marker region
+            m_activeMarkerType = activeType;
+            m_activeMarkerEndMs = activeEnd;
+            m_skipButtonShowSeconds = 0;
+            m_skipButtonVisible = true;
+
+            if (skipLabel) {
+                skipLabel->setText(isIntro ? "Skip Intro" : "Skip Credits");
+            }
+            if (skipBtn) {
+                skipBtn->setVisibility(brls::Visibility::VISIBLE);
+            }
+        } else {
+            // Still in same marker region
+            m_skipButtonShowSeconds++;
+
+            // Auto-hide after 5 seconds if controls are not visible
+            if (m_skipButtonShowSeconds >= 5 && !m_controlsVisible && m_skipButtonVisible) {
+                m_skipButtonVisible = false;
+                if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
+            }
+        }
+    } else {
+        // Not in any marker region - hide button
+        if (m_skipButtonVisible || !m_activeMarkerType.empty()) {
+            m_skipButtonVisible = false;
+            m_activeMarkerType.clear();
+            if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
+        }
+    }
+}
+
+void PlayerActivity::skipToMarkerEnd() {
+    if (m_activeMarkerEndMs <= 0) return;
+
+    double seekToSec = (m_activeMarkerEndMs - m_transcodeBaseOffsetMs) / 1000.0;
+    if (seekToSec > 0) {
+        MpvPlayer::getInstance().seekTo(seekToSec);
+        brls::Logger::info("PlayerActivity: Manually skipped {} to {}ms", m_activeMarkerType, m_activeMarkerEndMs);
+
+        // Mark as skipped to prevent auto-skip re-trigger
+        if (m_activeMarkerType == "intro") m_introSkipped = true;
+        else if (m_activeMarkerType == "credits") m_creditsSkipped = true;
+    }
+
+    // Hide button
+    m_skipButtonVisible = false;
+    m_activeMarkerType.clear();
+    if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
+}
+
 void PlayerActivity::toggleControls() {
     if (m_controlsVisible) {
         hideControls();
@@ -1669,6 +1778,12 @@ void PlayerActivity::showControls() {
     }
     if (titleLabel) {
         titleLabel->setVisibility(brls::Visibility::VISIBLE);
+    }
+    // Re-show skip button if we're still in a marker region
+    if (!m_activeMarkerType.empty() && skipBtn) {
+        m_skipButtonVisible = true;
+        m_skipButtonShowSeconds = 0;  // Reset auto-hide timer
+        skipBtn->setVisibility(brls::Visibility::VISIBLE);
     }
 }
 

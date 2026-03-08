@@ -64,6 +64,8 @@ private:
     brls::SelectorCell* m_subtitleSizeSelector = nullptr;
     brls::SelectorCell* m_seekIntervalSelector = nullptr;
     brls::SelectorCell* m_controlsAutoHideSelector = nullptr;
+    brls::BooleanCell* m_autoSkipIntroToggle = nullptr;
+    brls::BooleanCell* m_autoSkipCreditsToggle = nullptr;
 
     // Transcode section
     brls::SelectorCell* m_qualitySelector = nullptr;

@@ -118,6 +118,17 @@ private:
     void fetchPlexStreams();
     std::vector<PlexClient::SubtitleResult> m_subtitleSearchResults;
 
+    // Intro/credits skip
+    std::vector<MediaItem::Marker> m_markers;
+    void updateSkipButton(double positionMs);
+    void skipToMarkerEnd();
+    std::string m_activeMarkerType;        // Currently active marker type ("intro"/"credits"), empty if none
+    int m_activeMarkerEndMs = 0;           // End time of the active marker
+    int m_skipButtonShowSeconds = 0;       // Seconds the skip button has been visible
+    bool m_skipButtonVisible = false;      // Whether skip button is currently shown
+    bool m_introSkipped = false;           // Whether intro was already auto-skipped this playback
+    bool m_creditsSkipped = false;         // Whether credits was already auto-skipped this playback
+
     BRLS_BIND(brls::Box, playerContainer, "player/container");
     BRLS_BIND(brls::Label, titleLabel, "player/title");
     BRLS_BIND(brls::Label, artistLabel, "player/artist");
@@ -144,6 +155,8 @@ private:
     BRLS_BIND(brls::Box, trackOverlay, "player/track_overlay");
     BRLS_BIND(brls::Label, trackOverlayTitle, "player/track_overlay_title");
     BRLS_BIND(brls::Box, trackList, "player/track_list");
+    BRLS_BIND(brls::Box, skipBtn, "player/skip_btn");
+    BRLS_BIND(brls::Label, skipLabel, "player/skip_label");
 };
 
 } // namespace vitaplex

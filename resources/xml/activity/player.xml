@@ -241,6 +241,30 @@
 
     </brls:Box>
 
+    <!-- Skip intro/credits button - positioned at bottom-right above controls -->
+    <brls:Box
+        id="player/skip_btn"
+        axis="row"
+        justifyContent="center"
+        alignItems="center"
+        positionType="absolute"
+        positionBottom="160"
+        positionRight="30"
+        paddingLeft="20"
+        paddingRight="20"
+        paddingTop="10"
+        paddingBottom="10"
+        backgroundColor="#DD333333"
+        cornerRadius="8"
+        focusable="true"
+        visibility="gone">
+        <brls:Label
+            id="player/skip_label"
+            text="Skip Intro"
+            fontSize="18"
+            textColor="#FFFFFF"/>
+    </brls:Box>
+
     <!-- Track selection overlay - semi-transparent list -->
     <brls:Box
         id="player/track_overlay"

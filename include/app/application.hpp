@@ -69,6 +69,8 @@ struct AppSettings {
     SubtitleSize subtitleSize = SubtitleSize::MEDIUM;
     int seekInterval = 10;  // seconds
     int controlsAutoHideSeconds = 5;  // Auto-hide player controls after inactivity (0 = never)
+    bool autoSkipIntro = false;       // Automatically skip intro markers
+    bool autoSkipCredits = false;     // Automatically skip credits markers
 
     // Transcode Settings
     VideoQuality videoQuality = VideoQuality::QUALITY_480P;

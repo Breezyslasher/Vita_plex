@@ -277,6 +277,30 @@ void SettingsTab::createPlaybackSection() {
             onControlsAutoHideChanged(index);
         });
     m_contentBox->addView(m_controlsAutoHideSelector);
+
+    // Auto-skip intro toggle
+    m_autoSkipIntroToggle = new brls::BooleanCell();
+    m_autoSkipIntroToggle->init("Auto-Skip Intro", settings.autoSkipIntro, [&settings](bool value) {
+        settings.autoSkipIntro = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_autoSkipIntroToggle);
+
+    // Auto-skip credits toggle
+    m_autoSkipCreditsToggle = new brls::BooleanCell();
+    m_autoSkipCreditsToggle->init("Auto-Skip Credits", settings.autoSkipCredits, [&settings](bool value) {
+        settings.autoSkipCredits = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_autoSkipCreditsToggle);
+
+    // Info label for skip settings
+    auto* skipInfoLabel = new brls::Label();
+    skipInfoLabel->setText("When off, a skip button appears briefly");
+    skipInfoLabel->setFontSize(14);
+    skipInfoLabel->setMarginLeft(16);
+    skipInfoLabel->setMarginTop(8);
+    m_contentBox->addView(skipInfoLabel);
 }
 
 void SettingsTab::createTranscodeSection() {

@@ -73,6 +73,14 @@ struct MediaItem {
     // For downloads - media part path on server
     std::string partPath;
     int64_t partSize = 0;
+
+    // Markers (intro/credits) - times in milliseconds
+    struct Marker {
+        std::string type;   // "intro" or "credits"
+        int startTimeMs = 0;
+        int endTimeMs = 0;
+    };
+    std::vector<Marker> markers;
 };
 
 // Library section info

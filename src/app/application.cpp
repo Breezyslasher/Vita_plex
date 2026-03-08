@@ -266,6 +266,8 @@ bool Application::loadSettings() {
     if (m_settings.seekInterval <= 0) m_settings.seekInterval = 10;
     m_settings.controlsAutoHideSeconds = extractInt("controlsAutoHideSeconds");
     if (m_settings.controlsAutoHideSeconds < 0) m_settings.controlsAutoHideSeconds = 5;
+    m_settings.autoSkipIntro = extractBool("autoSkipIntro", false);
+    m_settings.autoSkipCredits = extractBool("autoSkipCredits", false);
 
     // Load transcode settings
     m_settings.videoQuality = static_cast<VideoQuality>(extractInt("videoQuality"));
@@ -326,6 +328,8 @@ bool Application::saveSettings() {
     json += "  \"subtitleSize\": " + std::to_string(static_cast<int>(m_settings.subtitleSize)) + ",\n";
     json += "  \"seekInterval\": " + std::to_string(m_settings.seekInterval) + ",\n";
     json += "  \"controlsAutoHideSeconds\": " + std::to_string(m_settings.controlsAutoHideSeconds) + ",\n";
+    json += "  \"autoSkipIntro\": " + std::string(m_settings.autoSkipIntro ? "true" : "false") + ",\n";
+    json += "  \"autoSkipCredits\": " + std::string(m_settings.autoSkipCredits ? "true" : "false") + ",\n";
 
     // Transcode settings
     json += "  \"videoQuality\": " + std::to_string(static_cast<int>(m_settings.videoQuality)) + ",\n";

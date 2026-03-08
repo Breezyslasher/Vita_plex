@@ -857,6 +857,38 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
         }
     }
 
+    // Parse markers (intro/credits) from "Marker" array in response
+    // Plex returns: "Marker":[{"type":"intro","startTimeOffset":0,"endTimeOffset":30000}, ...]
+    size_t markerArrayPos = resp.body.find("\"Marker\":");
+    if (markerArrayPos != std::string::npos) {
+        size_t arrStart = resp.body.find('[', markerArrayPos);
+        if (arrStart != std::string::npos) {
+            size_t arrEnd = resp.body.find(']', arrStart);
+            if (arrEnd != std::string::npos) {
+                std::string markerArr = resp.body.substr(arrStart, arrEnd - arrStart + 1);
+                // Parse each marker object in the array
+                size_t mPos = 0;
+                while ((mPos = markerArr.find('{', mPos)) != std::string::npos) {
+                    size_t mEnd = markerArr.find('}', mPos);
+                    if (mEnd == std::string::npos) break;
+                    std::string markerObj = markerArr.substr(mPos, mEnd - mPos + 1);
+
+                    MediaItem::Marker marker;
+                    marker.type = extractJsonValue(markerObj, "type");
+                    marker.startTimeMs = extractJsonInt(markerObj, "startTimeOffset");
+                    marker.endTimeMs = extractJsonInt(markerObj, "endTimeOffset");
+
+                    if (!marker.type.empty() && marker.endTimeMs > marker.startTimeMs) {
+                        item.markers.push_back(marker);
+                        brls::Logger::debug("fetchMediaDetails: marker type={} start={}ms end={}ms",
+                                           marker.type, marker.startTimeMs, marker.endTimeMs);
+                    }
+                    mPos = mEnd + 1;
+                }
+            }
+        }
+    }
+
     return true;
 }
 
