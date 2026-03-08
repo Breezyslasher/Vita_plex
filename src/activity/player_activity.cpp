@@ -97,12 +97,16 @@ void PlayerActivity::onContentAvailable() {
             resetControlsIdleTimer();
             // Seek to position
             MpvPlayer& player = MpvPlayer::getInstance();
-            double duration = player.getDuration();
-            if (duration <= 0 && m_isQueueMode) {
+            double duration = 0.0;
+            // For music queue mode, prefer Plex API duration (full track length)
+            // over MPV duration which may only reflect buffered/demuxed portion
+            if (m_isQueueMode) {
                 const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
                 if (track && track->duration > 0)
                     duration = (double)track->duration;
             }
+            if (duration <= 0)
+                duration = player.getDuration();
             player.seekTo(duration * progress);
         });
     }
@@ -400,15 +404,18 @@ void PlayerActivity::willDisappear(bool resetState) {
     // Only try to save progress if player is in a valid state
     if (player.isInitialized() && (player.isPlaying() || player.isPaused())) {
         double position = player.getPosition();
-        double duration = player.getDuration();
+        double duration = 0.0;
 
-        // Fallback duration from queue
-        if (duration <= 0 && m_isQueueMode) {
+        // For music queue mode, prefer Plex API duration (full track length)
+        // over MPV duration which may only reflect buffered/demuxed portion
+        if (m_isQueueMode) {
             const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
             if (track && track->duration > 0) {
                 duration = (double)track->duration;
             }
         }
+        if (duration <= 0)
+            duration = player.getDuration();
 
         if (position > 0 || m_transcodeBaseOffsetMs > 0) {
             int timeMs = m_transcodeBaseOffsetMs + (int)(position * 1000);
@@ -899,16 +906,18 @@ void PlayerActivity::updateProgress() {
     }
 
     double position = player.getPosition();
-    double duration = player.getDuration();
+    double duration = 0.0;
 
-    // Fallback: use Plex server-provided duration when mpv can't determine it
-    // (common with streamed/transcoded audio where the demuxer lacks full metadata)
-    if (duration <= 0 && m_isQueueMode) {
+    // For music queue mode, prefer Plex API duration (full track length)
+    // over MPV duration which may only reflect buffered/demuxed portion
+    if (m_isQueueMode) {
         const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
         if (track && track->duration > 0) {
             duration = (double)track->duration;
         }
     }
+    if (duration <= 0)
+        duration = player.getDuration();
 
     if (duration > 0) {
         if (progressSlider) {
