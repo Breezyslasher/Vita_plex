@@ -283,6 +283,13 @@ bool Application::loadSettings() {
     // Load download settings
     m_settings.deleteAfterWatch = extractBool("deleteAfterWatch", false);
 
+    // Load music settings
+    int trackAction = extractInt("trackDefaultAction");
+    if (trackAction >= 0 && trackAction <= 4) {
+        m_settings.trackDefaultAction = static_cast<TrackDefaultAction>(trackAction);
+    }
+    m_settings.backgroundMusic = extractBool("backgroundMusic", true);
+
     brls::Logger::info("Settings loaded successfully");
     return !m_authToken.empty();
 #else
@@ -341,7 +348,11 @@ bool Application::saveSettings() {
     json += "  \"directPlay\": " + std::string(m_settings.directPlay ? "true" : "false") + ",\n";
 
     // Download settings
-    json += "  \"deleteAfterWatch\": " + std::string(m_settings.deleteAfterWatch ? "true" : "false") + "\n";
+    json += "  \"deleteAfterWatch\": " + std::string(m_settings.deleteAfterWatch ? "true" : "false") + ",\n";
+
+    // Music settings
+    json += "  \"trackDefaultAction\": " + std::to_string(static_cast<int>(m_settings.trackDefaultAction)) + ",\n";
+    json += "  \"backgroundMusic\": " + std::string(m_settings.backgroundMusic ? "true" : "false") + "\n";
 
     json += "}\n";
 

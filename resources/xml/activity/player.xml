@@ -68,7 +68,7 @@
             textColor="#AAAAAA"/>
     </brls:Box>
 
-    <!-- Music transport controls (prev/play/next) shown below song info for music -->
+    <!-- Music transport controls (shuffle/prev/play/next/repeat) shown below song info for music -->
     <brls:Box
         id="player/music_transport"
         width="100%"
@@ -77,6 +77,25 @@
         alignItems="center"
         visibility="gone"
         marginBottom="6">
+
+        <!-- Shuffle toggle button -->
+        <brls:Box
+            id="player/shuffle_btn"
+            width="48"
+            height="48"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="24"
+            marginRight="16"
+            focusable="true">
+            <brls:Image
+                id="player/shuffle_icon"
+                width="24"
+                height="24"
+                image="@res/icons/shuffle-disabled.png"
+                scalingType="fit"/>
+        </brls:Box>
 
         <!-- Previous button -->
         <brls:Box
@@ -131,6 +150,25 @@
                 width="36"
                 height="36"
                 image="@res/icons/skip-next.png"
+                scalingType="fit"/>
+        </brls:Box>
+
+        <!-- Repeat toggle button -->
+        <brls:Box
+            id="player/repeat_btn"
+            width="48"
+            height="48"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="24"
+            marginLeft="16"
+            focusable="true">
+            <brls:Image
+                id="player/repeat_icon"
+                width="24"
+                height="24"
+                image="@res/icons/repeat-off.png"
                 scalingType="fit"/>
         </brls:Box>
 

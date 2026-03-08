@@ -56,21 +56,31 @@ MediaItemCell::MediaItemCell()
     this->addView(m_progressBar);
 
     // Button hint box (shown on focus for music items)
+    // Positioned absolutely at top-right corner of album art
     m_buttonHintBox = new brls::Box();
     m_buttonHintBox->setAxis(brls::Axis::ROW);
     m_buttonHintBox->setJustifyContent(brls::JustifyContent::CENTER);
     m_buttonHintBox->setAlignItems(brls::AlignItems::CENTER);
+    m_buttonHintBox->setPositionType(brls::PositionType::ABSOLUTE);
+    m_buttonHintBox->setPositionTop(4);
+    m_buttonHintBox->setPositionRight(4);
+    m_buttonHintBox->setBackgroundColor(nvgRGBA(0, 0, 0, 160));
+    m_buttonHintBox->setCornerRadius(4);
+    m_buttonHintBox->setPaddingLeft(4);
+    m_buttonHintBox->setPaddingRight(4);
+    m_buttonHintBox->setPaddingTop(2);
+    m_buttonHintBox->setPaddingBottom(2);
     m_buttonHintBox->setVisibility(brls::Visibility::GONE);
 
     m_buttonHintIcon = new brls::Image();
-    m_buttonHintIcon->setWidth(14);
-    m_buttonHintIcon->setHeight(14);
+    m_buttonHintIcon->setWidth(12);
+    m_buttonHintIcon->setHeight(12);
     m_buttonHintIcon->setMarginRight(3);
     m_buttonHintBox->addView(m_buttonHintIcon);
 
     m_buttonHintLabel = new brls::Label();
-    m_buttonHintLabel->setFontSize(9);
-    m_buttonHintLabel->setTextColor(nvgRGBA(180, 180, 180, 200));
+    m_buttonHintLabel->setFontSize(8);
+    m_buttonHintLabel->setTextColor(nvgRGBA(255, 255, 255, 220));
     m_buttonHintBox->addView(m_buttonHintLabel);
 
     this->addView(m_buttonHintBox);

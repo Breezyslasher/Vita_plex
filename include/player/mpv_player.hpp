@@ -116,6 +116,8 @@ public:
     void setSubtitleDelay(double seconds);
     void setAudioDelay(double seconds);
     void disableSubtitles();
+    void loadSubtitleUrl(const std::string& url);   // Load external subtitle (e.g. lyrics) by URL
+    void removeExternalSubtitles();                   // Remove all external subtitle tracks
 
     // Get available tracks by type
     std::vector<TrackInfo> getTrackList(const std::string& type = "") const;

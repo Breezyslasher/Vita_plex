@@ -323,6 +323,28 @@ void PlayerActivity::onContentAvailable() {
         // In music mode: hide audio/video/subtitle track buttons, only show queue + lyrics
         // audioBtn, videoBtn, subBtn stay hidden (GONE by default in XML)
 
+        // Shuffle toggle button
+        if (shuffleBtn) {
+            shuffleBtn->registerClickAction([this](brls::View* view) {
+                toggleShuffle();
+                return true;
+            });
+            shuffleBtn->addGestureRecognizer(new brls::TapGestureRecognizer(shuffleBtn));
+            // Set initial icon based on current shuffle state
+            updateShuffleIcon();
+        }
+
+        // Repeat toggle button
+        if (repeatBtn) {
+            repeatBtn->registerClickAction([this](brls::View* view) {
+                toggleRepeat();
+                return true;
+            });
+            repeatBtn->addGestureRecognizer(new brls::TapGestureRecognizer(repeatBtn));
+            // Set initial icon based on current repeat state
+            updateRepeatIcon();
+        }
+
         // Lyrics toggle button (dedicated music-only button)
         if (lyricsBtn) {
             lyricsBtn->setVisibility(brls::Visibility::VISIBLE);
@@ -332,30 +354,34 @@ void PlayerActivity::onContentAvailable() {
                 MpvPlayer& player = MpvPlayer::getInstance();
 
                 if (m_lyricsEnabled) {
-                    // Find and enable the first subtitle stream (lyrics)
+                    // Find the first lyrics/subtitle stream and load it as external subtitle
                     fetchPlexStreams();
                     int lyricsStreamId = -1;
+                    std::string lyricsCodec;
                     for (const auto& ps : m_plexStreams) {
                         if (ps.streamType == 3) {
                             lyricsStreamId = ps.id;
+                            lyricsCodec = ps.codec;
                             break;
                         }
                     }
-                    if (lyricsStreamId > 0 && m_partId > 0) {
-                        PlexClient::getInstance().setStreamSelection(m_partId, -1, lyricsStreamId);
-                        for (auto& ps : m_plexStreams) {
-                            if (ps.streamType == 3) ps.selected = (ps.id == lyricsStreamId);
-                        }
-                        // Reload transcode with lyrics
-                        double currentPos = player.getPosition();
-                        int offsetMs = m_transcodeBaseOffsetMs + static_cast<int>(currentPos * 1000);
+                    if (lyricsStreamId > 0) {
+                        // Build URL to fetch lyrics stream directly from Plex
+                        // GET /library/streams/{streamId}.{ext}
+                        std::string ext = lyricsCodec.empty() ? "lrc" : lyricsCodec;
+                        // Normalize common codec names to file extensions
+                        if (ext == "text" || ext == "txt") ext = "srt";
                         PlexClient& client = PlexClient::getInstance();
-                        client.stopTranscode();
-                        std::string newUrl;
-                        if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
-                            m_transcodeBaseOffsetMs = offsetMs;
-                            player.loadUrl(newUrl, "");
-                        }
+                        std::string serverUrl = client.getServerUrl();
+                        // Remove trailing slash
+                        while (!serverUrl.empty() && serverUrl.back() == '/') serverUrl.pop_back();
+                        std::string lyricsUrl = serverUrl +
+                            "/library/streams/" + std::to_string(lyricsStreamId) + "." + ext;
+                        // Append auth token
+                        lyricsUrl += "?X-Plex-Token=" + client.getAuthToken();
+
+                        brls::Logger::info("PlayerActivity: Loading lyrics from: {}", lyricsUrl);
+                        player.loadSubtitleUrl(lyricsUrl);
                         player.showOSD("Lyrics on", 1.5);
                     } else {
                         // No lyrics stream available
@@ -363,22 +389,8 @@ void PlayerActivity::onContentAvailable() {
                         player.showOSD("No lyrics available", 1.5);
                     }
                 } else {
-                    // Disable lyrics (subtitle off)
-                    if (m_partId > 0) {
-                        PlexClient::getInstance().setStreamSelection(m_partId, -1, 0);
-                    }
-                    for (auto& ps : m_plexStreams) {
-                        if (ps.streamType == 3) ps.selected = false;
-                    }
-                    double currentPos = player.getPosition();
-                    int offsetMs = m_transcodeBaseOffsetMs + static_cast<int>(currentPos * 1000);
-                    PlexClient& client = PlexClient::getInstance();
-                    client.stopTranscode();
-                    std::string newUrl;
-                    if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
-                        m_transcodeBaseOffsetMs = offsetMs;
-                        player.loadUrl(newUrl, "");
-                    }
+                    // Disable lyrics
+                    player.removeExternalSubtitles();
                     player.showOSD("Lyrics off", 1.5);
                 }
 
@@ -601,6 +613,13 @@ void PlayerActivity::loadFromQueue() {
 
     brls::Logger::info("PlayerActivity: Loading track from queue: {} - {}",
                       track->artist, track->title);
+
+    // Reset streams cache so lyrics button re-fetches for the new track
+    m_streamsLoaded = false;
+    m_plexStreams.clear();
+    m_partId = 0;
+    m_lyricsEnabled = false;
+    if (lyricsIcon) lyricsIcon->setAlpha(0.5f);
 
     // If resuming and MPV is already playing/paused, just update the UI
     // without restarting the track (user pressed circle to return to player)
@@ -1857,6 +1876,7 @@ void PlayerActivity::toggleShuffle() {
     queue.setShuffle(!queue.isShuffleEnabled());
 
     updateQueueDisplay();
+    updateShuffleIcon();
 
     // Show OSD feedback
     MpvPlayer::getInstance().showOSD(
@@ -1870,6 +1890,7 @@ void PlayerActivity::toggleRepeat() {
     queue.cycleRepeatMode();
 
     updateQueueDisplay();
+    updateRepeatIcon();
 
     // Show OSD feedback
     const char* modeStr = "Repeat: OFF";
@@ -1879,6 +1900,32 @@ void PlayerActivity::toggleRepeat() {
         modeStr = "Repeat: ALL";
     }
     MpvPlayer::getInstance().showOSD(modeStr, 1.5);
+}
+
+void PlayerActivity::updateShuffleIcon() {
+    if (!shuffleIcon) return;
+    MusicQueue& queue = MusicQueue::getInstance();
+    if (queue.isShuffleEnabled()) {
+        shuffleIcon->setImageFromRes("icons/shuffle-variant.png");
+    } else {
+        shuffleIcon->setImageFromRes("icons/shuffle-disabled.png");
+    }
+}
+
+void PlayerActivity::updateRepeatIcon() {
+    if (!repeatIcon) return;
+    MusicQueue& queue = MusicQueue::getInstance();
+    switch (queue.getRepeatMode()) {
+        case RepeatMode::OFF:
+            repeatIcon->setImageFromRes("icons/repeat-off.png");
+            break;
+        case RepeatMode::ALL:
+            repeatIcon->setImageFromRes("icons/repeat.png");
+            break;
+        case RepeatMode::ONE:
+            repeatIcon->setImageFromRes("icons/repeat-once.png");
+            break;
+    }
 }
 
 void PlayerActivity::onTrackEnded(const QueueItem* nextTrack) {
@@ -1892,9 +1939,12 @@ void PlayerActivity::onTrackEnded(const QueueItem* nextTrack) {
             loadFromQueue();
         });
     } else {
-        brls::Logger::info("PlayerActivity: Queue ended, closing player");
-        brls::sync([]() {
-            brls::Application::popActivity();
+        brls::Logger::info("PlayerActivity: Queue ended, stopping playback");
+        brls::sync([this]() {
+            // Stop playback but keep player open so user can queue more songs
+            m_isPlaying = false;
+            updatePlayPauseLabel();
+            MpvPlayer::getInstance().showOSD("Queue ended", 2.0);
         });
     }
 }

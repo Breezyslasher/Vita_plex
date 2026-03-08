@@ -664,6 +664,24 @@ void MpvPlayer::toggleSubtitles() {
     m_subtitlesVisible = !m_subtitlesVisible;
 }
 
+void MpvPlayer::loadSubtitleUrl(const std::string& url) {
+    if (!m_mpv || m_stopping) return;
+
+    brls::Logger::info("MpvPlayer: Loading external subtitle: {}", url);
+    const char* cmd[] = {"sub-add", url.c_str(), "auto", NULL};
+    mpv_command_async(m_mpv, 0, cmd);
+    m_subtitlesVisible = true;
+}
+
+void MpvPlayer::removeExternalSubtitles() {
+    if (!m_mpv || m_stopping) return;
+
+    // Remove all subtitle tracks by setting sid to "no"
+    const char* val = "no";
+    mpv_set_property_async(m_mpv, 0, "sid", MPV_FORMAT_STRING, &val);
+    m_subtitlesVisible = false;
+}
+
 double MpvPlayer::getPosition() const {
     if (!m_mpv) return 0.0;
 

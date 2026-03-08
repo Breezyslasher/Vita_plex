@@ -68,6 +68,8 @@ private:
     void playPrevious();
     void toggleShuffle();
     void toggleRepeat();
+    void updateShuffleIcon();       // Update shuffle button icon based on state
+    void updateRepeatIcon();        // Update repeat button icon based on state
     void onTrackEnded(const QueueItem* nextTrack);  // Called when track ends
     void updateQueueDisplay();      // Update UI with queue info
 
@@ -189,6 +191,10 @@ private:
     BRLS_BIND(brls::Box, musicNextBtn, "player/music_next_btn");
     BRLS_BIND(brls::Box, lyricsBtn, "player/lyrics_btn");
     BRLS_BIND(brls::Image, lyricsIcon, "player/lyrics_icon");
+    BRLS_BIND(brls::Box, shuffleBtn, "player/shuffle_btn");
+    BRLS_BIND(brls::Image, shuffleIcon, "player/shuffle_icon");
+    BRLS_BIND(brls::Box, repeatBtn, "player/repeat_btn");
+    BRLS_BIND(brls::Image, repeatIcon, "player/repeat_icon");
 };
 
 } // namespace vitaplex
