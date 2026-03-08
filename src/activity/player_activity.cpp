@@ -155,7 +155,11 @@ void PlayerActivity::onContentAvailable() {
         });
 
         this->registerAction("Shuffle", brls::ControllerButton::BUTTON_X, [this](brls::View* view) {
-            toggleShuffle();
+            if (!m_controlsVisible) {
+                togglePlayPause();
+            } else {
+                toggleShuffle();
+            }
             return true;
         });
 
@@ -179,10 +183,14 @@ void PlayerActivity::onContentAvailable() {
             return true;
         });
 
-        // X = cycle audio track, Y = cycle subtitle track (for video playback)
+        // X = cycle audio track (when controls visible), pause/unpause (when hidden)
         this->registerAction("Audio Track", brls::ControllerButton::BUTTON_X, [this](brls::View* view) {
-            resetControlsIdleTimer();
-            cycleAudioTrack();
+            if (!m_controlsVisible) {
+                togglePlayPause();
+            } else {
+                resetControlsIdleTimer();
+                cycleAudioTrack();
+            }
             return true;
         });
 
