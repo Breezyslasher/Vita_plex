@@ -252,7 +252,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_mainContent->addView(childrenScroll);
     }
 
-    // Track list for albums (vertical scrollable list like Suwayomi chapter list)
+    // Track list for albums (vertical list, scrolls with main content)
     if (m_item.mediaType == MediaType::MUSIC_ALBUM) {
         auto* tracksLabel = new brls::Label();
         tracksLabel->setText("Tracks");
@@ -260,17 +260,13 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         tracksLabel->setMarginBottom(10);
         m_mainContent->addView(tracksLabel);
 
-        // Scrollable container for track list (like Suwayomi RecyclerFrame wrapper)
-        m_trackScrollView = new brls::ScrollingFrame();
-        m_trackScrollView->setGrow(1.0f);
-
+        // Add tracks directly to main content (no nested scroll view)
         m_trackListBox = new brls::Box();
         m_trackListBox->setAxis(brls::Axis::COLUMN);
         m_trackListBox->setJustifyContent(brls::JustifyContent::FLEX_START);
         m_trackListBox->setAlignItems(brls::AlignItems::STRETCH);
 
-        m_trackScrollView->setContentView(m_trackListBox);
-        m_mainContent->addView(m_trackScrollView);
+        m_mainContent->addView(m_trackListBox);
     }
 
     // Music categories container for artists
