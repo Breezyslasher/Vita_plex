@@ -89,6 +89,7 @@ private:
     bool m_isLocalFile = false;    // Playing from local download
     bool m_isDirectFile = false;   // Playing direct file path (debug)
     bool m_isQueueMode = false;    // Playing from queue
+    bool m_lyricsEnabled = false;  // Lyrics subtitle toggle state for music mode
     bool m_destroying = false;     // Flag to prevent timer callbacks during destruction
     bool m_loadingMedia = false;   // Flag to prevent rapid re-entry of loadMedia
     double m_pendingSeek = 0.0;    // Pending seek position (set when resuming)
@@ -185,6 +186,8 @@ private:
     BRLS_BIND(brls::Image, musicPlayIcon, "player/music_play_icon");
     BRLS_BIND(brls::Box, musicPrevBtn, "player/music_prev_btn");
     BRLS_BIND(brls::Box, musicNextBtn, "player/music_next_btn");
+    BRLS_BIND(brls::Box, lyricsBtn, "player/lyrics_btn");
+    BRLS_BIND(brls::Image, lyricsIcon, "player/lyrics_icon");
 };
 
 } // namespace vitaplex

@@ -319,21 +319,80 @@ void PlayerActivity::onContentAvailable() {
             musicNextBtn->addGestureRecognizer(new brls::TapGestureRecognizer(musicNextBtn));
         }
 
-        // In music mode: hide audio/video track buttons, only show queue + lyrics(subtitle)
-        // audioBtn and videoBtn stay hidden (GONE by default in XML)
+        // In music mode: hide audio/video/subtitle track buttons, only show queue + lyrics
+        // audioBtn, videoBtn, subBtn stay hidden (GONE by default in XML)
 
-        // Subtitle button becomes "Lyrics" in music mode
-        if (subBtn) {
-            subBtn->setVisibility(brls::Visibility::VISIBLE);
-            if (subtitleIcon) {
-                subtitleIcon->setImageFromRes("icons/subtitles.png");
-            }
-            subBtn->registerClickAction([this](brls::View* view) {
-                // In music mode, subtitle button shows lyrics overlay
-                showTrackOverlay(TrackSelectMode::SUBTITLE);
+        // Lyrics toggle button (dedicated music-only button)
+        if (lyricsBtn) {
+            lyricsBtn->setVisibility(brls::Visibility::VISIBLE);
+            lyricsBtn->registerClickAction([this](brls::View* view) {
+                // Toggle lyrics on/off
+                m_lyricsEnabled = !m_lyricsEnabled;
+                MpvPlayer& player = MpvPlayer::getInstance();
+
+                if (m_lyricsEnabled) {
+                    // Find and enable the first subtitle stream (lyrics)
+                    fetchPlexStreams();
+                    int lyricsStreamId = -1;
+                    for (const auto& ps : m_plexStreams) {
+                        if (ps.streamType == 3) {
+                            lyricsStreamId = ps.id;
+                            break;
+                        }
+                    }
+                    if (lyricsStreamId > 0 && m_partId > 0) {
+                        PlexClient::getInstance().setStreamSelection(m_partId, -1, lyricsStreamId);
+                        for (auto& ps : m_plexStreams) {
+                            if (ps.streamType == 3) ps.selected = (ps.id == lyricsStreamId);
+                        }
+                        // Reload transcode with lyrics
+                        double currentPos = player.getPosition();
+                        int offsetMs = m_transcodeBaseOffsetMs + static_cast<int>(currentPos * 1000);
+                        PlexClient& client = PlexClient::getInstance();
+                        client.stopTranscode();
+                        std::string newUrl;
+                        if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
+                            m_transcodeBaseOffsetMs = offsetMs;
+                            player.loadUrl(newUrl, "");
+                        }
+                        player.showOSD("Lyrics on", 1.5);
+                    } else {
+                        // No lyrics stream available
+                        m_lyricsEnabled = false;
+                        player.showOSD("No lyrics available", 1.5);
+                    }
+                } else {
+                    // Disable lyrics (subtitle off)
+                    if (m_partId > 0) {
+                        PlexClient::getInstance().setStreamSelection(m_partId, -1, 0);
+                    }
+                    for (auto& ps : m_plexStreams) {
+                        if (ps.streamType == 3) ps.selected = false;
+                    }
+                    double currentPos = player.getPosition();
+                    int offsetMs = m_transcodeBaseOffsetMs + static_cast<int>(currentPos * 1000);
+                    PlexClient& client = PlexClient::getInstance();
+                    client.stopTranscode();
+                    std::string newUrl;
+                    if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
+                        m_transcodeBaseOffsetMs = offsetMs;
+                        player.loadUrl(newUrl, "");
+                    }
+                    player.showOSD("Lyrics off", 1.5);
+                }
+
+                // Update icon opacity to show state
+                if (lyricsIcon) {
+                    lyricsIcon->setAlpha(m_lyricsEnabled ? 1.0f : 0.5f);
+                }
                 return true;
             });
-            subBtn->addGestureRecognizer(new brls::TapGestureRecognizer(subBtn));
+            lyricsBtn->addGestureRecognizer(new brls::TapGestureRecognizer(lyricsBtn));
+
+            // Start with dimmed icon to indicate off state
+            if (lyricsIcon) {
+                lyricsIcon->setAlpha(0.5f);
+            }
         }
         if (queueBtn) {
             queueBtn->setVisibility(brls::Visibility::VISIBLE);

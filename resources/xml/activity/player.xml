@@ -349,6 +349,26 @@
                     scalingType="fit"/>
             </brls:Box>
 
+            <!-- Lyrics toggle button (music mode only) -->
+            <brls:Box
+                id="player/lyrics_btn"
+                width="64"
+                height="64"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="32"
+                marginLeft="16"
+                focusable="true"
+                visibility="gone">
+                <brls:Image
+                    id="player/lyrics_icon"
+                    width="34"
+                    height="34"
+                    image="@res/icons/book-open-page-variant.png"
+                    scalingType="fit"/>
+            </brls:Box>
+
         </brls:Box>
 
     </brls:Box>
