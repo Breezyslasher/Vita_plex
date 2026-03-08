@@ -338,10 +338,13 @@ void MediaItemCell::updateFocusInfo(bool focused) {
                 m_descriptionLabel->setText(info);
                 m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
             }
-            // Show button hint for albums
+            // Show button hint for albums (icon only, no text)
             if (m_buttonHintBox && m_item.mediaType == MediaType::MUSIC_ALBUM) {
-                if (m_buttonHintIcon) m_buttonHintIcon->setImageFromRes("images/start_button.png");
-                if (m_buttonHintLabel) m_buttonHintLabel->setText("Options");
+                if (m_buttonHintIcon) {
+                    m_buttonHintIcon->setImageFromRes("images/start_button.png");
+                    m_buttonHintIcon->setMarginRight(0);
+                }
+                if (m_buttonHintLabel) m_buttonHintLabel->setVisibility(brls::Visibility::GONE);
                 m_buttonHintBox->setVisibility(brls::Visibility::VISIBLE);
             }
         } else {
