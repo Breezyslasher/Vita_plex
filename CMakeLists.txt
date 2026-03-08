@@ -261,6 +261,11 @@ vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
     FILE resources/icons/rewind-30.png resources/icons/rewind-30.png
     FILE resources/icons/rewind-45.png resources/icons/rewind-45.png
     FILE resources/icons/rewind-60.png resources/icons/rewind-60.png
+    FILE resources/icons/shuffle-variant.png resources/icons/shuffle-variant.png
+    FILE resources/icons/shuffle-disabled.png resources/icons/shuffle-disabled.png
+    FILE resources/icons/repeat.png resources/icons/repeat.png
+    FILE resources/icons/repeat-once.png resources/icons/repeat-once.png
+    FILE resources/icons/repeat-off.png resources/icons/repeat-off.png
 
     # Images
     FILE resources/images/circle_button.png resources/images/circle_button.png

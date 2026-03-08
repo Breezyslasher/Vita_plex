@@ -59,18 +59,39 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     leftBox->setWidth(200);
     leftBox->setMarginRight(30);
 
+    // Wrap poster in a container for overlaying the star icon
+    auto* posterContainer = new brls::Box();
+    posterContainer->setAxis(brls::Axis::COLUMN);
+    posterContainer->setWidth(200);
+
     m_posterImage = new brls::Image();
     if (isMusic) {
         // Square album art
         m_posterImage->setWidth(200);
         m_posterImage->setHeight(200);
+        posterContainer->setHeight(200);
     } else {
         // Portrait poster
         m_posterImage->setWidth(200);
         m_posterImage->setHeight(300);
+        posterContainer->setHeight(300);
     }
     m_posterImage->setScalingType(brls::ImageScalingType::FIT);
-    leftBox->addView(m_posterImage);
+    posterContainer->addView(m_posterImage);
+
+    // Star/rating icon overlay in top-right corner of album art
+    if (m_item.rating > 0.0f) {
+        auto* starIcon = new brls::Image();
+        starIcon->setImageFromRes("icons/star.png");
+        starIcon->setWidth(24);
+        starIcon->setHeight(24);
+        starIcon->setPositionType(brls::PositionType::ABSOLUTE);
+        starIcon->setPositionTop(4);
+        starIcon->setPositionRight(4);
+        posterContainer->addView(starIcon);
+    }
+
+    leftBox->addView(posterContainer);
 
     // Play buttons (not for artists or albums - albums use track list actions)
     if (m_item.mediaType != MediaType::MUSIC_ARTIST &&
@@ -125,10 +146,9 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         }
     }
 
-    // Download options for shows, seasons (albums use context menu instead)
+    // Download options for shows and seasons (albums use context menu instead)
     if (m_item.mediaType == MediaType::SHOW ||
-        m_item.mediaType == MediaType::SEASON ||
-        m_item.mediaType == MediaType::MUSIC_ARTIST) {
+        m_item.mediaType == MediaType::SEASON) {
 
         m_downloadButton = new brls::Button();
         m_downloadButton->setText("Download...");

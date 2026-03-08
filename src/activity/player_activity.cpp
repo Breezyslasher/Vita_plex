@@ -323,6 +323,28 @@ void PlayerActivity::onContentAvailable() {
         // In music mode: hide audio/video/subtitle track buttons, only show queue + lyrics
         // audioBtn, videoBtn, subBtn stay hidden (GONE by default in XML)
 
+        // Shuffle toggle button
+        if (shuffleBtn) {
+            shuffleBtn->registerClickAction([this](brls::View* view) {
+                toggleShuffle();
+                return true;
+            });
+            shuffleBtn->addGestureRecognizer(new brls::TapGestureRecognizer(shuffleBtn));
+            // Set initial icon based on current shuffle state
+            updateShuffleIcon();
+        }
+
+        // Repeat toggle button
+        if (repeatBtn) {
+            repeatBtn->registerClickAction([this](brls::View* view) {
+                toggleRepeat();
+                return true;
+            });
+            repeatBtn->addGestureRecognizer(new brls::TapGestureRecognizer(repeatBtn));
+            // Set initial icon based on current repeat state
+            updateRepeatIcon();
+        }
+
         // Lyrics toggle button (dedicated music-only button)
         if (lyricsBtn) {
             lyricsBtn->setVisibility(brls::Visibility::VISIBLE);
@@ -601,6 +623,13 @@ void PlayerActivity::loadFromQueue() {
 
     brls::Logger::info("PlayerActivity: Loading track from queue: {} - {}",
                       track->artist, track->title);
+
+    // Reset streams cache so lyrics button re-fetches for the new track
+    m_streamsLoaded = false;
+    m_plexStreams.clear();
+    m_partId = 0;
+    m_lyricsEnabled = false;
+    if (lyricsIcon) lyricsIcon->setAlpha(0.5f);
 
     // If resuming and MPV is already playing/paused, just update the UI
     // without restarting the track (user pressed circle to return to player)
@@ -1857,6 +1886,7 @@ void PlayerActivity::toggleShuffle() {
     queue.setShuffle(!queue.isShuffleEnabled());
 
     updateQueueDisplay();
+    updateShuffleIcon();
 
     // Show OSD feedback
     MpvPlayer::getInstance().showOSD(
@@ -1870,6 +1900,7 @@ void PlayerActivity::toggleRepeat() {
     queue.cycleRepeatMode();
 
     updateQueueDisplay();
+    updateRepeatIcon();
 
     // Show OSD feedback
     const char* modeStr = "Repeat: OFF";
@@ -1879,6 +1910,32 @@ void PlayerActivity::toggleRepeat() {
         modeStr = "Repeat: ALL";
     }
     MpvPlayer::getInstance().showOSD(modeStr, 1.5);
+}
+
+void PlayerActivity::updateShuffleIcon() {
+    if (!shuffleIcon) return;
+    MusicQueue& queue = MusicQueue::getInstance();
+    if (queue.isShuffleEnabled()) {
+        shuffleIcon->setImageFromRes("icons/shuffle-variant.png");
+    } else {
+        shuffleIcon->setImageFromRes("icons/shuffle-disabled.png");
+    }
+}
+
+void PlayerActivity::updateRepeatIcon() {
+    if (!repeatIcon) return;
+    MusicQueue& queue = MusicQueue::getInstance();
+    switch (queue.getRepeatMode()) {
+        case RepeatMode::OFF:
+            repeatIcon->setImageFromRes("icons/repeat-off.png");
+            break;
+        case RepeatMode::ALL:
+            repeatIcon->setImageFromRes("icons/repeat.png");
+            break;
+        case RepeatMode::ONE:
+            repeatIcon->setImageFromRes("icons/repeat-once.png");
+            break;
+    }
 }
 
 void PlayerActivity::onTrackEnded(const QueueItem* nextTrack) {

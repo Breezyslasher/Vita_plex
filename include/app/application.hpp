@@ -94,7 +94,7 @@ struct AppSettings {
     bool deleteAfterWatch = false;     // Auto-delete after fully watched
 
     // Music Settings
-    TrackDefaultAction trackDefaultAction = TrackDefaultAction::PLAY_NOW_CLEAR;  // Default action for tracks
+    TrackDefaultAction trackDefaultAction = TrackDefaultAction::ASK_EACH_TIME;  // Default action for tracks
     bool backgroundMusic = true;       // Allow leaving player without stopping music
 };
 
