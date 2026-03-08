@@ -202,6 +202,7 @@ public:
     bool refreshToken();  // JWT token refresh (call before 7-day expiry)
     bool fetchServers(std::vector<PlexServer>& servers);  // Get user's servers from plex.tv
     bool connectToServer(const std::string& url);
+    bool connectToServer(const std::string& url, int timeoutSeconds);
     void logout();
 
     // Library operations

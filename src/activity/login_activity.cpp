@@ -148,16 +148,22 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
             const auto& conn = server.connections[i];
             std::string connType = conn.local ? "local" : (conn.relay ? "relay" : "remote");
 
+            // Use shorter timeouts per connection type to fail fast
+            // Local: 10s (should respond quickly if reachable)
+            // Remote: 15s (direct remote access)
+            // Relay: 30s (relay may be slower but is the fallback)
+            int timeout = conn.local ? 10 : (conn.relay ? 30 : 15);
+
             brls::sync([progressDialog, i, totalConnections, server, connType]() {
                 progressDialog->setAttempt(i + 1, totalConnections);
                 progressDialog->setStatus("Trying " + connType + " connection...");
                 progressDialog->setProgress(static_cast<float>(i) / totalConnections);
             });
 
-            brls::Logger::info("Trying connection {}/{}: {} ({})",
-                              i + 1, totalConnections, conn.uri, connType);
+            brls::Logger::info("Trying connection {}/{}: {} ({}, timeout: {}s)",
+                              i + 1, totalConnections, conn.uri, connType, timeout);
 
-            if (client.connectToServer(conn.uri)) {
+            if (client.connectToServer(conn.uri, timeout)) {
                 // Success!
                 brls::sync([this, progressDialog, server]() {
                     progressDialog->setStatus("Connected!");

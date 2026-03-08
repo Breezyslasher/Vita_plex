@@ -28,7 +28,7 @@ private:
 
     // Helper to create a media row with horizontal scrolling
     HorizontalScrollRow* createMediaRow();
-    void populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>& items);
+    void populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>& items, bool directPlay = false);
 
     // Vertical scroll container
     brls::ScrollingFrame* m_scrollView = nullptr;

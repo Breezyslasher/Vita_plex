@@ -93,7 +93,7 @@ HorizontalScrollRow* HomeTab::createMediaRow() {
     return row;
 }
 
-void HomeTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>& items) {
+void HomeTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>& items, bool directPlay) {
     if (!row) return;
 
     row->clearViews();
@@ -104,8 +104,13 @@ void HomeTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>
         cell->setMarginRight(10);
 
         MediaItem capturedItem = item;
-        cell->registerClickAction([this, capturedItem](brls::View* view) {
-            onItemSelected(capturedItem);
+        cell->registerClickAction([this, capturedItem, directPlay](brls::View* view) {
+            if (directPlay) {
+                // Play directly for continue watching items (movies, episodes, tracks)
+                Application::getInstance().pushPlayerActivity(capturedItem.ratingKey);
+            } else {
+                onItemSelected(capturedItem);
+            }
             return true;
         });
         cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
@@ -160,7 +165,7 @@ void HomeTab::loadContent() {
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
                 m_continueWatching = items;
-                populateRow(m_continueWatchingRow, m_continueWatching);
+                populateRow(m_continueWatchingRow, m_continueWatching, true);
             });
         } else {
             brls::Logger::error("HomeTab: Failed to fetch continue watching");

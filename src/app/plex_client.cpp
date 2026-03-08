@@ -421,7 +421,14 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers) {
 }
 
 bool PlexClient::connectToServer(const std::string& url) {
-    brls::Logger::info("Connecting to server: {}", url);
+    // Use connection timeout from settings (default 3 minutes for slow connections)
+    int timeout = Application::getInstance().getSettings().connectionTimeout;
+    if (timeout <= 0) timeout = 180;
+    return connectToServer(url, timeout);
+}
+
+bool PlexClient::connectToServer(const std::string& url, int timeoutSeconds) {
+    brls::Logger::info("Connecting to server: {} (timeout: {}s)", url, timeoutSeconds);
 
     // Normalize URL - ensure http/https is lowercase
     m_serverUrl = url;
@@ -440,13 +447,9 @@ bool PlexClient::connectToServer(const std::string& url) {
     req.url = buildApiUrl("/");
     req.method = "GET";
     req.headers["Accept"] = "application/json";
+    req.timeout = timeoutSeconds;
 
-    // Use connection timeout from settings (default 3 minutes for slow connections)
-    int timeout = Application::getInstance().getSettings().connectionTimeout;
-    if (timeout <= 0) timeout = 180;  // Default to 3 minutes
-    req.timeout = timeout;
-
-    brls::Logger::debug("Connection timeout: {} seconds", timeout);
+    brls::Logger::debug("Connection timeout: {} seconds", timeoutSeconds);
 
     HttpResponse resp = client.request(req);
 
