@@ -214,7 +214,7 @@ bool MusicQueue::playNext() {
                 reshuffle();
                 m_shufflePosition = 0;
             } else {
-                // End of queue
+                // End of queue - stop
                 m_shufflePosition = (int)m_shuffleOrder.size() - 1;
                 return false;
             }
@@ -227,6 +227,7 @@ bool MusicQueue::playNext() {
             if (m_repeatMode == RepeatMode::ALL) {
                 nextIndex = 0;
             } else {
+                // End of queue - stop
                 return false;
             }
         }
@@ -301,17 +302,28 @@ void MusicQueue::setShuffle(bool enabled) {
 
     m_shuffleEnabled = enabled;
 
-    if (enabled) {
-        generateShuffleOrder();
-        // Find current track in shuffle order
-        for (size_t i = 0; i < m_shuffleOrder.size(); i++) {
-            if (m_shuffleOrder[i] == m_currentIndex) {
-                // Move current track to front
-                std::swap(m_shuffleOrder[0], m_shuffleOrder[i]);
-                m_shufflePosition = 0;
-                break;
+    if (enabled && !m_queue.empty()) {
+        // Build shuffle order: current track first, then all others shuffled
+        m_shuffleOrder.clear();
+        m_shuffleOrder.push_back(m_currentIndex);
+
+        // Collect all other indices
+        std::vector<int> others;
+        for (int i = 0; i < (int)m_queue.size(); i++) {
+            if (i != m_currentIndex) {
+                others.push_back(i);
             }
         }
+
+        // Fisher-Yates shuffle the remaining tracks
+        for (int i = (int)others.size() - 1; i > 0; i--) {
+            int j = m_rng() % (i + 1);
+            std::swap(others[i], others[j]);
+        }
+
+        // Append shuffled tracks after current
+        m_shuffleOrder.insert(m_shuffleOrder.end(), others.begin(), others.end());
+        m_shufflePosition = 0;
     } else {
         m_shuffleOrder.clear();
         m_shufflePosition = -1;

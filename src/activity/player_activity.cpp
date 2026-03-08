@@ -354,30 +354,34 @@ void PlayerActivity::onContentAvailable() {
                 MpvPlayer& player = MpvPlayer::getInstance();
 
                 if (m_lyricsEnabled) {
-                    // Find and enable the first subtitle stream (lyrics)
+                    // Find the first lyrics/subtitle stream and load it as external subtitle
                     fetchPlexStreams();
                     int lyricsStreamId = -1;
+                    std::string lyricsCodec;
                     for (const auto& ps : m_plexStreams) {
                         if (ps.streamType == 3) {
                             lyricsStreamId = ps.id;
+                            lyricsCodec = ps.codec;
                             break;
                         }
                     }
-                    if (lyricsStreamId > 0 && m_partId > 0) {
-                        PlexClient::getInstance().setStreamSelection(m_partId, -1, lyricsStreamId);
-                        for (auto& ps : m_plexStreams) {
-                            if (ps.streamType == 3) ps.selected = (ps.id == lyricsStreamId);
-                        }
-                        // Reload transcode with lyrics
-                        double currentPos = player.getPosition();
-                        int offsetMs = m_transcodeBaseOffsetMs + static_cast<int>(currentPos * 1000);
+                    if (lyricsStreamId > 0) {
+                        // Build URL to fetch lyrics stream directly from Plex
+                        // GET /library/streams/{streamId}.{ext}
+                        std::string ext = lyricsCodec.empty() ? "lrc" : lyricsCodec;
+                        // Normalize common codec names to file extensions
+                        if (ext == "text" || ext == "txt") ext = "srt";
                         PlexClient& client = PlexClient::getInstance();
-                        client.stopTranscode();
-                        std::string newUrl;
-                        if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
-                            m_transcodeBaseOffsetMs = offsetMs;
-                            player.loadUrl(newUrl, "");
-                        }
+                        std::string serverUrl = client.getServerUrl();
+                        // Remove trailing slash
+                        while (!serverUrl.empty() && serverUrl.back() == '/') serverUrl.pop_back();
+                        std::string lyricsUrl = serverUrl +
+                            "/library/streams/" + std::to_string(lyricsStreamId) + "." + ext;
+                        // Append auth token
+                        lyricsUrl += "?X-Plex-Token=" + client.getAuthToken();
+
+                        brls::Logger::info("PlayerActivity: Loading lyrics from: {}", lyricsUrl);
+                        player.loadSubtitleUrl(lyricsUrl);
                         player.showOSD("Lyrics on", 1.5);
                     } else {
                         // No lyrics stream available
@@ -385,22 +389,8 @@ void PlayerActivity::onContentAvailable() {
                         player.showOSD("No lyrics available", 1.5);
                     }
                 } else {
-                    // Disable lyrics (subtitle off)
-                    if (m_partId > 0) {
-                        PlexClient::getInstance().setStreamSelection(m_partId, -1, 0);
-                    }
-                    for (auto& ps : m_plexStreams) {
-                        if (ps.streamType == 3) ps.selected = false;
-                    }
-                    double currentPos = player.getPosition();
-                    int offsetMs = m_transcodeBaseOffsetMs + static_cast<int>(currentPos * 1000);
-                    PlexClient& client = PlexClient::getInstance();
-                    client.stopTranscode();
-                    std::string newUrl;
-                    if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
-                        m_transcodeBaseOffsetMs = offsetMs;
-                        player.loadUrl(newUrl, "");
-                    }
+                    // Disable lyrics
+                    player.removeExternalSubtitles();
                     player.showOSD("Lyrics off", 1.5);
                 }
 
@@ -1949,9 +1939,12 @@ void PlayerActivity::onTrackEnded(const QueueItem* nextTrack) {
             loadFromQueue();
         });
     } else {
-        brls::Logger::info("PlayerActivity: Queue ended, closing player");
-        brls::sync([]() {
-            brls::Application::popActivity();
+        brls::Logger::info("PlayerActivity: Queue ended, stopping playback");
+        brls::sync([this]() {
+            // Stop playback but keep player open so user can queue more songs
+            m_isPlaying = false;
+            updatePlayPauseLabel();
+            MpvPlayer::getInstance().showOSD("Queue ended", 2.0);
         });
     }
 }
