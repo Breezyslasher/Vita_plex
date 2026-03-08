@@ -314,7 +314,7 @@
             id="player/queue_scroll"
             width="480"
             height="380"
-            showScrollIndicator="true">
+>
             <brls:Box
                 id="player/queue_list"
                 width="480"
