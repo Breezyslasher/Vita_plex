@@ -132,6 +132,11 @@ void PlayerActivity::onContentAvailable() {
             hideTrackOverlay();
             return true;
         }
+        // If queue overlay is showing, dismiss it instead of leaving player
+        if (m_queueOverlayVisible) {
+            hideQueueOverlay();
+            return true;
+        }
         brls::Application::popActivity();
         return true;
     });
@@ -246,6 +251,16 @@ void PlayerActivity::onContentAvailable() {
             }));
     }
 
+    // Queue overlay dismiss on tap
+    if (queueOverlay) {
+        queueOverlay->addGestureRecognizer(new brls::TapGestureRecognizer(
+            [this](brls::TapGestureStatus status, brls::Sound* soundToPlay) {
+                if (status.state == brls::GestureState::END) {
+                    hideQueueOverlay();
+                }
+            }));
+    }
+
     // Show mode-specific icons and wire touch
     if (m_isQueueMode) {
         // Queue mode: use skip-previous / skip-next icons for prev/next track
@@ -267,6 +282,18 @@ void PlayerActivity::onContentAvailable() {
                 return true;
             });
             subBtn->addGestureRecognizer(new brls::TapGestureRecognizer(subBtn));
+        }
+        if (queueBtn) {
+            queueBtn->setVisibility(brls::Visibility::VISIBLE);
+            queueBtn->registerClickAction([this](brls::View* view) {
+                if (m_queueOverlayVisible) {
+                    hideQueueOverlay();
+                } else {
+                    showQueueOverlay();
+                }
+                return true;
+            });
+            queueBtn->addGestureRecognizer(new brls::TapGestureRecognizer(queueBtn));
         }
     } else {
         // Video mode: seek icons matching the configured interval
@@ -447,6 +474,7 @@ void PlayerActivity::loadFromQueue() {
     }
     if (artistLabel) {
         artistLabel->setText(track->artist);
+        artistLabel->setVisibility(brls::Visibility::VISIBLE);
     }
 
     // Update queue info display
@@ -455,7 +483,7 @@ void PlayerActivity::loadFromQueue() {
     // Load album art - temporarily unpause the image loader for this one load
     if (albumArt && !track->thumb.empty()) {
         PlexClient& client = PlexClient::getInstance();
-        std::string thumbUrl = client.getThumbnailUrl(track->thumb, 300, 300);
+        std::string thumbUrl = client.getThumbnailUrl(track->thumb, 400, 400);
         bool wasPaused = ImageLoader::isPaused();
         if (wasPaused) ImageLoader::setPaused(false);
         ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {
@@ -1711,6 +1739,174 @@ void PlayerActivity::updateQueueDisplay() {
 
         queueLabel->setText(queueInfo);
         queueLabel->setVisibility(brls::Visibility::VISIBLE);
+    }
+
+    // Refresh queue list overlay if visible
+    if (m_queueOverlayVisible) {
+        populateQueueList();
+    }
+}
+
+// Queue list overlay methods
+
+void PlayerActivity::showQueueOverlay() {
+    if (m_queueOverlayVisible) {
+        hideQueueOverlay();
+        return;
+    }
+
+    m_queueOverlayVisible = true;
+    populateQueueList();
+
+    if (queueOverlay) {
+        queueOverlay->setVisibility(brls::Visibility::VISIBLE);
+        queueOverlay->registerAction("Back", brls::ControllerButton::BUTTON_B, [this](brls::View* view) {
+            hideQueueOverlay();
+            return true;
+        });
+
+        // Give focus to the currently playing track in the list
+        MusicQueue& queue = MusicQueue::getInstance();
+        int currentIdx = queue.getCurrentIndex();
+        if (queueList && !queueList->getChildren().empty()) {
+            int focusIdx = std::min(currentIdx, (int)queueList->getChildren().size() - 1);
+            if (focusIdx < 0) focusIdx = 0;
+            brls::Application::giveFocus(queueList->getChildren()[focusIdx]);
+        }
+    }
+}
+
+void PlayerActivity::hideQueueOverlay() {
+    m_queueOverlayVisible = false;
+    if (queueOverlay) {
+        queueOverlay->setVisibility(brls::Visibility::GONE);
+    }
+    // Restore focus to queue button
+    if (queueBtn) {
+        brls::Application::giveFocus(queueBtn);
+    }
+}
+
+void PlayerActivity::populateQueueList() {
+    if (!queueList || !queueOverlayTitle) return;
+
+    // Clear existing items
+    queueList->clearViews();
+
+    MusicQueue& queue = MusicQueue::getInstance();
+    const auto& tracks = queue.getQueue();
+    int currentIndex = queue.getCurrentIndex();
+
+    // Set title with track count
+    char titleBuf[64];
+    snprintf(titleBuf, sizeof(titleBuf), "Queue (%d tracks)", (int)tracks.size());
+    queueOverlayTitle->setText(titleBuf);
+
+    // Temporarily unpause image loader for loading thumbnails
+    bool wasPaused = ImageLoader::isPaused();
+    if (wasPaused) ImageLoader::setPaused(false);
+
+    PlexClient& client = PlexClient::getInstance();
+
+    for (int i = 0; i < (int)tracks.size(); i++) {
+        const QueueItem& track = tracks[i];
+        bool isCurrent = (i == currentIndex);
+
+        // Row container: [cover art] [title + artist]
+        brls::Box* row = new brls::Box();
+        row->setAxis(brls::Axis::ROW);
+        row->setJustifyContent(brls::JustifyContent::FLEX_START);
+        row->setAlignItems(brls::AlignItems::CENTER);
+        row->setPaddingTop(6);
+        row->setPaddingBottom(6);
+        row->setPaddingLeft(8);
+        row->setPaddingRight(8);
+        row->setCornerRadius(6);
+        row->setFocusable(true);
+
+        if (isCurrent) {
+            row->setBackgroundColor(nvgRGBA(80, 80, 200, 120));
+            row->setBorderColor(nvgRGB(100, 130, 255));
+            row->setBorderThickness(1);
+        }
+
+        // Cover art thumbnail (50x50)
+        brls::Image* thumb = new brls::Image();
+        thumb->setWidth(50);
+        thumb->setHeight(50);
+        thumb->setCornerRadius(4);
+        thumb->setScalingType(brls::ImageScalingType::FIT);
+        thumb->setMarginRight(10);
+
+        if (!track.thumb.empty()) {
+            std::string thumbUrl = client.getThumbnailUrl(track.thumb, 100, 100);
+            ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {
+                // Thumbnail loaded
+            }, thumb, m_alive);
+        }
+        row->addView(thumb);
+
+        // Text container: title on top, artist below
+        brls::Box* textBox = new brls::Box();
+        textBox->setAxis(brls::Axis::COLUMN);
+        textBox->setJustifyContent(brls::JustifyContent::CENTER);
+        textBox->setGrow(1.0f);
+
+        // Track number + title
+        brls::Label* titleLbl = new brls::Label();
+        std::string titleStr;
+        if (isCurrent) {
+            titleStr = "> " + track.title;
+        } else {
+            char numBuf[8];
+            snprintf(numBuf, sizeof(numBuf), "%d. ", i + 1);
+            titleStr = numBuf + track.title;
+        }
+        titleLbl->setText(titleStr);
+        titleLbl->setFontSize(15);
+        titleLbl->setTextColor(isCurrent ? nvgRGB(150, 200, 255) : nvgRGB(230, 230, 230));
+        textBox->addView(titleLbl);
+
+        // Artist name
+        if (!track.artist.empty()) {
+            brls::Label* artistLbl = new brls::Label();
+            artistLbl->setText(track.artist);
+            artistLbl->setFontSize(12);
+            artistLbl->setTextColor(isCurrent ? nvgRGBA(150, 200, 255, 180) : nvgRGB(160, 160, 160));
+            textBox->addView(artistLbl);
+        }
+
+        row->addView(textBox);
+
+        // Click handler to play this track
+        int trackIdx = i;
+        row->registerClickAction([this, trackIdx](brls::View* view) {
+            playFromQueue(trackIdx);
+            return true;
+        });
+        row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
+
+        queueList->addView(row);
+    }
+
+    // Re-pause image loader if it was paused
+    if (wasPaused) ImageLoader::setPaused(true);
+}
+
+void PlayerActivity::playFromQueue(int index) {
+    if (!m_isQueueMode) return;
+
+    MusicQueue& queue = MusicQueue::getInstance();
+    if (queue.playTrack(index)) {
+        // Stop current playback
+        MpvPlayer::getInstance().stop();
+        m_isPlaying = false;
+
+        // Hide queue overlay
+        hideQueueOverlay();
+
+        // Load selected track
+        loadFromQueue();
     }
 }
 

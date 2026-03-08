@@ -68,6 +68,13 @@ private:
     void onTrackEnded(const QueueItem* nextTrack);  // Called when track ends
     void updateQueueDisplay();      // Update UI with queue info
 
+    // Queue list overlay
+    void showQueueOverlay();
+    void hideQueueOverlay();
+    void populateQueueList();       // Build queue list with cover art and titles
+    void playFromQueue(int index);  // Play a specific track from queue list
+    bool m_queueOverlayVisible = false;
+
     std::string m_mediaKey;
     std::string m_directFilePath;  // For direct file playback (debug) or stream URL
     std::string m_streamTitle;     // Title for stream playback (Live TV)
@@ -159,6 +166,12 @@ private:
     BRLS_BIND(brls::Box, trackList, "player/track_list");
     BRLS_BIND(brls::Box, skipBtn, "player/skip_btn");
     BRLS_BIND(brls::Label, skipLabel, "player/skip_label");
+    BRLS_BIND(brls::Box, queueBtn, "player/queue_btn");
+    BRLS_BIND(brls::Image, queueIcon, "player/queue_icon");
+    BRLS_BIND(brls::Box, queueOverlay, "player/queue_overlay");
+    BRLS_BIND(brls::Label, queueOverlayTitle, "player/queue_overlay_title");
+    BRLS_BIND(brls::Box, queueList, "player/queue_list");
+    BRLS_BIND(brls::ScrollingFrame, queueScroll, "player/queue_scroll");
 };
 
 } // namespace vitaplex

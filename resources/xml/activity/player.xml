@@ -37,10 +37,10 @@
         alignItems="center">
         <brls:Image
             id="player/album_art"
-            width="200"
-            height="200"
+            width="280"
+            height="280"
             scalingType="fit"
-            cornerRadius="8"
+            cornerRadius="12"
             visibility="gone"/>
     </brls:Box>
 
@@ -237,6 +237,26 @@
                     scalingType="fit"/>
             </brls:Box>
 
+            <!-- Queue list button (music queue mode) -->
+            <brls:Box
+                id="player/queue_btn"
+                width="64"
+                height="64"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="32"
+                marginLeft="16"
+                focusable="true"
+                visibility="gone">
+                <brls:Image
+                    id="player/queue_icon"
+                    width="34"
+                    height="34"
+                    image="@res/icons/format-list-group.png"
+                    scalingType="fit"/>
+            </brls:Box>
+
         </brls:Box>
 
     </brls:Box>
@@ -263,6 +283,48 @@
             text="Skip Intro"
             fontSize="18"
             textColor="#FFFFFF"/>
+    </brls:Box>
+
+    <!-- Queue list overlay - shows all tracks with cover art -->
+    <brls:Box
+        id="player/queue_overlay"
+        width="100%"
+        height="100%"
+        axis="column"
+        justifyContent="center"
+        alignItems="center"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        positionRight="0"
+        positionBottom="0"
+        backgroundColor="#CC000000"
+        visibility="gone">
+
+        <!-- Queue title -->
+        <brls:Label
+            id="player/queue_overlay_title"
+            text="Queue"
+            fontSize="22"
+            textColor="#FFFFFF"
+            marginBottom="8"/>
+
+        <!-- Queue track list container (scrollable) -->
+        <brls:ScrollingFrame
+            id="player/queue_scroll"
+            width="480"
+            height="380"
+            showScrollIndicator="true">
+            <brls:Box
+                id="player/queue_list"
+                width="480"
+                axis="column"
+                alignItems="stretch"
+                backgroundColor="#E0222222"
+                cornerRadius="8"
+                padding="8"/>
+        </brls:ScrollingFrame>
+
     </brls:Box>
 
     <!-- Track selection overlay - semi-transparent list -->
