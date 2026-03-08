@@ -73,6 +73,14 @@ struct MediaItem {
     // For downloads - media part path on server
     std::string partPath;
     int64_t partSize = 0;
+
+    // Markers (intro/credits) - times in milliseconds
+    struct Marker {
+        std::string type;   // "intro" or "credits"
+        int startTimeMs = 0;
+        int endTimeMs = 0;
+    };
+    std::vector<Marker> markers;
 };
 
 // Library section info
@@ -249,6 +257,8 @@ public:
     bool getTranscodeUrl(const std::string& ratingKey, std::string& url, int offsetMs = 0);
     void stopTranscode();  // Stop the current transcode session
     bool updatePlayProgress(const std::string& ratingKey, int timeMs);
+    bool reportTimeline(const std::string& ratingKey, const std::string& key,
+                        const std::string& state, int timeMs, int durationMs);
     bool markAsWatched(const std::string& ratingKey);
     bool markAsUnwatched(const std::string& ratingKey);
 

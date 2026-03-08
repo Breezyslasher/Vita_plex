@@ -1,6 +1,12 @@
 /**
  * VitaPlex - Downloads Manager Implementation
  * Handles offline media downloads and progress sync
+ *
+ * Based on Vita_Suwayomi's download system patterns:
+ * - Proper state persistence with JSON parsing
+ * - Atomic flags for thread-safe download control
+ * - File validation on startup
+ * - Resume support for interrupted downloads
  */
 
 #include "app/downloads_manager.hpp"
@@ -14,6 +20,7 @@
 #include <ctime>
 #include <cstdlib>
 #include <thread>
+#include <chrono>
 
 #ifdef __vita__
 #include <psp2/io/fcntl.h>
@@ -32,6 +39,72 @@ static const char* STATE_FILE = "ux0:data/VitaPlex/downloads/state.json";
 static const char* DOWNLOADS_DIR = "./downloads";
 static const char* STATE_FILE = "./downloads/state.json";
 #endif
+
+// Helper: extract a JSON string value by key from a simple JSON object string
+static std::string extractJsonString(const std::string& json, const std::string& key) {
+    std::string searchKey = "\"" + key + "\":\"";
+    size_t pos = json.find(searchKey);
+    if (pos == std::string::npos) return "";
+    pos += searchKey.length();
+    size_t end = json.find("\"", pos);
+    if (end == std::string::npos) return "";
+
+    // Unescape basic sequences
+    std::string result;
+    for (size_t i = pos; i < end; i++) {
+        if (json[i] == '\\' && i + 1 < end) {
+            i++;
+            switch (json[i]) {
+                case '"': result += '"'; break;
+                case '\\': result += '\\'; break;
+                case '/': result += '/'; break;
+                case 'n': result += '\n'; break;
+                case 't': result += '\t'; break;
+                default: result += json[i]; break;
+            }
+        } else {
+            result += json[i];
+        }
+    }
+    return result;
+}
+
+// Helper: extract a JSON integer value by key
+static int64_t extractJsonInt(const std::string& json, const std::string& key) {
+    std::string searchKey = "\"" + key + "\":";
+    size_t pos = json.find(searchKey);
+    if (pos == std::string::npos) return 0;
+    pos += searchKey.length();
+    // Skip whitespace
+    while (pos < json.size() && (json[pos] == ' ' || json[pos] == '\t')) pos++;
+    if (pos >= json.size()) return 0;
+
+    std::string numStr;
+    bool negative = false;
+    if (json[pos] == '-') { negative = true; pos++; }
+    while (pos < json.size() && json[pos] >= '0' && json[pos] <= '9') {
+        numStr += json[pos++];
+    }
+    if (numStr.empty()) return 0;
+    int64_t val = std::strtoll(numStr.c_str(), nullptr, 10);
+    return negative ? -val : val;
+}
+
+// Helper: escape a string for JSON output
+static std::string escapeJson(const std::string& s) {
+    std::string result;
+    result.reserve(s.size() + 8);
+    for (char c : s) {
+        switch (c) {
+            case '"': result += "\\\""; break;
+            case '\\': result += "\\\\"; break;
+            case '\n': result += "\\n"; break;
+            case '\t': result += "\\t"; break;
+            default: result += c; break;
+        }
+    }
+    return result;
+}
 
 DownloadsManager& DownloadsManager::getInstance() {
     static DownloadsManager instance;
@@ -55,8 +128,12 @@ bool DownloadsManager::init() {
     // Load saved state
     loadState();
 
+    // Validate that completed files actually exist
+    validateDownloadedFiles();
+
     m_initialized = true;
-    brls::Logger::info("DownloadsManager: Initialized at {}", m_downloadsPath);
+    brls::Logger::info("DownloadsManager: Initialized at {} ({} items loaded)",
+                       m_downloadsPath, m_downloads.size());
     return true;
 }
 
@@ -92,23 +169,24 @@ bool DownloadsManager::queueDownload(const std::string& ratingKey, const std::st
     item.localPath = m_downloadsPath + "/" + filename;
 
     m_downloads.push_back(item);
-    saveState();
+    saveStateUnlocked();
 
     brls::Logger::info("DownloadsManager: Queued {} for download", title);
     return true;
 }
 
 void DownloadsManager::startDownloads() {
-    if (m_downloading) return;
-    m_downloading = true;
+    if (m_downloading.load()) return;
+    m_downloading.store(true);
 
     brls::Logger::info("DownloadsManager: Starting download queue");
 
     // Process downloads in background using asyncRun
     asyncRun([this]() {
+        m_downloadThreadActive.store(true);
         brls::Logger::info("DownloadsManager: Download thread started");
 
-        while (m_downloading) {
+        while (m_downloading.load()) {
             DownloadItem* nextItem = nullptr;
 
             {
@@ -132,13 +210,14 @@ void DownloadsManager::startDownloads() {
                 break;
             }
         }
-        m_downloading = false;
+        m_downloading.store(false);
+        m_downloadThreadActive.store(false);
         brls::Logger::info("DownloadsManager: Download thread finished");
     });
 }
 
 void DownloadsManager::pauseDownloads() {
-    m_downloading = false;
+    m_downloading.store(false);
 
     std::lock_guard<std::mutex> lock(m_mutex);
     for (auto& item : m_downloads) {
@@ -146,7 +225,7 @@ void DownloadsManager::pauseDownloads() {
             item.state = DownloadState::PAUSED;
         }
     }
-    saveState();
+    saveStateUnlocked();
 }
 
 bool DownloadsManager::cancelDownload(const std::string& ratingKey) {
@@ -163,7 +242,7 @@ bool DownloadsManager::cancelDownload(const std::string& ratingKey) {
 #endif
             }
             m_downloads.erase(it);
-            saveState();
+            saveStateUnlocked();
             return true;
         }
     }
@@ -184,7 +263,7 @@ bool DownloadsManager::deleteDownload(const std::string& ratingKey) {
 #endif
             }
             m_downloads.erase(it);
-            saveState();
+            saveStateUnlocked();
             brls::Logger::info("DownloadsManager: Deleted download {}", ratingKey);
             return true;
         }
@@ -194,7 +273,7 @@ bool DownloadsManager::deleteDownload(const std::string& ratingKey) {
 
 std::vector<DownloadItem> DownloadsManager::getDownloads() const {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return m_downloads;
+    return std::vector<DownloadItem>(m_downloads.begin(), m_downloads.end());
 }
 
 DownloadItem* DownloadsManager::getDownload(const std::string& ratingKey) {
@@ -315,6 +394,85 @@ void DownloadsManager::syncProgressBidirectional() {
     brls::Logger::info("DownloadsManager: Bidirectional sync complete");
 }
 
+void DownloadsManager::resumeIncompleteDownloads() {
+    int resumed = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& item : m_downloads) {
+            if (item.state == DownloadState::PAUSED || item.state == DownloadState::FAILED) {
+                item.state = DownloadState::QUEUED;
+                item.downloadedBytes = 0;  // Re-download from scratch (transcoded streams aren't resumable)
+                resumed++;
+            }
+        }
+        if (resumed > 0) {
+            saveStateUnlocked();
+        }
+    }
+
+    if (resumed > 0) {
+        brls::Logger::info("DownloadsManager: Resumed {} incomplete downloads", resumed);
+        startDownloads();
+    }
+}
+
+bool DownloadsManager::hasIncompleteDownloads() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const auto& item : m_downloads) {
+        if (item.state == DownloadState::PAUSED || item.state == DownloadState::FAILED ||
+            item.state == DownloadState::QUEUED) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int DownloadsManager::countIncompleteDownloads() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    int count = 0;
+    for (const auto& item : m_downloads) {
+        if (item.state == DownloadState::PAUSED || item.state == DownloadState::FAILED ||
+            item.state == DownloadState::QUEUED) {
+            count++;
+        }
+    }
+    return count;
+}
+
+void DownloadsManager::waitForDownloadThread(int timeoutMs) {
+    int waited = 0;
+    while (m_downloadThreadActive.load() && waited < timeoutMs) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        waited += 50;
+    }
+    if (m_downloadThreadActive.load()) {
+        brls::Logger::warning("DownloadsManager: Download thread did not exit within {}ms", timeoutMs);
+    }
+}
+
+void DownloadsManager::clearCompleted() {
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    auto it = m_downloads.begin();
+    while (it != m_downloads.end()) {
+        if (it->state == DownloadState::COMPLETED) {
+            // Delete file
+            if (!it->localPath.empty()) {
+#ifdef __vita__
+                sceIoRemove(it->localPath.c_str());
+#else
+                std::remove(it->localPath.c_str());
+#endif
+            }
+            it = m_downloads.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    saveStateUnlocked();
+    brls::Logger::info("DownloadsManager: Cleared completed downloads");
+}
+
 void DownloadsManager::downloadItem(DownloadItem& item) {
     brls::Logger::info("DownloadsManager: Starting download of {}", item.title);
 
@@ -416,7 +574,7 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                 m_progressCallback(item.downloadedBytes, item.totalBytes);
             }
 
-            return m_downloading; // Return false to cancel
+            return m_downloading.load(); // Return false to cancel
         },
         [&](int64_t total) {
             item.totalBytes = total;
@@ -430,10 +588,10 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     file.close();
 #endif
 
-    if (success && m_downloading) {
+    if (success && m_downloading.load()) {
         item.state = DownloadState::COMPLETED;
         brls::Logger::info("DownloadsManager: Completed download of {}", item.title);
-    } else if (!m_downloading) {
+    } else if (!m_downloading.load()) {
         item.state = DownloadState::PAUSED;
         brls::Logger::info("DownloadsManager: Paused download of {}", item.title);
     } else {
@@ -460,7 +618,6 @@ bool DownloadsManager::reportTimeline(const DownloadItem& item, const std::strin
     }
 
     // Build timeline URL
-    // GET /:/timeline?ratingKey={key}&key=/library/metadata/{key}&time={ms}&state={state}&duration={ms}&offline=1
     std::stringstream url;
     url << serverUrl << "/:/timeline"
         << "?ratingKey=" << item.ratingKey
@@ -484,27 +641,60 @@ bool DownloadsManager::reportTimeline(const DownloadItem& item, const std::strin
     return false;
 }
 
+void DownloadsManager::validateDownloadedFiles() {
+    // Check that COMPLETED items actually have their files on disk
+    for (auto& item : m_downloads) {
+        if (item.state == DownloadState::COMPLETED && !item.localPath.empty()) {
+            bool exists = false;
+#ifdef __vita__
+            SceUID fd = sceIoOpen(item.localPath.c_str(), SCE_O_RDONLY, 0);
+            if (fd >= 0) {
+                exists = true;
+                sceIoClose(fd);
+            }
+#else
+            std::ifstream f(item.localPath);
+            exists = f.good();
+#endif
+            if (!exists) {
+                brls::Logger::warning("DownloadsManager: File missing for {}, marking as failed",
+                                     item.title);
+                item.state = DownloadState::FAILED;
+                item.downloadedBytes = 0;
+            }
+        }
+
+        // Convert DOWNLOADING to QUEUED on startup (app was interrupted)
+        if (item.state == DownloadState::DOWNLOADING) {
+            item.state = DownloadState::QUEUED;
+            item.downloadedBytes = 0;
+        }
+    }
+}
+
 void DownloadsManager::saveState() {
     std::lock_guard<std::mutex> lock(m_mutex);
+    saveStateUnlocked();
+}
 
-    // Simple JSON-like format for state
+void DownloadsManager::saveStateUnlocked() {
     std::stringstream ss;
     ss << "{\n\"downloads\":[\n";
 
     for (size_t i = 0; i < m_downloads.size(); ++i) {
         const auto& item = m_downloads[i];
         ss << "{\n"
-           << "\"ratingKey\":\"" << item.ratingKey << "\",\n"
-           << "\"title\":\"" << item.title << "\",\n"
-           << "\"partPath\":\"" << item.partPath << "\",\n"
-           << "\"localPath\":\"" << item.localPath << "\",\n"
+           << "\"ratingKey\":\"" << escapeJson(item.ratingKey) << "\",\n"
+           << "\"title\":\"" << escapeJson(item.title) << "\",\n"
+           << "\"partPath\":\"" << escapeJson(item.partPath) << "\",\n"
+           << "\"localPath\":\"" << escapeJson(item.localPath) << "\",\n"
            << "\"totalBytes\":" << item.totalBytes << ",\n"
            << "\"downloadedBytes\":" << item.downloadedBytes << ",\n"
            << "\"duration\":" << item.duration << ",\n"
            << "\"viewOffset\":" << item.viewOffset << ",\n"
            << "\"state\":" << static_cast<int>(item.state) << ",\n"
-           << "\"mediaType\":\"" << item.mediaType << "\",\n"
-           << "\"parentTitle\":\"" << item.parentTitle << "\",\n"
+           << "\"mediaType\":\"" << escapeJson(item.mediaType) << "\",\n"
+           << "\"parentTitle\":\"" << escapeJson(item.parentTitle) << "\",\n"
            << "\"seasonNum\":" << item.seasonNum << ",\n"
            << "\"episodeNum\":" << item.episodeNum << ",\n"
            << "\"lastSynced\":" << item.lastSynced << "\n"
@@ -561,12 +751,61 @@ void DownloadsManager::loadState() {
         return;
     }
 
-    // Simple parsing - in production use proper JSON parser
-    // For now, just log that we would parse
     brls::Logger::info("DownloadsManager: Loading saved state...");
 
-    // TODO: Implement proper JSON parsing for download items
-    // For now, start fresh on each launch
+    // Parse the JSON array of download items
+    // Find the "downloads" array
+    size_t arrStart = content.find("[");
+    if (arrStart == std::string::npos) {
+        brls::Logger::error("DownloadsManager: Invalid state file format");
+        return;
+    }
+
+    // Find each object in the array
+    size_t pos = arrStart;
+    while (pos < content.size()) {
+        size_t objStart = content.find("{", pos + 1);
+        if (objStart == std::string::npos) break;
+
+        // Find matching closing brace (handle nested braces)
+        int depth = 1;
+        size_t objEnd = objStart + 1;
+        while (objEnd < content.size() && depth > 0) {
+            if (content[objEnd] == '{') depth++;
+            else if (content[objEnd] == '}') depth--;
+            if (depth > 0) objEnd++;
+        }
+
+        if (depth != 0) break;
+
+        std::string objStr = content.substr(objStart, objEnd - objStart + 1);
+
+        DownloadItem item;
+        item.ratingKey = extractJsonString(objStr, "ratingKey");
+        item.title = extractJsonString(objStr, "title");
+        item.partPath = extractJsonString(objStr, "partPath");
+        item.localPath = extractJsonString(objStr, "localPath");
+        item.totalBytes = extractJsonInt(objStr, "totalBytes");
+        item.downloadedBytes = extractJsonInt(objStr, "downloadedBytes");
+        item.duration = extractJsonInt(objStr, "duration");
+        item.viewOffset = extractJsonInt(objStr, "viewOffset");
+        item.state = static_cast<DownloadState>(extractJsonInt(objStr, "state"));
+        item.mediaType = extractJsonString(objStr, "mediaType");
+        item.parentTitle = extractJsonString(objStr, "parentTitle");
+        item.seasonNum = static_cast<int>(extractJsonInt(objStr, "seasonNum"));
+        item.episodeNum = static_cast<int>(extractJsonInt(objStr, "episodeNum"));
+        item.lastSynced = static_cast<time_t>(extractJsonInt(objStr, "lastSynced"));
+
+        if (!item.ratingKey.empty()) {
+            m_downloads.push_back(item);
+            brls::Logger::debug("DownloadsManager: Loaded item: {} (state={})",
+                               item.title, static_cast<int>(item.state));
+        }
+
+        pos = objEnd;
+    }
+
+    brls::Logger::info("DownloadsManager: Loaded {} items from state file", m_downloads.size());
 }
 
 void DownloadsManager::setProgressCallback(DownloadProgressCallback callback) {

@@ -45,6 +45,9 @@ private:
     brls::Label* m_subtitleLabel = nullptr;
     brls::Label* m_descriptionLabel = nullptr;  // Shows on focus for episodes
     brls::Rectangle* m_progressBar = nullptr;
+    brls::Box* m_buttonHintBox = nullptr;       // Shows button image + text hints on focus
+    brls::Image* m_buttonHintIcon = nullptr;
+    brls::Label* m_buttonHintLabel = nullptr;
 };
 
 } // namespace vitaplex

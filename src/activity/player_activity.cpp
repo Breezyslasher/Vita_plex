@@ -67,6 +67,23 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
     return activity;
 }
 
+PlayerActivity* PlayerActivity::createResumeQueue() {
+    PlayerActivity* activity = new PlayerActivity("", false);
+    activity->m_isQueueMode = true;
+    activity->m_isResuming = true;  // Don't restart playback
+
+    // Resume existing queue - don't reset it
+    MusicQueue& queue = MusicQueue::getInstance();
+
+    // Set up track ended callback for the new activity
+    queue.setTrackEndedCallback([activity](const QueueItem* nextTrack) {
+        activity->onTrackEnded(nextTrack);
+    });
+
+    brls::Logger::info("PlayerActivity resumed existing queue at index {}", queue.getCurrentIndex());
+    return activity;
+}
+
 brls::View* PlayerActivity::createContentView() {
     return brls::View::createFromXMLResource("activity/player.xml");
 }
@@ -97,12 +114,16 @@ void PlayerActivity::onContentAvailable() {
             resetControlsIdleTimer();
             // Seek to position
             MpvPlayer& player = MpvPlayer::getInstance();
-            double duration = player.getDuration();
-            if (duration <= 0 && m_isQueueMode) {
+            double duration = 0.0;
+            // For music queue mode, prefer Plex API duration (full track length)
+            // over MPV duration which may only reflect buffered/demuxed portion
+            if (m_isQueueMode) {
                 const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
                 if (track && track->duration > 0)
                     duration = (double)track->duration;
             }
+            if (duration <= 0)
+                duration = player.getDuration();
             player.seekTo(duration * progress);
         });
     }
@@ -132,6 +153,17 @@ void PlayerActivity::onContentAvailable() {
             hideTrackOverlay();
             return true;
         }
+        // If queue overlay is showing, dismiss it instead of leaving player
+        if (m_queueOverlayVisible) {
+            hideQueueOverlay();
+            return true;
+        }
+        // In music mode with background music enabled, leave without stopping
+        if (m_isQueueMode && Application::getInstance().getSettings().backgroundMusic) {
+            m_destroying = false;  // Don't mark as destroying - music continues
+            brls::Application::popActivity();
+            return true;
+        }
         brls::Application::popActivity();
         return true;
     });
@@ -155,7 +187,11 @@ void PlayerActivity::onContentAvailable() {
         });
 
         this->registerAction("Shuffle", brls::ControllerButton::BUTTON_X, [this](brls::View* view) {
-            toggleShuffle();
+            if (!m_controlsVisible) {
+                togglePlayPause();
+            } else {
+                toggleShuffle();
+            }
             return true;
         });
 
@@ -179,10 +215,14 @@ void PlayerActivity::onContentAvailable() {
             return true;
         });
 
-        // X = cycle audio track, Y = cycle subtitle track (for video playback)
+        // X = cycle audio track (when controls visible), pause/unpause (when hidden)
         this->registerAction("Audio Track", brls::ControllerButton::BUTTON_X, [this](brls::View* view) {
-            resetControlsIdleTimer();
-            cycleAudioTrack();
+            if (!m_controlsVisible) {
+                togglePlayPause();
+            } else {
+                resetControlsIdleTimer();
+                cycleAudioTrack();
+            }
             return true;
         });
 
@@ -238,28 +278,146 @@ void PlayerActivity::onContentAvailable() {
             }));
     }
 
+    // Queue overlay dismiss on tap
+    if (queueOverlay) {
+        queueOverlay->addGestureRecognizer(new brls::TapGestureRecognizer(
+            [this](brls::TapGestureStatus status, brls::Sound* soundToPlay) {
+                if (status.state == brls::GestureState::END) {
+                    hideQueueOverlay();
+                }
+            }));
+    }
+
     // Show mode-specific icons and wire touch
     if (m_isQueueMode) {
-        // Queue mode: use skip-previous / skip-next icons for prev/next track
-        if (rewindIcon) rewindIcon->setImageFromRes("icons/skip-previous.png");
-        if (forwardIcon) forwardIcon->setImageFromRes("icons/skip-next.png");
+        // Music mode: hide center video controls, show music transport + info
+        if (centerControls) centerControls->setVisibility(brls::Visibility::GONE);
 
-        if (audioBtn) {
-            audioBtn->setVisibility(brls::Visibility::VISIBLE);
-            audioBtn->registerClickAction([this](brls::View* view) {
-                toggleShuffle();
+        // Show music-specific UI elements
+        if (musicInfo) musicInfo->setVisibility(brls::Visibility::VISIBLE);
+        if (musicTransport) musicTransport->setVisibility(brls::Visibility::VISIBLE);
+
+        // Wire music transport buttons
+        if (musicPlayBtn) {
+            musicPlayBtn->registerClickAction([this](brls::View* view) {
+                togglePlayPause();
                 return true;
             });
-            audioBtn->addGestureRecognizer(new brls::TapGestureRecognizer(audioBtn));
+            musicPlayBtn->addGestureRecognizer(new brls::TapGestureRecognizer(musicPlayBtn));
         }
-        if (subBtn) {
-            subBtn->setVisibility(brls::Visibility::VISIBLE);
-            subBtn->registerClickAction([this](brls::View* view) {
-                toggleRepeat();
+        if (musicPrevBtn) {
+            musicPrevBtn->registerClickAction([this](brls::View* view) {
+                playPrevious();
                 return true;
             });
-            subBtn->addGestureRecognizer(new brls::TapGestureRecognizer(subBtn));
+            musicPrevBtn->addGestureRecognizer(new brls::TapGestureRecognizer(musicPrevBtn));
         }
+        if (musicNextBtn) {
+            musicNextBtn->registerClickAction([this](brls::View* view) {
+                playNext();
+                return true;
+            });
+            musicNextBtn->addGestureRecognizer(new brls::TapGestureRecognizer(musicNextBtn));
+        }
+
+        // In music mode: hide audio/video/subtitle track buttons, only show queue + lyrics
+        // audioBtn, videoBtn, subBtn stay hidden (GONE by default in XML)
+
+        // Lyrics toggle button (dedicated music-only button)
+        if (lyricsBtn) {
+            lyricsBtn->setVisibility(brls::Visibility::VISIBLE);
+            lyricsBtn->registerClickAction([this](brls::View* view) {
+                // Toggle lyrics on/off
+                m_lyricsEnabled = !m_lyricsEnabled;
+                MpvPlayer& player = MpvPlayer::getInstance();
+
+                if (m_lyricsEnabled) {
+                    // Find and enable the first subtitle stream (lyrics)
+                    fetchPlexStreams();
+                    int lyricsStreamId = -1;
+                    for (const auto& ps : m_plexStreams) {
+                        if (ps.streamType == 3) {
+                            lyricsStreamId = ps.id;
+                            break;
+                        }
+                    }
+                    if (lyricsStreamId > 0 && m_partId > 0) {
+                        PlexClient::getInstance().setStreamSelection(m_partId, -1, lyricsStreamId);
+                        for (auto& ps : m_plexStreams) {
+                            if (ps.streamType == 3) ps.selected = (ps.id == lyricsStreamId);
+                        }
+                        // Reload transcode with lyrics
+                        double currentPos = player.getPosition();
+                        int offsetMs = m_transcodeBaseOffsetMs + static_cast<int>(currentPos * 1000);
+                        PlexClient& client = PlexClient::getInstance();
+                        client.stopTranscode();
+                        std::string newUrl;
+                        if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
+                            m_transcodeBaseOffsetMs = offsetMs;
+                            player.loadUrl(newUrl, "");
+                        }
+                        player.showOSD("Lyrics on", 1.5);
+                    } else {
+                        // No lyrics stream available
+                        m_lyricsEnabled = false;
+                        player.showOSD("No lyrics available", 1.5);
+                    }
+                } else {
+                    // Disable lyrics (subtitle off)
+                    if (m_partId > 0) {
+                        PlexClient::getInstance().setStreamSelection(m_partId, -1, 0);
+                    }
+                    for (auto& ps : m_plexStreams) {
+                        if (ps.streamType == 3) ps.selected = false;
+                    }
+                    double currentPos = player.getPosition();
+                    int offsetMs = m_transcodeBaseOffsetMs + static_cast<int>(currentPos * 1000);
+                    PlexClient& client = PlexClient::getInstance();
+                    client.stopTranscode();
+                    std::string newUrl;
+                    if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
+                        m_transcodeBaseOffsetMs = offsetMs;
+                        player.loadUrl(newUrl, "");
+                    }
+                    player.showOSD("Lyrics off", 1.5);
+                }
+
+                // Update icon opacity to show state
+                if (lyricsIcon) {
+                    lyricsIcon->setAlpha(m_lyricsEnabled ? 1.0f : 0.5f);
+                }
+                return true;
+            });
+            lyricsBtn->addGestureRecognizer(new brls::TapGestureRecognizer(lyricsBtn));
+
+            // Start with dimmed icon to indicate off state
+            if (lyricsIcon) {
+                lyricsIcon->setAlpha(0.5f);
+            }
+        }
+        if (queueBtn) {
+            queueBtn->setVisibility(brls::Visibility::VISIBLE);
+            queueBtn->registerClickAction([this](brls::View* view) {
+                if (m_queueOverlayVisible) {
+                    hideQueueOverlay();
+                } else {
+                    showQueueOverlay();
+                }
+                return true;
+            });
+            queueBtn->addGestureRecognizer(new brls::TapGestureRecognizer(queueBtn));
+        }
+
+        // Music mode: controls never auto-hide, always visible
+        // Override the controls auto-hide for music
+        if (controlsBox) {
+            controlsBox->setVisibility(brls::Visibility::VISIBLE);
+            controlsBox->setAlpha(1.0f);
+        }
+
+        // Hide title/artist from bottom controls (shown in musicInfo instead)
+        if (titleLabel) titleLabel->setVisibility(brls::Visibility::GONE);
+        if (artistLabel) artistLabel->setVisibility(brls::Visibility::GONE);
     } else {
         // Video mode: seek icons matching the configured interval
         int seekSec = Application::getInstance().getSettings().seekInterval;
@@ -308,6 +466,15 @@ void PlayerActivity::onContentAvailable() {
         }
     }
 
+    // Wire up skip button for intro/credits
+    if (skipBtn) {
+        skipBtn->registerClickAction([this](brls::View* view) {
+            skipToMarkerEnd();
+            return true;
+        });
+        skipBtn->addGestureRecognizer(new brls::TapGestureRecognizer(skipBtn));
+    }
+
     // Start update timer
     m_updateTimer.setCallback([this]() {
         updateProgress();
@@ -326,6 +493,14 @@ void PlayerActivity::willDisappear(bool resetState) {
 
     // Re-enable background thumbnail loading now that playback is ending
     ImageLoader::setPaused(false);
+
+    // If background music is enabled and we're in queue mode, don't stop playback
+    if (m_isQueueMode && Application::getInstance().getSettings().backgroundMusic && !m_destroying) {
+        brls::Logger::info("PlayerActivity: Leaving with background music enabled, not stopping");
+        m_updateTimer.stop();
+        if (m_alive) m_alive->store(false);
+        return;
+    }
 
     // Mark as destroying to prevent timer and image loader callbacks
     m_destroying = true;
@@ -356,6 +531,19 @@ void PlayerActivity::willDisappear(bool resetState) {
     // Only try to save progress if player is in a valid state
     if (player.isInitialized() && (player.isPlaying() || player.isPaused())) {
         double position = player.getPosition();
+        double duration = 0.0;
+
+        // For music queue mode, prefer Plex API duration (full track length)
+        // over MPV duration which may only reflect buffered/demuxed portion
+        if (m_isQueueMode) {
+            const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
+            if (track && track->duration > 0) {
+                duration = (double)track->duration;
+            }
+        }
+        if (duration <= 0)
+            duration = player.getDuration();
+
         if (position > 0 || m_transcodeBaseOffsetMs > 0) {
             int timeMs = m_transcodeBaseOffsetMs + (int)(position * 1000);
 
@@ -364,9 +552,19 @@ void PlayerActivity::willDisappear(bool resetState) {
                 DownloadsManager::getInstance().updateProgress(m_mediaKey, timeMs);
                 DownloadsManager::getInstance().saveState();
                 brls::Logger::info("PlayerActivity: Saved local progress {}ms for {}", timeMs, m_mediaKey);
-            } else if (!m_isQueueMode && !m_mediaKey.empty()) {
-                // Save progress to Plex server (not for queue mode - tracks change)
-                PlexClient::getInstance().updatePlayProgress(m_mediaKey, timeMs);
+            } else if (!m_mediaKey.empty()) {
+                if (!m_isQueueMode) {
+                    PlexClient::getInstance().updatePlayProgress(m_mediaKey, timeMs);
+                }
+                // Report stopped timeline so Plex knows playback ended with full duration
+                std::string ratingKey = m_mediaKey;
+                if (m_isQueueMode) {
+                    const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
+                    if (track) ratingKey = track->ratingKey;
+                }
+                std::string key = "/library/metadata/" + ratingKey;
+                PlexClient::getInstance().reportTimeline(
+                    ratingKey, key, "stopped", timeMs, (int)(duration * 1000));
             }
         }
     }
@@ -404,12 +602,59 @@ void PlayerActivity::loadFromQueue() {
     brls::Logger::info("PlayerActivity: Loading track from queue: {} - {}",
                       track->artist, track->title);
 
-    // Update display
+    // If resuming and MPV is already playing/paused, just update the UI
+    // without restarting the track (user pressed circle to return to player)
+    MpvPlayer& resumePlayer = MpvPlayer::getInstance();
+    if (m_isResuming && resumePlayer.isInitialized() &&
+        (resumePlayer.isPlaying() || resumePlayer.isPaused())) {
+        brls::Logger::info("PlayerActivity: Resuming existing playback, skipping reload");
+        m_isPlaying = resumePlayer.isPlaying();
+        m_mediaKey = track->ratingKey;
+        m_isResuming = false;
+
+        // Update display labels and album art, then return without reloading
+        if (musicTitleLabel) musicTitleLabel->setText(track->title);
+        if (musicArtistLabel) musicArtistLabel->setText(track->artist);
+        if (titleLabel) titleLabel->setText(track->title);
+        if (artistLabel) {
+            artistLabel->setText(track->artist);
+            artistLabel->setVisibility(brls::Visibility::VISIBLE);
+        }
+        updateQueueDisplay();
+
+        // Load album art
+        if (albumArt && !track->thumb.empty()) {
+            PlexClient& client = PlexClient::getInstance();
+            std::string thumbUrl = client.getThumbnailUrl(track->thumb, 400, 400);
+            ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {}, albumArt, m_alive);
+            albumArt->setVisibility(brls::Visibility::VISIBLE);
+        }
+
+        // Show music UI elements
+        if (musicInfo) musicInfo->setVisibility(brls::Visibility::VISIBLE);
+        if (musicTransport) musicTransport->setVisibility(brls::Visibility::VISIBLE);
+        if (videoView) videoView->setVisibility(brls::Visibility::GONE);
+        if (photoImage) photoImage->setVisibility(brls::Visibility::GONE);
+
+        updatePlayPauseLabel();
+        m_loadingMedia = false;
+        return;
+    }
+
+    // Update display - use music info labels (between cover and play controls)
+    if (musicTitleLabel) {
+        musicTitleLabel->setText(track->title);
+    }
+    if (musicArtistLabel) {
+        musicArtistLabel->setText(track->artist);
+    }
+    // Also update bottom controls title for non-music fallback
     if (titleLabel) {
         titleLabel->setText(track->title);
     }
     if (artistLabel) {
         artistLabel->setText(track->artist);
+        artistLabel->setVisibility(brls::Visibility::VISIBLE);
     }
 
     // Update queue info display
@@ -418,7 +663,7 @@ void PlayerActivity::loadFromQueue() {
     // Load album art - temporarily unpause the image loader for this one load
     if (albumArt && !track->thumb.empty()) {
         PlexClient& client = PlexClient::getInstance();
-        std::string thumbUrl = client.getThumbnailUrl(track->thumb, 300, 300);
+        std::string thumbUrl = client.getThumbnailUrl(track->thumb, 400, 400);
         bool wasPaused = ImageLoader::isPaused();
         if (wasPaused) ImageLoader::setPaused(false);
         ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {
@@ -581,8 +826,12 @@ void PlayerActivity::loadMedia() {
         MpvPlayer& player = MpvPlayer::getInstance();
 
         // Resume from saved viewOffset if resumePlayback is enabled
+        // If near the end (>= 95% watched), start from beginning instead
         if (Application::getInstance().getSettings().resumePlayback && download->viewOffset > 0) {
-            m_pendingSeek = download->viewOffset / 1000.0;
+            bool nearEnd = (download->duration > 0 && download->viewOffset >= download->duration * 0.95);
+            if (!nearEnd) {
+                m_pendingSeek = download->viewOffset / 1000.0;
+            }
         }
 
         if (!player.isInitialized()) {
@@ -622,6 +871,12 @@ void PlayerActivity::loadMedia() {
         if (item.mediaType == MediaType::EPISODE) {
             m_episodeIndex = item.index;
             m_parentRatingKey = item.parentRatingKey;
+        }
+
+        // Store markers for intro/credits skip
+        m_markers = item.markers;
+        if (!m_markers.empty()) {
+            brls::Logger::info("PlayerActivity: Loaded {} markers for {}", m_markers.size(), item.title);
         }
         if (titleLabel) {
             std::string title = item.title;
@@ -684,7 +939,14 @@ void PlayerActivity::loadMedia() {
 
         // Get transcode URL for video/audio (forces Plex to convert to Vita-compatible format)
         // Only resume from viewOffset if resumePlayback is enabled
-        int resumeOffset = Application::getInstance().getSettings().resumePlayback ? item.viewOffset : 0;
+        // If near the end (>= 95% watched), start from beginning instead
+        int resumeOffset = 0;
+        if (Application::getInstance().getSettings().resumePlayback && item.viewOffset > 0) {
+            bool nearEnd = (item.duration > 0 && item.viewOffset >= item.duration * 0.95);
+            if (!nearEnd) {
+                resumeOffset = item.viewOffset;
+            }
+        }
         m_transcodeBaseOffsetMs = resumeOffset;
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, resumeOffset)) {
@@ -817,16 +1079,18 @@ void PlayerActivity::updateProgress() {
     }
 
     double position = player.getPosition();
-    double duration = player.getDuration();
+    double duration = 0.0;
 
-    // Fallback: use Plex server-provided duration when mpv can't determine it
-    // (common with streamed/transcoded audio where the demuxer lacks full metadata)
-    if (duration <= 0 && m_isQueueMode) {
+    // For music queue mode, prefer Plex API duration (full track length)
+    // over MPV duration which may only reflect buffered/demuxed portion
+    if (m_isQueueMode) {
         const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
         if (track && track->duration > 0) {
             duration = (double)track->duration;
         }
     }
+    if (duration <= 0)
+        duration = player.getDuration();
 
     if (duration > 0) {
         if (progressSlider) {
@@ -848,12 +1112,49 @@ void PlayerActivity::updateProgress() {
         }
     }
 
+    // Update skip intro/credits button
+    if (!m_markers.empty() && duration > 0) {
+        double posMs = (m_transcodeBaseOffsetMs + position * 1000.0);
+        updateSkipButton(posMs);
+    }
+
     // Auto-hide controls after inactivity
     int autoHide = Application::getInstance().getSettings().controlsAutoHideSeconds;
     if (autoHide > 0 && m_controlsVisible && !m_isPhoto) {
         m_controlsIdleSeconds++;
         if (m_controlsIdleSeconds >= autoHide) {
             hideControls();
+        }
+    }
+
+    // Report timeline to Plex server periodically and on state changes
+    // This sends duration so Plex shows the full track/video length
+    if (!m_mediaKey.empty() && !m_isLocalFile && !m_isDirectFile) {
+        std::string currentState = player.isPlaying() ? "playing" :
+                                   player.isPaused()  ? "paused"  : "stopped";
+
+        bool stateChanged = (currentState != m_lastTimelineState);
+        m_timelineCounter++;
+
+        if (stateChanged || m_timelineCounter >= 10) {
+            m_timelineCounter = 0;
+            m_lastTimelineState = currentState;
+
+            int timeMs = m_transcodeBaseOffsetMs + (int)(position * 1000);
+            int durationMs = (int)(duration * 1000);
+
+            std::string ratingKey = m_mediaKey;
+            // In queue mode, use the current track's ratingKey
+            if (m_isQueueMode) {
+                const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
+                if (track) {
+                    ratingKey = track->ratingKey;
+                }
+            }
+
+            std::string key = "/library/metadata/" + ratingKey;
+            PlexClient::getInstance().reportTimeline(
+                ratingKey, key, currentState, timeMs, durationMs);
         }
     }
 
@@ -921,6 +1222,10 @@ void PlayerActivity::togglePlayPause() {
 void PlayerActivity::updatePlayPauseLabel() {
     if (playPauseIcon) {
         playPauseIcon->setImageFromRes(m_isPlaying ? "icons/pause.png" : "icons/play.png");
+    }
+    // Also update music transport play icon
+    if (musicPlayIcon) {
+        musicPlayIcon->setImageFromRes(m_isPlaying ? "icons/pause.png" : "icons/play.png");
     }
 }
 
@@ -997,7 +1302,7 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
             trackOverlayTitle->setText("Audio Tracks");
             break;
         case TrackSelectMode::SUBTITLE:
-            trackOverlayTitle->setText("Subtitles");
+            trackOverlayTitle->setText(m_isQueueMode ? "Lyrics" : "Subtitles");
             break;
         case TrackSelectMode::VIDEO:
             trackOverlayTitle->setText("Video Tracks");
@@ -1040,7 +1345,7 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         item->setFocusable(true);
 
         brls::Label* label = new brls::Label();
-        label->setText("Off (No Subtitles)");
+        label->setText(m_isQueueMode ? "Off (No Lyrics)" : "Off (No Subtitles)");
         label->setFontSize(16);
         label->setTextColor(nvgRGB(220, 220, 220));
         item->addView(label);
@@ -1168,8 +1473,8 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         }
     }
 
-    // For subtitles, add "Search for Subtitles" option at the bottom
-    if (mode == TrackSelectMode::SUBTITLE && !m_mediaKey.empty()) {
+    // For subtitles (not music lyrics), add "Search for Subtitles" option at the bottom
+    if (mode == TrackSelectMode::SUBTITLE && !m_mediaKey.empty() && !m_isQueueMode) {
         // Add separator
         brls::Box* sep = new brls::Box();
         sep->setWidth(376);  // track list width (400) minus padding (24)
@@ -1621,9 +1926,265 @@ void PlayerActivity::updateQueueDisplay() {
         queueLabel->setText(queueInfo);
         queueLabel->setVisibility(brls::Visibility::VISIBLE);
     }
+
+    // Refresh queue list overlay if visible
+    if (m_queueOverlayVisible) {
+        populateQueueList();
+    }
+}
+
+// Queue list overlay methods
+
+void PlayerActivity::showQueueOverlay() {
+    if (m_queueOverlayVisible) {
+        hideQueueOverlay();
+        return;
+    }
+
+    m_queueOverlayVisible = true;
+    populateQueueList();
+
+    if (queueOverlay) {
+        queueOverlay->setVisibility(brls::Visibility::VISIBLE);
+        queueOverlay->registerAction("Back", brls::ControllerButton::BUTTON_B, [this](brls::View* view) {
+            hideQueueOverlay();
+            return true;
+        });
+
+        // Give focus to the currently playing track in the list
+        MusicQueue& queue = MusicQueue::getInstance();
+        int currentIdx = queue.getCurrentIndex();
+        if (queueList && !queueList->getChildren().empty()) {
+            int focusIdx = std::min(currentIdx, (int)queueList->getChildren().size() - 1);
+            if (focusIdx < 0) focusIdx = 0;
+            brls::Application::giveFocus(queueList->getChildren()[focusIdx]);
+        }
+    }
+}
+
+void PlayerActivity::hideQueueOverlay() {
+    m_queueOverlayVisible = false;
+    if (queueOverlay) {
+        queueOverlay->setVisibility(brls::Visibility::GONE);
+    }
+    // Restore focus to queue button
+    if (queueBtn) {
+        brls::Application::giveFocus(queueBtn);
+    }
+}
+
+void PlayerActivity::populateQueueList() {
+    if (!queueList || !queueOverlayTitle) return;
+
+    // Clear existing items
+    queueList->clearViews();
+
+    MusicQueue& queue = MusicQueue::getInstance();
+    const auto& tracks = queue.getQueue();
+    int currentIndex = queue.getCurrentIndex();
+
+    // Set title with track count
+    char titleBuf[64];
+    snprintf(titleBuf, sizeof(titleBuf), "Queue (%d tracks)", (int)tracks.size());
+    queueOverlayTitle->setText(titleBuf);
+
+    // Temporarily unpause image loader for loading thumbnails
+    bool wasPaused = ImageLoader::isPaused();
+    if (wasPaused) ImageLoader::setPaused(false);
+
+    PlexClient& client = PlexClient::getInstance();
+
+    for (int i = 0; i < (int)tracks.size(); i++) {
+        const QueueItem& track = tracks[i];
+        bool isCurrent = (i == currentIndex);
+
+        // Row container: [cover art] [title + artist]
+        brls::Box* row = new brls::Box();
+        row->setAxis(brls::Axis::ROW);
+        row->setJustifyContent(brls::JustifyContent::FLEX_START);
+        row->setAlignItems(brls::AlignItems::CENTER);
+        row->setPaddingTop(6);
+        row->setPaddingBottom(6);
+        row->setPaddingLeft(8);
+        row->setPaddingRight(8);
+        row->setCornerRadius(6);
+        row->setFocusable(true);
+
+        if (isCurrent) {
+            row->setBackgroundColor(nvgRGBA(80, 80, 200, 120));
+            row->setBorderColor(nvgRGB(100, 130, 255));
+            row->setBorderThickness(1);
+        }
+
+        // Cover art thumbnail (50x50)
+        brls::Image* thumb = new brls::Image();
+        thumb->setWidth(50);
+        thumb->setHeight(50);
+        thumb->setCornerRadius(4);
+        thumb->setScalingType(brls::ImageScalingType::FIT);
+        thumb->setMarginRight(10);
+
+        if (!track.thumb.empty()) {
+            std::string thumbUrl = client.getThumbnailUrl(track.thumb, 100, 100);
+            ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {
+                // Thumbnail loaded
+            }, thumb, m_alive);
+        }
+        row->addView(thumb);
+
+        // Text container: title on top, artist below
+        brls::Box* textBox = new brls::Box();
+        textBox->setAxis(brls::Axis::COLUMN);
+        textBox->setJustifyContent(brls::JustifyContent::CENTER);
+        textBox->setGrow(1.0f);
+
+        // Track number + title
+        brls::Label* titleLbl = new brls::Label();
+        std::string titleStr;
+        if (isCurrent) {
+            titleStr = "> " + track.title;
+        } else {
+            char numBuf[8];
+            snprintf(numBuf, sizeof(numBuf), "%d. ", i + 1);
+            titleStr = numBuf + track.title;
+        }
+        titleLbl->setText(titleStr);
+        titleLbl->setFontSize(15);
+        titleLbl->setTextColor(isCurrent ? nvgRGB(150, 200, 255) : nvgRGB(230, 230, 230));
+        textBox->addView(titleLbl);
+
+        // Artist name
+        if (!track.artist.empty()) {
+            brls::Label* artistLbl = new brls::Label();
+            artistLbl->setText(track.artist);
+            artistLbl->setFontSize(12);
+            artistLbl->setTextColor(isCurrent ? nvgRGBA(150, 200, 255, 180) : nvgRGB(160, 160, 160));
+            textBox->addView(artistLbl);
+        }
+
+        row->addView(textBox);
+
+        // Click handler to play this track
+        int trackIdx = i;
+        row->registerClickAction([this, trackIdx](brls::View* view) {
+            playFromQueue(trackIdx);
+            return true;
+        });
+        row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
+
+        queueList->addView(row);
+    }
+
+    // Re-pause image loader if it was paused
+    if (wasPaused) ImageLoader::setPaused(true);
+}
+
+void PlayerActivity::playFromQueue(int index) {
+    if (!m_isQueueMode) return;
+
+    MusicQueue& queue = MusicQueue::getInstance();
+    if (queue.playTrack(index)) {
+        // Stop current playback
+        MpvPlayer::getInstance().stop();
+        m_isPlaying = false;
+
+        // Hide queue overlay
+        hideQueueOverlay();
+
+        // Load selected track
+        loadFromQueue();
+    }
 }
 
 // Controls visibility toggle (like Suwayomi reader settings show/hide)
+
+void PlayerActivity::updateSkipButton(double positionMs) {
+    AppSettings& settings = Application::getInstance().getSettings();
+
+    // Check if we're inside any marker region
+    std::string activeType;
+    int activeEnd = 0;
+    for (const auto& marker : m_markers) {
+        if (positionMs >= marker.startTimeMs && positionMs < marker.endTimeMs) {
+            activeType = marker.type;
+            activeEnd = marker.endTimeMs;
+            break;
+        }
+    }
+
+    if (!activeType.empty()) {
+        // We're inside a marker region
+        bool isIntro = (activeType == "intro");
+        bool autoSkip = isIntro ? settings.autoSkipIntro : settings.autoSkipCredits;
+        bool& alreadySkipped = isIntro ? m_introSkipped : m_creditsSkipped;
+
+        if (autoSkip && !alreadySkipped) {
+            // Auto-skip: seek to end of marker
+            alreadySkipped = true;
+            double seekToSec = (activeEnd - m_transcodeBaseOffsetMs) / 1000.0;
+            if (seekToSec > 0) {
+                MpvPlayer::getInstance().seekTo(seekToSec);
+                brls::Logger::info("PlayerActivity: Auto-skipped {} to {}ms", activeType, activeEnd);
+                // Hide skip button
+                if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
+                m_skipButtonVisible = false;
+                m_activeMarkerType.clear();
+            }
+            return;
+        }
+
+        // Manual skip mode: show button
+        if (m_activeMarkerType != activeType) {
+            // Entering a new marker region
+            m_activeMarkerType = activeType;
+            m_activeMarkerEndMs = activeEnd;
+            m_skipButtonShowSeconds = 0;
+            m_skipButtonVisible = true;
+
+            if (skipLabel) {
+                skipLabel->setText(isIntro ? "Skip Intro" : "Skip Credits");
+            }
+            if (skipBtn) {
+                skipBtn->setVisibility(brls::Visibility::VISIBLE);
+            }
+        } else {
+            // Still in same marker region
+            m_skipButtonShowSeconds++;
+
+            // Auto-hide after 5 seconds if controls are not visible
+            if (m_skipButtonShowSeconds >= 5 && !m_controlsVisible && m_skipButtonVisible) {
+                m_skipButtonVisible = false;
+                if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
+            }
+        }
+    } else {
+        // Not in any marker region - hide button
+        if (m_skipButtonVisible || !m_activeMarkerType.empty()) {
+            m_skipButtonVisible = false;
+            m_activeMarkerType.clear();
+            if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
+        }
+    }
+}
+
+void PlayerActivity::skipToMarkerEnd() {
+    if (m_activeMarkerEndMs <= 0) return;
+
+    double seekToSec = (m_activeMarkerEndMs - m_transcodeBaseOffsetMs) / 1000.0;
+    if (seekToSec > 0) {
+        MpvPlayer::getInstance().seekTo(seekToSec);
+        brls::Logger::info("PlayerActivity: Manually skipped {} to {}ms", m_activeMarkerType, m_activeMarkerEndMs);
+
+        // Mark as skipped to prevent auto-skip re-trigger
+        if (m_activeMarkerType == "intro") m_introSkipped = true;
+        else if (m_activeMarkerType == "credits") m_creditsSkipped = true;
+    }
+
+    // Hide button
+    m_skipButtonVisible = false;
+    m_activeMarkerType.clear();
+    if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
+}
 
 void PlayerActivity::toggleControls() {
     if (m_controlsVisible) {
@@ -1651,11 +2212,17 @@ void PlayerActivity::showControls() {
     if (titleLabel) {
         titleLabel->setVisibility(brls::Visibility::VISIBLE);
     }
+    // Re-show skip button if we're still in a marker region
+    if (!m_activeMarkerType.empty() && skipBtn) {
+        m_skipButtonVisible = true;
+        m_skipButtonShowSeconds = 0;  // Reset auto-hide timer
+        skipBtn->setVisibility(brls::Visibility::VISIBLE);
+    }
 }
 
 void PlayerActivity::hideControls() {
-    // Don't hide controls for photos
-    if (m_isPhoto) return;
+    // Don't hide controls for photos or music mode
+    if (m_isPhoto || m_isQueueMode) return;
 
     m_controlsVisible = false;
     if (controlsBox) {

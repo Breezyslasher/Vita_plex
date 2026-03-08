@@ -30,6 +30,9 @@ private:
     void downloadAll();
     void downloadUnwatched(int maxCount = -1);
     void toggleDescription();          // Collapse/expand description
+    void showAlbumContextMenu(const MediaItem& album);  // Context menu for albums
+    void performTrackAction(const MediaItem& track, size_t trackIndex);  // Handle track default action
+    void showTrackActionDialog(const MediaItem& track, size_t trackIndex);  // Ask user what to do
 
     brls::HScrollingFrame* createMediaRow(const std::string& title, brls::Box** contentOut);
 
@@ -51,8 +54,7 @@ private:
     brls::Button* m_downloadButton = nullptr;
     brls::Box* m_childrenBox = nullptr;
 
-    // Track list for albums (vertical scrollable list like Suwayomi chapter list)
-    brls::ScrollingFrame* m_trackScrollView = nullptr;
+    // Track list for albums (vertical list with its own nested scroll)
     brls::Box* m_trackListBox = nullptr;
 
     // Collapsible description
@@ -66,6 +68,10 @@ private:
     brls::Box* m_epsContent = nullptr;
     brls::Box* m_compilationsContent = nullptr;
     brls::Box* m_soundtracksContent = nullptr;
+
+    // Track currently focused hint icon (like Suwayomi's m_currentFocusedIcon)
+    brls::Image* m_currentFocusedHint = nullptr;
+    brls::Label* m_currentFocusedHintLabel = nullptr;
 
     // Shared alive flag to prevent async callbacks from accessing destroyed view
     std::shared_ptr<std::atomic<bool>> m_alive;

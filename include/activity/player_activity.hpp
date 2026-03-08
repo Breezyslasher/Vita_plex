@@ -39,6 +39,9 @@ public:
     // Play from queue (album, playlist, etc.)
     static PlayerActivity* createWithQueue(const std::vector<MediaItem>& tracks, int startIndex = 0);
 
+    // Resume existing queue (return to player without resetting queue)
+    static PlayerActivity* createResumeQueue();
+
     brls::View* createContentView() override;
 
     void onContentAvailable() override;
@@ -68,6 +71,13 @@ private:
     void onTrackEnded(const QueueItem* nextTrack);  // Called when track ends
     void updateQueueDisplay();      // Update UI with queue info
 
+    // Queue list overlay
+    void showQueueOverlay();
+    void hideQueueOverlay();
+    void populateQueueList();       // Build queue list with cover art and titles
+    void playFromQueue(int index);  // Play a specific track from queue list
+    bool m_queueOverlayVisible = false;
+
     std::string m_mediaKey;
     std::string m_directFilePath;  // For direct file playback (debug) or stream URL
     std::string m_streamTitle;     // Title for stream playback (Live TV)
@@ -79,12 +89,16 @@ private:
     bool m_isLocalFile = false;    // Playing from local download
     bool m_isDirectFile = false;   // Playing direct file path (debug)
     bool m_isQueueMode = false;    // Playing from queue
+    bool m_isResuming = false;     // Resuming existing playback (don't restart track)
+    bool m_lyricsEnabled = false;  // Lyrics subtitle toggle state for music mode
     bool m_destroying = false;     // Flag to prevent timer callbacks during destruction
     bool m_loadingMedia = false;   // Flag to prevent rapid re-entry of loadMedia
     double m_pendingSeek = 0.0;    // Pending seek position (set when resuming)
     int m_transcodeBaseOffsetMs = 0;  // Base offset (ms) used to start current transcode
     bool m_updatingSlider = false;  // Guard to prevent slider update from triggering seek
     brls::RepeatingTimer m_updateTimer;
+    int m_timelineCounter = 0;           // Seconds since last timeline report
+    std::string m_lastTimelineState;     // Last reported state to detect changes
 
     // Deferred MPV init: URL and title are stored here during onContentAvailable()
     // and loaded in the first updateProgress() call. This prevents GXM context
@@ -118,6 +132,17 @@ private:
     void fetchPlexStreams();
     std::vector<PlexClient::SubtitleResult> m_subtitleSearchResults;
 
+    // Intro/credits skip
+    std::vector<MediaItem::Marker> m_markers;
+    void updateSkipButton(double positionMs);
+    void skipToMarkerEnd();
+    std::string m_activeMarkerType;        // Currently active marker type ("intro"/"credits"), empty if none
+    int m_activeMarkerEndMs = 0;           // End time of the active marker
+    int m_skipButtonShowSeconds = 0;       // Seconds the skip button has been visible
+    bool m_skipButtonVisible = false;      // Whether skip button is currently shown
+    bool m_introSkipped = false;           // Whether intro was already auto-skipped this playback
+    bool m_creditsSkipped = false;         // Whether credits was already auto-skipped this playback
+
     BRLS_BIND(brls::Box, playerContainer, "player/container");
     BRLS_BIND(brls::Label, titleLabel, "player/title");
     BRLS_BIND(brls::Label, artistLabel, "player/artist");
@@ -144,6 +169,26 @@ private:
     BRLS_BIND(brls::Box, trackOverlay, "player/track_overlay");
     BRLS_BIND(brls::Label, trackOverlayTitle, "player/track_overlay_title");
     BRLS_BIND(brls::Box, trackList, "player/track_list");
+    BRLS_BIND(brls::Box, skipBtn, "player/skip_btn");
+    BRLS_BIND(brls::Label, skipLabel, "player/skip_label");
+    BRLS_BIND(brls::Box, queueBtn, "player/queue_btn");
+    BRLS_BIND(brls::Image, queueIcon, "player/queue_icon");
+    BRLS_BIND(brls::Box, queueOverlay, "player/queue_overlay");
+    BRLS_BIND(brls::Label, queueOverlayTitle, "player/queue_overlay_title");
+    BRLS_BIND(brls::Box, queueList, "player/queue_list");
+    BRLS_BIND(brls::ScrollingFrame, queueScroll, "player/queue_scroll");
+
+    // Music-specific UI elements
+    BRLS_BIND(brls::Box, musicInfo, "player/music_info");
+    BRLS_BIND(brls::Label, musicTitleLabel, "player/music_title");
+    BRLS_BIND(brls::Label, musicArtistLabel, "player/music_artist");
+    BRLS_BIND(brls::Box, musicTransport, "player/music_transport");
+    BRLS_BIND(brls::Box, musicPlayBtn, "player/music_play_btn");
+    BRLS_BIND(brls::Image, musicPlayIcon, "player/music_play_icon");
+    BRLS_BIND(brls::Box, musicPrevBtn, "player/music_prev_btn");
+    BRLS_BIND(brls::Box, musicNextBtn, "player/music_next_btn");
+    BRLS_BIND(brls::Box, lyricsBtn, "player/lyrics_btn");
+    BRLS_BIND(brls::Image, lyricsIcon, "player/lyrics_icon");
 };
 
 } // namespace vitaplex

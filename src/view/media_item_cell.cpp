@@ -54,6 +54,26 @@ MediaItemCell::MediaItemCell()
     m_progressBar->setColor(nvgRGBA(229, 160, 13, 255)); // Plex orange
     m_progressBar->setVisibility(brls::Visibility::GONE);
     this->addView(m_progressBar);
+
+    // Button hint box (shown on focus for music items)
+    m_buttonHintBox = new brls::Box();
+    m_buttonHintBox->setAxis(brls::Axis::ROW);
+    m_buttonHintBox->setJustifyContent(brls::JustifyContent::CENTER);
+    m_buttonHintBox->setAlignItems(brls::AlignItems::CENTER);
+    m_buttonHintBox->setVisibility(brls::Visibility::GONE);
+
+    m_buttonHintIcon = new brls::Image();
+    m_buttonHintIcon->setWidth(14);
+    m_buttonHintIcon->setHeight(14);
+    m_buttonHintIcon->setMarginRight(3);
+    m_buttonHintBox->addView(m_buttonHintIcon);
+
+    m_buttonHintLabel = new brls::Label();
+    m_buttonHintLabel->setFontSize(9);
+    m_buttonHintLabel->setTextColor(nvgRGBA(180, 180, 180, 200));
+    m_buttonHintBox->addView(m_buttonHintLabel);
+
+    this->addView(m_buttonHintBox);
 }
 
 MediaItemCell::~MediaItemCell() {
@@ -308,9 +328,16 @@ void MediaItemCell::updateFocusInfo(bool focused) {
                 m_descriptionLabel->setText(info);
                 m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
             }
+            // Show button hint for albums
+            if (m_buttonHintBox && m_item.mediaType == MediaType::MUSIC_ALBUM) {
+                if (m_buttonHintIcon) m_buttonHintIcon->setImageFromRes("images/start_button.png");
+                if (m_buttonHintLabel) m_buttonHintLabel->setText("Options");
+                m_buttonHintBox->setVisibility(brls::Visibility::VISIBLE);
+            }
         } else {
             m_titleLabel->setText(m_originalTitle);
             m_descriptionLabel->setVisibility(brls::Visibility::GONE);
+            if (m_buttonHintBox) m_buttonHintBox->setVisibility(brls::Visibility::GONE);
         }
     }
 }

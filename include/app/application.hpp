@@ -45,6 +45,15 @@ enum class SubtitleSize {
     LARGE = 2
 };
 
+// Default action when selecting a track in album view
+enum class TrackDefaultAction {
+    PLAY_NEXT = 0,           // Add after current track
+    PLAY_NOW_REPLACE = 1,    // Replace current and play next
+    ADD_TO_BOTTOM = 2,       // Add to end of queue
+    PLAY_NOW_CLEAR = 3,      // Clear queue and play
+    ASK_EACH_TIME = 4        // Show dialog each time
+};
+
 // Application settings structure
 struct AppSettings {
     // UI Settings
@@ -69,6 +78,8 @@ struct AppSettings {
     SubtitleSize subtitleSize = SubtitleSize::MEDIUM;
     int seekInterval = 10;  // seconds
     int controlsAutoHideSeconds = 5;  // Auto-hide player controls after inactivity (0 = never)
+    bool autoSkipIntro = false;       // Automatically skip intro markers
+    bool autoSkipCredits = false;     // Automatically skip credits markers
 
     // Transcode Settings
     VideoQuality videoQuality = VideoQuality::QUALITY_480P;
@@ -81,6 +92,10 @@ struct AppSettings {
 
     // Download Settings
     bool deleteAfterWatch = false;     // Auto-delete after fully watched
+
+    // Music Settings
+    TrackDefaultAction trackDefaultAction = TrackDefaultAction::PLAY_NOW_CLEAR;  // Default action for tracks
+    bool backgroundMusic = true;       // Allow leaving player without stopping music
 };
 
 /**

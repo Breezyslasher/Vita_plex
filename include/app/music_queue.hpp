@@ -41,8 +41,9 @@ public:
 
     // Queue management
     void clear();
-    void addTrack(const MediaItem& item);
+    void addTrack(const MediaItem& item);           // Add to end of queue
     void addTracks(const std::vector<MediaItem>& items);
+    void insertTrackAfterCurrent(const MediaItem& item);  // Insert after current track (play next)
     void removeTrack(int index);
     void moveTrack(int fromIndex, int toIndex);
 

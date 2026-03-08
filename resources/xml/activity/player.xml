@@ -30,6 +30,7 @@
 
     <!-- Album art for music (centered above controls) -->
     <brls:Box
+        id="player/album_art_container"
         width="100%"
         grow="1"
         axis="column"
@@ -37,14 +38,105 @@
         alignItems="center">
         <brls:Image
             id="player/album_art"
-            width="200"
-            height="200"
+            width="220"
+            height="220"
             scalingType="fit"
-            cornerRadius="8"
+            cornerRadius="12"
             visibility="gone"/>
     </brls:Box>
 
-    <!-- Center transport controls overlay - absolutely positioned in center of screen -->
+    <!-- Music info area: title + artist between album art and play controls -->
+    <brls:Box
+        id="player/music_info"
+        width="100%"
+        axis="column"
+        alignItems="center"
+        visibility="gone"
+        marginBottom="6">
+        <brls:Label
+            id="player/music_title"
+            text=""
+            fontSize="24"
+            horizontalAlign="center"
+            textColor="#FFFFFF"
+            marginBottom="2"/>
+        <brls:Label
+            id="player/music_artist"
+            text=""
+            fontSize="18"
+            horizontalAlign="center"
+            textColor="#AAAAAA"/>
+    </brls:Box>
+
+    <!-- Music transport controls (prev/play/next) shown below song info for music -->
+    <brls:Box
+        id="player/music_transport"
+        width="100%"
+        axis="row"
+        justifyContent="center"
+        alignItems="center"
+        visibility="gone"
+        marginBottom="6">
+
+        <!-- Previous button -->
+        <brls:Box
+            id="player/music_prev_btn"
+            width="60"
+            height="60"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="30"
+            marginRight="24"
+            focusable="true">
+            <brls:Image
+                id="player/music_prev_icon"
+                width="36"
+                height="36"
+                image="@res/icons/skip-previous.png"
+                scalingType="fit"/>
+        </brls:Box>
+
+        <!-- Play/Pause button -->
+        <brls:Box
+            id="player/music_play_btn"
+            width="80"
+            height="80"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="40"
+            focusable="true">
+            <brls:Image
+                id="player/music_play_icon"
+                width="44"
+                height="44"
+                image="@res/icons/pause.png"
+                scalingType="fit"/>
+        </brls:Box>
+
+        <!-- Next button -->
+        <brls:Box
+            id="player/music_next_btn"
+            width="60"
+            height="60"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="30"
+            marginLeft="24"
+            focusable="true">
+            <brls:Image
+                id="player/music_next_icon"
+                width="36"
+                height="36"
+                image="@res/icons/skip-next.png"
+                scalingType="fit"/>
+        </brls:Box>
+
+    </brls:Box>
+
+    <!-- Center transport controls overlay - absolutely positioned (video mode only) -->
     <brls:Box
         id="player/center_controls"
         width="100%"
@@ -136,7 +228,7 @@
             fontSize="20"
             marginBottom="5"/>
 
-        <!-- Artist (for music) -->
+        <!-- Artist (for music - used in video mode controls only) -->
         <brls:Label
             id="player/artist"
             text=""
@@ -236,6 +328,127 @@
                     image="@res/icons/video-image.png"
                     scalingType="fit"/>
             </brls:Box>
+
+            <!-- Queue list button (music queue mode) -->
+            <brls:Box
+                id="player/queue_btn"
+                width="64"
+                height="64"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="32"
+                marginLeft="16"
+                focusable="true"
+                visibility="gone">
+                <brls:Image
+                    id="player/queue_icon"
+                    width="34"
+                    height="34"
+                    image="@res/icons/format-list-group.png"
+                    scalingType="fit"/>
+            </brls:Box>
+
+            <!-- Lyrics toggle button (music mode only) -->
+            <brls:Box
+                id="player/lyrics_btn"
+                width="64"
+                height="64"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="32"
+                marginLeft="16"
+                focusable="true"
+                visibility="gone">
+                <brls:Image
+                    id="player/lyrics_icon"
+                    width="34"
+                    height="34"
+                    image="@res/icons/book-open-page-variant.png"
+                    scalingType="fit"/>
+            </brls:Box>
+
+        </brls:Box>
+
+    </brls:Box>
+
+    <!-- Skip intro/credits button - positioned at bottom-right above controls -->
+    <brls:Box
+        id="player/skip_btn"
+        axis="row"
+        justifyContent="center"
+        alignItems="center"
+        positionType="absolute"
+        positionBottom="160"
+        positionRight="30"
+        paddingLeft="20"
+        paddingRight="20"
+        paddingTop="10"
+        paddingBottom="10"
+        backgroundColor="#DD333333"
+        cornerRadius="8"
+        focusable="true"
+        visibility="gone">
+        <brls:Label
+            id="player/skip_label"
+            text="Skip Intro"
+            fontSize="18"
+            textColor="#FFFFFF"/>
+    </brls:Box>
+
+    <!-- Queue list overlay - slides up from bottom -->
+    <brls:Box
+        id="player/queue_overlay"
+        width="100%"
+        height="100%"
+        axis="column"
+        justifyContent="flexEnd"
+        alignItems="stretch"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        positionRight="0"
+        positionBottom="0"
+        backgroundColor="#CC000000"
+        visibility="gone">
+
+        <!-- Spacer to push queue to bottom half -->
+        <brls:Box grow="1"/>
+
+        <!-- Queue panel at bottom -->
+        <brls:Box
+            width="100%"
+            axis="column"
+            alignItems="stretch"
+            backgroundColor="#E0222222"
+            cornerRadius="12"
+            paddingTop="12"
+            paddingBottom="12"
+            paddingLeft="16"
+            paddingRight="16">
+
+            <!-- Queue title -->
+            <brls:Label
+                id="player/queue_overlay_title"
+                text="Queue"
+                fontSize="20"
+                textColor="#FFFFFF"
+                horizontalAlign="center"
+                marginBottom="8"/>
+
+            <!-- Queue track list container (scrollable) -->
+            <brls:ScrollingFrame
+                id="player/queue_scroll"
+                width="100%"
+                height="300">
+                <brls:Box
+                    id="player/queue_list"
+                    width="100%"
+                    axis="column"
+                    alignItems="stretch"
+                    padding="4"/>
+            </brls:ScrollingFrame>
 
         </brls:Box>
 
