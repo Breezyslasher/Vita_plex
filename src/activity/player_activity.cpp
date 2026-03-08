@@ -70,6 +70,7 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
 PlayerActivity* PlayerActivity::createResumeQueue() {
     PlayerActivity* activity = new PlayerActivity("", false);
     activity->m_isQueueMode = true;
+    activity->m_isResuming = true;  // Don't restart playback
 
     // Resume existing queue - don't reset it
     MusicQueue& queue = MusicQueue::getInstance();
@@ -600,6 +601,45 @@ void PlayerActivity::loadFromQueue() {
 
     brls::Logger::info("PlayerActivity: Loading track from queue: {} - {}",
                       track->artist, track->title);
+
+    // If resuming and MPV is already playing/paused, just update the UI
+    // without restarting the track (user pressed circle to return to player)
+    MpvPlayer& resumePlayer = MpvPlayer::getInstance();
+    if (m_isResuming && resumePlayer.isInitialized() &&
+        (resumePlayer.isPlaying() || resumePlayer.isPaused())) {
+        brls::Logger::info("PlayerActivity: Resuming existing playback, skipping reload");
+        m_isPlaying = resumePlayer.isPlaying();
+        m_mediaKey = track->ratingKey;
+        m_isResuming = false;
+
+        // Update display labels and album art, then return without reloading
+        if (musicTitleLabel) musicTitleLabel->setText(track->title);
+        if (musicArtistLabel) musicArtistLabel->setText(track->artist);
+        if (titleLabel) titleLabel->setText(track->title);
+        if (artistLabel) {
+            artistLabel->setText(track->artist);
+            artistLabel->setVisibility(brls::Visibility::VISIBLE);
+        }
+        updateQueueDisplay();
+
+        // Load album art
+        if (albumArt && !track->thumb.empty()) {
+            PlexClient& client = PlexClient::getInstance();
+            std::string thumbUrl = client.getThumbnailUrl(track->thumb, 400, 400);
+            ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {}, albumArt, m_alive);
+            albumArt->setVisibility(brls::Visibility::VISIBLE);
+        }
+
+        // Show music UI elements
+        if (musicInfo) musicInfo->setVisibility(brls::Visibility::VISIBLE);
+        if (musicTransport) musicTransport->setVisibility(brls::Visibility::VISIBLE);
+        if (videoView) videoView->setVisibility(brls::Visibility::GONE);
+        if (photoImage) photoImage->setVisibility(brls::Visibility::GONE);
+
+        updatePlayPauseLabel();
+        m_loadingMedia = false;
+        return;
+    }
 
     // Update display - use music info labels (between cover and play controls)
     if (musicTitleLabel) {

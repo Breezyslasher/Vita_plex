@@ -89,6 +89,7 @@ private:
     bool m_isLocalFile = false;    // Playing from local download
     bool m_isDirectFile = false;   // Playing direct file path (debug)
     bool m_isQueueMode = false;    // Playing from queue
+    bool m_isResuming = false;     // Resuming existing playback (don't restart track)
     bool m_lyricsEnabled = false;  // Lyrics subtitle toggle state for music mode
     bool m_destroying = false;     // Flag to prevent timer callbacks during destruction
     bool m_loadingMedia = false;   // Flag to prevent rapid re-entry of loadMedia
