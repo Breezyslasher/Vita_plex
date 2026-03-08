@@ -55,27 +55,24 @@ MediaItemCell::MediaItemCell()
     m_progressBar->setVisibility(brls::Visibility::GONE);
     this->addView(m_progressBar);
 
-    // Button hint box (shown on focus for music items)
-    // Positioned absolutely at top-right corner of album art
+    // Button hint box (shown on focus for album items)
+    // Sized to cover the album art image as an overlay
     m_buttonHintBox = new brls::Box();
     m_buttonHintBox->setAxis(brls::Axis::ROW);
     m_buttonHintBox->setJustifyContent(brls::JustifyContent::CENTER);
     m_buttonHintBox->setAlignItems(brls::AlignItems::CENTER);
     m_buttonHintBox->setPositionType(brls::PositionType::ABSOLUTE);
-    m_buttonHintBox->setPositionTop(4);
-    m_buttonHintBox->setPositionRight(4);
+    m_buttonHintBox->setPositionTop(5);  // Match parent padding
+    m_buttonHintBox->setPositionLeft(5); // Match parent padding
+    m_buttonHintBox->setWidth(110);
+    m_buttonHintBox->setHeight(110);
     m_buttonHintBox->setBackgroundColor(nvgRGBA(0, 0, 0, 160));
     m_buttonHintBox->setCornerRadius(4);
-    m_buttonHintBox->setPaddingLeft(4);
-    m_buttonHintBox->setPaddingRight(4);
-    m_buttonHintBox->setPaddingTop(2);
-    m_buttonHintBox->setPaddingBottom(2);
     m_buttonHintBox->setVisibility(brls::Visibility::GONE);
 
     m_buttonHintIcon = new brls::Image();
-    m_buttonHintIcon->setWidth(12);
-    m_buttonHintIcon->setHeight(12);
-    m_buttonHintIcon->setMarginRight(3);
+    m_buttonHintIcon->setWidth(24);
+    m_buttonHintIcon->setHeight(24);
     m_buttonHintBox->addView(m_buttonHintIcon);
 
     m_buttonHintLabel = new brls::Label();
@@ -338,11 +335,10 @@ void MediaItemCell::updateFocusInfo(bool focused) {
                 m_descriptionLabel->setText(info);
                 m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
             }
-            // Show button hint for albums (icon only, no text)
+            // Show button hint overlay for albums (icon only, no text)
             if (m_buttonHintBox && m_item.mediaType == MediaType::MUSIC_ALBUM) {
                 if (m_buttonHintIcon) {
                     m_buttonHintIcon->setImageFromRes("images/start_button.png");
-                    m_buttonHintIcon->setMarginRight(0);
                 }
                 if (m_buttonHintLabel) m_buttonHintLabel->setVisibility(brls::Visibility::GONE);
                 m_buttonHintBox->setVisibility(brls::Visibility::VISIBLE);
