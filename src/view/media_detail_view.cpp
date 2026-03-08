@@ -263,6 +263,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         // Wrap track list in its own ScrollingFrame so only tracks scroll
         auto* trackScroll = new brls::ScrollingFrame();
         trackScroll->setGrow(1.0f);
+        trackScroll->setMinHeight(200);
 
         m_trackListBox = new brls::Box();
         m_trackListBox->setAxis(brls::Axis::COLUMN);
@@ -282,6 +283,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
 
     if (m_item.mediaType == MediaType::MUSIC_ALBUM) {
         // For albums: no outer scroll - top info is fixed, only track list scrolls
+        m_mainContent->setGrow(1.0f);
         this->addView(m_mainContent);
     } else {
         m_scrollView->setContentView(m_mainContent);
