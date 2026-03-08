@@ -1056,6 +1056,7 @@ void MediaDetailView::loadTrackList() {
                 hintIcon->setWidth(16);
                 hintIcon->setHeight(16);
                 hintIcon->setMarginRight(2);
+                hintIcon->setVisibility(brls::Visibility::INVISIBLE);
                 rightSide->addView(hintIcon);
 
                 auto* hintLabel = new brls::Label();
@@ -1063,7 +1064,26 @@ void MediaDetailView::loadTrackList() {
                 hintLabel->setTextColor(nvgRGBA(150, 150, 180, 180));
                 hintLabel->setText("DL");
                 hintLabel->setMarginRight(10);
+                hintLabel->setVisibility(brls::Visibility::INVISIBLE);
                 rightSide->addView(hintLabel);
+
+                // Show hint on focus, hide previous (like Suwayomi chapter icon pattern)
+                brls::Image* capturedHintIcon = hintIcon;
+                brls::Label* capturedHintLabel = hintLabel;
+                row->getFocusEvent()->subscribe([this, capturedHintIcon, capturedHintLabel](brls::View*) {
+                    // Hide previously focused hint
+                    if (m_currentFocusedHint && m_currentFocusedHint != capturedHintIcon) {
+                        m_currentFocusedHint->setVisibility(brls::Visibility::INVISIBLE);
+                    }
+                    if (m_currentFocusedHintLabel && m_currentFocusedHintLabel != capturedHintLabel) {
+                        m_currentFocusedHintLabel->setVisibility(brls::Visibility::INVISIBLE);
+                    }
+                    // Show current hint
+                    capturedHintIcon->setVisibility(brls::Visibility::VISIBLE);
+                    capturedHintLabel->setVisibility(brls::Visibility::VISIBLE);
+                    m_currentFocusedHint = capturedHintIcon;
+                    m_currentFocusedHintLabel = capturedHintLabel;
+                });
 
                 if (track.duration > 0) {
                     auto* durLabel = new brls::Label();

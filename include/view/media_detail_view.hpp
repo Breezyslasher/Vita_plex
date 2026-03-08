@@ -69,6 +69,10 @@ private:
     brls::Box* m_compilationsContent = nullptr;
     brls::Box* m_soundtracksContent = nullptr;
 
+    // Track currently focused hint icon (like Suwayomi's m_currentFocusedIcon)
+    brls::Image* m_currentFocusedHint = nullptr;
+    brls::Label* m_currentFocusedHintLabel = nullptr;
+
     // Shared alive flag to prevent async callbacks from accessing destroyed view
     std::shared_ptr<std::atomic<bool>> m_alive;
 };
