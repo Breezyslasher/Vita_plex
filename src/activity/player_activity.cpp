@@ -581,8 +581,12 @@ void PlayerActivity::loadMedia() {
         MpvPlayer& player = MpvPlayer::getInstance();
 
         // Resume from saved viewOffset if resumePlayback is enabled
+        // If near the end (>= 95% watched), start from beginning instead
         if (Application::getInstance().getSettings().resumePlayback && download->viewOffset > 0) {
-            m_pendingSeek = download->viewOffset / 1000.0;
+            bool nearEnd = (download->duration > 0 && download->viewOffset >= download->duration * 0.95);
+            if (!nearEnd) {
+                m_pendingSeek = download->viewOffset / 1000.0;
+            }
         }
 
         if (!player.isInitialized()) {
@@ -684,7 +688,14 @@ void PlayerActivity::loadMedia() {
 
         // Get transcode URL for video/audio (forces Plex to convert to Vita-compatible format)
         // Only resume from viewOffset if resumePlayback is enabled
-        int resumeOffset = Application::getInstance().getSettings().resumePlayback ? item.viewOffset : 0;
+        // If near the end (>= 95% watched), start from beginning instead
+        int resumeOffset = 0;
+        if (Application::getInstance().getSettings().resumePlayback && item.viewOffset > 0) {
+            bool nearEnd = (item.duration > 0 && item.viewOffset >= item.duration * 0.95);
+            if (!nearEnd) {
+                resumeOffset = item.viewOffset;
+            }
+        }
         m_transcodeBaseOffsetMs = resumeOffset;
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, resumeOffset)) {
