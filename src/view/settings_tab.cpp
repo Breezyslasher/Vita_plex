@@ -301,6 +301,39 @@ void SettingsTab::createPlaybackSection() {
     skipInfoLabel->setMarginLeft(16);
     skipInfoLabel->setMarginTop(8);
     m_contentBox->addView(skipInfoLabel);
+
+    // Music section
+    auto* musicHeader = new brls::Header();
+    musicHeader->setTitle("Music");
+    m_contentBox->addView(musicHeader);
+
+    // Default track action selector
+    m_trackActionSelector = new brls::SelectorCell();
+    m_trackActionSelector->init("Default Track Action",
+        {"Play Next", "Play Now (Replace Current)", "Add to Bottom of Queue", "Play Now (Clear Queue)", "Ask Each Time"},
+        static_cast<int>(settings.trackDefaultAction),
+        [](int index) {
+            Application& app = Application::getInstance();
+            app.getSettings().trackDefaultAction = static_cast<TrackDefaultAction>(index);
+            app.saveSettings();
+        });
+    m_contentBox->addView(m_trackActionSelector);
+
+    // Background music toggle
+    m_backgroundMusicToggle = new brls::BooleanCell();
+    m_backgroundMusicToggle->init("Background Music", settings.backgroundMusic, [&settings](bool value) {
+        settings.backgroundMusic = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_backgroundMusicToggle);
+
+    // Info label for music settings
+    auto* musicInfoLabel = new brls::Label();
+    musicInfoLabel->setText("Background music lets you leave player to add more songs");
+    musicInfoLabel->setFontSize(14);
+    musicInfoLabel->setMarginLeft(16);
+    musicInfoLabel->setMarginTop(8);
+    m_contentBox->addView(musicInfoLabel);
 }
 
 void SettingsTab::createTranscodeSection() {

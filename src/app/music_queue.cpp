@@ -61,6 +61,27 @@ void MusicQueue::addTrack(const MediaItem& item) {
     notifyQueueChanged();
 }
 
+void MusicQueue::insertTrackAfterCurrent(const MediaItem& item) {
+    int insertPos = m_currentIndex + 1;
+    if (insertPos < 0) insertPos = 0;
+    if (insertPos > (int)m_queue.size()) insertPos = (int)m_queue.size();
+
+    m_queue.insert(m_queue.begin() + insertPos, mediaItemToQueueItem(item, insertPos));
+
+    // Update indices for items after the insertion point
+    for (int i = insertPos; i < (int)m_queue.size(); i++) {
+        m_queue[i].index = i;
+    }
+
+    // Regenerate shuffle order if shuffling
+    if (m_shuffleEnabled) {
+        generateShuffleOrder();
+    }
+
+    notifyQueueChanged();
+    brls::Logger::info("MusicQueue: Inserted track after current at position {}", insertPos);
+}
+
 void MusicQueue::addTracks(const std::vector<MediaItem>& items) {
     int startIndex = (int)m_queue.size();
     for (size_t i = 0; i < items.size(); i++) {

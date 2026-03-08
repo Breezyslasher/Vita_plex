@@ -78,6 +78,10 @@ private:
     // Downloads section
     brls::BooleanCell* m_deleteAfterWatchToggle = nullptr;
     brls::DetailCell* m_clearDownloadsCell = nullptr;
+
+    // Music section
+    brls::SelectorCell* m_trackActionSelector = nullptr;
+    brls::BooleanCell* m_backgroundMusicToggle = nullptr;
 };
 
 } // namespace vitaplex

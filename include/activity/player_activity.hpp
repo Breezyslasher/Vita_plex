@@ -172,6 +172,16 @@ private:
     BRLS_BIND(brls::Label, queueOverlayTitle, "player/queue_overlay_title");
     BRLS_BIND(brls::Box, queueList, "player/queue_list");
     BRLS_BIND(brls::ScrollingFrame, queueScroll, "player/queue_scroll");
+
+    // Music-specific UI elements
+    BRLS_BIND(brls::Box, musicInfo, "player/music_info");
+    BRLS_BIND(brls::Label, musicTitleLabel, "player/music_title");
+    BRLS_BIND(brls::Label, musicArtistLabel, "player/music_artist");
+    BRLS_BIND(brls::Box, musicTransport, "player/music_transport");
+    BRLS_BIND(brls::Box, musicPlayBtn, "player/music_play_btn");
+    BRLS_BIND(brls::Image, musicPlayIcon, "player/music_play_icon");
+    BRLS_BIND(brls::Box, musicPrevBtn, "player/music_prev_btn");
+    BRLS_BIND(brls::Box, musicNextBtn, "player/music_next_btn");
 };
 
 } // namespace vitaplex

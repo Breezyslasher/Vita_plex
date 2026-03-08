@@ -30,6 +30,9 @@ private:
     void downloadAll();
     void downloadUnwatched(int maxCount = -1);
     void toggleDescription();          // Collapse/expand description
+    void showAlbumContextMenu(const MediaItem& album);  // Context menu for albums
+    void performTrackAction(const MediaItem& track, size_t trackIndex);  // Handle track default action
+    void showTrackActionDialog(const MediaItem& track, size_t trackIndex);  // Ask user what to do
 
     brls::HScrollingFrame* createMediaRow(const std::string& title, brls::Box** contentOut);
 

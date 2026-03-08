@@ -8,6 +8,7 @@
 #include "activity/player_activity.hpp"
 #include "app/application.hpp"
 #include "app/downloads_manager.hpp"
+#include "app/music_queue.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
 #include <thread>
@@ -71,8 +72,9 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     m_posterImage->setScalingType(brls::ImageScalingType::FIT);
     leftBox->addView(m_posterImage);
 
-    // Play buttons (not for artists)
-    if (m_item.mediaType != MediaType::MUSIC_ARTIST) {
+    // Play buttons (not for artists or albums - albums use track list actions)
+    if (m_item.mediaType != MediaType::MUSIC_ARTIST &&
+        m_item.mediaType != MediaType::MUSIC_ALBUM) {
         m_playButton = new brls::Button();
         m_playButton->setText("Play");
         m_playButton->setWidth(200);
@@ -99,7 +101,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             leftBox->addView(m_resumeButton);
         }
 
-        // Download button (for movies, episodes, and tracks)
+        // Download button (for movies, episodes, and individual tracks only)
         if (m_item.mediaType == MediaType::MOVIE || m_item.mediaType == MediaType::EPISODE ||
             m_item.mediaType == MediaType::MUSIC_TRACK) {
             m_downloadButton = new brls::Button();
@@ -274,15 +276,21 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_mainContent->addView(trackScroll);
     }
 
-    // Music categories container for artists
+    // Music categories container for artists - scrollable below fixed header
     if (m_item.mediaType == MediaType::MUSIC_ARTIST) {
+        auto* categoriesScroll = new brls::ScrollingFrame();
+        categoriesScroll->setGrow(1.0f);
+
         m_musicCategoriesBox = new brls::Box();
         m_musicCategoriesBox->setAxis(brls::Axis::COLUMN);
-        m_mainContent->addView(m_musicCategoriesBox);
+
+        categoriesScroll->setContentView(m_musicCategoriesBox);
+        m_mainContent->addView(categoriesScroll);
     }
 
-    if (m_item.mediaType == MediaType::MUSIC_ALBUM) {
-        // For albums: no outer scroll - top info is fixed, only track list scrolls
+    if (m_item.mediaType == MediaType::MUSIC_ALBUM ||
+        m_item.mediaType == MediaType::MUSIC_ARTIST) {
+        // For albums and artists: top info is fixed, only content below scrolls
         m_mainContent->setGrow(1.0f);
         this->addView(m_mainContent);
     } else {
@@ -495,12 +503,19 @@ void MediaDetailView::loadMusicCategories() {
                     cell->setMarginRight(10);
 
                     MediaItem capturedItem = item;
+                    // A button (cross) - open album detail
                     cell->registerClickAction([this, capturedItem](brls::View* view) {
                         auto* detailView = new MediaDetailView(capturedItem);
                         brls::Application::pushActivity(new brls::Activity(detailView));
                         return true;
                     });
                     cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+
+                    // Start button - context menu for album actions
+                    cell->registerAction("Options", brls::ControllerButton::BUTTON_START, [this, capturedItem](brls::View* view) {
+                        showAlbumContextMenu(capturedItem);
+                        return true;
+                    });
 
                     content->addView(cell);
                 }
@@ -1031,7 +1046,25 @@ void MediaDetailView::loadTrackList() {
 
                 row->addView(leftBox);
 
-                // Right side: duration
+                // Right side: button hint + duration
+                auto* rightSide = new brls::Box();
+                rightSide->setAxis(brls::Axis::ROW);
+                rightSide->setAlignItems(brls::AlignItems::CENTER);
+
+                auto* hintIcon = new brls::Image();
+                hintIcon->setImageFromRes("images/square_button.png");
+                hintIcon->setWidth(16);
+                hintIcon->setHeight(16);
+                hintIcon->setMarginRight(2);
+                rightSide->addView(hintIcon);
+
+                auto* hintLabel = new brls::Label();
+                hintLabel->setFontSize(10);
+                hintLabel->setTextColor(nvgRGBA(150, 150, 180, 180));
+                hintLabel->setText("DL");
+                hintLabel->setMarginRight(10);
+                rightSide->addView(hintLabel);
+
                 if (track.duration > 0) {
                     auto* durLabel = new brls::Label();
                     durLabel->setFontSize(12);
@@ -1042,27 +1075,287 @@ void MediaDetailView::loadTrackList() {
                     char durStr[16];
                     snprintf(durStr, sizeof(durStr), "%d:%02d", min, sec);
                     durLabel->setText(durStr);
-                    row->addView(durLabel);
+                    rightSide->addView(durLabel);
                 }
 
-                // Click to play track (with queue for all album tracks)
+                row->addView(rightSide);
+
+                // Click to perform default track action
                 MediaItem capturedTrack = track;
                 row->registerClickAction([this, capturedTrack, i](brls::View* view) {
-                    // Play album starting from this track using queue
-                    if (!m_children.empty()) {
-                        auto* playerActivity = PlayerActivity::createWithQueue(m_children, (int)i);
-                        brls::Application::pushActivity(playerActivity);
-                    } else {
-                        Application::getInstance().pushPlayerActivity(capturedTrack.ratingKey);
-                    }
+                    performTrackAction(capturedTrack, i);
                     return true;
                 });
                 row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
+
+                // Square button (X on PS Vita) adds to download queue
+                row->registerAction("Download", brls::ControllerButton::BUTTON_X, [this, capturedTrack](brls::View* view) {
+                    // Create a temporary copy to download
+                    MediaItem dlItem = capturedTrack;
+                    if (DownloadsManager::getInstance().isDownloaded(dlItem.ratingKey)) {
+                        brls::Application::notify("Already downloaded");
+                    } else {
+                        // Fetch full details for partPath
+                        asyncRun([this, dlItem]() {
+                            PlexClient& client = PlexClient::getInstance();
+                            MediaItem fullItem;
+                            if (client.fetchMediaDetails(dlItem.ratingKey, fullItem) && !fullItem.partPath.empty()) {
+                                bool queued = DownloadsManager::getInstance().queueDownload(
+                                    fullItem.ratingKey, fullItem.title, fullItem.partPath,
+                                    fullItem.duration, "track",
+                                    fullItem.grandparentTitle, 0, fullItem.index);
+                                brls::sync([queued, fullItem]() {
+                                    if (queued) {
+                                        DownloadsManager::getInstance().startDownloads();
+                                        brls::Application::notify("Downloading: " + fullItem.title);
+                                    } else {
+                                        brls::Application::notify("Failed to queue download");
+                                    }
+                                });
+                            } else {
+                                brls::sync([]() {
+                                    brls::Application::notify("Could not get download info");
+                                });
+                            }
+                        });
+                    }
+                    return true;
+                });
 
                 m_trackListBox->addView(row);
             }
         });
     });
+}
+
+void MediaDetailView::performTrackAction(const MediaItem& track, size_t trackIndex) {
+    TrackDefaultAction action = Application::getInstance().getSettings().trackDefaultAction;
+
+    if (action == TrackDefaultAction::ASK_EACH_TIME) {
+        showTrackActionDialog(track, trackIndex);
+        return;
+    }
+
+    MusicQueue& queue = MusicQueue::getInstance();
+
+    switch (action) {
+        case TrackDefaultAction::PLAY_NEXT:
+            // Add after current track in queue
+            if (queue.isEmpty()) {
+                // No queue yet - start a new one with all tracks starting from this one
+                if (!m_children.empty()) {
+                    auto* playerActivity = PlayerActivity::createWithQueue(m_children, (int)trackIndex);
+                    brls::Application::pushActivity(playerActivity);
+                }
+            } else {
+                queue.insertTrackAfterCurrent(track);
+                brls::Application::notify("Playing next: " + track.title);
+            }
+            break;
+
+        case TrackDefaultAction::PLAY_NOW_REPLACE:
+            // Replace current track and play
+            if (queue.isEmpty()) {
+                if (!m_children.empty()) {
+                    auto* playerActivity = PlayerActivity::createWithQueue(m_children, (int)trackIndex);
+                    brls::Application::pushActivity(playerActivity);
+                }
+            } else {
+                queue.insertTrackAfterCurrent(track);
+                if (queue.playNext()) {
+                    brls::Application::notify("Now playing: " + track.title);
+                }
+            }
+            break;
+
+        case TrackDefaultAction::ADD_TO_BOTTOM:
+            // Add to end of queue
+            if (queue.isEmpty()) {
+                if (!m_children.empty()) {
+                    auto* playerActivity = PlayerActivity::createWithQueue(m_children, (int)trackIndex);
+                    brls::Application::pushActivity(playerActivity);
+                }
+            } else {
+                queue.addTrack(track);
+                brls::Application::notify("Added to queue: " + track.title);
+            }
+            break;
+
+        case TrackDefaultAction::PLAY_NOW_CLEAR:
+        default:
+            // Clear queue and play from this track (original behavior)
+            if (!m_children.empty()) {
+                auto* playerActivity = PlayerActivity::createWithQueue(m_children, (int)trackIndex);
+                brls::Application::pushActivity(playerActivity);
+            } else {
+                Application::getInstance().pushPlayerActivity(track.ratingKey);
+            }
+            break;
+    }
+}
+
+void MediaDetailView::showTrackActionDialog(const MediaItem& track, size_t trackIndex) {
+    auto* dialog = new brls::Dialog("Choose Action");
+
+    auto* optionsBox = new brls::Box();
+    optionsBox->setAxis(brls::Axis::COLUMN);
+    optionsBox->setPadding(20);
+
+    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
+        auto* btn = new brls::Button();
+        btn->setText(text);
+        btn->setHeight(44);
+        btn->setMarginBottom(10);
+        btn->registerClickAction(action);
+        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+        optionsBox->addView(btn);
+    };
+
+    MediaItem capturedTrack = track;
+    size_t capturedIndex = trackIndex;
+
+    addDialogButton("Play Now (Clear Queue)", [this, capturedTrack, capturedIndex, dialog](brls::View*) {
+        dialog->dismiss();
+        if (!m_children.empty()) {
+            auto* playerActivity = PlayerActivity::createWithQueue(m_children, (int)capturedIndex);
+            brls::Application::pushActivity(playerActivity);
+        }
+        return true;
+    });
+
+    addDialogButton("Play Next", [this, capturedTrack, dialog](brls::View*) {
+        dialog->dismiss();
+        MusicQueue& queue = MusicQueue::getInstance();
+        if (queue.isEmpty()) {
+            // Start new queue with just this track
+            std::vector<MediaItem> single = {capturedTrack};
+            auto* playerActivity = PlayerActivity::createWithQueue(single, 0);
+            brls::Application::pushActivity(playerActivity);
+        } else {
+            queue.insertTrackAfterCurrent(capturedTrack);
+            brls::Application::notify("Playing next: " + capturedTrack.title);
+        }
+        return true;
+    });
+
+    addDialogButton("Add to Bottom of Queue", [this, capturedTrack, dialog](brls::View*) {
+        dialog->dismiss();
+        MusicQueue& queue = MusicQueue::getInstance();
+        if (queue.isEmpty()) {
+            std::vector<MediaItem> single = {capturedTrack};
+            auto* playerActivity = PlayerActivity::createWithQueue(single, 0);
+            brls::Application::pushActivity(playerActivity);
+        } else {
+            queue.addTrack(capturedTrack);
+            brls::Application::notify("Added to queue: " + capturedTrack.title);
+        }
+        return true;
+    });
+
+    addDialogButton("Cancel", [dialog](brls::View*) {
+        dialog->dismiss();
+        return true;
+    });
+
+    dialog->addView(optionsBox);
+    brls::Application::pushActivity(new brls::Activity(dialog));
+}
+
+void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
+    auto* dialog = new brls::Dialog(album.title);
+
+    auto* optionsBox = new brls::Box();
+    optionsBox->setAxis(brls::Axis::COLUMN);
+    optionsBox->setPadding(20);
+
+    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
+        auto* btn = new brls::Button();
+        btn->setText(text);
+        btn->setHeight(44);
+        btn->setMarginBottom(10);
+        btn->registerClickAction(action);
+        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+        optionsBox->addView(btn);
+    };
+
+    MediaItem capturedAlbum = album;
+
+    addDialogButton("Play Now (Clear Queue)", [this, capturedAlbum, dialog](brls::View*) {
+        dialog->dismiss();
+        // Fetch album tracks and play
+        asyncRun([this, capturedAlbum]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> tracks;
+            if (client.fetchChildren(capturedAlbum.ratingKey, tracks) && !tracks.empty()) {
+                brls::sync([tracks]() {
+                    auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                    brls::Application::pushActivity(playerActivity);
+                });
+            }
+        });
+        return true;
+    });
+
+    addDialogButton("Play Next", [this, capturedAlbum, dialog](brls::View*) {
+        dialog->dismiss();
+        asyncRun([capturedAlbum]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> tracks;
+            if (client.fetchChildren(capturedAlbum.ratingKey, tracks)) {
+                brls::sync([tracks]() {
+                    MusicQueue& queue = MusicQueue::getInstance();
+                    if (queue.isEmpty()) {
+                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                        brls::Application::pushActivity(playerActivity);
+                    } else {
+                        // Insert all tracks after current
+                        for (int i = (int)tracks.size() - 1; i >= 0; i--) {
+                            queue.insertTrackAfterCurrent(tracks[i]);
+                        }
+                        brls::Application::notify("Album queued next");
+                    }
+                });
+            }
+        });
+        return true;
+    });
+
+    addDialogButton("Add to Bottom of Queue", [this, capturedAlbum, dialog](brls::View*) {
+        dialog->dismiss();
+        asyncRun([capturedAlbum]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> tracks;
+            if (client.fetchChildren(capturedAlbum.ratingKey, tracks)) {
+                brls::sync([tracks]() {
+                    MusicQueue& queue = MusicQueue::getInstance();
+                    if (queue.isEmpty()) {
+                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                        brls::Application::pushActivity(playerActivity);
+                    } else {
+                        queue.addTracks(tracks);
+                        brls::Application::notify("Album added to queue");
+                    }
+                });
+            }
+        });
+        return true;
+    });
+
+    addDialogButton("Download Album", [this, capturedAlbum, dialog](brls::View*) {
+        dialog->dismiss();
+        // Re-use existing download logic
+        m_item = capturedAlbum;
+        downloadAll();
+        return true;
+    });
+
+    addDialogButton("Cancel", [dialog](brls::View*) {
+        dialog->dismiss();
+        return true;
+    });
+
+    dialog->addView(optionsBox);
+    brls::Application::pushActivity(new brls::Activity(dialog));
 }
 
 void MediaDetailView::toggleDescription() {

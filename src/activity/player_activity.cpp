@@ -141,6 +141,12 @@ void PlayerActivity::onContentAvailable() {
             hideQueueOverlay();
             return true;
         }
+        // In music mode with background music enabled, leave without stopping
+        if (m_isQueueMode && Application::getInstance().getSettings().backgroundMusic) {
+            m_destroying = false;  // Don't mark as destroying - music continues
+            brls::Application::popActivity();
+            return true;
+        }
         brls::Application::popActivity();
         return true;
     });
@@ -267,22 +273,48 @@ void PlayerActivity::onContentAvailable() {
 
     // Show mode-specific icons and wire touch
     if (m_isQueueMode) {
-        // Queue mode: use skip-previous / skip-next icons for prev/next track
-        if (rewindIcon) rewindIcon->setImageFromRes("icons/skip-previous.png");
-        if (forwardIcon) forwardIcon->setImageFromRes("icons/skip-next.png");
+        // Music mode: hide center video controls, show music transport + info
+        if (centerControls) centerControls->setVisibility(brls::Visibility::GONE);
 
-        if (audioBtn) {
-            audioBtn->setVisibility(brls::Visibility::VISIBLE);
-            audioBtn->registerClickAction([this](brls::View* view) {
-                toggleShuffle();
+        // Show music-specific UI elements
+        if (musicInfo) musicInfo->setVisibility(brls::Visibility::VISIBLE);
+        if (musicTransport) musicTransport->setVisibility(brls::Visibility::VISIBLE);
+
+        // Wire music transport buttons
+        if (musicPlayBtn) {
+            musicPlayBtn->registerClickAction([this](brls::View* view) {
+                togglePlayPause();
                 return true;
             });
-            audioBtn->addGestureRecognizer(new brls::TapGestureRecognizer(audioBtn));
+            musicPlayBtn->addGestureRecognizer(new brls::TapGestureRecognizer(musicPlayBtn));
         }
+        if (musicPrevBtn) {
+            musicPrevBtn->registerClickAction([this](brls::View* view) {
+                playPrevious();
+                return true;
+            });
+            musicPrevBtn->addGestureRecognizer(new brls::TapGestureRecognizer(musicPrevBtn));
+        }
+        if (musicNextBtn) {
+            musicNextBtn->registerClickAction([this](brls::View* view) {
+                playNext();
+                return true;
+            });
+            musicNextBtn->addGestureRecognizer(new brls::TapGestureRecognizer(musicNextBtn));
+        }
+
+        // In music mode: hide audio/video track buttons, only show queue + lyrics(subtitle)
+        // audioBtn and videoBtn stay hidden (GONE by default in XML)
+
+        // Subtitle button becomes "Lyrics" in music mode
         if (subBtn) {
             subBtn->setVisibility(brls::Visibility::VISIBLE);
+            if (subtitleIcon) {
+                subtitleIcon->setImageFromRes("icons/subtitles.png");
+            }
             subBtn->registerClickAction([this](brls::View* view) {
-                toggleRepeat();
+                // In music mode, subtitle button shows lyrics overlay
+                showTrackOverlay(TrackSelectMode::SUBTITLE);
                 return true;
             });
             subBtn->addGestureRecognizer(new brls::TapGestureRecognizer(subBtn));
@@ -299,6 +331,17 @@ void PlayerActivity::onContentAvailable() {
             });
             queueBtn->addGestureRecognizer(new brls::TapGestureRecognizer(queueBtn));
         }
+
+        // Music mode: controls never auto-hide, always visible
+        // Override the controls auto-hide for music
+        if (controlsBox) {
+            controlsBox->setVisibility(brls::Visibility::VISIBLE);
+            controlsBox->setAlpha(1.0f);
+        }
+
+        // Hide title/artist from bottom controls (shown in musicInfo instead)
+        if (titleLabel) titleLabel->setVisibility(brls::Visibility::GONE);
+        if (artistLabel) artistLabel->setVisibility(brls::Visibility::GONE);
     } else {
         // Video mode: seek icons matching the configured interval
         int seekSec = Application::getInstance().getSettings().seekInterval;
@@ -374,6 +417,14 @@ void PlayerActivity::willDisappear(bool resetState) {
 
     // Re-enable background thumbnail loading now that playback is ending
     ImageLoader::setPaused(false);
+
+    // If background music is enabled and we're in queue mode, don't stop playback
+    if (m_isQueueMode && Application::getInstance().getSettings().backgroundMusic && !m_destroying) {
+        brls::Logger::info("PlayerActivity: Leaving with background music enabled, not stopping");
+        m_updateTimer.stop();
+        if (m_alive) m_alive->store(false);
+        return;
+    }
 
     // Mark as destroying to prevent timer and image loader callbacks
     m_destroying = true;
@@ -475,7 +526,14 @@ void PlayerActivity::loadFromQueue() {
     brls::Logger::info("PlayerActivity: Loading track from queue: {} - {}",
                       track->artist, track->title);
 
-    // Update display
+    // Update display - use music info labels (between cover and play controls)
+    if (musicTitleLabel) {
+        musicTitleLabel->setText(track->title);
+    }
+    if (musicArtistLabel) {
+        musicArtistLabel->setText(track->artist);
+    }
+    // Also update bottom controls title for non-music fallback
     if (titleLabel) {
         titleLabel->setText(track->title);
     }
@@ -1050,6 +1108,10 @@ void PlayerActivity::updatePlayPauseLabel() {
     if (playPauseIcon) {
         playPauseIcon->setImageFromRes(m_isPlaying ? "icons/pause.png" : "icons/play.png");
     }
+    // Also update music transport play icon
+    if (musicPlayIcon) {
+        musicPlayIcon->setImageFromRes(m_isPlaying ? "icons/pause.png" : "icons/play.png");
+    }
 }
 
 void PlayerActivity::cycleAudioTrack() {
@@ -1125,7 +1187,7 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
             trackOverlayTitle->setText("Audio Tracks");
             break;
         case TrackSelectMode::SUBTITLE:
-            trackOverlayTitle->setText("Subtitles");
+            trackOverlayTitle->setText(m_isQueueMode ? "Lyrics" : "Subtitles");
             break;
         case TrackSelectMode::VIDEO:
             trackOverlayTitle->setText("Video Tracks");
@@ -2044,8 +2106,8 @@ void PlayerActivity::showControls() {
 }
 
 void PlayerActivity::hideControls() {
-    // Don't hide controls for photos
-    if (m_isPhoto) return;
+    // Don't hide controls for photos or music mode
+    if (m_isPhoto || m_isQueueMode) return;
 
     m_controlsVisible = false;
     if (controlsBox) {
