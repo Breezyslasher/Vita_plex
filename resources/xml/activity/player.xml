@@ -56,14 +56,14 @@
         <brls:Label
             id="player/music_title"
             text=""
-            fontSize="18"
+            fontSize="24"
             horizontalAlign="center"
             textColor="#FFFFFF"
             marginBottom="2"/>
         <brls:Label
             id="player/music_artist"
             text=""
-            fontSize="14"
+            fontSize="18"
             horizontalAlign="center"
             textColor="#AAAAAA"/>
     </brls:Box>

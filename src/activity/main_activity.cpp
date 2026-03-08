@@ -14,6 +14,8 @@
 #include "app/downloads_manager.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
+#include "app/music_queue.hpp"
+#include "activity/player_activity.hpp"
 #include "utils/async.hpp"
 
 #include <algorithm>
@@ -146,6 +148,17 @@ void MainActivity::onContentAvailable() {
 
         // Focus first tab
         tabFrame->focusTab(0);
+
+        // Circle button: if music is playing in background, return to player
+        tabFrame->registerAction("", brls::ControllerButton::BUTTON_B, [](brls::View* view) {
+            MusicQueue& queue = MusicQueue::getInstance();
+            if (!queue.isEmpty() && queue.getCurrentIndex() >= 0) {
+                auto* playerActivity = PlayerActivity::createResumeQueue();
+                brls::Application::pushActivity(playerActivity);
+                return true;
+            }
+            return false;  // Let default back behavior happen
+        });
     }
 }
 

@@ -67,6 +67,22 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
     return activity;
 }
 
+PlayerActivity* PlayerActivity::createResumeQueue() {
+    PlayerActivity* activity = new PlayerActivity("", false);
+    activity->m_isQueueMode = true;
+
+    // Resume existing queue - don't reset it
+    MusicQueue& queue = MusicQueue::getInstance();
+
+    // Set up track ended callback for the new activity
+    queue.setTrackEndedCallback([activity](const QueueItem* nextTrack) {
+        activity->onTrackEnded(nextTrack);
+    });
+
+    brls::Logger::info("PlayerActivity resumed existing queue at index {}", queue.getCurrentIndex());
+    return activity;
+}
+
 brls::View* PlayerActivity::createContentView() {
     return brls::View::createFromXMLResource("activity/player.xml");
 }
@@ -1230,7 +1246,7 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         item->setFocusable(true);
 
         brls::Label* label = new brls::Label();
-        label->setText("Off (No Subtitles)");
+        label->setText(m_isQueueMode ? "Off (No Lyrics)" : "Off (No Subtitles)");
         label->setFontSize(16);
         label->setTextColor(nvgRGB(220, 220, 220));
         item->addView(label);
@@ -1358,8 +1374,8 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         }
     }
 
-    // For subtitles, add "Search for Subtitles" option at the bottom
-    if (mode == TrackSelectMode::SUBTITLE && !m_mediaKey.empty()) {
+    // For subtitles (not music lyrics), add "Search for Subtitles" option at the bottom
+    if (mode == TrackSelectMode::SUBTITLE && !m_mediaKey.empty() && !m_isQueueMode) {
         // Add separator
         brls::Box* sep = new brls::Box();
         sep->setWidth(376);  // track list width (400) minus padding (24)

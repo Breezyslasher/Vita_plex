@@ -125,10 +125,9 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         }
     }
 
-    // Download options for shows, seasons, albums
+    // Download options for shows, seasons (albums use context menu instead)
     if (m_item.mediaType == MediaType::SHOW ||
         m_item.mediaType == MediaType::SEASON ||
-        m_item.mediaType == MediaType::MUSIC_ALBUM ||
         m_item.mediaType == MediaType::MUSIC_ARTIST) {
 
         m_downloadButton = new brls::Button();

@@ -39,6 +39,9 @@ public:
     // Play from queue (album, playlist, etc.)
     static PlayerActivity* createWithQueue(const std::vector<MediaItem>& tracks, int startIndex = 0);
 
+    // Resume existing queue (return to player without resetting queue)
+    static PlayerActivity* createResumeQueue();
+
     brls::View* createContentView() override;
 
     void onContentAvailable() override;
