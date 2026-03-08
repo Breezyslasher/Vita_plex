@@ -2194,6 +2194,26 @@ bool PlexClient::updatePlayProgress(const std::string& ratingKey, int timeMs) {
     return resp.statusCode == 200;
 }
 
+bool PlexClient::reportTimeline(const std::string& ratingKey, const std::string& key,
+                                const std::string& state, int timeMs, int durationMs) {
+    HttpClient client;
+    std::string url = buildApiUrl(
+        "/:/timeline?ratingKey=" + ratingKey +
+        "&key=" + key +
+        "&state=" + state +
+        "&time=" + std::to_string(timeMs) +
+        "&duration=" + std::to_string(durationMs));
+
+    HttpRequest req;
+    req.url = url;
+    req.method = "POST";
+    req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+    req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+
+    HttpResponse resp = client.request(req);
+    return resp.statusCode == 200;
+}
+
 bool PlexClient::markAsWatched(const std::string& ratingKey) {
     HttpClient client;
     std::string url = buildApiUrl("/:/scrobble?key=" + ratingKey + "&identifier=com.plexapp.plugins.library");

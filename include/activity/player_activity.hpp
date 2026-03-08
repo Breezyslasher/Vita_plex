@@ -85,6 +85,8 @@ private:
     int m_transcodeBaseOffsetMs = 0;  // Base offset (ms) used to start current transcode
     bool m_updatingSlider = false;  // Guard to prevent slider update from triggering seek
     brls::RepeatingTimer m_updateTimer;
+    int m_timelineCounter = 0;           // Seconds since last timeline report
+    std::string m_lastTimelineState;     // Last reported state to detect changes
 
     // Deferred MPV init: URL and title are stored here during onContentAvailable()
     // and loaded in the first updateProgress() call. This prevents GXM context

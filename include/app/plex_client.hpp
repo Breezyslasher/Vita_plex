@@ -257,6 +257,8 @@ public:
     bool getTranscodeUrl(const std::string& ratingKey, std::string& url, int offsetMs = 0);
     void stopTranscode();  // Stop the current transcode session
     bool updatePlayProgress(const std::string& ratingKey, int timeMs);
+    bool reportTimeline(const std::string& ratingKey, const std::string& key,
+                        const std::string& state, int timeMs, int durationMs);
     bool markAsWatched(const std::string& ratingKey);
     bool markAsUnwatched(const std::string& ratingKey);
 

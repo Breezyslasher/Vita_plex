@@ -373,6 +373,16 @@ void PlayerActivity::willDisappear(bool resetState) {
     // Only try to save progress if player is in a valid state
     if (player.isInitialized() && (player.isPlaying() || player.isPaused())) {
         double position = player.getPosition();
+        double duration = player.getDuration();
+
+        // Fallback duration from queue
+        if (duration <= 0 && m_isQueueMode) {
+            const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
+            if (track && track->duration > 0) {
+                duration = (double)track->duration;
+            }
+        }
+
         if (position > 0 || m_transcodeBaseOffsetMs > 0) {
             int timeMs = m_transcodeBaseOffsetMs + (int)(position * 1000);
 
@@ -381,9 +391,19 @@ void PlayerActivity::willDisappear(bool resetState) {
                 DownloadsManager::getInstance().updateProgress(m_mediaKey, timeMs);
                 DownloadsManager::getInstance().saveState();
                 brls::Logger::info("PlayerActivity: Saved local progress {}ms for {}", timeMs, m_mediaKey);
-            } else if (!m_isQueueMode && !m_mediaKey.empty()) {
-                // Save progress to Plex server (not for queue mode - tracks change)
-                PlexClient::getInstance().updatePlayProgress(m_mediaKey, timeMs);
+            } else if (!m_mediaKey.empty()) {
+                if (!m_isQueueMode) {
+                    PlexClient::getInstance().updatePlayProgress(m_mediaKey, timeMs);
+                }
+                // Report stopped timeline so Plex knows playback ended with full duration
+                std::string ratingKey = m_mediaKey;
+                if (m_isQueueMode) {
+                    const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
+                    if (track) ratingKey = track->ratingKey;
+                }
+                std::string key = "/library/metadata/" + ratingKey;
+                PlexClient::getInstance().reportTimeline(
+                    ratingKey, key, "stopped", timeMs, (int)(duration * 1000));
             }
         }
     }
@@ -894,6 +914,37 @@ void PlayerActivity::updateProgress() {
         m_controlsIdleSeconds++;
         if (m_controlsIdleSeconds >= autoHide) {
             hideControls();
+        }
+    }
+
+    // Report timeline to Plex server periodically and on state changes
+    // This sends duration so Plex shows the full track/video length
+    if (!m_mediaKey.empty() && !m_isLocalFile && !m_isDirectFile) {
+        std::string currentState = player.isPlaying() ? "playing" :
+                                   player.isPaused()  ? "paused"  : "stopped";
+
+        bool stateChanged = (currentState != m_lastTimelineState);
+        m_timelineCounter++;
+
+        if (stateChanged || m_timelineCounter >= 10) {
+            m_timelineCounter = 0;
+            m_lastTimelineState = currentState;
+
+            int timeMs = m_transcodeBaseOffsetMs + (int)(position * 1000);
+            int durationMs = (int)(duration * 1000);
+
+            std::string ratingKey = m_mediaKey;
+            // In queue mode, use the current track's ratingKey
+            if (m_isQueueMode) {
+                const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
+                if (track) {
+                    ratingKey = track->ratingKey;
+                }
+            }
+
+            std::string key = "/library/metadata/" + ratingKey;
+            PlexClient::getInstance().reportTimeline(
+                ratingKey, key, currentState, timeMs, durationMs);
         }
     }
 
