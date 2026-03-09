@@ -52,6 +52,12 @@ OverlayDialog::OverlayDialog(const std::string& title, const std::string& messag
     m_container->addView(m_buttonBox);
 
     this->addView(m_container);
+
+    // Handle back button (Circle) to dismiss instead of triggering app exit
+    this->registerAction("Back", brls::ControllerButton::BUTTON_B, [this](brls::View* view) {
+        dismiss();
+        return true;
+    });
 }
 
 OverlayDialog::~OverlayDialog() {
