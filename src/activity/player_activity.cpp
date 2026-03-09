@@ -371,88 +371,6 @@ void PlayerActivity::onContentAvailable() {
             updateRepeatIcon();
         }
 
-        // Lyrics toggle button (dedicated music-only button)
-        if (lyricsBtn) {
-            lyricsBtn->setVisibility(brls::Visibility::VISIBLE);
-            lyricsBtn->registerClickAction([this](brls::View* view) {
-                // Toggle lyrics on/off
-                m_lyricsEnabled = !m_lyricsEnabled;
-                MpvPlayer& player = MpvPlayer::getInstance();
-
-                if (m_lyricsEnabled) {
-                    // Force re-fetch streams for current track to find lyrics
-                    m_streamsLoaded = false;
-                    m_plexStreams.clear();
-                    fetchPlexStreams();
-                    int lyricsStreamId = -1;
-                    std::string lyricsCodec;
-                    for (const auto& ps : m_plexStreams) {
-                        brls::Logger::debug("PlayerActivity: Stream type={} id={} codec={} title={}",
-                                           ps.streamType, ps.id, ps.codec, ps.title);
-                        if (ps.streamType == 4 || ps.streamType == 3) {
-                            lyricsStreamId = ps.id;
-                            lyricsCodec = ps.codec;
-                            break;
-                        }
-                    }
-                    if (lyricsStreamId > 0) {
-                        // Build URL to fetch lyrics stream directly from Plex
-                        // GET /library/streams/{streamId}.{ext}
-                        std::string ext = lyricsCodec.empty() ? "lrc" : lyricsCodec;
-                        // Normalize common codec names to file extensions
-                        if (ext == "text" || ext == "txt") ext = "srt";
-                        if (ext == "lrc") ext = "lrc";  // Keep LRC as-is
-                        PlexClient& client = PlexClient::getInstance();
-                        std::string serverUrl = client.getServerUrl();
-                        // Remove trailing slash
-                        while (!serverUrl.empty() && serverUrl.back() == '/') serverUrl.pop_back();
-                        std::string lyricsUrl = serverUrl +
-                            "/library/streams/" + std::to_string(lyricsStreamId) + "." + ext;
-                        // Append auth token
-                        lyricsUrl += "?X-Plex-Token=" + client.getAuthToken();
-
-                        brls::Logger::info("PlayerActivity: Loading lyrics from: {}", lyricsUrl);
-                        player.loadSubtitleUrl(lyricsUrl);
-                        brls::Application::notify("Lyrics on");
-                    } else {
-                        // No lyrics stream available
-                        m_lyricsEnabled = false;
-                        brls::Application::notify("No lyrics available");
-                    }
-                } else {
-                    // Disable lyrics
-                    player.removeExternalSubtitles();
-                    brls::Application::notify("Lyrics off");
-                }
-
-                // Toggle lyrics display vs album art
-                if (m_lyricsEnabled) {
-                    // Hide album art, show lyrics area
-                    if (albumArt) albumArt->setVisibility(brls::Visibility::GONE);
-                    if (lyricsScroll) lyricsScroll->setVisibility(brls::Visibility::VISIBLE);
-                    if (lyricsText) lyricsText->setText("Waiting for lyrics...");
-                    m_lastLyricsText.clear();
-                } else {
-                    // Show album art, hide lyrics area
-                    if (albumArt) albumArt->setVisibility(brls::Visibility::VISIBLE);
-                    if (lyricsScroll) lyricsScroll->setVisibility(brls::Visibility::GONE);
-                    if (lyricsText) lyricsText->setText("");
-                    m_lastLyricsText.clear();
-                }
-
-                // Update icon opacity to show state
-                if (lyricsIcon) {
-                    lyricsIcon->setAlpha(m_lyricsEnabled ? 1.0f : 0.5f);
-                }
-                return true;
-            });
-            lyricsBtn->addGestureRecognizer(new brls::TapGestureRecognizer(lyricsBtn));
-
-            // Start with dimmed icon to indicate off state
-            if (lyricsIcon) {
-                lyricsIcon->setAlpha(0.5f);
-            }
-        }
         if (queueBtn) {
             queueBtn->setVisibility(brls::Visibility::VISIBLE);
             queueBtn->registerClickAction([this](brls::View* view) {
@@ -660,17 +578,10 @@ void PlayerActivity::loadFromQueue() {
     brls::Logger::info("PlayerActivity: Loading track from queue: {} - {}",
                       track->artist, track->title);
 
-    // Reset streams cache so lyrics button re-fetches for the new track
+    // Reset streams cache for the new track
     m_streamsLoaded = false;
     m_plexStreams.clear();
     m_partId = 0;
-    m_lyricsEnabled = false;
-    m_lastLyricsText.clear();
-    if (lyricsIcon) lyricsIcon->setAlpha(0.5f);
-    // Hide lyrics, show album art when switching tracks
-    if (lyricsScroll) lyricsScroll->setVisibility(brls::Visibility::GONE);
-    if (lyricsText) lyricsText->setText("");
-    if (albumArt) albumArt->setVisibility(brls::Visibility::VISIBLE);
 
     // If resuming and MPV is already playing/paused, just update the UI
     // without restarting the track (user pressed circle to return to player)
@@ -1197,21 +1108,6 @@ void PlayerActivity::updateProgress() {
         }
     }
 
-    // Update timed lyrics display (read current subtitle text from MPV)
-    if (m_lyricsEnabled && lyricsText) {
-        std::string subText = player.getProperty("sub-text");
-        if (subText != m_lastLyricsText) {
-            m_lastLyricsText = subText;
-            if (subText.empty()) {
-                lyricsText->setText("...");
-                lyricsText->setTextColor(nvgRGBA(255, 255, 255, 120));
-            } else {
-                lyricsText->setText(subText);
-                lyricsText->setTextColor(nvgRGB(255, 255, 255));
-            }
-        }
-    }
-
     // Update skip intro/credits button
     if (!m_markers.empty() && duration > 0) {
         double posMs = (m_transcodeBaseOffsetMs + position * 1000.0);
@@ -1418,7 +1314,7 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
                          (mode == TrackSelectMode::AUDIO) ? 2 : 3;
 
     // Collect Plex streams of the requested type
-    // For subtitles/lyrics, also include streamType 4 (Plex lyrics type)
+    // For subtitles, also include streamType 4
     std::vector<const PlexStream*> plexTracksOfType;
     for (const auto& ps : m_plexStreams) {
         if (ps.streamType == plexStreamType ||
@@ -1575,7 +1471,7 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         }
     }
 
-    // For subtitles (not music lyrics), add "Search for Subtitles" option at the bottom
+    // For subtitles, add "Search for Subtitles" option at the bottom
     if (mode == TrackSelectMode::SUBTITLE && !m_mediaKey.empty() && !m_isQueueMode) {
         // Add separator
         brls::Box* sep = new brls::Box();
@@ -2193,7 +2089,7 @@ void PlayerActivity::populateQueueList() {
         snprintf(titleBuf, sizeof(titleBuf), "Queue - %d tracks (%d min)%s",
                  (int)tracks.size(), totalMin, shuffled ? " - Shuffled" : "");
     }
-    queueOverlayTitle->setText(std::string(titleBuf) + "\nSwipe left to remove | Swipe up/down to reorder");
+    queueOverlayTitle->setText(std::string(titleBuf) + "\nSwipe left to remove | Drag up/down to reorder");
 
     // Temporarily unpause image loader for loading thumbnails
     bool wasPaused = ImageLoader::isPaused();
@@ -2312,7 +2208,11 @@ void PlayerActivity::populateQueueList() {
                         int currentIdx = queue.getCurrentIndex();
                         if (swipeIdx != currentIdx) {
                             queue.removeTrack(swipeIdx);
-                            populateQueueList();
+                            // Defer populateQueueList to next frame so the gesture
+                            // callback finishes before the row view is destroyed
+                            brls::sync([this]() {
+                                populateQueueList();
+                            });
                             brls::Application::notify("Removed from queue");
                         } else {
                             // Can't remove currently playing track
@@ -2331,29 +2231,40 @@ void PlayerActivity::populateQueueList() {
                 }
             }, brls::PanAxis::HORIZONTAL));
 
-        // Vertical swipe to reorder (drag up/down)
+        // Vertical swipe to reorder (drag up/down, distance determines how many positions)
         row->addGestureRecognizer(new brls::PanGestureRecognizer(
             [this, swipeIdx, displayIdx](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
                 if (status.state == brls::GestureState::END) {
                     float deltaY = status.position.y - status.startPosition.y;
-                    float threshold = 40.0f;
+                    float threshold = 40.0f;  // Minimum swipe to move at all
+                    float stepSize = 60.0f;   // Each additional 60px = one more position
                     MusicQueue& queue = MusicQueue::getInstance();
                     bool shuffled = queue.isShuffleEnabled();
                     const auto& shuffleOrder = queue.getShuffleOrder();
+                    int queueSize = queue.getQueueSize();
+
                     if (deltaY < -threshold && displayIdx > 0) {
-                        // Swiped up - move track up
-                        int toIdx = (shuffled && (displayIdx-1) < (int)shuffleOrder.size())
-                                    ? shuffleOrder[displayIdx-1] : (displayIdx-1);
+                        // Swiped up - calculate how many positions to move
+                        int positions = 1 + (int)((-deltaY - threshold) / stepSize);
+                        int targetDisplay = std::max(0, displayIdx - positions);
+                        int toIdx = (shuffled && targetDisplay < (int)shuffleOrder.size())
+                                    ? shuffleOrder[targetDisplay] : targetDisplay;
                         queue.moveTrack(swipeIdx, toIdx);
-                        populateQueueList();
-                    } else if (deltaY > threshold) {
-                        // Swiped down - move track down
-                        int maxDisplay = queue.getQueueSize() - 1;
-                        if (displayIdx < maxDisplay) {
-                            int toIdx = (shuffled && (displayIdx+1) < (int)shuffleOrder.size())
-                                        ? shuffleOrder[displayIdx+1] : (displayIdx+1);
-                            queue.moveTrack(swipeIdx, toIdx);
+                        brls::sync([this]() {
                             populateQueueList();
+                        });
+                    } else if (deltaY > threshold) {
+                        // Swiped down - calculate how many positions to move
+                        int maxDisplay = queueSize - 1;
+                        if (displayIdx < maxDisplay) {
+                            int positions = 1 + (int)((deltaY - threshold) / stepSize);
+                            int targetDisplay = std::min(maxDisplay, displayIdx + positions);
+                            int toIdx = (shuffled && targetDisplay < (int)shuffleOrder.size())
+                                        ? shuffleOrder[targetDisplay] : targetDisplay;
+                            queue.moveTrack(swipeIdx, toIdx);
+                            brls::sync([this]() {
+                                populateQueueList();
+                            });
                         }
                     }
                 }

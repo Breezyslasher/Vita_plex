@@ -92,7 +92,7 @@ private:
     bool m_isDirectFile = false;   // Playing direct file path (debug)
     bool m_isQueueMode = false;    // Playing from queue
     bool m_isResuming = false;     // Resuming existing playback (don't restart track)
-    bool m_lyricsEnabled = false;  // Lyrics subtitle toggle state for music mode
+    // lyrics support removed
     bool m_destroying = false;     // Flag to prevent timer callbacks during destruction
     bool m_loadingMedia = false;   // Flag to prevent rapid re-entry of loadMedia
     double m_pendingSeek = 0.0;    // Pending seek position (set when resuming)
@@ -183,12 +183,6 @@ private:
     BRLS_BIND(brls::Box, queueList, "player/queue_list");
     BRLS_BIND(brls::ScrollingFrame, queueScroll, "player/queue_scroll");
 
-    // Lyrics display (replaces album art when active)
-    BRLS_BIND(brls::ScrollingFrame, lyricsScroll, "player/lyrics_scroll");
-    BRLS_BIND(brls::Box, lyricsBox, "player/lyrics_box");
-    BRLS_BIND(brls::Label, lyricsText, "player/lyrics_text");
-    std::string m_lastLyricsText;  // Cache to avoid unnecessary label updates
-
     // Music-specific UI elements
     BRLS_BIND(brls::Box, musicInfo, "player/music_info");
     BRLS_BIND(brls::Label, musicTitleLabel, "player/music_title");
@@ -198,8 +192,7 @@ private:
     BRLS_BIND(brls::Image, musicPlayIcon, "player/music_play_icon");
     BRLS_BIND(brls::Box, musicPrevBtn, "player/music_prev_btn");
     BRLS_BIND(brls::Box, musicNextBtn, "player/music_next_btn");
-    BRLS_BIND(brls::Box, lyricsBtn, "player/lyrics_btn");
-    BRLS_BIND(brls::Image, lyricsIcon, "player/lyrics_icon");
+    // lyrics button removed
     BRLS_BIND(brls::Box, shuffleBtn, "player/shuffle_btn");
     BRLS_BIND(brls::Image, shuffleIcon, "player/shuffle_icon");
     BRLS_BIND(brls::Box, repeatBtn, "player/repeat_btn");
