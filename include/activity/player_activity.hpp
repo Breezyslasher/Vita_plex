@@ -11,6 +11,7 @@
 #include <vector>
 #include <memory>
 #include <atomic>
+#include <unordered_map>
 #include "app/plex_client.hpp"
 
 // Forward declarations
@@ -79,6 +80,25 @@ private:
     void populateQueueList();       // Build queue list with cover art and titles
     void playFromQueue(int index);  // Play a specific track from queue list
     bool m_queueOverlayVisible = false;
+    bool m_queuePopulating = false;     // Guard against re-entrant populateQueueList
+
+    // Queue row management - maps row views to their track indices
+    // so gesture handlers can look up current position at interaction time
+    // instead of relying on stale captured values
+    struct QueueRowData {
+        int trackIdx;
+        std::string title;
+    };
+    std::unordered_map<brls::View*, QueueRowData> m_queueRowData;
+
+    // Helper to find a row's current display position in the queue list
+    int findQueueRowDisplayIndex(brls::View* row);
+    // Swap two adjacent queue rows visually (no rebuild)
+    void swapQueueRows(int displayIdxA, int displayIdxB);
+    // Remove a single queue row from the display (no rebuild)
+    void removeQueueRow(int displayIdx);
+    // Update queue overlay title with current track count/duration
+    void updateQueueTitle();
 
     std::string m_mediaKey;
     std::string m_directFilePath;  // For direct file playback (debug) or stream URL
