@@ -38,10 +38,10 @@
         alignItems="center">
         <brls:Image
             id="player/album_art"
-            width="220"
-            height="220"
+            width="260"
+            height="260"
             scalingType="fit"
-            cornerRadius="12"
+            cornerRadius="16"
             visibility="gone"/>
     </brls:Box>
 
@@ -52,20 +52,23 @@
         axis="column"
         alignItems="center"
         visibility="gone"
-        marginBottom="6">
+        marginBottom="8"
+        marginTop="4"
+        paddingLeft="24"
+        paddingRight="24">
         <brls:Label
             id="player/music_title"
             text=""
-            fontSize="24"
+            fontSize="22"
             horizontalAlign="center"
             textColor="#FFFFFF"
-            marginBottom="2"/>
+            marginBottom="4"/>
         <brls:Label
             id="player/music_artist"
             text=""
-            fontSize="18"
+            fontSize="16"
             horizontalAlign="center"
-            textColor="#AAAAAA"/>
+            textColor="#BBBBBB"/>
     </brls:Box>
 
     <!-- Music transport controls (shuffle/prev/play/next/repeat) shown below song info for music -->
@@ -289,15 +292,33 @@
             id="player/progress"
             width="100%"
             height="40"
-            marginBottom="5"/>
+            marginBottom="2"/>
 
-        <!-- Time display -->
-        <brls:Label
-            id="player/time"
-            text="00:00 / 00:00"
-            fontSize="14"
-            horizontalAlign="center"
-            marginBottom="8"/>
+        <!-- Time display: elapsed on left, remaining on right -->
+        <brls:Box
+            width="100%"
+            axis="row"
+            justifyContent="spaceBetween"
+            alignItems="center"
+            marginBottom="8">
+            <brls:Label
+                id="player/time_elapsed"
+                text="0:00"
+                fontSize="13"
+                textColor="#AAAAAA"/>
+            <brls:Label
+                id="player/time"
+                text=""
+                fontSize="13"
+                horizontalAlign="center"
+                textColor="#888888"
+                visibility="gone"/>
+            <brls:Label
+                id="player/time_remaining"
+                text="-0:00"
+                fontSize="13"
+                textColor="#AAAAAA"/>
+        </brls:Box>
 
         <!-- Audio/Sub/Video buttons row at bottom -->
         <brls:Box
@@ -459,21 +480,24 @@
             width="100%"
             axis="column"
             alignItems="stretch"
-            backgroundColor="#E0222222"
-            cornerRadius="12"
-            paddingTop="12"
-            paddingBottom="12"
-            paddingLeft="16"
-            paddingRight="16">
+            backgroundColor="#E8181818"
+            cornerRadius="16"
+            paddingTop="14"
+            paddingBottom="14"
+            paddingLeft="18"
+            paddingRight="18"
+            marginLeft="8"
+            marginRight="8"
+            marginBottom="8">
 
             <!-- Queue title -->
             <brls:Label
                 id="player/queue_overlay_title"
                 text="Queue"
-                fontSize="20"
-                textColor="#FFFFFF"
+                fontSize="18"
+                textColor="#DDDDDD"
                 horizontalAlign="center"
-                marginBottom="8"/>
+                marginBottom="10"/>
 
             <!-- Queue track list container (scrollable) -->
             <brls:ScrollingFrame

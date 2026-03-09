@@ -149,11 +149,14 @@ private:
     BRLS_BIND(brls::Label, titleLabel, "player/title");
     BRLS_BIND(brls::Label, artistLabel, "player/artist");
     BRLS_BIND(brls::Label, timeLabel, "player/time");
+    BRLS_BIND(brls::Label, timeElapsedLabel, "player/time_elapsed");
+    BRLS_BIND(brls::Label, timeRemainingLabel, "player/time_remaining");
     BRLS_BIND(brls::Label, queueLabel, "player/queue_info");
     BRLS_BIND(brls::Slider, progressSlider, "player/progress");
     BRLS_BIND(brls::Box, controlsBox, "player/controls");
     BRLS_BIND(brls::Box, centerControls, "player/center_controls");
     BRLS_BIND(brls::Image, photoImage, "player/photo");
+    BRLS_BIND(brls::Box, albumArtContainer, "player/album_art_container");
     BRLS_BIND(brls::Image, albumArt, "player/album_art");
     BRLS_BIND(VideoView, videoView, "player/video");
     BRLS_BIND(brls::Image, playPauseIcon, "player/play_pause_icon");
