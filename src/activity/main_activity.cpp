@@ -8,6 +8,7 @@
 #include "view/library_section_tab.hpp"
 #include "view/search_tab.hpp"
 #include "view/settings_tab.hpp"
+#include "view/debug_tab.hpp"
 #include "view/livetv_tab.hpp"
 #include "view/downloads_tab.hpp"
 #include "view/music_tab.hpp"
@@ -142,8 +143,9 @@ void MainActivity::onContentAvailable() {
         // Downloads tab (always available)
         tabFrame->addTab("Downloads", []() { return new DownloadsTab(); });
 
-        // Settings always at the bottom
+        // Debug and Settings always at the bottom
         tabFrame->addSeparator();
+        tabFrame->addTab("Debug", []() { return new DebugTab(); });
         tabFrame->addTab("Settings", []() { return new SettingsTab(); });
 
         // Focus first tab
