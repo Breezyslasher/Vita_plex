@@ -33,6 +33,7 @@ private:
     // Playlist management
     void showCreatePlaylistDialog();
     void showPlaylistOptionsDialog(const Playlist& playlist);
+    void showAlbumContextMenu(const MediaItem& album);
     void playPlaylistWithQueue(const std::string& playlistId, int startIndex = 0);
     void refreshPlaylists();
 

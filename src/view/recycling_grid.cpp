@@ -30,6 +30,10 @@ void RecyclingGrid::setOnItemSelected(std::function<void(const MediaItem&)> call
     m_onItemSelected = callback;
 }
 
+void RecyclingGrid::setOnItemStartAction(std::function<void(const MediaItem&)> callback) {
+    m_onItemStartAction = callback;
+}
+
 void RecyclingGrid::rebuildGrid() {
     m_contentBox->clearViews();
 
@@ -58,6 +62,18 @@ void RecyclingGrid::rebuildGrid() {
             return true;
         });
         cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+
+        // Register START button action for album items
+        if (m_items[i].mediaType == MediaType::MUSIC_ALBUM && m_onItemStartAction) {
+            MediaItem capturedItem = m_items[i];
+            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                [this, capturedItem](brls::View* view) {
+                    if (m_onItemStartAction) {
+                        m_onItemStartAction(capturedItem);
+                    }
+                    return true;
+                });
+        }
 
         currentRow->addView(cell);
 

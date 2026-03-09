@@ -25,6 +25,7 @@ private:
     void loadContent(const std::string& sectionKey);
     void onSectionSelected(const LibrarySection& section);
     void onItemSelected(const MediaItem& item);
+    void showAlbumContextMenu(const MediaItem& album);
 
     brls::Label* m_titleLabel = nullptr;
     brls::HScrollingFrame* m_sectionsScroll = nullptr;
