@@ -412,8 +412,32 @@ void PlayerActivity::onContentAvailable() {
                         lyricsUrl += "?X-Plex-Token=" + client.getAuthToken();
 
                         brls::Logger::info("PlayerActivity: Loading lyrics from: {}", lyricsUrl);
-                        player.loadSubtitleUrl(lyricsUrl);
-                        brls::Application::notify("Lyrics on");
+
+                        // Download lyrics file locally first - MPV on Vita can't
+                        // fetch remote subtitle files over HTTPS directly
+                        std::string localLyricsPath = "ux0:data/vitaplex/lyrics." + ext;
+                        HttpClient http;
+                        std::string lyricsData;
+                        if (http.get(lyricsUrl, lyricsData) && !lyricsData.empty()) {
+                            std::ofstream lyricsFile(localLyricsPath, std::ios::binary | std::ios::trunc);
+                            if (lyricsFile.is_open()) {
+                                lyricsFile.write(lyricsData.data(), lyricsData.size());
+                                lyricsFile.close();
+                                brls::Logger::info("PlayerActivity: Saved lyrics to {}", localLyricsPath);
+                                player.loadSubtitleUrl(localLyricsPath);
+                            } else {
+                                brls::Logger::error("PlayerActivity: Failed to write lyrics file");
+                                m_lyricsEnabled = false;
+                                brls::Application::notify("Failed to save lyrics");
+                            }
+                        } else {
+                            brls::Logger::error("PlayerActivity: Failed to download lyrics from server");
+                            m_lyricsEnabled = false;
+                            brls::Application::notify("Failed to download lyrics");
+                        }
+                        if (m_lyricsEnabled) {
+                            brls::Application::notify("Lyrics on");
+                        }
                     } else {
                         // No lyrics stream available
                         m_lyricsEnabled = false;
@@ -2312,7 +2336,11 @@ void PlayerActivity::populateQueueList() {
                         int currentIdx = queue.getCurrentIndex();
                         if (swipeIdx != currentIdx) {
                             queue.removeTrack(swipeIdx);
-                            populateQueueList();
+                            // Defer populateQueueList to next frame so the gesture
+                            // callback finishes before the row view is destroyed
+                            brls::sync([this]() {
+                                populateQueueList();
+                            });
                             brls::Application::notify("Removed from queue");
                         } else {
                             // Can't remove currently playing track
@@ -2345,7 +2373,10 @@ void PlayerActivity::populateQueueList() {
                         int toIdx = (shuffled && (displayIdx-1) < (int)shuffleOrder.size())
                                     ? shuffleOrder[displayIdx-1] : (displayIdx-1);
                         queue.moveTrack(swipeIdx, toIdx);
-                        populateQueueList();
+                        // Defer to next frame to avoid use-after-free
+                        brls::sync([this]() {
+                            populateQueueList();
+                        });
                     } else if (deltaY > threshold) {
                         // Swiped down - move track down
                         int maxDisplay = queue.getQueueSize() - 1;
@@ -2353,7 +2384,10 @@ void PlayerActivity::populateQueueList() {
                             int toIdx = (shuffled && (displayIdx+1) < (int)shuffleOrder.size())
                                         ? shuffleOrder[displayIdx+1] : (displayIdx+1);
                             queue.moveTrack(swipeIdx, toIdx);
-                            populateQueueList();
+                            // Defer to next frame to avoid use-after-free
+                            brls::sync([this]() {
+                                populateQueueList();
+                            });
                         }
                     }
                 }
