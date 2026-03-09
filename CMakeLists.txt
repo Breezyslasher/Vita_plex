@@ -88,6 +88,7 @@ set(APP_SOURCES
     src/view/downloads_tab.cpp
     src/view/music_tab.cpp
     src/view/progress_dialog.cpp
+    src/view/overlay_dialog.cpp
     src/view/horizontal_scroll_row.cpp
 
     # Player

@@ -1,10 +1,11 @@
 /**
  * VitaPlex - Debug Tab implementation
- * UI test tab with 15+ different dialog/notification style demos
+ * UI test tab with 25 different dialog/notification/overlay style demos
  */
 
 #include "view/debug_tab.hpp"
 #include "view/progress_dialog.hpp"
+#include "view/overlay_dialog.hpp"
 
 namespace vitaplex {
 
@@ -24,6 +25,8 @@ DebugTab::DebugTab() {
 
     createDialogSection();
     createNotificationSection();
+    createOverlayDialogSection();
+    createProgressDialogSection();
     createCustomDialogSection();
 
     m_scrollView->setContentView(m_contentBox);
@@ -154,7 +157,7 @@ void DebugTab::createNotificationSection() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// SECTION 3: Custom-Styled Dialogs
+// SECTION 5: Custom-Styled Dialogs (Info)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 void DebugTab::createCustomDialogSection() {
@@ -734,6 +737,173 @@ void DebugTab::showMultiNotifications() {
     brls::Application::notify("Notification 3 of 5: Processing...");
     brls::Application::notify("Notification 4 of 5: Almost done...");
     brls::Application::notify("Notification 5 of 5: Complete!");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 3: Semi-Transparent Overlay Dialogs
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void DebugTab::createOverlayDialogSection() {
+    auto* header = new brls::Header();
+    header->setTitle("Semi-Transparent Overlay Dialogs");
+    m_contentBox->addView(header);
+
+    auto* infoLabel = new brls::Label();
+    infoLabel->setText("Overlay dialogs with configurable backdrop and content transparency");
+    infoLabel->setFontSize(14);
+    infoLabel->setMarginLeft(16);
+    infoLabel->setMarginTop(4);
+    infoLabel->setMarginBottom(12);
+    m_contentBox->addView(infoLabel);
+
+    // 19. Light overlay (low backdrop opacity)
+    m_contentBox->addView(makeButton("19. Light Overlay", "25% backdrop opacity", [this]() {
+        showLightOverlay();
+    }));
+
+    // 20. Medium overlay (balanced backdrop)
+    m_contentBox->addView(makeButton("20. Medium Overlay", "50% backdrop opacity", [this]() {
+        showMediumOverlay();
+    }));
+
+    // 21. Heavy overlay (strong backdrop)
+    m_contentBox->addView(makeButton("21. Heavy Overlay", "80% backdrop opacity", [this]() {
+        showHeavyOverlay();
+    }));
+
+    // 22. Glass-effect overlay (semi-transparent content box)
+    m_contentBox->addView(makeButton("22. Glass Effect Overlay", "Translucent content panel", [this]() {
+        showGlassOverlay();
+    }));
+
+    // 23. Fully transparent content overlay
+    m_contentBox->addView(makeButton("23. Transparent Content Overlay", "Invisible content bg, visible backdrop", [this]() {
+        showTransparentContentOverlay();
+    }));
+}
+
+// 19. Light Overlay — barely visible backdrop, content peeks through
+void DebugTab::showLightOverlay() {
+    auto* overlay = new OverlayDialog("Light Overlay",
+        "The backdrop behind this dialog is only 25% opaque.\n"
+        "You can still see the content underneath clearly.",
+        64);  // 25% of 255
+    overlay->addButton("Dismiss", [overlay]() {
+        overlay->dismiss();
+    });
+    overlay->show();
+}
+
+// 20. Medium Overlay — balanced 50% backdrop
+void DebugTab::showMediumOverlay() {
+    auto* overlay = new OverlayDialog("Medium Overlay",
+        "The backdrop is 50% opaque, providing a balanced\n"
+        "dimming effect while still showing content below.",
+        128);  // 50% of 255
+    overlay->addButton("Cancel", [overlay]() {
+        overlay->dismiss();
+    });
+    overlay->addButton("OK", [overlay]() {
+        overlay->dismiss();
+        brls::Application::notify("Medium overlay dismissed");
+    });
+    overlay->show();
+}
+
+// 21. Heavy Overlay — strong 80% dimming
+void DebugTab::showHeavyOverlay() {
+    auto* overlay = new OverlayDialog("Heavy Overlay",
+        "This backdrop is 80% opaque, heavily dimming\n"
+        "the background to focus attention on the dialog.",
+        204);  // 80% of 255
+    overlay->addButton("Close", [overlay]() {
+        overlay->dismiss();
+    });
+    overlay->show();
+}
+
+// 22. Glass Effect — semi-transparent content panel + medium backdrop
+void DebugTab::showGlassOverlay() {
+    auto* overlay = new OverlayDialog("Glass Effect",
+        "Both the backdrop AND the content panel are\n"
+        "semi-transparent, creating a frosted glass look.\n"
+        "The content box is 60% opaque.",
+        100);  // ~40% backdrop
+    overlay->setContentAlpha(153);  // 60% content panel opacity
+    overlay->addButton("Cancel", [overlay]() {
+        overlay->dismiss();
+    });
+    overlay->addButton("Accept", [overlay]() {
+        overlay->dismiss();
+        brls::Application::notify("Glass overlay accepted");
+    });
+    overlay->show();
+}
+
+// 23. Transparent Content — invisible content bg, text floats over backdrop
+void DebugTab::showTransparentContentOverlay() {
+    auto* overlay = new OverlayDialog("Floating Text",
+        "The content panel background is fully transparent.\n"
+        "The text appears to float directly over the\n"
+        "dimmed backdrop with no visible container.",
+        160);  // ~63% backdrop
+    overlay->setContentAlpha(0);  // Fully transparent content bg
+    overlay->addButton("OK", [overlay]() {
+        overlay->dismiss();
+    });
+    overlay->show();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 4: ProgressDialog Demos
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void DebugTab::createProgressDialogSection() {
+    auto* header = new brls::Header();
+    header->setTitle("ProgressDialog Component");
+    m_contentBox->addView(header);
+
+    auto* infoLabel = new brls::Label();
+    infoLabel->setText("Demos of the ProgressDialog used for connections and downloads");
+    infoLabel->setFontSize(14);
+    infoLabel->setMarginLeft(16);
+    infoLabel->setMarginTop(4);
+    infoLabel->setMarginBottom(12);
+    m_contentBox->addView(infoLabel);
+
+    // 24. ProgressDialog — Connecting style
+    m_contentBox->addView(makeButton("24. ProgressDialog (Connecting)", "Server connection progress", [this]() {
+        showProgressDialogConnecting();
+    }));
+
+    // 25. ProgressDialog — Download style
+    m_contentBox->addView(makeButton("25. ProgressDialog (Download)", "Download with speed and size info", [this]() {
+        showProgressDialogDownload();
+    }));
+}
+
+// 24. ProgressDialog — Connecting style with attempt counter
+void DebugTab::showProgressDialogConnecting() {
+    auto* dialog = new ProgressDialog("Connecting to Server");
+    dialog->setStatus("Connecting to Living Room Plex...");
+    dialog->setAttempt(1, 3);
+    dialog->setProgress(0.35f);
+    dialog->setCancelCallback([dialog]() {
+        brls::Application::notify("Connection cancelled");
+    });
+    dialog->show();
+}
+
+// 25. ProgressDialog — Download style with progress and speed
+void DebugTab::showProgressDialogDownload() {
+    auto* dialog = new ProgressDialog("Downloading");
+    dialog->setStatus("45.2 / 128.0 MB");
+    dialog->setProgress(0.35f);
+    dialog->setSpeed(2621440);  // 2.5 MB/s
+    dialog->setCancelCallback([dialog]() {
+        brls::Application::notify("Download cancelled");
+    });
+    dialog->show();
 }
 
 } // namespace vitaplex

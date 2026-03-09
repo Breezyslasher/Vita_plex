@@ -17,6 +17,8 @@ private:
     void createDialogSection();
     void createNotificationSection();
     void createCustomDialogSection();
+    void createOverlayDialogSection();
+    void createProgressDialogSection();
 
     brls::ScrollingFrame* m_scrollView = nullptr;
     brls::Box* m_contentBox = nullptr;
@@ -42,6 +44,17 @@ private:
     void showBasicNotification();
     void showLongNotification();
     void showMultiNotifications();
+
+    // Semi-transparent overlay demos
+    void showLightOverlay();
+    void showMediumOverlay();
+    void showHeavyOverlay();
+    void showGlassOverlay();
+    void showTransparentContentOverlay();
+
+    // ProgressDialog demos
+    void showProgressDialogConnecting();
+    void showProgressDialogDownload();
 };
 
 } // namespace vitaplex
