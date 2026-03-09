@@ -2296,7 +2296,7 @@ void PlayerActivity::populateQueueList() {
                 if (status.state == brls::GestureState::UNSURE || status.state == brls::GestureState::START) {
                     // Show visual feedback - translate row horizontally
                     float deltaX = status.position.x - status.startPosition.x;
-                    row->setTranslateX(deltaX);
+                    row->setTranslationX(deltaX);
                     // Fade out as it slides away
                     float alpha = 1.0f - std::min(1.0f, std::abs(deltaX) / 200.0f);
                     row->setAlpha(std::max(0.2f, alpha));
@@ -2313,17 +2313,17 @@ void PlayerActivity::populateQueueList() {
                             brls::Application::notify("Removed from queue");
                         } else {
                             // Can't remove currently playing track
-                            row->setTranslateX(0);
+                            row->setTranslationX(0);
                             row->setAlpha(1.0f);
                             brls::Application::notify("Can't remove current track");
                         }
                     } else {
                         // Snap back
-                        row->setTranslateX(0);
+                        row->setTranslationX(0);
                         row->setAlpha(1.0f);
                     }
                 } else if (status.state == brls::GestureState::FAILED) {
-                    row->setTranslateX(0);
+                    row->setTranslationX(0);
                     row->setAlpha(1.0f);
                 }
             }, brls::PanAxis::HORIZONTAL));
