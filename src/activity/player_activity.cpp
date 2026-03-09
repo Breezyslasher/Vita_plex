@@ -422,6 +422,21 @@ void PlayerActivity::onContentAvailable() {
                     brls::Application::notify("Lyrics off");
                 }
 
+                // Toggle lyrics display vs album art
+                if (m_lyricsEnabled) {
+                    // Hide album art, show lyrics area
+                    if (albumArt) albumArt->setVisibility(brls::Visibility::GONE);
+                    if (lyricsScroll) lyricsScroll->setVisibility(brls::Visibility::VISIBLE);
+                    if (lyricsText) lyricsText->setText("Waiting for lyrics...");
+                    m_lastLyricsText.clear();
+                } else {
+                    // Show album art, hide lyrics area
+                    if (albumArt) albumArt->setVisibility(brls::Visibility::VISIBLE);
+                    if (lyricsScroll) lyricsScroll->setVisibility(brls::Visibility::GONE);
+                    if (lyricsText) lyricsText->setText("");
+                    m_lastLyricsText.clear();
+                }
+
                 // Update icon opacity to show state
                 if (lyricsIcon) {
                     lyricsIcon->setAlpha(m_lyricsEnabled ? 1.0f : 0.5f);
@@ -647,7 +662,12 @@ void PlayerActivity::loadFromQueue() {
     m_plexStreams.clear();
     m_partId = 0;
     m_lyricsEnabled = false;
+    m_lastLyricsText.clear();
     if (lyricsIcon) lyricsIcon->setAlpha(0.5f);
+    // Hide lyrics, show album art when switching tracks
+    if (lyricsScroll) lyricsScroll->setVisibility(brls::Visibility::GONE);
+    if (lyricsText) lyricsText->setText("");
+    if (albumArt) albumArt->setVisibility(brls::Visibility::VISIBLE);
 
     // If resuming and MPV is already playing/paused, just update the UI
     // without restarting the track (user pressed circle to return to player)
@@ -1170,6 +1190,21 @@ void PlayerActivity::updateProgress() {
                 snprintf(timeStr, sizeof(timeStr), "%02d:%02d / %02d:%02d",
                          posMin, posSec, durMin, durSec);
                 timeLabel->setText(timeStr);
+            }
+        }
+    }
+
+    // Update timed lyrics display (read current subtitle text from MPV)
+    if (m_lyricsEnabled && lyricsText) {
+        std::string subText = player.getProperty("sub-text");
+        if (subText != m_lastLyricsText) {
+            m_lastLyricsText = subText;
+            if (subText.empty()) {
+                lyricsText->setText("...");
+                lyricsText->setTextColor(nvgRGBA(255, 255, 255, 120));
+            } else {
+                lyricsText->setText(subText);
+                lyricsText->setTextColor(nvgRGB(255, 255, 255));
             }
         }
     }
@@ -2155,7 +2190,7 @@ void PlayerActivity::populateQueueList() {
         snprintf(titleBuf, sizeof(titleBuf), "Queue - %d tracks (%d min)%s",
                  (int)tracks.size(), totalMin, shuffled ? " - Shuffled" : "");
     }
-    queueOverlayTitle->setText(titleBuf);
+    queueOverlayTitle->setText(std::string(titleBuf) + "\nSwipe left to remove | Swipe up/down to reorder");
 
     // Temporarily unpause image loader for loading thumbnails
     bool wasPaused = ImageLoader::isPaused();
@@ -2252,6 +2287,74 @@ void PlayerActivity::populateQueueList() {
             durLbl->setMarginLeft(8);
             row->addView(durLbl);
         }
+
+        // Swipe left to remove track from queue
+        int swipeIdx = trackIdx;
+        int displayIdx = i;
+        row->addGestureRecognizer(new brls::PanGestureRecognizer(
+            [this, swipeIdx, displayIdx, row](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
+                if (status.state == brls::GestureState::UNSURE || status.state == brls::GestureState::START) {
+                    // Show visual feedback - translate row horizontally
+                    float deltaX = status.position.x - status.startPosition.x;
+                    row->setTranslateX(deltaX);
+                    // Fade out as it slides away
+                    float alpha = 1.0f - std::min(1.0f, std::abs(deltaX) / 200.0f);
+                    row->setAlpha(std::max(0.2f, alpha));
+                } else if (status.state == brls::GestureState::END) {
+                    float deltaX = status.position.x - status.startPosition.x;
+                    float threshold = 120.0f;
+                    if (deltaX < -threshold) {
+                        // Swiped left far enough - remove track
+                        MusicQueue& queue = MusicQueue::getInstance();
+                        int currentIdx = queue.getCurrentIndex();
+                        if (swipeIdx != currentIdx) {
+                            queue.removeTrack(swipeIdx);
+                            populateQueueList();
+                            brls::Application::notify("Removed from queue");
+                        } else {
+                            // Can't remove currently playing track
+                            row->setTranslateX(0);
+                            row->setAlpha(1.0f);
+                            brls::Application::notify("Can't remove current track");
+                        }
+                    } else {
+                        // Snap back
+                        row->setTranslateX(0);
+                        row->setAlpha(1.0f);
+                    }
+                } else if (status.state == brls::GestureState::FAILED) {
+                    row->setTranslateX(0);
+                    row->setAlpha(1.0f);
+                }
+            }, brls::PanAxis::HORIZONTAL));
+
+        // Vertical swipe to reorder (drag up/down)
+        row->addGestureRecognizer(new brls::PanGestureRecognizer(
+            [this, swipeIdx, displayIdx](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
+                if (status.state == brls::GestureState::END) {
+                    float deltaY = status.position.y - status.startPosition.y;
+                    float threshold = 40.0f;
+                    MusicQueue& queue = MusicQueue::getInstance();
+                    bool shuffled = queue.isShuffleEnabled();
+                    const auto& shuffleOrder = queue.getShuffleOrder();
+                    if (deltaY < -threshold && displayIdx > 0) {
+                        // Swiped up - move track up
+                        int toIdx = (shuffled && (displayIdx-1) < (int)shuffleOrder.size())
+                                    ? shuffleOrder[displayIdx-1] : (displayIdx-1);
+                        queue.moveTrack(swipeIdx, toIdx);
+                        populateQueueList();
+                    } else if (deltaY > threshold) {
+                        // Swiped down - move track down
+                        int maxDisplay = queue.getQueueSize() - 1;
+                        if (displayIdx < maxDisplay) {
+                            int toIdx = (shuffled && (displayIdx+1) < (int)shuffleOrder.size())
+                                        ? shuffleOrder[displayIdx+1] : (displayIdx+1);
+                            queue.moveTrack(swipeIdx, toIdx);
+                            populateQueueList();
+                        }
+                    }
+                }
+            }, brls::PanAxis::VERTICAL));
 
         // Click handler to play this track (use actual queue index, not display position)
         int clickIdx = trackIdx;

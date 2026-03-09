@@ -183,6 +183,12 @@ private:
     BRLS_BIND(brls::Box, queueList, "player/queue_list");
     BRLS_BIND(brls::ScrollingFrame, queueScroll, "player/queue_scroll");
 
+    // Lyrics display (replaces album art when active)
+    BRLS_BIND(brls::ScrollingFrame, lyricsScroll, "player/lyrics_scroll");
+    BRLS_BIND(brls::Box, lyricsBox, "player/lyrics_box");
+    BRLS_BIND(brls::Label, lyricsText, "player/lyrics_text");
+    std::string m_lastLyricsText;  // Cache to avoid unnecessary label updates
+
     // Music-specific UI elements
     BRLS_BIND(brls::Box, musicInfo, "player/music_info");
     BRLS_BIND(brls::Label, musicTitleLabel, "player/music_title");
