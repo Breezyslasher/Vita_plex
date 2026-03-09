@@ -1396,45 +1396,22 @@ void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
 void MediaDetailView::toggleDescription() {
     if (!m_summaryLabel || m_fullDescription.empty()) return;
 
-    // Show full description in a scrollable dialog popup
-    auto* dialog = new brls::Dialog("Description");
+    m_descriptionExpanded = !m_descriptionExpanded;
 
-    auto* contentBox = new brls::Box();
-    contentBox->setAxis(brls::Axis::COLUMN);
-    contentBox->setPadding(20);
-
-    // Scrollable frame for long text
-    auto* scrollFrame = new brls::ScrollingFrame();
-    scrollFrame->setWidth(400);
-    scrollFrame->setHeight(300);
-
-    auto* textBox = new brls::Box();
-    textBox->setAxis(brls::Axis::COLUMN);
-    textBox->setAlignItems(brls::AlignItems::STRETCH);
-
-    auto* descLabel = new brls::Label();
-    descLabel->setText(m_fullDescription);
-    descLabel->setFontSize(15);
-    descLabel->setFocusable(true);
-    textBox->addView(descLabel);
-
-    scrollFrame->setContentView(textBox);
-    contentBox->addView(scrollFrame);
-
-    // Close button
-    auto* closeBtn = new brls::Button();
-    closeBtn->setText("Close");
-    closeBtn->setHeight(44);
-    closeBtn->setMarginTop(12);
-    closeBtn->registerClickAction([dialog](brls::View*) {
-        dialog->dismiss();
-        return true;
-    });
-    closeBtn->addGestureRecognizer(new brls::TapGestureRecognizer(closeBtn));
-    contentBox->addView(closeBtn);
-
-    dialog->addView(contentBox);
-    brls::Application::pushActivity(new brls::Activity(dialog));
+    if (m_descriptionExpanded) {
+        // Expand inline: show full text, set max height so it scrolls within the page
+        m_summaryLabel->setText(m_fullDescription + "\n\n[L] Collapse");
+        // Allow the label to grow tall - the parent ScrollingFrame handles scrolling
+        m_summaryLabel->setMarginBottom(20);
+    } else {
+        // Collapse back to truncated preview
+        std::string truncatedDesc = m_fullDescription;
+        if (truncatedDesc.length() > 80) {
+            truncatedDesc = truncatedDesc.substr(0, 77) + "... [L]";
+        }
+        m_summaryLabel->setText(truncatedDesc);
+        m_summaryLabel->setMarginBottom(20);
+    }
 }
 
 } // namespace vitaplex
