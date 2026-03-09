@@ -44,35 +44,6 @@
             cornerRadius="16"
             visibility="gone"/>
 
-        <!-- Lyrics display (replaces album art when lyrics are active) -->
-        <brls:ScrollingFrame
-            id="player/lyrics_scroll"
-            width="100%"
-            height="100%"
-            positionType="absolute"
-            positionTop="0"
-            positionLeft="0"
-            positionRight="0"
-            positionBottom="0"
-            visibility="gone">
-            <brls:Box
-                id="player/lyrics_box"
-                width="100%"
-                axis="column"
-                justifyContent="center"
-                alignItems="center"
-                paddingLeft="30"
-                paddingRight="30"
-                paddingTop="20"
-                paddingBottom="20">
-                <brls:Label
-                    id="player/lyrics_text"
-                    text=""
-                    fontSize="22"
-                    horizontalAlign="center"
-                    textColor="#FFFFFF"/>
-            </brls:Box>
-        </brls:ScrollingFrame>
     </brls:Box>
 
     <!-- Music info area: title + artist between album art and play controls -->
@@ -435,26 +406,6 @@
                     width="34"
                     height="34"
                     image="@res/icons/format-list-group.png"
-                    scalingType="fit"/>
-            </brls:Box>
-
-            <!-- Lyrics toggle button (music mode only) -->
-            <brls:Box
-                id="player/lyrics_btn"
-                width="64"
-                height="64"
-                axis="row"
-                justifyContent="center"
-                alignItems="center"
-                cornerRadius="32"
-                marginLeft="16"
-                focusable="true"
-                visibility="gone">
-                <brls:Image
-                    id="player/lyrics_icon"
-                    width="34"
-                    height="34"
-                    image="@res/icons/book-open-page-variant.png"
                     scalingType="fit"/>
             </brls:Box>
 
