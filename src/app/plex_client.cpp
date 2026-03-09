@@ -896,7 +896,7 @@ bool PlexClient::fetchArtistHubs(const std::string& ratingKey, std::vector<Hub>&
     brls::Logger::debug("fetchArtistHubs: ratingKey={}", ratingKey);
 
     HttpClient client;
-    std::string url = buildApiUrl("/hubs/metadata/" + ratingKey);
+    std::string url = buildApiUrl("/hubs/metadata/" + ratingKey + "?count=999");
 
     HttpRequest req;
     req.url = url;
@@ -989,6 +989,74 @@ bool PlexClient::fetchArtistHubs(const std::string& ratingKey, std::vector<Hub>&
     }
 
     brls::Logger::info("Found {} artist hubs", hubs.size());
+
+    // For hubs with more items available, fetch the full list using the hub's key
+    for (auto& hub : hubs) {
+        if (!hub.more || hub.key.empty()) continue;
+
+        brls::Logger::info("Fetching full hub '{}' ({} items so far, more=true)", hub.title, hub.items.size());
+
+        HttpClient hubClient;
+        std::string hubUrl = buildApiUrl(hub.key);
+        HttpRequest hubReq;
+        hubReq.url = hubUrl;
+        hubReq.method = "GET";
+        hubReq.headers["Accept"] = "application/json";
+        HttpResponse hubResp = hubClient.request(hubReq);
+
+        if (hubResp.statusCode != 200) {
+            brls::Logger::error("Failed to fetch full hub '{}': {}", hub.title, hubResp.statusCode);
+            continue;
+        }
+
+        // Parse all items from the full hub response
+        std::vector<MediaItem> fullItems;
+        size_t itemPos = 0;
+        while ((itemPos = hubResp.body.find("\"ratingKey\"", itemPos)) != std::string::npos) {
+            size_t itemStart = hubResp.body.rfind('{', itemPos);
+            if (itemStart == std::string::npos) {
+                itemPos++;
+                continue;
+            }
+
+            int itemBraceCount = 1;
+            size_t itemEnd = itemStart + 1;
+            while (itemBraceCount > 0 && itemEnd < hubResp.body.length()) {
+                if (hubResp.body[itemEnd] == '{') itemBraceCount++;
+                else if (hubResp.body[itemEnd] == '}') itemBraceCount--;
+                itemEnd++;
+            }
+
+            std::string itemObj = hubResp.body.substr(itemStart, itemEnd - itemStart);
+
+            MediaItem item;
+            item.ratingKey = extractJsonValue(itemObj, "ratingKey");
+            item.title = extractJsonValue(itemObj, "title");
+            item.thumb = extractJsonValue(itemObj, "thumb");
+            item.art = extractJsonValue(itemObj, "art");
+            item.type = extractJsonValue(itemObj, "type");
+            item.mediaType = parseMediaType(item.type);
+            item.year = extractJsonInt(itemObj, "year");
+            item.summary = extractJsonValue(itemObj, "summary");
+            item.leafCount = extractJsonInt(itemObj, "leafCount");
+            item.viewedLeafCount = extractJsonInt(itemObj, "viewedLeafCount");
+            item.subtype = extractJsonValue(itemObj, "subtype");
+            item.parentTitle = extractJsonValue(itemObj, "parentTitle");
+            item.grandparentTitle = extractJsonValue(itemObj, "grandparentTitle");
+
+            if (!item.ratingKey.empty() && !item.title.empty()) {
+                fullItems.push_back(item);
+            }
+
+            itemPos = itemEnd;
+        }
+
+        if (!fullItems.empty()) {
+            brls::Logger::info("Hub '{}': replaced {} items with {} from full fetch", hub.title, hub.items.size(), fullItems.size());
+            hub.items = std::move(fullItems);
+        }
+    }
+
     return true;
 }
 
