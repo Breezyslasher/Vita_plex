@@ -478,13 +478,66 @@ void MediaDetailView::loadMusicCategories() {
     asyncRun([this]() {
         PlexClient& client = PlexClient::getInstance();
 
+        // Use the hubs API which returns albums pre-grouped by type
+        // (Albums, Singles & EPs, Compilations, Appears On, etc.)
+        std::vector<Hub> hubs;
+        bool useHubs = client.fetchArtistHubs(m_item.ratingKey, hubs);
+
+        if (useHubs && !hubs.empty()) {
+            brls::Logger::info("Artist hubs: {} categories", hubs.size());
+
+            brls::sync([this, hubs]() {
+                m_musicCategoriesBox->clearViews();
+
+                for (const auto& hub : hubs) {
+                    // Skip non-album hubs (e.g. "Related Artists")
+                    // Keep album types: album, single, ep, compilation, etc.
+                    bool isAlbumHub = false;
+                    for (const auto& item : hub.items) {
+                        if (item.mediaType == MediaType::MUSIC_ALBUM) {
+                            isAlbumHub = true;
+                            break;
+                        }
+                    }
+                    if (!isAlbumHub) continue;
+
+                    brls::Box* content = nullptr;
+                    createMediaRow(hub.title + " (" + std::to_string(hub.items.size()) + ")", &content);
+
+                    for (const auto& item : hub.items) {
+                        auto* cell = new MediaItemCell();
+                        cell->setItem(item);
+                        cell->setMarginRight(10);
+
+                        MediaItem capturedItem = item;
+                        cell->registerClickAction([this, capturedItem](brls::View* view) {
+                            auto* detailView = new MediaDetailView(capturedItem);
+                            brls::Application::pushActivity(new brls::Activity(detailView));
+                            return true;
+                        });
+                        cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+
+                        cell->registerAction("Options", brls::ControllerButton::BUTTON_START, [this, capturedItem](brls::View* view) {
+                            showAlbumContextMenu(capturedItem);
+                            return true;
+                        });
+
+                        content->addView(cell);
+                    }
+                }
+            });
+            return;
+        }
+
+        // Fallback: use children endpoint and group by subtype
+        brls::Logger::info("Artist hubs unavailable, falling back to children grouping");
+
         std::vector<MediaItem> allAlbums;
         if (!client.fetchChildren(m_item.ratingKey, allAlbums)) {
             brls::Logger::error("Failed to fetch albums for artist");
             return;
         }
 
-        // Categorize albums by subtype
         std::vector<MediaItem> albums;
         std::vector<MediaItem> singles;
         std::vector<MediaItem> eps;
@@ -494,7 +547,6 @@ void MediaDetailView::loadMusicCategories() {
 
         for (const auto& album : allAlbums) {
             std::string subtype = album.subtype;
-            // Convert to lowercase for comparison
             for (char& c : subtype) c = tolower(c);
 
             if (subtype == "single") {
@@ -512,11 +564,6 @@ void MediaDetailView::loadMusicCategories() {
             }
         }
 
-        brls::Logger::info("Music categories: {} albums, {} singles, {} EPs, {} compilations, {} soundtracks, {} other",
-                           albums.size(), singles.size(), eps.size(),
-                           compilations.size(), soundtracks.size(), other.size());
-
-        // Update UI on main thread
         brls::sync([this, albums, singles, eps, compilations, soundtracks, other]() {
             m_musicCategoriesBox->clearViews();
 
@@ -524,7 +571,7 @@ void MediaDetailView::loadMusicCategories() {
                 if (items.empty()) return;
 
                 brls::Box* content = nullptr;
-                createMediaRow(title, &content);
+                createMediaRow(title + " (" + std::to_string(items.size()) + ")", &content);
 
                 for (const auto& item : items) {
                     auto* cell = new MediaItemCell();
@@ -532,7 +579,6 @@ void MediaDetailView::loadMusicCategories() {
                     cell->setMarginRight(10);
 
                     MediaItem capturedItem = item;
-                    // A button (cross) - open album detail
                     cell->registerClickAction([this, capturedItem](brls::View* view) {
                         auto* detailView = new MediaDetailView(capturedItem);
                         brls::Application::pushActivity(new brls::Activity(detailView));
@@ -540,7 +586,6 @@ void MediaDetailView::loadMusicCategories() {
                     });
                     cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
 
-                    // Start button - context menu for album actions
                     cell->registerAction("Options", brls::ControllerButton::BUTTON_START, [this, capturedItem](brls::View* view) {
                         showAlbumContextMenu(capturedItem);
                         return true;

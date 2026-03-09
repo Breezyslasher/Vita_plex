@@ -220,6 +220,9 @@ public:
     bool fetchChildren(const std::string& ratingKey, std::vector<MediaItem>& items);
     bool fetchMediaDetails(const std::string& ratingKey, MediaItem& item);
 
+    // Music artist hubs (albums grouped by type: Albums, Singles, EPs, etc.)
+    bool fetchArtistHubs(const std::string& ratingKey, std::vector<Hub>& hubs);
+
     // Home screen
     bool fetchHubs(std::vector<Hub>& hubs);
     bool fetchContinueWatching(std::vector<MediaItem>& items);

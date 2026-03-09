@@ -892,6 +892,106 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
     return true;
 }
 
+bool PlexClient::fetchArtistHubs(const std::string& ratingKey, std::vector<Hub>& hubs) {
+    brls::Logger::debug("fetchArtistHubs: ratingKey={}", ratingKey);
+
+    HttpClient client;
+    std::string url = buildApiUrl("/hubs/metadata/" + ratingKey);
+
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+
+    brls::Logger::debug("ArtistHubs response: {} - {} bytes", resp.statusCode, resp.body.length());
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("Failed to fetch artist hubs: {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
+        return false;
+    }
+
+    hubs.clear();
+
+    // Parse hubs - look for objects with "hubIdentifier" field
+    size_t pos = 0;
+    while ((pos = resp.body.find("\"hubIdentifier\"", pos)) != std::string::npos) {
+        size_t hubStart = resp.body.rfind('{', pos);
+        if (hubStart == std::string::npos) {
+            pos++;
+            continue;
+        }
+
+        int braceCount = 1;
+        size_t hubEnd = hubStart + 1;
+        while (braceCount > 0 && hubEnd < resp.body.length()) {
+            if (resp.body[hubEnd] == '{') braceCount++;
+            else if (resp.body[hubEnd] == '}') braceCount--;
+            hubEnd++;
+        }
+
+        std::string hubObj = resp.body.substr(hubStart, hubEnd - hubStart);
+
+        Hub hub;
+        hub.title = extractJsonValue(hubObj, "title");
+        hub.type = extractJsonValue(hubObj, "type");
+        hub.hubIdentifier = extractJsonValue(hubObj, "hubIdentifier");
+        hub.key = extractJsonValue(hubObj, "key");
+        hub.more = extractJsonBool(hubObj, "more");
+
+        // Parse items inside the hub
+        size_t itemPos = 0;
+        while ((itemPos = hubObj.find("\"ratingKey\"", itemPos)) != std::string::npos) {
+            size_t itemStart = hubObj.rfind('{', itemPos);
+            if (itemStart == std::string::npos) {
+                itemPos++;
+                continue;
+            }
+
+            int itemBraceCount = 1;
+            size_t itemEnd = itemStart + 1;
+            while (itemBraceCount > 0 && itemEnd < hubObj.length()) {
+                if (hubObj[itemEnd] == '{') itemBraceCount++;
+                else if (hubObj[itemEnd] == '}') itemBraceCount--;
+                itemEnd++;
+            }
+
+            std::string itemObj = hubObj.substr(itemStart, itemEnd - itemStart);
+
+            MediaItem item;
+            item.ratingKey = extractJsonValue(itemObj, "ratingKey");
+            item.title = extractJsonValue(itemObj, "title");
+            item.thumb = extractJsonValue(itemObj, "thumb");
+            item.art = extractJsonValue(itemObj, "art");
+            item.type = extractJsonValue(itemObj, "type");
+            item.mediaType = parseMediaType(item.type);
+            item.year = extractJsonInt(itemObj, "year");
+            item.summary = extractJsonValue(itemObj, "summary");
+            item.leafCount = extractJsonInt(itemObj, "leafCount");
+            item.viewedLeafCount = extractJsonInt(itemObj, "viewedLeafCount");
+            item.subtype = extractJsonValue(itemObj, "subtype");
+            item.parentTitle = extractJsonValue(itemObj, "parentTitle");
+            item.grandparentTitle = extractJsonValue(itemObj, "grandparentTitle");
+
+            if (!item.ratingKey.empty() && !item.title.empty()) {
+                hub.items.push_back(item);
+            }
+
+            itemPos = itemEnd;
+        }
+
+        if (!hub.title.empty() && !hub.items.empty()) {
+            hubs.push_back(hub);
+        }
+
+        pos = hubEnd;
+    }
+
+    brls::Logger::info("Found {} artist hubs", hubs.size());
+    return true;
+}
+
 bool PlexClient::fetchHubs(std::vector<Hub>& hubs) {
     brls::Logger::debug("fetchHubs: serverUrl={}", m_serverUrl);
 
