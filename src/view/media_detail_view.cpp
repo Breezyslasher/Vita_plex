@@ -486,25 +486,61 @@ void MediaDetailView::loadMusicCategories() {
         if (useHubs && !hubs.empty()) {
             brls::Logger::info("Artist hubs: {} categories", hubs.size());
 
-            brls::sync([this, hubs]() {
+            // Collect all album items from hubs, then group by subtype
+            std::vector<MediaItem> allAlbumItems;
+            for (const auto& hub : hubs) {
+                for (const auto& item : hub.items) {
+                    if (item.mediaType == MediaType::MUSIC_ALBUM) {
+                        allAlbumItems.push_back(item);
+                    }
+                }
+            }
+
+            brls::Logger::info("Artist hubs: {} total album items to group by subtype", allAlbumItems.size());
+
+            // Group items by subtype
+            std::vector<MediaItem> albums;
+            std::vector<MediaItem> singles;
+            std::vector<MediaItem> eps;
+            std::vector<MediaItem> compilations;
+            std::vector<MediaItem> soundtracks;
+            std::vector<MediaItem> live;
+            std::vector<MediaItem> other;
+
+            for (const auto& item : allAlbumItems) {
+                std::string subtype = item.subtype;
+                for (char& c : subtype) c = tolower(c);
+
+                if (subtype == "single") {
+                    singles.push_back(item);
+                } else if (subtype == "ep") {
+                    eps.push_back(item);
+                } else if (subtype == "compilation") {
+                    compilations.push_back(item);
+                } else if (subtype == "soundtrack") {
+                    soundtracks.push_back(item);
+                } else if (subtype == "live") {
+                    live.push_back(item);
+                } else if (subtype == "album" || subtype.empty()) {
+                    albums.push_back(item);
+                } else {
+                    other.push_back(item);
+                }
+            }
+
+            brls::Logger::info("Grouped: {} albums, {} singles, {} EPs, {} compilations, {} soundtracks, {} live, {} other",
+                albums.size(), singles.size(), eps.size(), compilations.size(), soundtracks.size(), live.size(), other.size());
+
+            brls::sync([this, albums, singles, eps, compilations, soundtracks, live, other]() {
                 m_musicCategoriesBox->clearViews();
 
-                for (const auto& hub : hubs) {
-                    // Skip non-album hubs (e.g. "Related Artists")
-                    // Keep album types: album, single, ep, compilation, etc.
-                    bool isAlbumHub = false;
-                    for (const auto& item : hub.items) {
-                        if (item.mediaType == MediaType::MUSIC_ALBUM) {
-                            isAlbumHub = true;
-                            break;
-                        }
-                    }
-                    if (!isAlbumHub) continue;
+                auto addCategory = [this](const std::string& title, const std::vector<MediaItem>& items) {
+                    if (items.empty()) return;
 
                     brls::Box* content = nullptr;
-                    createMediaRow(hub.title + " (" + std::to_string(hub.items.size()) + ")", &content);
+                    createMediaRow(title + " (" + std::to_string(items.size()) + ")", &content);
 
-                    for (const auto& item : hub.items) {
+                    for (const auto& item : items) {
                         auto* cell = new MediaItemCell();
                         cell->setItem(item);
                         cell->setMarginRight(10);
@@ -524,7 +560,15 @@ void MediaDetailView::loadMusicCategories() {
 
                         content->addView(cell);
                     }
-                }
+                };
+
+                addCategory("Albums", albums);
+                addCategory("Singles", singles);
+                addCategory("EPs", eps);
+                addCategory("Compilations", compilations);
+                addCategory("Soundtracks", soundtracks);
+                addCategory("Live", live);
+                addCategory("Other", other);
             });
             return;
         }
