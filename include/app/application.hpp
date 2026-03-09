@@ -60,7 +60,6 @@ struct AppSettings {
     AppTheme theme = AppTheme::DARK;
     bool debugLogging = true;  // Enable debug logging
     bool showDebugTab = true;  // Show debug tab in sidebar
-    bool showNetworkTest = true;  // Show network test section in debug tab
 
     // Layout Settings
     bool showLibrariesInSidebar = false;  // Show libraries in sidebar instead of Library tab

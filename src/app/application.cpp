@@ -246,7 +246,6 @@ bool Application::loadSettings() {
     m_settings.theme = static_cast<AppTheme>(extractInt("theme"));
     m_settings.debugLogging = extractBool("debugLogging", true);
     m_settings.showDebugTab = extractBool("showDebugTab", true);
-    m_settings.showNetworkTest = extractBool("showNetworkTest", true);
 
     // Load layout settings
     m_settings.showLibrariesInSidebar = extractBool("showLibrariesInSidebar", false);
@@ -319,7 +318,6 @@ bool Application::saveSettings() {
     json += "  \"theme\": " + std::to_string(static_cast<int>(m_settings.theme)) + ",\n";
     json += "  \"debugLogging\": " + std::string(m_settings.debugLogging ? "true" : "false") + ",\n";
     json += "  \"showDebugTab\": " + std::string(m_settings.showDebugTab ? "true" : "false") + ",\n";
-    json += "  \"showNetworkTest\": " + std::string(m_settings.showNetworkTest ? "true" : "false") + ",\n";
 
     // Layout settings
     json += "  \"showLibrariesInSidebar\": " + std::string(m_settings.showLibrariesInSidebar ? "true" : "false") + ",\n";

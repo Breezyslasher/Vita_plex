@@ -14,7 +14,6 @@ public:
     DebugTab();
 
 private:
-    void createNetworkTestSection();
     void createDialogSection();
     void createNotificationSection();
     void createCustomDialogSection();
@@ -57,9 +56,6 @@ private:
     void showProgressDialogConnecting();
     void showProgressDialogDownload();
 
-    // Network test
-    void showNetworkInfo();
-    void testPlexConnection();
 };
 
 } // namespace vitaplex

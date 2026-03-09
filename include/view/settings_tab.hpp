@@ -25,6 +25,7 @@ private:
     void createDebugSection();
 
     void onLogout();
+    void onNetworkTest();
     void onTestLocalPlayback();
     void onThemeChanged(int index);
     void onQualityChanged(int index);
@@ -46,7 +47,6 @@ private:
     brls::SelectorCell* m_themeSelector = nullptr;
     brls::BooleanCell* m_debugLogToggle = nullptr;
     brls::BooleanCell* m_showDebugTabToggle = nullptr;
-    brls::BooleanCell* m_showNetworkTestToggle = nullptr;
 
     // Layout section
     brls::BooleanCell* m_sidebarLibrariesToggle = nullptr;

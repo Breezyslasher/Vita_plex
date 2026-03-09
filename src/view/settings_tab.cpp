@@ -8,7 +8,15 @@
 #include "app/downloads_manager.hpp"
 #include "player/mpv_player.hpp"
 #include "activity/player_activity.hpp"
+#include "utils/http_client.hpp"
 #include <set>
+#include <chrono>
+#include <thread>
+
+#ifdef __vita__
+#include <psp2/net/netctl.h>
+#include <psp2/net/net.h>
+#endif
 
 namespace vitaplex {
 
@@ -111,17 +119,9 @@ void SettingsTab::createUISection() {
     });
     m_contentBox->addView(m_showDebugTabToggle);
 
-    // Show network test toggle
-    m_showNetworkTestToggle = new brls::BooleanCell();
-    m_showNetworkTestToggle->init("Show Network Test", settings.showNetworkTest, [&settings](bool value) {
-        settings.showNetworkTest = value;
-        Application::getInstance().saveSettings();
-    });
-    m_contentBox->addView(m_showNetworkTestToggle);
-
-    // Info label for debug/network settings
+    // Info label for debug tab setting
     auto* debugInfoLabel = new brls::Label();
-    debugInfoLabel->setText("Debug tab and network test changes require app restart");
+    debugInfoLabel->setText("Debug tab change requires app restart");
     debugInfoLabel->setFontSize(14);
     debugInfoLabel->setMarginLeft(16);
     debugInfoLabel->setMarginTop(8);
@@ -469,6 +469,16 @@ void SettingsTab::createDebugSection() {
     auto* header = new brls::Header();
     header->setTitle("Debug");
     m_contentBox->addView(header);
+
+    // Network test button
+    auto* networkTestCell = new brls::DetailCell();
+    networkTestCell->setText("Network Test");
+    networkTestCell->setDetailText("View network info and test Plex connection");
+    networkTestCell->registerClickAction([this](brls::View* view) {
+        onNetworkTest();
+        return true;
+    });
+    m_contentBox->addView(networkTestCell);
 
     // Test local playback button
     auto* testLocalCell = new brls::DetailCell();
@@ -930,6 +940,171 @@ void SettingsTab::onManageSidebarOrder() {
     });
 
     dialog->open();
+}
+
+void SettingsTab::onNetworkTest() {
+    // Show a toast while tests run
+    brls::Application::notify("Running network test...");
+
+    // Run the network tests on a detached thread to avoid blocking the UI
+    std::thread([this]() {
+        // ── 1. WiFi Check ──
+        std::string ipAddress = "-";
+        std::string dnsInfo = "-";
+        std::string signalStr = "-";
+        std::string ssid = "-";
+        bool wifiConnected = false;
+
+#ifdef __vita__
+        SceNetCtlInfo info;
+
+        int ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_IP_ADDRESS, &info);
+        if (ret >= 0) {
+            ipAddress = std::string(info.ip_address);
+            wifiConnected = true;
+        }
+
+        ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_SSID, &info);
+        if (ret >= 0) {
+            ssid = std::string(info.ssid);
+        }
+
+        ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_RSSI_PERCENTAGE, &info);
+        if (ret >= 0) {
+            signalStr = std::to_string(info.rssi_percentage) + "%";
+        }
+
+        ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_PRIMARY_DNS, &info);
+        if (ret >= 0) {
+            dnsInfo = std::string(info.primary_dns);
+            ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_SECONDARY_DNS, &info);
+            if (ret >= 0) {
+                dnsInfo += " / " + std::string(info.secondary_dns);
+            }
+        }
+#else
+        ipAddress = "127.0.0.1";
+        dnsInfo = "8.8.8.8";
+        signalStr = "100%";
+        ssid = "Desktop";
+        wifiConnected = true;
+#endif
+
+        // ── 2. Internet Check (latency) ──
+        std::string internetStatus = "Skipped (no WiFi)";
+        if (wifiConnected) {
+            HttpClient netClient;
+            netClient.setTimeout(10);
+
+            auto start = std::chrono::steady_clock::now();
+            std::string response;
+            bool ok = netClient.get("http://connectivitycheck.gstatic.com/generate_204", response);
+            auto end = std::chrono::steady_clock::now();
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+            if (ok) {
+                internetStatus = "Reachable (" + std::to_string(ms) + "ms)";
+            } else {
+                internetStatus = "Unreachable (" + std::to_string(ms) + "ms)";
+            }
+        }
+
+        // ── 3. Plex Server Check (latency) ──
+        Application& app = Application::getInstance();
+        std::string serverUrl = app.getServerUrl();
+        std::string plexStatus;
+        std::string plexLatency = "-";
+
+        if (serverUrl.empty()) {
+            plexStatus = "Not configured";
+        } else if (!wifiConnected) {
+            plexStatus = "Skipped (no WiFi)";
+        } else {
+            HttpClient plexClient;
+            plexClient.setTimeout(10);
+            plexClient.setDefaultHeader("X-Plex-Token", app.getAuthToken());
+            plexClient.setDefaultHeader("Accept", "application/json");
+
+            auto start = std::chrono::steady_clock::now();
+            std::string response;
+            bool ok = plexClient.get(serverUrl + "/identity", response);
+            auto end = std::chrono::steady_clock::now();
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+            plexLatency = std::to_string(ms) + "ms";
+            if (ok) {
+                plexStatus = "Connected (" + std::to_string(ms) + "ms)";
+            } else {
+                plexStatus = "Failed (" + std::to_string(ms) + "ms)";
+            }
+        }
+
+        // ── Build dialog on main thread ──
+        // Capture results by value for the lambda
+        brls::sync([=]() {
+            brls::Box* content = new brls::Box();
+            content->setAxis(brls::Axis::COLUMN);
+            content->setWidth(700);
+            content->setHeight(420);
+            content->setPadding(25);
+
+            auto* titleLabel = new brls::Label();
+            titleLabel->setText("Network Test Results");
+            titleLabel->setFontSize(22);
+            titleLabel->setMarginBottom(15);
+            content->addView(titleLabel);
+
+            // Helper to create info rows (item #11 style)
+            auto addRow = [&content](const std::string& label, const std::string& value) {
+                auto* row = new brls::Box();
+                row->setAxis(brls::Axis::ROW);
+                row->setMarginBottom(8);
+                auto* lblA = new brls::Label();
+                lblA->setText(label);
+                lblA->setFontSize(16);
+                lblA->setWidth(220);
+                row->addView(lblA);
+                auto* lblB = new brls::Label();
+                lblB->setText(value);
+                lblB->setFontSize(16);
+                row->addView(lblB);
+                content->addView(row);
+            };
+
+            // Helper for section headers
+            auto addHeader = [&content](const std::string& text) {
+                auto* lbl = new brls::Label();
+                lbl->setText(text);
+                lbl->setFontSize(16);
+                lbl->setMarginBottom(6);
+                lbl->setMarginTop(4);
+                content->addView(lbl);
+            };
+
+            // WiFi section
+            addHeader("-- WiFi --");
+            addRow("Status:", wifiConnected ? "Connected" : "Not Connected");
+            addRow("Network:", ssid);
+            addRow("IP Address:", ipAddress);
+            addRow("DNS:", dnsInfo);
+            addRow("Signal:", signalStr);
+
+            // Internet section
+            addHeader("-- Internet --");
+            addRow("Connectivity:", internetStatus);
+
+            // Plex server section
+            addHeader("-- Plex Server --");
+            addRow("Server:", serverUrl.empty() ? "Not configured" : serverUrl);
+            addRow("Connection:", plexStatus);
+
+            auto* dialog = new brls::Dialog(content);
+            dialog->addButton("Close", [dialog]() {
+                dialog->close();
+            });
+            dialog->open();
+        });
+    }).detach();
 }
 
 void SettingsTab::onTestLocalPlayback() {
