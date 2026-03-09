@@ -341,6 +341,10 @@ void PlayerActivity::onContentAvailable() {
 
         // In music mode: hide audio/video/subtitle track buttons, only show queue + lyrics
         // audioBtn, videoBtn, subBtn stay hidden (GONE by default in XML)
+        // Also explicitly disable focusability so they can't be hovered/selected
+        if (audioBtn) audioBtn->setFocusable(false);
+        if (subBtn) subBtn->setFocusable(false);
+        if (videoBtn) videoBtn->setFocusable(false);
 
         // Shuffle toggle button
         if (shuffleBtn) {
@@ -373,11 +377,15 @@ void PlayerActivity::onContentAvailable() {
                 MpvPlayer& player = MpvPlayer::getInstance();
 
                 if (m_lyricsEnabled) {
-                    // Find the first lyrics/subtitle stream and load it as external subtitle
+                    // Force re-fetch streams for current track to find lyrics
+                    m_streamsLoaded = false;
+                    m_plexStreams.clear();
                     fetchPlexStreams();
                     int lyricsStreamId = -1;
                     std::string lyricsCodec;
                     for (const auto& ps : m_plexStreams) {
+                        brls::Logger::debug("PlayerActivity: Stream type={} id={} codec={} title={}",
+                                           ps.streamType, ps.id, ps.codec, ps.title);
                         if (ps.streamType == 4 || ps.streamType == 3) {
                             lyricsStreamId = ps.id;
                             lyricsCodec = ps.codec;
@@ -390,6 +398,7 @@ void PlayerActivity::onContentAvailable() {
                         std::string ext = lyricsCodec.empty() ? "lrc" : lyricsCodec;
                         // Normalize common codec names to file extensions
                         if (ext == "text" || ext == "txt") ext = "srt";
+                        if (ext == "lrc") ext = "lrc";  // Keep LRC as-is
                         PlexClient& client = PlexClient::getInstance();
                         std::string serverUrl = client.getServerUrl();
                         // Remove trailing slash
@@ -401,16 +410,16 @@ void PlayerActivity::onContentAvailable() {
 
                         brls::Logger::info("PlayerActivity: Loading lyrics from: {}", lyricsUrl);
                         player.loadSubtitleUrl(lyricsUrl);
-                        player.showOSD("Lyrics on", 1.5);
+                        brls::Application::notify("Lyrics on");
                     } else {
                         // No lyrics stream available
                         m_lyricsEnabled = false;
-                        player.showOSD("No lyrics available", 1.5);
+                        brls::Application::notify("No lyrics available");
                     }
                 } else {
                     // Disable lyrics
                     player.removeExternalSubtitles();
-                    player.showOSD("Lyrics off", 1.5);
+                    brls::Application::notify("Lyrics off");
                 }
 
                 // Update icon opacity to show state
@@ -2034,6 +2043,59 @@ void PlayerActivity::showQueueOverlay() {
         queueOverlay->setVisibility(brls::Visibility::VISIBLE);
         queueOverlay->registerAction("Back", brls::ControllerButton::BUTTON_B, [this](brls::View* view) {
             hideQueueOverlay();
+            return true;
+        });
+
+        // L button = move focused song up in queue
+        queueOverlay->registerAction("Move Up", brls::ControllerButton::BUTTON_LB, [this](brls::View* view) {
+            if (!queueList) return true;
+            auto& children = queueList->getChildren();
+            // Find which child has focus
+            brls::View* focused = brls::Application::getCurrentFocus();
+            for (int i = 0; i < (int)children.size(); i++) {
+                if (children[i] == focused) {
+                    if (i > 0) {
+                        MusicQueue& queue = MusicQueue::getInstance();
+                        bool shuffled = queue.isShuffleEnabled();
+                        const auto& shuffleOrder = queue.getShuffleOrder();
+                        int fromIdx = (shuffled && i < (int)shuffleOrder.size()) ? shuffleOrder[i] : i;
+                        int toIdx = (shuffled && (i-1) < (int)shuffleOrder.size()) ? shuffleOrder[i-1] : (i-1);
+                        queue.moveTrack(fromIdx, toIdx);
+                        populateQueueList();
+                        int newFocus = i - 1;
+                        if (newFocus >= 0 && newFocus < (int)queueList->getChildren().size()) {
+                            brls::Application::giveFocus(queueList->getChildren()[newFocus]);
+                        }
+                    }
+                    break;
+                }
+            }
+            return true;
+        });
+
+        // R button = move focused song down in queue
+        queueOverlay->registerAction("Move Down", brls::ControllerButton::BUTTON_RB, [this](brls::View* view) {
+            if (!queueList) return true;
+            auto& children = queueList->getChildren();
+            brls::View* focused = brls::Application::getCurrentFocus();
+            for (int i = 0; i < (int)children.size(); i++) {
+                if (children[i] == focused) {
+                    if (i < (int)children.size() - 1) {
+                        MusicQueue& queue = MusicQueue::getInstance();
+                        bool shuffled = queue.isShuffleEnabled();
+                        const auto& shuffleOrder = queue.getShuffleOrder();
+                        int fromIdx = (shuffled && i < (int)shuffleOrder.size()) ? shuffleOrder[i] : i;
+                        int toIdx = (shuffled && (i+1) < (int)shuffleOrder.size()) ? shuffleOrder[i+1] : (i+1);
+                        queue.moveTrack(fromIdx, toIdx);
+                        populateQueueList();
+                        int newFocus = i + 1;
+                        if (newFocus < (int)queueList->getChildren().size()) {
+                            brls::Application::giveFocus(queueList->getChildren()[newFocus]);
+                        }
+                    }
+                    break;
+                }
+            }
             return true;
         });
 

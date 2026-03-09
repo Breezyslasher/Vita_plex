@@ -1253,7 +1253,15 @@ void MediaDetailView::showTrackActionDialog(const MediaItem& track, size_t track
     MediaItem capturedTrack = track;
     size_t capturedIndex = trackIndex;
 
-    addDialogButton("Play Now (Clear Queue)", [this, capturedTrack, capturedIndex, dialog](brls::View*) {
+    addDialogButton("Play This Track Only", [this, capturedTrack, dialog](brls::View*) {
+        dialog->dismiss();
+        std::vector<MediaItem> single = {capturedTrack};
+        auto* playerActivity = PlayerActivity::createWithQueue(single, 0);
+        brls::Application::pushActivity(playerActivity);
+        return true;
+    });
+
+    addDialogButton("Play Album From Here", [this, capturedTrack, capturedIndex, dialog](brls::View*) {
         dialog->dismiss();
         if (!m_children.empty()) {
             auto* playerActivity = PlayerActivity::createWithQueue(m_children, (int)capturedIndex);
@@ -1400,19 +1408,45 @@ void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
 void MediaDetailView::toggleDescription() {
     if (!m_summaryLabel || m_fullDescription.empty()) return;
 
-    m_descriptionExpanded = !m_descriptionExpanded;
+    // Show full description in a scrollable dialog popup
+    auto* dialog = new brls::Dialog("Description");
 
-    if (m_descriptionExpanded) {
-        // Show full description
-        m_summaryLabel->setText(m_fullDescription + " [L]");
-    } else {
-        // Show truncated description (first ~80 chars / 2 lines)
-        std::string truncatedDesc = m_fullDescription;
-        if (truncatedDesc.length() > 80) {
-            truncatedDesc = truncatedDesc.substr(0, 77) + "... [L]";
-        }
-        m_summaryLabel->setText(truncatedDesc);
-    }
+    auto* contentBox = new brls::Box();
+    contentBox->setAxis(brls::Axis::COLUMN);
+    contentBox->setPadding(20);
+
+    // Scrollable frame for long text
+    auto* scrollFrame = new brls::ScrollingFrame();
+    scrollFrame->setWidth(400);
+    scrollFrame->setHeight(300);
+
+    auto* textBox = new brls::Box();
+    textBox->setAxis(brls::Axis::COLUMN);
+    textBox->setAlignItems(brls::AlignItems::STRETCH);
+
+    auto* descLabel = new brls::Label();
+    descLabel->setText(m_fullDescription);
+    descLabel->setFontSize(15);
+    descLabel->setFocusable(true);
+    textBox->addView(descLabel);
+
+    scrollFrame->setContentView(textBox);
+    contentBox->addView(scrollFrame);
+
+    // Close button
+    auto* closeBtn = new brls::Button();
+    closeBtn->setText("Close");
+    closeBtn->setHeight(44);
+    closeBtn->setMarginTop(12);
+    closeBtn->registerClickAction([dialog](brls::View*) {
+        dialog->dismiss();
+        return true;
+    });
+    closeBtn->addGestureRecognizer(new brls::TapGestureRecognizer(closeBtn));
+    contentBox->addView(closeBtn);
+
+    dialog->addView(contentBox);
+    brls::Application::pushActivity(new brls::Activity(dialog));
 }
 
 } // namespace vitaplex
