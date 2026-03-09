@@ -257,7 +257,8 @@ void MusicTab::loadContent(const std::string& sectionKey) {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
-        if (client.fetchLibraryContent(key, items)) {
+        // type=8 for artists (top-level items in a music library)
+        if (client.fetchLibraryContent(key, items, 8)) {
             brls::Logger::info("MusicTab: Got {} items for section {}", items.size(), key);
 
             // Update UI on main thread

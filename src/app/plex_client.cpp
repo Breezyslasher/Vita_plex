@@ -562,11 +562,14 @@ bool PlexClient::fetchLibrarySections(std::vector<LibrarySection>& sections) {
     return !sections.empty();
 }
 
-bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items) {
-    brls::Logger::debug("fetchLibraryContent: section={}", sectionKey);
+bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items, int metadataType) {
+    brls::Logger::debug("fetchLibraryContent: section={} type={}", sectionKey, metadataType);
 
     HttpClient client;
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all");
+    if (metadataType > 0) {
+        url += "?type=" + std::to_string(metadataType);
+    }
 
     // Request JSON format
     HttpRequest req;
@@ -1318,10 +1321,16 @@ bool PlexClient::fetchRecentlyAddedByType(MediaType type, std::vector<MediaItem>
             typeName = "show";
             break;
         case MediaType::MUSIC_ARTIST:
-        case MediaType::MUSIC_ALBUM:
-        case MediaType::MUSIC_TRACK:
-            typeCode = 8;  // artist
+            typeCode = 8;
             typeName = "artist";
+            break;
+        case MediaType::MUSIC_ALBUM:
+            typeCode = 9;
+            typeName = "album";
+            break;
+        case MediaType::MUSIC_TRACK:
+            typeCode = 10;
+            typeName = "track";
             break;
         default:
             return fetchRecentlyAdded(items);  // Fallback to all types
@@ -1697,12 +1706,15 @@ bool PlexClient::fetchGenreItems(const std::string& sectionKey, std::vector<Genr
     return true;
 }
 
-bool PlexClient::fetchByGenre(const std::string& sectionKey, const std::string& genre, std::vector<MediaItem>& items) {
-    brls::Logger::debug("Fetching items by genre: {} in section {}", genre, sectionKey);
+bool PlexClient::fetchByGenre(const std::string& sectionKey, const std::string& genre, std::vector<MediaItem>& items, int metadataType) {
+    brls::Logger::debug("Fetching items by genre: {} in section {} type={}", genre, sectionKey, metadataType);
 
     HttpClient client;
-    // Plex API: /library/sections/{key}/all?genre={genreId}
+    // Plex API: /library/sections/{key}/all?genre={genreId}&type={metadataType}
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all?genre=" + HttpClient::urlEncode(genre));
+    if (metadataType > 0) {
+        url += "&type=" + std::to_string(metadataType);
+    }
 
     HttpRequest req;
     req.url = url;
@@ -1760,13 +1772,16 @@ bool PlexClient::fetchByGenre(const std::string& sectionKey, const std::string& 
     return true;
 }
 
-bool PlexClient::fetchByGenreKey(const std::string& sectionKey, const std::string& genreKey, std::vector<MediaItem>& items) {
-    brls::Logger::debug("Fetching items by genre key: {} in section {}", genreKey, sectionKey);
+bool PlexClient::fetchByGenreKey(const std::string& sectionKey, const std::string& genreKey, std::vector<MediaItem>& items, int metadataType) {
+    brls::Logger::debug("Fetching items by genre key: {} in section {} type={}", genreKey, sectionKey, metadataType);
 
     HttpClient client;
     // Plex API: Use the fastKey or construct filter with genre key/ID
     // The genreKey is typically the numeric ID from the genre list
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all?genre=" + genreKey);
+    if (metadataType > 0) {
+        url += "&type=" + std::to_string(metadataType);
+    }
 
     HttpRequest req;
     req.url = url;

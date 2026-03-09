@@ -215,7 +215,7 @@ public:
 
     // Library operations
     bool fetchLibrarySections(std::vector<LibrarySection>& sections);
-    bool fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items);
+    bool fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items, int metadataType = 0);
     bool fetchSectionRecentlyAdded(const std::string& sectionKey, std::vector<MediaItem>& items);
     bool fetchChildren(const std::string& ratingKey, std::vector<MediaItem>& items);
     bool fetchMediaDetails(const std::string& ratingKey, MediaItem& item);
@@ -236,8 +236,8 @@ public:
     bool fetchCollections(const std::string& sectionKey, std::vector<MediaItem>& collections);
     bool fetchGenres(const std::string& sectionKey, std::vector<std::string>& genres);
     bool fetchGenreItems(const std::string& sectionKey, std::vector<GenreItem>& genres);
-    bool fetchByGenre(const std::string& sectionKey, const std::string& genre, std::vector<MediaItem>& items);
-    bool fetchByGenreKey(const std::string& sectionKey, const std::string& genreKey, std::vector<MediaItem>& items);
+    bool fetchByGenre(const std::string& sectionKey, const std::string& genre, std::vector<MediaItem>& items, int metadataType = 0);
+    bool fetchByGenreKey(const std::string& sectionKey, const std::string& genreKey, std::vector<MediaItem>& items, int metadataType = 0);
 
     // Playlists (using official Plex API from developer.plex.tv)
     bool fetchPlaylists(std::vector<MediaItem>& playlists);  // Legacy - returns as MediaItem
