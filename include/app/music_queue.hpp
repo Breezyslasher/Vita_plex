@@ -68,6 +68,8 @@ public:
     void setShuffle(bool enabled);
     bool isShuffleEnabled() const { return m_shuffleEnabled; }
     void reshuffle();  // Re-randomize shuffle order
+    const std::vector<int>& getShuffleOrder() const { return m_shuffleOrder; }
+    int getShufflePosition() const { return m_shufflePosition; }
 
     // Repeat mode
     void setRepeatMode(RepeatMode mode);

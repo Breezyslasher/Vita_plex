@@ -2002,10 +2002,16 @@ void PlayerActivity::showQueueOverlay() {
         });
 
         // Give focus to the currently playing track in the list
+        // When shuffled, the current track's display position is the shuffle position
         MusicQueue& queue = MusicQueue::getInstance();
-        int currentIdx = queue.getCurrentIndex();
+        int focusIdx = 0;
+        if (queue.isShuffleEnabled()) {
+            focusIdx = queue.getShufflePosition();
+        } else {
+            focusIdx = queue.getCurrentIndex();
+        }
         if (queueList && !queueList->getChildren().empty()) {
-            int focusIdx = std::min(currentIdx, (int)queueList->getChildren().size() - 1);
+            focusIdx = std::min(focusIdx, (int)queueList->getChildren().size() - 1);
             if (focusIdx < 0) focusIdx = 0;
             brls::Application::giveFocus(queueList->getChildren()[focusIdx]);
         }
@@ -2032,10 +2038,13 @@ void PlayerActivity::populateQueueList() {
     MusicQueue& queue = MusicQueue::getInstance();
     const auto& tracks = queue.getQueue();
     int currentIndex = queue.getCurrentIndex();
+    bool shuffled = queue.isShuffleEnabled();
+    const auto& shuffleOrder = queue.getShuffleOrder();
 
     // Set title with track count
     char titleBuf[64];
-    snprintf(titleBuf, sizeof(titleBuf), "Queue (%d tracks)", (int)tracks.size());
+    snprintf(titleBuf, sizeof(titleBuf), "Queue (%d tracks)%s",
+             (int)tracks.size(), shuffled ? " - Shuffled" : "");
     queueOverlayTitle->setText(titleBuf);
 
     // Temporarily unpause image loader for loading thumbnails
@@ -2044,9 +2053,14 @@ void PlayerActivity::populateQueueList() {
 
     PlexClient& client = PlexClient::getInstance();
 
-    for (int i = 0; i < (int)tracks.size(); i++) {
-        const QueueItem& track = tracks[i];
-        bool isCurrent = (i == currentIndex);
+    int count = (int)tracks.size();
+    for (int i = 0; i < count; i++) {
+        // When shuffled, display tracks in shuffle order
+        int trackIdx = (shuffled && i < (int)shuffleOrder.size())
+                        ? shuffleOrder[i] : i;
+        if (trackIdx < 0 || trackIdx >= (int)tracks.size()) continue;
+        const QueueItem& track = tracks[trackIdx];
+        bool isCurrent = (trackIdx == currentIndex);
 
         // Row container: [cover art] [title + artist]
         brls::Box* row = new brls::Box();
@@ -2114,10 +2128,10 @@ void PlayerActivity::populateQueueList() {
 
         row->addView(textBox);
 
-        // Click handler to play this track
-        int trackIdx = i;
-        row->registerClickAction([this, trackIdx](brls::View* view) {
-            playFromQueue(trackIdx);
+        // Click handler to play this track (use actual queue index, not display position)
+        int clickIdx = trackIdx;
+        row->registerClickAction([this, clickIdx](brls::View* view) {
+            playFromQueue(clickIdx);
             return true;
         });
         row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
