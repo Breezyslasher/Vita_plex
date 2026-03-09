@@ -359,7 +359,7 @@ void PlayerActivity::onContentAvailable() {
                     int lyricsStreamId = -1;
                     std::string lyricsCodec;
                     for (const auto& ps : m_plexStreams) {
-                        if (ps.streamType == 3) {
+                        if (ps.streamType == 4 || ps.streamType == 3) {
                             lyricsStreamId = ps.id;
                             lyricsCodec = ps.codec;
                             break;
@@ -1337,9 +1337,11 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
                          (mode == TrackSelectMode::AUDIO) ? 2 : 3;
 
     // Collect Plex streams of the requested type
+    // For subtitles/lyrics, also include streamType 4 (Plex lyrics type)
     std::vector<const PlexStream*> plexTracksOfType;
     for (const auto& ps : m_plexStreams) {
-        if (ps.streamType == plexStreamType) {
+        if (ps.streamType == plexStreamType ||
+            (mode == TrackSelectMode::SUBTITLE && ps.streamType == 4)) {
             plexTracksOfType.push_back(&ps);
         }
     }
@@ -1757,7 +1759,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                 }
                 // Clear selection in cache
                 for (auto& ps : m_plexStreams) {
-                    if (ps.streamType == 3) ps.selected = false;
+                    if (ps.streamType == 3 || ps.streamType == 4) ps.selected = false;
                 }
                 // Reload transcode so Plex stops sending subtitles
                 {
@@ -1784,7 +1786,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                 }
                 PlexClient::getInstance().setStreamSelection(m_partId, -1, trackId);
                 for (auto& ps : m_plexStreams) {
-                    if (ps.streamType == 3) {
+                    if (ps.streamType == 3 || ps.streamType == 4) {
                         ps.selected = (ps.id == trackId);
                     }
                 }
