@@ -116,13 +116,14 @@ bool MpvPlayer::init() {
     // ========================================
 
     if (m_audioOnly) {
-        // Audio-only mode: disable all video processing
+        // Audio-only mode: disable video rendering but keep subtitle support for lyrics
         brls::Logger::info("MpvPlayer: Initializing in audio-only mode");
         mpv_set_option_string(m_mpv, "vo", "null");
         mpv_set_option_string(m_mpv, "vid", "no");
-        mpv_set_option_string(m_mpv, "video", "no");
         mpv_set_option_string(m_mpv, "audio-display", "no");  // Don't try to show album art
         mpv_set_option_string(m_mpv, "hwdec", "no");
+        // Keep subtitle/lyrics support active (don't set video=no which disables sub rendering)
+        mpv_set_option_string(m_mpv, "sub-visibility", "yes");
     } else {
         // Video mode: use libmpv for video output - we'll create a render context
         brls::Logger::info("MpvPlayer: Initializing in video mode");

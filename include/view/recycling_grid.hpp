@@ -17,6 +17,7 @@ public:
 
     void setDataSource(const std::vector<MediaItem>& items);
     void setOnItemSelected(std::function<void(const MediaItem&)> callback);
+    void setOnItemStartAction(std::function<void(const MediaItem&)> callback);
 
     static brls::View* create();
 
@@ -26,6 +27,7 @@ private:
 
     std::vector<MediaItem> m_items;
     std::function<void(const MediaItem&)> m_onItemSelected;
+    std::function<void(const MediaItem&)> m_onItemStartAction;
 
     brls::Box* m_contentBox = nullptr;
     int m_columns = 4;

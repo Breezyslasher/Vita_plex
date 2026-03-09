@@ -139,6 +139,25 @@ void PlayerActivity::onContentAvailable() {
             }));
     }
 
+    // Add horizontal swipe gesture on album art area for prev/next track (music mode)
+    if (albumArtContainer) {
+        albumArtContainer->addGestureRecognizer(new brls::PanGestureRecognizer(
+            [this](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
+                if (!m_isQueueMode) return;
+                if (status.state == brls::GestureState::END) {
+                    float deltaX = status.position.x - status.startPosition.x;
+                    float threshold = 60.0f; // Minimum swipe distance
+                    if (deltaX > threshold) {
+                        // Swipe right = previous track
+                        playPrevious();
+                    } else if (deltaX < -threshold) {
+                        // Swipe left = next track
+                        playNext();
+                    }
+                }
+            }, brls::PanAxis::HORIZONTAL));
+    }
+
     // Register controller actions
     this->registerAction("Play/Pause", brls::ControllerButton::BUTTON_A, [this](brls::View* view) {
         resetControlsIdleTimer();
@@ -322,6 +341,10 @@ void PlayerActivity::onContentAvailable() {
 
         // In music mode: hide audio/video/subtitle track buttons, only show queue + lyrics
         // audioBtn, videoBtn, subBtn stay hidden (GONE by default in XML)
+        // Also explicitly disable focusability so they can't be hovered/selected
+        if (audioBtn) audioBtn->setFocusable(false);
+        if (subBtn) subBtn->setFocusable(false);
+        if (videoBtn) videoBtn->setFocusable(false);
 
         // Shuffle toggle button
         if (shuffleBtn) {
@@ -354,11 +377,15 @@ void PlayerActivity::onContentAvailable() {
                 MpvPlayer& player = MpvPlayer::getInstance();
 
                 if (m_lyricsEnabled) {
-                    // Find the first lyrics/subtitle stream and load it as external subtitle
+                    // Force re-fetch streams for current track to find lyrics
+                    m_streamsLoaded = false;
+                    m_plexStreams.clear();
                     fetchPlexStreams();
                     int lyricsStreamId = -1;
                     std::string lyricsCodec;
                     for (const auto& ps : m_plexStreams) {
+                        brls::Logger::debug("PlayerActivity: Stream type={} id={} codec={} title={}",
+                                           ps.streamType, ps.id, ps.codec, ps.title);
                         if (ps.streamType == 4 || ps.streamType == 3) {
                             lyricsStreamId = ps.id;
                             lyricsCodec = ps.codec;
@@ -371,6 +398,7 @@ void PlayerActivity::onContentAvailable() {
                         std::string ext = lyricsCodec.empty() ? "lrc" : lyricsCodec;
                         // Normalize common codec names to file extensions
                         if (ext == "text" || ext == "txt") ext = "srt";
+                        if (ext == "lrc") ext = "lrc";  // Keep LRC as-is
                         PlexClient& client = PlexClient::getInstance();
                         std::string serverUrl = client.getServerUrl();
                         // Remove trailing slash
@@ -382,16 +410,16 @@ void PlayerActivity::onContentAvailable() {
 
                         brls::Logger::info("PlayerActivity: Loading lyrics from: {}", lyricsUrl);
                         player.loadSubtitleUrl(lyricsUrl);
-                        player.showOSD("Lyrics on", 1.5);
+                        brls::Application::notify("Lyrics on");
                     } else {
                         // No lyrics stream available
                         m_lyricsEnabled = false;
-                        player.showOSD("No lyrics available", 1.5);
+                        brls::Application::notify("No lyrics available");
                     }
                 } else {
                     // Disable lyrics
                     player.removeExternalSubtitles();
-                    player.showOSD("Lyrics off", 1.5);
+                    brls::Application::notify("Lyrics off");
                 }
 
                 // Update icon opacity to show state
@@ -1118,16 +1146,31 @@ void PlayerActivity::updateProgress() {
             m_updatingSlider = false;
         }
 
-        if (timeLabel) {
+        // Update time labels: elapsed on left, remaining on right
+        {
             int posMin = (int)position / 60;
             int posSec = (int)position % 60;
-            int durMin = (int)duration / 60;
-            int durSec = (int)duration % 60;
+            int remaining = std::max(0, (int)(duration - position));
+            int remMin = remaining / 60;
+            int remSec = remaining % 60;
 
-            char timeStr[32];
-            snprintf(timeStr, sizeof(timeStr), "%02d:%02d / %02d:%02d",
-                     posMin, posSec, durMin, durSec);
-            timeLabel->setText(timeStr);
+            char elapsedStr[16];
+            snprintf(elapsedStr, sizeof(elapsedStr), "%d:%02d", posMin, posSec);
+            char remainStr[16];
+            snprintf(remainStr, sizeof(remainStr), "-%d:%02d", remMin, remSec);
+
+            if (timeElapsedLabel) timeElapsedLabel->setText(elapsedStr);
+            if (timeRemainingLabel) timeRemainingLabel->setText(remainStr);
+
+            // Keep legacy time label updated for video mode
+            if (timeLabel) {
+                int durMin = (int)duration / 60;
+                int durSec = (int)duration % 60;
+                char timeStr[32];
+                snprintf(timeStr, sizeof(timeStr), "%02d:%02d / %02d:%02d",
+                         posMin, posSec, durMin, durSec);
+                timeLabel->setText(timeStr);
+            }
         }
     }
 
@@ -2003,6 +2046,59 @@ void PlayerActivity::showQueueOverlay() {
             return true;
         });
 
+        // L button = move focused song up in queue
+        queueOverlay->registerAction("Move Up", brls::ControllerButton::BUTTON_LB, [this](brls::View* view) {
+            if (!queueList) return true;
+            auto& children = queueList->getChildren();
+            // Find which child has focus
+            brls::View* focused = brls::Application::getCurrentFocus();
+            for (int i = 0; i < (int)children.size(); i++) {
+                if (children[i] == focused) {
+                    if (i > 0) {
+                        MusicQueue& queue = MusicQueue::getInstance();
+                        bool shuffled = queue.isShuffleEnabled();
+                        const auto& shuffleOrder = queue.getShuffleOrder();
+                        int fromIdx = (shuffled && i < (int)shuffleOrder.size()) ? shuffleOrder[i] : i;
+                        int toIdx = (shuffled && (i-1) < (int)shuffleOrder.size()) ? shuffleOrder[i-1] : (i-1);
+                        queue.moveTrack(fromIdx, toIdx);
+                        populateQueueList();
+                        int newFocus = i - 1;
+                        if (newFocus >= 0 && newFocus < (int)queueList->getChildren().size()) {
+                            brls::Application::giveFocus(queueList->getChildren()[newFocus]);
+                        }
+                    }
+                    break;
+                }
+            }
+            return true;
+        });
+
+        // R button = move focused song down in queue
+        queueOverlay->registerAction("Move Down", brls::ControllerButton::BUTTON_RB, [this](brls::View* view) {
+            if (!queueList) return true;
+            auto& children = queueList->getChildren();
+            brls::View* focused = brls::Application::getCurrentFocus();
+            for (int i = 0; i < (int)children.size(); i++) {
+                if (children[i] == focused) {
+                    if (i < (int)children.size() - 1) {
+                        MusicQueue& queue = MusicQueue::getInstance();
+                        bool shuffled = queue.isShuffleEnabled();
+                        const auto& shuffleOrder = queue.getShuffleOrder();
+                        int fromIdx = (shuffled && i < (int)shuffleOrder.size()) ? shuffleOrder[i] : i;
+                        int toIdx = (shuffled && (i+1) < (int)shuffleOrder.size()) ? shuffleOrder[i+1] : (i+1);
+                        queue.moveTrack(fromIdx, toIdx);
+                        populateQueueList();
+                        int newFocus = i + 1;
+                        if (newFocus < (int)queueList->getChildren().size()) {
+                            brls::Application::giveFocus(queueList->getChildren()[newFocus]);
+                        }
+                    }
+                    break;
+                }
+            }
+            return true;
+        });
+
         // Give focus to the currently playing track in the list
         // When shuffled, the current track's display position is the shuffle position
         MusicQueue& queue = MusicQueue::getInstance();
@@ -2043,10 +2139,22 @@ void PlayerActivity::populateQueueList() {
     bool shuffled = queue.isShuffleEnabled();
     const auto& shuffleOrder = queue.getShuffleOrder();
 
-    // Set title with track count
-    char titleBuf[64];
-    snprintf(titleBuf, sizeof(titleBuf), "Queue (%d tracks)%s",
-             (int)tracks.size(), shuffled ? " - Shuffled" : "");
+    // Calculate total queue duration
+    int totalDuration = 0;
+    for (const auto& t : tracks) totalDuration += t.duration;
+    int totalMin = totalDuration / 60;
+    int totalHrs = totalMin / 60;
+    totalMin %= 60;
+
+    // Set title with track count and total duration
+    char titleBuf[96];
+    if (totalHrs > 0) {
+        snprintf(titleBuf, sizeof(titleBuf), "Queue - %d tracks (%dh %dm)%s",
+                 (int)tracks.size(), totalHrs, totalMin, shuffled ? " - Shuffled" : "");
+    } else {
+        snprintf(titleBuf, sizeof(titleBuf), "Queue - %d tracks (%d min)%s",
+                 (int)tracks.size(), totalMin, shuffled ? " - Shuffled" : "");
+    }
     queueOverlayTitle->setText(titleBuf);
 
     // Temporarily unpause image loader for loading thumbnails
@@ -2064,31 +2172,32 @@ void PlayerActivity::populateQueueList() {
         const QueueItem& track = tracks[trackIdx];
         bool isCurrent = (trackIdx == currentIndex);
 
-        // Row container: [cover art] [title + artist]
+        // Row container: [cover art] [title + artist] [duration]
         brls::Box* row = new brls::Box();
         row->setAxis(brls::Axis::ROW);
         row->setJustifyContent(brls::JustifyContent::FLEX_START);
         row->setAlignItems(brls::AlignItems::CENTER);
         row->setPaddingTop(6);
         row->setPaddingBottom(6);
-        row->setPaddingLeft(8);
-        row->setPaddingRight(8);
-        row->setCornerRadius(6);
+        row->setPaddingLeft(10);
+        row->setPaddingRight(10);
+        row->setCornerRadius(8);
         row->setFocusable(true);
+        row->setMarginBottom(2);
 
         if (isCurrent) {
-            row->setBackgroundColor(nvgRGBA(80, 80, 200, 120));
-            row->setBorderColor(nvgRGB(100, 130, 255));
-            row->setBorderThickness(1);
+            row->setBackgroundColor(nvgRGBA(80, 100, 220, 140));
+            row->setBorderColor(nvgRGB(100, 140, 255));
+            row->setBorderThickness(1.5f);
         }
 
-        // Cover art thumbnail (50x50)
+        // Cover art thumbnail (46x46)
         brls::Image* thumb = new brls::Image();
-        thumb->setWidth(50);
-        thumb->setHeight(50);
-        thumb->setCornerRadius(4);
+        thumb->setWidth(46);
+        thumb->setHeight(46);
+        thumb->setCornerRadius(6);
         thumb->setScalingType(brls::ImageScalingType::FIT);
-        thumb->setMarginRight(10);
+        thumb->setMarginRight(12);
 
         if (!track.thumb.empty()) {
             std::string thumbUrl = client.getThumbnailUrl(track.thumb, 100, 100);
@@ -2129,6 +2238,20 @@ void PlayerActivity::populateQueueList() {
         }
 
         row->addView(textBox);
+
+        // Duration label on the right side
+        if (track.duration > 0) {
+            brls::Label* durLbl = new brls::Label();
+            int durMin = track.duration / 60;
+            int durSec = track.duration % 60;
+            char durBuf[16];
+            snprintf(durBuf, sizeof(durBuf), "%d:%02d", durMin, durSec);
+            durLbl->setText(durBuf);
+            durLbl->setFontSize(12);
+            durLbl->setTextColor(nvgRGB(140, 140, 140));
+            durLbl->setMarginLeft(8);
+            row->addView(durLbl);
+        }
 
         // Click handler to play this track (use actual queue index, not display position)
         int clickIdx = trackIdx;

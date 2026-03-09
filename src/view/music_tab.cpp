@@ -83,6 +83,9 @@ MusicTab::MusicTab() {
     m_contentGrid->setOnItemSelected([this](const MediaItem& item) {
         onItemSelected(item);
     });
+    m_contentGrid->setOnItemStartAction([this](const MediaItem& item) {
+        showAlbumContextMenu(item);
+    });
     m_mainContainer->addView(m_contentGrid);
 
     m_scrollView->setContentView(m_mainContainer);
@@ -527,6 +530,93 @@ void MusicTab::showCreatePlaylistDialog() {
             }
         });
     }, "New Playlist", "Enter playlist name", 128, "");
+}
+
+void MusicTab::showAlbumContextMenu(const MediaItem& album) {
+    auto* dialog = new brls::Dialog(album.title);
+
+    auto* optionsBox = new brls::Box();
+    optionsBox->setAxis(brls::Axis::COLUMN);
+    optionsBox->setPadding(20);
+
+    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
+        auto* btn = new brls::Button();
+        btn->setText(text);
+        btn->setHeight(44);
+        btn->setMarginBottom(10);
+        btn->registerClickAction(action);
+        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+        optionsBox->addView(btn);
+    };
+
+    MediaItem capturedAlbum = album;
+
+    addDialogButton("Play Now (Clear Queue)", [capturedAlbum, dialog](brls::View*) {
+        dialog->dismiss();
+        asyncRun([capturedAlbum]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> tracks;
+            if (client.fetchChildren(capturedAlbum.ratingKey, tracks) && !tracks.empty()) {
+                brls::sync([tracks]() {
+                    auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                    brls::Application::pushActivity(playerActivity);
+                });
+            }
+        });
+        return true;
+    });
+
+    addDialogButton("Play Next", [capturedAlbum, dialog](brls::View*) {
+        dialog->dismiss();
+        asyncRun([capturedAlbum]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> tracks;
+            if (client.fetchChildren(capturedAlbum.ratingKey, tracks)) {
+                brls::sync([tracks]() {
+                    MusicQueue& queue = MusicQueue::getInstance();
+                    if (queue.isEmpty()) {
+                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                        brls::Application::pushActivity(playerActivity);
+                    } else {
+                        for (int i = (int)tracks.size() - 1; i >= 0; i--) {
+                            queue.insertTrackAfterCurrent(tracks[i]);
+                        }
+                        brls::Application::notify("Album queued next");
+                    }
+                });
+            }
+        });
+        return true;
+    });
+
+    addDialogButton("Add to Bottom of Queue", [capturedAlbum, dialog](brls::View*) {
+        dialog->dismiss();
+        asyncRun([capturedAlbum]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> tracks;
+            if (client.fetchChildren(capturedAlbum.ratingKey, tracks)) {
+                brls::sync([tracks]() {
+                    MusicQueue& queue = MusicQueue::getInstance();
+                    if (queue.isEmpty()) {
+                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                        brls::Application::pushActivity(playerActivity);
+                    } else {
+                        queue.addTracks(tracks);
+                        brls::Application::notify("Album added to queue");
+                    }
+                });
+            }
+        });
+        return true;
+    });
+
+    addDialogButton("Cancel", [dialog](brls::View*) {
+        dialog->dismiss();
+        return true;
+    });
+
+    dialog->addView(optionsBox);
+    brls::Application::pushActivity(new brls::Activity(dialog));
 }
 
 void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
