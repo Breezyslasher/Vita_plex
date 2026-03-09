@@ -56,23 +56,23 @@ MediaItemCell::MediaItemCell()
     this->addView(m_progressBar);
 
     // Button hint box (shown on focus for album items)
-    // Sized to cover the album art image as an overlay
+    // Small circular badge in top-right corner of album art
     m_buttonHintBox = new brls::Box();
     m_buttonHintBox->setAxis(brls::Axis::ROW);
     m_buttonHintBox->setJustifyContent(brls::JustifyContent::CENTER);
     m_buttonHintBox->setAlignItems(brls::AlignItems::CENTER);
     m_buttonHintBox->setPositionType(brls::PositionType::ABSOLUTE);
-    m_buttonHintBox->setPositionTop(5);  // Match parent padding
-    m_buttonHintBox->setPositionLeft(5); // Match parent padding
-    m_buttonHintBox->setWidth(110);
-    m_buttonHintBox->setHeight(110);
-    m_buttonHintBox->setBackgroundColor(nvgRGBA(0, 0, 0, 160));
-    m_buttonHintBox->setCornerRadius(4);
+    m_buttonHintBox->setPositionTop(7);    // Small offset from top edge
+    m_buttonHintBox->setPositionRight(7);  // Anchor to top-right corner
+    m_buttonHintBox->setWidth(28);
+    m_buttonHintBox->setHeight(28);
+    m_buttonHintBox->setBackgroundColor(nvgRGBA(0, 0, 0, 180));
+    m_buttonHintBox->setCornerRadius(14);
     m_buttonHintBox->setVisibility(brls::Visibility::GONE);
 
     m_buttonHintIcon = new brls::Image();
-    m_buttonHintIcon->setWidth(24);
-    m_buttonHintIcon->setHeight(24);
+    m_buttonHintIcon->setWidth(18);
+    m_buttonHintIcon->setHeight(18);
     m_buttonHintBox->addView(m_buttonHintIcon);
 
     m_buttonHintLabel = new brls::Label();
