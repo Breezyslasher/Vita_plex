@@ -339,12 +339,15 @@ void PlayerActivity::onContentAvailable() {
             musicNextBtn->addGestureRecognizer(new brls::TapGestureRecognizer(musicNextBtn));
         }
 
-        // In music mode: hide audio/video/subtitle track buttons, only show queue + lyrics
-        // audioBtn, videoBtn, subBtn stay hidden (GONE by default in XML)
-        // Also explicitly disable focusability so they can't be hovered/selected
-        if (audioBtn) audioBtn->setFocusable(false);
-        if (subBtn) subBtn->setFocusable(false);
-        if (videoBtn) videoBtn->setFocusable(false);
+        // In music mode: disable focusability on ALL hidden buttons
+        // so focus navigation skips them entirely
+        if (audioBtn) { audioBtn->setFocusable(false); audioBtn->setVisibility(brls::Visibility::GONE); }
+        if (subBtn) { subBtn->setFocusable(false); subBtn->setVisibility(brls::Visibility::GONE); }
+        if (videoBtn) { videoBtn->setFocusable(false); videoBtn->setVisibility(brls::Visibility::GONE); }
+        // Also disable center video controls buttons (hidden parent but still focusable)
+        if (playBtn) playBtn->setFocusable(false);
+        if (rewindBtn) rewindBtn->setFocusable(false);
+        if (forwardBtn) forwardBtn->setFocusable(false);
 
         // Shuffle toggle button
         if (shuffleBtn) {
