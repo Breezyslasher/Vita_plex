@@ -1181,11 +1181,10 @@ void MediaDetailView::performTrackAction(const MediaItem& track, size_t trackInd
         case TrackDefaultAction::PLAY_NEXT:
             // Add after current track in queue
             if (queue.isEmpty()) {
-                // No queue yet - start a new one with all tracks starting from this one
-                if (!m_children.empty()) {
-                    auto* playerActivity = PlayerActivity::createWithQueue(m_children, (int)trackIndex);
-                    brls::Application::pushActivity(playerActivity);
-                }
+                // No queue yet - start with just this track
+                std::vector<MediaItem> single = {track};
+                auto* playerActivity = PlayerActivity::createWithQueue(single, 0);
+                brls::Application::pushActivity(playerActivity);
             } else {
                 queue.insertTrackAfterCurrent(track);
                 brls::Application::notify("Playing next: " + track.title);
@@ -1195,10 +1194,9 @@ void MediaDetailView::performTrackAction(const MediaItem& track, size_t trackInd
         case TrackDefaultAction::PLAY_NOW_REPLACE:
             // Replace current track and play
             if (queue.isEmpty()) {
-                if (!m_children.empty()) {
-                    auto* playerActivity = PlayerActivity::createWithQueue(m_children, (int)trackIndex);
-                    brls::Application::pushActivity(playerActivity);
-                }
+                std::vector<MediaItem> single = {track};
+                auto* playerActivity = PlayerActivity::createWithQueue(single, 0);
+                brls::Application::pushActivity(playerActivity);
             } else {
                 queue.insertTrackAfterCurrent(track);
                 if (queue.playNext()) {
@@ -1210,10 +1208,9 @@ void MediaDetailView::performTrackAction(const MediaItem& track, size_t trackInd
         case TrackDefaultAction::ADD_TO_BOTTOM:
             // Add to end of queue
             if (queue.isEmpty()) {
-                if (!m_children.empty()) {
-                    auto* playerActivity = PlayerActivity::createWithQueue(m_children, (int)trackIndex);
-                    brls::Application::pushActivity(playerActivity);
-                }
+                std::vector<MediaItem> single = {track};
+                auto* playerActivity = PlayerActivity::createWithQueue(single, 0);
+                brls::Application::pushActivity(playerActivity);
             } else {
                 queue.addTrack(track);
                 brls::Application::notify("Added to queue: " + track.title);
@@ -1222,12 +1219,11 @@ void MediaDetailView::performTrackAction(const MediaItem& track, size_t trackInd
 
         case TrackDefaultAction::PLAY_NOW_CLEAR:
         default:
-            // Clear queue and play from this track (original behavior)
-            if (!m_children.empty()) {
-                auto* playerActivity = PlayerActivity::createWithQueue(m_children, (int)trackIndex);
+            // Clear queue and play just this track
+            {
+                std::vector<MediaItem> single = {track};
+                auto* playerActivity = PlayerActivity::createWithQueue(single, 0);
                 brls::Application::pushActivity(playerActivity);
-            } else {
-                Application::getInstance().pushPlayerActivity(track.ratingKey);
             }
             break;
     }
@@ -1253,20 +1249,12 @@ void MediaDetailView::showTrackActionDialog(const MediaItem& track, size_t track
     MediaItem capturedTrack = track;
     size_t capturedIndex = trackIndex;
 
-    addDialogButton("Play This Track Only", [this, capturedTrack, dialog](brls::View*) {
+    addDialogButton("Play Now (Clear Queue)", [this, capturedTrack, dialog](brls::View*) {
         dialog->dismiss();
+        // Play only this single track
         std::vector<MediaItem> single = {capturedTrack};
         auto* playerActivity = PlayerActivity::createWithQueue(single, 0);
         brls::Application::pushActivity(playerActivity);
-        return true;
-    });
-
-    addDialogButton("Play Album From Here", [this, capturedTrack, capturedIndex, dialog](brls::View*) {
-        dialog->dismiss();
-        if (!m_children.empty()) {
-            auto* playerActivity = PlayerActivity::createWithQueue(m_children, (int)capturedIndex);
-            brls::Application::pushActivity(playerActivity);
-        }
         return true;
     });
 
