@@ -119,7 +119,7 @@ void LoginActivity::showServerSelectionDialog(const std::vector<PlexServer>& ser
     }
 
     dialog->addView(list);
-    dialog->addButton("Cancel", [dialog]() { dialog->dismiss(); });
+    dialog->addButton("Cancel", []() {});
 
     brls::Application::pushActivity(new brls::Activity(dialog));
 }

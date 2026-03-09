@@ -31,7 +31,8 @@ enum class DownloadState {
     DOWNLOADING,
     PAUSED,
     COMPLETED,
-    FAILED
+    FAILED,
+    CANCELLED   // Marked for removal - will be purged when safe
 };
 
 // Download item information
@@ -148,6 +149,9 @@ private:
 
     // Validate that downloaded files actually exist on disk
     void validateDownloadedFiles();
+
+    // Remove items marked as CANCELLED from the deque (only safe when download thread is idle)
+    void purgeCancelledUnlocked();
 
     // Internal save without locking (caller must hold m_mutex)
     void saveStateUnlocked();

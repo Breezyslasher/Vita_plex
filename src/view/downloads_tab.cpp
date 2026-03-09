@@ -18,6 +18,7 @@
 #include <memory>
 #include <thread>
 #include <chrono>
+#include <set>
 
 namespace vitaplex {
 
@@ -256,87 +257,117 @@ void DownloadsTab::refresh() {
     if (!stateChanged) return;  // Nothing changed, skip UI rebuild
     m_lastState = currentState;
 
-    // Check if just progress changed on existing items (can do incremental update)
-    bool canIncremental = (downloads.size() == m_rowElements.size());
-    if (canIncremental) {
-        for (size_t i = 0; i < downloads.size(); i++) {
-            if (downloads[i].ratingKey != m_rowElements[i].ratingKey) {
-                canIncremental = false;
-                break;
+    // Try incremental update: remove rows for items that no longer exist,
+    // then update status on remaining items that match
+    if (!m_rowElements.empty()) {
+        // Build set of current ratingKeys for quick lookup
+        std::set<std::string> currentKeys;
+        for (const auto& d : downloads) {
+            currentKeys.insert(d.ratingKey);
+        }
+
+        // Remove rows for items that were deleted/cancelled
+        // Walk backwards to avoid index shifting issues
+        for (int i = (int)m_rowElements.size() - 1; i >= 0; i--) {
+            if (currentKeys.find(m_rowElements[i].ratingKey) == currentKeys.end()) {
+                if (m_rowElements[i].row) {
+                    m_listContainer->removeView(m_rowElements[i].row);
+                }
+                m_rowElements.erase(m_rowElements.begin() + i);
             }
         }
-    }
 
-    if (canIncremental) {
-        // Just update status labels without rebuilding
-        for (size_t i = 0; i < downloads.size(); i++) {
-            const auto& item = downloads[i];
-            auto& row = m_rowElements[i];
-
-            std::string statusText;
-            switch (item.state) {
-                case DownloadState::QUEUED:
-                    statusText = "Queued";
+        // Check if remaining items match the download list (same order, same keys)
+        bool canUpdate = (downloads.size() == m_rowElements.size());
+        if (canUpdate) {
+            for (size_t i = 0; i < downloads.size(); i++) {
+                if (downloads[i].ratingKey != m_rowElements[i].ratingKey) {
+                    canUpdate = false;
                     break;
-                case DownloadState::DOWNLOADING:
-                    if (item.totalBytes > 0) {
-                        int percent = (int)((item.downloadedBytes * 100) / item.totalBytes);
-                        int64_t dlMB = item.downloadedBytes / (1024 * 1024);
-                        int64_t totalMB = item.totalBytes / (1024 * 1024);
-                        statusText = "Downloading... " + std::to_string(percent) + "% (" +
-                                    std::to_string(dlMB) + "/" + std::to_string(totalMB) + " MB)";
-                    } else {
-                        int64_t dlMB = item.downloadedBytes / (1024 * 1024);
-                        statusText = "Downloading... " + std::to_string(dlMB) + " MB";
-                    }
-                    break;
-                case DownloadState::PAUSED:
-                    statusText = "Paused";
-                    if (item.totalBytes > 0) {
-                        int percent = (int)((item.downloadedBytes * 100) / item.totalBytes);
-                        statusText += " (" + std::to_string(percent) + "%)";
-                    }
-                    break;
-                case DownloadState::COMPLETED:
-                    statusText = "Ready to play";
-                    if (item.viewOffset > 0) {
-                        int minutes = (int)(item.viewOffset / 60000);
-                        statusText += " (" + std::to_string(minutes) + " min watched)";
-                    }
-                    break;
-                case DownloadState::FAILED:
-                    statusText = "Failed";
-                    break;
+                }
             }
+        }
 
-            if (row.statusLabel) {
-                row.statusLabel->setText(statusText);
-            }
+        if (canUpdate) {
+            // Update status labels and colors in-place
+            for (size_t i = 0; i < downloads.size(); i++) {
+                const auto& item = downloads[i];
+                auto& row = m_rowElements[i];
 
-            // Update row background color based on state
-            if (row.row) {
-                NVGcolor bgColor;
+                std::string statusText;
                 switch (item.state) {
+                    case DownloadState::QUEUED:
+                        statusText = "Queued";
+                        break;
                     case DownloadState::DOWNLOADING:
-                        bgColor = nvgRGBA(20, 60, 20, 200);  // Green tint
+                        if (item.totalBytes > 0) {
+                            int percent = (int)((item.downloadedBytes * 100) / item.totalBytes);
+                            int64_t dlMB = item.downloadedBytes / (1024 * 1024);
+                            int64_t totalMB = item.totalBytes / (1024 * 1024);
+                            statusText = "Downloading... " + std::to_string(percent) + "% (" +
+                                        std::to_string(dlMB) + "/" + std::to_string(totalMB) + " MB)";
+                        } else {
+                            int64_t dlMB = item.downloadedBytes / (1024 * 1024);
+                            statusText = "Downloading... " + std::to_string(dlMB) + " MB";
+                        }
                         break;
                     case DownloadState::PAUSED:
-                        bgColor = nvgRGBA(60, 50, 10, 200);  // Amber tint
+                        statusText = "Paused";
+                        if (item.totalBytes > 0) {
+                            int percent = (int)((item.downloadedBytes * 100) / item.totalBytes);
+                            statusText += " (" + std::to_string(percent) + "%)";
+                        }
+                        break;
+                    case DownloadState::COMPLETED:
+                        statusText = "Ready to play";
+                        if (item.viewOffset > 0) {
+                            int minutes = (int)(item.viewOffset / 60000);
+                            statusText += " (" + std::to_string(minutes) + " min watched)";
+                        }
                         break;
                     case DownloadState::FAILED:
-                        bgColor = nvgRGBA(60, 20, 20, 200);  // Red tint
+                        statusText = "Failed";
                         break;
                     default:
-                        bgColor = nvgRGBA(40, 40, 40, 200);
                         break;
                 }
-                row.row->setBackgroundColor(bgColor);
+
+                if (row.statusLabel) {
+                    row.statusLabel->setText(statusText);
+                }
+
+                // Update row background color based on state
+                if (row.row) {
+                    NVGcolor bgColor;
+                    switch (item.state) {
+                        case DownloadState::DOWNLOADING:
+                            bgColor = nvgRGBA(20, 60, 20, 200);  // Green tint
+                            break;
+                        case DownloadState::PAUSED:
+                            bgColor = nvgRGBA(60, 50, 10, 200);  // Amber tint
+                            break;
+                        case DownloadState::FAILED:
+                            bgColor = nvgRGBA(60, 20, 20, 200);  // Red tint
+                            break;
+                        default:
+                            bgColor = nvgRGBA(40, 40, 40, 200);
+                            break;
+                    }
+                    row.row->setBackgroundColor(bgColor);
+                }
             }
+
+            // Show/hide empty label
+            if (downloads.empty()) {
+                m_emptyLabel->setVisibility(brls::Visibility::VISIBLE);
+            } else {
+                m_emptyLabel->setVisibility(brls::Visibility::GONE);
+            }
+            return;
         }
-        return;
     }
 
-    // Full rebuild needed
+    // Full rebuild needed (new items added or order changed)
     // Clear existing items (except empty label which is always last)
     while (m_listContainer->getChildren().size() > 1) {
         m_listContainer->removeView(m_listContainer->getChildren()[0]);
@@ -470,9 +501,10 @@ void DownloadsTab::refresh() {
             deleteBtn->addView(delLabel);
 
             std::string key = item.ratingKey;
-            deleteBtn->registerClickAction([key](brls::View*) {
+            deleteBtn->registerClickAction([this, key](brls::View*) {
                 DownloadsManager::getInstance().deleteDownload(key);
                 brls::Application::notify("Download deleted");
+                m_lastState.clear();  // Force refresh on next auto-refresh cycle
                 return true;
             });
             buttonsBox->addView(deleteBtn);
@@ -485,9 +517,10 @@ void DownloadsTab::refresh() {
             cancelBtn->addView(cancelLabel);
 
             std::string key = item.ratingKey;
-            cancelBtn->registerClickAction([key](brls::View*) {
+            cancelBtn->registerClickAction([this, key](brls::View*) {
                 DownloadsManager::getInstance().cancelDownload(key);
                 brls::Application::notify("Download cancelled");
+                m_lastState.clear();  // Force refresh on next auto-refresh cycle
                 return true;
             });
             buttonsBox->addView(cancelBtn);
@@ -501,9 +534,10 @@ void DownloadsTab::refresh() {
             cancelBtn->addView(cancelLabel);
 
             std::string key = item.ratingKey;
-            cancelBtn->registerClickAction([key](brls::View*) {
+            cancelBtn->registerClickAction([this, key](brls::View*) {
                 DownloadsManager::getInstance().cancelDownload(key);
                 brls::Application::notify("Download removed");
+                m_lastState.clear();  // Force refresh on next auto-refresh cycle
                 return true;
             });
             buttonsBox->addView(cancelBtn);

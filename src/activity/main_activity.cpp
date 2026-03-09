@@ -8,6 +8,7 @@
 #include "view/library_section_tab.hpp"
 #include "view/search_tab.hpp"
 #include "view/settings_tab.hpp"
+#include "view/debug_tab.hpp"
 #include "view/livetv_tab.hpp"
 #include "view/downloads_tab.hpp"
 #include "view/music_tab.hpp"
@@ -142,23 +143,33 @@ void MainActivity::onContentAvailable() {
         // Downloads tab (always available)
         tabFrame->addTab("Downloads", []() { return new DownloadsTab(); });
 
-        // Settings always at the bottom
+        // Debug and Settings always at the bottom
         tabFrame->addSeparator();
+        if (settings.showDebugTab) {
+            tabFrame->addTab("Debug", []() { return new DebugTab(); });
+        }
         tabFrame->addTab("Settings", []() { return new SettingsTab(); });
 
         // Focus first tab
         tabFrame->focusTab(0);
 
-        // Circle button: if music is playing in background, return to player
-        tabFrame->registerAction("", brls::ControllerButton::BUTTON_B, [](brls::View* view) {
-            MusicQueue& queue = MusicQueue::getInstance();
-            if (!queue.isEmpty() && queue.getCurrentIndex() >= 0) {
-                auto* playerActivity = PlayerActivity::createResumeQueue();
-                brls::Application::pushActivity(playerActivity);
+        // Register BUTTON_B on the root content view (parent of tabFrame) so it
+        // intercepts back/circle regardless of which child has focus. When a
+        // dialog closes, borealis may restore focus to the root Box instead of
+        // a child inside tabFrame, which would bypass a handler registered only
+        // on tabFrame and let AppletFrame show the "exit this app" dialog.
+        brls::View* rootBox = tabFrame->getParent();
+        if (rootBox) {
+            rootBox->registerAction("", brls::ControllerButton::BUTTON_B, [](brls::View* view) {
+                MusicQueue& queue = MusicQueue::getInstance();
+                if (!queue.isEmpty() && queue.getCurrentIndex() >= 0) {
+                    auto* playerActivity = PlayerActivity::createResumeQueue();
+                    brls::Application::pushActivity(playerActivity);
+                }
+                // Always return true to prevent the exit confirmation dialog
                 return true;
-            }
-            return false;  // Let default back behavior happen
-        });
+            });
+        }
     }
 }
 

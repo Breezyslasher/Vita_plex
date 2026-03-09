@@ -247,7 +247,7 @@ public:
     
     // Library operations
     bool fetchLibrarySections();
-    bool fetchLibraryContent(const std::string& sectionKey);
+    bool fetchLibraryContent(const std::string& sectionKey, int metadataType = 0);
     bool fetchChildren(const std::string& ratingKey);  // Get seasons/episodes/albums/tracks
     bool fetchMediaDetails(const std::string& ratingKey);
     bool fetchHubs();                     // Get home screen hubs
@@ -371,6 +371,7 @@ private:
     std::vector<LiveTVChannel> m_liveTVChannels;
     MediaItem m_currentMedia;
     std::string m_currentSectionKey;
+    std::string m_currentSectionType;  // "movie", "show", "artist", etc.
     std::string m_searchQuery;
     AppSettings m_settings;
     bool m_hasLiveTV = false;

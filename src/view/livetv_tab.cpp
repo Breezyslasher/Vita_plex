@@ -548,7 +548,7 @@ void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
             brls::Logger::error("LiveTVTab: Failed to tune channel {}", channel.title);
             brls::sync([channel]() {
                 brls::Dialog* dialog = new brls::Dialog("Failed to tune channel: " + channel.title);
-                dialog->addButton("OK", [dialog]() { dialog->close(); });
+                dialog->addButton("OK", []() {});
                 dialog->open();
             });
         }
@@ -567,19 +567,15 @@ void LiveTVTab::onProgramSelected(const GuideProgram& program, const LiveTVChann
 
     brls::Dialog* dialog = new brls::Dialog(message);
 
-    dialog->addButton("Watch Now", [this, channel, dialog]() {
-        dialog->close();
+    dialog->addButton("Watch Now", [this, channel]() {
         onChannelSelected(channel);
     });
 
-    dialog->addButton("Record", [this, program, channel, dialog]() {
-        dialog->close();
+    dialog->addButton("Record", [this, program, channel]() {
         scheduleRecording(program, channel);
     });
 
-    dialog->addButton("Cancel", [dialog]() {
-        dialog->close();
-    });
+    dialog->addButton("Cancel", []() {});
 
     dialog->open();
 }
@@ -589,7 +585,7 @@ void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChann
     // POST to /media/subscriptions with program details
 
     brls::Dialog* dialog = new brls::Dialog("Recording scheduled for: " + program.title);
-    dialog->addButton("OK", [dialog]() { dialog->close(); });
+    dialog->addButton("OK", []() {});
     dialog->open();
 }
 

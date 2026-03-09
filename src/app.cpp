@@ -843,11 +843,14 @@ bool App::fetchLibrarySections() {
     return false;
 }
 
-bool App::fetchLibraryContent(const std::string& sectionKey) {
-    debugLog("Fetching content for section: %s\n", sectionKey.c_str());
-    
+bool App::fetchLibraryContent(const std::string& sectionKey, int metadataType) {
+    debugLog("Fetching content for section: %s type: %d\n", sectionKey.c_str(), metadataType);
+
     m_currentSectionKey = sectionKey;
     std::string apiUrl = buildApiUrl("/library/sections/" + sectionKey + "/all");
+    if (metadataType > 0) {
+        apiUrl += "?type=" + std::to_string(metadataType);
+    }
     
     HttpClient client;
     HttpRequest req;
@@ -3056,7 +3059,13 @@ void App::handleLibraryInput(SceCtrlData* ctrl, SceCtrlData* oldCtrl) {
     if ((ctrl->buttons & SCE_CTRL_CROSS) && !(oldCtrl->buttons & SCE_CTRL_CROSS)) {
         if (m_selectedItem < listSize) {
             const auto& section = m_librarySections[m_selectedItem];
-            if (fetchLibraryContent(section.key)) {
+            m_currentSectionType = section.type;
+            // Plex type codes: 1=movie, 2=show, 8=artist
+            int metaType = 0;
+            if (section.type == "movie") metaType = 1;
+            else if (section.type == "show") metaType = 2;
+            else if (section.type == "artist") metaType = 8;
+            if (fetchLibraryContent(section.key, metaType)) {
                 m_selectedItem = 0;
                 m_scrollOffset = 0;
                 setState(AppState::BROWSE);
@@ -3144,7 +3153,11 @@ void App::handleBrowseInput(SceCtrlData* ctrl, SceCtrlData* oldCtrl) {
                 fetchChildren(parent.key);
             } else {
                 // Back to library content
-                fetchLibraryContent(m_currentSectionKey);
+                int metaType = 0;
+                if (m_currentSectionType == "movie") metaType = 1;
+                else if (m_currentSectionType == "show") metaType = 2;
+                else if (m_currentSectionType == "artist") metaType = 8;
+                fetchLibraryContent(m_currentSectionKey, metaType);
             }
         } else {
             // Back to library list

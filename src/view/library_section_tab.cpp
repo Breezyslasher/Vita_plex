@@ -127,11 +127,18 @@ void LibrarySectionTab::loadContent() {
     std::string key = m_sectionKey;
     std::weak_ptr<bool> aliveWeak = m_alive;  // Capture weak_ptr for async safety
 
-    asyncRun([this, key, aliveWeak]() {
+    std::string sectionType = m_sectionType;
+    asyncRun([this, key, sectionType, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
-        if (client.fetchLibraryContent(key, items)) {
+        // Plex type codes: 1=movie, 2=show, 8=artist, 9=album, 10=track
+        int metadataType = 0;
+        if (sectionType == "movie") metadataType = 1;
+        else if (sectionType == "show") metadataType = 2;
+        else if (sectionType == "artist") metadataType = 8;
+
+        if (client.fetchLibraryContent(key, items, metadataType)) {
             brls::Logger::info("LibrarySectionTab: Got {} items for section {}", items.size(), key);
 
             brls::sync([this, items, aliveWeak]() {
@@ -381,12 +388,19 @@ void LibrarySectionTab::onGenreSelected(const GenreItem& genre) {
     std::string filterTitle = m_filterTitle;
     std::weak_ptr<bool> aliveWeak = m_alive;
 
-    asyncRun([this, key, genreKey, genreTitle, filterTitle, aliveWeak]() {
+    std::string secType = m_sectionType;
+    asyncRun([this, key, genreKey, genreTitle, filterTitle, secType, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
+        // Plex type codes: 1=movie, 2=show, 8=artist
+        int metadataType = 0;
+        if (secType == "movie") metadataType = 1;
+        else if (secType == "show") metadataType = 2;
+        else if (secType == "artist") metadataType = 8;
+
         // Try with genre key first, fall back to title
-        if (client.fetchByGenreKey(key, genreKey, items) || client.fetchByGenre(key, genreTitle, items)) {
+        if (client.fetchByGenreKey(key, genreKey, items, metadataType) || client.fetchByGenre(key, genreTitle, items, metadataType)) {
             brls::Logger::info("LibrarySectionTab: Got {} items for genre", items.size());
 
             brls::sync([this, items, filterTitle, aliveWeak]() {

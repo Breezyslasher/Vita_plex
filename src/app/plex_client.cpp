@@ -562,11 +562,14 @@ bool PlexClient::fetchLibrarySections(std::vector<LibrarySection>& sections) {
     return !sections.empty();
 }
 
-bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items) {
-    brls::Logger::debug("fetchLibraryContent: section={}", sectionKey);
+bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items, int metadataType) {
+    brls::Logger::debug("fetchLibraryContent: section={} type={}", sectionKey, metadataType);
 
     HttpClient client;
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all");
+    if (metadataType > 0) {
+        url += "?type=" + std::to_string(metadataType);
+    }
 
     // Request JSON format
     HttpRequest req;
@@ -892,6 +895,174 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
     return true;
 }
 
+bool PlexClient::fetchArtistHubs(const std::string& ratingKey, std::vector<Hub>& hubs) {
+    brls::Logger::debug("fetchArtistHubs: ratingKey={}", ratingKey);
+
+    HttpClient client;
+    std::string url = buildApiUrl("/hubs/metadata/" + ratingKey + "?count=999");
+
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+
+    brls::Logger::debug("ArtistHubs response: {} - {} bytes", resp.statusCode, resp.body.length());
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("Failed to fetch artist hubs: {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
+        return false;
+    }
+
+    hubs.clear();
+
+    // Parse hubs - look for objects with "hubIdentifier" field
+    size_t pos = 0;
+    while ((pos = resp.body.find("\"hubIdentifier\"", pos)) != std::string::npos) {
+        size_t hubStart = resp.body.rfind('{', pos);
+        if (hubStart == std::string::npos) {
+            pos++;
+            continue;
+        }
+
+        int braceCount = 1;
+        size_t hubEnd = hubStart + 1;
+        while (braceCount > 0 && hubEnd < resp.body.length()) {
+            if (resp.body[hubEnd] == '{') braceCount++;
+            else if (resp.body[hubEnd] == '}') braceCount--;
+            hubEnd++;
+        }
+
+        std::string hubObj = resp.body.substr(hubStart, hubEnd - hubStart);
+
+        Hub hub;
+        hub.title = extractJsonValue(hubObj, "title");
+        hub.type = extractJsonValue(hubObj, "type");
+        hub.hubIdentifier = extractJsonValue(hubObj, "hubIdentifier");
+        hub.key = extractJsonValue(hubObj, "key");
+        hub.more = extractJsonBool(hubObj, "more");
+
+        // Parse items inside the hub
+        size_t itemPos = 0;
+        while ((itemPos = hubObj.find("\"ratingKey\"", itemPos)) != std::string::npos) {
+            size_t itemStart = hubObj.rfind('{', itemPos);
+            if (itemStart == std::string::npos) {
+                itemPos++;
+                continue;
+            }
+
+            int itemBraceCount = 1;
+            size_t itemEnd = itemStart + 1;
+            while (itemBraceCount > 0 && itemEnd < hubObj.length()) {
+                if (hubObj[itemEnd] == '{') itemBraceCount++;
+                else if (hubObj[itemEnd] == '}') itemBraceCount--;
+                itemEnd++;
+            }
+
+            std::string itemObj = hubObj.substr(itemStart, itemEnd - itemStart);
+
+            MediaItem item;
+            item.ratingKey = extractJsonValue(itemObj, "ratingKey");
+            item.title = extractJsonValue(itemObj, "title");
+            item.thumb = extractJsonValue(itemObj, "thumb");
+            item.art = extractJsonValue(itemObj, "art");
+            item.type = extractJsonValue(itemObj, "type");
+            item.mediaType = parseMediaType(item.type);
+            item.year = extractJsonInt(itemObj, "year");
+            item.summary = extractJsonValue(itemObj, "summary");
+            item.leafCount = extractJsonInt(itemObj, "leafCount");
+            item.viewedLeafCount = extractJsonInt(itemObj, "viewedLeafCount");
+            item.subtype = extractJsonValue(itemObj, "subtype");
+            item.parentTitle = extractJsonValue(itemObj, "parentTitle");
+            item.grandparentTitle = extractJsonValue(itemObj, "grandparentTitle");
+
+            if (!item.ratingKey.empty() && !item.title.empty()) {
+                hub.items.push_back(item);
+            }
+
+            itemPos = itemEnd;
+        }
+
+        if (!hub.title.empty() && !hub.items.empty()) {
+            hubs.push_back(hub);
+        }
+
+        pos = hubEnd;
+    }
+
+    brls::Logger::info("Found {} artist hubs", hubs.size());
+
+    // For hubs with more items available, fetch the full list using the hub's key
+    for (auto& hub : hubs) {
+        if (!hub.more || hub.key.empty()) continue;
+
+        brls::Logger::info("Fetching full hub '{}' ({} items so far, more=true)", hub.title, hub.items.size());
+
+        HttpClient hubClient;
+        std::string hubUrl = buildApiUrl(hub.key);
+        HttpRequest hubReq;
+        hubReq.url = hubUrl;
+        hubReq.method = "GET";
+        hubReq.headers["Accept"] = "application/json";
+        HttpResponse hubResp = hubClient.request(hubReq);
+
+        if (hubResp.statusCode != 200) {
+            brls::Logger::error("Failed to fetch full hub '{}': {}", hub.title, hubResp.statusCode);
+            continue;
+        }
+
+        // Parse all items from the full hub response
+        std::vector<MediaItem> fullItems;
+        size_t itemPos = 0;
+        while ((itemPos = hubResp.body.find("\"ratingKey\"", itemPos)) != std::string::npos) {
+            size_t itemStart = hubResp.body.rfind('{', itemPos);
+            if (itemStart == std::string::npos) {
+                itemPos++;
+                continue;
+            }
+
+            int itemBraceCount = 1;
+            size_t itemEnd = itemStart + 1;
+            while (itemBraceCount > 0 && itemEnd < hubResp.body.length()) {
+                if (hubResp.body[itemEnd] == '{') itemBraceCount++;
+                else if (hubResp.body[itemEnd] == '}') itemBraceCount--;
+                itemEnd++;
+            }
+
+            std::string itemObj = hubResp.body.substr(itemStart, itemEnd - itemStart);
+
+            MediaItem item;
+            item.ratingKey = extractJsonValue(itemObj, "ratingKey");
+            item.title = extractJsonValue(itemObj, "title");
+            item.thumb = extractJsonValue(itemObj, "thumb");
+            item.art = extractJsonValue(itemObj, "art");
+            item.type = extractJsonValue(itemObj, "type");
+            item.mediaType = parseMediaType(item.type);
+            item.year = extractJsonInt(itemObj, "year");
+            item.summary = extractJsonValue(itemObj, "summary");
+            item.leafCount = extractJsonInt(itemObj, "leafCount");
+            item.viewedLeafCount = extractJsonInt(itemObj, "viewedLeafCount");
+            item.subtype = extractJsonValue(itemObj, "subtype");
+            item.parentTitle = extractJsonValue(itemObj, "parentTitle");
+            item.grandparentTitle = extractJsonValue(itemObj, "grandparentTitle");
+
+            if (!item.ratingKey.empty() && !item.title.empty()) {
+                fullItems.push_back(item);
+            }
+
+            itemPos = itemEnd;
+        }
+
+        if (!fullItems.empty()) {
+            brls::Logger::info("Hub '{}': replaced {} items with {} from full fetch", hub.title, hub.items.size(), fullItems.size());
+            hub.items = std::move(fullItems);
+        }
+    }
+
+    return true;
+}
+
 bool PlexClient::fetchHubs(std::vector<Hub>& hubs) {
     brls::Logger::debug("fetchHubs: serverUrl={}", m_serverUrl);
 
@@ -1150,10 +1321,16 @@ bool PlexClient::fetchRecentlyAddedByType(MediaType type, std::vector<MediaItem>
             typeName = "show";
             break;
         case MediaType::MUSIC_ARTIST:
-        case MediaType::MUSIC_ALBUM:
-        case MediaType::MUSIC_TRACK:
-            typeCode = 8;  // artist
+            typeCode = 8;
             typeName = "artist";
+            break;
+        case MediaType::MUSIC_ALBUM:
+            typeCode = 9;
+            typeName = "album";
+            break;
+        case MediaType::MUSIC_TRACK:
+            typeCode = 10;
+            typeName = "track";
             break;
         default:
             return fetchRecentlyAdded(items);  // Fallback to all types
@@ -1529,12 +1706,15 @@ bool PlexClient::fetchGenreItems(const std::string& sectionKey, std::vector<Genr
     return true;
 }
 
-bool PlexClient::fetchByGenre(const std::string& sectionKey, const std::string& genre, std::vector<MediaItem>& items) {
-    brls::Logger::debug("Fetching items by genre: {} in section {}", genre, sectionKey);
+bool PlexClient::fetchByGenre(const std::string& sectionKey, const std::string& genre, std::vector<MediaItem>& items, int metadataType) {
+    brls::Logger::debug("Fetching items by genre: {} in section {} type={}", genre, sectionKey, metadataType);
 
     HttpClient client;
-    // Plex API: /library/sections/{key}/all?genre={genreId}
+    // Plex API: /library/sections/{key}/all?genre={genreId}&type={metadataType}
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all?genre=" + HttpClient::urlEncode(genre));
+    if (metadataType > 0) {
+        url += "&type=" + std::to_string(metadataType);
+    }
 
     HttpRequest req;
     req.url = url;
@@ -1592,13 +1772,16 @@ bool PlexClient::fetchByGenre(const std::string& sectionKey, const std::string& 
     return true;
 }
 
-bool PlexClient::fetchByGenreKey(const std::string& sectionKey, const std::string& genreKey, std::vector<MediaItem>& items) {
-    brls::Logger::debug("Fetching items by genre key: {} in section {}", genreKey, sectionKey);
+bool PlexClient::fetchByGenreKey(const std::string& sectionKey, const std::string& genreKey, std::vector<MediaItem>& items, int metadataType) {
+    brls::Logger::debug("Fetching items by genre key: {} in section {} type={}", genreKey, sectionKey, metadataType);
 
     HttpClient client;
     // Plex API: Use the fastKey or construct filter with genre key/ID
     // The genreKey is typically the numeric ID from the genre list
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all?genre=" + genreKey);
+    if (metadataType > 0) {
+        url += "&type=" + std::to_string(metadataType);
+    }
 
     HttpRequest req;
     req.url = url;

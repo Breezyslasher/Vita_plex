@@ -105,6 +105,15 @@ ProgressDialog::ProgressDialog(const std::string& title) {
     container->addView(m_cancelButton);
 
     this->addView(container);
+
+    // Handle back button (Circle) to dismiss instead of triggering app exit
+    this->registerAction("Back", brls::ControllerButton::BUTTON_B, [this](brls::View* view) {
+        if (m_cancelCallback) {
+            m_cancelCallback();
+        }
+        dismiss();
+        return true;
+    });
 }
 
 ProgressDialog::~ProgressDialog() {

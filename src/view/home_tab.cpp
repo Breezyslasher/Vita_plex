@@ -115,6 +115,33 @@ void HomeTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>
         });
         cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
 
+        // Register START button context menus for movies, shows, and seasons
+        if (capturedItem.mediaType == MediaType::MOVIE) {
+            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                [capturedItem](brls::View* view) {
+                    MediaDetailView::showMovieContextMenuStatic(capturedItem);
+                    return true;
+                });
+        } else if (capturedItem.mediaType == MediaType::SHOW) {
+            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                [capturedItem](brls::View* view) {
+                    MediaDetailView::showShowContextMenuStatic(capturedItem);
+                    return true;
+                });
+        } else if (capturedItem.mediaType == MediaType::SEASON) {
+            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                [capturedItem](brls::View* view) {
+                    MediaDetailView::showSeasonContextMenuStatic(capturedItem);
+                    return true;
+                });
+        } else if (capturedItem.mediaType == MediaType::MUSIC_ARTIST) {
+            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                [capturedItem](brls::View* view) {
+                    MediaDetailView::showArtistContextMenuStatic(capturedItem);
+                    return true;
+                });
+        }
+
         row->addView(cell);
     }
 

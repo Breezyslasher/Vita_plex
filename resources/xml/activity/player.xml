@@ -461,30 +461,32 @@
             width="100%"
             axis="column"
             alignItems="stretch"
-            backgroundColor="#E8181818"
-            cornerRadius="16"
-            paddingTop="14"
-            paddingBottom="14"
-            paddingLeft="18"
-            paddingRight="18"
-            marginLeft="8"
-            marginRight="8"
-            marginBottom="8">
+            backgroundColor="#F0141420"
+            cornerRadius="18"
+            paddingTop="16"
+            paddingBottom="16"
+            paddingLeft="20"
+            paddingRight="20"
+            marginLeft="10"
+            marginRight="10"
+            marginBottom="10"
+            borderColor="#30FFFFFF"
+            borderThickness="1">
 
             <!-- Queue title -->
             <brls:Label
                 id="player/queue_overlay_title"
                 text="Queue"
-                fontSize="18"
-                textColor="#DDDDDD"
+                fontSize="19"
+                textColor="#EEEEEE"
                 horizontalAlign="center"
-                marginBottom="10"/>
+                marginBottom="12"/>
 
             <!-- Queue track list container (scrollable) -->
             <brls:ScrollingFrame
                 id="player/queue_scroll"
                 width="100%"
-                height="300">
+                height="320">
                 <brls:Box
                     id="player/queue_list"
                     width="100%"

@@ -19,6 +19,7 @@
 #include <sstream>
 #include <ctime>
 #include <cstdlib>
+#include <cctype>
 #include <thread>
 #include <chrono>
 
@@ -201,10 +202,10 @@ void DownloadsManager::startDownloads() {
                 }
             }
 
-            if (nextItem) {
+            if (nextItem && nextItem->state != DownloadState::CANCELLED) {
                 brls::Logger::info("DownloadsManager: Starting download of {}", nextItem->title);
                 downloadItem(*nextItem);
-            } else {
+            } else if (!nextItem) {
                 // No more queued items
                 brls::Logger::info("DownloadsManager: No more queued items");
                 break;
@@ -212,6 +213,14 @@ void DownloadsManager::startDownloads() {
         }
         m_downloading.store(false);
         m_downloadThreadActive.store(false);
+
+        // Now safe to purge cancelled items since no references are held
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            purgeCancelledUnlocked();
+            saveStateUnlocked();
+        }
+
         brls::Logger::info("DownloadsManager: Download thread finished");
     });
 }
@@ -231,17 +240,19 @@ void DownloadsManager::pauseDownloads() {
 bool DownloadsManager::cancelDownload(const std::string& ratingKey) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
-    for (auto it = m_downloads.begin(); it != m_downloads.end(); ++it) {
-        if (it->ratingKey == ratingKey) {
+    for (auto& item : m_downloads) {
+        if (item.ratingKey == ratingKey) {
             // Delete partial file if exists
-            if (!it->localPath.empty()) {
+            if (!item.localPath.empty()) {
 #ifdef __vita__
-                sceIoRemove(it->localPath.c_str());
+                sceIoRemove(item.localPath.c_str());
 #else
-                std::remove(it->localPath.c_str());
+                std::remove(item.localPath.c_str());
 #endif
             }
-            m_downloads.erase(it);
+            // Mark as cancelled instead of erasing - safe while download thread runs
+            item.state = DownloadState::CANCELLED;
+            purgeCancelledUnlocked();
             saveStateUnlocked();
             return true;
         }
@@ -252,17 +263,19 @@ bool DownloadsManager::cancelDownload(const std::string& ratingKey) {
 bool DownloadsManager::deleteDownload(const std::string& ratingKey) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
-    for (auto it = m_downloads.begin(); it != m_downloads.end(); ++it) {
-        if (it->ratingKey == ratingKey) {
+    for (auto& item : m_downloads) {
+        if (item.ratingKey == ratingKey) {
             // Delete file
-            if (!it->localPath.empty()) {
+            if (!item.localPath.empty()) {
 #ifdef __vita__
-                sceIoRemove(it->localPath.c_str());
+                sceIoRemove(item.localPath.c_str());
 #else
-                std::remove(it->localPath.c_str());
+                std::remove(item.localPath.c_str());
 #endif
             }
-            m_downloads.erase(it);
+            // Mark as cancelled instead of erasing - safe while download thread runs
+            item.state = DownloadState::CANCELLED;
+            purgeCancelledUnlocked();
             saveStateUnlocked();
             brls::Logger::info("DownloadsManager: Deleted download {}", ratingKey);
             return true;
@@ -273,7 +286,13 @@ bool DownloadsManager::deleteDownload(const std::string& ratingKey) {
 
 std::vector<DownloadItem> DownloadsManager::getDownloads() const {
     std::lock_guard<std::mutex> lock(m_mutex);
-    return std::vector<DownloadItem>(m_downloads.begin(), m_downloads.end());
+    std::vector<DownloadItem> result;
+    for (const auto& item : m_downloads) {
+        if (item.state != DownloadState::CANCELLED) {
+            result.push_back(item);
+        }
+    }
+    return result;
 }
 
 DownloadItem* DownloadsManager::getDownload(const std::string& ratingKey) {
@@ -453,24 +472,37 @@ void DownloadsManager::waitForDownloadThread(int timeoutMs) {
 void DownloadsManager::clearCompleted() {
     std::lock_guard<std::mutex> lock(m_mutex);
 
-    auto it = m_downloads.begin();
-    while (it != m_downloads.end()) {
-        if (it->state == DownloadState::COMPLETED) {
+    for (auto& item : m_downloads) {
+        if (item.state == DownloadState::COMPLETED) {
             // Delete file
-            if (!it->localPath.empty()) {
+            if (!item.localPath.empty()) {
 #ifdef __vita__
-                sceIoRemove(it->localPath.c_str());
+                sceIoRemove(item.localPath.c_str());
 #else
-                std::remove(it->localPath.c_str());
+                std::remove(item.localPath.c_str());
 #endif
             }
+            item.state = DownloadState::CANCELLED;
+        }
+    }
+    purgeCancelledUnlocked();
+    saveStateUnlocked();
+    brls::Logger::info("DownloadsManager: Cleared completed downloads");
+}
+
+void DownloadsManager::purgeCancelledUnlocked() {
+    // Only erase from deque when download thread is not active
+    // to avoid invalidating references held by the download thread
+    if (m_downloadThreadActive.load()) return;
+
+    auto it = m_downloads.begin();
+    while (it != m_downloads.end()) {
+        if (it->state == DownloadState::CANCELLED) {
             it = m_downloads.erase(it);
         } else {
             ++it;
         }
     }
-    saveStateUnlocked();
-    brls::Logger::info("DownloadsManager: Cleared completed downloads");
 }
 
 void DownloadsManager::downloadItem(DownloadItem& item) {
@@ -488,8 +520,20 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     }
 
     // Build transcode URL for Vita-compatible format
-    // URL-encode the path
-    std::string encodedPath = HttpClient::urlEncode(item.partPath);
+    // URL-encode the path but preserve slashes (Plex expects literal path separators)
+    std::string encodedPath;
+    for (char c : item.partPath) {
+        if (c == '/') {
+            encodedPath += '/';  // Keep path separators literal
+        } else if (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.' || c == '~') {
+            encodedPath += c;
+        } else {
+            static const char* hex = "0123456789ABCDEF";
+            encodedPath += '%';
+            encodedPath += hex[(unsigned char)c >> 4];
+            encodedPath += hex[(unsigned char)c & 0x0F];
+        }
+    }
 
     std::string url = serverUrl;
     bool isAudio = (item.mediaType == "track");
@@ -574,7 +618,8 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                 m_progressCallback(item.downloadedBytes, item.totalBytes);
             }
 
-            return m_downloading.load(); // Return false to cancel
+            // Return false to cancel download
+            return m_downloading.load() && item.state != DownloadState::CANCELLED;
         },
         [&](int64_t total) {
             item.totalBytes = total;
@@ -588,7 +633,10 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     file.close();
 #endif
 
-    if (success && m_downloading.load()) {
+    // Don't overwrite CANCELLED state - it was already handled
+    if (item.state == DownloadState::CANCELLED) {
+        brls::Logger::info("DownloadsManager: Download of {} was cancelled", item.title);
+    } else if (success && m_downloading.load()) {
         item.state = DownloadState::COMPLETED;
         brls::Logger::info("DownloadsManager: Completed download of {}", item.title);
     } else if (!m_downloading.load()) {
@@ -681,8 +729,13 @@ void DownloadsManager::saveStateUnlocked() {
     std::stringstream ss;
     ss << "{\n\"downloads\":[\n";
 
+    bool first = true;
     for (size_t i = 0; i < m_downloads.size(); ++i) {
         const auto& item = m_downloads[i];
+        // Skip cancelled items - don't persist them
+        if (item.state == DownloadState::CANCELLED) continue;
+        if (!first) ss << ",\n";
+        first = false;
         ss << "{\n"
            << "\"ratingKey\":\"" << escapeJson(item.ratingKey) << "\",\n"
            << "\"title\":\"" << escapeJson(item.title) << "\",\n"
@@ -699,8 +752,6 @@ void DownloadsManager::saveStateUnlocked() {
            << "\"episodeNum\":" << item.episodeNum << ",\n"
            << "\"lastSynced\":" << item.lastSynced << "\n"
            << "}";
-        if (i < m_downloads.size() - 1) ss << ",";
-        ss << "\n";
     }
 
     ss << "]\n}";
