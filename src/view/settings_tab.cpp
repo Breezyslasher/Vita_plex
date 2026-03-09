@@ -434,11 +434,9 @@ void SettingsTab::createDownloadsSection() {
     m_clearDownloadsCell->registerClickAction([this](brls::View* view) {
         brls::Dialog* dialog = new brls::Dialog("Delete all downloaded content?");
 
-        dialog->addButton("Cancel", [dialog]() {
-            dialog->close();
-        });
+        dialog->addButton("Cancel", []() {});
 
-        dialog->addButton("Delete All", [dialog, this]() {
+        dialog->addButton("Delete All", [this]() {
             auto downloads = DownloadsManager::getInstance().getDownloads();
             for (const auto& item : downloads) {
                 DownloadsManager::getInstance().deleteDownload(item.ratingKey);
@@ -446,7 +444,6 @@ void SettingsTab::createDownloadsSection() {
             if (m_clearDownloadsCell) {
                 m_clearDownloadsCell->setDetailText("0 items");
             }
-            dialog->close();
             brls::Application::notify("All downloads deleted");
         });
 
@@ -533,13 +530,9 @@ void SettingsTab::createAboutSection() {
 void SettingsTab::onLogout() {
     brls::Dialog* dialog = new brls::Dialog("Are you sure you want to logout?");
 
-    dialog->addButton("Cancel", [dialog]() {
-        dialog->close();
-    });
+    dialog->addButton("Cancel", []() {});
 
-    dialog->addButton("Logout", [dialog, this]() {
-        dialog->close();
-
+    dialog->addButton("Logout", [this]() {
         // Clear credentials
         PlexClient::getInstance().logout();
         Application::getInstance().setAuthToken("");
@@ -657,7 +650,7 @@ void SettingsTab::onManageHiddenLibraries() {
 
     if (sections.empty()) {
         brls::Dialog* dialog = new brls::Dialog("No libraries found");
-        dialog->addButton("OK", [dialog]() { dialog->close(); });
+        dialog->addButton("OK", []() {});
         dialog->open();
         return;
     }
@@ -711,11 +704,9 @@ void SettingsTab::onManageHiddenLibraries() {
 
     brls::Dialog* dialog = new brls::Dialog(outerBox);
 
-    dialog->addButton("Cancel", [dialog]() {
-        dialog->close();
-    });
+    dialog->addButton("Cancel", []() {});
 
-    dialog->addButton("Save", [dialog, checkboxes, this]() {
+    dialog->addButton("Save", [checkboxes, this]() {
         Application& app = Application::getInstance();
         AppSettings& settings = app.getSettings();
 
@@ -741,8 +732,6 @@ void SettingsTab::onManageHiddenLibraries() {
         if (m_hiddenLibrariesCell) {
             m_hiddenLibrariesCell->setDetailText(count > 0 ? std::to_string(count) + " hidden" : "None hidden");
         }
-
-        dialog->close();
     });
 
     dialog->open();
@@ -904,11 +893,9 @@ void SettingsTab::onManageSidebarOrder() {
 
     brls::Dialog* dialog = new brls::Dialog(outerBox);
 
-    dialog->addButton("Cancel", [dialog]() {
-        dialog->close();
-    });
+    dialog->addButton("Cancel", []() {});
 
-    dialog->addButton("Reset", [dialog, orderCopy, defaultItems, this]() {
+    dialog->addButton("Reset", [orderCopy, defaultItems, this]() {
         Application& app = Application::getInstance();
         AppSettings& settings = app.getSettings();
         settings.sidebarOrder = "";
@@ -916,10 +903,9 @@ void SettingsTab::onManageSidebarOrder() {
         if (m_sidebarOrderCell) {
             m_sidebarOrderCell->setDetailText("Default");
         }
-        dialog->close();
     });
 
-    dialog->addButton("Save", [dialog, orderCopy, this]() {
+    dialog->addButton("Save", [orderCopy, this]() {
         Application& app = Application::getInstance();
         AppSettings& settings = app.getSettings();
 
@@ -935,8 +921,6 @@ void SettingsTab::onManageSidebarOrder() {
         if (m_sidebarOrderCell) {
             m_sidebarOrderCell->setDetailText("Custom");
         }
-
-        dialog->close();
     });
 
     dialog->open();
@@ -1099,9 +1083,7 @@ void SettingsTab::onNetworkTest() {
             addRow("Connection:", plexStatus);
 
             auto* dialog = new brls::Dialog(content);
-            dialog->addButton("Close", [dialog]() {
-                dialog->close();
-            });
+            dialog->addButton("Close", []() {});
             dialog->open();
         });
     }).detach();

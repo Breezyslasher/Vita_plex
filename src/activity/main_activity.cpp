@@ -153,17 +153,23 @@ void MainActivity::onContentAvailable() {
         // Focus first tab
         tabFrame->focusTab(0);
 
-        // Circle button: if music is playing in background, return to player
-        // Otherwise consume the event to prevent the "you will exit this app" dialog
-        tabFrame->registerAction("", brls::ControllerButton::BUTTON_B, [](brls::View* view) {
-            MusicQueue& queue = MusicQueue::getInstance();
-            if (!queue.isEmpty() && queue.getCurrentIndex() >= 0) {
-                auto* playerActivity = PlayerActivity::createResumeQueue();
-                brls::Application::pushActivity(playerActivity);
-            }
-            // Always return true to prevent the exit confirmation dialog
-            return true;
-        });
+        // Register BUTTON_B on the root content view (parent of tabFrame) so it
+        // intercepts back/circle regardless of which child has focus. When a
+        // dialog closes, borealis may restore focus to the root Box instead of
+        // a child inside tabFrame, which would bypass a handler registered only
+        // on tabFrame and let AppletFrame show the "exit this app" dialog.
+        brls::View* rootBox = tabFrame->getParent();
+        if (rootBox) {
+            rootBox->registerAction("", brls::ControllerButton::BUTTON_B, [](brls::View* view) {
+                MusicQueue& queue = MusicQueue::getInstance();
+                if (!queue.isEmpty() && queue.getCurrentIndex() >= 0) {
+                    auto* playerActivity = PlayerActivity::createResumeQueue();
+                    brls::Application::pushActivity(playerActivity);
+                }
+                // Always return true to prevent the exit confirmation dialog
+                return true;
+            });
+        }
     }
 }
 

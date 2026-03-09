@@ -644,17 +644,16 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
 
     // Play all button
     std::string playlistId = playlist.ratingKey;
-    dialog->addButton("Play All", [this, playlistId, dialog]() {
+    dialog->addButton("Play All", [this, playlistId]() {
         playPlaylistWithQueue(playlistId, 0);
-        dialog->dismiss();
     });
 
     // Delete button (only for non-smart playlists)
     if (!playlist.smart) {
-        dialog->addButton("Delete", [this, playlistId, dialog]() {
+        dialog->addButton("Delete", [this, playlistId]() {
             // Confirm deletion
             brls::Dialog* confirmDialog = new brls::Dialog("Delete this playlist?");
-            confirmDialog->addButton("Yes, Delete", [this, playlistId, confirmDialog, dialog]() {
+            confirmDialog->addButton("Yes, Delete", [this, playlistId]() {
                 std::weak_ptr<bool> aliveWeak = m_alive;
 
                 asyncRun([this, playlistId, aliveWeak]() {
@@ -671,20 +670,13 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
                         });
                     }
                 });
-
-                confirmDialog->dismiss();
-                dialog->dismiss();
             });
-            confirmDialog->addButton("Cancel", [confirmDialog]() {
-                confirmDialog->dismiss();
-            });
+            confirmDialog->addButton("Cancel", []() {});
             confirmDialog->open();
         });
     }
 
-    dialog->addButton("Cancel", [dialog]() {
-        dialog->dismiss();
-    });
+    dialog->addButton("Cancel", []() {});
 
     dialog->open();
 }

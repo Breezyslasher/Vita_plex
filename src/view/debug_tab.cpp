@@ -181,9 +181,7 @@ void DebugTab::createCustomDialogSection() {
 // 1. Basic Alert — single OK button
 void DebugTab::showBasicAlert() {
     auto* dialog = new brls::Dialog("This is a basic alert dialog. Press OK to dismiss.");
-    dialog->addButton("OK", [dialog]() {
-        dialog->close();
-    });
+    dialog->addButton("OK", []() {});
     dialog->open();
 }
 
@@ -191,13 +189,11 @@ void DebugTab::showBasicAlert() {
 void DebugTab::showConfirmDialog() {
     auto* dialog = new brls::Dialog("Do you want to perform this action?");
 
-    dialog->addButton("Cancel", [dialog]() {
-        dialog->close();
+    dialog->addButton("Cancel", []() {
         brls::Application::notify("Action cancelled");
     });
 
-    dialog->addButton("Confirm", [dialog]() {
-        dialog->close();
+    dialog->addButton("Confirm", []() {
         brls::Application::notify("Action confirmed!");
     });
 
@@ -208,17 +204,13 @@ void DebugTab::showConfirmDialog() {
 void DebugTab::showThreeButtonDialog() {
     auto* dialog = new brls::Dialog("What would you like to do with this item?");
 
-    dialog->addButton("Cancel", [dialog]() {
-        dialog->close();
-    });
+    dialog->addButton("Cancel", []() {});
 
-    dialog->addButton("Archive", [dialog]() {
-        dialog->close();
+    dialog->addButton("Archive", []() {
         brls::Application::notify("Item archived");
     });
 
-    dialog->addButton("Delete", [dialog]() {
-        dialog->close();
+    dialog->addButton("Delete", []() {
         brls::Application::notify("Item deleted");
     });
 
@@ -261,9 +253,7 @@ void DebugTab::showLongTextDialog() {
     content->addView(scrollFrame);
 
     auto* dialog = new brls::Dialog(content);
-    dialog->addButton("Close", [dialog]() {
-        dialog->close();
-    });
+    dialog->addButton("Close", []() {});
     dialog->open();
 }
 
@@ -271,24 +261,19 @@ void DebugTab::showLongTextDialog() {
 void DebugTab::showStackedButtonsDialog() {
     auto* dialog = new brls::Dialog("Select a quality setting:");
 
-    dialog->addButton("240p", [dialog]() {
-        dialog->close();
+    dialog->addButton("240p", []() {
         brls::Application::notify("Selected: 240p");
     });
-    dialog->addButton("480p", [dialog]() {
-        dialog->close();
+    dialog->addButton("480p", []() {
         brls::Application::notify("Selected: 480p");
     });
-    dialog->addButton("720p", [dialog]() {
-        dialog->close();
+    dialog->addButton("720p", []() {
         brls::Application::notify("Selected: 720p");
     });
-    dialog->addButton("1080p", [dialog]() {
-        dialog->close();
+    dialog->addButton("1080p", []() {
         brls::Application::notify("Selected: 1080p");
     });
-    dialog->addButton("Original", [dialog]() {
-        dialog->close();
+    dialog->addButton("Original", []() {
         brls::Application::notify("Selected: Original");
     });
 
@@ -332,11 +317,8 @@ void DebugTab::showCustomContentDialog() {
     content->addView(infoLabel);
 
     auto* dialog = new brls::Dialog(content);
-    dialog->addButton("Cancel", [dialog]() {
-        dialog->close();
-    });
-    dialog->addButton("Apply", [dialog]() {
-        dialog->close();
+    dialog->addButton("Cancel", []() {});
+    dialog->addButton("Apply", []() {
         brls::Application::notify("Filters applied!");
     });
     dialog->open();
@@ -385,8 +367,7 @@ void DebugTab::showProgressStyleDialog() {
     content->addView(percentLabel);
 
     auto* dialog = new brls::Dialog(content);
-    dialog->addButton("Cancel", [dialog]() {
-        dialog->close();
+    dialog->addButton("Cancel", []() {
         brls::Application::notify("Download cancelled");
     });
     dialog->open();
@@ -432,9 +413,7 @@ void DebugTab::showListSelectionDialog() {
     content->addView(scrollFrame);
 
     auto* dialog = new brls::Dialog(content);
-    dialog->addButton("Cancel", [dialog]() {
-        dialog->close();
-    });
+    dialog->addButton("Cancel", []() {});
     dialog->open();
 }
 
@@ -442,16 +421,11 @@ void DebugTab::showListSelectionDialog() {
 void DebugTab::showNestedDialog() {
     auto* dialog = new brls::Dialog("This dialog will open another dialog. Ready?");
 
-    dialog->addButton("Cancel", [dialog]() {
-        dialog->close();
-    });
+    dialog->addButton("Cancel", []() {});
 
-    dialog->addButton("Open Inner", [dialog]() {
-        dialog->close();
-
+    dialog->addButton("Open Inner", []() {
         auto* inner = new brls::Dialog("This is the inner dialog! You navigated one level deeper.");
-        inner->addButton("OK", [inner]() {
-            inner->close();
+        inner->addButton("OK", []() {
             brls::Application::notify("Returned from nested dialogs");
         });
         inner->open();
@@ -466,8 +440,7 @@ void DebugTab::showTimedAutoCloseDialog() {
         "On a full platform this dialog would auto-close after a timeout.\n"
         "This demonstrates a dialog intended for transient status messages.");
 
-    dialog->addButton("Dismiss", [dialog]() {
-        dialog->close();
+    dialog->addButton("Dismiss", []() {
         brls::Application::notify("Transient dialog dismissed");
     });
 
@@ -546,9 +519,7 @@ void DebugTab::showFullWidthDialog() {
     content->addView(row4);
 
     auto* dialog = new brls::Dialog(content);
-    dialog->addButton("Close", [dialog]() {
-        dialog->close();
-    });
+    dialog->addButton("Close", []() {});
     dialog->open();
 }
 
@@ -581,11 +552,8 @@ void DebugTab::showWarningDialog() {
     content->addView(msgLabel);
 
     auto* dialog = new brls::Dialog(content);
-    dialog->addButton("Cancel", [dialog]() {
-        dialog->close();
-    });
-    dialog->addButton("Continue", [dialog]() {
-        dialog->close();
+    dialog->addButton("Cancel", []() {});
+    dialog->addButton("Continue", []() {
         brls::Application::notify("Warning acknowledged");
     });
     dialog->open();
@@ -620,13 +588,10 @@ void DebugTab::showErrorDialog() {
     content->addView(msgLabel);
 
     auto* dialog = new brls::Dialog(content);
-    dialog->addButton("Retry", [dialog]() {
-        dialog->close();
+    dialog->addButton("Retry", []() {
         brls::Application::notify("Retrying connection...");
     });
-    dialog->addButton("Dismiss", [dialog]() {
-        dialog->close();
-    });
+    dialog->addButton("Dismiss", []() {});
     dialog->open();
 }
 
@@ -659,9 +624,7 @@ void DebugTab::showSuccessDialog() {
     content->addView(msgLabel);
 
     auto* dialog = new brls::Dialog(content);
-    dialog->addButton("OK", [dialog]() {
-        dialog->close();
-    });
+    dialog->addButton("OK", []() {});
     dialog->open();
 }
 
@@ -706,11 +669,8 @@ void DebugTab::showInputPromptDialog() {
     content->addView(hintLabel);
 
     auto* dialog = new brls::Dialog(content);
-    dialog->addButton("Cancel", [dialog]() {
-        dialog->close();
-    });
-    dialog->addButton("Connect", [dialog]() {
-        dialog->close();
+    dialog->addButton("Cancel", []() {});
+    dialog->addButton("Connect", []() {
         brls::Application::notify("Connecting to server...");
     });
     dialog->open();
