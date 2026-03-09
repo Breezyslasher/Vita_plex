@@ -45,6 +45,8 @@ private:
     // UI section
     brls::SelectorCell* m_themeSelector = nullptr;
     brls::BooleanCell* m_debugLogToggle = nullptr;
+    brls::BooleanCell* m_showDebugTabToggle = nullptr;
+    brls::BooleanCell* m_showNetworkTestToggle = nullptr;
 
     // Layout section
     brls::BooleanCell* m_sidebarLibrariesToggle = nullptr;

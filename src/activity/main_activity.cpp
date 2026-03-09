@@ -145,21 +145,24 @@ void MainActivity::onContentAvailable() {
 
         // Debug and Settings always at the bottom
         tabFrame->addSeparator();
-        tabFrame->addTab("Debug", []() { return new DebugTab(); });
+        if (settings.showDebugTab) {
+            tabFrame->addTab("Debug", []() { return new DebugTab(); });
+        }
         tabFrame->addTab("Settings", []() { return new SettingsTab(); });
 
         // Focus first tab
         tabFrame->focusTab(0);
 
         // Circle button: if music is playing in background, return to player
+        // Otherwise consume the event to prevent the "you will exit this app" dialog
         tabFrame->registerAction("", brls::ControllerButton::BUTTON_B, [](brls::View* view) {
             MusicQueue& queue = MusicQueue::getInstance();
             if (!queue.isEmpty() && queue.getCurrentIndex() >= 0) {
                 auto* playerActivity = PlayerActivity::createResumeQueue();
                 brls::Application::pushActivity(playerActivity);
-                return true;
             }
-            return false;  // Let default back behavior happen
+            // Always return true to prevent the exit confirmation dialog
+            return true;
         });
     }
 }

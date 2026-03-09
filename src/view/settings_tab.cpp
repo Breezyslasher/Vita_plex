@@ -102,6 +102,30 @@ void SettingsTab::createUISection() {
         Application::getInstance().saveSettings();
     });
     m_contentBox->addView(m_debugLogToggle);
+
+    // Show debug tab toggle
+    m_showDebugTabToggle = new brls::BooleanCell();
+    m_showDebugTabToggle->init("Show Debug Tab", settings.showDebugTab, [&settings](bool value) {
+        settings.showDebugTab = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_showDebugTabToggle);
+
+    // Show network test toggle
+    m_showNetworkTestToggle = new brls::BooleanCell();
+    m_showNetworkTestToggle->init("Show Network Test", settings.showNetworkTest, [&settings](bool value) {
+        settings.showNetworkTest = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_showNetworkTestToggle);
+
+    // Info label for debug/network settings
+    auto* debugInfoLabel = new brls::Label();
+    debugInfoLabel->setText("Debug tab and network test changes require app restart");
+    debugInfoLabel->setFontSize(14);
+    debugInfoLabel->setMarginLeft(16);
+    debugInfoLabel->setMarginTop(8);
+    m_contentBox->addView(debugInfoLabel);
 }
 
 void SettingsTab::createLayoutSection() {

@@ -6,6 +6,14 @@
 #include "view/debug_tab.hpp"
 #include "view/progress_dialog.hpp"
 #include "view/overlay_dialog.hpp"
+#include "app/application.hpp"
+#include "app/plex_client.hpp"
+#include "utils/http_client.hpp"
+
+#ifdef __vita__
+#include <psp2/net/netctl.h>
+#include <psp2/net/net.h>
+#endif
 
 namespace vitaplex {
 
@@ -22,6 +30,11 @@ DebugTab::DebugTab() {
     m_contentBox->setAxis(brls::Axis::COLUMN);
     m_contentBox->setPadding(20);
     m_contentBox->setGrow(1.0f);
+
+    // Network test section (shown based on setting)
+    if (Application::getInstance().getSettings().showNetworkTest) {
+        createNetworkTestSection();
+    }
 
     createDialogSection();
     createNotificationSection();
@@ -44,6 +57,140 @@ static brls::DetailCell* makeButton(const std::string& title, const std::string&
         return true;
     });
     return cell;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// SECTION 0: Network Test
+// ═══════════════════════════════════════════════════════════════════════════════
+
+void DebugTab::createNetworkTestSection() {
+    auto* header = new brls::Header();
+    header->setTitle("Network Test");
+    m_contentBox->addView(header);
+
+    // Single button: shows full network info + Plex connection test in one dialog
+    m_contentBox->addView(makeButton("Network Test", "View network info and test Plex connection", [this]() {
+        showNetworkInfo();
+    }));
+}
+
+// Network Test — uses item #11 style (Full-Width Content Dialog with info rows)
+// Shows all network info + Plex connection test results in one dialog
+void DebugTab::showNetworkInfo() {
+    brls::Box* content = new brls::Box();
+    content->setAxis(brls::Axis::COLUMN);
+    content->setWidth(700);
+    content->setHeight(400);
+    content->setPadding(25);
+
+    auto* titleLabel = new brls::Label();
+    titleLabel->setText("Network Test Results");
+    titleLabel->setFontSize(22);
+    titleLabel->setMarginBottom(15);
+    content->addView(titleLabel);
+
+    // Helper to create info rows (same style as item #11)
+    auto addRow = [&content](const std::string& label, const std::string& value) {
+        auto* row = new brls::Box();
+        row->setAxis(brls::Axis::ROW);
+        row->setMarginBottom(8);
+        auto* lblA = new brls::Label();
+        lblA->setText(label);
+        lblA->setFontSize(16);
+        lblA->setWidth(220);
+        row->addView(lblA);
+        auto* lblB = new brls::Label();
+        lblB->setText(value);
+        lblB->setFontSize(16);
+        row->addView(lblB);
+        content->addView(row);
+    };
+
+    // Get network info
+    std::string ipAddress = "-";
+    std::string dnsInfo = "-";
+    std::string signalStr = "-";
+    std::string ssid = "-";
+    std::string connectionStatus = "Unknown";
+
+#ifdef __vita__
+    SceNetCtlInfo info;
+
+    // IP Address
+    int ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_IP_ADDRESS, &info);
+    if (ret >= 0) {
+        ipAddress = std::string(info.ip_address);
+        connectionStatus = "Connected";
+    } else {
+        connectionStatus = "Not Connected";
+    }
+
+    // SSID
+    ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_SSID, &info);
+    if (ret >= 0) {
+        ssid = std::string(info.ssid);
+    }
+
+    // Signal Strength
+    ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_RSSI_PERCENTAGE, &info);
+    if (ret >= 0) {
+        signalStr = std::to_string(info.rssi_percentage) + "%";
+    }
+
+    // DNS
+    ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_PRIMARY_DNS, &info);
+    if (ret >= 0) {
+        dnsInfo = std::string(info.primary_dns);
+        ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_SECONDARY_DNS, &info);
+        if (ret >= 0) {
+            dnsInfo += " / " + std::string(info.secondary_dns);
+        }
+    }
+#endif
+
+    // Vita network info rows
+    addRow("Status:", connectionStatus);
+    addRow("Wi-Fi Network:", ssid);
+    addRow("IP Address:", ipAddress);
+    addRow("DNS:", dnsInfo);
+    addRow("Signal Strength:", signalStr);
+
+    // Separator
+    auto* separator = new brls::Rectangle();
+    separator->setHeight(1);
+    separator->setColor(nvgRGBA(100, 100, 100, 128));
+    separator->setMarginTop(8);
+    separator->setMarginBottom(8);
+    content->addView(separator);
+
+    // Test Plex connection
+    Application& app = Application::getInstance();
+    std::string serverUrl = app.getServerUrl();
+    addRow("Plex Server:", serverUrl.empty() ? "Not configured" : serverUrl);
+
+    if (!serverUrl.empty()) {
+        HttpClient client;
+        client.setTimeout(10);
+        client.setDefaultHeader("X-Plex-Token", app.getAuthToken());
+        client.setDefaultHeader("Accept", "application/json");
+
+        std::string response;
+        bool plexOk = client.get(serverUrl + "/identity", response);
+        addRow("Plex Connection:", plexOk ? "OK" : "FAILED");
+    } else {
+        addRow("Plex Connection:", "N/A (no server)");
+    }
+
+    auto* dialog = new brls::Dialog(content);
+    dialog->addButton("Close", [dialog]() {
+        dialog->close();
+    });
+    dialog->open();
+}
+
+void DebugTab::testPlexConnection() {
+    // Handled inline in showNetworkInfo()
+    showNetworkInfo();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
