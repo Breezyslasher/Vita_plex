@@ -287,19 +287,30 @@ void MediaItemCell::updateFocusInfo(bool focused) {
         }
     } else if (m_item.mediaType == MediaType::MOVIE) {
         // Show runtime for movies on focus
-        if (focused && m_item.duration > 0) {
-            int minutes = m_item.duration / 60000;
-            std::string info = std::to_string(minutes) + " min";
-            if (m_item.year > 0) {
-                info = std::to_string(m_item.year) + " - " + info;
+        if (focused) {
+            if (m_item.duration > 0) {
+                int minutes = m_item.duration / 60000;
+                std::string info = std::to_string(minutes) + " min";
+                if (m_item.year > 0) {
+                    info = std::to_string(m_item.year) + " - " + info;
+                }
+                m_descriptionLabel->setText(info);
+                m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
             }
-            m_descriptionLabel->setText(info);
-            m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
             // Show full title
             m_titleLabel->setText(m_item.title);
+            // Show start button hint overlay
+            if (m_buttonHintBox) {
+                if (m_buttonHintIcon) {
+                    m_buttonHintIcon->setImageFromRes("images/start_button.png");
+                }
+                if (m_buttonHintLabel) m_buttonHintLabel->setVisibility(brls::Visibility::GONE);
+                m_buttonHintBox->setVisibility(brls::Visibility::VISIBLE);
+            }
         } else {
             m_titleLabel->setText(m_originalTitle);
             m_descriptionLabel->setVisibility(brls::Visibility::GONE);
+            if (m_buttonHintBox) m_buttonHintBox->setVisibility(brls::Visibility::GONE);
         }
     } else if (m_item.mediaType == MediaType::SHOW) {
         // Show year for shows on focus
@@ -317,9 +328,43 @@ void MediaItemCell::updateFocusInfo(bool focused) {
                 m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
             }
             m_titleLabel->setText(m_item.title);
+            // Show start button hint overlay
+            if (m_buttonHintBox) {
+                if (m_buttonHintIcon) {
+                    m_buttonHintIcon->setImageFromRes("images/start_button.png");
+                }
+                if (m_buttonHintLabel) m_buttonHintLabel->setVisibility(brls::Visibility::GONE);
+                m_buttonHintBox->setVisibility(brls::Visibility::VISIBLE);
+            }
         } else {
             m_titleLabel->setText(m_originalTitle);
             m_descriptionLabel->setVisibility(brls::Visibility::GONE);
+            if (m_buttonHintBox) m_buttonHintBox->setVisibility(brls::Visibility::GONE);
+        }
+    } else if (m_item.mediaType == MediaType::SEASON) {
+        // Show season info on focus
+        if (focused) {
+            m_titleLabel->setText(m_item.title);
+            std::string info;
+            if (m_item.leafCount > 0) {
+                info = std::to_string(m_item.leafCount) + " episodes";
+            }
+            if (!info.empty()) {
+                m_descriptionLabel->setText(info);
+                m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
+            }
+            // Show start button hint overlay
+            if (m_buttonHintBox) {
+                if (m_buttonHintIcon) {
+                    m_buttonHintIcon->setImageFromRes("images/start_button.png");
+                }
+                if (m_buttonHintLabel) m_buttonHintLabel->setVisibility(brls::Visibility::GONE);
+                m_buttonHintBox->setVisibility(brls::Visibility::VISIBLE);
+            }
+        } else {
+            m_titleLabel->setText(m_originalTitle);
+            m_descriptionLabel->setVisibility(brls::Visibility::GONE);
+            if (m_buttonHintBox) m_buttonHintBox->setVisibility(brls::Visibility::GONE);
         }
     } else if (m_item.mediaType == MediaType::MUSIC_ALBUM ||
                m_item.mediaType == MediaType::MUSIC_ARTIST) {
@@ -334,8 +379,9 @@ void MediaItemCell::updateFocusInfo(bool focused) {
                 m_descriptionLabel->setText(info);
                 m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
             }
-            // Show button hint overlay for albums (icon only, no text)
-            if (m_buttonHintBox && m_item.mediaType == MediaType::MUSIC_ALBUM) {
+            // Show button hint overlay for albums and artists (icon only, no text)
+            if (m_buttonHintBox && (m_item.mediaType == MediaType::MUSIC_ALBUM ||
+                                    m_item.mediaType == MediaType::MUSIC_ARTIST)) {
                 if (m_buttonHintIcon) {
                     m_buttonHintIcon->setImageFromRes("images/start_button.png");
                 }

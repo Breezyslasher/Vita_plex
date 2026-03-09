@@ -457,6 +457,16 @@ void MediaDetailView::loadChildren() {
             });
             cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
 
+            // Register START button context menu for child items
+            MediaItem capturedChild = child;
+            if (child.mediaType == MediaType::SEASON) {
+                cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                    [capturedChild](brls::View* view) {
+                        showSeasonContextMenuStatic(capturedChild);
+                        return true;
+                    });
+            }
+
             m_childrenBox->addView(cell);
         }
     }
@@ -1387,6 +1397,685 @@ void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
     addDialogButton("Cancel", [dialog](brls::View*) {
         dialog->dismiss();
         return true;
+    });
+
+    dialog->addView(optionsBox);
+    brls::Application::pushActivity(new brls::Activity(dialog));
+}
+
+void MediaDetailView::showMovieContextMenu(const MediaItem& movie) {
+    showMovieContextMenuStatic(movie);
+}
+
+void MediaDetailView::showShowContextMenu(const MediaItem& show) {
+    showShowContextMenuStatic(show);
+}
+
+void MediaDetailView::showMovieContextMenuStatic(const MediaItem& movie) {
+    auto* dialog = new brls::Dialog(movie.title);
+
+    auto* optionsBox = new brls::Box();
+    optionsBox->setAxis(brls::Axis::COLUMN);
+    optionsBox->setPadding(20);
+
+    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
+        auto* btn = new brls::Button();
+        btn->setText(text);
+        btn->setHeight(44);
+        btn->setMarginBottom(10);
+        btn->registerClickAction(action);
+        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+        optionsBox->addView(btn);
+    };
+
+    MediaItem capturedMovie = movie;
+
+    // Restart button
+    addDialogButton("Restart", [capturedMovie, dialog](brls::View*) {
+        dialog->dismiss();
+        // Mark as unwatched first to reset progress, then play
+        PlexClient::getInstance().markAsUnwatched(capturedMovie.ratingKey);
+        Application::getInstance().pushPlayerActivity(capturedMovie.ratingKey);
+        return true;
+    });
+
+    // Resume button (only if there's a view offset)
+    if (movie.viewOffset > 0) {
+        int totalSec = movie.viewOffset / 1000;
+        int hours = totalSec / 3600;
+        int minutes = (totalSec % 3600) / 60;
+        char resumeStr[64];
+        if (hours > 0) {
+            snprintf(resumeStr, sizeof(resumeStr), "Resume from %dh %dm", hours, minutes);
+        } else {
+            snprintf(resumeStr, sizeof(resumeStr), "Resume from %dm", minutes);
+        }
+        addDialogButton(resumeStr, [capturedMovie, dialog](brls::View*) {
+            dialog->dismiss();
+            Application::getInstance().pushPlayerActivity(capturedMovie.ratingKey);
+            return true;
+        });
+    }
+
+    // Download
+    addDialogButton("Download", [capturedMovie, dialog](brls::View*) {
+        dialog->dismiss();
+        if (DownloadsManager::getInstance().isDownloaded(capturedMovie.ratingKey)) {
+            brls::Application::notify("Already downloaded");
+            return true;
+        }
+        // Fetch full details and queue download
+        asyncRun([capturedMovie]() {
+            PlexClient& client = PlexClient::getInstance();
+            MediaItem fullItem;
+            if (client.fetchMediaDetails(capturedMovie.ratingKey, fullItem) && !fullItem.partPath.empty()) {
+                bool queued = DownloadsManager::getInstance().queueDownload(
+                    fullItem.ratingKey, fullItem.title, fullItem.partPath,
+                    fullItem.duration, "movie", "", 0, 0);
+                brls::sync([queued, fullItem]() {
+                    if (queued) {
+                        DownloadsManager::getInstance().startDownloads();
+                        brls::Application::notify("Downloading: " + fullItem.title);
+                    } else {
+                        brls::Application::notify("Failed to queue download");
+                    }
+                });
+            } else {
+                brls::sync([]() {
+                    brls::Application::notify("Could not get download info");
+                });
+            }
+        });
+        return true;
+    });
+
+    // Mark as watched/unwatched
+    if (movie.watched) {
+        addDialogButton("Mark as Unwatched", [capturedMovie, dialog](brls::View*) {
+            dialog->dismiss();
+            asyncRun([capturedMovie]() {
+                PlexClient::getInstance().markAsUnwatched(capturedMovie.ratingKey);
+                brls::sync([]() {
+                    brls::Application::notify("Marked as unwatched");
+                });
+            });
+            return true;
+        });
+    } else {
+        addDialogButton("Mark as Watched", [capturedMovie, dialog](brls::View*) {
+            dialog->dismiss();
+            asyncRun([capturedMovie]() {
+                PlexClient::getInstance().markAsWatched(capturedMovie.ratingKey);
+                brls::sync([]() {
+                    brls::Application::notify("Marked as watched");
+                });
+            });
+            return true;
+        });
+    }
+
+    addDialogButton("Cancel", [dialog](brls::View*) {
+        dialog->dismiss(); return true;
+    });
+
+    dialog->addView(optionsBox);
+    brls::Application::pushActivity(new brls::Activity(dialog));
+}
+
+void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
+    auto* dialog = new brls::Dialog(show.title);
+
+    auto* optionsBox = new brls::Box();
+    optionsBox->setAxis(brls::Axis::COLUMN);
+    optionsBox->setPadding(20);
+
+    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
+        auto* btn = new brls::Button();
+        btn->setText(text);
+        btn->setHeight(44);
+        btn->setMarginBottom(10);
+        btn->registerClickAction(action);
+        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+        optionsBox->addView(btn);
+    };
+
+    MediaItem capturedShow = show;
+
+    // Restart (play first episode of first season)
+    addDialogButton("Restart (S01E01)", [capturedShow, dialog](brls::View*) {
+        dialog->dismiss();
+        asyncRun([capturedShow]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> seasons;
+            if (client.fetchChildren(capturedShow.ratingKey, seasons) && !seasons.empty()) {
+                std::vector<MediaItem> episodes;
+                if (client.fetchChildren(seasons[0].ratingKey, episodes) && !episodes.empty()) {
+                    brls::sync([episodes]() {
+                        Application::getInstance().pushPlayerActivity(episodes[0].ratingKey);
+                    });
+                }
+            }
+        });
+        return true;
+    });
+
+    // Resume (find the next unwatched/in-progress episode)
+    if (show.viewOffset > 0 || show.viewedLeafCount > 0) {
+        addDialogButton("Resume", [capturedShow, dialog](brls::View*) {
+            dialog->dismiss();
+            asyncRun([capturedShow]() {
+                PlexClient& client = PlexClient::getInstance();
+                std::vector<MediaItem> seasons;
+                if (!client.fetchChildren(capturedShow.ratingKey, seasons) || seasons.empty()) return;
+
+                // Find the first in-progress or unwatched episode
+                for (const auto& season : seasons) {
+                    std::vector<MediaItem> episodes;
+                    if (!client.fetchChildren(season.ratingKey, episodes)) continue;
+                    for (const auto& ep : episodes) {
+                        // Episode with viewOffset = in-progress, play it
+                        if (ep.viewOffset > 0) {
+                            int totalSec = ep.viewOffset / 1000;
+                            int minLeft = ((ep.duration - ep.viewOffset) / 1000) / 60;
+                            char info[64];
+                            snprintf(info, sizeof(info), "S%02dE%02d - %dm left",
+                                     ep.parentIndex, ep.index, minLeft);
+                            std::string infoStr = info;
+                            brls::sync([ep, infoStr]() {
+                                brls::Application::notify("Resuming " + infoStr);
+                                Application::getInstance().pushPlayerActivity(ep.ratingKey);
+                            });
+                            return;
+                        }
+                        // First unwatched episode
+                        if (!ep.watched) {
+                            char info[64];
+                            snprintf(info, sizeof(info), "S%02dE%02d",
+                                     ep.parentIndex, ep.index);
+                            std::string infoStr = info;
+                            brls::sync([ep, infoStr]() {
+                                brls::Application::notify("Playing " + infoStr);
+                                Application::getInstance().pushPlayerActivity(ep.ratingKey);
+                            });
+                            return;
+                        }
+                    }
+                }
+                // All watched - play first episode
+                brls::sync([]() {
+                    brls::Application::notify("All episodes watched, restarting");
+                });
+                std::vector<MediaItem> firstEps;
+                if (client.fetchChildren(seasons[0].ratingKey, firstEps) && !firstEps.empty()) {
+                    brls::sync([firstEps]() {
+                        Application::getInstance().pushPlayerActivity(firstEps[0].ratingKey);
+                    });
+                }
+            });
+            return true;
+        });
+    }
+
+    // Download options
+    addDialogButton("Download Entire Show", [capturedShow, dialog](brls::View*) {
+        dialog->dismiss();
+        // Use the downloadAll pattern from existing code
+        asyncRun([capturedShow]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> seasons;
+            int queued = 0;
+            if (client.fetchChildren(capturedShow.ratingKey, seasons)) {
+                for (const auto& season : seasons) {
+                    std::vector<MediaItem> episodes;
+                    if (client.fetchChildren(season.ratingKey, episodes)) {
+                        for (const auto& ep : episodes) {
+                            MediaItem fullItem;
+                            if (client.fetchMediaDetails(ep.ratingKey, fullItem) && !fullItem.partPath.empty()) {
+                                if (DownloadsManager::getInstance().queueDownload(
+                                    fullItem.ratingKey, fullItem.title, fullItem.partPath,
+                                    fullItem.duration, "episode", capturedShow.title,
+                                    fullItem.parentIndex, fullItem.index)) {
+                                    queued++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            DownloadsManager::getInstance().startDownloads();
+            brls::sync([queued]() {
+                brls::Application::notify("Queued " + std::to_string(queued) + " episodes");
+            });
+        });
+        return true;
+    });
+
+    addDialogButton("Download All Unwatched", [capturedShow, dialog](brls::View*) {
+        dialog->dismiss();
+        asyncRun([capturedShow]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> seasons;
+            int queued = 0;
+            if (client.fetchChildren(capturedShow.ratingKey, seasons)) {
+                for (const auto& season : seasons) {
+                    std::vector<MediaItem> episodes;
+                    if (client.fetchChildren(season.ratingKey, episodes)) {
+                        for (const auto& ep : episodes) {
+                            if (!ep.watched && ep.viewOffset == 0) {
+                                MediaItem fullItem;
+                                if (client.fetchMediaDetails(ep.ratingKey, fullItem) && !fullItem.partPath.empty()) {
+                                    if (DownloadsManager::getInstance().queueDownload(
+                                        fullItem.ratingKey, fullItem.title, fullItem.partPath,
+                                        fullItem.duration, "episode", capturedShow.title,
+                                        fullItem.parentIndex, fullItem.index)) {
+                                        queued++;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            DownloadsManager::getInstance().startDownloads();
+            brls::sync([queued]() {
+                brls::Application::notify("Queued " + std::to_string(queued) + " unwatched episodes");
+            });
+        });
+        return true;
+    });
+
+    // Per-season download submenu
+    addDialogButton("Download by Season...", [capturedShow, dialog](brls::View*) {
+        dialog->dismiss();
+        // Show a second dialog with season options
+        asyncRun([capturedShow]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> seasons;
+            if (!client.fetchChildren(capturedShow.ratingKey, seasons) || seasons.empty()) {
+                brls::sync([]() {
+                    brls::Application::notify("No seasons found");
+                });
+                return;
+            }
+
+            brls::sync([capturedShow, seasons]() {
+                auto* seasonDialog = new brls::Dialog("Download Season");
+                auto* box = new brls::Box();
+                box->setAxis(brls::Axis::COLUMN);
+                box->setPadding(20);
+
+                for (const auto& season : seasons) {
+                    MediaItem capturedSeason = season;
+                    std::string showTitle = capturedShow.title;
+                    auto* btn = new brls::Button();
+                    btn->setText(season.title);
+                    btn->setHeight(44);
+                    btn->setMarginBottom(10);
+                    btn->registerClickAction([capturedSeason, showTitle, seasonDialog](brls::View*) {
+                        seasonDialog->dismiss();
+                        asyncRun([capturedSeason, showTitle]() {
+                            PlexClient& client = PlexClient::getInstance();
+                            std::vector<MediaItem> episodes;
+                            int queued = 0;
+                            if (client.fetchChildren(capturedSeason.ratingKey, episodes)) {
+                                for (const auto& ep : episodes) {
+                                    MediaItem fullItem;
+                                    if (client.fetchMediaDetails(ep.ratingKey, fullItem) && !fullItem.partPath.empty()) {
+                                        if (DownloadsManager::getInstance().queueDownload(
+                                            fullItem.ratingKey, fullItem.title, fullItem.partPath,
+                                            fullItem.duration, "episode", showTitle,
+                                            fullItem.parentIndex, fullItem.index)) {
+                                            queued++;
+                                        }
+                                    }
+                                }
+                            }
+                            DownloadsManager::getInstance().startDownloads();
+                            brls::sync([queued, capturedSeason]() {
+                                brls::Application::notify("Queued " + std::to_string(queued) +
+                                    " episodes from " + capturedSeason.title);
+                            });
+                        });
+                        return true;
+                    });
+                    btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+                    box->addView(btn);
+                }
+
+                auto* cancelBtn = new brls::Button();
+                cancelBtn->setText("Cancel");
+                cancelBtn->setHeight(44);
+                cancelBtn->setMarginBottom(10);
+                cancelBtn->registerClickAction([seasonDialog](brls::View*) {
+                    seasonDialog->dismiss(); return true;
+                });
+                cancelBtn->addGestureRecognizer(new brls::TapGestureRecognizer(cancelBtn));
+                box->addView(cancelBtn);
+
+                seasonDialog->addView(box);
+                brls::Application::pushActivity(new brls::Activity(seasonDialog));
+            });
+        });
+        return true;
+    });
+
+    // Mark as watched/unwatched
+    if (show.watched || (show.leafCount > 0 && show.viewedLeafCount == show.leafCount)) {
+        addDialogButton("Mark as Unwatched", [capturedShow, dialog](brls::View*) {
+            dialog->dismiss();
+            asyncRun([capturedShow]() {
+                PlexClient::getInstance().markAsUnwatched(capturedShow.ratingKey);
+                brls::sync([]() {
+                    brls::Application::notify("Marked as unwatched");
+                });
+            });
+            return true;
+        });
+    } else {
+        addDialogButton("Mark as Watched", [capturedShow, dialog](brls::View*) {
+            dialog->dismiss();
+            asyncRun([capturedShow]() {
+                PlexClient::getInstance().markAsWatched(capturedShow.ratingKey);
+                brls::sync([]() {
+                    brls::Application::notify("Marked as watched");
+                });
+            });
+            return true;
+        });
+    }
+
+    addDialogButton("Cancel", [dialog](brls::View*) {
+        dialog->dismiss(); return true;
+    });
+
+    dialog->addView(optionsBox);
+    brls::Application::pushActivity(new brls::Activity(dialog));
+}
+
+void MediaDetailView::showSeasonContextMenuStatic(const MediaItem& season) {
+    auto* dialog = new brls::Dialog(season.title);
+
+    auto* optionsBox = new brls::Box();
+    optionsBox->setAxis(brls::Axis::COLUMN);
+    optionsBox->setPadding(20);
+
+    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
+        auto* btn = new brls::Button();
+        btn->setText(text);
+        btn->setHeight(44);
+        btn->setMarginBottom(10);
+        btn->registerClickAction(action);
+        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+        optionsBox->addView(btn);
+    };
+
+    MediaItem capturedSeason = season;
+
+    // Resume (find next in-progress or unwatched episode)
+    addDialogButton("Resume", [capturedSeason, dialog](brls::View*) {
+        dialog->dismiss();
+        asyncRun([capturedSeason]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> episodes;
+            if (!client.fetchChildren(capturedSeason.ratingKey, episodes) || episodes.empty()) {
+                brls::sync([]() { brls::Application::notify("No episodes found"); });
+                return;
+            }
+            // Find in-progress episode first
+            for (const auto& ep : episodes) {
+                if (ep.viewOffset > 0) {
+                    int minLeft = ((ep.duration - ep.viewOffset) / 1000) / 60;
+                    char info[64];
+                    snprintf(info, sizeof(info), "S%02dE%02d - %dm left",
+                             ep.parentIndex, ep.index, minLeft);
+                    std::string infoStr = info;
+                    brls::sync([ep, infoStr]() {
+                        brls::Application::notify("Resuming " + infoStr);
+                        Application::getInstance().pushPlayerActivity(ep.ratingKey);
+                    });
+                    return;
+                }
+            }
+            // Find first unwatched
+            for (const auto& ep : episodes) {
+                if (!ep.watched) {
+                    char info[64];
+                    snprintf(info, sizeof(info), "S%02dE%02d", ep.parentIndex, ep.index);
+                    std::string infoStr = info;
+                    brls::sync([ep, infoStr]() {
+                        brls::Application::notify("Playing " + infoStr);
+                        Application::getInstance().pushPlayerActivity(ep.ratingKey);
+                    });
+                    return;
+                }
+            }
+            // All watched - play first
+            brls::sync([episodes]() {
+                brls::Application::notify("All watched, restarting season");
+                Application::getInstance().pushPlayerActivity(episodes[0].ratingKey);
+            });
+        });
+        return true;
+    });
+
+    // Download whole season
+    addDialogButton("Download Whole Season", [capturedSeason, dialog](brls::View*) {
+        dialog->dismiss();
+        asyncRun([capturedSeason]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> episodes;
+            int queued = 0;
+            if (client.fetchChildren(capturedSeason.ratingKey, episodes)) {
+                for (const auto& ep : episodes) {
+                    MediaItem fullItem;
+                    if (client.fetchMediaDetails(ep.ratingKey, fullItem) && !fullItem.partPath.empty()) {
+                        if (DownloadsManager::getInstance().queueDownload(
+                            fullItem.ratingKey, fullItem.title, fullItem.partPath,
+                            fullItem.duration, "episode", capturedSeason.parentTitle.empty() ? capturedSeason.title : capturedSeason.parentTitle,
+                            fullItem.parentIndex, fullItem.index)) {
+                            queued++;
+                        }
+                    }
+                }
+            }
+            DownloadsManager::getInstance().startDownloads();
+            brls::sync([queued]() {
+                brls::Application::notify("Queued " + std::to_string(queued) + " episodes");
+            });
+        });
+        return true;
+    });
+
+    // Download all unwatched
+    addDialogButton("Download All Unwatched", [capturedSeason, dialog](brls::View*) {
+        dialog->dismiss();
+        asyncRun([capturedSeason]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> episodes;
+            int queued = 0;
+            if (client.fetchChildren(capturedSeason.ratingKey, episodes)) {
+                for (const auto& ep : episodes) {
+                    if (!ep.watched && ep.viewOffset == 0) {
+                        MediaItem fullItem;
+                        if (client.fetchMediaDetails(ep.ratingKey, fullItem) && !fullItem.partPath.empty()) {
+                            if (DownloadsManager::getInstance().queueDownload(
+                                fullItem.ratingKey, fullItem.title, fullItem.partPath,
+                                fullItem.duration, "episode", capturedSeason.parentTitle.empty() ? capturedSeason.title : capturedSeason.parentTitle,
+                                fullItem.parentIndex, fullItem.index)) {
+                                queued++;
+                            }
+                        }
+                    }
+                }
+            }
+            DownloadsManager::getInstance().startDownloads();
+            brls::sync([queued]() {
+                brls::Application::notify("Queued " + std::to_string(queued) + " unwatched episodes");
+            });
+        });
+        return true;
+    });
+
+    // Mark as watched/unwatched
+    if (season.watched || (season.leafCount > 0 && season.viewedLeafCount == season.leafCount)) {
+        addDialogButton("Mark as Unwatched", [capturedSeason, dialog](brls::View*) {
+            dialog->dismiss();
+            asyncRun([capturedSeason]() {
+                PlexClient::getInstance().markAsUnwatched(capturedSeason.ratingKey);
+                brls::sync([]() {
+                    brls::Application::notify("Marked as unwatched");
+                });
+            });
+            return true;
+        });
+    } else {
+        addDialogButton("Mark as Watched", [capturedSeason, dialog](brls::View*) {
+            dialog->dismiss();
+            asyncRun([capturedSeason]() {
+                PlexClient::getInstance().markAsWatched(capturedSeason.ratingKey);
+                brls::sync([]() {
+                    brls::Application::notify("Marked as watched");
+                });
+            });
+            return true;
+        });
+    }
+
+    addDialogButton("Cancel", [dialog](brls::View*) {
+        dialog->dismiss(); return true;
+    });
+
+    dialog->addView(optionsBox);
+    brls::Application::pushActivity(new brls::Activity(dialog));
+}
+
+void MediaDetailView::showArtistContextMenuStatic(const MediaItem& artist) {
+    auto* dialog = new brls::Dialog(artist.title);
+
+    auto* optionsBox = new brls::Box();
+    optionsBox->setAxis(brls::Axis::COLUMN);
+    optionsBox->setPadding(20);
+
+    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
+        auto* btn = new brls::Button();
+        btn->setText(text);
+        btn->setHeight(44);
+        btn->setMarginBottom(10);
+        btn->registerClickAction(action);
+        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+        optionsBox->addView(btn);
+    };
+
+    MediaItem capturedArtist = artist;
+
+    // Shuffle Artist - add all tracks to queue in random order
+    addDialogButton("Shuffle Artist", [capturedArtist, dialog](brls::View*) {
+        dialog->dismiss();
+        asyncRun([capturedArtist]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> albums;
+            std::vector<MediaItem> allTracks;
+
+            if (client.fetchChildren(capturedArtist.ratingKey, albums)) {
+                for (const auto& album : albums) {
+                    std::vector<MediaItem> tracks;
+                    if (client.fetchChildren(album.ratingKey, tracks)) {
+                        for (auto& track : tracks) {
+                            allTracks.push_back(track);
+                        }
+                    }
+                }
+            }
+
+            if (allTracks.empty()) {
+                brls::sync([]() { brls::Application::notify("No tracks found"); });
+                return;
+            }
+
+            // Shuffle
+            srand((unsigned)time(nullptr));
+            for (size_t i = allTracks.size() - 1; i > 0; i--) {
+                size_t j = rand() % (i + 1);
+                std::swap(allTracks[i], allTracks[j]);
+            }
+
+            brls::sync([allTracks]() {
+                auto* playerActivity = PlayerActivity::createWithQueue(allTracks, 0);
+                brls::Application::pushActivity(playerActivity);
+            });
+        });
+        return true;
+    });
+
+    // Play All (in order)
+    addDialogButton("Play All", [capturedArtist, dialog](brls::View*) {
+        dialog->dismiss();
+        asyncRun([capturedArtist]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> albums;
+            std::vector<MediaItem> allTracks;
+
+            if (client.fetchChildren(capturedArtist.ratingKey, albums)) {
+                for (const auto& album : albums) {
+                    std::vector<MediaItem> tracks;
+                    if (client.fetchChildren(album.ratingKey, tracks)) {
+                        for (auto& track : tracks) {
+                            allTracks.push_back(track);
+                        }
+                    }
+                }
+            }
+
+            if (allTracks.empty()) {
+                brls::sync([]() { brls::Application::notify("No tracks found"); });
+                return;
+            }
+
+            brls::sync([allTracks]() {
+                auto* playerActivity = PlayerActivity::createWithQueue(allTracks, 0);
+                brls::Application::pushActivity(playerActivity);
+            });
+        });
+        return true;
+    });
+
+    // Download Artist
+    addDialogButton("Download Artist", [capturedArtist, dialog](brls::View*) {
+        dialog->dismiss();
+        asyncRun([capturedArtist]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<MediaItem> albums;
+            int queued = 0;
+
+            if (client.fetchChildren(capturedArtist.ratingKey, albums)) {
+                for (const auto& album : albums) {
+                    std::vector<MediaItem> tracks;
+                    if (client.fetchChildren(album.ratingKey, tracks)) {
+                        for (const auto& track : tracks) {
+                            MediaItem fullItem;
+                            if (client.fetchMediaDetails(track.ratingKey, fullItem) && !fullItem.partPath.empty()) {
+                                if (DownloadsManager::getInstance().queueDownload(
+                                    fullItem.ratingKey, fullItem.title, fullItem.partPath,
+                                    fullItem.duration, "track",
+                                    capturedArtist.title, 0, fullItem.index)) {
+                                    queued++;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            DownloadsManager::getInstance().startDownloads();
+            brls::sync([queued]() {
+                brls::Application::notify("Queued " + std::to_string(queued) + " tracks");
+            });
+        });
+        return true;
+    });
+
+    addDialogButton("Cancel", [dialog](brls::View*) {
+        dialog->dismiss(); return true;
     });
 
     dialog->addView(optionsBox);

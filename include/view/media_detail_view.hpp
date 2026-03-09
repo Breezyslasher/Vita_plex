@@ -31,6 +31,15 @@ private:
     void downloadUnwatched(int maxCount = -1);
     void toggleDescription();          // Collapse/expand description
     void showAlbumContextMenu(const MediaItem& album);  // Context menu for albums
+    void showMovieContextMenu(const MediaItem& movie);  // Context menu for movies
+    void showShowContextMenu(const MediaItem& show);    // Context menu for TV shows
+
+public:
+    // Static context menus callable from any view (home, search, library grid, etc.)
+    static void showMovieContextMenuStatic(const MediaItem& movie);
+    static void showShowContextMenuStatic(const MediaItem& show);
+    static void showSeasonContextMenuStatic(const MediaItem& season);
+    static void showArtistContextMenuStatic(const MediaItem& artist);
     void performTrackAction(const MediaItem& track, size_t trackIndex);  // Handle track default action
     void showTrackActionDialog(const MediaItem& track, size_t trackIndex);  // Ask user what to do
 

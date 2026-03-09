@@ -4,6 +4,7 @@
 
 #include "view/recycling_grid.hpp"
 #include "view/media_item_cell.hpp"
+#include "view/media_detail_view.hpp"
 
 namespace vitaplex {
 
@@ -71,6 +72,46 @@ void RecyclingGrid::rebuildGrid() {
                     if (m_onItemStartAction) {
                         m_onItemStartAction(capturedItem);
                     }
+                    return true;
+                });
+        }
+
+        // Register START button action for movies
+        if (m_items[i].mediaType == MediaType::MOVIE) {
+            MediaItem capturedItem = m_items[i];
+            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                [capturedItem](brls::View* view) {
+                    MediaDetailView::showMovieContextMenuStatic(capturedItem);
+                    return true;
+                });
+        }
+
+        // Register START button action for TV shows
+        if (m_items[i].mediaType == MediaType::SHOW) {
+            MediaItem capturedItem = m_items[i];
+            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                [capturedItem](brls::View* view) {
+                    MediaDetailView::showShowContextMenuStatic(capturedItem);
+                    return true;
+                });
+        }
+
+        // Register START button action for seasons
+        if (m_items[i].mediaType == MediaType::SEASON) {
+            MediaItem capturedItem = m_items[i];
+            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                [capturedItem](brls::View* view) {
+                    MediaDetailView::showSeasonContextMenuStatic(capturedItem);
+                    return true;
+                });
+        }
+
+        // Register START button action for artists
+        if (m_items[i].mediaType == MediaType::MUSIC_ARTIST) {
+            MediaItem capturedItem = m_items[i];
+            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                [capturedItem](brls::View* view) {
+                    MediaDetailView::showArtistContextMenuStatic(capturedItem);
                     return true;
                 });
         }
