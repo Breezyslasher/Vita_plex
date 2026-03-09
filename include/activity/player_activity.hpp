@@ -12,6 +12,7 @@
 #include <memory>
 #include <atomic>
 #include <unordered_map>
+#include <chrono>
 #include "app/plex_client.hpp"
 
 // Forward declarations
@@ -95,10 +96,24 @@ private:
     int findQueueRowDisplayIndex(brls::View* row);
     // Swap two adjacent queue rows visually (no rebuild)
     void swapQueueRows(int displayIdxA, int displayIdxB);
+    // Renumber all queue row labels after a reorder
+    void renumberQueueRows();
     // Remove a single queue row from the display (no rebuild)
     void removeQueueRow(int displayIdx);
     // Update queue overlay title with current track count/duration
     void updateQueueTitle();
+
+    // Drag-to-reorder state: hold delay + live row movement
+    struct DragState {
+        bool active = false;                 // Whether a drag is in progress
+        brls::View* draggedRow = nullptr;     // The row being dragged
+        int lastSwappedDisplay = -1;          // Last display index after swaps
+        std::chrono::steady_clock::time_point holdStart;  // When touch began
+        bool holdMet = false;                 // Whether hold threshold was met
+    };
+    DragState m_dragState;
+    static constexpr int HOLD_THRESHOLD_MS = 300;  // ms to hold before drag starts
+    static constexpr float ROW_HEIGHT_PX = 62.0f;  // Approx row height for swap threshold
 
     std::string m_mediaKey;
     std::string m_directFilePath;  // For direct file playback (debug) or stream URL
