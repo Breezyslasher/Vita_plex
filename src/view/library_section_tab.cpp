@@ -5,6 +5,7 @@
 #include "view/library_section_tab.hpp"
 #include "view/media_item_cell.hpp"
 #include "view/media_detail_view.hpp"
+#include "activity/player_activity.hpp"
 #include "app/application.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
@@ -71,6 +72,18 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
             return true;
         });
         m_viewModeBox->addView(m_categoriesBtn);
+    }
+
+    // Playlists button (only for music/artist sections)
+    if (settings.showPlaylists && sectionType == "artist") {
+        m_playlistsBtn = new brls::Button();
+        m_playlistsBtn->setText("Playlists");
+        m_playlistsBtn->setMarginRight(10);
+        m_playlistsBtn->registerClickAction([this](brls::View* view) {
+            showPlaylists();
+            return true;
+        });
+        m_viewModeBox->addView(m_playlistsBtn);
     }
 
     // Back button (hidden by default, shown in filtered view)
@@ -170,6 +183,9 @@ void LibrarySectionTab::loadContent() {
     }
     if (settings.showGenres) {
         loadGenres();
+    }
+    if (settings.showPlaylists && m_sectionType == "artist") {
+        loadPlaylists();
     }
 }
 
@@ -313,6 +329,9 @@ void LibrarySectionTab::updateViewModeButtons() {
     if (m_categoriesBtn) {
         m_categoriesBtn->setVisibility(showModeButtons && !m_genres.empty() ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
     }
+    if (m_playlistsBtn) {
+        m_playlistsBtn->setVisibility(showModeButtons && !m_playlists.empty() ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
+    }
 }
 
 void LibrarySectionTab::onItemSelected(const MediaItem& item) {
@@ -329,6 +348,17 @@ void LibrarySectionTab::onItemSelected(const MediaItem& item) {
         genre.title = item.title;
         genre.key = item.ratingKey;
         onGenreSelected(genre);
+        return;
+    }
+
+    if (m_viewMode == LibraryViewMode::PLAYLISTS) {
+        // Selected a playlist - show its contents
+        for (const auto& playlist : m_playlists) {
+            if (playlist.ratingKey == item.ratingKey) {
+                onPlaylistSelected(playlist);
+                return;
+            }
+        }
         return;
     }
 
@@ -418,6 +448,197 @@ void LibrarySectionTab::onGenreSelected(const GenreItem& genre) {
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
                 brls::Application::notify("Failed to load category");
+            });
+        }
+    });
+}
+
+void LibrarySectionTab::loadPlaylists() {
+    std::weak_ptr<bool> aliveWeak = m_alive;
+
+    asyncRun([this, aliveWeak]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<Playlist> playlists;
+
+        if (client.fetchMusicPlaylists(playlists)) {
+            brls::Logger::info("LibrarySectionTab: Got {} music playlists", playlists.size());
+
+            brls::sync([this, playlists, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
+                m_playlists = playlists;
+                m_playlistsLoaded = true;
+
+                if (m_playlists.empty() && m_playlistsBtn) {
+                    m_playlistsBtn->setVisibility(brls::Visibility::GONE);
+                }
+            });
+        } else {
+            brls::Logger::debug("LibrarySectionTab: Failed to load playlists or none found");
+            brls::sync([this, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
+                m_playlistsLoaded = true;
+                if (m_playlistsBtn) {
+                    m_playlistsBtn->setVisibility(brls::Visibility::GONE);
+                }
+            });
+        }
+    });
+}
+
+void LibrarySectionTab::showPlaylists() {
+    if (!m_playlistsLoaded) {
+        brls::Application::notify("Loading playlists...");
+        return;
+    }
+
+    if (m_playlists.empty()) {
+        brls::Application::notify("No playlists available");
+        return;
+    }
+
+    m_viewMode = LibraryViewMode::PLAYLISTS;
+    m_titleLabel->setText(m_title + " - Playlists");
+
+    // Convert playlists to MediaItem format for the grid
+    std::vector<MediaItem> playlistItems;
+    for (size_t i = 0; i < m_playlists.size(); i++) {
+        MediaItem item;
+        item.title = m_playlists[i].title;
+        if (m_playlists[i].leafCount > 0) {
+            item.title += " (" + std::to_string(m_playlists[i].leafCount) + " tracks)";
+        }
+        item.ratingKey = m_playlists[i].ratingKey;
+        item.thumb = m_playlists[i].composite.empty() ? m_playlists[i].thumb : m_playlists[i].composite;
+        item.type = "playlist";
+        item.mediaType = MediaType::UNKNOWN;
+        playlistItems.push_back(item);
+    }
+
+    m_contentGrid->setDataSource(playlistItems);
+    updateViewModeButtons();
+}
+
+void LibrarySectionTab::onPlaylistSelected(const Playlist& playlist) {
+    brls::Logger::debug("LibrarySectionTab: Selected playlist: {}", playlist.title);
+
+    std::string playlistId = playlist.ratingKey;
+    std::string playlistTitle = playlist.title;
+    std::weak_ptr<bool> aliveWeak = m_alive;
+
+    asyncRun([this, playlistId, playlistTitle, aliveWeak]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<PlaylistItem> items;
+
+        if (client.fetchPlaylistItems(playlistId, items)) {
+            brls::Logger::info("LibrarySectionTab: Got {} items in playlist", items.size());
+
+            std::vector<MediaItem> mediaItems;
+            for (const auto& item : items) {
+                mediaItems.push_back(item.media);
+            }
+
+            brls::sync([this, mediaItems, playlistTitle, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
+                m_viewMode = LibraryViewMode::FILTERED;
+                m_titleLabel->setText(m_title + " - " + playlistTitle);
+                m_contentGrid->setDataSource(mediaItems);
+                updateViewModeButtons();
+            });
+        } else {
+            brls::Logger::error("LibrarySectionTab: Failed to load playlist content");
+            brls::sync([aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+                brls::Application::notify("Failed to load playlist");
+            });
+        }
+    });
+}
+
+void LibrarySectionTab::showPlaylistOptionsDialog(const Playlist& playlist) {
+    brls::Dialog* dialog = new brls::Dialog(playlist.title);
+
+    auto* infoBox = new brls::Box();
+    infoBox->setAxis(brls::Axis::COLUMN);
+    infoBox->setPadding(20);
+
+    auto* trackCount = new brls::Label();
+    trackCount->setText("Tracks: " + std::to_string(playlist.leafCount));
+    trackCount->setMarginBottom(10);
+    infoBox->addView(trackCount);
+
+    if (playlist.smart) {
+        auto* smartLabel = new brls::Label();
+        smartLabel->setText("(Smart Playlist - cannot be edited)");
+        smartLabel->setFontSize(14);
+        smartLabel->setTextColor(nvgRGBA(150, 150, 150, 255));
+        infoBox->addView(smartLabel);
+    }
+
+    dialog->addView(infoBox);
+
+    std::string playlistId = playlist.ratingKey;
+    dialog->addButton("Play All", [this, playlistId]() {
+        playPlaylistWithQueue(playlistId, 0);
+    });
+
+    if (!playlist.smart) {
+        dialog->addButton("Delete", [this, playlistId]() {
+            brls::Dialog* confirmDialog = new brls::Dialog("Delete this playlist?");
+            confirmDialog->addButton("Yes, Delete", [this, playlistId]() {
+                std::weak_ptr<bool> aliveWeak = m_alive;
+
+                asyncRun([this, playlistId, aliveWeak]() {
+                    PlexClient& client = PlexClient::getInstance();
+
+                    if (client.deletePlaylist(playlistId)) {
+                        brls::Logger::info("LibrarySectionTab: Deleted playlist");
+
+                        brls::sync([this, aliveWeak]() {
+                            auto alive = aliveWeak.lock();
+                            if (!alive || !*alive) return;
+
+                            loadPlaylists();
+                            showAllItems();
+                        });
+                    }
+                });
+            });
+            confirmDialog->addButton("Cancel", []() {});
+            confirmDialog->open();
+        });
+    }
+
+    dialog->addButton("Cancel", []() {});
+    dialog->open();
+}
+
+void LibrarySectionTab::playPlaylistWithQueue(const std::string& playlistId, int startIndex) {
+    std::weak_ptr<bool> aliveWeak = m_alive;
+
+    asyncRun([this, playlistId, startIndex, aliveWeak]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<PlaylistItem> items;
+
+        if (client.fetchPlaylistItems(playlistId, items) && !items.empty()) {
+            std::vector<MediaItem> tracks;
+            for (const auto& item : items) {
+                tracks.push_back(item.media);
+            }
+
+            brls::sync([tracks, startIndex, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
+                brls::Application::pushActivity(
+                    PlayerActivity::createWithQueue(tracks, startIndex)
+                );
             });
         }
     });

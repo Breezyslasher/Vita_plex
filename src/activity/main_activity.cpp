@@ -210,9 +210,10 @@ void MainActivity::loadLibrariesToSidebar() {
 
             std::string key = section.key;
             std::string title = section.title;
+            std::string type = section.type;
 
-            tabFrame->addTab(title, [key, title]() {
-                return new LibrarySectionTab(key, title);
+            tabFrame->addTab(title, [key, title, type]() {
+                return new LibrarySectionTab(key, title, type);
             });
 
             brls::Logger::debug("MainActivity: Added sidebar tab for library: {}", title);

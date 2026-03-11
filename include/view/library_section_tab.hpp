@@ -8,6 +8,7 @@
 
 #include <borealis.hpp>
 #include <memory>
+#include <vector>
 #include "app/plex_client.hpp"
 #include "view/recycling_grid.hpp"
 
@@ -18,6 +19,7 @@ enum class LibraryViewMode {
     ALL_ITEMS,      // Show all items in the library
     COLLECTIONS,    // Show collections as browsable items
     CATEGORIES,     // Show categories/genres as browsable items
+    PLAYLISTS,      // Show playlists (music sections only)
     FILTERED        // Showing items filtered by collection or category
 };
 
@@ -33,12 +35,17 @@ private:
     void loadContent();
     void loadCollections();
     void loadGenres();
+    void loadPlaylists();
     void showAllItems();
     void showCollections();
     void showCategories();
+    void showPlaylists();
     void onItemSelected(const MediaItem& item);
     void onCollectionSelected(const MediaItem& collection);
     void onGenreSelected(const GenreItem& genre);
+    void onPlaylistSelected(const Playlist& playlist);
+    void showPlaylistOptionsDialog(const Playlist& playlist);
+    void playPlaylistWithQueue(const std::string& playlistId, int startIndex);
     void updateViewModeButtons();
 
     // Check if this tab is still valid (not destroyed)
@@ -55,6 +62,7 @@ private:
     brls::Button* m_allBtn = nullptr;
     brls::Button* m_collectionsBtn = nullptr;
     brls::Button* m_categoriesBtn = nullptr;
+    brls::Button* m_playlistsBtn = nullptr;
     brls::Button* m_backBtn = nullptr;  // Back button when in filtered view
 
     // Main content grid
@@ -64,12 +72,14 @@ private:
     std::vector<MediaItem> m_items;
     std::vector<MediaItem> m_collections;
     std::vector<GenreItem> m_genres;
+    std::vector<Playlist> m_playlists;
 
     LibraryViewMode m_viewMode = LibraryViewMode::ALL_ITEMS;
     std::string m_filterTitle;  // Title of current filter (collection/genre name)
     bool m_loaded = false;
     bool m_collectionsLoaded = false;
     bool m_genresLoaded = false;
+    bool m_playlistsLoaded = false;
 
     // Shared pointer to track if this object is still alive
     // Used by async callbacks to check validity before updating UI
