@@ -84,7 +84,7 @@ private:
     bool m_queuePopulating = false;     // Guard against re-entrant populateQueueList
 
     // Batched queue population - creates rows across multiple frames to avoid UI freeze
-    static constexpr int QUEUE_BATCH_SIZE = 15;  // Rows to create per frame
+    static constexpr int QUEUE_BATCH_SIZE = 30;  // Rows to create per frame
     int m_queueBatchNext = 0;                    // Next row index to create
     int m_queueBatchTotal = 0;                   // Total rows to create
     bool m_queueBatchActive = false;             // Whether batched creation is in progress
@@ -113,7 +113,7 @@ private:
     };
     std::vector<DeferredThumb> m_deferredThumbs;
     void loadQueueThumbsAroundIndex(int displayIndex);
-    static constexpr int QUEUE_THUMB_BUFFER = 4;  // Load this many rows above/below visible
+    static constexpr int QUEUE_THUMB_BUFFER = 6;  // Load this many rows above/below visible
 
     // Helper to find a row's current display position in the queue list
     int findQueueRowDisplayIndex(brls::View* row);

@@ -2035,9 +2035,31 @@ void PlayerActivity::updateQueueDisplay() {
         queueLabel->setVisibility(brls::Visibility::VISIBLE);
     }
 
-    // Refresh queue list overlay if visible
-    if (m_queueOverlayVisible) {
-        populateQueueList();
+    // Refresh queue list overlay if visible - use lightweight update when
+    // only the current track changed (avoids full rebuild for large queues)
+    if (m_queueOverlayVisible && queueList) {
+        int rowCount = (int)queueList->getChildren().size();
+        if (rowCount != queue.getQueueSize()) {
+            // Queue size changed - need full rebuild
+            populateQueueList();
+        } else {
+            // Just update highlight on current track rows
+            int currentIdx = queue.getCurrentIndex();
+            for (auto& pair : m_queueRowData) {
+                brls::Box* row = static_cast<brls::Box*>(pair.first);
+                bool isCurrent = (pair.second.trackIdx == currentIdx);
+                if (isCurrent) {
+                    row->setBackgroundColor(nvgRGBA(70, 90, 210, 150));
+                    row->setBorderColor(nvgRGBA(120, 160, 255, 200));
+                    row->setBorderThickness(1.5f);
+                } else {
+                    row->setBackgroundColor(nvgRGBA(255, 255, 255, 8));
+                    row->setBorderColor(nvgRGBA(0, 0, 0, 0));
+                    row->setBorderThickness(0);
+                }
+            }
+            updateQueueTitle();
+        }
     }
 }
 

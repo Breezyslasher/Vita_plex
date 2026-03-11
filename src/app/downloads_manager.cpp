@@ -223,13 +223,15 @@ void DownloadsManager::startDownloads() {
                 brls::Logger::info("DownloadsManager: Starting download of {}", nextItem->title);
                 downloadItem(*nextItem);
 
-                // Retry failed downloads up to 3 times with exponential backoff
+                // Retry failed downloads up to 5 times with exponential backoff
+                // Video transcodes especially need retries as the server may need time to prepare
                 int retries = 0;
-                while (nextItem->state == DownloadState::FAILED && retries < 3 && m_downloading.load()) {
+                int maxRetries = (nextItem->mediaType == "track") ? 3 : 5;
+                while (nextItem->state == DownloadState::FAILED && retries < maxRetries && m_downloading.load()) {
                     retries++;
-                    int waitSec = retries * 5;  // 5s, 10s, 15s (longer for transcode retries)
-                    brls::Logger::info("DownloadsManager: Retry {}/3 for {} in {}s",
-                                      retries, nextItem->title, waitSec);
+                    int waitSec = retries * 5;  // 5s, 10s, 15s, 20s, 25s
+                    brls::Logger::info("DownloadsManager: Retry {}/{} for {} in {}s",
+                                      retries, maxRetries, nextItem->title, waitSec);
 #ifdef __vita__
                     sceKernelDelayThread(waitSec * 1000 * 1000);
 #else
@@ -959,6 +961,7 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         queryParams += "path=" + encodedPath;
         queryParams += "&mediaIndex=0&partIndex=0";
         queryParams += "&protocol=http";
+        queryParams += "&offset=0";
         queryParams += "&directPlay=0&directStream=0";
         queryParams += "&directStreamAudio=1";
         queryParams += "&hasMDE=1";
@@ -1041,6 +1044,18 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         char startPathBuf[128];
         snprintf(startPathBuf, sizeof(startPathBuf), "/%s/:/transcode/universal/start.%s?", transcodeType, container);
         url = convertToHttpForDownload(serverUrl + startPathBuf + startQuery);
+
+        // Give the server time to start the transcode session before we request data.
+        // Without this delay, the server may return an empty/partial response because
+        // the transcode hasn't begun buffering yet (causes CURLE_PARTIAL_FILE).
+        if (!isAudio) {
+            brls::Logger::info("DownloadsManager: Waiting for transcode to buffer...");
+#ifdef __vita__
+            sceKernelDelayThread(3 * 1000 * 1000);  // 3 seconds
+#else
+            std::this_thread::sleep_for(std::chrono::seconds(3));
+#endif
+        }
     }
 
     brls::Logger::debug("DownloadsManager: Downloading from {}", url);
