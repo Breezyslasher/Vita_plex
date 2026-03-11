@@ -135,6 +135,9 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
                         case DownloadState::COMPLETED:
                             m_downloadButton->setText("Downloaded");
                             break;
+                        case DownloadState::TRANSCODING:
+                            m_downloadButton->setText("Transcoding...");
+                            break;
                         case DownloadState::DOWNLOADING:
                             m_downloadButton->setText("Downloading...");
                             break;

@@ -29,6 +29,7 @@ namespace vitaplex {
 enum class DownloadState {
     QUEUED,
     DOWNLOADING,
+    TRANSCODING,  // Server is transcoding video before download begins
     PAUSED,
     COMPLETED,
     FAILED,

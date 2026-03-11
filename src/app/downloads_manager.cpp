@@ -264,7 +264,7 @@ void DownloadsManager::pauseDownloads() {
 
     std::lock_guard<std::mutex> lock(m_mutex);
     for (auto& item : m_downloads) {
-        if (item.state == DownloadState::DOWNLOADING) {
+        if (item.state == DownloadState::DOWNLOADING || item.state == DownloadState::TRANSCODING) {
             item.state = DownloadState::PAUSED;
         }
     }
@@ -665,7 +665,7 @@ static std::string buildDirectDownloadUrl(const std::string& serverUrl, const st
 // Returns true if the download URL was obtained, with the URL stored in outUrl.
 static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string& token,
                                  const std::string& ratingKey, std::string& outUrl,
-                                 std::atomic<bool>& downloading) {
+                                 std::atomic<bool>& downloading, DownloadItem& item) {
     brls::Logger::info("DownloadsManager: Trying Download Queue API for {}", ratingKey);
 
     std::string baseUrl = convertToHttpForDownload(serverUrl);
@@ -792,6 +792,7 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     // Step 4: Poll the individual item status until transcoding is complete.
     // The /media endpoint returns 503 if not ready, so we poll the item status.
     // Poll /downloadQueue/{queueId}/items/{itemId} for item-level status every 3 seconds.
+    item.state = DownloadState::TRANSCODING;
     const int maxPollAttempts = 100;  // 100 * 3s = 5 minutes max
     const int pollIntervalMs = 3000;
     const int maxErrorRestarts = 5;   // Max consecutive error restarts before giving up
@@ -826,6 +827,13 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
             errorRestarts++;
             brls::Logger::error("DownloadsManager: Item transcoding failed with status: {} (error {}/{})",
                                status, errorRestarts, maxErrorRestarts);
+
+            // If the very first poll returns error, the Download Queue API likely
+            // doesn't work on this server. Fail fast to fall back to streaming transcode.
+            if (attempt == 0) {
+                brls::Logger::warning("DownloadsManager: Immediate error on first poll, Download Queue API not supported");
+                break;
+            }
 
             if (errorRestarts >= maxErrorRestarts) {
                 brls::Logger::error("DownloadsManager: Giving up after {} consecutive transcode errors", errorRestarts);
@@ -891,7 +899,8 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     }
 
     if (!mediaReady) {
-        brls::Logger::warning("DownloadsManager: Transcode may not be complete, attempting download anyway");
+        brls::Logger::warning("DownloadsManager: Download Queue API failed, will fall back to streaming transcode");
+        return false;
     }
 
     // Step 5: Build the media download URL
@@ -930,7 +939,7 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     } else {
         // Video: use Download Queue API to transcode to Vita resolution (960x544)
         // This polls until the server finishes transcoding before downloading
-        urlReady = tryDownloadQueueApi(serverUrl, token, item.ratingKey, url, m_downloading);
+        urlReady = tryDownloadQueueApi(serverUrl, token, item.ratingKey, url, m_downloading, item);
         if (urlReady) {
             brls::Logger::info("DownloadsManager: Using Download Queue API for video: {}", item.title);
         } else {
@@ -1035,6 +1044,9 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     }
 
     brls::Logger::debug("DownloadsManager: Downloading from {}", url);
+
+    // Transcoding done (or skipped for audio), now downloading the file
+    item.state = DownloadState::DOWNLOADING;
 
     // Open local file for writing
 #ifdef __vita__
@@ -1244,8 +1256,8 @@ void DownloadsManager::validateDownloadedFiles() {
             }
         }
 
-        // Convert DOWNLOADING to QUEUED on startup (app was interrupted)
-        if (item.state == DownloadState::DOWNLOADING) {
+        // Convert DOWNLOADING/TRANSCODING to QUEUED on startup (app was interrupted)
+        if (item.state == DownloadState::DOWNLOADING || item.state == DownloadState::TRANSCODING) {
             item.state = DownloadState::QUEUED;
             item.downloadedBytes = 0;
         }

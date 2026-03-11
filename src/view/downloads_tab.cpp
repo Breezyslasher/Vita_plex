@@ -199,10 +199,11 @@ void DownloadsTab::refresh() {
     auto downloads = DownloadsManager::getInstance().getDownloads();
 
     // Update status label
-    int queued = 0, downloading = 0, completed = 0, paused = 0, failed = 0;
+    int queued = 0, downloading = 0, transcoding = 0, completed = 0, paused = 0, failed = 0;
     for (const auto& d : downloads) {
         switch (d.state) {
             case DownloadState::QUEUED: queued++; break;
+            case DownloadState::TRANSCODING: transcoding++; break;
             case DownloadState::DOWNLOADING: downloading++; break;
             case DownloadState::COMPLETED: completed++; break;
             case DownloadState::PAUSED: paused++; break;
@@ -216,6 +217,7 @@ void DownloadsTab::refresh() {
         status = "No downloads";
     } else {
         status = std::to_string(downloads.size()) + " items";
+        if (transcoding > 0) status += " | " + std::to_string(transcoding) + " transcoding";
         if (downloading > 0) status += " | " + std::to_string(downloading) + " downloading";
         if (queued > 0) status += " | " + std::to_string(queued) + " queued";
         if (paused > 0) status += " | " + std::to_string(paused) + " paused";
@@ -302,6 +304,9 @@ void DownloadsTab::refresh() {
                     case DownloadState::QUEUED:
                         statusText = "Queued";
                         break;
+                    case DownloadState::TRANSCODING:
+                        statusText = "Transcoding on server...";
+                        break;
                     case DownloadState::DOWNLOADING:
                         if (item.totalBytes > 0) {
                             int percent = (int)((item.downloadedBytes * 100) / item.totalBytes);
@@ -343,6 +348,9 @@ void DownloadsTab::refresh() {
                 if (row.row) {
                     NVGcolor bgColor;
                     switch (item.state) {
+                        case DownloadState::TRANSCODING:
+                            bgColor = nvgRGBA(50, 30, 60, 200);  // Purple tint
+                            break;
                         case DownloadState::DOWNLOADING:
                             bgColor = nvgRGBA(20, 60, 20, 200);  // Green tint
                             break;
@@ -396,6 +404,9 @@ void DownloadsTab::refresh() {
         // Color-coded background based on state
         NVGcolor bgColor;
         switch (item.state) {
+            case DownloadState::TRANSCODING:
+                bgColor = nvgRGBA(50, 30, 60, 200);  // Purple tint
+                break;
             case DownloadState::DOWNLOADING:
                 bgColor = nvgRGBA(20, 60, 20, 200);  // Green tint
                 break;
@@ -441,6 +452,9 @@ void DownloadsTab::refresh() {
         switch (item.state) {
             case DownloadState::QUEUED:
                 statusText = "Queued";
+                break;
+            case DownloadState::TRANSCODING:
+                statusText = "Transcoding on server...";
                 break;
             case DownloadState::DOWNLOADING:
                 if (item.totalBytes > 0) {
@@ -613,6 +627,7 @@ void DownloadsTab::refresh() {
             });
             buttonsBox->addView(deleteBtn);
         } else if (item.state == DownloadState::DOWNLOADING ||
+                   item.state == DownloadState::TRANSCODING ||
                    item.state == DownloadState::QUEUED) {
             auto cancelBtn = new brls::Button();
             auto cancelLabel = new brls::Label();
