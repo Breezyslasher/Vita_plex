@@ -894,7 +894,8 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
         dialog->dismiss();
         std::string playlistId = capturedPlaylist.ratingKey;
         std::string playlistTitle = capturedPlaylist.title;
-        asyncRun([playlistId, playlistTitle]() {
+        std::string playlistThumb = capturedPlaylist.thumb.empty() ? capturedPlaylist.composite : capturedPlaylist.thumb;
+        asyncRun([playlistId, playlistTitle, playlistThumb]() {
             PlexClient& client = PlexClient::getInstance();
             std::vector<PlaylistItem> items;
             int queued = 0;
@@ -907,7 +908,9 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
                             fullItem.ratingKey, fullItem.title, fullItem.partPath,
                             fullItem.duration, "track",
                             playlistTitle, 0, fullItem.index,
-                            fullItem.thumb)) {
+                            fullItem.thumb,
+                            DownloadGroupType::PLAYLIST, playlistId,
+                            playlistTitle, playlistThumb)) {
                             queued++;
                         }
                     }

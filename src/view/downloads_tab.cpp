@@ -1,12 +1,16 @@
 /**
  * VitaPlex - Downloads Tab Implementation
  * Queue display with start/stop/pause controls and auto-refresh progress.
+ * Groups downloads by playlist/album/artist with cover art and context menus.
  *
  * Based on Vita_Suwayomi's downloads tab patterns:
  * - Start/Stop/Pause/Resume/Clear action buttons
- * - Auto-refresh with incremental UI updates
+ * - Auto-refresh with smart rebuild detection
  * - Per-item cancel/delete actions
  * - Color-coded status display
+ * - Grouped view for playlists, albums, artists
+ * - Cover art / poster thumbnails
+ * - START button context menu (Play Now, Add to Queue, Clear Queue)
  */
 
 #include "view/downloads_tab.hpp"
@@ -16,11 +20,13 @@
 #include "app/music_queue.hpp"
 #include "activity/player_activity.hpp"
 #include "utils/async.hpp"
+#include "utils/image_loader.hpp"
 
 #include <memory>
 #include <thread>
 #include <chrono>
 #include <set>
+#include <map>
 
 namespace vitaplex {
 
@@ -36,7 +42,6 @@ static std::string formatElapsedTime(int totalSeconds) {
 
 // Build a transcoding status string with elapsed time and animated dots
 static std::string buildTranscodeStatus(int elapsedSeconds) {
-    // Cycle through 1-3 dots every second for animation
     int dotCount = (elapsedSeconds % 3) + 1;
     std::string dots(dotCount, '.');
 
@@ -47,8 +52,56 @@ static std::string buildTranscodeStatus(int elapsedSeconds) {
     return status;
 }
 
+static std::string buildItemStatusText(const DownloadItem& item) {
+    switch (item.state) {
+        case DownloadState::QUEUED:
+            return "Queued";
+        case DownloadState::TRANSCODING:
+            return buildTranscodeStatus(item.transcodeElapsedSeconds);
+        case DownloadState::DOWNLOADING:
+            if (item.totalBytes > 0) {
+                int percent = (int)((item.downloadedBytes * 100) / item.totalBytes);
+                int64_t dlMB = item.downloadedBytes / (1024 * 1024);
+                int64_t totalMB = item.totalBytes / (1024 * 1024);
+                return "Downloading... " + std::to_string(percent) + "% (" +
+                       std::to_string(dlMB) + "/" + std::to_string(totalMB) + " MB)";
+            } else {
+                int64_t dlMB = item.downloadedBytes / (1024 * 1024);
+                return "Downloading... " + std::to_string(dlMB) + " MB";
+            }
+        case DownloadState::PAUSED:
+            if (item.totalBytes > 0) {
+                int percent = (int)((item.downloadedBytes * 100) / item.totalBytes);
+                return "Paused (" + std::to_string(percent) + "%)";
+            }
+            return "Paused";
+        case DownloadState::COMPLETED:
+            if (item.viewOffset > 0) {
+                int minutes = (int)(item.viewOffset / 60000);
+                return "Ready to play (" + std::to_string(minutes) + " min watched)";
+            }
+            return "Ready to play";
+        case DownloadState::FAILED:
+            return "Failed";
+        default:
+            return "";
+    }
+}
+
+static NVGcolor getStateColor(DownloadState state) {
+    switch (state) {
+        case DownloadState::TRANSCODING: return nvgRGBA(50, 30, 60, 200);
+        case DownloadState::DOWNLOADING: return nvgRGBA(20, 60, 20, 200);
+        case DownloadState::PAUSED:      return nvgRGBA(60, 50, 10, 200);
+        case DownloadState::FAILED:      return nvgRGBA(60, 20, 20, 200);
+        case DownloadState::COMPLETED:   return nvgRGBA(20, 40, 60, 200);
+        default:                         return nvgRGBA(40, 40, 40, 200);
+    }
+}
+
 DownloadsTab::DownloadsTab()
     : m_alive(std::make_shared<bool>(true))
+    , m_aliveAtomic(std::make_shared<std::atomic<bool>>(true))
 {
     this->setAxis(brls::Axis::COLUMN);
     this->setPadding(20);
@@ -95,7 +148,7 @@ DownloadsTab::DownloadsTab()
     });
     m_actionsRow->addView(m_startStopBtn);
 
-    // Resume button (for paused/failed items)
+    // Resume button
     m_resumeBtn = new brls::Button();
     auto resumeLabel = new brls::Label();
     resumeLabel->setText("Resume All");
@@ -140,7 +193,8 @@ DownloadsTab::DownloadsTab()
     m_clearBtn->registerClickAction([this](brls::View*) {
         DownloadsManager::getInstance().clearCompleted();
         brls::Application::notify("Cleared completed downloads");
-        refresh();
+        m_lastState.clear();
+        rebuildList();
         return true;
     });
     m_actionsRow->addView(m_clearBtn);
@@ -170,20 +224,21 @@ DownloadsTab::DownloadsTab()
 
 DownloadsTab::~DownloadsTab() {
     *m_alive = false;
+    m_aliveAtomic->store(false);
     stopAutoRefresh();
 }
 
 void DownloadsTab::willAppear(bool resetState) {
     brls::Box::willAppear(resetState);
 
-    // Update start/stop button label
     if (DownloadsManager::getInstance().isDownloading()) {
         m_startStopLabel->setText("Stop");
     } else {
         m_startStopLabel->setText("Start");
     }
 
-    refresh();
+    m_lastState.clear();
+    rebuildList();
     startAutoRefresh();
 }
 
@@ -249,7 +304,6 @@ void DownloadsTab::refresh() {
     }
     m_statusLabel->setText(status);
 
-    // Update start/stop button
     if (DownloadsManager::getInstance().isDownloading()) {
         m_startStopLabel->setText("Stop");
     } else {
@@ -284,131 +338,19 @@ void DownloadsTab::refresh() {
         }
     }
 
-    if (!stateChanged) return;  // Nothing changed, skip UI rebuild
+    if (!stateChanged) return;
     m_lastState = currentState;
 
-    // Try incremental update: remove rows for items that no longer exist,
-    // then update status on remaining items that match
-    if (!m_rowElements.empty()) {
-        // Build set of current ratingKeys for quick lookup
-        std::set<std::string> currentKeys;
-        for (const auto& d : downloads) {
-            currentKeys.insert(d.ratingKey);
-        }
+    rebuildList();
+}
 
-        // Remove rows for items that were deleted/cancelled
-        // Walk backwards to avoid index shifting issues
-        for (int i = (int)m_rowElements.size() - 1; i >= 0; i--) {
-            if (currentKeys.find(m_rowElements[i].ratingKey) == currentKeys.end()) {
-                if (m_rowElements[i].row) {
-                    m_listContainer->removeView(m_rowElements[i].row);
-                }
-                m_rowElements.erase(m_rowElements.begin() + i);
-            }
-        }
+void DownloadsTab::rebuildList() {
+    auto downloads = DownloadsManager::getInstance().getDownloads();
 
-        // Check if remaining items match the download list (same order, same keys)
-        bool canUpdate = (downloads.size() == m_rowElements.size());
-        if (canUpdate) {
-            for (size_t i = 0; i < downloads.size(); i++) {
-                if (downloads[i].ratingKey != m_rowElements[i].ratingKey) {
-                    canUpdate = false;
-                    break;
-                }
-            }
-        }
-
-        if (canUpdate) {
-            // Update status labels and colors in-place
-            for (size_t i = 0; i < downloads.size(); i++) {
-                const auto& item = downloads[i];
-                auto& row = m_rowElements[i];
-
-                std::string statusText;
-                switch (item.state) {
-                    case DownloadState::QUEUED:
-                        statusText = "Queued";
-                        break;
-                    case DownloadState::TRANSCODING:
-                        statusText = buildTranscodeStatus(item.transcodeElapsedSeconds);
-                        break;
-                    case DownloadState::DOWNLOADING:
-                        if (item.totalBytes > 0) {
-                            int percent = (int)((item.downloadedBytes * 100) / item.totalBytes);
-                            int64_t dlMB = item.downloadedBytes / (1024 * 1024);
-                            int64_t totalMB = item.totalBytes / (1024 * 1024);
-                            statusText = "Downloading... " + std::to_string(percent) + "% (" +
-                                        std::to_string(dlMB) + "/" + std::to_string(totalMB) + " MB)";
-                        } else {
-                            int64_t dlMB = item.downloadedBytes / (1024 * 1024);
-                            statusText = "Downloading... " + std::to_string(dlMB) + " MB";
-                        }
-                        break;
-                    case DownloadState::PAUSED:
-                        statusText = "Paused";
-                        if (item.totalBytes > 0) {
-                            int percent = (int)((item.downloadedBytes * 100) / item.totalBytes);
-                            statusText += " (" + std::to_string(percent) + "%)";
-                        }
-                        break;
-                    case DownloadState::COMPLETED:
-                        statusText = "Ready to play";
-                        if (item.viewOffset > 0) {
-                            int minutes = (int)(item.viewOffset / 60000);
-                            statusText += " (" + std::to_string(minutes) + " min watched)";
-                        }
-                        break;
-                    case DownloadState::FAILED:
-                        statusText = "Failed";
-                        break;
-                    default:
-                        break;
-                }
-
-                if (row.statusLabel) {
-                    row.statusLabel->setText(statusText);
-                }
-
-                // Update row background color based on state
-                if (row.row) {
-                    NVGcolor bgColor;
-                    switch (item.state) {
-                        case DownloadState::TRANSCODING:
-                            bgColor = nvgRGBA(50, 30, 60, 200);  // Purple tint
-                            break;
-                        case DownloadState::DOWNLOADING:
-                            bgColor = nvgRGBA(20, 60, 20, 200);  // Green tint
-                            break;
-                        case DownloadState::PAUSED:
-                            bgColor = nvgRGBA(60, 50, 10, 200);  // Amber tint
-                            break;
-                        case DownloadState::FAILED:
-                            bgColor = nvgRGBA(60, 20, 20, 200);  // Red tint
-                            break;
-                        default:
-                            bgColor = nvgRGBA(40, 40, 40, 200);
-                            break;
-                    }
-                    row.row->setBackgroundColor(bgColor);
-                }
-            }
-
-            // Show/hide empty label
-            if (downloads.empty()) {
-                m_emptyLabel->setVisibility(brls::Visibility::VISIBLE);
-            } else {
-                m_emptyLabel->setVisibility(brls::Visibility::GONE);
-            }
-            return;
-        }
-    }
-
-    // Full rebuild needed (new items added or order changed)
     // Clear existing items (except empty label which is always last)
     while (m_listContainer->getChildren().size() > 1) {
         m_listContainer->removeView(m_listContainer->getChildren()[0]);
     }
-    m_rowElements.clear();
 
     if (downloads.empty()) {
         m_emptyLabel->setVisibility(brls::Visibility::VISIBLE);
@@ -417,288 +359,594 @@ void DownloadsTab::refresh() {
 
     m_emptyLabel->setVisibility(brls::Visibility::GONE);
 
+    // Group information
+    struct GroupInfo {
+        DownloadGroupType type;
+        std::string key;
+        std::string title;
+        std::string thumb;
+        int total = 0;
+        int completed = 0;
+        int downloading = 0;
+    };
+
+    // Collect groups and ungrouped items in order of first appearance
+    std::vector<std::string> groupOrder;
+    std::map<std::string, GroupInfo> groups;
+    std::vector<DownloadItem> ungrouped;
+
     for (const auto& item : downloads) {
-        auto row = new brls::Box();
-        row->setAxis(brls::Axis::ROW);
-        row->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
-        row->setAlignItems(brls::AlignItems::CENTER);
-        row->setPadding(10);
-        row->setMargins(0, 0, 8, 0);
-        row->setCornerRadius(8);
-
-        // Color-coded background based on state
-        NVGcolor bgColor;
-        switch (item.state) {
-            case DownloadState::TRANSCODING:
-                bgColor = nvgRGBA(50, 30, 60, 200);  // Purple tint
-                break;
-            case DownloadState::DOWNLOADING:
-                bgColor = nvgRGBA(20, 60, 20, 200);  // Green tint
-                break;
-            case DownloadState::PAUSED:
-                bgColor = nvgRGBA(60, 50, 10, 200);  // Amber tint
-                break;
-            case DownloadState::FAILED:
-                bgColor = nvgRGBA(60, 20, 20, 200);  // Red tint
-                break;
-            case DownloadState::COMPLETED:
-                bgColor = nvgRGBA(20, 40, 60, 200);  // Blue tint
-                break;
-            default:
-                bgColor = nvgRGBA(40, 40, 40, 200);
-                break;
+        if (item.groupType != DownloadGroupType::NONE && !item.groupKey.empty()) {
+            std::string compositeKey = std::to_string(static_cast<int>(item.groupType)) + ":" + item.groupKey;
+            auto it = groups.find(compositeKey);
+            if (it == groups.end()) {
+                GroupInfo gi;
+                gi.type = item.groupType;
+                gi.key = item.groupKey;
+                gi.title = item.groupTitle;
+                gi.thumb = item.groupThumb;
+                gi.total = 1;
+                gi.completed = (item.state == DownloadState::COMPLETED) ? 1 : 0;
+                gi.downloading = (item.state == DownloadState::DOWNLOADING || item.state == DownloadState::TRANSCODING) ? 1 : 0;
+                groups[compositeKey] = gi;
+                groupOrder.push_back(compositeKey);
+            } else {
+                it->second.total++;
+                if (item.state == DownloadState::COMPLETED) it->second.completed++;
+                if (item.state == DownloadState::DOWNLOADING || item.state == DownloadState::TRANSCODING) it->second.downloading++;
+                // Use first non-empty thumb
+                if (it->second.thumb.empty() && !item.groupThumb.empty()) {
+                    it->second.thumb = item.groupThumb;
+                }
+            }
+        } else {
+            ungrouped.push_back(item);
         }
-        row->setBackgroundColor(bgColor);
+    }
 
-        // Title and info column
-        auto infoBox = new brls::Box();
+    // Add grouped entries
+    for (const auto& compositeKey : groupOrder) {
+        const auto& gi = groups[compositeKey];
+        auto* row = buildGroupRow(gi.type, gi.key, gi.title, gi.thumb,
+                                   gi.total, gi.completed, gi.downloading);
+        m_listContainer->addView(row, m_listContainer->getChildren().size() - 1);
+    }
+
+    // Add ungrouped items
+    for (const auto& item : ungrouped) {
+        auto* row = buildItemRow(item);
+        m_listContainer->addView(row, m_listContainer->getChildren().size() - 1);
+    }
+}
+
+brls::Box* DownloadsTab::buildGroupRow(DownloadGroupType groupType, const std::string& groupKey,
+                                        const std::string& groupTitle, const std::string& groupThumb,
+                                        int totalItems, int completedItems, int downloadingItems) {
+    auto* row = new brls::Box();
+    row->setAxis(brls::Axis::ROW);
+    row->setAlignItems(brls::AlignItems::CENTER);
+    row->setPadding(8);
+    row->setMargins(0, 0, 8, 0);
+    row->setCornerRadius(8);
+    row->setFocusable(true);
+
+    // Background color based on completion status
+    if (completedItems == totalItems) {
+        row->setBackgroundColor(nvgRGBA(20, 40, 60, 200));  // Blue - all done
+    } else if (downloadingItems > 0) {
+        row->setBackgroundColor(nvgRGBA(20, 60, 20, 200));  // Green - downloading
+    } else {
+        row->setBackgroundColor(nvgRGBA(40, 40, 40, 200));  // Gray - queued
+    }
+
+    // Cover art thumbnail
+    auto* thumbImage = new brls::Image();
+    bool isMusic = (groupType == DownloadGroupType::PLAYLIST ||
+                    groupType == DownloadGroupType::ALBUM ||
+                    groupType == DownloadGroupType::ARTIST);
+    int thumbW = isMusic ? 60 : 45;
+    int thumbH = isMusic ? 60 : 67;
+    thumbImage->setSize(brls::Size(thumbW, thumbH));
+    thumbImage->setScalingType(brls::ImageScalingType::FIT);
+    thumbImage->setMargins(0, 10, 0, 0);
+    thumbImage->setCornerRadius(4);
+
+    // Try to load cover from first completed item in this group, or use async URL
+    if (!groupThumb.empty()) {
+        // Check if any item in the group has a downloaded cover
+        auto groupItems = DownloadsManager::getInstance().getDownloadsByGroup(groupType, groupKey);
+        bool loaded = false;
+        for (const auto& gi : groupItems) {
+            if (!gi.thumbPath.empty() && gi.state == DownloadState::COMPLETED) {
+                ImageLoader::loadFromFile(gi.thumbPath, thumbImage);
+                loaded = true;
+                break;
+            }
+        }
+        if (!loaded) {
+            // Load from server URL
+            std::string thumbUrl = PlexClient::getInstance().getThumbnailUrl(groupThumb, thumbW * 2, thumbH * 2);
+            if (!thumbUrl.empty()) {
+                ImageLoader::loadAsync(thumbUrl, [](brls::Image*) {}, thumbImage, m_aliveAtomic);
+            }
+        }
+    }
+    row->addView(thumbImage);
+
+    // Info column
+    auto* infoBox = new brls::Box();
+    infoBox->setAxis(brls::Axis::COLUMN);
+    infoBox->setGrow(1.0f);
+
+    // Group type label
+    std::string typePrefix;
+    switch (groupType) {
+        case DownloadGroupType::PLAYLIST: typePrefix = "Playlist"; break;
+        case DownloadGroupType::ALBUM:    typePrefix = "Album"; break;
+        case DownloadGroupType::ARTIST:   typePrefix = "Artist"; break;
+        case DownloadGroupType::SHOW:     typePrefix = "Show"; break;
+        default: break;
+    }
+
+    auto* titleLabel = new brls::Label();
+    titleLabel->setText(groupTitle);
+    titleLabel->setFontSize(18);
+    infoBox->addView(titleLabel);
+
+    auto* statusLabel = new brls::Label();
+    statusLabel->setFontSize(14);
+    statusLabel->setTextColor(nvgRGBA(200, 200, 200, 255));
+    std::string statusText = typePrefix + " - " + std::to_string(completedItems) + "/" +
+                             std::to_string(totalItems) + " ready";
+    if (downloadingItems > 0) {
+        statusText += " (" + std::to_string(downloadingItems) + " downloading)";
+    }
+    statusLabel->setText(statusText);
+    infoBox->addView(statusLabel);
+
+    row->addView(infoBox);
+
+    // Click to view tracks in this group
+    DownloadGroupType capturedType = groupType;
+    std::string capturedKey = groupKey;
+    std::string capturedTitle = groupTitle;
+    row->registerClickAction([this, capturedType, capturedKey, capturedTitle](brls::View*) {
+        showGroupDetail(capturedType, capturedKey, capturedTitle);
+        return true;
+    });
+    row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
+
+    // START button context menu
+    row->registerAction("Options", brls::ControllerButton::BUTTON_START,
+        [this, capturedType, capturedKey, capturedTitle](brls::View*) {
+            showGroupContextMenu(capturedType, capturedKey, capturedTitle);
+            return true;
+        });
+
+    return row;
+}
+
+brls::Box* DownloadsTab::buildItemRow(const DownloadItem& item) {
+    auto* row = new brls::Box();
+    row->setAxis(brls::Axis::ROW);
+    row->setAlignItems(brls::AlignItems::CENTER);
+    row->setPadding(8);
+    row->setMargins(0, 0, 8, 0);
+    row->setCornerRadius(8);
+    row->setFocusable(true);
+    row->setBackgroundColor(getStateColor(item.state));
+
+    // Cover art / poster thumbnail
+    auto* thumbImage = new brls::Image();
+    bool isMusic = (item.mediaType == "track");
+    bool isMovie = (item.mediaType == "movie");
+    int thumbW = isMusic ? 60 : (isMovie ? 45 : 50);
+    int thumbH = isMusic ? 60 : (isMovie ? 67 : 38);
+    thumbImage->setSize(brls::Size(thumbW, thumbH));
+    thumbImage->setScalingType(brls::ImageScalingType::FIT);
+    thumbImage->setMargins(0, 10, 0, 0);
+    thumbImage->setCornerRadius(4);
+
+    // Load thumbnail
+    if (!item.thumbPath.empty() && item.state == DownloadState::COMPLETED) {
+        ImageLoader::loadFromFile(item.thumbPath, thumbImage);
+    } else if (!item.thumbUrl.empty()) {
+        std::string thumbUrl = PlexClient::getInstance().getThumbnailUrl(item.thumbUrl, thumbW * 2, thumbH * 2);
+        if (!thumbUrl.empty()) {
+            ImageLoader::loadAsync(thumbUrl, [](brls::Image*) {}, thumbImage, m_aliveAtomic);
+        }
+    }
+    row->addView(thumbImage);
+
+    // Info column
+    auto* infoBox = new brls::Box();
+    infoBox->setAxis(brls::Axis::COLUMN);
+    infoBox->setGrow(1.0f);
+
+    auto* titleLabel = new brls::Label();
+    std::string displayTitle = item.title;
+    if (!item.parentTitle.empty()) {
+        displayTitle = item.parentTitle + " - " + item.title;
+    }
+    if (item.seasonNum > 0 && item.episodeNum > 0) {
+        char epStr[32];
+        snprintf(epStr, sizeof(epStr), " (S%02dE%02d)", item.seasonNum, item.episodeNum);
+        displayTitle += epStr;
+    }
+    titleLabel->setText(displayTitle);
+    titleLabel->setFontSize(18);
+    infoBox->addView(titleLabel);
+
+    auto* statusLabel = new brls::Label();
+    statusLabel->setFontSize(14);
+    statusLabel->setText(buildItemStatusText(item));
+    statusLabel->setTextColor(nvgRGBA(200, 200, 200, 255));
+    infoBox->addView(statusLabel);
+
+    row->addView(infoBox);
+
+    // Action buttons
+    auto* buttonsBox = new brls::Box();
+    buttonsBox->setAxis(brls::Axis::ROW);
+
+    if (item.state == DownloadState::COMPLETED) {
+        // START button for context menu on completed items
+        DownloadItem capturedItem = item;
+        row->registerAction("Options", brls::ControllerButton::BUTTON_START,
+            [this, capturedItem](brls::View*) {
+                showItemContextMenu(capturedItem);
+                return true;
+            });
+
+        auto* playBtn = new brls::Button();
+        auto* playLabel = new brls::Label();
+        playLabel->setText("Play");
+        playLabel->setFontSize(14);
+        playBtn->addView(playLabel);
+        playBtn->setMargins(0, 0, 0, 5);
+
+        std::string ratingKey = item.ratingKey;
+        bool isTrack = (item.mediaType == "track");
+        DownloadItem capturedForPlay = item;
+        playBtn->registerClickAction([ratingKey, isTrack, capturedForPlay](brls::View*) {
+            if (isTrack) {
+                MediaItem mi;
+                mi.ratingKey = capturedForPlay.ratingKey;
+                mi.title = capturedForPlay.title;
+                mi.grandparentTitle = capturedForPlay.parentTitle;
+                mi.parentTitle = capturedForPlay.parentTitle;
+                mi.duration = capturedForPlay.duration;
+                mi.thumb = capturedForPlay.thumbUrl;
+
+                std::vector<MediaItem> single = {mi};
+                brls::Application::pushActivity(
+                    PlayerActivity::createWithQueue(single, 0));
+            } else {
+                brls::Application::pushActivity(new PlayerActivity(ratingKey, true));
+            }
+            return true;
+        });
+        buttonsBox->addView(playBtn);
+
+        auto* deleteBtn = new brls::Button();
+        auto* delLabel = new brls::Label();
+        delLabel->setText("Delete");
+        delLabel->setFontSize(14);
+        deleteBtn->addView(delLabel);
+
+        std::string key = item.ratingKey;
+        deleteBtn->registerClickAction([this, key](brls::View*) {
+            DownloadsManager::getInstance().deleteDownload(key);
+            brls::Application::notify("Download deleted");
+            m_lastState.clear();
+            return true;
+        });
+        buttonsBox->addView(deleteBtn);
+    } else if (item.state == DownloadState::DOWNLOADING ||
+               item.state == DownloadState::TRANSCODING ||
+               item.state == DownloadState::QUEUED) {
+        auto* cancelBtn = new brls::Button();
+        auto* cancelLabel = new brls::Label();
+        cancelLabel->setText("Cancel");
+        cancelLabel->setFontSize(14);
+        cancelBtn->addView(cancelLabel);
+
+        std::string key = item.ratingKey;
+        cancelBtn->registerClickAction([this, key](brls::View*) {
+            DownloadsManager::getInstance().cancelDownload(key);
+            brls::Application::notify("Download cancelled");
+            m_lastState.clear();
+            return true;
+        });
+        buttonsBox->addView(cancelBtn);
+    } else if (item.state == DownloadState::PAUSED ||
+               item.state == DownloadState::FAILED) {
+        auto* cancelBtn = new brls::Button();
+        auto* cancelLabel = new brls::Label();
+        cancelLabel->setText("Remove");
+        cancelLabel->setFontSize(14);
+        cancelBtn->addView(cancelLabel);
+
+        std::string key = item.ratingKey;
+        cancelBtn->registerClickAction([this, key](brls::View*) {
+            DownloadsManager::getInstance().cancelDownload(key);
+            brls::Application::notify("Download removed");
+            m_lastState.clear();
+            return true;
+        });
+        buttonsBox->addView(cancelBtn);
+    }
+
+    row->addView(buttonsBox);
+    return row;
+}
+
+void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::string& groupKey,
+                                    const std::string& groupTitle) {
+    auto items = DownloadsManager::getInstance().getDownloadsByGroup(groupType, groupKey);
+    if (items.empty()) return;
+
+    auto* dialog = new brls::Dialog(groupTitle);
+
+    auto* scrollView = new brls::ScrollingFrame();
+    scrollView->setGrow(1.0f);
+
+    auto* contentBox = new brls::Box();
+    contentBox->setAxis(brls::Axis::COLUMN);
+    contentBox->setPadding(15);
+    contentBox->setGrow(1.0f);
+
+    // Summary line
+    int completed = 0, total = (int)items.size();
+    for (const auto& item : items) {
+        if (item.state == DownloadState::COMPLETED) completed++;
+    }
+    auto* summaryLabel = new brls::Label();
+    summaryLabel->setText(std::to_string(completed) + "/" + std::to_string(total) + " tracks ready");
+    summaryLabel->setFontSize(14);
+    summaryLabel->setTextColor(nvgRGBA(180, 180, 180, 255));
+    summaryLabel->setMarginBottom(10);
+    contentBox->addView(summaryLabel);
+
+    for (const auto& item : items) {
+        auto* row = new brls::Box();
+        row->setAxis(brls::Axis::ROW);
+        row->setAlignItems(brls::AlignItems::CENTER);
+        row->setPadding(6);
+        row->setMargins(0, 0, 4, 0);
+        row->setCornerRadius(6);
+        row->setBackgroundColor(getStateColor(item.state));
+
+        // Small thumbnail
+        auto* thumbImage = new brls::Image();
+        thumbImage->setSize(brls::Size(40, 40));
+        thumbImage->setScalingType(brls::ImageScalingType::FIT);
+        thumbImage->setMargins(0, 8, 0, 0);
+        thumbImage->setCornerRadius(3);
+        if (!item.thumbPath.empty() && item.state == DownloadState::COMPLETED) {
+            ImageLoader::loadFromFile(item.thumbPath, thumbImage);
+        } else if (!item.thumbUrl.empty()) {
+            std::string thumbUrl = PlexClient::getInstance().getThumbnailUrl(item.thumbUrl, 80, 80);
+            if (!thumbUrl.empty()) {
+                ImageLoader::loadAsync(thumbUrl, [](brls::Image*) {}, thumbImage, m_aliveAtomic);
+            }
+        }
+        row->addView(thumbImage);
+
+        auto* infoBox = new brls::Box();
         infoBox->setAxis(brls::Axis::COLUMN);
         infoBox->setGrow(1.0f);
 
-        auto titleLabel = new brls::Label();
+        auto* titleLabel = new brls::Label();
         std::string displayTitle = item.title;
-        if (!item.parentTitle.empty()) {
-            displayTitle = item.parentTitle + " - " + item.title;
-        }
-        if (item.seasonNum > 0 && item.episodeNum > 0) {
-            char epStr[32];
-            snprintf(epStr, sizeof(epStr), " (S%02dE%02d)", item.seasonNum, item.episodeNum);
-            displayTitle += epStr;
+        if (!item.albumTitle.empty()) {
+            displayTitle += " (" + item.albumTitle + ")";
         }
         titleLabel->setText(displayTitle);
-        titleLabel->setFontSize(18);
+        titleLabel->setFontSize(16);
         infoBox->addView(titleLabel);
 
-        // Status/progress label
-        auto statusLabel = new brls::Label();
-        statusLabel->setFontSize(14);
-
-        std::string statusText;
-        switch (item.state) {
-            case DownloadState::QUEUED:
-                statusText = "Queued";
-                break;
-            case DownloadState::TRANSCODING:
-                statusText = "Transcoding on server...";
-                break;
-            case DownloadState::DOWNLOADING:
-                if (item.totalBytes > 0) {
-                    int percent = (int)((item.downloadedBytes * 100) / item.totalBytes);
-                    int64_t dlMB = item.downloadedBytes / (1024 * 1024);
-                    int64_t totalMB = item.totalBytes / (1024 * 1024);
-                    statusText = "Downloading... " + std::to_string(percent) + "% (" +
-                                std::to_string(dlMB) + "/" + std::to_string(totalMB) + " MB)";
-                } else {
-                    int64_t dlMB = item.downloadedBytes / (1024 * 1024);
-                    statusText = "Downloading... " + std::to_string(dlMB) + " MB";
-                }
-                break;
-            case DownloadState::PAUSED:
-                statusText = "Paused";
-                if (item.totalBytes > 0) {
-                    int percent = (int)((item.downloadedBytes * 100) / item.totalBytes);
-                    statusText += " (" + std::to_string(percent) + "%)";
-                }
-                break;
-            case DownloadState::COMPLETED:
-                statusText = "Ready to play";
-                if (item.viewOffset > 0) {
-                    int minutes = (int)(item.viewOffset / 60000);
-                    statusText += " (" + std::to_string(minutes) + " min watched)";
-                }
-                break;
-            case DownloadState::FAILED:
-                statusText = "Failed";
-                break;
-            default:
-                break;
-        }
-        statusLabel->setText(statusText);
-        statusLabel->setTextColor(nvgRGBA(200, 200, 200, 255));
+        auto* statusLabel = new brls::Label();
+        statusLabel->setFontSize(12);
+        statusLabel->setText(buildItemStatusText(item));
+        statusLabel->setTextColor(nvgRGBA(180, 180, 180, 255));
         infoBox->addView(statusLabel);
 
         row->addView(infoBox);
-
-        // Action buttons based on state
-        auto buttonsBox = new brls::Box();
-        buttonsBox->setAxis(brls::Axis::ROW);
-
-        if (item.state == DownloadState::COMPLETED) {
-            auto playBtn = new brls::Button();
-            auto playLabel = new brls::Label();
-            playLabel->setText("Play");
-            playLabel->setFontSize(14);
-            playBtn->addView(playLabel);
-            playBtn->setMargins(0, 0, 0, 5);
-
-            std::string ratingKey = item.ratingKey;
-            bool isMusic = (item.mediaType == "track");
-            DownloadItem capturedItem = item;
-            playBtn->registerClickAction([ratingKey, isMusic, capturedItem](brls::View*) {
-                if (isMusic) {
-                    // Build a MediaItem from the download for queue integration
-                    MediaItem mi;
-                    mi.ratingKey = capturedItem.ratingKey;
-                    mi.title = capturedItem.title;
-                    mi.grandparentTitle = capturedItem.parentTitle;  // artist
-                    mi.parentTitle = capturedItem.parentTitle;       // album/artist
-                    mi.duration = capturedItem.duration;
-                    mi.thumb = capturedItem.thumbUrl;
-
-                    // Helper lambda to execute a track action with queue integration
-                    auto executeAction = [](const MediaItem& track, TrackDefaultAction act) {
-                        MusicQueue& queue = MusicQueue::getInstance();
-                        switch (act) {
-                            case TrackDefaultAction::PLAY_NEXT:
-                                if (queue.isEmpty()) {
-                                    std::vector<MediaItem> single = {track};
-                                    brls::Application::pushActivity(
-                                        PlayerActivity::createWithQueue(single, 0));
-                                } else {
-                                    queue.insertTrackAfterCurrent(track);
-                                    brls::Application::notify("Playing next: " + track.title);
-                                }
-                                break;
-
-                            case TrackDefaultAction::PLAY_NOW_REPLACE:
-                                if (queue.isEmpty()) {
-                                    std::vector<MediaItem> single = {track};
-                                    brls::Application::pushActivity(
-                                        PlayerActivity::createWithQueue(single, 0));
-                                } else {
-                                    queue.insertTrackAfterCurrent(track);
-                                    if (queue.playNext()) {
-                                        brls::Application::notify("Now playing: " + track.title);
-                                    }
-                                }
-                                break;
-
-                            case TrackDefaultAction::ADD_TO_BOTTOM:
-                                if (queue.isEmpty()) {
-                                    std::vector<MediaItem> single = {track};
-                                    brls::Application::pushActivity(
-                                        PlayerActivity::createWithQueue(single, 0));
-                                } else {
-                                    queue.addTrack(track);
-                                    brls::Application::notify("Added to queue: " + track.title);
-                                }
-                                break;
-
-                            case TrackDefaultAction::PLAY_NOW_CLEAR:
-                            default: {
-                                std::vector<MediaItem> single = {track};
-                                brls::Application::pushActivity(
-                                    PlayerActivity::createWithQueue(single, 0));
-                                break;
-                            }
-                        }
-                    };
-
-                    TrackDefaultAction action = Application::getInstance().getSettings().trackDefaultAction;
-
-                    if (action == TrackDefaultAction::ASK_EACH_TIME) {
-                        // Show action dialog
-                        auto* dialog = new brls::Dialog("Choose Action");
-                        auto* optionsBox = new brls::Box();
-                        optionsBox->setAxis(brls::Axis::COLUMN);
-                        optionsBox->setPadding(20);
-
-                        auto addBtn = [&optionsBox, &mi, dialog, executeAction](
-                                const std::string& text, TrackDefaultAction act) {
-                            auto* btn = new brls::Button();
-                            btn->setText(text);
-                            btn->setHeight(44);
-                            btn->setMarginBottom(10);
-                            MediaItem captured = mi;
-                            btn->registerClickAction([dialog, captured, executeAction, act](brls::View*) {
-                                dialog->dismiss();
-                                executeAction(captured, act);
-                                return true;
-                            });
-                            btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-                            optionsBox->addView(btn);
-                        };
-
-                        addBtn("Play Now (Clear Queue)", TrackDefaultAction::PLAY_NOW_CLEAR);
-                        addBtn("Play Next", TrackDefaultAction::PLAY_NEXT);
-                        addBtn("Add to Bottom of Queue", TrackDefaultAction::ADD_TO_BOTTOM);
-                        addBtn("Play Now (Replace Current)", TrackDefaultAction::PLAY_NOW_REPLACE);
-
-                        dialog->addView(optionsBox);
-                        dialog->open();
-                    } else {
-                        executeAction(mi, action);
-                    }
-                } else {
-                    // Video: play directly as local file
-                    brls::Application::pushActivity(new PlayerActivity(ratingKey, true));
-                }
-                return true;
-            });
-            buttonsBox->addView(playBtn);
-
-            auto deleteBtn = new brls::Button();
-            auto delLabel = new brls::Label();
-            delLabel->setText("Delete");
-            delLabel->setFontSize(14);
-            deleteBtn->addView(delLabel);
-
-            std::string key = item.ratingKey;
-            deleteBtn->registerClickAction([this, key](brls::View*) {
-                DownloadsManager::getInstance().deleteDownload(key);
-                brls::Application::notify("Download deleted");
-                m_lastState.clear();  // Force refresh on next auto-refresh cycle
-                return true;
-            });
-            buttonsBox->addView(deleteBtn);
-        } else if (item.state == DownloadState::DOWNLOADING ||
-                   item.state == DownloadState::TRANSCODING ||
-                   item.state == DownloadState::QUEUED) {
-            auto cancelBtn = new brls::Button();
-            auto cancelLabel = new brls::Label();
-            cancelLabel->setText("Cancel");
-            cancelLabel->setFontSize(14);
-            cancelBtn->addView(cancelLabel);
-
-            std::string key = item.ratingKey;
-            cancelBtn->registerClickAction([this, key](brls::View*) {
-                DownloadsManager::getInstance().cancelDownload(key);
-                brls::Application::notify("Download cancelled");
-                m_lastState.clear();  // Force refresh on next auto-refresh cycle
-                return true;
-            });
-            buttonsBox->addView(cancelBtn);
-        } else if (item.state == DownloadState::PAUSED ||
-                   item.state == DownloadState::FAILED) {
-            // Show cancel to remove from queue
-            auto cancelBtn = new brls::Button();
-            auto cancelLabel = new brls::Label();
-            cancelLabel->setText("Remove");
-            cancelLabel->setFontSize(14);
-            cancelBtn->addView(cancelLabel);
-
-            std::string key = item.ratingKey;
-            cancelBtn->registerClickAction([this, key](brls::View*) {
-                DownloadsManager::getInstance().cancelDownload(key);
-                brls::Application::notify("Download removed");
-                m_lastState.clear();  // Force refresh on next auto-refresh cycle
-                return true;
-            });
-            buttonsBox->addView(cancelBtn);
-        }
-
-        row->addView(buttonsBox);
-
-        // Track elements for incremental updates
-        RowElements re;
-        re.row = row;
-        re.statusLabel = statusLabel;
-        re.ratingKey = item.ratingKey;
-        m_rowElements.push_back(re);
-
-        // Add row before the empty label
-        m_listContainer->addView(row, m_listContainer->getChildren().size() - 1);
+        contentBox->addView(row);
     }
+
+    // Close button
+    auto* closeBtn = new brls::Button();
+    closeBtn->setText("Close");
+    closeBtn->setHeight(40);
+    closeBtn->setMarginTop(10);
+    closeBtn->registerClickAction([dialog](brls::View*) {
+        dialog->dismiss();
+        return true;
+    });
+    closeBtn->addGestureRecognizer(new brls::TapGestureRecognizer(closeBtn));
+    contentBox->addView(closeBtn);
+
+    scrollView->setContentView(contentBox);
+    dialog->addView(scrollView);
+    dialog->open();
+}
+
+void DownloadsTab::showGroupContextMenu(DownloadGroupType groupType, const std::string& groupKey,
+                                         const std::string& groupTitle) {
+    auto items = DownloadsManager::getInstance().getDownloadsByGroup(groupType, groupKey);
+    if (items.empty()) return;
+
+    auto* dialog = new brls::Dialog(groupTitle);
+
+    auto* optionsBox = new brls::Box();
+    optionsBox->setAxis(brls::Axis::COLUMN);
+    optionsBox->setPadding(20);
+
+    // Track count info
+    int completed = 0;
+    for (const auto& item : items) {
+        if (item.state == DownloadState::COMPLETED) completed++;
+    }
+    auto* infoLabel = new brls::Label();
+    infoLabel->setText(std::to_string(completed) + "/" + std::to_string((int)items.size()) + " tracks ready");
+    infoLabel->setFontSize(14);
+    infoLabel->setTextColor(nvgRGBA(180, 180, 180, 255));
+    infoLabel->setMarginBottom(10);
+    optionsBox->addView(infoLabel);
+
+    auto addBtn = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
+        auto* btn = new brls::Button();
+        btn->setText(text);
+        btn->setHeight(44);
+        btn->setMarginBottom(10);
+        btn->registerClickAction(action);
+        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+        optionsBox->addView(btn);
+    };
+
+    // Build a list of completed tracks as MediaItems
+    std::vector<MediaItem> completedTracks;
+    for (const auto& item : items) {
+        if (item.state == DownloadState::COMPLETED && item.mediaType == "track") {
+            MediaItem mi;
+            mi.ratingKey = item.ratingKey;
+            mi.title = item.title;
+            mi.grandparentTitle = item.parentTitle;
+            mi.parentTitle = item.parentTitle;
+            mi.duration = item.duration;
+            mi.thumb = item.thumbUrl;
+            completedTracks.push_back(mi);
+        }
+    }
+
+    // Play Now (Clear Queue)
+    addBtn("Play Now (Clear Queue)", [dialog, completedTracks](brls::View*) {
+        dialog->dismiss();
+        if (!completedTracks.empty()) {
+            brls::Application::pushActivity(
+                PlayerActivity::createWithQueue(completedTracks, 0));
+        } else {
+            brls::Application::notify("No completed tracks to play");
+        }
+        return true;
+    });
+
+    // Add to Queue
+    addBtn("Add to Queue", [dialog, completedTracks](brls::View*) {
+        dialog->dismiss();
+        if (completedTracks.empty()) {
+            brls::Application::notify("No completed tracks to add");
+            return true;
+        }
+        MusicQueue& queue = MusicQueue::getInstance();
+        if (queue.isEmpty()) {
+            brls::Application::pushActivity(
+                PlayerActivity::createWithQueue(completedTracks, 0));
+        } else {
+            queue.addTracks(completedTracks);
+            brls::Application::notify("Added " + std::to_string(completedTracks.size()) + " tracks to queue");
+        }
+        return true;
+    });
+
+    // Delete All
+    DownloadGroupType capturedType = groupType;
+    std::string capturedKey = groupKey;
+    addBtn("Delete All", [this, dialog, capturedType, capturedKey](brls::View*) {
+        dialog->dismiss();
+        auto groupItems = DownloadsManager::getInstance().getDownloadsByGroup(capturedType, capturedKey);
+        for (const auto& item : groupItems) {
+            DownloadsManager::getInstance().deleteDownload(item.ratingKey);
+        }
+        m_lastState.clear();
+        brls::Application::notify("Deleted all items in group");
+        return true;
+    });
+
+    addBtn("Cancel", [dialog](brls::View*) {
+        dialog->dismiss();
+        return true;
+    });
+
+    dialog->addView(optionsBox);
+    dialog->open();
+}
+
+void DownloadsTab::showItemContextMenu(const DownloadItem& item) {
+    auto* dialog = new brls::Dialog(item.title);
+
+    auto* optionsBox = new brls::Box();
+    optionsBox->setAxis(brls::Axis::COLUMN);
+    optionsBox->setPadding(20);
+
+    auto addBtn = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
+        auto* btn = new brls::Button();
+        btn->setText(text);
+        btn->setHeight(44);
+        btn->setMarginBottom(10);
+        btn->registerClickAction(action);
+        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+        optionsBox->addView(btn);
+    };
+
+    DownloadItem capturedItem = item;
+
+    if (item.mediaType == "track") {
+        MediaItem mi;
+        mi.ratingKey = item.ratingKey;
+        mi.title = item.title;
+        mi.grandparentTitle = item.parentTitle;
+        mi.parentTitle = item.parentTitle;
+        mi.duration = item.duration;
+        mi.thumb = item.thumbUrl;
+
+        addBtn("Play Now (Clear Queue)", [dialog, mi](brls::View*) {
+            dialog->dismiss();
+            std::vector<MediaItem> single = {mi};
+            brls::Application::pushActivity(PlayerActivity::createWithQueue(single, 0));
+            return true;
+        });
+
+        addBtn("Add to Queue", [dialog, mi](brls::View*) {
+            dialog->dismiss();
+            MusicQueue& queue = MusicQueue::getInstance();
+            if (queue.isEmpty()) {
+                std::vector<MediaItem> single = {mi};
+                brls::Application::pushActivity(PlayerActivity::createWithQueue(single, 0));
+            } else {
+                queue.addTrack(mi);
+                brls::Application::notify("Added to queue: " + mi.title);
+            }
+            return true;
+        });
+    } else {
+        // Video content
+        std::string ratingKey = item.ratingKey;
+        addBtn("Play", [dialog, ratingKey](brls::View*) {
+            dialog->dismiss();
+            brls::Application::pushActivity(new PlayerActivity(ratingKey, true));
+            return true;
+        });
+    }
+
+    std::string key = item.ratingKey;
+    addBtn("Delete", [this, dialog, key](brls::View*) {
+        dialog->dismiss();
+        DownloadsManager::getInstance().deleteDownload(key);
+        m_lastState.clear();
+        brls::Application::notify("Download deleted");
+        return true;
+    });
+
+    addBtn("Cancel", [dialog](brls::View*) {
+        dialog->dismiss();
+        return true;
+    });
+
+    dialog->addView(optionsBox);
+    dialog->open();
 }
 
 } // namespace vitaplex

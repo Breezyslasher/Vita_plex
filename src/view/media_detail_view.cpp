@@ -908,8 +908,9 @@ void MediaDetailView::downloadAll() {
     std::string ratingKey = m_item.ratingKey;
     MediaType mediaType = m_item.mediaType;
     std::string parentTitle = m_item.title;
+    std::string itemThumb = m_item.thumb;
 
-    asyncRun([this, progressDialog, ratingKey, mediaType, parentTitle]() {
+    asyncRun([this, progressDialog, ratingKey, mediaType, parentTitle, itemThumb]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
         int queued = 0;
@@ -962,6 +963,13 @@ void MediaDetailView::downloadAll() {
             return;
         }
 
+        // Determine grouping based on media type
+        DownloadGroupType dlGroupType = DownloadGroupType::NONE;
+        if (mediaType == MediaType::MUSIC_ALBUM) dlGroupType = DownloadGroupType::ALBUM;
+        else if (mediaType == MediaType::MUSIC_ARTIST) dlGroupType = DownloadGroupType::ARTIST;
+        else if (mediaType == MediaType::SHOW) dlGroupType = DownloadGroupType::SHOW;
+        else if (mediaType == MediaType::SEASON) dlGroupType = DownloadGroupType::SHOW;
+
         // Queue each item for download
         for (size_t i = 0; i < items.size(); i++) {
             const auto& item = items[i];
@@ -973,6 +981,9 @@ void MediaDetailView::downloadAll() {
                 if (fullItem.mediaType == MediaType::MOVIE) itemMediaType = "movie";
                 else if (fullItem.mediaType == MediaType::MUSIC_TRACK) itemMediaType = "track";
 
+                // For music tracks, pass thumb for cover art download
+                std::string trackThumb = (itemMediaType == "track") ? fullItem.thumb : "";
+
                 if (DownloadsManager::getInstance().queueDownload(
                     fullItem.ratingKey,
                     fullItem.title,
@@ -981,7 +992,13 @@ void MediaDetailView::downloadAll() {
                     itemMediaType,
                     parentTitle,
                     fullItem.parentIndex,
-                    fullItem.index
+                    fullItem.index,
+                    trackThumb,
+                    dlGroupType,
+                    ratingKey,
+                    parentTitle,
+                    itemThumb,
+                    fullItem.parentTitle  // album title for tracks
                 )) {
                     queued++;
                 }
@@ -1016,8 +1033,9 @@ void MediaDetailView::downloadUnwatched(int maxCount) {
     std::string ratingKey = m_item.ratingKey;
     MediaType mediaType = m_item.mediaType;
     std::string parentTitle = m_item.title;
+    std::string itemThumb = m_item.thumb;
 
-    asyncRun([this, progressDialog, ratingKey, mediaType, parentTitle, maxCount]() {
+    asyncRun([this, progressDialog, ratingKey, mediaType, parentTitle, itemThumb, maxCount]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> unwatchedItems;
         int queued = 0;
@@ -1075,6 +1093,9 @@ void MediaDetailView::downloadUnwatched(int maxCount) {
             return;
         }
 
+        // Determine grouping
+        DownloadGroupType dlGroupType = DownloadGroupType::SHOW;
+
         // Queue each unwatched item for download
         for (size_t i = 0; i < unwatchedItems.size(); i++) {
             const auto& item = unwatchedItems[i];
@@ -1092,7 +1113,12 @@ void MediaDetailView::downloadUnwatched(int maxCount) {
                     itemMediaType,
                     parentTitle,
                     fullItem.parentIndex,
-                    fullItem.index
+                    fullItem.index,
+                    "",
+                    dlGroupType,
+                    ratingKey,
+                    parentTitle,
+                    itemThumb
                 )) {
                     queued++;
                 }
@@ -1749,7 +1775,8 @@ void MediaDetailView::showMovieContextMenuStatic(const MediaItem& movie) {
             if (client.fetchMediaDetails(capturedMovie.ratingKey, fullItem) && !fullItem.partPath.empty()) {
                 bool queued = DownloadsManager::getInstance().queueDownload(
                     fullItem.ratingKey, fullItem.title, fullItem.partPath,
-                    fullItem.duration, "movie", "", 0, 0);
+                    fullItem.duration, "movie", "", 0, 0,
+                    fullItem.thumb);
                 brls::sync([queued, fullItem]() {
                     if (queued) {
                         DownloadsManager::getInstance().startDownloads();
@@ -1912,7 +1939,10 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
                                 if (DownloadsManager::getInstance().queueDownload(
                                     fullItem.ratingKey, fullItem.title, fullItem.partPath,
                                     fullItem.duration, "episode", capturedShow.title,
-                                    fullItem.parentIndex, fullItem.index)) {
+                                    fullItem.parentIndex, fullItem.index,
+                                    fullItem.grandparentThumb.empty() ? capturedShow.thumb : fullItem.grandparentThumb,
+                                    DownloadGroupType::SHOW, capturedShow.ratingKey,
+                                    capturedShow.title, capturedShow.thumb)) {
                                     queued++;
                                 }
                             }
@@ -1945,7 +1975,10 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
                                     if (DownloadsManager::getInstance().queueDownload(
                                         fullItem.ratingKey, fullItem.title, fullItem.partPath,
                                         fullItem.duration, "episode", capturedShow.title,
-                                        fullItem.parentIndex, fullItem.index)) {
+                                        fullItem.parentIndex, fullItem.index,
+                                        fullItem.grandparentThumb.empty() ? capturedShow.thumb : fullItem.grandparentThumb,
+                                        DownloadGroupType::SHOW, capturedShow.ratingKey,
+                                        capturedShow.title, capturedShow.thumb)) {
                                         queued++;
                                     }
                                 }
@@ -1989,9 +2022,11 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
                     btn->setText(season.title);
                     btn->setHeight(44);
                     btn->setMarginBottom(10);
-                    btn->registerClickAction([capturedSeason, showTitle, seasonDialog](brls::View*) {
+                    std::string showThumb = capturedShow.thumb;
+                    std::string showKey = capturedShow.ratingKey;
+                    btn->registerClickAction([capturedSeason, showTitle, showThumb, showKey, seasonDialog](brls::View*) {
                         seasonDialog->dismiss();
-                        asyncRun([capturedSeason, showTitle]() {
+                        asyncRun([capturedSeason, showTitle, showThumb, showKey]() {
                             PlexClient& client = PlexClient::getInstance();
                             std::vector<MediaItem> episodes;
                             int queued = 0;
@@ -2002,7 +2037,10 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
                                         if (DownloadsManager::getInstance().queueDownload(
                                             fullItem.ratingKey, fullItem.title, fullItem.partPath,
                                             fullItem.duration, "episode", showTitle,
-                                            fullItem.parentIndex, fullItem.index)) {
+                                            fullItem.parentIndex, fullItem.index,
+                                            fullItem.grandparentThumb.empty() ? showThumb : fullItem.grandparentThumb,
+                                            DownloadGroupType::SHOW, showKey,
+                                            showTitle, showThumb)) {
                                             queued++;
                                         }
                                     }
@@ -2143,14 +2181,18 @@ void MediaDetailView::showSeasonContextMenuStatic(const MediaItem& season) {
             PlexClient& client = PlexClient::getInstance();
             std::vector<MediaItem> episodes;
             int queued = 0;
+            std::string showTitle = capturedSeason.parentTitle.empty() ? capturedSeason.title : capturedSeason.parentTitle;
             if (client.fetchChildren(capturedSeason.ratingKey, episodes)) {
                 for (const auto& ep : episodes) {
                     MediaItem fullItem;
                     if (client.fetchMediaDetails(ep.ratingKey, fullItem) && !fullItem.partPath.empty()) {
                         if (DownloadsManager::getInstance().queueDownload(
                             fullItem.ratingKey, fullItem.title, fullItem.partPath,
-                            fullItem.duration, "episode", capturedSeason.parentTitle.empty() ? capturedSeason.title : capturedSeason.parentTitle,
-                            fullItem.parentIndex, fullItem.index)) {
+                            fullItem.duration, "episode", showTitle,
+                            fullItem.parentIndex, fullItem.index,
+                            fullItem.grandparentThumb.empty() ? capturedSeason.thumb : fullItem.grandparentThumb,
+                            DownloadGroupType::SHOW, capturedSeason.parentRatingKey.empty() ? capturedSeason.ratingKey : capturedSeason.parentRatingKey,
+                            showTitle, capturedSeason.parentThumb.empty() ? capturedSeason.thumb : capturedSeason.parentThumb)) {
                             queued++;
                         }
                     }
@@ -2171,6 +2213,7 @@ void MediaDetailView::showSeasonContextMenuStatic(const MediaItem& season) {
             PlexClient& client = PlexClient::getInstance();
             std::vector<MediaItem> episodes;
             int queued = 0;
+            std::string showTitle = capturedSeason.parentTitle.empty() ? capturedSeason.title : capturedSeason.parentTitle;
             if (client.fetchChildren(capturedSeason.ratingKey, episodes)) {
                 for (const auto& ep : episodes) {
                     if (!ep.watched && ep.viewOffset == 0) {
@@ -2178,8 +2221,11 @@ void MediaDetailView::showSeasonContextMenuStatic(const MediaItem& season) {
                         if (client.fetchMediaDetails(ep.ratingKey, fullItem) && !fullItem.partPath.empty()) {
                             if (DownloadsManager::getInstance().queueDownload(
                                 fullItem.ratingKey, fullItem.title, fullItem.partPath,
-                                fullItem.duration, "episode", capturedSeason.parentTitle.empty() ? capturedSeason.title : capturedSeason.parentTitle,
-                                fullItem.parentIndex, fullItem.index)) {
+                                fullItem.duration, "episode", showTitle,
+                                fullItem.parentIndex, fullItem.index,
+                                fullItem.grandparentThumb.empty() ? capturedSeason.thumb : fullItem.grandparentThumb,
+                                DownloadGroupType::SHOW, capturedSeason.parentRatingKey.empty() ? capturedSeason.ratingKey : capturedSeason.parentRatingKey,
+                                showTitle, capturedSeason.parentThumb.empty() ? capturedSeason.thumb : capturedSeason.parentThumb)) {
                                 queued++;
                             }
                         }
@@ -2336,7 +2382,10 @@ void MediaDetailView::showArtistContextMenuStatic(const MediaItem& artist) {
                                     fullItem.ratingKey, fullItem.title, fullItem.partPath,
                                     fullItem.duration, "track",
                                     capturedArtist.title, 0, fullItem.index,
-                                    fullItem.thumb)) {
+                                    fullItem.thumb,
+                                    DownloadGroupType::ARTIST, capturedArtist.ratingKey,
+                                    capturedArtist.title, capturedArtist.thumb,
+                                    album.title)) {
                                     queued++;
                                 }
                             }
