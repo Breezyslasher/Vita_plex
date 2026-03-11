@@ -2143,9 +2143,9 @@ void PlayerActivity::populateQueueList() {
     }
     queueOverlayTitle->setText(std::string(titleBuf) + "\nHold & drag to reorder | Swipe left to remove | LB/RB to move");
 
-    // Temporarily unpause image loader for loading thumbnails
-    bool wasPaused = ImageLoader::isPaused();
-    if (wasPaused) ImageLoader::setPaused(false);
+    // Prepare deferred thumbnail loading - only load covers for visible rows
+    m_deferredThumbs.clear();
+    m_deferredThumbs.reserve(tracks.size());
 
     PlexClient& client = PlexClient::getInstance();
 
@@ -2187,11 +2187,12 @@ void PlayerActivity::populateQueueList() {
         thumb->setScalingType(brls::ImageScalingType::FIT);
         thumb->setMarginRight(14);
 
+        // Defer thumbnail loading - will be loaded lazily when row becomes visible
         if (!track.thumb.empty()) {
             std::string thumbUrl = client.getThumbnailUrl(track.thumb, 100, 100);
-            ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {
-                // Thumbnail loaded
-            }, thumb, m_alive);
+            m_deferredThumbs.push_back({thumb, thumbUrl, false});
+        } else {
+            m_deferredThumbs.push_back({thumb, "", true});  // No thumb to load
         }
         row->addView(thumb);
 
@@ -2430,13 +2431,49 @@ void PlayerActivity::populateQueueList() {
         });
         row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
 
+        // Lazy-load nearby thumbnails when this row gains focus
+        int displayIdx = i;
+        row->getFocusEvent()->subscribe([this, displayIdx](brls::View*) {
+            loadQueueThumbsAroundIndex(displayIdx);
+        });
+
         queueList->addView(row);
     }
 
-    // Re-pause image loader if it was paused
-    if (wasPaused) ImageLoader::setPaused(true);
+    // Load thumbnails only for the initially visible window (around current track)
+    int focusIdx = 0;
+    if (shuffled) {
+        focusIdx = queue.getShufflePosition();
+    } else {
+        focusIdx = currentIndex;
+    }
+    loadQueueThumbsAroundIndex(focusIdx);
 
     m_queuePopulating = false;
+}
+
+void PlayerActivity::loadQueueThumbsAroundIndex(int displayIndex) {
+    if (m_deferredThumbs.empty()) return;
+
+    bool wasPaused = ImageLoader::isPaused();
+    if (wasPaused) ImageLoader::setPaused(false);
+
+    // Load thumbnails for a window around the given display index
+    // Queue scroll is 320px with ~62px rows = ~5 visible rows
+    int start = std::max(0, displayIndex - QUEUE_THUMB_BUFFER);
+    int end = std::min((int)m_deferredThumbs.size(), displayIndex + QUEUE_THUMB_BUFFER + 6);
+
+    for (int i = start; i < end; i++) {
+        auto& dt = m_deferredThumbs[i];
+        if (!dt.loaded && !dt.url.empty()) {
+            dt.loaded = true;
+            ImageLoader::loadAsync(dt.url, [](brls::Image* image) {
+                // Thumbnail loaded
+            }, dt.image, m_alive);
+        }
+    }
+
+    if (wasPaused) ImageLoader::setPaused(true);
 }
 
 int PlayerActivity::findQueueRowDisplayIndex(brls::View* row) {
@@ -2457,6 +2494,12 @@ void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB) {
 
     // Swap the children in the parent's children list
     std::swap(children[displayIdxA], children[displayIdxB]);
+
+    // Keep deferred thumbs in sync with display order
+    if (displayIdxA < (int)m_deferredThumbs.size() &&
+        displayIdxB < (int)m_deferredThumbs.size()) {
+        std::swap(m_deferredThumbs[displayIdxA], m_deferredThumbs[displayIdxB]);
+    }
 
     // Update the number labels on both swapped rows
     // Row structure: [thumb(Image)] [textBox(Box)] [durLbl(Label, optional)]
@@ -2528,6 +2571,11 @@ void PlayerActivity::removeQueueRow(int displayIdx) {
     // Remove from track index map
     brls::View* rowToRemove = children[displayIdx];
     m_queueRowData.erase(rowToRemove);
+
+    // Remove from deferred thumbnails list
+    if (displayIdx < (int)m_deferredThumbs.size()) {
+        m_deferredThumbs.erase(m_deferredThumbs.begin() + displayIdx);
+    }
 
     // Remove the view from the list
     queueList->removeView(rowToRemove);

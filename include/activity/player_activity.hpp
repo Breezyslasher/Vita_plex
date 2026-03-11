@@ -92,6 +92,17 @@ private:
     };
     std::unordered_map<brls::View*, QueueRowData> m_queueRowData;
 
+    // Lazy thumbnail loading for queue rows - only loads covers for
+    // visible rows instead of all tracks at once
+    struct DeferredThumb {
+        brls::Image* image;
+        std::string url;
+        bool loaded;
+    };
+    std::vector<DeferredThumb> m_deferredThumbs;
+    void loadQueueThumbsAroundIndex(int displayIndex);
+    static constexpr int QUEUE_THUMB_BUFFER = 4;  // Load this many rows above/below visible
+
     // Helper to find a row's current display position in the queue list
     int findQueueRowDisplayIndex(brls::View* row);
     // Swap two adjacent queue rows visually (no rebuild)
