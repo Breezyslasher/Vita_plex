@@ -968,19 +968,9 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
             brls::Logger::info("DownloadsManager: Using direct file download for audio: {}", item.title);
         }
     } else {
-        // Video: use Download Queue API to transcode to Vita resolution (960x544)
-        // This polls until the server finishes transcoding before downloading
-        urlReady = tryDownloadQueueApi(serverUrl, token, item.ratingKey, url, m_downloading, item);
-        if (urlReady) {
-            brls::Logger::info("DownloadsManager: Using Download Queue API for video: {}", item.title);
-            // Download Queue produces MKV container - update local file extension
-            size_t dotPos = item.localPath.rfind('.');
-            if (dotPos != std::string::npos) {
-                item.localPath = item.localPath.substr(0, dotPos) + ".mkv";
-            }
-        } else {
-            brls::Logger::info("DownloadsManager: Download Queue API failed, falling back to transcode stream");
-        }
+        // Video: skip Download Queue API (too slow - polls for transcoding completion
+        // which can take 15+ minutes). Go straight to HLS streaming transcode instead.
+        brls::Logger::info("DownloadsManager: Using HLS streaming transcode for video: {}", item.title);
     }
 
     // Fall back to streaming transcode if no URL ready yet
