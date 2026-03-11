@@ -2445,6 +2445,7 @@ void PlayerActivity::populateQueueList() {
                     m_dragState.lastSwappedDisplay = -1;
                 } else if (status.state == brls::GestureState::FAILED) {
                     row->setTranslationY(0);
+                    // Restore background color (may have been changed during drag)
                     auto it = m_queueRowData.find(row);
                     if (it != m_queueRowData.end()) {
                         MusicQueue& queue = MusicQueue::getInstance();
@@ -2453,6 +2454,9 @@ void PlayerActivity::populateQueueList() {
                         } else {
                             row->setBackgroundColor(nvgRGBA(255, 255, 255, 8));
                         }
+                    } else {
+                        // Fallback: reset to default when row data is missing
+                        row->setBackgroundColor(nvgRGBA(255, 255, 255, 8));
                     }
                     m_dragState.active = false;
                     m_dragState.draggedRow = nullptr;
@@ -2476,9 +2480,13 @@ void PlayerActivity::populateQueueList() {
         row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
 
         // Lazy-load nearby thumbnails when this row gains focus
-        int displayIdx = i;
-        row->getFocusEvent()->subscribe([this, displayIdx](brls::View*) {
-            loadQueueThumbsAroundIndex(displayIdx);
+        // Use dynamic lookup instead of captured index, since drag reordering
+        // changes row positions and would make a captured index stale
+        row->getFocusEvent()->subscribe([this, row](brls::View*) {
+            int actualIdx = findQueueRowDisplayIndex(row);
+            if (actualIdx >= 0) {
+                loadQueueThumbsAroundIndex(actualIdx);
+            }
         });
 
         queueList->addView(row);
