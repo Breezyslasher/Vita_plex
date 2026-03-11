@@ -9,6 +9,8 @@
 #include "app/application.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
+#include "app/music_queue.hpp"
+#include "app/downloads_manager.hpp"
 
 namespace vitaplex {
 
@@ -105,6 +107,16 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
         onItemSelected(item);
     });
     this->addView(m_contentGrid);
+
+    // Track list view (for playlist contents - hidden by default)
+    m_trackListScroll = new brls::ScrollingFrame();
+    m_trackListScroll->setGrow(1.0f);
+    m_trackListScroll->setVisibility(brls::Visibility::GONE);
+    m_trackListBox = new brls::Box();
+    m_trackListBox->setAxis(brls::Axis::COLUMN);
+    m_trackListBox->setPadding(5);
+    m_trackListScroll->setContentView(m_trackListBox);
+    this->addView(m_trackListScroll);
 
     // Load content immediately
     brls::Logger::debug("LibrarySectionTab: Created for section {} ({}) type={}", m_sectionKey, m_title, m_sectionType);
@@ -263,6 +275,8 @@ void LibrarySectionTab::loadGenres() {
 void LibrarySectionTab::showAllItems() {
     m_viewMode = LibraryViewMode::ALL_ITEMS;
     m_titleLabel->setText(m_title);
+    m_trackListScroll->setVisibility(brls::Visibility::GONE);
+    m_contentGrid->setVisibility(brls::Visibility::VISIBLE);
     m_contentGrid->setDataSource(m_items);
     updateViewModeButtons();
 }
@@ -280,6 +294,8 @@ void LibrarySectionTab::showCollections() {
 
     m_viewMode = LibraryViewMode::COLLECTIONS;
     m_titleLabel->setText(m_title + " - Collections");
+    m_trackListScroll->setVisibility(brls::Visibility::GONE);
+    m_contentGrid->setVisibility(brls::Visibility::VISIBLE);
 
     // Show collections in the grid
     m_contentGrid->setDataSource(m_collections);
@@ -299,6 +315,8 @@ void LibrarySectionTab::showCategories() {
 
     m_viewMode = LibraryViewMode::CATEGORIES;
     m_titleLabel->setText(m_title + " - Categories");
+    m_trackListScroll->setVisibility(brls::Visibility::GONE);
+    m_contentGrid->setVisibility(brls::Visibility::VISIBLE);
 
     // Convert genres to MediaItem format for the grid
     std::vector<MediaItem> genreItems;
@@ -394,6 +412,8 @@ void LibrarySectionTab::onCollectionSelected(const MediaItem& collection) {
 
                 m_viewMode = LibraryViewMode::FILTERED;
                 m_titleLabel->setText(m_title + " - " + filterTitle);
+                m_trackListScroll->setVisibility(brls::Visibility::GONE);
+                m_contentGrid->setVisibility(brls::Visibility::VISIBLE);
                 m_contentGrid->setDataSource(items);
                 updateViewModeButtons();
             });
@@ -439,6 +459,8 @@ void LibrarySectionTab::onGenreSelected(const GenreItem& genre) {
 
                 m_viewMode = LibraryViewMode::FILTERED;
                 m_titleLabel->setText(m_title + " - " + filterTitle);
+                m_trackListScroll->setVisibility(brls::Visibility::GONE);
+                m_contentGrid->setVisibility(brls::Visibility::VISIBLE);
                 m_contentGrid->setDataSource(items);
                 updateViewModeButtons();
             });
@@ -502,6 +524,8 @@ void LibrarySectionTab::showPlaylists() {
 
     m_viewMode = LibraryViewMode::PLAYLISTS;
     m_titleLabel->setText(m_title + " - Playlists");
+    m_trackListScroll->setVisibility(brls::Visibility::GONE);
+    m_contentGrid->setVisibility(brls::Visibility::VISIBLE);
 
     // Convert playlists to MediaItem format for the grid
     std::vector<MediaItem> playlistItems;
@@ -541,14 +565,11 @@ void LibrarySectionTab::onPlaylistSelected(const Playlist& playlist) {
                 mediaItems.push_back(item.media);
             }
 
-            brls::sync([this, mediaItems, playlistTitle, aliveWeak]() {
+            brls::sync([this, mediaItems, playlistTitle, playlistId, aliveWeak]() {
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
-                m_viewMode = LibraryViewMode::FILTERED;
-                m_titleLabel->setText(m_title + " - " + playlistTitle);
-                m_contentGrid->setDataSource(mediaItems);
-                updateViewModeButtons();
+                showPlaylistTrackList(mediaItems, playlistTitle, playlistId);
             });
         } else {
             brls::Logger::error("LibrarySectionTab: Failed to load playlist content");
@@ -559,6 +580,208 @@ void LibrarySectionTab::onPlaylistSelected(const Playlist& playlist) {
             });
         }
     });
+}
+
+void LibrarySectionTab::showPlaylistTrackList(const std::vector<MediaItem>& tracks,
+                                                const std::string& playlistTitle,
+                                                const std::string& playlistId) {
+    m_viewMode = LibraryViewMode::FILTERED;
+    m_titleLabel->setText(m_title + " - " + playlistTitle + " (" + std::to_string(tracks.size()) + " tracks)");
+    updateViewModeButtons();
+
+    // Hide grid, show track list
+    m_contentGrid->setVisibility(brls::Visibility::GONE);
+    m_trackListScroll->setVisibility(brls::Visibility::VISIBLE);
+    m_trackListBox->clearViews();
+
+    for (size_t i = 0; i < tracks.size(); i++) {
+        const auto& track = tracks[i];
+
+        auto* row = new brls::Box();
+        row->setAxis(brls::Axis::ROW);
+        row->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
+        row->setAlignItems(brls::AlignItems::CENTER);
+        row->setHeight(48);
+        row->setPadding(8, 12, 8, 12);
+        row->setMarginBottom(3);
+        row->setCornerRadius(6);
+        row->setBackgroundColor(nvgRGBA(50, 50, 60, 200));
+        row->setFocusable(true);
+
+        // Left side: track number + artist + title
+        auto* leftBox = new brls::Box();
+        leftBox->setAxis(brls::Axis::ROW);
+        leftBox->setAlignItems(brls::AlignItems::CENTER);
+        leftBox->setGrow(1.0f);
+
+        auto* trackNum = new brls::Label();
+        trackNum->setFontSize(13);
+        trackNum->setMarginRight(10);
+        trackNum->setTextColor(nvgRGBA(150, 150, 150, 255));
+        trackNum->setText(std::to_string(i + 1));
+        leftBox->addView(trackNum);
+
+        auto* titleLabel = new brls::Label();
+        titleLabel->setFontSize(13);
+        std::string displayTitle = track.title;
+        if (!track.grandparentTitle.empty()) {
+            displayTitle = track.grandparentTitle + " - " + displayTitle;
+        }
+        // Truncate for Vita screen
+        if (displayTitle.length() > 55) {
+            displayTitle = displayTitle.substr(0, 52) + "...";
+        }
+        titleLabel->setText(displayTitle);
+        leftBox->addView(titleLabel);
+
+        row->addView(leftBox);
+
+        // Right side: duration
+        if (track.duration > 0) {
+            auto* durLabel = new brls::Label();
+            durLabel->setFontSize(12);
+            durLabel->setTextColor(nvgRGBA(150, 150, 150, 255));
+            int totalSec = track.duration / 1000;
+            int min = totalSec / 60;
+            int sec = totalSec % 60;
+            char durStr[16];
+            snprintf(durStr, sizeof(durStr), "%d:%02d", min, sec);
+            durLabel->setText(durStr);
+            row->addView(durLabel);
+        }
+
+        // Click to play track (starts queue from this position)
+        MediaItem capturedTrack = track;
+        std::vector<MediaItem> allTracks = tracks;
+        std::string capturedPlaylistId = playlistId;
+        row->registerClickAction([this, capturedTrack, allTracks, i, capturedPlaylistId](brls::View*) {
+            performPlaylistTrackAction(capturedTrack, allTracks, i, capturedPlaylistId);
+            return true;
+        });
+        row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
+
+        m_trackListBox->addView(row);
+    }
+}
+
+void LibrarySectionTab::performPlaylistTrackAction(const MediaItem& track,
+                                                     const std::vector<MediaItem>& allTracks,
+                                                     size_t trackIndex,
+                                                     const std::string& playlistId) {
+    TrackDefaultAction action = Application::getInstance().getSettings().trackDefaultAction;
+    MusicQueue& queue = MusicQueue::getInstance();
+
+    auto executeAction = [&](TrackDefaultAction act) {
+        switch (act) {
+            case TrackDefaultAction::PLAY_NOW_CLEAR:
+            default:
+                // Play entire playlist starting from this track
+                brls::Application::pushActivity(
+                    PlayerActivity::createWithQueue(allTracks, trackIndex));
+                break;
+
+            case TrackDefaultAction::PLAY_NEXT:
+                if (queue.isEmpty()) {
+                    brls::Application::pushActivity(
+                        PlayerActivity::createWithQueue(allTracks, trackIndex));
+                } else {
+                    queue.insertTrackAfterCurrent(track);
+                    brls::Application::notify("Playing next: " + track.title);
+                }
+                break;
+
+            case TrackDefaultAction::ADD_TO_BOTTOM:
+                if (queue.isEmpty()) {
+                    brls::Application::pushActivity(
+                        PlayerActivity::createWithQueue(allTracks, trackIndex));
+                } else {
+                    queue.addTrack(track);
+                    brls::Application::notify("Added to queue: " + track.title);
+                }
+                break;
+
+            case TrackDefaultAction::PLAY_NOW_REPLACE:
+                if (queue.isEmpty()) {
+                    brls::Application::pushActivity(
+                        PlayerActivity::createWithQueue(allTracks, trackIndex));
+                } else {
+                    queue.insertTrackAfterCurrent(track);
+                    if (queue.playNext()) {
+                        brls::Application::notify("Now playing: " + track.title);
+                    }
+                }
+                break;
+
+            case TrackDefaultAction::ASK_EACH_TIME:
+                break;  // Handled below
+        }
+    };
+
+    if (action == TrackDefaultAction::ASK_EACH_TIME) {
+        auto* dialog = new brls::Dialog("Choose Action");
+        auto* optionsBox = new brls::Box();
+        optionsBox->setAxis(brls::Axis::COLUMN);
+        optionsBox->setPadding(20);
+
+        auto addBtn = [&](const std::string& text, TrackDefaultAction act) {
+            auto* btn = new brls::Button();
+            btn->setText(text);
+            btn->setHeight(44);
+            btn->setMarginBottom(10);
+            MediaItem captured = track;
+            std::vector<MediaItem> capturedAll = allTracks;
+            size_t capturedIdx = trackIndex;
+            btn->registerClickAction([dialog, captured, capturedAll, capturedIdx, act](brls::View*) {
+                dialog->dismiss();
+                if (act == TrackDefaultAction::PLAY_NOW_CLEAR) {
+                    brls::Application::pushActivity(
+                        PlayerActivity::createWithQueue(capturedAll, capturedIdx));
+                } else if (act == TrackDefaultAction::PLAY_NEXT) {
+                    MusicQueue& q = MusicQueue::getInstance();
+                    if (q.isEmpty()) {
+                        brls::Application::pushActivity(
+                            PlayerActivity::createWithQueue(capturedAll, capturedIdx));
+                    } else {
+                        q.insertTrackAfterCurrent(captured);
+                        brls::Application::notify("Playing next: " + captured.title);
+                    }
+                } else if (act == TrackDefaultAction::ADD_TO_BOTTOM) {
+                    MusicQueue& q = MusicQueue::getInstance();
+                    if (q.isEmpty()) {
+                        brls::Application::pushActivity(
+                            PlayerActivity::createWithQueue(capturedAll, capturedIdx));
+                    } else {
+                        q.addTrack(captured);
+                        brls::Application::notify("Added to queue: " + captured.title);
+                    }
+                } else if (act == TrackDefaultAction::PLAY_NOW_REPLACE) {
+                    MusicQueue& q = MusicQueue::getInstance();
+                    if (q.isEmpty()) {
+                        brls::Application::pushActivity(
+                            PlayerActivity::createWithQueue(capturedAll, capturedIdx));
+                    } else {
+                        q.insertTrackAfterCurrent(captured);
+                        if (q.playNext()) {
+                            brls::Application::notify("Now playing: " + captured.title);
+                        }
+                    }
+                }
+                return true;
+            });
+            btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+            optionsBox->addView(btn);
+        };
+
+        addBtn("Play Playlist from Here", TrackDefaultAction::PLAY_NOW_CLEAR);
+        addBtn("Play Next", TrackDefaultAction::PLAY_NEXT);
+        addBtn("Add to Bottom of Queue", TrackDefaultAction::ADD_TO_BOTTOM);
+        addBtn("Play Now (Replace Current)", TrackDefaultAction::PLAY_NOW_REPLACE);
+
+        dialog->addView(optionsBox);
+        dialog->open();
+    } else {
+        executeAction(action);
+    }
 }
 
 void LibrarySectionTab::showPlaylistOptionsDialog(const Playlist& playlist) {

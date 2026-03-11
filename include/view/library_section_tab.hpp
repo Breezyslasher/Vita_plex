@@ -46,6 +46,8 @@ private:
     void onPlaylistSelected(const Playlist& playlist);
     void showPlaylistOptionsDialog(const Playlist& playlist);
     void playPlaylistWithQueue(const std::string& playlistId, int startIndex);
+    void showPlaylistTrackList(const std::vector<MediaItem>& tracks, const std::string& playlistTitle, const std::string& playlistId);
+    void performPlaylistTrackAction(const MediaItem& track, const std::vector<MediaItem>& allTracks, size_t trackIndex, const std::string& playlistId);
     void updateViewModeButtons();
 
     // Check if this tab is still valid (not destroyed)
@@ -67,6 +69,10 @@ private:
 
     // Main content grid
     RecyclingGrid* m_contentGrid = nullptr;
+
+    // Track list view (for playlist contents)
+    brls::ScrollingFrame* m_trackListScroll = nullptr;
+    brls::Box* m_trackListBox = nullptr;
 
     // Data
     std::vector<MediaItem> m_items;

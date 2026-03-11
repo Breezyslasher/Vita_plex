@@ -98,7 +98,8 @@ void MediaItemCell::setItem(const MediaItem& item) {
     // Movies, TV shows use portrait posters
     bool isMusic = (item.mediaType == MediaType::MUSIC_ARTIST ||
                     item.mediaType == MediaType::MUSIC_ALBUM ||
-                    item.mediaType == MediaType::MUSIC_TRACK);
+                    item.mediaType == MediaType::MUSIC_TRACK ||
+                    item.type == "playlist");
     bool isEpisode = (item.mediaType == MediaType::EPISODE);
 
     if (isMusic) {
@@ -184,10 +185,11 @@ void MediaItemCell::loadThumbnail() {
 
     PlexClient& client = PlexClient::getInstance();
 
-    // Use square dimensions for music, landscape for episodes, portrait for movies/TV
+    // Use square dimensions for music/playlists, landscape for episodes, portrait for movies/TV
     bool isMusic = (m_item.mediaType == MediaType::MUSIC_ARTIST ||
                     m_item.mediaType == MediaType::MUSIC_ALBUM ||
-                    m_item.mediaType == MediaType::MUSIC_TRACK);
+                    m_item.mediaType == MediaType::MUSIC_TRACK ||
+                    m_item.type == "playlist");
     bool isEpisode = (m_item.mediaType == MediaType::EPISODE);
 
     int width, height;
