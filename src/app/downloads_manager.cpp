@@ -741,17 +741,19 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     }
 
     // Step 2: Add item to the download queue with transcode parameters.
-    // Per API spec, the /add endpoint accepts the same transcode query params
-    // and profile headers as the /transcode/universal endpoints.
+    // Per API spec (openapi.json), the /add endpoint accepts transcode query params
+    // (parameters #2-#27) and profile headers (#28-#35).
     bool isAudio = (item.mediaType == "track");
     std::string addUrl = baseUrl + "/downloadQueue/" + queueId + "/add"
-        + "?keys=" + HttpClient::urlEncode("/library/metadata/" + ratingKey);
+        + "?keys=/library/metadata/" + ratingKey;
 
-    // Add transcode parameters so the server knows the target format
+    // protocol=http tells the server to produce a single downloadable file
+    // (as opposed to hls/dash streaming segments)
     addUrl += "&protocol=http";
     addUrl += "&directPlay=0&directStream=0&directStreamAudio=1";
     addUrl += "&location=lan";
     addUrl += "&audioBoost=100&audioChannelCount=2";
+    addUrl += "&mediaIndex=0&partIndex=0";
 
     std::string profileExtra;
     if (isAudio) {
@@ -766,10 +768,10 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
         addUrl += bitrateStr;
         addUrl += "&videoResolution=960x544";
-        addUrl += "&subtitles=none";
+        addUrl += "&subtitles=burn";
         profileExtra = "add-transcode-target(type=videoProfile"
                        "&context=streaming&protocol=http"
-                       "&container=mp4&videoCodec=h264"
+                       "&container=mkv&videoCodec=h264"
                        "&audioCodec=aac)"
                        "+add-limitation(scope=videoCodec&scopeName=h264"
                        "&type=upperBound&name=video.level&value=40)"
@@ -800,7 +802,7 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     brls::Logger::info("DownloadsManager: Added to download queue, response: {}",
                       addResp.body.substr(0, 500));
 
-    // Parse item ID from the add response
+    // Parse item ID from the add response (AddedQueueItems[].id)
     std::string itemId;
     int64_t numItemId = extractJsonInt(addResp.body, "id");
     if (numItemId > 0) {
@@ -831,108 +833,87 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     brls::Logger::info("DownloadsManager: Queue decision response: {} ({})",
                       decResp.statusCode, decResp.body.substr(0, 500));
 
-    // Step 4: Poll the individual item status until transcoding is complete.
-    // The /media endpoint returns 503 if not ready, so we poll the item status.
-    // Poll /downloadQueue/{queueId}/items/{itemId} for item-level status every 3 seconds.
+    // Step 4: Poll the /media endpoint directly per the API spec.
+    // Per openapi.json: GET /downloadQueue/{queueId}/item/{itemId}/media
+    //   - 200: Returns the raw media file (transcoding complete)
+    //   - 503: Still transcoding, with Retry-After header (seconds to wait, or -1 if unknown)
     item.state = DownloadState::TRANSCODING;
-    const int maxPollAttempts = 100;  // 100 * 3s = 5 minutes max
-    const int pollIntervalMs = 3000;
-    const int maxErrorRestarts = 5;   // Max consecutive error restarts before giving up
-    int errorRestarts = 0;
+    std::string mediaUrl = baseUrl + "/downloadQueue/" + queueId + "/item/" + itemId
+        + "/media?X-Plex-Token=" + token;
+
+    const int maxPollAttempts = 200;  // generous limit for long transcodes
+    const int defaultRetrySeconds = 5;  // default if Retry-After header missing or -1
+    const int maxWaitSeconds = 30;  // cap individual waits
     bool mediaReady = false;
 
     for (int attempt = 0; attempt < maxPollAttempts && downloading.load(); attempt++) {
-        // Poll individual item status, not the overall queue
-        HttpClient statusHttp;
-        HttpRequest statusReq;
-        statusReq.url = baseUrl + "/downloadQueue/" + queueId + "/items/" + itemId
-            + "?X-Plex-Token=" + token;
-        statusReq.method = "GET";
-        addPlexHeaders(statusReq, token);
-        statusReq.timeout = 15;
-        HttpResponse statusResp = statusHttp.request(statusReq);
+        HttpClient mediaHttp;
+        HttpRequest mediaReq;
+        mediaReq.url = mediaUrl;
+        mediaReq.method = "HEAD";  // HEAD to check status without downloading the file
+        addPlexHeaders(mediaReq, token);
+        mediaReq.timeout = 15;
+        HttpResponse mediaResp = mediaHttp.request(mediaReq);
 
-        if (statusResp.statusCode != 200) {
-            brls::Logger::warning("DownloadsManager: Item status check failed (HTTP {})", statusResp.statusCode);
-            break;
-        }
+        brls::Logger::debug("DownloadsManager: Media poll attempt {}/{}: HTTP {}",
+                           attempt + 1, maxPollAttempts, mediaResp.statusCode);
 
-        std::string status = extractJsonString(statusResp.body, "status");
-        brls::Logger::debug("DownloadsManager: Item {} status: {} (attempt {}/{})", itemId, status, attempt + 1, maxPollAttempts);
-
-        if (status == "done" || status == "complete" || status == "ready") {
+        if (mediaResp.statusCode == 200) {
+            // Media is ready for download
             mediaReady = true;
+            brls::Logger::info("DownloadsManager: Media ready after {} polls", attempt + 1);
             break;
         }
 
-        if (status == "error" || status == "failed") {
-            errorRestarts++;
-            brls::Logger::error("DownloadsManager: Item transcoding failed with status: {} (error {}/{})",
-                               status, errorRestarts, maxErrorRestarts);
-
-            // If the very first poll returns error, the Download Queue API likely
-            // doesn't work on this server. Fail fast to fall back to streaming transcode.
-            if (attempt == 0) {
-                brls::Logger::warning("DownloadsManager: Immediate error on first poll, Download Queue API not supported");
-                break;
+        if (mediaResp.statusCode == 503) {
+            // Still transcoding - check Retry-After header
+            int waitSeconds = defaultRetrySeconds;
+            auto retryIt = mediaResp.headers.find("Retry-After");
+            if (retryIt == mediaResp.headers.end())
+                retryIt = mediaResp.headers.find("retry-after");
+            if (retryIt != mediaResp.headers.end()) {
+                int retryVal = std::atoi(retryIt->second.c_str());
+                if (retryVal > 0 && retryVal <= maxWaitSeconds) {
+                    waitSeconds = retryVal;
+                } else if (retryVal == -1) {
+                    // -1 means unknown, use default
+                    waitSeconds = defaultRetrySeconds;
+                }
             }
 
-            if (errorRestarts >= maxErrorRestarts) {
-                brls::Logger::error("DownloadsManager: Giving up after {} consecutive transcode errors", errorRestarts);
-                break;
-            }
+            brls::Logger::debug("DownloadsManager: Transcoding in progress, waiting {}s (Retry-After)", waitSeconds);
 
-            // Try restarting the item processing with exponential backoff
-            HttpClient restartHttp;
-            HttpRequest restartReq;
-            restartReq.url = baseUrl + "/downloadQueue/" + queueId + "/items/" + itemId
-                + "/restart?X-Plex-Token=" + token;
-            restartReq.method = "POST";
-            addPlexHeaders(restartReq, token);
-            restartReq.timeout = 30;
-            HttpResponse restartResp = restartHttp.request(restartReq);
-            brls::Logger::info("DownloadsManager: Restart response: {}", restartResp.statusCode);
-
-            // Exponential backoff: 3s, 6s, 12s, 24s, 48s
-            int backoffMs = pollIntervalMs * (1 << (errorRestarts - 1));
-            brls::Logger::info("DownloadsManager: Waiting {}ms before next poll", backoffMs);
+            int waitMs = waitSeconds * 1000;
 #ifdef __vita__
-            sceKernelDelayThread(backoffMs * 1000);
+            sceKernelDelayThread(waitMs * 1000);
 #else
-            std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
+            std::this_thread::sleep_for(std::chrono::milliseconds(waitMs));
 #endif
             continue;
         }
 
-        // Status is not an error - reset error counter
-        errorRestarts = 0;
+        // Any other status code (4xx, 5xx other than 503) means failure
+        brls::Logger::warning("DownloadsManager: Media endpoint returned unexpected HTTP {}", mediaResp.statusCode);
 
-        // Still processing ("deciding", "transcoding", etc.) - wait and poll again
-#ifdef __vita__
-        sceKernelDelayThread(pollIntervalMs * 1000);
-#else
-        std::this_thread::sleep_for(std::chrono::milliseconds(pollIntervalMs));
-#endif
-
-        // Every 30 attempts (~90s), try probing the media endpoint directly
-        // Some servers may not update item status but have the media ready
-        if (attempt > 0 && attempt % 30 == 0) {
-            HttpClient probeHttp;
-            HttpRequest probeReq;
-            probeReq.url = baseUrl + "/downloadQueue/" + queueId + "/item/" + itemId
-                + "/media?X-Plex-Token=" + token;
-            probeReq.method = "GET";
-            addPlexHeaders(probeReq, token);
-            probeReq.timeout = 10;
-            // Use a HEAD-like check: just see if we get 200 vs 503
-            HttpResponse probeResp = probeHttp.request(probeReq);
-            if (probeResp.statusCode == 200 && probeResp.body.size() > 1000) {
-                brls::Logger::info("DownloadsManager: Media probe returned 200 with {} bytes, media is ready",
-                                  probeResp.body.size());
-                mediaReady = true;
-                break;
-            }
+        // On first attempt, if we get an immediate error, the API may not be supported
+        if (attempt == 0) {
+            brls::Logger::warning("DownloadsManager: Immediate error on media poll, Download Queue API not working");
+            break;
         }
+
+        // For subsequent errors, try a few more times with backoff
+        if (attempt >= 5) {
+            brls::Logger::error("DownloadsManager: Too many media poll errors, giving up");
+            break;
+        }
+
+        int backoffMs = defaultRetrySeconds * 1000 * (1 << attempt);
+        if (backoffMs > maxWaitSeconds * 1000) backoffMs = maxWaitSeconds * 1000;
+#ifdef __vita__
+        sceKernelDelayThread(backoffMs * 1000);
+#else
+        std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
+#endif
     }
 
     if (!downloading.load()) {
@@ -945,9 +926,8 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         return false;
     }
 
-    // Step 5: Build the media download URL
-    outUrl = baseUrl + "/downloadQueue/" + queueId + "/item/" + itemId
-        + "/media?X-Plex-Token=" + token;
+    // Step 5: The media URL is ready - return it for the caller to download via GET
+    outUrl = mediaUrl;
 
     brls::Logger::info("DownloadsManager: Download Queue media URL ready");
     return true;
@@ -985,6 +965,11 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         urlReady = tryDownloadQueueApi(serverUrl, token, item.ratingKey, url, m_downloading, item);
         if (urlReady) {
             brls::Logger::info("DownloadsManager: Using Download Queue API for video: {}", item.title);
+            // Download Queue produces MKV container - update local file extension
+            size_t dotPos = item.localPath.rfind('.');
+            if (dotPos != std::string::npos) {
+                item.localPath = item.localPath.substr(0, dotPos) + ".mkv";
+            }
         } else {
             brls::Logger::info("DownloadsManager: Download Queue API failed, falling back to transcode stream");
         }

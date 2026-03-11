@@ -196,6 +196,8 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
         }
     } else if (req.method == "DELETE") {
         curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+    } else if (req.method == "HEAD") {
+        curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
     }
 
     // Perform request
