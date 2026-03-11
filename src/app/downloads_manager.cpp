@@ -568,6 +568,210 @@ void DownloadsManager::purgeCancelledUnlocked() {
     }
 }
 
+// Convert .plex.direct HTTPS URL to plain HTTP with real IP.
+// The .plex.direct hostnames embed the LAN IP (e.g., 192-168-1-28.xxx.plex.direct)
+// and exist solely to provide SSL certs for local servers. On the Vita's limited
+// SSL stack, HTTPS streaming transcode connections frequently fail with
+// CURLE_RECV_ERROR. Using HTTP on the LAN avoids this entirely.
+static std::string convertToHttpForDownload(const std::string& url) {
+    // Only convert .plex.direct HTTPS URLs
+    size_t plexDirect = url.find(".plex.direct");
+    if (plexDirect == std::string::npos) return url;
+    if (url.substr(0, 8) != "https://") return url;
+
+    // Extract the IP from hostname: "192-168-1-28.HASH.plex.direct"
+    size_t hostStart = 8;  // after "https://"
+    size_t firstDot = url.find('.', hostStart);
+    if (firstDot == std::string::npos || firstDot >= plexDirect) return url;
+
+    std::string ipDashed = url.substr(hostStart, firstDot - hostStart);
+
+    // Convert dashes to dots: "192-168-1-28" -> "192.168.1.28"
+    std::string ip;
+    for (char c : ipDashed) {
+        ip += (c == '-') ? '.' : c;
+    }
+
+    // Validate it looks like an IP (4 dot-separated numbers)
+    int dots = 0;
+    for (char c : ip) {
+        if (c == '.') dots++;
+        else if (c < '0' || c > '9') return url;  // Not an IP
+    }
+    if (dots != 3) return url;
+
+    // Find the port (after .plex.direct:PORT)
+    size_t portStart = url.find(':', plexDirect);
+    std::string port = "32400";
+    std::string pathAndQuery;
+    if (portStart != std::string::npos) {
+        size_t pathStart = url.find('/', portStart);
+        if (pathStart != std::string::npos) {
+            port = url.substr(portStart + 1, pathStart - portStart - 1);
+            pathAndQuery = url.substr(pathStart);
+        } else {
+            port = url.substr(portStart + 1);
+        }
+    } else {
+        size_t pathStart = url.find('/', plexDirect);
+        if (pathStart != std::string::npos) {
+            pathAndQuery = url.substr(pathStart);
+        }
+    }
+
+    std::string httpUrl = "http://" + ip + ":" + port + pathAndQuery;
+    brls::Logger::info("DownloadsManager: Converted to HTTP: {}:{}...", ip, port);
+    return httpUrl;
+}
+
+// Helper: Build standard Plex client headers for requests
+static void addPlexHeaders(HttpRequest& req, const std::string& token) {
+    req.headers["Accept"] = "application/json";
+    req.headers["X-Plex-Client-Identifier"] = "VitaPlex";
+    req.headers["X-Plex-Product"] = "VitaPlex";
+    req.headers["X-Plex-Version"] = "1.0.0";
+    req.headers["X-Plex-Platform"] = "PlayStation Vita";
+    req.headers["X-Plex-Device"] = "PS Vita";
+    req.headers["X-Plex-Device-Name"] = "PS Vita";
+    req.headers["X-Plex-Token"] = token;
+}
+
+// Try downloading via the Plex Download Queue API (server-side transcode + file download).
+// Returns true if the download URL was obtained, with the URL stored in outUrl.
+// Returns false if the API is unsupported or fails (caller should fall back to streaming).
+static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string& token,
+                                 const std::string& ratingKey, std::string& outUrl) {
+    brls::Logger::info("DownloadsManager: Trying Download Queue API for {}", ratingKey);
+
+    std::string baseUrl = convertToHttpForDownload(serverUrl);
+
+    // Step 1: Create/get a download queue
+    HttpClient http;
+    HttpRequest req;
+    req.url = baseUrl + "/downloadQueue?X-Plex-Token=" + token;
+    req.method = "POST";
+    addPlexHeaders(req, token);
+    req.timeout = 30;
+    HttpResponse resp = http.request(req);
+
+    if (resp.statusCode != 200 || resp.body.empty()) {
+        brls::Logger::warning("DownloadsManager: Download Queue API not available (HTTP {})", resp.statusCode);
+        return false;
+    }
+
+    brls::Logger::debug("DownloadsManager: downloadQueue response: {}", resp.body.substr(0, 500));
+
+    // Parse queue ID from response - look for "downloadQueueID" or "id"
+    std::string queueId = extractJsonString(resp.body, "downloadQueueID");
+    if (queueId.empty()) {
+        // Try numeric id
+        int64_t numId = extractJsonInt(resp.body, "downloadQueueID");
+        if (numId > 0) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%lld", (long long)numId);
+            queueId = buf;
+        }
+    }
+    if (queueId.empty()) {
+        // Try looking for "id" in the response
+        int64_t numId = extractJsonInt(resp.body, "id");
+        if (numId > 0) {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%lld", (long long)numId);
+            queueId = buf;
+        }
+    }
+
+    if (queueId.empty()) {
+        brls::Logger::warning("DownloadsManager: Could not parse queue ID from response");
+        return false;
+    }
+
+    brls::Logger::info("DownloadsManager: Got download queue ID: {}", queueId);
+
+    // Step 2: Add item to the download queue
+    std::string addUrl = baseUrl + "/downloadQueue/" + queueId + "/add"
+        + "?keys=" + HttpClient::urlEncode("/library/metadata/" + ratingKey)
+        + "&X-Plex-Token=" + token;
+
+    HttpRequest addReq;
+    addReq.url = addUrl;
+    addReq.method = "POST";
+    addPlexHeaders(addReq, token);
+    addReq.timeout = 30;
+
+    HttpClient addHttp;
+    HttpResponse addResp = addHttp.request(addReq);
+
+    if (addResp.statusCode != 200) {
+        brls::Logger::warning("DownloadsManager: Failed to add to download queue (HTTP {})", addResp.statusCode);
+        return false;
+    }
+
+    brls::Logger::info("DownloadsManager: Added to download queue, response: {}",
+                      addResp.body.substr(0, 500));
+
+    // Parse item ID from the add response
+    std::string itemId;
+    int64_t numItemId = extractJsonInt(addResp.body, "id");
+    if (numItemId > 0) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%lld", (long long)numItemId);
+        itemId = buf;
+    }
+
+    if (itemId.empty()) {
+        // Try to get it from the items list
+        HttpClient itemsHttp;
+        HttpRequest itemsReq;
+        itemsReq.url = baseUrl + "/downloadQueue/" + queueId + "/items?X-Plex-Token=" + token;
+        itemsReq.method = "GET";
+        addPlexHeaders(itemsReq, token);
+        itemsReq.timeout = 30;
+        HttpResponse itemsResp = itemsHttp.request(itemsReq);
+
+        if (itemsResp.statusCode == 200) {
+            brls::Logger::debug("DownloadsManager: Queue items: {}", itemsResp.body.substr(0, 500));
+            numItemId = extractJsonInt(itemsResp.body, "id");
+            if (numItemId > 0) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%lld", (long long)numItemId);
+                itemId = buf;
+            }
+        }
+    }
+
+    if (itemId.empty()) {
+        brls::Logger::warning("DownloadsManager: Could not determine item ID in download queue");
+        return false;
+    }
+
+    brls::Logger::info("DownloadsManager: Download queue item ID: {}", itemId);
+
+    // Step 3: Get the decision for this download queue item
+    HttpClient decHttp;
+    HttpRequest decReq;
+    decReq.url = baseUrl + "/downloadQueue/" + queueId + "/item/" + itemId
+        + "/decision?X-Plex-Token=" + token;
+    decReq.method = "GET";
+    addPlexHeaders(decReq, token);
+    decReq.timeout = 60;  // Transcoding decision may take time
+    HttpResponse decResp = decHttp.request(decReq);
+
+    brls::Logger::info("DownloadsManager: Queue decision response: {} ({})",
+                      decResp.statusCode, decResp.body.substr(0, 500));
+
+    // Step 4: Build the media download URL
+    outUrl = baseUrl + "/downloadQueue/" + queueId + "/item/" + itemId
+        + "/media?X-Plex-Token=" + token;
+
+    brls::Logger::info("DownloadsManager: Download Queue media URL ready");
+
+    // Clean up: delete the item from the queue after we have the URL
+    // (the actual download will happen in the caller)
+    return true;
+}
+
 void DownloadsManager::downloadItem(DownloadItem& item) {
     brls::Logger::info("DownloadsManager: Starting download of {}", item.title);
 
@@ -582,110 +786,114 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         return;
     }
 
-    // Build transcode URL for Vita-compatible format
-    // The path parameter must be the metadata path, URL-encoded (per API spec)
-    std::string metadataPath = "/library/metadata/" + item.ratingKey;
-    std::string encodedPath = HttpClient::urlEncode(metadataPath);
-
     bool isAudio = (item.mediaType == "track");
-    std::string profileExtra;
+    std::string url;
+    bool useDownloadQueue = false;
 
-    // Build query parameters (shared between decision and start endpoints)
-    std::string queryParams;
-    queryParams += "path=" + encodedPath;
-    queryParams += "&mediaIndex=0&partIndex=0";
-    queryParams += "&protocol=http";
-    queryParams += "&directPlay=0&directStream=0";
-    queryParams += "&directStreamAudio=1";
-    queryParams += "&hasMDE=1";
-    queryParams += "&location=lan";
-    queryParams += "&audioBoost=100";
-    queryParams += "&audioChannelCount=2";
-
-    if (isAudio) {
-        // Audio transcode - convert to MP3 which the Vita can play
-        queryParams += "&musicBitrate=320";
-
-        profileExtra = "add-transcode-target(type=musicProfile"
-                       "&context=streaming&protocol=http"
-                       "&container=mp3&audioCodec=mp3)";
+    // Try the Download Queue API first (server-side transcode, reliable download)
+    // Works for both audio and video - avoids SSL streaming issues on the Vita
+    useDownloadQueue = tryDownloadQueueApi(serverUrl, token, item.ratingKey, url);
+    if (useDownloadQueue) {
+        brls::Logger::info("DownloadsManager: Using Download Queue API for {}", item.title);
     } else {
-        // Video transcode - convert to H.264/AAC MP4 which the Vita can decode
-        AppSettings& settings = Application::getInstance().getSettings();
-        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : 2000;
-
-        char bitrateStr[64];
-        snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
-        queryParams += bitrateStr;
-        queryParams += "&videoResolution=960x544";
-        queryParams += "&subtitles=none";
-
-        profileExtra = "add-transcode-target(type=videoProfile"
-                       "&context=streaming&protocol=http"
-                       "&container=mp4&videoCodec=h264"
-                       "&audioCodec=aac)"
-                       "+add-limitation(scope=videoCodec&scopeName=h264"
-                       "&type=upperBound&name=video.level&value=40)"
-                       "+add-limitation(scope=videoCodec&scopeName=h264"
-                       "&type=upperBound&name=video.width&value=960)"
-                       "+add-limitation(scope=videoCodec&scopeName=h264"
-                       "&type=upperBound&name=video.height&value=544)";
+        brls::Logger::info("DownloadsManager: Download Queue API not available, falling back to transcode stream");
     }
 
-    // Generate a session ID for this transcode request
-    char sessionBuf[32];
-    snprintf(sessionBuf, sizeof(sessionBuf), "%lu", (unsigned long)time(nullptr));
-    std::string sessionId = sessionBuf;
-    queryParams += "&session=" + sessionId;
-    queryParams += "&X-Plex-Token=" + token;
+    // Fall back to streaming transcode (or always use it for audio)
+    if (!useDownloadQueue) {
+        // Build transcode URL for Vita-compatible format
+        std::string metadataPath = "/library/metadata/" + item.ratingKey;
+        std::string encodedPath = HttpClient::urlEncode(metadataPath);
+        std::string profileExtra;
 
-    // Step 1: Call the /decision endpoint first (required by Plex to set up transcode session)
-    const char* transcodeType = isAudio ? "music" : "video";
-    std::string decisionUrl = serverUrl + "/" + transcodeType + "/:/transcode/universal/decision?" + queryParams;
+        // Build query parameters (shared between decision and start endpoints)
+        std::string queryParams;
+        queryParams += "path=" + encodedPath;
+        queryParams += "&mediaIndex=0&partIndex=0";
+        queryParams += "&protocol=http";
+        queryParams += "&directPlay=0&directStream=0";
+        queryParams += "&directStreamAudio=1";
+        queryParams += "&hasMDE=1";
+        queryParams += "&location=lan";
+        queryParams += "&audioBoost=100";
+        queryParams += "&audioChannelCount=2";
 
-    brls::Logger::info("DownloadsManager: Calling decision endpoint for {}", item.title);
-    {
-        HttpClient decisionClient;
-        HttpRequest decisionReq;
-        decisionReq.url = decisionUrl;
-        decisionReq.method = "GET";
-        decisionReq.headers["Accept"] = "application/json";
-        decisionReq.headers["X-Plex-Client-Identifier"] = "VitaPlex";
-        decisionReq.headers["X-Plex-Product"] = "VitaPlex";
-        decisionReq.headers["X-Plex-Version"] = "1.0.0";
-        decisionReq.headers["X-Plex-Platform"] = "PlayStation Vita";
-        decisionReq.headers["X-Plex-Device"] = "PS Vita";
-        decisionReq.headers["X-Plex-Device-Name"] = "PS Vita";
-        decisionReq.headers["X-Plex-Client-Profile-Name"] = "Generic";
-        decisionReq.headers["X-Plex-Client-Profile-Extra"] = profileExtra;
-        decisionReq.timeout = 30;
-        HttpResponse decisionResp = decisionClient.request(decisionReq);
+        if (isAudio) {
+            queryParams += "&musicBitrate=320";
+            profileExtra = "add-transcode-target(type=musicProfile"
+                           "&context=streaming&protocol=http"
+                           "&container=mp3&audioCodec=mp3)";
+        } else {
+            AppSettings& settings = Application::getInstance().getSettings();
+            int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : 2000;
 
-        brls::Logger::info("DownloadsManager: Decision response: {} ({})",
-                          decisionResp.statusCode, decisionResp.body.substr(0, 300));
+            char bitrateStr[64];
+            snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
+            queryParams += bitrateStr;
+            queryParams += "&videoResolution=960x544";
+            queryParams += "&subtitles=none";
 
-        if (decisionResp.statusCode != 200) {
-            brls::Logger::warning("DownloadsManager: Decision returned {}, trying start anyway",
-                                 decisionResp.statusCode);
+            profileExtra = "add-transcode-target(type=videoProfile"
+                           "&context=streaming&protocol=http"
+                           "&container=mp4&videoCodec=h264"
+                           "&audioCodec=aac)"
+                           "+add-limitation(scope=videoCodec&scopeName=h264"
+                           "&type=upperBound&name=video.level&value=40)"
+                           "+add-limitation(scope=videoCodec&scopeName=h264"
+                           "&type=upperBound&name=video.width&value=960)"
+                           "+add-limitation(scope=videoCodec&scopeName=h264"
+                           "&type=upperBound&name=video.height&value=544)";
         }
+
+        // Generate a session ID for this transcode request
+        char sessionBuf[32];
+        snprintf(sessionBuf, sizeof(sessionBuf), "%lu", (unsigned long)time(nullptr));
+        std::string sessionId = sessionBuf;
+        queryParams += "&session=" + sessionId;
+        queryParams += "&X-Plex-Token=" + token;
+
+        // Call the /decision endpoint first (required by Plex to set up transcode session)
+        const char* transcodeType = isAudio ? "music" : "video";
+        std::string decisionUrl = convertToHttpForDownload(
+            serverUrl + "/" + transcodeType + "/:/transcode/universal/decision?" + queryParams);
+
+        brls::Logger::info("DownloadsManager: Calling decision endpoint for {}", item.title);
+        {
+            HttpClient decisionClient;
+            HttpRequest decisionReq;
+            decisionReq.url = decisionUrl;
+            decisionReq.method = "GET";
+            addPlexHeaders(decisionReq, token);
+            decisionReq.headers["X-Plex-Client-Profile-Name"] = "Generic";
+            decisionReq.headers["X-Plex-Client-Profile-Extra"] = profileExtra;
+            decisionReq.timeout = 30;
+            HttpResponse decisionResp = decisionClient.request(decisionReq);
+
+            brls::Logger::info("DownloadsManager: Decision response: {} ({})",
+                              decisionResp.statusCode, decisionResp.body.substr(0, 300));
+
+            if (decisionResp.statusCode != 200) {
+                brls::Logger::warning("DownloadsManager: Decision returned {}, trying start anyway",
+                                     decisionResp.statusCode);
+            }
+        }
+
+        // Build the /start URL for downloading
+        std::string startQuery = queryParams;
+        startQuery += "&X-Plex-Client-Identifier=VitaPlex";
+        startQuery += "&X-Plex-Product=VitaPlex";
+        startQuery += "&X-Plex-Version=1.0.0";
+        startQuery += "&X-Plex-Platform=PlayStation%20Vita";
+        startQuery += "&X-Plex-Device=PS%20Vita";
+        startQuery += "&X-Plex-Device-Name=PS%20Vita";
+        startQuery += "&X-Plex-Client-Profile-Name=Generic";
+        startQuery += "&X-Plex-Client-Profile-Extra=" + HttpClient::urlEncode(profileExtra);
+
+        const char* container = isAudio ? "mp3" : "mp4";
+        char startPathBuf[128];
+        snprintf(startPathBuf, sizeof(startPathBuf), "/%s/:/transcode/universal/start.%s?", transcodeType, container);
+        url = convertToHttpForDownload(serverUrl + startPathBuf + startQuery);
     }
-
-    // Step 2: Build the /start URL for downloading
-    // Include X-Plex-* as query params for the download request
-    std::string startQuery = queryParams;
-    startQuery += "&X-Plex-Client-Identifier=VitaPlex";
-    startQuery += "&X-Plex-Product=VitaPlex";
-    startQuery += "&X-Plex-Version=1.0.0";
-    startQuery += "&X-Plex-Platform=PlayStation%20Vita";
-    startQuery += "&X-Plex-Device=PS%20Vita";
-    startQuery += "&X-Plex-Device-Name=PS%20Vita";
-    startQuery += "&X-Plex-Client-Profile-Name=Generic";
-    startQuery += "&X-Plex-Client-Profile-Extra=" + HttpClient::urlEncode(profileExtra);
-
-    const char* container = isAudio ? "mp3" : "mp4";
-    char startPathBuf[128];
-    snprintf(startPathBuf, sizeof(startPathBuf), "/%s/:/transcode/universal/start.%s?", transcodeType, container);
-    std::string url = serverUrl + startPathBuf + startQuery;
 
     brls::Logger::debug("DownloadsManager: Downloading from {}", url);
 
@@ -785,10 +993,11 @@ void DownloadsManager::downloadCoverArt(DownloadItem& item) {
     if (serverUrl.empty() || token.empty() || item.thumbUrl.empty()) return;
 
     // Build the thumbnail URL using Plex's photo transcoder for a reasonable size
-    std::string thumbDownloadUrl = serverUrl + "/photo/:/transcode?url="
+    std::string thumbDownloadUrl = convertToHttpForDownload(
+        serverUrl + "/photo/:/transcode?url="
         + HttpClient::urlEncode(item.thumbUrl)
         + "&width=400&height=400&minSize=1"
-        + "&X-Plex-Token=" + token;
+        + "&X-Plex-Token=" + token);
 
     brls::Logger::info("DownloadsManager: Downloading cover art for {}", item.title);
 

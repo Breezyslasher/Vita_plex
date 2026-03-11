@@ -12,6 +12,8 @@
 #include "view/downloads_tab.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/application.hpp"
+#include "app/plex_client.hpp"
+#include "app/music_queue.hpp"
 #include "activity/player_activity.hpp"
 #include "utils/async.hpp"
 
@@ -491,8 +493,107 @@ void DownloadsTab::refresh() {
             playBtn->setMargins(0, 0, 0, 5);
 
             std::string ratingKey = item.ratingKey;
-            playBtn->registerClickAction([ratingKey](brls::View*) {
-                brls::Application::pushActivity(new PlayerActivity(ratingKey, true));
+            bool isMusic = (item.mediaType == "track");
+            DownloadItem capturedItem = item;
+            playBtn->registerClickAction([ratingKey, isMusic, capturedItem](brls::View*) {
+                if (isMusic) {
+                    // Build a MediaItem from the download for queue integration
+                    MediaItem mi;
+                    mi.ratingKey = capturedItem.ratingKey;
+                    mi.title = capturedItem.title;
+                    mi.grandparentTitle = capturedItem.parentTitle;  // artist
+                    mi.parentTitle = capturedItem.parentTitle;       // album/artist
+                    mi.duration = capturedItem.duration;
+                    mi.thumb = capturedItem.thumbUrl;
+
+                    // Helper lambda to execute a track action with queue integration
+                    auto executeAction = [](const MediaItem& track, TrackDefaultAction act) {
+                        MusicQueue& queue = MusicQueue::getInstance();
+                        switch (act) {
+                            case TrackDefaultAction::PLAY_NEXT:
+                                if (queue.isEmpty()) {
+                                    std::vector<MediaItem> single = {track};
+                                    brls::Application::pushActivity(
+                                        PlayerActivity::createWithQueue(single, 0));
+                                } else {
+                                    queue.insertTrackAfterCurrent(track);
+                                    brls::Application::notify("Playing next: " + track.title);
+                                }
+                                break;
+
+                            case TrackDefaultAction::PLAY_NOW_REPLACE:
+                                if (queue.isEmpty()) {
+                                    std::vector<MediaItem> single = {track};
+                                    brls::Application::pushActivity(
+                                        PlayerActivity::createWithQueue(single, 0));
+                                } else {
+                                    queue.insertTrackAfterCurrent(track);
+                                    if (queue.playNext()) {
+                                        brls::Application::notify("Now playing: " + track.title);
+                                    }
+                                }
+                                break;
+
+                            case TrackDefaultAction::ADD_TO_BOTTOM:
+                                if (queue.isEmpty()) {
+                                    std::vector<MediaItem> single = {track};
+                                    brls::Application::pushActivity(
+                                        PlayerActivity::createWithQueue(single, 0));
+                                } else {
+                                    queue.addTrack(track);
+                                    brls::Application::notify("Added to queue: " + track.title);
+                                }
+                                break;
+
+                            case TrackDefaultAction::PLAY_NOW_CLEAR:
+                            default: {
+                                std::vector<MediaItem> single = {track};
+                                brls::Application::pushActivity(
+                                    PlayerActivity::createWithQueue(single, 0));
+                                break;
+                            }
+                        }
+                    };
+
+                    TrackDefaultAction action = Application::getInstance().getSettings().trackDefaultAction;
+
+                    if (action == TrackDefaultAction::ASK_EACH_TIME) {
+                        // Show action dialog
+                        auto* dialog = new brls::Dialog("Choose Action");
+                        auto* optionsBox = new brls::Box();
+                        optionsBox->setAxis(brls::Axis::COLUMN);
+                        optionsBox->setPadding(20);
+
+                        auto addBtn = [&optionsBox, &mi, dialog, executeAction](
+                                const std::string& text, TrackDefaultAction act) {
+                            auto* btn = new brls::Button();
+                            btn->setText(text);
+                            btn->setHeight(44);
+                            btn->setMarginBottom(10);
+                            MediaItem captured = mi;
+                            btn->registerClickAction([dialog, captured, executeAction, act](brls::View*) {
+                                dialog->dismiss();
+                                executeAction(captured, act);
+                                return true;
+                            });
+                            btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+                            optionsBox->addView(btn);
+                        };
+
+                        addBtn("Play Now (Clear Queue)", TrackDefaultAction::PLAY_NOW_CLEAR);
+                        addBtn("Play Next", TrackDefaultAction::PLAY_NEXT);
+                        addBtn("Add to Bottom of Queue", TrackDefaultAction::ADD_TO_BOTTOM);
+                        addBtn("Play Now (Replace Current)", TrackDefaultAction::PLAY_NOW_REPLACE);
+
+                        dialog->addView(optionsBox);
+                        dialog->open();
+                    } else {
+                        executeAction(mi, action);
+                    }
+                } else {
+                    // Video: play directly as local file
+                    brls::Application::pushActivity(new PlayerActivity(ratingKey, true));
+                }
                 return true;
             });
             buttonsBox->addView(playBtn);

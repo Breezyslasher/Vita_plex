@@ -407,6 +407,11 @@ bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallbac
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
 
+    // Critical: disable signals for thread-safe operation.
+    // Without this, curl uses SIGALRM for timeouts which can cause CURLE_RECV_ERROR
+    // in multi-threaded apps (downloads run on a background thread).
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+
     // Follow redirects
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
 
