@@ -418,6 +418,17 @@ bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallbac
     // User agent
     curl_easy_setopt(curl, CURLOPT_USERAGENT, m_userAgent.c_str());
 
+    // Set a smaller receive buffer to avoid overwhelming the Vita's network stack
+    curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 16384L);
+
+    // Enable TCP keepalive to prevent idle connection drops during transcoding
+    curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
+    curl_easy_setopt(curl, CURLOPT_TCP_KEEPIDLE, 30L);
+    curl_easy_setopt(curl, CURLOPT_TCP_KEEPINTVL, 15L);
+
+    // Prefer HTTP/1.1 for better compatibility with Vita's network stack
+    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+
     // Setup callback data
     DownloadCallbackData callbackData;
     callbackData.writeCallback = writeCallback;
@@ -431,9 +442,10 @@ bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallbac
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, downloadHeaderCallback);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &callbackData);
 
-    // Low speed limit - abort if < 1KB/s for 30 seconds
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 30L);
+    // Low speed limit - abort if < 100 bytes/s for 60 seconds
+    // Transcoding can have slow starts while the server processes the media
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 100L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);
 
     brls::Logger::info("HttpClient: Starting download from {}", url);
 

@@ -212,6 +212,23 @@ void DownloadsManager::startDownloads() {
             if (nextItem && nextItem->state != DownloadState::CANCELLED) {
                 brls::Logger::info("DownloadsManager: Starting download of {}", nextItem->title);
                 downloadItem(*nextItem);
+
+                // Retry failed downloads up to 3 times with backoff
+                int retries = 0;
+                while (nextItem->state == DownloadState::FAILED && retries < 3 && m_downloading.load()) {
+                    retries++;
+                    int waitSec = retries * 2;  // 2s, 4s, 6s
+                    brls::Logger::info("DownloadsManager: Retry {}/3 for {} in {}s",
+                                      retries, nextItem->title, waitSec);
+#ifdef __vita__
+                    sceKernelDelayThread(waitSec * 1000 * 1000);
+#else
+                    std::this_thread::sleep_for(std::chrono::seconds(waitSec));
+#endif
+                    nextItem->state = DownloadState::DOWNLOADING;
+                    nextItem->downloadedBytes = 0;
+                    downloadItem(*nextItem);
+                }
             } else if (!nextItem) {
                 // No more queued items
                 brls::Logger::info("DownloadsManager: No more queued items");

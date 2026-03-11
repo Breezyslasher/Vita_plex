@@ -96,8 +96,8 @@ void Application::pushMainActivity() {
     brls::Application::pushActivity(new MainActivity());
 }
 
-void Application::pushPlayerActivity(const std::string& mediaKey) {
-    brls::Application::pushActivity(new PlayerActivity(mediaKey));
+void Application::pushPlayerActivity(const std::string& mediaKey, bool isLocalFile) {
+    brls::Application::pushActivity(new PlayerActivity(mediaKey, isLocalFile));
 }
 
 void Application::pushLiveTVPlayerActivity(const std::string& streamUrl, const std::string& channelTitle) {

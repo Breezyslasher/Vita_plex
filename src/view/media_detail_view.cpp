@@ -697,7 +697,11 @@ void MediaDetailView::onPlay(bool resume) {
         m_item.mediaType == MediaType::EPISODE ||
         m_item.mediaType == MediaType::MUSIC_TRACK) {
 
-        Application::getInstance().pushPlayerActivity(m_item.ratingKey);
+        // Check if this item is downloaded locally - play from local file if available
+        DownloadItem dlItem;
+        bool isLocal = DownloadsManager::getInstance().getDownloadCopy(m_item.ratingKey, dlItem)
+                       && dlItem.state == DownloadState::COMPLETED;
+        Application::getInstance().pushPlayerActivity(m_item.ratingKey, isLocal);
     }
     // For shows/seasons/albums, play the first child item
     else if (m_item.mediaType == MediaType::SHOW ||
@@ -821,74 +825,14 @@ void MediaDetailView::onDownload() {
 
     if (queued) {
         if (m_downloadButton) {
-            m_downloadButton->setText("Downloading...");
+            m_downloadButton->setText("Queued");
         }
 
-        // Show progress dialog
-        auto* progressDialog = new ProgressDialog("Downloading");
-        progressDialog->setStatus(m_item.title);
-        progressDialog->setProgress(0);
-        progressDialog->show();
+        // Just notify the user and add to queue - no progress dialog
+        brls::Application::notify("Added to download queue: " + m_item.title);
 
-        // Track the rating key to update button when done
-        std::string ratingKey = m_item.ratingKey;
-        std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
-
-        // Set progress callback with speed display
-        DownloadsManager::getInstance().setProgressCallback(
-            [progressDialog](int64_t downloaded, int64_t total) {
-                brls::sync([progressDialog, downloaded, total]() {
-                    progressDialog->updateDownloadProgress(downloaded, total);
-                });
-            }
-        );
-
-        // Allow dismissing dialog - download continues in background
-        progressDialog->setCancelCallback([progressDialog]() {
-            brls::Application::notify("Download continues in background");
-            // Clear callback to avoid updating dismissed dialog
-            DownloadsManager::getInstance().setProgressCallback(nullptr);
-        });
-
-        // Start downloading
+        // Start downloading in background
         DownloadsManager::getInstance().startDownloads();
-
-        // Monitor for completion - use weak_ptr to avoid use-after-free on view destruction
-        asyncRun([progressDialog, aliveWeak, ratingKey]() {
-            while (true) {
-                DownloadItem dlItem;
-                if (!DownloadsManager::getInstance().getDownloadCopy(ratingKey, dlItem)) break;
-
-                if (dlItem.state == DownloadState::COMPLETED) {
-                    brls::sync([progressDialog, aliveWeak]() {
-                        progressDialog->setStatus("Download complete!");
-                        progressDialog->setProgress(1.0f);
-                        brls::delay(1500, [progressDialog]() {
-                            progressDialog->dismiss();
-                        });
-                    });
-                    break;
-                } else if (dlItem.state == DownloadState::FAILED) {
-                    brls::sync([progressDialog, aliveWeak]() {
-                        progressDialog->setStatus("Download failed");
-                        brls::delay(2000, [progressDialog]() {
-                            progressDialog->dismiss();
-                        });
-                    });
-                    break;
-                }
-
-                // Sleep briefly before checking again
-#ifdef __vita__
-                sceKernelDelayThread(500 * 1000);  // 500ms
-#else
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-#endif
-            }
-
-            // Clear progress callback
-            DownloadsManager::getInstance().setProgressCallback(nullptr);
-        });
     } else {
         brls::Application::notify("Failed to queue download");
     }
