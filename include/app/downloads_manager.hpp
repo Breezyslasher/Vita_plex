@@ -54,6 +54,10 @@ struct DownloadItem {
     int seasonNum = 0;          // Season number for episodes
     int episodeNum = 0;         // Episode number for episodes
     time_t lastSynced = 0;      // Last time progress was synced to server
+
+    // Transcoding progress tracking
+    int transcodeElapsedSeconds = 0;  // How long transcoding has been running
+    int transcodePollAttempt = 0;     // Current poll attempt number
 };
 
 // Progress callback: (downloadedBytes, totalBytes)

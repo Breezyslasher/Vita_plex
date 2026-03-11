@@ -838,6 +838,8 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     //   - 200: Returns the raw media file (transcoding complete)
     //   - 503: Still transcoding, with Retry-After header (seconds to wait, or -1 if unknown)
     item.state = DownloadState::TRANSCODING;
+    item.transcodeElapsedSeconds = 0;
+    item.transcodePollAttempt = 0;
     std::string mediaUrl = baseUrl + "/downloadQueue/" + queueId + "/item/" + itemId
         + "/media?X-Plex-Token=" + token;
 
@@ -845,8 +847,14 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     const int defaultRetrySeconds = 5;  // default if Retry-After header missing or -1
     const int maxWaitSeconds = 30;  // cap individual waits
     bool mediaReady = false;
+    auto transcodeStart = std::chrono::steady_clock::now();
 
     for (int attempt = 0; attempt < maxPollAttempts && downloading.load(); attempt++) {
+        // Update elapsed time for UI display
+        auto now = std::chrono::steady_clock::now();
+        item.transcodeElapsedSeconds = (int)std::chrono::duration_cast<std::chrono::seconds>(
+            now - transcodeStart).count();
+        item.transcodePollAttempt = attempt;
         HttpClient mediaHttp;
         HttpRequest mediaReq;
         mediaReq.url = mediaUrl;

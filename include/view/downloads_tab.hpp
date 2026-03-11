@@ -52,6 +52,7 @@ private:
         int64_t totalBytes = 0;
         int state = 0;
         int64_t viewOffset = 0;
+        int transcodeElapsedSeconds = 0;
     };
     std::vector<CachedItem> m_lastState;
 

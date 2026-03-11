@@ -24,6 +24,29 @@
 
 namespace vitaplex {
 
+// Format elapsed seconds as a human-readable string like "1m 23s" or "45s"
+static std::string formatElapsedTime(int totalSeconds) {
+    if (totalSeconds < 60) {
+        return std::to_string(totalSeconds) + "s";
+    }
+    int minutes = totalSeconds / 60;
+    int seconds = totalSeconds % 60;
+    return std::to_string(minutes) + "m " + std::to_string(seconds) + "s";
+}
+
+// Build a transcoding status string with elapsed time and animated dots
+static std::string buildTranscodeStatus(int elapsedSeconds) {
+    // Cycle through 1-3 dots every second for animation
+    int dotCount = (elapsedSeconds % 3) + 1;
+    std::string dots(dotCount, '.');
+
+    std::string status = "Transcoding on server" + dots;
+    if (elapsedSeconds > 0) {
+        status += " (" + formatElapsedTime(elapsedSeconds) + " elapsed)";
+    }
+    return status;
+}
+
 DownloadsTab::DownloadsTab()
     : m_alive(std::make_shared<bool>(true))
 {
@@ -243,6 +266,7 @@ void DownloadsTab::refresh() {
         ci.totalBytes = d.totalBytes;
         ci.state = static_cast<int>(d.state);
         ci.viewOffset = d.viewOffset;
+        ci.transcodeElapsedSeconds = d.transcodeElapsedSeconds;
         currentState.push_back(ci);
     }
 
@@ -252,7 +276,8 @@ void DownloadsTab::refresh() {
         for (size_t i = 0; i < currentState.size(); i++) {
             if (currentState[i].ratingKey != m_lastState[i].ratingKey ||
                 currentState[i].state != m_lastState[i].state ||
-                currentState[i].downloadedBytes != m_lastState[i].downloadedBytes) {
+                currentState[i].downloadedBytes != m_lastState[i].downloadedBytes ||
+                currentState[i].transcodeElapsedSeconds != m_lastState[i].transcodeElapsedSeconds) {
                 stateChanged = true;
                 break;
             }
@@ -305,7 +330,7 @@ void DownloadsTab::refresh() {
                         statusText = "Queued";
                         break;
                     case DownloadState::TRANSCODING:
-                        statusText = "Transcoding on server...";
+                        statusText = buildTranscodeStatus(item.transcodeElapsedSeconds);
                         break;
                     case DownloadState::DOWNLOADING:
                         if (item.totalBytes > 0) {
