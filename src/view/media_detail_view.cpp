@@ -127,11 +127,33 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             m_item.mediaType == MediaType::MUSIC_TRACK) {
             m_downloadButton = new brls::Button();
 
-            // Check if already downloaded
-            if (DownloadsManager::getInstance().isDownloaded(m_item.ratingKey)) {
-                m_downloadButton->setText("Downloaded");
-            } else {
-                m_downloadButton->setText("Download");
+            // Check current download state
+            {
+                DownloadItem dlCheck;
+                if (DownloadsManager::getInstance().getDownloadCopy(m_item.ratingKey, dlCheck)) {
+                    switch (dlCheck.state) {
+                        case DownloadState::COMPLETED:
+                            m_downloadButton->setText("Downloaded");
+                            break;
+                        case DownloadState::DOWNLOADING:
+                            m_downloadButton->setText("Downloading...");
+                            break;
+                        case DownloadState::QUEUED:
+                            m_downloadButton->setText("Queued");
+                            break;
+                        case DownloadState::PAUSED:
+                            m_downloadButton->setText("Paused");
+                            break;
+                        case DownloadState::FAILED:
+                            m_downloadButton->setText("Retry Download");
+                            break;
+                        default:
+                            m_downloadButton->setText("Download");
+                            break;
+                    }
+                } else {
+                    m_downloadButton->setText("Download");
+                }
             }
 
             m_downloadButton->setWidth(200);
@@ -387,8 +409,28 @@ void MediaDetailView::loadDetails() {
 
                 // Update download button state now that we have the part path
                 if (m_downloadButton && !m_item.partPath.empty()) {
-                    if (DownloadsManager::getInstance().isDownloaded(m_item.ratingKey)) {
-                        m_downloadButton->setText("Downloaded");
+                    DownloadItem dlCheck;
+                    if (DownloadsManager::getInstance().getDownloadCopy(m_item.ratingKey, dlCheck)) {
+                        switch (dlCheck.state) {
+                            case DownloadState::COMPLETED:
+                                m_downloadButton->setText("Downloaded");
+                                break;
+                            case DownloadState::DOWNLOADING:
+                                m_downloadButton->setText("Downloading...");
+                                break;
+                            case DownloadState::QUEUED:
+                                m_downloadButton->setText("Queued");
+                                break;
+                            case DownloadState::PAUSED:
+                                m_downloadButton->setText("Paused");
+                                break;
+                            case DownloadState::FAILED:
+                                m_downloadButton->setText("Retry Download");
+                                break;
+                            default:
+                                m_downloadButton->setText("Download");
+                                break;
+                        }
                     } else {
                         m_downloadButton->setText("Download");
                     }
@@ -695,10 +737,34 @@ void MediaDetailView::onPlay(bool resume) {
 }
 
 void MediaDetailView::onDownload() {
-    // Check if already downloaded
-    if (DownloadsManager::getInstance().isDownloaded(m_item.ratingKey)) {
-        brls::Application::notify("Already downloaded");
-        return;
+    // Check if already in download queue
+    DownloadItem existingDl;
+    if (DownloadsManager::getInstance().getDownloadCopy(m_item.ratingKey, existingDl)) {
+        switch (existingDl.state) {
+            case DownloadState::COMPLETED:
+                brls::Application::notify("Already downloaded");
+                return;
+            case DownloadState::DOWNLOADING:
+                brls::Application::notify("Already downloading");
+                return;
+            case DownloadState::QUEUED:
+                brls::Application::notify("Already queued for download");
+                return;
+            case DownloadState::PAUSED:
+                // Resume paused downloads
+                brls::Application::notify("Resuming download...");
+                DownloadsManager::getInstance().resumeIncompleteDownloads();
+                DownloadsManager::getInstance().startDownloads();
+                if (m_downloadButton) m_downloadButton->setText("Downloading...");
+                return;
+            case DownloadState::FAILED:
+                // Allow retry - fall through to re-queue
+                brls::Logger::info("Retrying failed download: {}", m_item.title);
+                DownloadsManager::getInstance().deleteDownload(m_item.ratingKey);
+                break;
+            default:
+                break;
+        }
     }
 
     // Check if we have the part path (need to fetch full details first)
