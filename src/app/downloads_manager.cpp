@@ -646,19 +646,172 @@ static void addPlexHeaders(HttpRequest& req, const std::string& token) {
     req.headers["X-Plex-Token"] = token;
 }
 
-// Try downloading the original file directly using the part path.
-// This avoids the Download Queue API (which returns 503 when transcoding
-// isn't ready) and gets the raw file from disk.
-// Returns the direct download URL if the part path is valid.
+// Build a direct file download URL using the part path.
+// Downloads the original file without transcoding - suitable for audio.
 static std::string buildDirectDownloadUrl(const std::string& serverUrl, const std::string& token,
                                            const std::string& partPath) {
     if (partPath.empty()) return "";
 
     std::string baseUrl = convertToHttpForDownload(serverUrl);
-    // The part path is like /library/parts/19779/1760220985/file.mp4
+    // The part path is like /library/parts/19779/1760220985/file.m4a
     // We add ?download=1 to signal this is a download (lower priority than streaming)
     std::string url = baseUrl + partPath + "?download=1&X-Plex-Token=" + token;
     return url;
+}
+
+// Try downloading via the Plex Download Queue API (server-side transcode + file download).
+// This transcodes video to Vita-compatible resolution (960x544) before downloading.
+// Polls the queue status until transcoding is complete before returning the media URL.
+// Returns true if the download URL was obtained, with the URL stored in outUrl.
+static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string& token,
+                                 const std::string& ratingKey, std::string& outUrl,
+                                 std::atomic<bool>& downloading) {
+    brls::Logger::info("DownloadsManager: Trying Download Queue API for {}", ratingKey);
+
+    std::string baseUrl = convertToHttpForDownload(serverUrl);
+
+    // Step 1: Create/get a download queue
+    HttpClient http;
+    HttpRequest req;
+    req.url = baseUrl + "/downloadQueue?X-Plex-Token=" + token;
+    req.method = "POST";
+    addPlexHeaders(req, token);
+    req.timeout = 30;
+    HttpResponse resp = http.request(req);
+
+    if (resp.statusCode != 200 || resp.body.empty()) {
+        brls::Logger::warning("DownloadsManager: Download Queue API not available (HTTP {})", resp.statusCode);
+        return false;
+    }
+
+    brls::Logger::debug("DownloadsManager: downloadQueue response: {}", resp.body.substr(0, 500));
+
+    // Parse queue ID from response
+    std::string queueId;
+    int64_t numId = extractJsonInt(resp.body, "id");
+    if (numId > 0) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%lld", (long long)numId);
+        queueId = buf;
+    }
+
+    if (queueId.empty()) {
+        brls::Logger::warning("DownloadsManager: Could not parse queue ID from response");
+        return false;
+    }
+
+    brls::Logger::info("DownloadsManager: Got download queue ID: {}", queueId);
+
+    // Step 2: Add item to the download queue
+    std::string addUrl = baseUrl + "/downloadQueue/" + queueId + "/add"
+        + "?keys=" + HttpClient::urlEncode("/library/metadata/" + ratingKey)
+        + "&X-Plex-Token=" + token;
+
+    HttpRequest addReq;
+    addReq.url = addUrl;
+    addReq.method = "POST";
+    addPlexHeaders(addReq, token);
+    addReq.timeout = 30;
+
+    HttpClient addHttp;
+    HttpResponse addResp = addHttp.request(addReq);
+
+    if (addResp.statusCode != 200) {
+        brls::Logger::warning("DownloadsManager: Failed to add to download queue (HTTP {})", addResp.statusCode);
+        return false;
+    }
+
+    brls::Logger::info("DownloadsManager: Added to download queue, response: {}",
+                      addResp.body.substr(0, 500));
+
+    // Parse item ID from the add response
+    std::string itemId;
+    int64_t numItemId = extractJsonInt(addResp.body, "id");
+    if (numItemId > 0) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%lld", (long long)numItemId);
+        itemId = buf;
+    }
+
+    if (itemId.empty()) {
+        brls::Logger::warning("DownloadsManager: Could not determine item ID in download queue");
+        return false;
+    }
+
+    brls::Logger::info("DownloadsManager: Download queue item ID: {}", itemId);
+
+    // Step 3: Get the decision for this download queue item (triggers transcoding)
+    HttpClient decHttp;
+    HttpRequest decReq;
+    decReq.url = baseUrl + "/downloadQueue/" + queueId + "/item/" + itemId
+        + "/decision?X-Plex-Token=" + token;
+    decReq.method = "GET";
+    addPlexHeaders(decReq, token);
+    decReq.timeout = 60;
+    HttpResponse decResp = decHttp.request(decReq);
+
+    brls::Logger::info("DownloadsManager: Queue decision response: {} ({})",
+                      decResp.statusCode, decResp.body.substr(0, 500));
+
+    // Step 4: Poll the queue status until transcoding is complete.
+    // The server needs time to transcode; the /media endpoint returns 503 if not ready.
+    // Poll the queue status every 3 seconds for up to 5 minutes.
+    const int maxPollAttempts = 100;  // 100 * 3s = 5 minutes max
+    const int pollIntervalMs = 3000;
+    bool mediaReady = false;
+
+    for (int attempt = 0; attempt < maxPollAttempts && downloading.load(); attempt++) {
+        HttpClient statusHttp;
+        HttpRequest statusReq;
+        statusReq.url = baseUrl + "/downloadQueue/" + queueId + "?X-Plex-Token=" + token;
+        statusReq.method = "GET";
+        addPlexHeaders(statusReq, token);
+        statusReq.timeout = 15;
+        HttpResponse statusResp = statusHttp.request(statusReq);
+
+        if (statusResp.statusCode != 200) {
+            brls::Logger::warning("DownloadsManager: Queue status check failed (HTTP {})", statusResp.statusCode);
+            break;
+        }
+
+        std::string status = extractJsonString(statusResp.body, "status");
+        brls::Logger::debug("DownloadsManager: Queue status: {} (attempt {}/{})", status, attempt + 1, maxPollAttempts);
+
+        if (status == "done" || status == "complete" || status == "ready") {
+            mediaReady = true;
+            break;
+        }
+
+        if (status == "error" || status == "failed") {
+            brls::Logger::error("DownloadsManager: Queue transcoding failed with status: {}", status);
+            return false;
+        }
+
+        // Still transcoding ("deciding", "transcoding", etc.) - wait and poll again
+#ifdef __vita__
+        sceKernelDelayThread(pollIntervalMs * 1000);
+#else
+        std::this_thread::sleep_for(std::chrono::milliseconds(pollIntervalMs));
+#endif
+    }
+
+    if (!downloading.load()) {
+        brls::Logger::info("DownloadsManager: Download cancelled during transcode wait");
+        return false;
+    }
+
+    if (!mediaReady) {
+        // Even if status isn't definitively "done", try downloading anyway -
+        // some servers may report different status strings
+        brls::Logger::warning("DownloadsManager: Transcode may not be complete, attempting download anyway");
+    }
+
+    // Step 5: Build the media download URL
+    outUrl = baseUrl + "/downloadQueue/" + queueId + "/item/" + itemId
+        + "/media?X-Plex-Token=" + token;
+
+    brls::Logger::info("DownloadsManager: Download Queue media URL ready");
+    return true;
 }
 
 void DownloadsManager::downloadItem(DownloadItem& item) {
@@ -677,21 +830,28 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
 
     bool isAudio = (item.mediaType == "track");
     std::string url;
-    bool useDirectDownload = false;
+    bool urlReady = false;
 
-    // Try direct file download first using the part path
-    // This downloads the original file directly from the server's disk,
-    // avoiding the Download Queue API which often returns 503.
-    url = buildDirectDownloadUrl(serverUrl, token, item.partPath);
-    if (!url.empty()) {
-        useDirectDownload = true;
-        brls::Logger::info("DownloadsManager: Using direct file download for {}", item.title);
+    if (isAudio) {
+        // Audio: download the original file directly (small files, Vita-compatible formats)
+        url = buildDirectDownloadUrl(serverUrl, token, item.partPath);
+        if (!url.empty()) {
+            urlReady = true;
+            brls::Logger::info("DownloadsManager: Using direct file download for audio: {}", item.title);
+        }
     } else {
-        brls::Logger::info("DownloadsManager: No part path available, using transcode stream");
+        // Video: use Download Queue API to transcode to Vita resolution (960x544)
+        // This polls until the server finishes transcoding before downloading
+        urlReady = tryDownloadQueueApi(serverUrl, token, item.ratingKey, url, m_downloading);
+        if (urlReady) {
+            brls::Logger::info("DownloadsManager: Using Download Queue API for video: {}", item.title);
+        } else {
+            brls::Logger::info("DownloadsManager: Download Queue API failed, falling back to transcode stream");
+        }
     }
 
-    // Fall back to streaming transcode if no direct download URL
-    if (!useDirectDownload) {
+    // Fall back to streaming transcode if no URL ready yet
+    if (!urlReady) {
         // Build transcode URL for Vita-compatible format
         std::string metadataPath = "/library/metadata/" + item.ratingKey;
         std::string encodedPath = HttpClient::urlEncode(metadataPath);
