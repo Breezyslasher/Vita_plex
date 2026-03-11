@@ -47,8 +47,9 @@ private:
     void showPlaylistContextMenu(const Playlist& playlist);
     void showPlaylistOptionsDialog(const Playlist& playlist);
     void playPlaylistWithQueue(const std::string& playlistId, int startIndex);
-    void showPlaylistTrackList(const std::vector<MediaItem>& tracks, const std::string& playlistTitle, const std::string& playlistId);
-    void performPlaylistTrackAction(const MediaItem& track, const std::vector<MediaItem>& allTracks, size_t trackIndex, const std::string& playlistId);
+    void showPlaylistTrackList(std::vector<MediaItem>&& tracks, const std::string& playlistTitle, const std::string& playlistId);
+    void appendTrackListPage();
+    void performPlaylistTrackAction(size_t trackIndex);
     void updateViewModeButtons();
 
     // Check if this tab is still valid (not destroyed)
@@ -80,6 +81,14 @@ private:
     std::vector<MediaItem> m_collections;
     std::vector<GenreItem> m_genres;
     std::vector<Playlist> m_playlists;
+
+    // Current playlist track list (stored as member to avoid per-row copies)
+    std::vector<MediaItem> m_playlistTracks;
+    std::string m_currentPlaylistId;
+    size_t m_trackListRendered = 0;  // How many track rows rendered so far
+    brls::Button* m_trackListLoadMoreBtn = nullptr;
+
+    static constexpr size_t TRACK_LIST_PAGE_SIZE = 50;
 
     LibraryViewMode m_viewMode = LibraryViewMode::ALL_ITEMS;
     std::string m_filterTitle;  // Title of current filter (collection/genre name)
