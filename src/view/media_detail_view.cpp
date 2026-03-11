@@ -806,7 +806,7 @@ void MediaDetailView::onDownload() {
         parentTitle = m_item.grandparentTitle;  // Artist name
     }
 
-    // Queue the download
+    // Queue the download (pass thumb for cover art on music tracks)
     bool queued = DownloadsManager::getInstance().queueDownload(
         m_item.ratingKey,
         m_item.title,
@@ -815,7 +815,8 @@ void MediaDetailView::onDownload() {
         mediaType,
         parentTitle,
         seasonNum,
-        episodeNum
+        episodeNum,
+        m_item.thumb
     );
 
     if (queued) {
@@ -1307,7 +1308,8 @@ void MediaDetailView::loadTrackList() {
                                 bool queued = DownloadsManager::getInstance().queueDownload(
                                     fullItem.ratingKey, fullItem.title, fullItem.partPath,
                                     fullItem.duration, "track",
-                                    fullItem.grandparentTitle, 0, fullItem.index);
+                                    fullItem.grandparentTitle, 0, fullItem.index,
+                                    fullItem.thumb);
                                 brls::sync([queued, fullItem]() {
                                     if (queued) {
                                         DownloadsManager::getInstance().startDownloads();
@@ -2212,7 +2214,8 @@ void MediaDetailView::showArtistContextMenuStatic(const MediaItem& artist) {
                                 if (DownloadsManager::getInstance().queueDownload(
                                     fullItem.ratingKey, fullItem.title, fullItem.partPath,
                                     fullItem.duration, "track",
-                                    capturedArtist.title, 0, fullItem.index)) {
+                                    capturedArtist.title, 0, fullItem.index,
+                                    fullItem.thumb)) {
                                     queued++;
                                 }
                             }

@@ -655,15 +655,32 @@ void PlayerActivity::loadFromQueue() {
         albumArt->setVisibility(brls::Visibility::VISIBLE);
     }
 
-    // Use the rating key to get transcode URL
+    // Use the rating key to get the playback URL
     m_mediaKey = track->ratingKey;
-    PlexClient& client = PlexClient::getInstance();
     std::string url;
 
-    if (!client.getTranscodeUrl(track->ratingKey, url, 0)) {
-        brls::Logger::error("Failed to get transcode URL for track: {}", track->ratingKey);
-        m_loadingMedia = false;
-        return;
+    // Check if this track is downloaded locally - play from local file if available
+    DownloadsManager& downloads = DownloadsManager::getInstance();
+    DownloadItem dlItem;
+    bool useLocalFile = false;
+    if (downloads.getDownloadCopy(track->ratingKey, dlItem) && dlItem.state == DownloadState::COMPLETED) {
+        url = dlItem.localPath;
+        useLocalFile = true;
+        brls::Logger::info("PlayerActivity: Using downloaded file for track: {}", url);
+
+        // Load cover art from local file if available
+        if (albumArt && !dlItem.thumbPath.empty()) {
+            ImageLoader::loadFromFile(dlItem.thumbPath, albumArt);
+            albumArt->setVisibility(brls::Visibility::VISIBLE);
+        }
+    } else {
+        // Stream from server
+        PlexClient& client = PlexClient::getInstance();
+        if (!client.getTranscodeUrl(track->ratingKey, url, 0)) {
+            brls::Logger::error("Failed to get transcode URL for track: {}", track->ratingKey);
+            m_loadingMedia = false;
+            return;
+        }
     }
 
     // Pause image loading and free cache to reclaim memory for MPV.
@@ -676,7 +693,7 @@ void PlayerActivity::loadFromQueue() {
     // Set audio-only mode BEFORE initializing
     player.setAudioOnly(true);
 
-    // Stream audio directly via MPV (transcode API returns mp3 stream)
+    // Stream audio directly via MPV (transcode API returns mp3 stream or local file)
     if (!player.isInitialized()) {
         // Defer MPV init + load to after activity transition completes
         m_pendingPlayUrl = url;
@@ -792,12 +809,39 @@ void PlayerActivity::loadMedia() {
 
         brls::Logger::info("PlayerActivity: Playing local file: {}", dlItem.localPath);
 
-        if (titleLabel) {
-            std::string title = dlItem.title;
-            if (!dlItem.parentTitle.empty()) {
-                title = dlItem.parentTitle + " - " + dlItem.title;
+        // Detect if this is a music track
+        bool isAudioTrack = (dlItem.mediaType == "track");
+
+        if (isAudioTrack) {
+            // Set up music UI labels
+            if (musicTitleLabel) musicTitleLabel->setText(dlItem.title);
+            if (musicArtistLabel) musicArtistLabel->setText(dlItem.parentTitle);
+            if (titleLabel) titleLabel->setText(dlItem.title);
+            if (artistLabel) {
+                artistLabel->setText(dlItem.parentTitle);
+                artistLabel->setVisibility(brls::Visibility::VISIBLE);
             }
-            titleLabel->setText(title);
+
+            // Load cover art from downloaded file if available
+            if (albumArt && !dlItem.thumbPath.empty()) {
+                // Load local cover art image directly
+                ImageLoader::loadFromFile(dlItem.thumbPath, albumArt);
+                albumArt->setVisibility(brls::Visibility::VISIBLE);
+            }
+
+            // Show music UI, hide video view
+            if (musicInfo) musicInfo->setVisibility(brls::Visibility::VISIBLE);
+            if (musicTransport) musicTransport->setVisibility(brls::Visibility::VISIBLE);
+            if (videoView) videoView->setVisibility(brls::Visibility::GONE);
+            if (photoImage) photoImage->setVisibility(brls::Visibility::GONE);
+        } else {
+            if (titleLabel) {
+                std::string title = dlItem.title;
+                if (!dlItem.parentTitle.empty()) {
+                    title = dlItem.parentTitle + " - " + dlItem.title;
+                }
+                titleLabel->setText(title);
+            }
         }
 
         // Pause image loading and free cache to reclaim memory for MPV
@@ -806,6 +850,9 @@ void PlayerActivity::loadMedia() {
         ImageLoader::clearCache();
 
         MpvPlayer& player = MpvPlayer::getInstance();
+
+        // Set audio-only mode for music tracks (skip render context)
+        player.setAudioOnly(isAudioTrack);
 
         // Resume from saved viewOffset if resumePlayback is enabled
         // If near the end (>= 95% watched), start from beginning instead
@@ -820,7 +867,7 @@ void PlayerActivity::loadMedia() {
             // Defer MPV init + load to after activity transition completes
             m_pendingPlayUrl = dlItem.localPath;
             m_pendingPlayTitle = dlItem.title;
-            m_pendingIsAudio = false;
+            m_pendingIsAudio = isAudioTrack;
             m_loadingMedia = false;
             return;
         }
@@ -832,8 +879,8 @@ void PlayerActivity::loadMedia() {
             return;
         }
 
-        // Show video view
-        if (videoView) {
+        // Show video view only for non-audio content
+        if (!isAudioTrack && videoView) {
             videoView->setVisibility(brls::Visibility::VISIBLE);
             videoView->setVideoVisible(true);
         }

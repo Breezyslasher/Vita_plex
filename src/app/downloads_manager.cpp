@@ -142,7 +142,8 @@ bool DownloadsManager::queueDownload(const std::string& ratingKey, const std::st
                                       const std::string& partPath, int64_t duration,
                                       const std::string& mediaType,
                                       const std::string& parentTitle,
-                                      int seasonNum, int episodeNum) {
+                                      int seasonNum, int episodeNum,
+                                      const std::string& thumbUrl) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     // Check if already in queue
@@ -162,12 +163,18 @@ bool DownloadsManager::queueDownload(const std::string& ratingKey, const std::st
     item.parentTitle = parentTitle;
     item.seasonNum = seasonNum;
     item.episodeNum = episodeNum;
+    item.thumbUrl = thumbUrl;
     item.state = DownloadState::QUEUED;
 
     // Generate local path with appropriate extension for transcoded format
     std::string extension = (mediaType == "track") ? ".mp3" : ".mp4";
     std::string filename = ratingKey + extension;
     item.localPath = m_downloadsPath + "/" + filename;
+
+    // Generate cover art path for music tracks
+    if (mediaType == "track" && !thumbUrl.empty()) {
+        item.thumbPath = m_downloadsPath + "/" + ratingKey + "_cover.jpg";
+    }
 
     m_downloads.push_back(item);
     saveStateUnlocked();
@@ -268,12 +275,20 @@ bool DownloadsManager::deleteDownload(const std::string& ratingKey) {
 
     for (auto& item : m_downloads) {
         if (item.ratingKey == ratingKey) {
-            // Delete file
+            // Delete media file
             if (!item.localPath.empty()) {
 #ifdef __vita__
                 sceIoRemove(item.localPath.c_str());
 #else
                 std::remove(item.localPath.c_str());
+#endif
+            }
+            // Delete cover art file if exists
+            if (!item.thumbPath.empty()) {
+#ifdef __vita__
+                sceIoRemove(item.thumbPath.c_str());
+#else
+                std::remove(item.thumbPath.c_str());
 #endif
             }
             // Mark as cancelled instead of erasing - safe while download thread runs
@@ -497,12 +512,20 @@ void DownloadsManager::clearCompleted() {
 
     for (auto& item : m_downloads) {
         if (item.state == DownloadState::COMPLETED) {
-            // Delete file
+            // Delete media file
             if (!item.localPath.empty()) {
 #ifdef __vita__
                 sceIoRemove(item.localPath.c_str());
 #else
                 std::remove(item.localPath.c_str());
+#endif
+            }
+            // Delete cover art file
+            if (!item.thumbPath.empty()) {
+#ifdef __vita__
+                sceIoRemove(item.thumbPath.c_str());
+#else
+                std::remove(item.thumbPath.c_str());
 #endif
             }
             item.state = DownloadState::CANCELLED;
@@ -543,48 +566,43 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     }
 
     // Build transcode URL for Vita-compatible format
-    // The path parameter must be the metadata path (per API: /library/metadata/{id})
+    // The path parameter must be the metadata path, URL-encoded (per API spec)
     std::string metadataPath = "/library/metadata/" + item.ratingKey;
+    std::string encodedPath = HttpClient::urlEncode(metadataPath);
 
-    std::string url = serverUrl;
     bool isAudio = (item.mediaType == "track");
     std::string profileExtra;
 
+    // Build query parameters (shared between decision and start endpoints)
+    std::string queryParams;
+    queryParams += "path=" + encodedPath;
+    queryParams += "&mediaIndex=0&partIndex=0";
+    queryParams += "&protocol=http";
+    queryParams += "&directPlay=0&directStream=0";
+    queryParams += "&directStreamAudio=1";
+    queryParams += "&hasMDE=1";
+    queryParams += "&location=lan";
+    queryParams += "&audioBoost=100";
+    queryParams += "&audioChannelCount=2";
+
     if (isAudio) {
         // Audio transcode - convert to MP3 which the Vita can play
-        url += "/music/:/transcode/universal/start.mp3?";
-        url += "path=" + metadataPath;
-        url += "&mediaIndex=0&partIndex=0";
-        url += "&protocol=http";
-        url += "&directPlay=0&directStream=0";
-        url += "&musicBitrate=320";
-        url += "&audioBoost=100";
+        queryParams += "&musicBitrate=320";
 
         profileExtra = "add-transcode-target(type=musicProfile"
                        "&context=streaming&protocol=http"
                        "&container=mp3&audioCodec=mp3)";
     } else {
         // Video transcode - convert to H.264/AAC MP4 which the Vita can decode
-        url += "/video/:/transcode/universal/start.mp4?";
-        url += "path=" + metadataPath;
-        url += "&mediaIndex=0&partIndex=0";
-        url += "&protocol=http";
-        url += "&directPlay=0&directStream=0";
-
-        // Get quality settings
         AppSettings& settings = Application::getInstance().getSettings();
         int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : 2000;
 
         char bitrateStr[64];
         snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
-        url += bitrateStr;
-        url += "&videoResolution=960x544";
-        url += "&audioBoost=100";
-        url += "&audioChannelCount=2";
-        url += "&location=lan";
-        url += "&subtitles=none";
+        queryParams += bitrateStr;
+        queryParams += "&videoResolution=960x544";
+        queryParams += "&subtitles=none";
 
-        // Profile augmentation: tell Plex to transcode to h264+aac in MP4 via HTTP
         profileExtra = "add-transcode-target(type=videoProfile"
                        "&context=streaming&protocol=http"
                        "&container=mp4&videoCodec=h264"
@@ -597,21 +615,60 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                        "&type=upperBound&name=video.height&value=544)";
     }
 
-    // Add authentication and client identification
-    url += "&X-Plex-Token=" + token;
-    url += "&X-Plex-Client-Identifier=VitaPlex";
-    url += "&X-Plex-Product=VitaPlex";
-    url += "&X-Plex-Version=1.0.0";
-    url += "&X-Plex-Platform=PlayStation%20Vita";
-    url += "&X-Plex-Device=PS%20Vita";
-    url += "&X-Plex-Device-Name=PS%20Vita";
-    url += "&X-Plex-Client-Profile-Name=Generic";
-    url += "&X-Plex-Client-Profile-Extra=" + HttpClient::urlEncode(profileExtra);
-
     // Generate a session ID for this transcode request
-    char sessionId[32];
-    snprintf(sessionId, sizeof(sessionId), "&session=%lu", (unsigned long)time(nullptr));
-    url += sessionId;
+    char sessionBuf[32];
+    snprintf(sessionBuf, sizeof(sessionBuf), "%lu", (unsigned long)time(nullptr));
+    std::string sessionId = sessionBuf;
+    queryParams += "&session=" + sessionId;
+    queryParams += "&X-Plex-Token=" + token;
+
+    // Step 1: Call the /decision endpoint first (required by Plex to set up transcode session)
+    const char* transcodeType = isAudio ? "music" : "video";
+    std::string decisionUrl = serverUrl + "/" + transcodeType + "/:/transcode/universal/decision?" + queryParams;
+
+    brls::Logger::info("DownloadsManager: Calling decision endpoint for {}", item.title);
+    {
+        HttpClient decisionClient;
+        HttpRequest decisionReq;
+        decisionReq.url = decisionUrl;
+        decisionReq.method = "GET";
+        decisionReq.headers["Accept"] = "application/json";
+        decisionReq.headers["X-Plex-Client-Identifier"] = "VitaPlex";
+        decisionReq.headers["X-Plex-Product"] = "VitaPlex";
+        decisionReq.headers["X-Plex-Version"] = "1.0.0";
+        decisionReq.headers["X-Plex-Platform"] = "PlayStation Vita";
+        decisionReq.headers["X-Plex-Device"] = "PS Vita";
+        decisionReq.headers["X-Plex-Device-Name"] = "PS Vita";
+        decisionReq.headers["X-Plex-Client-Profile-Name"] = "Generic";
+        decisionReq.headers["X-Plex-Client-Profile-Extra"] = profileExtra;
+        decisionReq.timeout = 30;
+        HttpResponse decisionResp = decisionClient.request(decisionReq);
+
+        brls::Logger::info("DownloadsManager: Decision response: {} ({})",
+                          decisionResp.statusCode, decisionResp.body.substr(0, 300));
+
+        if (decisionResp.statusCode != 200) {
+            brls::Logger::warning("DownloadsManager: Decision returned {}, trying start anyway",
+                                 decisionResp.statusCode);
+        }
+    }
+
+    // Step 2: Build the /start URL for downloading
+    // Include X-Plex-* as query params for the download request
+    std::string startQuery = queryParams;
+    startQuery += "&X-Plex-Client-Identifier=VitaPlex";
+    startQuery += "&X-Plex-Product=VitaPlex";
+    startQuery += "&X-Plex-Version=1.0.0";
+    startQuery += "&X-Plex-Platform=PlayStation%20Vita";
+    startQuery += "&X-Plex-Device=PS%20Vita";
+    startQuery += "&X-Plex-Device-Name=PS%20Vita";
+    startQuery += "&X-Plex-Client-Profile-Name=Generic";
+    startQuery += "&X-Plex-Client-Profile-Extra=" + HttpClient::urlEncode(profileExtra);
+
+    const char* container = isAudio ? "mp3" : "mp4";
+    char startPathBuf[128];
+    snprintf(startPathBuf, sizeof(startPathBuf), "/%s/:/transcode/universal/start.%s?", transcodeType, container);
+    std::string url = serverUrl + startPathBuf + startQuery;
 
     brls::Logger::debug("DownloadsManager: Downloading from {}", url);
 
@@ -681,6 +738,11 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     } else if (success && m_downloading.load()) {
         item.state = DownloadState::COMPLETED;
         brls::Logger::info("DownloadsManager: Completed download of {}", item.title);
+
+        // Download cover art for music tracks
+        if (!item.thumbUrl.empty() && !item.thumbPath.empty()) {
+            downloadCoverArt(item);
+        }
     } else if (!m_downloading.load()) {
         item.state = DownloadState::PAUSED;
         brls::Logger::info("DownloadsManager: Paused download of {}", item.title);
@@ -696,6 +758,69 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     }
 
     saveState();
+}
+
+void DownloadsManager::downloadCoverArt(DownloadItem& item) {
+    PlexClient& client = PlexClient::getInstance();
+    std::string serverUrl = client.getServerUrl();
+    std::string token = client.getAuthToken();
+
+    if (serverUrl.empty() || token.empty() || item.thumbUrl.empty()) return;
+
+    // Build the thumbnail URL using Plex's photo transcoder for a reasonable size
+    std::string thumbDownloadUrl = serverUrl + "/photo/:/transcode?url="
+        + HttpClient::urlEncode(item.thumbUrl)
+        + "&width=400&height=400&minSize=1"
+        + "&X-Plex-Token=" + token;
+
+    brls::Logger::info("DownloadsManager: Downloading cover art for {}", item.title);
+
+    // Open file for writing
+#ifdef __vita__
+    SceUID fd = sceIoOpen(item.thumbPath.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+    if (fd < 0) {
+        brls::Logger::warning("DownloadsManager: Failed to create cover art file");
+        return;
+    }
+#else
+    std::ofstream file(item.thumbPath, std::ios::binary);
+    if (!file.is_open()) {
+        brls::Logger::warning("DownloadsManager: Failed to create cover art file");
+        return;
+    }
+#endif
+
+    HttpClient http;
+    bool success = http.downloadFile(thumbDownloadUrl,
+        [&](const char* data, size_t size) {
+#ifdef __vita__
+            sceIoWrite(fd, data, size);
+#else
+            file.write(data, size);
+#endif
+            return true;
+        },
+        [](int64_t) {}
+    );
+
+#ifdef __vita__
+    sceIoClose(fd);
+#else
+    file.close();
+#endif
+
+    if (success) {
+        brls::Logger::info("DownloadsManager: Cover art saved for {}", item.title);
+    } else {
+        brls::Logger::warning("DownloadsManager: Failed to download cover art for {}", item.title);
+        // Clean up failed file
+#ifdef __vita__
+        sceIoRemove(item.thumbPath.c_str());
+#else
+        std::remove(item.thumbPath.c_str());
+#endif
+        item.thumbPath.clear();
+    }
 }
 
 bool DownloadsManager::reportTimeline(const DownloadItem& item, const std::string& state) {
@@ -792,6 +917,8 @@ void DownloadsManager::saveStateUnlocked() {
            << "\"parentTitle\":\"" << escapeJson(item.parentTitle) << "\",\n"
            << "\"seasonNum\":" << item.seasonNum << ",\n"
            << "\"episodeNum\":" << item.episodeNum << ",\n"
+           << "\"thumbUrl\":\"" << escapeJson(item.thumbUrl) << "\",\n"
+           << "\"thumbPath\":\"" << escapeJson(item.thumbPath) << "\",\n"
            << "\"lastSynced\":" << item.lastSynced << "\n"
            << "}";
     }
@@ -887,6 +1014,8 @@ void DownloadsManager::loadState() {
         item.parentTitle = extractJsonString(objStr, "parentTitle");
         item.seasonNum = static_cast<int>(extractJsonInt(objStr, "seasonNum"));
         item.episodeNum = static_cast<int>(extractJsonInt(objStr, "episodeNum"));
+        item.thumbUrl = extractJsonString(objStr, "thumbUrl");
+        item.thumbPath = extractJsonString(objStr, "thumbPath");
         item.lastSynced = static_cast<time_t>(extractJsonInt(objStr, "lastSynced"));
 
         if (!item.ratingKey.empty()) {

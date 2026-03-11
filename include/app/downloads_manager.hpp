@@ -41,7 +41,8 @@ struct DownloadItem {
     std::string title;          // Display title
     std::string partPath;       // Path to media file on server
     std::string localPath;      // Local storage path
-    std::string thumbUrl;       // Thumbnail URL
+    std::string thumbUrl;       // Thumbnail URL (Plex path, e.g. /library/metadata/.../thumb)
+    std::string thumbPath;      // Local path to downloaded cover art
     int64_t totalBytes = 0;     // Total file size
     int64_t downloadedBytes = 0; // Downloaded so far
     int64_t duration = 0;       // Media duration in ms
@@ -69,7 +70,8 @@ public:
                        const std::string& partPath, int64_t duration,
                        const std::string& mediaType = "movie",
                        const std::string& parentTitle = "",
-                       int seasonNum = 0, int episodeNum = 0);
+                       int seasonNum = 0, int episodeNum = 0,
+                       const std::string& thumbUrl = "");
 
     // Start downloading queued items
     void startDownloads();
@@ -146,6 +148,9 @@ private:
 
     // Download a single item (runs in background)
     void downloadItem(DownloadItem& item);
+
+    // Download cover art for a music track
+    void downloadCoverArt(DownloadItem& item);
 
     // Report timeline to server
     bool reportTimeline(const DownloadItem& item, const std::string& state);
