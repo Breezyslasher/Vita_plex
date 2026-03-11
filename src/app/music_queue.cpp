@@ -73,9 +73,16 @@ void MusicQueue::insertTrackAfterCurrent(const MediaItem& item) {
         m_queue[i].index = i;
     }
 
-    // Regenerate shuffle order if shuffling
+    // Update shuffle order incrementally: bump indices >= insertPos, then insert
+    // the new track right after the current shuffle position (play next behavior)
     if (m_shuffleEnabled) {
-        generateShuffleOrder();
+        for (auto& idx : m_shuffleOrder) {
+            if (idx >= insertPos) idx++;
+        }
+        // Insert right after current shuffle position so it plays next
+        int shuffleInsert = m_shufflePosition + 1;
+        if (shuffleInsert > (int)m_shuffleOrder.size()) shuffleInsert = (int)m_shuffleOrder.size();
+        m_shuffleOrder.insert(m_shuffleOrder.begin() + shuffleInsert, insertPos);
     }
 
     notifyQueueChanged();
@@ -88,9 +95,20 @@ void MusicQueue::addTracks(const std::vector<MediaItem>& items) {
         m_queue.push_back(mediaItemToQueueItem(items[i], startIndex + (int)i));
     }
 
-    // Regenerate shuffle order if shuffling
+    // Append new tracks at random positions in the remaining shuffle order
+    // instead of regenerating the entire order (O(new) instead of O(total))
     if (m_shuffleEnabled && !m_queue.empty()) {
-        generateShuffleOrder();
+        int remaining = (int)m_shuffleOrder.size() - m_shufflePosition - 1;
+        for (size_t i = 0; i < items.size(); i++) {
+            int newIdx = startIndex + (int)i;
+            // Insert at random position after current shuffle position
+            int insertPos = m_shufflePosition + 1;
+            if (remaining > 0) {
+                insertPos += m_rng() % (remaining + 1);
+            }
+            m_shuffleOrder.insert(m_shuffleOrder.begin() + insertPos, newIdx);
+            remaining++;
+        }
     }
 
     notifyQueueChanged();
@@ -113,9 +131,26 @@ void MusicQueue::removeTrack(int index) {
         m_currentIndex--;
     }
 
-    // Regenerate shuffle order
+    // Update shuffle order incrementally: remove the entry and adjust indices
     if (m_shuffleEnabled) {
-        generateShuffleOrder();
+        // Find and remove the deleted index from shuffle order
+        for (auto it = m_shuffleOrder.begin(); it != m_shuffleOrder.end(); ++it) {
+            if (*it == index) {
+                int pos = (int)(it - m_shuffleOrder.begin());
+                m_shuffleOrder.erase(it);
+                // Adjust shuffle position if the removed entry was before it
+                if (pos < m_shufflePosition) {
+                    m_shufflePosition--;
+                } else if (pos == m_shufflePosition && m_shufflePosition >= (int)m_shuffleOrder.size()) {
+                    m_shufflePosition = (int)m_shuffleOrder.size() - 1;
+                }
+                break;
+            }
+        }
+        // Decrement all indices > removed index
+        for (auto& idx : m_shuffleOrder) {
+            if (idx > index) idx--;
+        }
     }
 
     notifyQueueChanged();

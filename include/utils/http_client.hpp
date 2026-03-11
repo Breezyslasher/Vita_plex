@@ -78,7 +78,8 @@ public:
     // sizeCallback: called with total file size when known
     using WriteCallback = std::function<bool(const char* data, size_t size)>;
     using SizeCallback = std::function<void(int64_t totalSize)>;
-    bool downloadFile(const std::string& url, WriteCallback writeCallback, SizeCallback sizeCallback = nullptr);
+    bool downloadFile(const std::string& url, WriteCallback writeCallback, SizeCallback sizeCallback = nullptr,
+                      const std::map<std::string, std::string>& headers = {});
 
     // URL encoding
     static std::string urlEncode(const std::string& str);

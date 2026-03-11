@@ -196,6 +196,8 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
         }
     } else if (req.method == "DELETE") {
         curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
+    } else if (req.method == "HEAD") {
+        curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
     }
 
     // Perform request
@@ -388,7 +390,8 @@ static size_t downloadHeaderCallback(void* contents, size_t size, size_t nmemb, 
     return totalSize;
 }
 
-bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallback, SizeCallback sizeCallback) {
+bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallback, SizeCallback sizeCallback,
+                              const std::map<std::string, std::string>& headers) {
     if (!m_curl) {
         brls::Logger::error("CURL not initialized for download");
         return false;
@@ -447,26 +450,54 @@ bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallbac
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, downloadHeaderCallback);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &callbackData);
 
-    // Low speed limit - abort if < 100 bytes/s for 60 seconds
-    // Transcoding can have slow starts while the server processes the media
+    // Low speed limit - abort if < 100 bytes/s for 120 seconds
+    // Transcoding can have very slow starts while the server processes the media,
+    // especially for video where the server needs to decode and re-encode
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 100L);
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 120L);
+
+    // Set custom headers (e.g. Plex identification headers required by transcode API)
+    struct curl_slist* headerList = nullptr;
+    for (const auto& h : headers) {
+        std::string header = h.first + ": " + h.second;
+        headerList = curl_slist_append(headerList, header.c_str());
+    }
+    if (headerList) {
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headerList);
+    }
 
     brls::Logger::info("HttpClient: Starting download from {}", url);
 
     // Perform download
     CURLcode res = curl_easy_perform(curl);
 
+    if (headerList) {
+        curl_slist_free_all(headerList);
+    }
+
     if (callbackData.cancelled) {
         brls::Logger::info("HttpClient: Download cancelled by user");
         return false;
     }
 
-    if (res == CURLE_OK) {
+    if (res == CURLE_OK || res == CURLE_PARTIAL_FILE) {
         long httpCode;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
 
         if (httpCode >= 200 && httpCode < 300) {
+            // For streaming transcodes, CURLE_PARTIAL_FILE is expected because the
+            // server uses chunked transfer encoding and may not send Content-Length.
+            // Accept as success if we actually received data.
+            if (res == CURLE_PARTIAL_FILE) {
+                double downloaded = 0;
+                curl_easy_getinfo(curl, CURLINFO_SIZE_DOWNLOAD, &downloaded);
+                if (downloaded > 0) {
+                    brls::Logger::info("HttpClient: Download completed (partial file, {:.0f} bytes received)", downloaded);
+                    return true;
+                }
+                brls::Logger::error("HttpClient: Partial file with no data received");
+                return false;
+            }
             brls::Logger::info("HttpClient: Download completed successfully");
             return true;
         } else {
