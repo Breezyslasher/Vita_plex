@@ -929,6 +929,7 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
 
     bool isAudio = (item.mediaType == "track");
     std::string url;
+    std::string profileExtra;
     bool urlReady = false;
 
     if (isAudio) {
@@ -954,7 +955,6 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         // Build transcode URL for Vita-compatible format
         std::string metadataPath = "/library/metadata/" + item.ratingKey;
         std::string encodedPath = HttpClient::urlEncode(metadataPath);
-        std::string profileExtra;
 
         // Build query parameters (shared between decision and start endpoints)
         std::string queryParams;
@@ -1083,6 +1083,10 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     dlHeaders["X-Plex-Device"] = "PS Vita";
     dlHeaders["X-Plex-Device-Name"] = "PS Vita";
     dlHeaders["X-Plex-Token"] = token;
+    if (!profileExtra.empty()) {
+        dlHeaders["X-Plex-Client-Profile-Name"] = "Generic";
+        dlHeaders["X-Plex-Client-Profile-Extra"] = profileExtra;
+    }
 
     // Download with progress tracking
     HttpClient http;
