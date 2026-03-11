@@ -35,93 +35,165 @@ void RecyclingGrid::setOnItemStartAction(std::function<void(const MediaItem&)> c
     m_onItemStartAction = callback;
 }
 
+void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size_t index) {
+    if (itemsInRow == 0) {
+        currentRow = new brls::Box();
+        currentRow->setAxis(brls::Axis::ROW);
+        currentRow->setJustifyContent(brls::JustifyContent::FLEX_START);
+        currentRow->setMarginBottom(10);
+        // Insert before "Load More" button if it exists, otherwise at end
+        if (m_loadMoreBtn) {
+            size_t btnIdx = 0;
+            auto& children = m_contentBox->getChildren();
+            for (size_t c = 0; c < children.size(); c++) {
+                if (children[c] == m_loadMoreBtn) {
+                    btnIdx = c;
+                    break;
+                }
+            }
+            m_contentBox->addView(currentRow, btnIdx);
+        } else {
+            m_contentBox->addView(currentRow);
+        }
+    }
+
+    auto* cell = new MediaItemCell();
+    cell->setItem(m_items[index]);
+    cell->setMarginRight(10);
+
+    int idx = (int)index;
+    cell->registerClickAction([this, idx](brls::View* view) {
+        onItemClicked(idx);
+        return true;
+    });
+    cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+
+    // Register START button action for album items
+    if (m_items[index].mediaType == MediaType::MUSIC_ALBUM && m_onItemStartAction) {
+        MediaItem capturedItem = m_items[index];
+        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+            [this, capturedItem](brls::View* view) {
+                if (m_onItemStartAction) {
+                    m_onItemStartAction(capturedItem);
+                }
+                return true;
+            });
+    }
+
+    // Register START button action for movies
+    if (m_items[index].mediaType == MediaType::MOVIE) {
+        MediaItem capturedItem = m_items[index];
+        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+            [capturedItem](brls::View* view) {
+                MediaDetailView::showMovieContextMenuStatic(capturedItem);
+                return true;
+            });
+    }
+
+    // Register START button action for TV shows
+    if (m_items[index].mediaType == MediaType::SHOW) {
+        MediaItem capturedItem = m_items[index];
+        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+            [capturedItem](brls::View* view) {
+                MediaDetailView::showShowContextMenuStatic(capturedItem);
+                return true;
+            });
+    }
+
+    // Register START button action for seasons
+    if (m_items[index].mediaType == MediaType::SEASON) {
+        MediaItem capturedItem = m_items[index];
+        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+            [capturedItem](brls::View* view) {
+                MediaDetailView::showSeasonContextMenuStatic(capturedItem);
+                return true;
+            });
+    }
+
+    // Register START button action for artists
+    if (m_items[index].mediaType == MediaType::MUSIC_ARTIST) {
+        MediaItem capturedItem = m_items[index];
+        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+            [capturedItem](brls::View* view) {
+                MediaDetailView::showArtistContextMenuStatic(capturedItem);
+                return true;
+            });
+    }
+
+    // Register START button action for playlists
+    if (m_items[index].type == "playlist" && m_onItemStartAction) {
+        MediaItem capturedItem = m_items[index];
+        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+            [this, capturedItem](brls::View* view) {
+                if (m_onItemStartAction) {
+                    m_onItemStartAction(capturedItem);
+                }
+                return true;
+            });
+    }
+
+    currentRow->addView(cell);
+
+    itemsInRow++;
+    if (itemsInRow >= m_columns) {
+        itemsInRow = 0;
+    }
+}
+
 void RecyclingGrid::rebuildGrid() {
     m_contentBox->clearViews();
+    m_loadMoreBtn = nullptr;
+    m_renderedCount = 0;
 
     if (m_items.empty()) return;
 
-    // Create rows
+    appendPage();
+}
+
+void RecyclingGrid::appendPage() {
+    size_t end = std::min(m_renderedCount + PAGE_SIZE, m_items.size());
+
+    // Remove existing "Load More" button before adding new rows
+    if (m_loadMoreBtn) {
+        m_contentBox->removeView(m_loadMoreBtn);
+        m_loadMoreBtn = nullptr;
+    }
+
     brls::Box* currentRow = nullptr;
-    int itemsInRow = 0;
+    // If we have items already, check if the last row is incomplete
+    int itemsInRow = (int)(m_renderedCount % m_columns);
+    if (itemsInRow > 0 && m_contentBox->getChildren().size() > 0) {
+        // Get the last row to continue filling it
+        auto& children = m_contentBox->getChildren();
+        currentRow = dynamic_cast<brls::Box*>(children.back());
+        if (!currentRow) itemsInRow = 0;
+    } else {
+        itemsInRow = 0;
+    }
 
-    for (size_t i = 0; i < m_items.size(); i++) {
-        if (itemsInRow == 0) {
-            currentRow = new brls::Box();
-            currentRow->setAxis(brls::Axis::ROW);
-            currentRow->setJustifyContent(brls::JustifyContent::FLEX_START);
-            currentRow->setMarginBottom(10);
-            m_contentBox->addView(currentRow);
-        }
+    for (size_t i = m_renderedCount; i < end; i++) {
+        addCellForItem(currentRow, itemsInRow, i);
+    }
 
-        auto* cell = new MediaItemCell();
-        cell->setItem(m_items[i]);
-        cell->setMarginRight(10);
+    m_renderedCount = end;
 
-        int index = (int)i;
-        cell->registerClickAction([this, index](brls::View* view) {
-            onItemClicked(index);
+    // Add "Load More" button if there are remaining items
+    if (m_renderedCount < m_items.size()) {
+        size_t remaining = m_items.size() - m_renderedCount;
+        m_loadMoreBtn = new brls::Button();
+        auto* label = new brls::Label();
+        label->setText("Load More (" + std::to_string(remaining) + " remaining)");
+        label->setFontSize(16);
+        label->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+        m_loadMoreBtn->addView(label);
+        m_loadMoreBtn->setMarginTop(10);
+        m_loadMoreBtn->setHeight(44);
+        m_loadMoreBtn->registerClickAction([this](brls::View*) {
+            appendPage();
             return true;
         });
-        cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
-
-        // Register START button action for album items
-        if (m_items[i].mediaType == MediaType::MUSIC_ALBUM && m_onItemStartAction) {
-            MediaItem capturedItem = m_items[i];
-            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-                [this, capturedItem](brls::View* view) {
-                    if (m_onItemStartAction) {
-                        m_onItemStartAction(capturedItem);
-                    }
-                    return true;
-                });
-        }
-
-        // Register START button action for movies
-        if (m_items[i].mediaType == MediaType::MOVIE) {
-            MediaItem capturedItem = m_items[i];
-            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-                [capturedItem](brls::View* view) {
-                    MediaDetailView::showMovieContextMenuStatic(capturedItem);
-                    return true;
-                });
-        }
-
-        // Register START button action for TV shows
-        if (m_items[i].mediaType == MediaType::SHOW) {
-            MediaItem capturedItem = m_items[i];
-            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-                [capturedItem](brls::View* view) {
-                    MediaDetailView::showShowContextMenuStatic(capturedItem);
-                    return true;
-                });
-        }
-
-        // Register START button action for seasons
-        if (m_items[i].mediaType == MediaType::SEASON) {
-            MediaItem capturedItem = m_items[i];
-            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-                [capturedItem](brls::View* view) {
-                    MediaDetailView::showSeasonContextMenuStatic(capturedItem);
-                    return true;
-                });
-        }
-
-        // Register START button action for artists
-        if (m_items[i].mediaType == MediaType::MUSIC_ARTIST) {
-            MediaItem capturedItem = m_items[i];
-            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-                [capturedItem](brls::View* view) {
-                    MediaDetailView::showArtistContextMenuStatic(capturedItem);
-                    return true;
-                });
-        }
-
-        currentRow->addView(cell);
-
-        itemsInRow++;
-        if (itemsInRow >= m_columns) {
-            itemsInRow = 0;
-        }
+        m_loadMoreBtn->addGestureRecognizer(new brls::TapGestureRecognizer(m_loadMoreBtn));
+        m_contentBox->addView(m_loadMoreBtn);
     }
 }
 

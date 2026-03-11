@@ -5,6 +5,7 @@
 #include "activity/login_activity.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
+#include "app/downloads_manager.hpp"
 #include "view/progress_dialog.hpp"
 #include "utils/async.hpp"
 
@@ -89,6 +90,15 @@ void LoginActivity::onContentAvailable() {
         pinButton->setText("Login with PIN (plex.tv/link)");
         pinButton->registerClickAction([this](brls::View* view) {
             onPinLoginPressed();
+            return true;
+        });
+    }
+
+    // Offline mode button
+    if (offlineButton) {
+        offlineButton->setText("Offline Mode");
+        offlineButton->registerClickAction([this](brls::View* view) {
+            onOfflinePressed();
             return true;
         });
     }
@@ -198,6 +208,30 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
             });
         });
     });
+}
+
+void LoginActivity::onOfflinePressed() {
+    // Initialize downloads manager to load saved downloads
+    DownloadsManager::getInstance().init();
+
+    auto downloads = DownloadsManager::getInstance().getDownloads();
+    bool hasDownloads = false;
+    for (const auto& d : downloads) {
+        if (d.state == DownloadState::COMPLETED) {
+            hasDownloads = true;
+            break;
+        }
+    }
+
+    if (!hasDownloads) {
+        if (statusLabel) statusLabel->setText("No downloaded content available for offline use");
+        return;
+    }
+
+    if (statusLabel) statusLabel->setText("Entering offline mode...");
+
+    // Push main activity in offline mode - downloads tab will show available content
+    Application::getInstance().pushMainActivity();
 }
 
 void LoginActivity::onLoginPressed() {

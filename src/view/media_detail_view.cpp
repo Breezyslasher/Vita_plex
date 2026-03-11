@@ -127,11 +127,36 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             m_item.mediaType == MediaType::MUSIC_TRACK) {
             m_downloadButton = new brls::Button();
 
-            // Check if already downloaded
-            if (DownloadsManager::getInstance().isDownloaded(m_item.ratingKey)) {
-                m_downloadButton->setText("Downloaded");
-            } else {
-                m_downloadButton->setText("Download");
+            // Check current download state
+            {
+                DownloadItem dlCheck;
+                if (DownloadsManager::getInstance().getDownloadCopy(m_item.ratingKey, dlCheck)) {
+                    switch (dlCheck.state) {
+                        case DownloadState::COMPLETED:
+                            m_downloadButton->setText("Downloaded");
+                            break;
+                        case DownloadState::TRANSCODING:
+                            m_downloadButton->setText("Transcoding...");
+                            break;
+                        case DownloadState::DOWNLOADING:
+                            m_downloadButton->setText("Downloading...");
+                            break;
+                        case DownloadState::QUEUED:
+                            m_downloadButton->setText("Queued");
+                            break;
+                        case DownloadState::PAUSED:
+                            m_downloadButton->setText("Paused");
+                            break;
+                        case DownloadState::FAILED:
+                            m_downloadButton->setText("Retry Download");
+                            break;
+                        default:
+                            m_downloadButton->setText("Download");
+                            break;
+                    }
+                } else {
+                    m_downloadButton->setText("Download");
+                }
             }
 
             m_downloadButton->setWidth(200);
@@ -387,8 +412,28 @@ void MediaDetailView::loadDetails() {
 
                 // Update download button state now that we have the part path
                 if (m_downloadButton && !m_item.partPath.empty()) {
-                    if (DownloadsManager::getInstance().isDownloaded(m_item.ratingKey)) {
-                        m_downloadButton->setText("Downloaded");
+                    DownloadItem dlCheck;
+                    if (DownloadsManager::getInstance().getDownloadCopy(m_item.ratingKey, dlCheck)) {
+                        switch (dlCheck.state) {
+                            case DownloadState::COMPLETED:
+                                m_downloadButton->setText("Downloaded");
+                                break;
+                            case DownloadState::DOWNLOADING:
+                                m_downloadButton->setText("Downloading...");
+                                break;
+                            case DownloadState::QUEUED:
+                                m_downloadButton->setText("Queued");
+                                break;
+                            case DownloadState::PAUSED:
+                                m_downloadButton->setText("Paused");
+                                break;
+                            case DownloadState::FAILED:
+                                m_downloadButton->setText("Retry Download");
+                                break;
+                            default:
+                                m_downloadButton->setText("Download");
+                                break;
+                        }
                     } else {
                         m_downloadButton->setText("Download");
                     }
@@ -655,7 +700,11 @@ void MediaDetailView::onPlay(bool resume) {
         m_item.mediaType == MediaType::EPISODE ||
         m_item.mediaType == MediaType::MUSIC_TRACK) {
 
-        Application::getInstance().pushPlayerActivity(m_item.ratingKey);
+        // Check if this item is downloaded locally - play from local file if available
+        DownloadItem dlItem;
+        bool isLocal = DownloadsManager::getInstance().getDownloadCopy(m_item.ratingKey, dlItem)
+                       && dlItem.state == DownloadState::COMPLETED;
+        Application::getInstance().pushPlayerActivity(m_item.ratingKey, isLocal);
     }
     // For shows/seasons/albums, play the first child item
     else if (m_item.mediaType == MediaType::SHOW ||
@@ -695,10 +744,34 @@ void MediaDetailView::onPlay(bool resume) {
 }
 
 void MediaDetailView::onDownload() {
-    // Check if already downloaded
-    if (DownloadsManager::getInstance().isDownloaded(m_item.ratingKey)) {
-        brls::Application::notify("Already downloaded");
-        return;
+    // Check if already in download queue
+    DownloadItem existingDl;
+    if (DownloadsManager::getInstance().getDownloadCopy(m_item.ratingKey, existingDl)) {
+        switch (existingDl.state) {
+            case DownloadState::COMPLETED:
+                brls::Application::notify("Already downloaded");
+                return;
+            case DownloadState::DOWNLOADING:
+                brls::Application::notify("Already downloading");
+                return;
+            case DownloadState::QUEUED:
+                brls::Application::notify("Already queued for download");
+                return;
+            case DownloadState::PAUSED:
+                // Resume paused downloads
+                brls::Application::notify("Resuming download...");
+                DownloadsManager::getInstance().resumeIncompleteDownloads();
+                DownloadsManager::getInstance().startDownloads();
+                if (m_downloadButton) m_downloadButton->setText("Downloading...");
+                return;
+            case DownloadState::FAILED:
+                // Allow retry - fall through to re-queue
+                brls::Logger::info("Retrying failed download: {}", m_item.title);
+                DownloadsManager::getInstance().deleteDownload(m_item.ratingKey);
+                break;
+            default:
+                break;
+        }
     }
 
     // Check if we have the part path (need to fetch full details first)
@@ -740,7 +813,7 @@ void MediaDetailView::onDownload() {
         parentTitle = m_item.grandparentTitle;  // Artist name
     }
 
-    // Queue the download
+    // Queue the download (pass thumb for cover art on music tracks)
     bool queued = DownloadsManager::getInstance().queueDownload(
         m_item.ratingKey,
         m_item.title,
@@ -749,79 +822,20 @@ void MediaDetailView::onDownload() {
         mediaType,
         parentTitle,
         seasonNum,
-        episodeNum
+        episodeNum,
+        m_item.thumb
     );
 
     if (queued) {
         if (m_downloadButton) {
-            m_downloadButton->setText("Downloading...");
+            m_downloadButton->setText("Queued");
         }
 
-        // Show progress dialog
-        auto* progressDialog = new ProgressDialog("Downloading");
-        progressDialog->setStatus(m_item.title);
-        progressDialog->setProgress(0);
-        progressDialog->show();
+        // Just notify the user and add to queue - no progress dialog
+        brls::Application::notify("Added to download queue: " + m_item.title);
 
-        // Track the rating key to update button when done
-        std::string ratingKey = m_item.ratingKey;
-        std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
-
-        // Set progress callback with speed display
-        DownloadsManager::getInstance().setProgressCallback(
-            [progressDialog](int64_t downloaded, int64_t total) {
-                brls::sync([progressDialog, downloaded, total]() {
-                    progressDialog->updateDownloadProgress(downloaded, total);
-                });
-            }
-        );
-
-        // Allow dismissing dialog - download continues in background
-        progressDialog->setCancelCallback([progressDialog]() {
-            brls::Application::notify("Download continues in background");
-            // Clear callback to avoid updating dismissed dialog
-            DownloadsManager::getInstance().setProgressCallback(nullptr);
-        });
-
-        // Start downloading
+        // Start downloading in background
         DownloadsManager::getInstance().startDownloads();
-
-        // Monitor for completion - use weak_ptr to avoid use-after-free on view destruction
-        asyncRun([progressDialog, aliveWeak, ratingKey]() {
-            while (true) {
-                auto* item = DownloadsManager::getInstance().getDownload(ratingKey);
-                if (!item) break;
-
-                if (item->state == DownloadState::COMPLETED) {
-                    brls::sync([progressDialog, aliveWeak]() {
-                        progressDialog->setStatus("Download complete!");
-                        progressDialog->setProgress(1.0f);
-                        brls::delay(1500, [progressDialog]() {
-                            progressDialog->dismiss();
-                        });
-                    });
-                    break;
-                } else if (item->state == DownloadState::FAILED) {
-                    brls::sync([progressDialog, aliveWeak]() {
-                        progressDialog->setStatus("Download failed");
-                        brls::delay(2000, [progressDialog]() {
-                            progressDialog->dismiss();
-                        });
-                    });
-                    break;
-                }
-
-                // Sleep briefly before checking again
-#ifdef __vita__
-                sceKernelDelayThread(500 * 1000);  // 500ms
-#else
-                std::this_thread::sleep_for(std::chrono::milliseconds(500));
-#endif
-            }
-
-            // Clear progress callback
-            DownloadsManager::getInstance().setProgressCallback(nullptr);
-        });
     } else {
         brls::Application::notify("Failed to queue download");
     }
@@ -1241,7 +1255,8 @@ void MediaDetailView::loadTrackList() {
                                 bool queued = DownloadsManager::getInstance().queueDownload(
                                     fullItem.ratingKey, fullItem.title, fullItem.partPath,
                                     fullItem.duration, "track",
-                                    fullItem.grandparentTitle, 0, fullItem.index);
+                                    fullItem.grandparentTitle, 0, fullItem.index,
+                                    fullItem.thumb);
                                 brls::sync([queued, fullItem]() {
                                     if (queued) {
                                         DownloadsManager::getInstance().startDownloads();
@@ -1386,6 +1401,80 @@ void MediaDetailView::showTrackActionDialog(const MediaItem& track, size_t track
         return true;
     });
 
+    addDialogButton("Add to Playlist", [this, capturedTrack, dialog](brls::View*) {
+        dialog->dismiss();
+        asyncRun([this, capturedTrack]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<Playlist> playlists;
+            client.fetchMusicPlaylists(playlists);
+
+            brls::sync([this, playlists, capturedTrack]() {
+                auto alive = m_alive;
+                if (!alive || !alive->load()) return;
+
+                auto* plDialog = new brls::Dialog("Add to Playlist");
+                auto* plBox = new brls::Box();
+                plBox->setAxis(brls::Axis::COLUMN);
+                plBox->setPadding(20);
+
+                auto addBtn = [&plBox](const std::string& text, std::function<bool(brls::View*)> action) {
+                    auto* btn = new brls::Button();
+                    btn->setText(text);
+                    btn->setHeight(44);
+                    btn->setMarginBottom(10);
+                    btn->registerClickAction(action);
+                    btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+                    plBox->addView(btn);
+                };
+
+                addBtn("+ New Playlist", [plDialog, capturedTrack](brls::View*) {
+                    plDialog->dismiss();
+                    brls::Application::getImeManager()->openForText([capturedTrack](std::string name) {
+                        if (name.empty()) return;
+                        asyncRun([name, capturedTrack]() {
+                            PlexClient& client = PlexClient::getInstance();
+                            std::vector<std::string> keys = {capturedTrack.ratingKey};
+                            Playlist result;
+                            if (client.createPlaylistWithItems(name, keys, result)) {
+                                brls::sync([name]() {
+                                    brls::Application::notify("Created playlist: " + name);
+                                });
+                            }
+                        });
+                    }, "New Playlist", "Enter playlist name", 128, "");
+                    return true;
+                });
+
+                for (const auto& pl : playlists) {
+                    if (pl.smart) continue;
+                    Playlist capturedPl = pl;
+                    addBtn(pl.title, [plDialog, capturedPl, capturedTrack](brls::View*) {
+                        plDialog->dismiss();
+                        asyncRun([capturedPl, capturedTrack]() {
+                            PlexClient& client = PlexClient::getInstance();
+                            std::vector<std::string> keys = {capturedTrack.ratingKey};
+                            if (client.addToPlaylist(capturedPl.ratingKey, keys)) {
+                                brls::sync([capturedPl]() {
+                                    brls::Application::notify("Added to " + capturedPl.title);
+                                });
+                            }
+                        });
+                        return true;
+                    });
+                }
+
+                addBtn("Cancel", [plDialog](brls::View*) {
+                    plDialog->dismiss();
+                    return true;
+                });
+
+                plDialog->addView(plBox);
+                brls::Application::pushActivity(new brls::Activity(plDialog));
+            });
+        });
+        return true;
+    });
+
     addDialogButton("Cancel", [dialog](brls::View*) {
         dialog->dismiss();
         return true;
@@ -1471,6 +1560,106 @@ void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
                     }
                 });
             }
+        });
+        return true;
+    });
+
+    addDialogButton("Add to Playlist", [this, capturedAlbum, dialog](brls::View*) {
+        dialog->dismiss();
+        // Fetch audio playlists and let user pick one
+        asyncRun([this, capturedAlbum]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<Playlist> playlists;
+            client.fetchMusicPlaylists(playlists);
+
+            // Also fetch album tracks to get their ratingKeys
+            std::vector<MediaItem> tracks;
+            client.fetchChildren(capturedAlbum.ratingKey, tracks);
+
+            brls::sync([this, playlists, tracks, capturedAlbum]() {
+                auto alive = m_alive;
+                if (!alive || !alive->load()) return;
+
+                if (tracks.empty()) {
+                    brls::Application::notify("No tracks found");
+                    return;
+                }
+
+                auto* plDialog = new brls::Dialog("Add to Playlist");
+                auto* plBox = new brls::Box();
+                plBox->setAxis(brls::Axis::COLUMN);
+                plBox->setPadding(20);
+
+                auto addBtn = [&plBox](const std::string& text, std::function<bool(brls::View*)> action) {
+                    auto* btn = new brls::Button();
+                    btn->setText(text);
+                    btn->setHeight(44);
+                    btn->setMarginBottom(10);
+                    btn->registerClickAction(action);
+                    btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+                    plBox->addView(btn);
+                };
+
+                // Option to create new playlist with this album
+                addBtn("+ New Playlist", [plDialog, tracks](brls::View*) {
+                    plDialog->dismiss();
+                    brls::Application::getImeManager()->openForText([tracks](std::string name) {
+                        if (name.empty()) return;
+                        asyncRun([name, tracks]() {
+                            PlexClient& client = PlexClient::getInstance();
+                            std::vector<std::string> keys;
+                            for (const auto& t : tracks) {
+                                keys.push_back(t.ratingKey);
+                            }
+                            Playlist result;
+                            if (client.createPlaylistWithItems(name, keys, result)) {
+                                brls::sync([name]() {
+                                    brls::Application::notify("Created playlist: " + name);
+                                });
+                            } else {
+                                brls::sync([]() {
+                                    brls::Application::notify("Failed to create playlist");
+                                });
+                            }
+                        });
+                    }, "New Playlist", "Enter playlist name", 128, "");
+                    return true;
+                });
+
+                // Existing playlists
+                for (const auto& pl : playlists) {
+                    if (pl.smart) continue;  // Can't add to smart playlists
+                    Playlist capturedPl = pl;
+                    addBtn(pl.title, [plDialog, capturedPl, tracks](brls::View*) {
+                        plDialog->dismiss();
+                        asyncRun([capturedPl, tracks]() {
+                            PlexClient& client = PlexClient::getInstance();
+                            std::vector<std::string> keys;
+                            for (const auto& t : tracks) {
+                                keys.push_back(t.ratingKey);
+                            }
+                            if (client.addToPlaylist(capturedPl.ratingKey, keys)) {
+                                brls::sync([capturedPl]() {
+                                    brls::Application::notify("Added to " + capturedPl.title);
+                                });
+                            } else {
+                                brls::sync([]() {
+                                    brls::Application::notify("Failed to add to playlist");
+                                });
+                            }
+                        });
+                        return true;
+                    });
+                }
+
+                addBtn("Cancel", [plDialog](brls::View*) {
+                    plDialog->dismiss();
+                    return true;
+                });
+
+                plDialog->addView(plBox);
+                brls::Application::pushActivity(new brls::Activity(plDialog));
+            });
         });
         return true;
     });
@@ -2146,7 +2335,8 @@ void MediaDetailView::showArtistContextMenuStatic(const MediaItem& artist) {
                                 if (DownloadsManager::getInstance().queueDownload(
                                     fullItem.ratingKey, fullItem.title, fullItem.partPath,
                                     fullItem.duration, "track",
-                                    capturedArtist.title, 0, fullItem.index)) {
+                                    capturedArtist.title, 0, fullItem.index,
+                                    fullItem.thumb)) {
                                     queued++;
                                 }
                             }

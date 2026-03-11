@@ -98,7 +98,8 @@ void MediaItemCell::setItem(const MediaItem& item) {
     // Movies, TV shows use portrait posters
     bool isMusic = (item.mediaType == MediaType::MUSIC_ARTIST ||
                     item.mediaType == MediaType::MUSIC_ALBUM ||
-                    item.mediaType == MediaType::MUSIC_TRACK);
+                    item.mediaType == MediaType::MUSIC_TRACK ||
+                    item.type == "playlist");
     bool isEpisode = (item.mediaType == MediaType::EPISODE);
 
     if (isMusic) {
@@ -184,10 +185,11 @@ void MediaItemCell::loadThumbnail() {
 
     PlexClient& client = PlexClient::getInstance();
 
-    // Use square dimensions for music, landscape for episodes, portrait for movies/TV
+    // Use square dimensions for music/playlists, landscape for episodes, portrait for movies/TV
     bool isMusic = (m_item.mediaType == MediaType::MUSIC_ARTIST ||
                     m_item.mediaType == MediaType::MUSIC_ALBUM ||
-                    m_item.mediaType == MediaType::MUSIC_TRACK);
+                    m_item.mediaType == MediaType::MUSIC_TRACK ||
+                    m_item.type == "playlist");
     bool isEpisode = (m_item.mediaType == MediaType::EPISODE);
 
     int width, height;
@@ -391,6 +393,21 @@ void MediaItemCell::updateFocusInfo(bool focused) {
         } else {
             m_titleLabel->setText(m_originalTitle);
             m_descriptionLabel->setVisibility(brls::Visibility::GONE);
+            if (m_buttonHintBox) m_buttonHintBox->setVisibility(brls::Visibility::GONE);
+        }
+    } else if (m_item.type == "playlist") {
+        // Show full title and START button hint for playlists on focus
+        if (focused) {
+            m_titleLabel->setText(m_item.title);
+            if (m_buttonHintBox) {
+                if (m_buttonHintIcon) {
+                    m_buttonHintIcon->setImageFromRes("images/start_button.png");
+                }
+                if (m_buttonHintLabel) m_buttonHintLabel->setVisibility(brls::Visibility::GONE);
+                m_buttonHintBox->setVisibility(brls::Visibility::VISIBLE);
+            }
+        } else {
+            m_titleLabel->setText(m_originalTitle);
             if (m_buttonHintBox) m_buttonHintBox->setVisibility(brls::Visibility::GONE);
         }
     }

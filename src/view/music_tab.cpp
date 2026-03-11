@@ -7,6 +7,7 @@
 #include "view/media_detail_view.hpp"
 #include "app/application.hpp"
 #include "app/music_queue.hpp"
+#include "app/downloads_manager.hpp"
 #include "activity/player_activity.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
@@ -212,6 +213,7 @@ void MusicTab::loadSections() {
                         m_titleLabel->setText("Music - " + capturedSection.title);
                         loadContent(capturedSection.key);
                         loadCollections(capturedSection.key);
+                        loadPlaylists();
                         return true;
                     });
 
@@ -311,8 +313,8 @@ void MusicTab::loadPlaylists() {
                             return true;
                         });
 
-                        // Long press for options (delete, rename)
-                        btn->registerAction("Options", brls::ControllerButton::BUTTON_Y,
+                        // START button for context menu (Play All, Delete, etc.)
+                        btn->registerAction("Options", brls::ControllerButton::BUTTON_START,
                             [this, capturedPlaylist](brls::View* view) {
                                 showPlaylistOptionsDialog(capturedPlaylist);
                                 return true;
@@ -439,6 +441,12 @@ void MusicTab::onPlaylistSelected(const Playlist& playlist) {
                 m_currentPlaylistId = playlistId;
                 m_viewingPlaylist = true;
                 m_contentGrid->setDataSource(m_items);
+
+                // Transfer focus to the content grid so the playlist button
+                // doesn't keep its hover state
+                if (!m_items.empty()) {
+                    brls::Application::giveFocus(m_contentGrid);
+                }
             });
         } else {
             brls::Logger::error("MusicTab: Failed to load playlist content");
@@ -496,6 +504,12 @@ void MusicTab::onCollectionSelected(const MediaItem& collection) {
                 m_viewingPlaylist = false;
                 m_currentPlaylistId = "";
                 m_contentGrid->setDataSource(m_items);
+
+                // Transfer focus to the content grid so the collection button
+                // doesn't keep its hover state
+                if (!m_items.empty()) {
+                    brls::Application::giveFocus(m_contentGrid);
+                }
             });
         } else {
             brls::Logger::error("MusicTab: Failed to load collection content");
@@ -621,40 +635,110 @@ void MusicTab::showAlbumContextMenu(const MediaItem& album) {
 }
 
 void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
-    brls::Dialog* dialog = new brls::Dialog(playlist.title);
+    auto* dialog = new brls::Dialog(playlist.title);
 
-    auto* infoBox = new brls::Box();
-    infoBox->setAxis(brls::Axis::COLUMN);
-    infoBox->setPadding(20);
+    auto* optionsBox = new brls::Box();
+    optionsBox->setAxis(brls::Axis::COLUMN);
+    optionsBox->setPadding(20);
 
     auto* trackCount = new brls::Label();
     trackCount->setText("Tracks: " + std::to_string(playlist.leafCount));
     trackCount->setMarginBottom(10);
-    infoBox->addView(trackCount);
+    optionsBox->addView(trackCount);
 
     if (playlist.smart) {
         auto* smartLabel = new brls::Label();
         smartLabel->setText("(Smart Playlist - cannot be edited)");
         smartLabel->setFontSize(14);
         smartLabel->setTextColor(nvgRGBA(150, 150, 150, 255));
-        infoBox->addView(smartLabel);
+        smartLabel->setMarginBottom(10);
+        optionsBox->addView(smartLabel);
     }
 
-    dialog->addView(infoBox);
+    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
+        auto* btn = new brls::Button();
+        btn->setText(text);
+        btn->setHeight(44);
+        btn->setMarginBottom(10);
+        btn->registerClickAction(action);
+        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+        optionsBox->addView(btn);
+    };
 
-    // Play all button
-    std::string playlistId = playlist.ratingKey;
-    dialog->addButton("Play All", [this, playlistId]() {
-        playPlaylistWithQueue(playlistId, 0);
+    Playlist capturedPlaylist = playlist;
+
+    addDialogButton("Play All", [this, capturedPlaylist, dialog](brls::View*) {
+        dialog->dismiss();
+        playPlaylistWithQueue(capturedPlaylist.ratingKey, 0);
+        return true;
+    });
+
+    addDialogButton("Add to Queue", [capturedPlaylist, dialog](brls::View*) {
+        dialog->dismiss();
+        std::string playlistId = capturedPlaylist.ratingKey;
+        asyncRun([playlistId]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<PlaylistItem> items;
+            if (client.fetchPlaylistItems(playlistId, items) && !items.empty()) {
+                std::vector<MediaItem> tracks;
+                for (const auto& item : items) {
+                    tracks.push_back(item.media);
+                }
+                brls::sync([tracks]() {
+                    MusicQueue& queue = MusicQueue::getInstance();
+                    if (queue.isEmpty()) {
+                        brls::Application::pushActivity(
+                            PlayerActivity::createWithQueue(tracks, 0));
+                    } else {
+                        queue.addTracks(tracks);
+                        brls::Application::notify("Playlist added to queue");
+                    }
+                });
+            }
+        });
+        return true;
+    });
+
+    addDialogButton("Download", [capturedPlaylist, dialog](brls::View*) {
+        dialog->dismiss();
+        std::string playlistId = capturedPlaylist.ratingKey;
+        std::string playlistTitle = capturedPlaylist.title;
+        asyncRun([playlistId, playlistTitle]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<PlaylistItem> items;
+            int queued = 0;
+
+            if (client.fetchPlaylistItems(playlistId, items)) {
+                for (const auto& item : items) {
+                    MediaItem fullItem;
+                    if (client.fetchMediaDetails(item.media.ratingKey, fullItem) && !fullItem.partPath.empty()) {
+                        if (DownloadsManager::getInstance().queueDownload(
+                            fullItem.ratingKey, fullItem.title, fullItem.partPath,
+                            fullItem.duration, "track",
+                            playlistTitle, 0, fullItem.index,
+                            fullItem.thumb)) {
+                            queued++;
+                        }
+                    }
+                }
+            }
+
+            DownloadsManager::getInstance().startDownloads();
+            brls::sync([queued]() {
+                brls::Application::notify("Queued " + std::to_string(queued) + " tracks for download");
+            });
+        });
+        return true;
     });
 
     // Delete button (only for non-smart playlists)
-    if (!playlist.smart) {
-        dialog->addButton("Delete", [this, playlistId]() {
-            // Confirm deletion
+    if (!capturedPlaylist.smart) {
+        addDialogButton("Delete", [this, capturedPlaylist, dialog](brls::View*) {
+            dialog->dismiss();
             brls::Dialog* confirmDialog = new brls::Dialog("Delete this playlist?");
-            confirmDialog->addButton("Yes, Delete", [this, playlistId]() {
+            confirmDialog->addButton("Yes, Delete", [this, capturedPlaylist]() {
                 std::weak_ptr<bool> aliveWeak = m_alive;
+                std::string playlistId = capturedPlaylist.ratingKey;
 
                 asyncRun([this, playlistId, aliveWeak]() {
                     PlexClient& client = PlexClient::getInstance();
@@ -673,12 +757,17 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
             });
             confirmDialog->addButton("Cancel", []() {});
             confirmDialog->open();
+            return true;
         });
     }
 
-    dialog->addButton("Cancel", []() {});
+    addDialogButton("Cancel", [dialog](brls::View*) {
+        dialog->dismiss();
+        return true;
+    });
 
-    dialog->open();
+    dialog->addView(optionsBox);
+    brls::Application::pushActivity(new brls::Activity(dialog));
 }
 
 } // namespace vitaplex

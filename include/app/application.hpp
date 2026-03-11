@@ -114,7 +114,7 @@ public:
     // Navigation
     void pushLoginActivity();
     void pushMainActivity();
-    void pushPlayerActivity(const std::string& mediaKey);
+    void pushPlayerActivity(const std::string& mediaKey, bool isLocalFile = false);
     void pushLiveTVPlayerActivity(const std::string& streamUrl, const std::string& channelTitle);
 
     // Authentication state

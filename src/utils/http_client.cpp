@@ -402,9 +402,15 @@ bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallbac
     // Set URL
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
 
-    // Set longer timeout for downloads (10 minutes)
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L);
+    // No overall timeout for downloads - large transcoded files can take a long time.
+    // The low-speed limit below handles stalled connections instead.
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
+
+    // Critical: disable signals for thread-safe operation.
+    // Without this, curl uses SIGALRM for timeouts which can cause CURLE_RECV_ERROR
+    // in multi-threaded apps (downloads run on a background thread).
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
 
     // Follow redirects
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
@@ -416,6 +422,17 @@ bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallbac
 
     // User agent
     curl_easy_setopt(curl, CURLOPT_USERAGENT, m_userAgent.c_str());
+
+    // Set a smaller receive buffer to avoid overwhelming the Vita's network stack
+    curl_easy_setopt(curl, CURLOPT_BUFFERSIZE, 16384L);
+
+    // Enable TCP keepalive to prevent idle connection drops during transcoding
+    curl_easy_setopt(curl, CURLOPT_TCP_KEEPALIVE, 1L);
+    curl_easy_setopt(curl, CURLOPT_TCP_KEEPIDLE, 30L);
+    curl_easy_setopt(curl, CURLOPT_TCP_KEEPINTVL, 15L);
+
+    // Prefer HTTP/1.1 for better compatibility with Vita's network stack
+    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
 
     // Setup callback data
     DownloadCallbackData callbackData;
@@ -430,9 +447,10 @@ bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallbac
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, downloadHeaderCallback);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &callbackData);
 
-    // Low speed limit - abort if < 1KB/s for 30 seconds
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 1024L);
-    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 30L);
+    // Low speed limit - abort if < 100 bytes/s for 60 seconds
+    // Transcoding can have slow starts while the server processes the media
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 100L);
+    curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 60L);
 
     brls::Logger::info("HttpClient: Starting download from {}", url);
 

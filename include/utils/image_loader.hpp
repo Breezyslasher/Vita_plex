@@ -24,6 +24,10 @@ public:
     static void loadAsync(const std::string& url, LoadCallback callback,
                           brls::Image* target, std::shared_ptr<std::atomic<bool>> alive);
 
+    // Load image synchronously from a local file path into a brls::Image.
+    // Returns true on success.
+    static bool loadFromFile(const std::string& path, brls::Image* target);
+
     // Clear image cache
     static void clearCache();
 
