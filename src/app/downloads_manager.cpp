@@ -1008,6 +1008,8 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         queryParams += "&location=lan";
         queryParams += "&audioBoost=100";
         queryParams += "&audioChannelCount=2";
+        // Tell the server to buffer before sending - helps prevent empty responses
+        queryParams += "&mediaBufferSize=20480";
 
         if (isAudio) {
             queryParams += "&musicBitrate=320";
@@ -1036,9 +1038,10 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                            "&type=upperBound&name=video.height&value=544)";
         }
 
-        // Generate a session ID for this transcode request
-        char sessionBuf[32];
-        snprintf(sessionBuf, sizeof(sessionBuf), "%lu", (unsigned long)time(nullptr));
+        // Generate a unique session ID for this transcode request
+        char sessionBuf[64];
+        snprintf(sessionBuf, sizeof(sessionBuf), "vitaplex-%lu-%d",
+                 (unsigned long)time(nullptr), (int)(rand() % 10000));
         std::string sessionId = sessionBuf;
         queryParams += "&session=" + sessionId;
         queryParams += "&X-Plex-Token=" + token;
@@ -1049,6 +1052,11 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
             serverUrl + "/" + transcodeType + "/:/transcode/universal/decision?" + queryParams);
 
         brls::Logger::info("DownloadsManager: Calling decision endpoint for {}", item.title);
+
+        // Parse the decision response to extract the actual streaming URL from Part key.
+        // The server includes session-specific parameters in the Part key that are needed
+        // for the start endpoint to work correctly.
+        std::string partKey;
         {
             HttpClient decisionClient;
             HttpRequest decisionReq;
@@ -1057,33 +1065,76 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
             addPlexHeaders(decisionReq, token);
             decisionReq.headers["X-Plex-Client-Profile-Name"] = "Generic";
             decisionReq.headers["X-Plex-Client-Profile-Extra"] = profileExtra;
+            decisionReq.headers["X-Plex-Session-Identifier"] = sessionId;
             decisionReq.timeout = 30;
             HttpResponse decisionResp = decisionClient.request(decisionReq);
 
             brls::Logger::info("DownloadsManager: Decision response: {} ({})",
                               decisionResp.statusCode, decisionResp.body.substr(0, 300));
 
-            if (decisionResp.statusCode != 200) {
+            if (decisionResp.statusCode == 200 && !decisionResp.body.empty()) {
+                // Extract the Part key from the decision response.
+                // The response contains Metadata > Media > Part with a "key" field
+                // that has the server-generated streaming URL with correct parameters.
+                // Look for "key":"/video/:/transcode/..." or similar pattern in Part objects.
+                // We search for the transcode key pattern since the response may contain
+                // multiple "key" fields (metadata key, media key, part key).
+                std::string searchPattern = std::string("/") + transcodeType + "/:/transcode/universal/";
+                size_t keyPos = decisionResp.body.find("\"key\":\"" + searchPattern);
+                if (keyPos == std::string::npos) {
+                    // Also try without the leading slash in case of encoding differences
+                    keyPos = decisionResp.body.find("\"key\":\"" + searchPattern.substr(1));
+                }
+                if (keyPos != std::string::npos) {
+                    size_t valueStart = decisionResp.body.find(":\"", keyPos) + 2;
+                    size_t valueEnd = decisionResp.body.find("\"", valueStart);
+                    if (valueEnd != std::string::npos) {
+                        partKey = decisionResp.body.substr(valueStart, valueEnd - valueStart);
+                        brls::Logger::info("DownloadsManager: Extracted Part key from decision: {}",
+                                          partKey.substr(0, 120));
+                    }
+                }
+
+                if (partKey.empty()) {
+                    brls::Logger::debug("DownloadsManager: No transcode Part key in decision, using constructed URL");
+                }
+            } else {
                 brls::Logger::warning("DownloadsManager: Decision returned {}, trying start anyway",
                                      decisionResp.statusCode);
             }
         }
 
-        // Build the /start URL for downloading (transcode params as query, Plex identity as headers per API spec)
-        const char* container = isAudio ? "mp3" : "mp4";
-        char startPathBuf[128];
-        snprintf(startPathBuf, sizeof(startPathBuf), "/%s/:/transcode/universal/start.%s?", transcodeType, container);
-        url = convertToHttpForDownload(serverUrl + startPathBuf + queryParams);
+        // Use the Part key URL from the decision if available, otherwise construct manually
+        if (!partKey.empty()) {
+            // The Part key is a server path - append token and convert to HTTP
+            std::string partUrl = partKey;
+            if (partUrl.find("X-Plex-Token") == std::string::npos) {
+                partUrl += (partUrl.find('?') != std::string::npos ? "&" : "?");
+                partUrl += "X-Plex-Token=" + token;
+            }
+            url = convertToHttpForDownload(serverUrl + partUrl);
+            brls::Logger::info("DownloadsManager: Using decision Part key URL for download");
+        } else {
+            // Fallback: construct the start URL manually
+            const char* container = isAudio ? "mp3" : "mp4";
+            char startPathBuf[128];
+            snprintf(startPathBuf, sizeof(startPathBuf), "/%s/:/transcode/universal/start.%s?",
+                     transcodeType, container);
+            url = convertToHttpForDownload(serverUrl + startPathBuf + queryParams);
+            brls::Logger::info("DownloadsManager: Using constructed start URL for download");
+        }
 
         // Give the server time to start the transcode session before we request data.
         // Without this delay, the server may return an empty/partial response because
         // the transcode hasn't begun buffering yet (causes CURLE_PARTIAL_FILE).
+        // Video transcodes need more time than audio since the server must decode
+        // and re-encode the video stream before any data is available.
         if (!isAudio) {
             brls::Logger::info("DownloadsManager: Waiting for transcode to buffer...");
 #ifdef __vita__
-            sceKernelDelayThread(3 * 1000 * 1000);  // 3 seconds
+            sceKernelDelayThread(5 * 1000 * 1000);  // 5 seconds
 #else
-            std::this_thread::sleep_for(std::chrono::seconds(3));
+            std::this_thread::sleep_for(std::chrono::seconds(5));
 #endif
         }
     }
@@ -1092,25 +1143,6 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
 
     // Transcoding done (or skipped for audio), now downloading the file
     item.state = DownloadState::DOWNLOADING;
-
-    // Open local file for writing
-#ifdef __vita__
-    SceUID fd = sceIoOpen(item.localPath.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
-    if (fd < 0) {
-        brls::Logger::error("DownloadsManager: Failed to create file {}", item.localPath);
-        item.state = DownloadState::FAILED;
-        saveState();
-        return;
-    }
-#else
-    std::ofstream file(item.localPath, std::ios::binary);
-    if (!file.is_open()) {
-        brls::Logger::error("DownloadsManager: Failed to create file {}", item.localPath);
-        item.state = DownloadState::FAILED;
-        saveState();
-        return;
-    }
-#endif
 
     // Build Plex identification headers required by the transcode API.
     // The API spec requires X-Plex-Client-Identifier, X-Plex-Client-Profile-Extra,
@@ -1128,47 +1160,101 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         dlHeaders["X-Plex-Client-Profile-Extra"] = profileExtra;
     }
 
-    // Download with progress tracking
-    HttpClient http;
-    bool success = http.downloadFile(url,
-        [&](const char* data, size_t size) {
-            // Write chunk to file
+    // Retry the download connection within the same transcode session.
+    // Streaming transcodes may need time to produce output - the server can return
+    // an empty response (CURLE_PARTIAL_FILE with 0 bytes) if the transcoder hasn't
+    // started producing data yet. Retrying with increasing delays gives the server
+    // time to buffer while reusing the same session.
+    bool success = false;
+    const int maxDownloadAttempts = 3;
+    for (int attempt = 0; attempt < maxDownloadAttempts && m_downloading.load(); attempt++) {
+        if (attempt > 0) {
+            int waitSec = attempt * 5;  // 5s, 10s
+            brls::Logger::info("DownloadsManager: Download attempt {}/{}, waiting {}s for transcode to buffer...",
+                              attempt + 1, maxDownloadAttempts, waitSec);
 #ifdef __vita__
-            int written = sceIoWrite(fd, data, size);
-            if (written < 0 || (size_t)written != size) {
-                brls::Logger::error("DownloadsManager: Write failed (disk full?), wrote {}/{}", written, size);
-                return false;  // Cancel download on write error
-            }
+            sceKernelDelayThread(waitSec * 1000 * 1000);
 #else
-            file.write(data, size);
-            if (!file.good()) {
-                brls::Logger::error("DownloadsManager: Write failed (disk full?)");
-                return false;  // Cancel download on write error
-            }
+            std::this_thread::sleep_for(std::chrono::seconds(waitSec));
 #endif
-            item.downloadedBytes += size;
+            item.downloadedBytes = 0;
+        }
 
-            // Call progress callback (copy to local to avoid race if cleared by UI thread)
-            auto cb = m_progressCallback;
-            if (cb) {
-                cb(item.downloadedBytes, item.totalBytes);
-            }
+        // Open local file for writing (re-open on each attempt to truncate partial data)
+#ifdef __vita__
+        SceUID fd = sceIoOpen(item.localPath.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+        if (fd < 0) {
+            brls::Logger::error("DownloadsManager: Failed to create file {}", item.localPath);
+            item.state = DownloadState::FAILED;
+            saveState();
+            return;
+        }
+#else
+        std::ofstream file(item.localPath, std::ios::binary);
+        if (!file.is_open()) {
+            brls::Logger::error("DownloadsManager: Failed to create file {}", item.localPath);
+            item.state = DownloadState::FAILED;
+            saveState();
+            return;
+        }
+#endif
 
-            // Return false to cancel download
-            return m_downloading.load() && item.state != DownloadState::CANCELLED;
-        },
-        [&](int64_t total) {
-            item.totalBytes = total;
-            brls::Logger::debug("DownloadsManager: Total size: {} bytes", total);
-        },
-        dlHeaders
-    );
+        // Download with progress tracking
+        HttpClient http;
+        success = http.downloadFile(url,
+            [&](const char* data, size_t size) {
+                // Write chunk to file
+#ifdef __vita__
+                int written = sceIoWrite(fd, data, size);
+                if (written < 0 || (size_t)written != size) {
+                    brls::Logger::error("DownloadsManager: Write failed (disk full?), wrote {}/{}", written, size);
+                    return false;  // Cancel download on write error
+                }
+#else
+                file.write(data, size);
+                if (!file.good()) {
+                    brls::Logger::error("DownloadsManager: Write failed (disk full?)");
+                    return false;  // Cancel download on write error
+                }
+#endif
+                item.downloadedBytes += size;
+
+                // Call progress callback (copy to local to avoid race if cleared by UI thread)
+                auto cb = m_progressCallback;
+                if (cb) {
+                    cb(item.downloadedBytes, item.totalBytes);
+                }
+
+                // Return false to cancel download
+                return m_downloading.load() && item.state != DownloadState::CANCELLED;
+            },
+            [&](int64_t total) {
+                item.totalBytes = total;
+                brls::Logger::debug("DownloadsManager: Total size: {} bytes", total);
+            },
+            dlHeaders
+        );
 
 #ifdef __vita__
-    sceIoClose(fd);
+        sceIoClose(fd);
 #else
-    file.close();
+        file.close();
 #endif
+
+        if (success || !m_downloading.load() || item.state == DownloadState::CANCELLED) {
+            break;  // Success, paused, or cancelled - stop retrying
+        }
+
+        // If we got some data but failed, don't retry within this loop (let outer retry handle it)
+        if (item.downloadedBytes > 0) {
+            brls::Logger::info("DownloadsManager: Download got {} bytes before failing, not retrying within session",
+                              item.downloadedBytes);
+            break;
+        }
+
+        brls::Logger::warning("DownloadsManager: Download returned 0 bytes (attempt {}/{})",
+                             attempt + 1, maxDownloadAttempts);
+    }
 
     // Don't overwrite CANCELLED state - it was already handled
     if (item.state == DownloadState::CANCELLED) {
