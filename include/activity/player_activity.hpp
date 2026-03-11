@@ -14,12 +14,12 @@
 #include <unordered_map>
 #include <chrono>
 #include "app/plex_client.hpp"
+#include "app/music_queue.hpp"
 
 // Forward declarations
 namespace vitaplex {
     class VideoView;
     struct MediaItem;
-    struct QueueItem;
 }
 
 namespace vitaplex {
@@ -82,6 +82,18 @@ private:
     void playFromQueue(int index);  // Play a specific track from queue list
     bool m_queueOverlayVisible = false;
     bool m_queuePopulating = false;     // Guard against re-entrant populateQueueList
+
+    // Batched queue population - creates rows across multiple frames to avoid UI freeze
+    static constexpr int QUEUE_BATCH_SIZE = 15;  // Rows to create per frame
+    int m_queueBatchNext = 0;                    // Next row index to create
+    int m_queueBatchTotal = 0;                   // Total rows to create
+    bool m_queueBatchActive = false;             // Whether batched creation is in progress
+    std::vector<QueueItem> m_queueBatchTracks;   // Snapshot of tracks for batched creation
+    std::vector<int> m_queueBatchShuffleOrder;   // Snapshot of shuffle order
+    int m_queueBatchCurrentIndex = 0;            // Current track index snapshot
+    bool m_queueBatchShuffled = false;           // Shuffle state snapshot
+    void populateQueueBatch();                   // Create next batch of rows
+    void createQueueRow(int displayIdx, int trackIdx, const QueueItem& track, bool isCurrent);
 
     // Queue row management - maps row views to their track indices
     // so gesture handlers can look up current position at interaction time
