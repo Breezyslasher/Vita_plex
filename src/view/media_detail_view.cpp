@@ -1398,6 +1398,80 @@ void MediaDetailView::showTrackActionDialog(const MediaItem& track, size_t track
         return true;
     });
 
+    addDialogButton("Add to Playlist", [this, capturedTrack, dialog](brls::View*) {
+        dialog->dismiss();
+        asyncRun([this, capturedTrack]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<Playlist> playlists;
+            client.fetchMusicPlaylists(playlists);
+
+            brls::sync([this, playlists, capturedTrack]() {
+                auto alive = m_alive;
+                if (!alive || !alive->load()) return;
+
+                auto* plDialog = new brls::Dialog("Add to Playlist");
+                auto* plBox = new brls::Box();
+                plBox->setAxis(brls::Axis::COLUMN);
+                plBox->setPadding(20);
+
+                auto addBtn = [&plBox](const std::string& text, std::function<bool(brls::View*)> action) {
+                    auto* btn = new brls::Button();
+                    btn->setText(text);
+                    btn->setHeight(44);
+                    btn->setMarginBottom(10);
+                    btn->registerClickAction(action);
+                    btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+                    plBox->addView(btn);
+                };
+
+                addBtn("+ New Playlist", [plDialog, capturedTrack](brls::View*) {
+                    plDialog->dismiss();
+                    brls::Application::getImeManager()->openForText([capturedTrack](std::string name) {
+                        if (name.empty()) return;
+                        asyncRun([name, capturedTrack]() {
+                            PlexClient& client = PlexClient::getInstance();
+                            std::vector<std::string> keys = {capturedTrack.ratingKey};
+                            Playlist result;
+                            if (client.createPlaylistWithItems(name, keys, result)) {
+                                brls::sync([name]() {
+                                    brls::Application::notify("Created playlist: " + name);
+                                });
+                            }
+                        });
+                    }, "New Playlist", "Enter playlist name", 128, "");
+                    return true;
+                });
+
+                for (const auto& pl : playlists) {
+                    if (pl.smart) continue;
+                    Playlist capturedPl = pl;
+                    addBtn(pl.title, [plDialog, capturedPl, capturedTrack](brls::View*) {
+                        plDialog->dismiss();
+                        asyncRun([capturedPl, capturedTrack]() {
+                            PlexClient& client = PlexClient::getInstance();
+                            std::vector<std::string> keys = {capturedTrack.ratingKey};
+                            if (client.addToPlaylist(capturedPl.ratingKey, keys)) {
+                                brls::sync([capturedPl]() {
+                                    brls::Application::notify("Added to " + capturedPl.title);
+                                });
+                            }
+                        });
+                        return true;
+                    });
+                }
+
+                addBtn("Cancel", [plDialog](brls::View*) {
+                    plDialog->dismiss();
+                    return true;
+                });
+
+                plDialog->addView(plBox);
+                brls::Application::pushActivity(new brls::Activity(plDialog));
+            });
+        });
+        return true;
+    });
+
     addDialogButton("Cancel", [dialog](brls::View*) {
         dialog->dismiss();
         return true;
@@ -1483,6 +1557,106 @@ void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
                     }
                 });
             }
+        });
+        return true;
+    });
+
+    addDialogButton("Add to Playlist", [this, capturedAlbum, dialog](brls::View*) {
+        dialog->dismiss();
+        // Fetch audio playlists and let user pick one
+        asyncRun([this, capturedAlbum]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<Playlist> playlists;
+            client.fetchMusicPlaylists(playlists);
+
+            // Also fetch album tracks to get their ratingKeys
+            std::vector<MediaItem> tracks;
+            client.fetchChildren(capturedAlbum.ratingKey, tracks);
+
+            brls::sync([this, playlists, tracks, capturedAlbum]() {
+                auto alive = m_alive;
+                if (!alive || !alive->load()) return;
+
+                if (tracks.empty()) {
+                    brls::Application::notify("No tracks found");
+                    return;
+                }
+
+                auto* plDialog = new brls::Dialog("Add to Playlist");
+                auto* plBox = new brls::Box();
+                plBox->setAxis(brls::Axis::COLUMN);
+                plBox->setPadding(20);
+
+                auto addBtn = [&plBox](const std::string& text, std::function<bool(brls::View*)> action) {
+                    auto* btn = new brls::Button();
+                    btn->setText(text);
+                    btn->setHeight(44);
+                    btn->setMarginBottom(10);
+                    btn->registerClickAction(action);
+                    btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+                    plBox->addView(btn);
+                };
+
+                // Option to create new playlist with this album
+                addBtn("+ New Playlist", [plDialog, tracks](brls::View*) {
+                    plDialog->dismiss();
+                    brls::Application::getImeManager()->openForText([tracks](std::string name) {
+                        if (name.empty()) return;
+                        asyncRun([name, tracks]() {
+                            PlexClient& client = PlexClient::getInstance();
+                            std::vector<std::string> keys;
+                            for (const auto& t : tracks) {
+                                keys.push_back(t.ratingKey);
+                            }
+                            Playlist result;
+                            if (client.createPlaylistWithItems(name, keys, result)) {
+                                brls::sync([name]() {
+                                    brls::Application::notify("Created playlist: " + name);
+                                });
+                            } else {
+                                brls::sync([]() {
+                                    brls::Application::notify("Failed to create playlist");
+                                });
+                            }
+                        });
+                    }, "New Playlist", "Enter playlist name", 128, "");
+                    return true;
+                });
+
+                // Existing playlists
+                for (const auto& pl : playlists) {
+                    if (pl.smart) continue;  // Can't add to smart playlists
+                    Playlist capturedPl = pl;
+                    addBtn(pl.title, [plDialog, capturedPl, tracks](brls::View*) {
+                        plDialog->dismiss();
+                        asyncRun([capturedPl, tracks]() {
+                            PlexClient& client = PlexClient::getInstance();
+                            std::vector<std::string> keys;
+                            for (const auto& t : tracks) {
+                                keys.push_back(t.ratingKey);
+                            }
+                            if (client.addToPlaylist(capturedPl.ratingKey, keys)) {
+                                brls::sync([capturedPl]() {
+                                    brls::Application::notify("Added to " + capturedPl.title);
+                                });
+                            } else {
+                                brls::sync([]() {
+                                    brls::Application::notify("Failed to add to playlist");
+                                });
+                            }
+                        });
+                        return true;
+                    });
+                }
+
+                addBtn("Cancel", [plDialog](brls::View*) {
+                    plDialog->dismiss();
+                    return true;
+                });
+
+                plDialog->addView(plBox);
+                brls::Application::pushActivity(new brls::Activity(plDialog));
+            });
         });
         return true;
     });

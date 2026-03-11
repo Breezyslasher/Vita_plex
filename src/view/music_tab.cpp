@@ -212,6 +212,7 @@ void MusicTab::loadSections() {
                         m_titleLabel->setText("Music - " + capturedSection.title);
                         loadContent(capturedSection.key);
                         loadCollections(capturedSection.key);
+                        loadPlaylists();
                         return true;
                     });
 
@@ -311,8 +312,8 @@ void MusicTab::loadPlaylists() {
                             return true;
                         });
 
-                        // Long press for options (delete, rename)
-                        btn->registerAction("Options", brls::ControllerButton::BUTTON_Y,
+                        // START button for context menu (Play All, Delete, etc.)
+                        btn->registerAction("Options", brls::ControllerButton::BUTTON_START,
                             [this, capturedPlaylist](brls::View* view) {
                                 showPlaylistOptionsDialog(capturedPlaylist);
                                 return true;

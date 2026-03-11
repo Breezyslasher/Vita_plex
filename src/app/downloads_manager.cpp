@@ -223,11 +223,11 @@ void DownloadsManager::startDownloads() {
                 brls::Logger::info("DownloadsManager: Starting download of {}", nextItem->title);
                 downloadItem(*nextItem);
 
-                // Retry failed downloads up to 3 times with backoff
+                // Retry failed downloads up to 3 times with exponential backoff
                 int retries = 0;
                 while (nextItem->state == DownloadState::FAILED && retries < 3 && m_downloading.load()) {
                     retries++;
-                    int waitSec = retries * 2;  // 2s, 4s, 6s
+                    int waitSec = retries * 5;  // 5s, 10s, 15s (longer for transcode retries)
                     brls::Logger::info("DownloadsManager: Retry {}/3 for {} in {}s",
                                       retries, nextItem->title, waitSec);
 #ifdef __vita__
@@ -702,6 +702,42 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
 
     brls::Logger::info("DownloadsManager: Got download queue ID: {}", queueId);
 
+    // Step 1b: Clean up any existing items in the queue that may be stuck in "deciding"
+    // Stale items from previous attempts can prevent the queue from progressing.
+    {
+        HttpClient cleanHttp;
+        HttpRequest cleanReq;
+        cleanReq.url = baseUrl + "/downloadQueue/" + queueId + "/items?X-Plex-Token=" + token;
+        cleanReq.method = "GET";
+        addPlexHeaders(cleanReq, token);
+        cleanReq.timeout = 15;
+        HttpResponse cleanResp = cleanHttp.request(cleanReq);
+
+        if (cleanResp.statusCode == 200 && !cleanResp.body.empty()) {
+            // Find all item IDs and delete them
+            size_t searchPos = 0;
+            while (searchPos < cleanResp.body.size()) {
+                size_t idPos = cleanResp.body.find("\"id\":", searchPos);
+                if (idPos == std::string::npos) break;
+                int64_t oldItemId = extractJsonInt(cleanResp.body.substr(idPos), "id");
+                if (oldItemId > 0) {
+                    char oldIdBuf[32];
+                    snprintf(oldIdBuf, sizeof(oldIdBuf), "%lld", (long long)oldItemId);
+                    HttpClient delHttp;
+                    HttpRequest delReq;
+                    delReq.url = baseUrl + "/downloadQueue/" + queueId + "/items/" + oldIdBuf
+                        + "?X-Plex-Token=" + token;
+                    delReq.method = "DELETE";
+                    addPlexHeaders(delReq, token);
+                    delReq.timeout = 10;
+                    delHttp.request(delReq);
+                    brls::Logger::debug("DownloadsManager: Cleaned up old queue item {}", oldIdBuf);
+                }
+                searchPos = idPos + 5;
+            }
+        }
+    }
+
     // Step 2: Add item to the download queue
     std::string addUrl = baseUrl + "/downloadQueue/" + queueId + "/add"
         + "?keys=" + HttpClient::urlEncode("/library/metadata/" + ratingKey)
@@ -753,29 +789,31 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     brls::Logger::info("DownloadsManager: Queue decision response: {} ({})",
                       decResp.statusCode, decResp.body.substr(0, 500));
 
-    // Step 4: Poll the queue status until transcoding is complete.
-    // The server needs time to transcode; the /media endpoint returns 503 if not ready.
-    // Poll the queue status every 3 seconds for up to 5 minutes.
+    // Step 4: Poll the individual item status until transcoding is complete.
+    // The /media endpoint returns 503 if not ready, so we poll the item status.
+    // Poll /downloadQueue/{queueId}/items/{itemId} for item-level status every 3 seconds.
     const int maxPollAttempts = 100;  // 100 * 3s = 5 minutes max
     const int pollIntervalMs = 3000;
     bool mediaReady = false;
 
     for (int attempt = 0; attempt < maxPollAttempts && downloading.load(); attempt++) {
+        // Poll individual item status, not the overall queue
         HttpClient statusHttp;
         HttpRequest statusReq;
-        statusReq.url = baseUrl + "/downloadQueue/" + queueId + "?X-Plex-Token=" + token;
+        statusReq.url = baseUrl + "/downloadQueue/" + queueId + "/items/" + itemId
+            + "?X-Plex-Token=" + token;
         statusReq.method = "GET";
         addPlexHeaders(statusReq, token);
         statusReq.timeout = 15;
         HttpResponse statusResp = statusHttp.request(statusReq);
 
         if (statusResp.statusCode != 200) {
-            brls::Logger::warning("DownloadsManager: Queue status check failed (HTTP {})", statusResp.statusCode);
+            brls::Logger::warning("DownloadsManager: Item status check failed (HTTP {})", statusResp.statusCode);
             break;
         }
 
         std::string status = extractJsonString(statusResp.body, "status");
-        brls::Logger::debug("DownloadsManager: Queue status: {} (attempt {}/{})", status, attempt + 1, maxPollAttempts);
+        brls::Logger::debug("DownloadsManager: Item {} status: {} (attempt {}/{})", itemId, status, attempt + 1, maxPollAttempts);
 
         if (status == "done" || status == "complete" || status == "ready") {
             mediaReady = true;
@@ -783,16 +821,52 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         }
 
         if (status == "error" || status == "failed") {
-            brls::Logger::error("DownloadsManager: Queue transcoding failed with status: {}", status);
-            return false;
+            brls::Logger::error("DownloadsManager: Item transcoding failed with status: {}", status);
+            // Try restarting the item processing
+            HttpClient restartHttp;
+            HttpRequest restartReq;
+            restartReq.url = baseUrl + "/downloadQueue/" + queueId + "/items/" + itemId
+                + "/restart?X-Plex-Token=" + token;
+            restartReq.method = "POST";
+            addPlexHeaders(restartReq, token);
+            restartReq.timeout = 30;
+            HttpResponse restartResp = restartHttp.request(restartReq);
+            brls::Logger::info("DownloadsManager: Restart response: {}", restartResp.statusCode);
+            // Continue polling after restart
+#ifdef __vita__
+            sceKernelDelayThread(pollIntervalMs * 1000);
+#else
+            std::this_thread::sleep_for(std::chrono::milliseconds(pollIntervalMs));
+#endif
+            continue;
         }
 
-        // Still transcoding ("deciding", "transcoding", etc.) - wait and poll again
+        // Still processing ("deciding", "transcoding", etc.) - wait and poll again
 #ifdef __vita__
         sceKernelDelayThread(pollIntervalMs * 1000);
 #else
         std::this_thread::sleep_for(std::chrono::milliseconds(pollIntervalMs));
 #endif
+
+        // Every 30 attempts (~90s), try probing the media endpoint directly
+        // Some servers may not update item status but have the media ready
+        if (attempt > 0 && attempt % 30 == 0) {
+            HttpClient probeHttp;
+            HttpRequest probeReq;
+            probeReq.url = baseUrl + "/downloadQueue/" + queueId + "/item/" + itemId
+                + "/media?X-Plex-Token=" + token;
+            probeReq.method = "GET";
+            addPlexHeaders(probeReq, token);
+            probeReq.timeout = 10;
+            // Use a HEAD-like check: just see if we get 200 vs 503
+            HttpResponse probeResp = probeHttp.request(probeReq);
+            if (probeResp.statusCode == 200 && probeResp.body.size() > 1000) {
+                brls::Logger::info("DownloadsManager: Media probe returned 200 with {} bytes, media is ready",
+                                  probeResp.body.size());
+                mediaReady = true;
+                break;
+            }
+        }
     }
 
     if (!downloading.load()) {
@@ -801,8 +875,6 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     }
 
     if (!mediaReady) {
-        // Even if status isn't definitively "done", try downloading anyway -
-        // some servers may report different status strings
         brls::Logger::warning("DownloadsManager: Transcode may not be complete, attempting download anyway");
     }
 
