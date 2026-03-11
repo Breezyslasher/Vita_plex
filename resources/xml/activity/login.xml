@@ -70,6 +70,13 @@
 
     </brls:Box>
 
+    <!-- Offline mode button -->
+    <brls:Button
+        id="login/offline_button"
+        text="Offline Mode"
+        width="200"
+        marginBottom="20"/>
+
     <!-- PIN Code display -->
     <brls:Label
         id="login/pin_code"

@@ -252,7 +252,10 @@ bool DownloadsManager::cancelDownload(const std::string& ratingKey) {
             }
             // Mark as cancelled instead of erasing - safe while download thread runs
             item.state = DownloadState::CANCELLED;
-            purgeCancelledUnlocked();
+            // Only purge if download thread is not active to avoid invalidating references
+            if (!m_downloadThreadActive.load()) {
+                purgeCancelledUnlocked();
+            }
             saveStateUnlocked();
             return true;
         }
@@ -275,7 +278,10 @@ bool DownloadsManager::deleteDownload(const std::string& ratingKey) {
             }
             // Mark as cancelled instead of erasing - safe while download thread runs
             item.state = DownloadState::CANCELLED;
-            purgeCancelledUnlocked();
+            // Only purge if download thread is not active to avoid invalidating references
+            if (!m_downloadThreadActive.load()) {
+                purgeCancelledUnlocked();
+            }
             saveStateUnlocked();
             brls::Logger::info("DownloadsManager: Deleted download {}", ratingKey);
             return true;
@@ -305,6 +311,17 @@ DownloadItem* DownloadsManager::getDownload(const std::string& ratingKey) {
     return nullptr;
 }
 
+bool DownloadsManager::getDownloadCopy(const std::string& ratingKey, DownloadItem& out) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (const auto& item : m_downloads) {
+        if (item.ratingKey == ratingKey) {
+            out = item;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool DownloadsManager::isDownloaded(const std::string& ratingKey) const {
     std::lock_guard<std::mutex> lock(m_mutex);
     for (const auto& item : m_downloads) {
@@ -329,13 +346,19 @@ void DownloadsManager::updateProgress(const std::string& ratingKey, int64_t view
     std::lock_guard<std::mutex> lock(m_mutex);
     for (auto& item : m_downloads) {
         if (item.ratingKey == ratingKey) {
+            int64_t oldOffset = item.viewOffset;
             item.viewOffset = viewOffset;
             brls::Logger::debug("DownloadsManager: Updated progress for {} to {}ms",
                                item.title, viewOffset);
+
+            // Save periodically - every 30 seconds of progress to avoid data loss on crash
+            int64_t delta = (viewOffset > oldOffset) ? (viewOffset - oldOffset) : (oldOffset - viewOffset);
+            if (delta >= 30000) {
+                saveStateUnlocked();
+            }
             break;
         }
     }
-    // Don't save on every update - too frequent
 }
 
 void DownloadsManager::syncProgressToServer() {
@@ -607,15 +630,24 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         [&](const char* data, size_t size) {
             // Write chunk to file
 #ifdef __vita__
-            sceIoWrite(fd, data, size);
+            int written = sceIoWrite(fd, data, size);
+            if (written < 0 || (size_t)written != size) {
+                brls::Logger::error("DownloadsManager: Write failed (disk full?), wrote {}/{}", written, size);
+                return false;  // Cancel download on write error
+            }
 #else
             file.write(data, size);
+            if (!file.good()) {
+                brls::Logger::error("DownloadsManager: Write failed (disk full?)");
+                return false;  // Cancel download on write error
+            }
 #endif
             item.downloadedBytes += size;
 
-            // Call progress callback
-            if (m_progressCallback) {
-                m_progressCallback(item.downloadedBytes, item.totalBytes);
+            // Call progress callback (copy to local to avoid race if cleared by UI thread)
+            auto cb = m_progressCallback;
+            if (cb) {
+                cb(item.downloadedBytes, item.totalBytes);
             }
 
             // Return false to cancel download

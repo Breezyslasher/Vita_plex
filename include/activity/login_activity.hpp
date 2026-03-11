@@ -22,6 +22,7 @@ public:
 private:
     void onLoginPressed();
     void onPinLoginPressed();
+    void onOfflinePressed();
     void checkPinStatus();
     void showServerSelectionDialog(const std::vector<PlexServer>& servers);
     void connectToSelectedServer(const PlexServer& server);
@@ -33,6 +34,7 @@ private:
     BRLS_BIND(brls::Label, passwordLabel, "login/password_label");
     BRLS_BIND(brls::Button, loginButton, "login/login_button");
     BRLS_BIND(brls::Button, pinButton, "login/pin_button");
+    BRLS_BIND(brls::Button, offlineButton, "login/offline_button");
     BRLS_BIND(brls::Label, statusLabel, "login/status");
     BRLS_BIND(brls::Label, pinCodeLabel, "login/pin_code");
 

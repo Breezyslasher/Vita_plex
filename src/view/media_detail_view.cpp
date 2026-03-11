@@ -789,10 +789,10 @@ void MediaDetailView::onDownload() {
         // Monitor for completion - use weak_ptr to avoid use-after-free on view destruction
         asyncRun([progressDialog, aliveWeak, ratingKey]() {
             while (true) {
-                auto* item = DownloadsManager::getInstance().getDownload(ratingKey);
-                if (!item) break;
+                DownloadItem dlItem;
+                if (!DownloadsManager::getInstance().getDownloadCopy(ratingKey, dlItem)) break;
 
-                if (item->state == DownloadState::COMPLETED) {
+                if (dlItem.state == DownloadState::COMPLETED) {
                     brls::sync([progressDialog, aliveWeak]() {
                         progressDialog->setStatus("Download complete!");
                         progressDialog->setProgress(1.0f);
@@ -801,7 +801,7 @@ void MediaDetailView::onDownload() {
                         });
                     });
                     break;
-                } else if (item->state == DownloadState::FAILED) {
+                } else if (dlItem.state == DownloadState::FAILED) {
                     brls::sync([progressDialog, aliveWeak]() {
                         progressDialog->setStatus("Download failed");
                         brls::delay(2000, [progressDialog]() {

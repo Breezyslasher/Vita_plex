@@ -782,20 +782,20 @@ void PlayerActivity::loadMedia() {
     // Handle local file playback (downloaded media)
     if (m_isLocalFile) {
         DownloadsManager& downloads = DownloadsManager::getInstance();
-        DownloadItem* download = downloads.getDownload(m_mediaKey);
+        DownloadItem dlItem;
 
-        if (!download || download->state != DownloadState::COMPLETED) {
+        if (!downloads.getDownloadCopy(m_mediaKey, dlItem) || dlItem.state != DownloadState::COMPLETED) {
             brls::Logger::error("PlayerActivity: Downloaded media not found or incomplete");
             m_loadingMedia = false;
             return;
         }
 
-        brls::Logger::info("PlayerActivity: Playing local file: {}", download->localPath);
+        brls::Logger::info("PlayerActivity: Playing local file: {}", dlItem.localPath);
 
         if (titleLabel) {
-            std::string title = download->title;
-            if (!download->parentTitle.empty()) {
-                title = download->parentTitle + " - " + download->title;
+            std::string title = dlItem.title;
+            if (!dlItem.parentTitle.empty()) {
+                title = dlItem.parentTitle + " - " + dlItem.title;
             }
             titleLabel->setText(title);
         }
@@ -809,25 +809,25 @@ void PlayerActivity::loadMedia() {
 
         // Resume from saved viewOffset if resumePlayback is enabled
         // If near the end (>= 95% watched), start from beginning instead
-        if (Application::getInstance().getSettings().resumePlayback && download->viewOffset > 0) {
-            bool nearEnd = (download->duration > 0 && download->viewOffset >= download->duration * 0.95);
+        if (Application::getInstance().getSettings().resumePlayback && dlItem.viewOffset > 0) {
+            bool nearEnd = (dlItem.duration > 0 && dlItem.viewOffset >= dlItem.duration * 0.95);
             if (!nearEnd) {
-                m_pendingSeek = download->viewOffset / 1000.0;
+                m_pendingSeek = dlItem.viewOffset / 1000.0;
             }
         }
 
         if (!player.isInitialized()) {
             // Defer MPV init + load to after activity transition completes
-            m_pendingPlayUrl = download->localPath;
-            m_pendingPlayTitle = download->title;
+            m_pendingPlayUrl = dlItem.localPath;
+            m_pendingPlayTitle = dlItem.title;
             m_pendingIsAudio = false;
             m_loadingMedia = false;
             return;
         }
 
         // Player already initialized - load immediately
-        if (!player.loadUrl(download->localPath, download->title)) {
-            brls::Logger::error("Failed to load local file: {}", download->localPath);
+        if (!player.loadUrl(dlItem.localPath, dlItem.title)) {
+            brls::Logger::error("Failed to load local file: {}", dlItem.localPath);
             m_loadingMedia = false;
             return;
         }

@@ -86,8 +86,11 @@ public:
     // Get all download items
     std::vector<DownloadItem> getDownloads() const;
 
-    // Get a specific download by rating key
+    // Get a specific download by rating key (returns pointer - caller must hold no assumption about lifetime)
     DownloadItem* getDownload(const std::string& ratingKey);
+
+    // Get a copy of a specific download by rating key (thread-safe)
+    bool getDownloadCopy(const std::string& ratingKey, DownloadItem& out) const;
 
     // Check if media is downloaded
     bool isDownloaded(const std::string& ratingKey) const;

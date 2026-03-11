@@ -402,8 +402,9 @@ bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallbac
     // Set URL
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
 
-    // Set longer timeout for downloads (10 minutes)
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 600L);
+    // No overall timeout for downloads - large transcoded files can take a long time.
+    // The low-speed limit below handles stalled connections instead.
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
 
     // Follow redirects

@@ -205,6 +205,7 @@ void DownloadsTab::refresh() {
             case DownloadState::COMPLETED: completed++; break;
             case DownloadState::PAUSED: paused++; break;
             case DownloadState::FAILED: failed++; break;
+            default: break;
         }
     }
 
@@ -467,6 +468,8 @@ void DownloadsTab::refresh() {
                 break;
             case DownloadState::FAILED:
                 statusText = "Failed";
+                break;
+            default:
                 break;
         }
         statusLabel->setText(statusText);
