@@ -740,15 +740,53 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         }
     }
 
-    // Step 2: Add item to the download queue
+    // Step 2: Add item to the download queue with transcode parameters.
+    // Per API spec, the /add endpoint accepts the same transcode query params
+    // and profile headers as the /transcode/universal endpoints.
+    bool isAudio = (item.mediaType == "track");
     std::string addUrl = baseUrl + "/downloadQueue/" + queueId + "/add"
-        + "?keys=" + HttpClient::urlEncode("/library/metadata/" + ratingKey)
-        + "&X-Plex-Token=" + token;
+        + "?keys=" + HttpClient::urlEncode("/library/metadata/" + ratingKey);
+
+    // Add transcode parameters so the server knows the target format
+    addUrl += "&protocol=http";
+    addUrl += "&directPlay=0&directStream=0&directStreamAudio=1";
+    addUrl += "&location=lan";
+    addUrl += "&audioBoost=100&audioChannelCount=2";
+
+    std::string profileExtra;
+    if (isAudio) {
+        addUrl += "&musicBitrate=320";
+        profileExtra = "add-transcode-target(type=musicProfile"
+                       "&context=streaming&protocol=http"
+                       "&container=mp3&audioCodec=mp3)";
+    } else {
+        AppSettings& settings = Application::getInstance().getSettings();
+        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : 2000;
+        char bitrateStr[64];
+        snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
+        addUrl += bitrateStr;
+        addUrl += "&videoResolution=960x544";
+        addUrl += "&subtitles=none";
+        profileExtra = "add-transcode-target(type=videoProfile"
+                       "&context=streaming&protocol=http"
+                       "&container=mp4&videoCodec=h264"
+                       "&audioCodec=aac)"
+                       "+add-limitation(scope=videoCodec&scopeName=h264"
+                       "&type=upperBound&name=video.level&value=40)"
+                       "+add-limitation(scope=videoCodec&scopeName=h264"
+                       "&type=upperBound&name=video.width&value=960)"
+                       "+add-limitation(scope=videoCodec&scopeName=h264"
+                       "&type=upperBound&name=video.height&value=544)";
+    }
+
+    addUrl += "&X-Plex-Token=" + token;
 
     HttpRequest addReq;
     addReq.url = addUrl;
     addReq.method = "POST";
     addPlexHeaders(addReq, token);
+    addReq.headers["X-Plex-Client-Profile-Name"] = "Generic";
+    addReq.headers["X-Plex-Client-Profile-Extra"] = profileExtra;
     addReq.timeout = 30;
 
     HttpClient addHttp;
@@ -785,6 +823,8 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         + "/decision?X-Plex-Token=" + token;
     decReq.method = "GET";
     addPlexHeaders(decReq, token);
+    decReq.headers["X-Plex-Client-Profile-Name"] = "Generic";
+    decReq.headers["X-Plex-Client-Profile-Extra"] = profileExtra;
     decReq.timeout = 60;
     HttpResponse decResp = decHttp.request(decReq);
 
