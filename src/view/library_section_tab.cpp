@@ -106,6 +106,17 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     m_contentGrid->setOnItemSelected([this](const MediaItem& item) {
         onItemSelected(item);
     });
+    m_contentGrid->setOnItemStartAction([this](const MediaItem& item) {
+        if (item.type == "playlist") {
+            // Find the matching Playlist struct for full metadata
+            for (const auto& playlist : m_playlists) {
+                if (playlist.ratingKey == item.ratingKey) {
+                    showPlaylistContextMenu(playlist);
+                    return;
+                }
+            }
+        }
+    });
     this->addView(m_contentGrid);
 
     // Track list view (for playlist contents - hidden by default)
@@ -782,6 +793,98 @@ void LibrarySectionTab::performPlaylistTrackAction(const MediaItem& track,
     } else {
         executeAction(action);
     }
+}
+
+void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
+    auto* dialog = new brls::Dialog(playlist.title);
+
+    auto* optionsBox = new brls::Box();
+    optionsBox->setAxis(brls::Axis::COLUMN);
+    optionsBox->setPadding(20);
+
+    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
+        auto* btn = new brls::Button();
+        btn->setText(text);
+        btn->setHeight(44);
+        btn->setMarginBottom(10);
+        btn->registerClickAction(action);
+        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+        optionsBox->addView(btn);
+    };
+
+    Playlist capturedPlaylist = playlist;
+
+    addDialogButton("Play Now (Clear Queue)", [this, capturedPlaylist, dialog](brls::View*) {
+        dialog->dismiss();
+        playPlaylistWithQueue(capturedPlaylist.ratingKey, 0);
+        return true;
+    });
+
+    addDialogButton("Add to Queue", [capturedPlaylist, dialog](brls::View*) {
+        dialog->dismiss();
+        std::string playlistId = capturedPlaylist.ratingKey;
+        asyncRun([playlistId]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<PlaylistItem> items;
+            if (client.fetchPlaylistItems(playlistId, items) && !items.empty()) {
+                std::vector<MediaItem> tracks;
+                for (const auto& item : items) {
+                    tracks.push_back(item.media);
+                }
+                brls::sync([tracks]() {
+                    MusicQueue& queue = MusicQueue::getInstance();
+                    if (queue.isEmpty()) {
+                        brls::Application::pushActivity(
+                            PlayerActivity::createWithQueue(tracks, 0));
+                    } else {
+                        queue.addTracks(tracks);
+                        brls::Application::notify("Playlist added to queue");
+                    }
+                });
+            }
+        });
+        return true;
+    });
+
+    addDialogButton("Download", [capturedPlaylist, dialog](brls::View*) {
+        dialog->dismiss();
+        std::string playlistId = capturedPlaylist.ratingKey;
+        std::string playlistTitle = capturedPlaylist.title;
+        asyncRun([playlistId, playlistTitle]() {
+            PlexClient& client = PlexClient::getInstance();
+            std::vector<PlaylistItem> items;
+            int queued = 0;
+
+            if (client.fetchPlaylistItems(playlistId, items)) {
+                for (const auto& item : items) {
+                    MediaItem fullItem;
+                    if (client.fetchMediaDetails(item.media.ratingKey, fullItem) && !fullItem.partPath.empty()) {
+                        if (DownloadsManager::getInstance().queueDownload(
+                            fullItem.ratingKey, fullItem.title, fullItem.partPath,
+                            fullItem.duration, "track",
+                            playlistTitle, 0, fullItem.index,
+                            fullItem.thumb)) {
+                            queued++;
+                        }
+                    }
+                }
+            }
+
+            DownloadsManager::getInstance().startDownloads();
+            brls::sync([queued]() {
+                brls::Application::notify("Queued " + std::to_string(queued) + " tracks for download");
+            });
+        });
+        return true;
+    });
+
+    addDialogButton("Cancel", [dialog](brls::View*) {
+        dialog->dismiss();
+        return true;
+    });
+
+    dialog->addView(optionsBox);
+    brls::Application::pushActivity(new brls::Activity(dialog));
 }
 
 void LibrarySectionTab::showPlaylistOptionsDialog(const Playlist& playlist) {

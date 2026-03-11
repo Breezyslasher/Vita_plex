@@ -120,6 +120,18 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
             });
     }
 
+    // Register START button action for playlists
+    if (m_items[index].type == "playlist" && m_onItemStartAction) {
+        MediaItem capturedItem = m_items[index];
+        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+            [this, capturedItem](brls::View* view) {
+                if (m_onItemStartAction) {
+                    m_onItemStartAction(capturedItem);
+                }
+                return true;
+            });
+    }
+
     currentRow->addView(cell);
 
     itemsInRow++;

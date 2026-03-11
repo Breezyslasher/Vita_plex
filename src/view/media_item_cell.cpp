@@ -395,6 +395,21 @@ void MediaItemCell::updateFocusInfo(bool focused) {
             m_descriptionLabel->setVisibility(brls::Visibility::GONE);
             if (m_buttonHintBox) m_buttonHintBox->setVisibility(brls::Visibility::GONE);
         }
+    } else if (m_item.type == "playlist") {
+        // Show full title and START button hint for playlists on focus
+        if (focused) {
+            m_titleLabel->setText(m_item.title);
+            if (m_buttonHintBox) {
+                if (m_buttonHintIcon) {
+                    m_buttonHintIcon->setImageFromRes("images/start_button.png");
+                }
+                if (m_buttonHintLabel) m_buttonHintLabel->setVisibility(brls::Visibility::GONE);
+                m_buttonHintBox->setVisibility(brls::Visibility::VISIBLE);
+            }
+        } else {
+            m_titleLabel->setText(m_originalTitle);
+            if (m_buttonHintBox) m_buttonHintBox->setVisibility(brls::Visibility::GONE);
+        }
     }
 }
 

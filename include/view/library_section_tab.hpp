@@ -44,6 +44,7 @@ private:
     void onCollectionSelected(const MediaItem& collection);
     void onGenreSelected(const GenreItem& genre);
     void onPlaylistSelected(const Playlist& playlist);
+    void showPlaylistContextMenu(const Playlist& playlist);
     void showPlaylistOptionsDialog(const Playlist& playlist);
     void playPlaylistWithQueue(const std::string& playlistId, int startIndex);
     void showPlaylistTrackList(const std::vector<MediaItem>& tracks, const std::string& playlistTitle, const std::string& playlistId);
