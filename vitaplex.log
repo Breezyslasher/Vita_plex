@@ -1,0 +1,1603 @@
+18:40:43.324 [INFO] Log file initialized: ux0:data/VitaPlex/vitaplex.log
+18:40:43.917 [INFO] DownloadsManager: Loading saved state...
+18:40:43.917 [DEBUG] DownloadsManager: Loaded item: The Retroville 9 (state=0)
+18:40:43.918 [DEBUG] DownloadsManager: Loaded item: Grumpy Young Men (state=0)
+18:40:43.919 [INFO] DownloadsManager: Loaded 2 items from state file
+18:40:43.919 [INFO] DownloadsManager: Initialized at ux0:data/VitaPlex/downloads (2 items loaded)
+18:40:43.920 [INFO] VitaPlex 2.0.0 initializing...
+18:40:43.921 [DEBUG] sceIoMkdir result: -0x7ffeffef
+18:40:43.925 [INFO] Loading saved settings...
+18:40:43.931 [DEBUG] loadSettings: Opening ux0:data/VitaPlex/settings.json
+18:40:43.941 [DEBUG] loadSettings: File size = 801
+18:40:43.954 [DEBUG] loadSettings: Read 801 bytes
+18:40:43.963 [INFO] loadSettings: authToken=(set), serverUrl=http://192.168.1.28:32400, username=Nicholasflockerzi@gmail.Com
+18:40:43.975 [INFO] Settings loaded successfully
+18:40:43.985 [INFO] Settings load result: success
+18:40:43.995 [INFO] Applied theme: Dark
+18:40:44.001 [INFO] Debug logging enabled
+18:40:44.007 [INFO] Application::run - isLoggedIn=true, serverUrl=http://192.168.1.28:32400
+18:40:44.015 [INFO] Restoring saved session...
+18:40:44.025 [INFO] Connecting to server: http://192.168.1.28:32400 (timeout: 180s)
+18:40:44.035 [DEBUG] Connection timeout: 180 seconds
+18:40:44.046 [DEBUG] HTTP GET http://192.168.1.28:32400/?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:44.099 [DEBUG] HTTP response: 200 (9447 bytes)
+18:40:44.104 [INFO] Connected to: openmediavault
+18:40:44.109 [DEBUG] HTTP GET http://192.168.1.28:32400/livetv/dvrs?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:44.140 [DEBUG] HTTP response: 200 (8664 bytes)
+18:40:44.148 [DEBUG] DVR response (first 1000): {"MediaContainer":{"size":1,"Dvr":[{"key":"40","uuid":"f380ce1d-6b1e-4246-ba19-92e2149073b0","language":"eng","lineupTitle":"Local Broadcast Listings (106 channels)","lineup":"lineup://tv.plex.providers.epg.cloud/5fc76c55dd53a6002dab58e3#Local%20Broadcast%20Listings%20%28106%20channels%29","country":"usa","postalCode":"16066","refreshedAt":1773218319,"epgIdentifier":"tv.plex.providers.epg.cloud:40","Device":[{"parentID":40,"key":"18","uuid":"device://tv.plex.grabbers.hdhomerun/154011F3","uri":"http://192.168.1.17:80","protocol":"livetv","status":"alive","state":"enabled","lastSeenAt":1773268557,"canTranscode":"0","deviceAuth":"B4obsVtyn6jsK9CIqOnAjQBG","deviceId":"154011F3","make":"Unknown","model":"HDHomeRun SCRIBE 4K","modelNumber":"HDVR-4K-1TB","source":"0","sources":"0,1","thumb":"/:/resources/dvr/device-generic-560.png","title":"Local Broadcast Listings (106 channels)","tuners":"4","ChannelMapping":[{"channelKey":"5fc76c55dd53a6002dab58e3-5fc70600a05ef8002e61645f","deviceIdentifie
+18:40:44.168 [INFO] Live TV DVR ID: 40
+18:40:44.179 [INFO] Live TV Lineup URI: lineup://tv.plex.providers.epg.cloud/5fc76c55dd53a6002dab58e3#Local%20Broadcast%20Listings%20%28106%20channels%29
+18:40:44.190 [DEBUG] HTTP GET http://192.168.1.28:32400/media/providers?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:44.301 [DEBUG] HTTP response: 200 (23932 bytes)
+18:40:44.307 [DEBUG] media/providers response (first 2000): {"MediaContainer":{"size":2,"allowCameraUpload":true,"allowChannelAccess":true,"allowSharing":true,"allowSync":true,"allowTuners":true,"apiVersion":"1.2.0","backgroundProcessing":true,"certificate":true,"companionProxy":true,"countryCode":"usa","diagnostics":"logs,databases,streaminglogs","eventStream":true,"friendlyName":"openmediavault","livetv":7,"machineIdentifier":"6e44c885c542ccecabe792563118589a2b459eb1","musicAnalysis":2,"myPlex":true,"myPlexMappingState":"mapped","myPlexSigninState":"ok","myPlexSubscription":true,"myPlexUsername":"nicholasflockerzi@gmail.com","offlineTranscode":1,"ownerFeatures":"00077925-6031-401b-8679-f6617ed0cec6,002c9f1a-2fc0-4812-b85b-0e6140f21a0f,007fb90d-2224-4d24-bd42-e87ffde13558,00cc618e-eb08-4e0e-9221-82b4835dd89b,044a1fac-6b55-47d0-9933-25a035709432,04d7d794-b76c-49ef-9184-52f8f1f501ee,05690239-443e-43fb-bc1a-95b5d916ca63,06d14b9e-2af8-4c2b-a4a1-ea9d5c515824,075954ad-56ef-4f5e-9519-9cfb0ed05827,0de49fa2-30cc-4b54-a22d-ff860c1bf3af,0de6151c-e0dd-47c8-a81e-1acb977c7f0f,0e2acda2-d70d-4df6-96e0-f63cf264d217,0eee866d-782b-4dfd-b42b-3bbe8eb0af16,13056a62-9bd2-47cf-aba9-bab00095fd08,1417df52-986e-4e4b-8dcd-3997fbc5c976,1844737f-1a87-45c3-ab20-01435959e63c,1b3a63e4-c2f4-4011-a181-2343d3a97ef7,1b870b8e-f1a7-497c-80b2-857d45f3123f,1dd846ed-7cde-4dc5-8ef6-53d3ce8c4e9d,1df3cd16-faf2-4d37-8349-1fcf3713bf1d,1f952ea5-0837-44cb-8539-a69a14a75d4a,222020fb-1504-492d-af33-a0b80a49558a,228a6439-ee2f-4a9b-b0fc-1bfcd48b5095,22b27e12-472e-4383-92ea-2ec3976d8e72,24b4cf36-b296-4002-86b7-f1adb657e76a,2797e341-b062-46ed-862f-0acbba5dd522,298a11d3-9324-4104-8047-0ac10df4a8a6,2ea0e464-ea4f-4be2-97c1-ce6ed4b377dd,300231e0-69aa-4dce-97f4-52d8c00e3e8c,32cc8bf5-b425-4582-a52d-71b4f1cf436b,34ddfac9-3a76-459a-974d-591520b809dd,34e182bd-2f62-4678-a9e9-d13b3e25019d,359796ce-d614-427f-8165-19ff62ca053a,39dbdd84-8339-4736-96a1-0eb105cc2e08,3a2b0cb6-1519-4431-98e2-823c248c70eb,3ae06d3a-a76b-435e-8cef-2d2008610ba2,3bfd3ccf-8c63-4dbb-8f87-9b21b402c82b,3c376154-d47e-4bbf
+18:40:44.331 [INFO] Live TV EPG provider key: tv.plex.providers.epg.cloud:40
+18:40:44.343 [INFO] Live TV availability check: available (devices: 0, lineup: set, epg: tv.plex.providers.epg.cloud:40)
+18:40:44.355 [INFO] Restored session and connected to server
+18:40:44.364 [INFO] DownloadsManager: Starting bidirectional progress sync
+18:40:44.370 [INFO] DownloadsManager: Syncing 0 items to server
+18:40:44.399 [DEBUG] DownloadsManager: Saved state (2 items)
+18:40:44.415 [INFO] DownloadsManager: Bidirectional sync complete
+18:40:44.424 [DEBUG] MainActivity created
+18:40:44.430 [DEBUG] Adding an inputs block token (tokens=1)
+18:40:44.463 [DEBUG] MainActivity content available
+18:40:44.473 [DEBUG] fetchLibrarySections: serverUrl=http://192.168.1.28:32400, hasToken=true
+18:40:44.484 [DEBUG] Fetching: http://192.168.1.28:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:44.495 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:44.540 [DEBUG] HTTP response: 200 (5503 bytes)
+18:40:44.545 [DEBUG] Response: 200 - 5503 bytes
+18:40:44.552 [DEBUG] Response body: {"MediaContainer":{"size":11,"allowSync":false,"title1":"Plex Library","Directory":[{"allowSync":true,"filters":true,"refreshing":false,"key":"12","type":"movie","title":"3D Movies","agent":"tv.plex.agents.movie","scanner":"Plex Movie","language":"en-US","metadataAgentProviderGroupId":1,"uuid":"6cd2f30a-ef3d-4dac-8c8e-0404418f3ce1","updatedAt":1773237912,"createdAt":1753322285,"scannedAt":1767703375,"content":true,"directory":true,"contentChangedAt":3550580492361197975,"hidden":2,"Location":[{"i
+18:40:44.561 [DEBUG] Found section: 3D Movies (movie)
+18:40:44.572 [DEBUG] Found section: DVR Movies (movie)
+18:40:44.583 [DEBUG] Found section: Movies (movie)
+18:40:44.593 [DEBUG] Found section: DVR TV Shows (show)
+18:40:44.599 [DEBUG] Found section: TV Shows (show)
+18:40:44.606 [DEBUG] Found section: CD Music (artist)
+18:40:44.615 [DEBUG] Found section: Nick's Music (artist)
+18:40:44.625 [DEBUG] Found section: Colorized Photos (photo)
+18:40:44.636 [DEBUG] Found section: Photos (photo)
+18:40:44.646 [DEBUG] Found section: Photos 2.0 (photo)
+18:40:44.652 [DEBUG] Found section: Home Videos (movie)
+18:40:44.659 [INFO] Found 11 library sections
+18:40:44.669 [DEBUG] MainActivity: Dynamic sidebar width: 242px
+18:40:44.692 [DEBUG] MainActivity: Loading libraries to sidebar...
+18:40:44.706 [DEBUG] fetchLibrarySections: serverUrl=http://192.168.1.28:32400, hasToken=true
+18:40:44.716 [DEBUG] Fetching: http://192.168.1.28:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:44.721 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:44.764 [DEBUG] HTTP response: 200 (5503 bytes)
+18:40:44.773 [DEBUG] Response: 200 - 5503 bytes
+18:40:44.783 [DEBUG] Response body: {"MediaContainer":{"size":11,"allowSync":false,"title1":"Plex Library","Directory":[{"allowSync":true,"filters":true,"refreshing":false,"key":"12","type":"movie","title":"3D Movies","agent":"tv.plex.agents.movie","scanner":"Plex Movie","language":"en-US","metadataAgentProviderGroupId":1,"uuid":"6cd2f30a-ef3d-4dac-8c8e-0404418f3ce1","updatedAt":1773237912,"createdAt":1753322285,"scannedAt":1767703375,"content":true,"directory":true,"contentChangedAt":3550580492361197975,"hidden":2,"Location":[{"i
+18:40:44.795 [DEBUG] Found section: 3D Movies (movie)
+18:40:44.805 [DEBUG] Found section: DVR Movies (movie)
+18:40:44.810 [DEBUG] Found section: Movies (movie)
+18:40:44.817 [DEBUG] Found section: DVR TV Shows (show)
+18:40:44.826 [DEBUG] Found section: TV Shows (show)
+18:40:44.837 [DEBUG] Found section: CD Music (artist)
+18:40:44.849 [DEBUG] Found section: Nick's Music (artist)
+18:40:44.858 [DEBUG] Found section: Colorized Photos (photo)
+18:40:44.865 [DEBUG] Found section: Photos (photo)
+18:40:44.874 [DEBUG] Found section: Photos 2.0 (photo)
+18:40:44.886 [DEBUG] Found section: Home Videos (movie)
+18:40:44.898 [INFO] Found 11 library sections
+18:40:44.905 [INFO] MainActivity: Got 11 library sections
+18:40:44.913 [DEBUG] MainActivity: Hiding library: 3D Movies
+18:40:44.922 [DEBUG] MainActivity: Hiding library: DVR Movies
+18:40:44.946 [DEBUG] MainActivity: Added sidebar tab for library: Movies
+18:40:44.969 [DEBUG] MainActivity: Added sidebar tab for library: DVR TV Shows
+18:40:44.987 [DEBUG] MainActivity: Added sidebar tab for library: TV Shows
+18:40:44.996 [DEBUG] MainActivity: Hiding library: CD Music
+18:40:45.018 [DEBUG] MainActivity: Added sidebar tab for library: Nick's Music
+18:40:45.029 [DEBUG] MainActivity: Hiding library: Colorized Photos
+18:40:45.037 [DEBUG] MainActivity: Hiding library: Photos
+18:40:45.043 [DEBUG] MainActivity: Hiding library: Photos 2.0
+18:40:45.053 [DEBUG] MainActivity: Hiding library: Home Videos
+18:40:45.185 [DEBUG] HomeTab: Loading content...
+18:40:45.196 [DEBUG] HomeTab::loadContent - Starting async load
+18:40:45.207 [DEBUG] HomeTab: Fetching continue watching (async)...
+18:40:45.208 [DEBUG] HomeTab: Async content loading started
+18:40:45.208 [DEBUG] HomeTab: Fetching library sections for recently added...
+18:40:45.213 [DEBUG] fetchContinueWatching: serverUrl=http://192.168.1.28:32400
+18:40:45.233 [DEBUG] fetchLibrarySections: serverUrl=http://192.168.1.28:32400, hasToken=true
+18:40:45.237 [DEBUG] Giving focus to brls::SidebarItem
+18:40:45.315 [DEBUG] HTTP GET http://192.168.1.28:32400/hubs/continueWatching?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:45.321 [DEBUG] Fetching: http://192.168.1.28:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:45.328 [DEBUG] Hiding brls::Box
+18:40:45.349 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:45.361 [DEBUG] push activity to the stack
+18:40:45.375 [DEBUG] Showing brls::Box
+18:40:45.388 [DEBUG] HTTP response: 200 (5503 bytes)
+18:40:45.397 [DEBUG] HTTP response: 200 (17462 bytes)
+18:40:45.399 [DEBUG] Response: 200 - 5503 bytes
+18:40:45.410 [DEBUG] ContinueWatching response: 200 - 17462 bytes
+18:40:45.416 [DEBUG] Response body: {"MediaContainer":{"size":11,"allowSync":false,"title1":"Plex Library","Directory":[{"allowSync":true,"filters":true,"refreshing":false,"key":"12","type":"movie","title":"3D Movies","agent":"tv.plex.agents.movie","scanner":"Plex Movie","language":"en-US","metadataAgentProviderGroupId":1,"uuid":"6cd2f30a-ef3d-4dac-8c8e-0404418f3ce1","updatedAt":1773237912,"createdAt":1753322285,"scannedAt":1767703375,"content":true,"directory":true,"contentChangedAt":3550580492361197975,"hidden":2,"Location":[{"i
+18:40:45.429 [INFO] Found 3 continue watching items
+18:40:45.435 [DEBUG] Found section: 3D Movies (movie)
+18:40:45.447 [INFO] HomeTab: Got 3 continue watching items
+18:40:45.455 [DEBUG] Found section: DVR Movies (movie)
+18:40:45.470 [DEBUG] Found section: Movies (movie)
+18:40:45.480 [DEBUG] Found section: DVR TV Shows (show)
+18:40:45.492 [DEBUG] Found section: TV Shows (show)
+18:40:45.501 [DEBUG] Found section: CD Music (artist)
+18:40:45.507 [DEBUG] Found section: Nick's Music (artist)
+18:40:45.516 [DEBUG] Found section: Colorized Photos (photo)
+18:40:45.527 [DEBUG] Found section: Photos (photo)
+18:40:45.531 [DEBUG] Found section: Photos 2.0 (photo)
+18:40:45.539 [DEBUG] Found section: Home Videos (movie)
+18:40:45.545 [INFO] Found 11 library sections
+18:40:45.554 [DEBUG] HomeTab: Skipping hidden library: 3D Movies
+18:40:45.564 [DEBUG] HomeTab: Skipping hidden library: DVR Movies
+18:40:45.576 [DEBUG] fetchSectionRecentlyAdded: section=2
+18:40:45.585 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections/2/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:45.600 [DEBUG] Removing an inputs block token (tokens=0)
+18:40:45.825 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16681%2Fthumb%2F1770800250&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:45.873 [DEBUG] HTTP response: 200 (236198 bytes)
+18:40:45.878 [DEBUG] RecentlyAdded response: 200 - 236198 bytes
+18:40:45.943 [DEBUG] HTTP response: 200 (7513 bytes)
+18:40:45.953 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F4481%2Fthumb%2F1736453459&width=280&height=160&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:45.988 [DEBUG] HTTP response: 200 (16662 bytes)
+18:40:45.989 [INFO] Found 100 recently added items in section 2
+18:40:45.995 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F3920%2Fthumb%2F1736453118&width=280&height=160&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:46.001 [DEBUG] fetchSectionRecentlyAdded: section=6
+18:40:46.022 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections/6/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:46.031 [DEBUG] HTTP response: 200 (12061 bytes)
+18:40:46.187 [DEBUG] HTTP response: 200 (238556 bytes)
+18:40:46.197 [DEBUG] RecentlyAdded response: 200 - 238556 bytes
+18:40:46.287 [INFO] Found 100 recently added items in section 6
+18:40:46.294 [DEBUG] fetchSectionRecentlyAdded: section=3
+18:40:46.300 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections/3/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:46.845 [DEBUG] HTTP response: 200 (276510 bytes)
+18:40:46.856 [DEBUG] RecentlyAdded response: 200 - 276510 bytes
+18:40:46.947 [INFO] Found 100 recently added items in section 3
+18:40:46.954 [DEBUG] HomeTab: Skipping hidden library: CD Music
+18:40:46.963 [DEBUG] fetchSectionRecentlyAdded: section=4
+18:40:46.976 [DEBUG] HTTP GET http://192.168.1.28:32400/library/sections/4/recentlyAdded?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:47.179 [DEBUG] HTTP response: 200 (50489 bytes)
+18:40:47.186 [DEBUG] RecentlyAdded response: 200 - 50489 bytes
+18:40:47.214 [INFO] Found 25 recently added items in section 4
+18:40:47.226 [DEBUG] HomeTab: Skipping hidden library: Colorized Photos
+18:40:47.234 [DEBUG] HomeTab: Skipping hidden library: Photos
+18:40:47.240 [DEBUG] HomeTab: Skipping hidden library: Photos 2.0
+18:40:47.249 [DEBUG] HomeTab: Skipping hidden library: Home Videos
+18:40:47.262 [INFO] HomeTab: Got 10 movies, 10 shows, 10 music items
+18:40:47.539 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F17001%2Fthumb%2F1772616869&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:47.569 [DEBUG] HTTP response: 200 (6672 bytes)
+18:40:47.579 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16679%2Fthumb%2F1770800250&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:47.621 [DEBUG] HTTP response: 200 (5759 bytes)
+18:40:47.628 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16676%2Fthumb%2F1770800249&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:47.664 [DEBUG] HTTP response: 200 (6172 bytes)
+18:40:47.674 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16660%2Fthumb%2F1768118446&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:47.721 [DEBUG] HTTP response: 200 (6407 bytes)
+18:40:47.781 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F16022%2Fthumb%2F1773045128&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:47.811 [DEBUG] HTTP response: 200 (5266 bytes)
+18:40:48.322 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15620%2Fthumb%2F1770800248&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:48.369 [DEBUG] HTTP response: 200 (5074 bytes)
+18:40:48.375 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F15610%2Fthumb%2F1768208687&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:48.399 [DEBUG] HTTP response: 200 (4910 bytes)
+18:40:48.409 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F1640%2Fthumb%2F1771140667&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:48.520 [DEBUG] HTTP response: 200 (6267 bytes)
+18:40:48.526 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F2384%2Fthumb%2F1770800237&width=110&height=165&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:48.594 [DEBUG] HTTP response: 200 (8148 bytes)
+18:40:48.607 [DEBUG] HTTP GET http://192.168.1.28:32400/photo/:/transcode?url=%2Flibrary%2Fmetadata%2F17296%2Fthumb%2F1773120840&width=280&height=160&minSize=1&upscale=1&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:48.710 [DEBUG] HTTP response: 200 (10742 bytes)
+18:40:48.929 [DEBUG] Giving focus to brls::SidebarItem
+18:40:52.926 [DEBUG] Giving focus to brls::Button
+18:40:54.361 [DEBUG] Giving focus to brls::Button
+18:40:55.045 [DEBUG] Giving focus to brls::Button
+18:40:55.695 [INFO] DownloadsManager: Starting download queue
+18:40:55.708 [INFO] DownloadsManager: Download thread started
+18:40:55.717 [INFO] DownloadsManager: Found queued item: The Retroville 9
+18:40:55.725 [DEBUG] Showing notification "Downloads started"
+18:40:55.726 [INFO] DownloadsManager: Starting download of The Retroville 9
+18:40:55.749 [INFO] DownloadsManager: Starting download of The Retroville 9
+18:40:55.755 [INFO] DownloadsManager: Trying Download Queue API for 4675
+18:40:55.765 [DEBUG] HTTP POST http://192.168.1.28:32400/downloadQueue?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:55.821 [DEBUG] HTTP response: 200 (130 bytes)
+18:40:55.827 [DEBUG] DownloadsManager: downloadQueue response: {"MediaContainer":{"size":1,"DownloadQueue":[{"id":3,"owner":1,"clientIdentifier":"VitaPlex","itemCount":1,"status":"deciding"}]}}
+18:40:55.837 [INFO] DownloadsManager: Got download queue ID: 3
+18:40:55.848 [DEBUG] HTTP GET http://192.168.1.28:32400/downloadQueue/3/items?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:55.883 [DEBUG] HTTP response: 200 (484 bytes)
+18:40:55.889 [DEBUG] HTTP DELETE http://192.168.1.28:32400/downloadQueue/3/items/94?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:55.916 [DEBUG] HTTP response: 204 (0 bytes)
+18:40:55.928 [DEBUG] DownloadsManager: Cleaned up old queue item 94
+18:40:55.938 [DEBUG] HTTP POST http://192.168.1.28:32400/downloadQueue/3/add?keys=/library/metadata/4675&protocol=http&directPlay=0&directStream=0&directStreamAudio=1&location=lan&audioBoost=100&audioChannelCount=2&mediaIndex=0&partIndex=0&videoBitrate=2000&videoResolution=960x544&subtitles=burn&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:56.013 [DEBUG] Giving focus to brls::Button
+18:40:56.139 [DEBUG] HTTP response: 200 (90 bytes)
+18:40:56.145 [INFO] DownloadsManager: Added to download queue, response: {"MediaContainer":{"size":1,"AddedQueueItems":[{"key":"/library/metadata/4675","id":95}]}}
+18:40:56.153 [INFO] DownloadsManager: Download queue item ID: 95
+18:40:56.163 [DEBUG] HTTP GET http://192.168.1.28:32400/downloadQueue/3/item/95/decision?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:56.199 [DEBUG] HTTP response: 200 (4 bytes)
+18:40:56.205 [INFO] DownloadsManager: Queue decision response: 200 (null)
+18:40:56.215 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:40:56.242 [DEBUG] HTTP response: 503 (0 bytes)
+18:40:56.247 [DEBUG] DownloadsManager: Media poll attempt 1/200: HTTP 503
+18:40:56.256 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:41:01.267 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:41:01.300 [DEBUG] HTTP response: 503 (0 bytes)
+18:41:01.307 [DEBUG] DownloadsManager: Media poll attempt 2/200: HTTP 503
+18:41:01.316 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:41:01.318 [DEBUG] Giving focus to brls::Button
+18:41:01.702 [DEBUG] Giving focus to brls::Button
+18:41:06.329 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:41:06.356 [DEBUG] HTTP response: 503 (0 bytes)
+18:41:06.362 [DEBUG] DownloadsManager: Media poll attempt 3/200: HTTP 503
+18:41:06.372 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:41:11.442 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:41:11.467 [DEBUG] HTTP response: 503 (0 bytes)
+18:41:11.476 [DEBUG] DownloadsManager: Media poll attempt 4/200: HTTP 503
+18:41:11.489 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:41:16.499 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:41:16.593 [DEBUG] HTTP response: 503 (0 bytes)
+18:41:16.605 [DEBUG] DownloadsManager: Media poll attempt 5/200: HTTP 503
+18:41:16.615 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:41:21.626 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:41:22.254 [DEBUG] HTTP response: 503 (0 bytes)
+18:41:22.260 [DEBUG] DownloadsManager: Media poll attempt 6/200: HTTP 503
+18:41:22.270 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:41:27.283 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:41:27.309 [DEBUG] HTTP response: 503 (0 bytes)
+18:41:27.318 [DEBUG] DownloadsManager: Media poll attempt 7/200: HTTP 503
+18:41:27.331 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:41:32.342 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:41:32.400 [DEBUG] HTTP response: 503 (0 bytes)
+18:41:32.412 [DEBUG] DownloadsManager: Media poll attempt 8/200: HTTP 503
+18:41:32.421 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:41:37.432 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:41:37.466 [DEBUG] HTTP response: 503 (0 bytes)
+18:41:37.472 [DEBUG] DownloadsManager: Media poll attempt 9/200: HTTP 503
+18:41:37.482 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:41:42.496 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:41:42.555 [DEBUG] HTTP response: 503 (0 bytes)
+18:41:42.564 [DEBUG] DownloadsManager: Media poll attempt 10/200: HTTP 503
+18:41:42.577 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:41:47.588 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:41:47.693 [DEBUG] HTTP response: 503 (0 bytes)
+18:41:47.705 [DEBUG] DownloadsManager: Media poll attempt 11/200: HTTP 503
+18:41:47.714 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:41:52.725 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:41:52.763 [DEBUG] HTTP response: 503 (0 bytes)
+18:41:52.770 [DEBUG] DownloadsManager: Media poll attempt 12/200: HTTP 503
+18:41:52.780 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:41:57.793 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:41:57.903 [DEBUG] HTTP response: 503 (0 bytes)
+18:41:57.913 [DEBUG] DownloadsManager: Media poll attempt 13/200: HTTP 503
+18:41:57.926 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:42:02.936 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:42:02.971 [DEBUG] HTTP response: 503 (0 bytes)
+18:42:02.983 [DEBUG] DownloadsManager: Media poll attempt 14/200: HTTP 503
+18:42:02.992 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:42:08.002 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:42:08.046 [DEBUG] HTTP response: 503 (0 bytes)
+18:42:08.052 [DEBUG] DownloadsManager: Media poll attempt 15/200: HTTP 503
+18:42:08.062 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:42:13.133 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:42:13.166 [DEBUG] HTTP response: 503 (0 bytes)
+18:42:13.177 [DEBUG] DownloadsManager: Media poll attempt 16/200: HTTP 503
+18:42:13.186 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:42:18.197 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:42:18.359 [DEBUG] HTTP response: 503 (0 bytes)
+18:42:18.365 [DEBUG] DownloadsManager: Media poll attempt 17/200: HTTP 503
+18:42:18.375 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:42:23.389 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:42:23.413 [DEBUG] HTTP response: 503 (0 bytes)
+18:42:23.424 [DEBUG] DownloadsManager: Media poll attempt 18/200: HTTP 503
+18:42:23.433 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:42:28.444 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:42:28.478 [DEBUG] HTTP response: 503 (0 bytes)
+18:42:28.485 [DEBUG] DownloadsManager: Media poll attempt 19/200: HTTP 503
+18:42:28.495 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:42:33.509 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:42:33.535 [DEBUG] HTTP response: 503 (0 bytes)
+18:42:33.546 [DEBUG] DownloadsManager: Media poll attempt 20/200: HTTP 503
+18:42:33.555 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:42:38.566 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:42:38.614 [DEBUG] HTTP response: 503 (0 bytes)
+18:42:38.620 [DEBUG] DownloadsManager: Media poll attempt 21/200: HTTP 503
+18:42:38.630 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:42:43.644 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:42:43.676 [DEBUG] HTTP response: 503 (0 bytes)
+18:42:43.687 [DEBUG] DownloadsManager: Media poll attempt 22/200: HTTP 503
+18:42:43.696 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:42:48.707 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:42:48.747 [DEBUG] HTTP response: 503 (0 bytes)
+18:42:48.754 [DEBUG] DownloadsManager: Media poll attempt 23/200: HTTP 503
+18:42:48.764 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:42:53.778 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:42:53.806 [DEBUG] HTTP response: 503 (0 bytes)
+18:42:53.817 [DEBUG] DownloadsManager: Media poll attempt 24/200: HTTP 503
+18:42:53.826 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:42:58.836 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:42:58.888 [DEBUG] HTTP response: 503 (0 bytes)
+18:42:58.894 [DEBUG] DownloadsManager: Media poll attempt 25/200: HTTP 503
+18:42:58.904 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:43:03.911 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:43:03.932 [DEBUG] HTTP response: 503 (0 bytes)
+18:43:03.942 [DEBUG] DownloadsManager: Media poll attempt 26/200: HTTP 503
+18:43:04.009 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:43:09.018 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:43:09.046 [DEBUG] HTTP response: 503 (0 bytes)
+18:43:09.053 [DEBUG] DownloadsManager: Media poll attempt 27/200: HTTP 503
+18:43:09.063 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:43:14.077 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:43:14.117 [DEBUG] HTTP response: 503 (0 bytes)
+18:43:14.129 [DEBUG] DownloadsManager: Media poll attempt 28/200: HTTP 503
+18:43:14.139 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:43:19.151 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:43:19.207 [DEBUG] HTTP response: 503 (0 bytes)
+18:43:19.217 [DEBUG] DownloadsManager: Media poll attempt 29/200: HTTP 503
+18:43:19.230 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:43:24.240 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:43:24.312 [DEBUG] HTTP response: 503 (0 bytes)
+18:43:24.318 [DEBUG] DownloadsManager: Media poll attempt 30/200: HTTP 503
+18:43:24.329 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:43:29.343 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:43:29.370 [DEBUG] HTTP response: 503 (0 bytes)
+18:43:29.382 [DEBUG] DownloadsManager: Media poll attempt 31/200: HTTP 503
+18:43:29.392 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:43:34.403 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:43:34.433 [DEBUG] HTTP response: 503 (0 bytes)
+18:43:34.443 [DEBUG] DownloadsManager: Media poll attempt 32/200: HTTP 503
+18:43:34.456 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:43:39.466 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:43:39.515 [DEBUG] HTTP response: 503 (0 bytes)
+18:43:39.522 [DEBUG] DownloadsManager: Media poll attempt 33/200: HTTP 503
+18:43:39.532 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:43:44.547 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:43:44.595 [DEBUG] HTTP response: 503 (0 bytes)
+18:43:44.608 [DEBUG] DownloadsManager: Media poll attempt 34/200: HTTP 503
+18:43:44.618 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:43:49.629 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:43:49.676 [DEBUG] HTTP response: 503 (0 bytes)
+18:43:49.685 [DEBUG] DownloadsManager: Media poll attempt 35/200: HTTP 503
+18:43:49.699 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:43:54.709 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:43:54.804 [DEBUG] HTTP response: 503 (0 bytes)
+18:43:54.810 [DEBUG] DownloadsManager: Media poll attempt 36/200: HTTP 503
+18:43:54.821 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:43:59.835 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:43:59.871 [DEBUG] HTTP response: 503 (0 bytes)
+18:43:59.884 [DEBUG] DownloadsManager: Media poll attempt 37/200: HTTP 503
+18:43:59.893 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:44:04.905 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:44:04.936 [DEBUG] HTTP response: 503 (0 bytes)
+18:44:04.936 [DEBUG] DownloadsManager: Media poll attempt 38/200: HTTP 503
+18:44:04.937 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:44:09.938 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:44:09.979 [DEBUG] HTTP response: 503 (0 bytes)
+18:44:09.982 [DEBUG] DownloadsManager: Media poll attempt 39/200: HTTP 503
+18:44:09.987 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:44:14.993 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:44:15.041 [DEBUG] HTTP response: 503 (0 bytes)
+18:44:15.048 [DEBUG] DownloadsManager: Media poll attempt 40/200: HTTP 503
+18:44:15.057 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:44:20.068 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:44:20.101 [DEBUG] HTTP response: 503 (0 bytes)
+18:44:20.111 [DEBUG] DownloadsManager: Media poll attempt 41/200: HTTP 503
+18:44:20.117 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:44:25.123 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:44:25.146 [DEBUG] HTTP response: 503 (0 bytes)
+18:44:25.154 [DEBUG] DownloadsManager: Media poll attempt 42/200: HTTP 503
+18:44:25.164 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:44:30.176 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:44:30.205 [DEBUG] HTTP response: 503 (0 bytes)
+18:44:30.215 [DEBUG] DownloadsManager: Media poll attempt 43/200: HTTP 503
+18:44:30.220 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:44:35.227 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:44:35.396 [DEBUG] HTTP response: 503 (0 bytes)
+18:44:35.404 [DEBUG] DownloadsManager: Media poll attempt 44/200: HTTP 503
+18:44:35.414 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:44:40.425 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:44:40.470 [DEBUG] HTTP response: 503 (0 bytes)
+18:44:40.480 [DEBUG] DownloadsManager: Media poll attempt 45/200: HTTP 503
+18:44:40.485 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:44:45.492 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:44:45.532 [DEBUG] HTTP response: 503 (0 bytes)
+18:44:45.540 [DEBUG] DownloadsManager: Media poll attempt 46/200: HTTP 503
+18:44:45.550 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:44:50.562 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:44:50.604 [DEBUG] HTTP response: 503 (0 bytes)
+18:44:50.614 [DEBUG] DownloadsManager: Media poll attempt 47/200: HTTP 503
+18:44:50.619 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:44:55.625 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:44:55.649 [DEBUG] HTTP response: 503 (0 bytes)
+18:44:55.657 [DEBUG] DownloadsManager: Media poll attempt 48/200: HTTP 503
+18:44:55.667 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:45:00.679 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:45:00.731 [DEBUG] HTTP response: 503 (0 bytes)
+18:45:00.741 [DEBUG] DownloadsManager: Media poll attempt 49/200: HTTP 503
+18:45:00.746 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:45:05.752 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:45:05.849 [DEBUG] HTTP response: 503 (0 bytes)
+18:45:05.858 [DEBUG] DownloadsManager: Media poll attempt 50/200: HTTP 503
+18:45:05.867 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:45:10.879 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:45:10.961 [DEBUG] HTTP response: 503 (0 bytes)
+18:45:10.971 [DEBUG] DownloadsManager: Media poll attempt 51/200: HTTP 503
+18:45:10.976 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:45:15.983 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:45:16.013 [DEBUG] HTTP response: 503 (0 bytes)
+18:45:16.023 [DEBUG] DownloadsManager: Media poll attempt 52/200: HTTP 503
+18:45:16.034 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:45:21.046 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:45:21.073 [DEBUG] HTTP response: 503 (0 bytes)
+18:45:21.078 [DEBUG] DownloadsManager: Media poll attempt 53/200: HTTP 503
+18:45:21.087 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:45:26.098 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:45:26.156 [DEBUG] HTTP response: 503 (0 bytes)
+18:45:26.167 [DEBUG] DownloadsManager: Media poll attempt 54/200: HTTP 503
+18:45:26.173 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:45:31.180 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:45:31.225 [DEBUG] HTTP response: 503 (0 bytes)
+18:45:31.234 [DEBUG] DownloadsManager: Media poll attempt 55/200: HTTP 503
+18:45:31.246 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:45:36.258 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:45:36.698 [DEBUG] HTTP response: 503 (0 bytes)
+18:45:36.704 [DEBUG] DownloadsManager: Media poll attempt 56/200: HTTP 503
+18:45:36.713 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:45:41.724 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:45:41.772 [DEBUG] HTTP response: 503 (0 bytes)
+18:45:41.784 [DEBUG] DownloadsManager: Media poll attempt 57/200: HTTP 503
+18:45:41.789 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:45:46.796 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:45:46.937 [DEBUG] HTTP response: 503 (0 bytes)
+18:45:46.946 [DEBUG] DownloadsManager: Media poll attempt 58/200: HTTP 503
+18:45:46.958 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:45:51.970 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:45:51.997 [DEBUG] HTTP response: 503 (0 bytes)
+18:45:52.003 [DEBUG] DownloadsManager: Media poll attempt 59/200: HTTP 503
+18:45:52.012 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:45:57.022 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:45:57.058 [DEBUG] HTTP response: 503 (0 bytes)
+18:45:57.070 [DEBUG] DownloadsManager: Media poll attempt 60/200: HTTP 503
+18:45:57.075 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:46:02.082 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:46:02.103 [DEBUG] HTTP response: 503 (0 bytes)
+18:46:02.130 [DEBUG] DownloadsManager: Media poll attempt 61/200: HTTP 503
+18:46:02.136 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:46:07.142 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:46:07.188 [DEBUG] HTTP response: 503 (0 bytes)
+18:46:07.198 [DEBUG] DownloadsManager: Media poll attempt 62/200: HTTP 503
+18:46:07.209 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:46:12.221 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:46:12.269 [DEBUG] HTTP response: 503 (0 bytes)
+18:46:12.275 [DEBUG] DownloadsManager: Media poll attempt 63/200: HTTP 503
+18:46:12.284 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:46:17.294 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:46:17.563 [DEBUG] HTTP response: 503 (0 bytes)
+18:46:17.568 [DEBUG] DownloadsManager: Media poll attempt 64/200: HTTP 503
+18:46:17.574 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:46:22.584 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:46:22.713 [DEBUG] HTTP response: 503 (0 bytes)
+18:46:22.724 [DEBUG] DownloadsManager: Media poll attempt 65/200: HTTP 503
+18:46:22.734 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:46:27.740 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:46:27.776 [DEBUG] HTTP response: 503 (0 bytes)
+18:46:27.787 [DEBUG] DownloadsManager: Media poll attempt 66/200: HTTP 503
+18:46:27.799 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:46:32.809 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:46:32.838 [DEBUG] HTTP response: 503 (0 bytes)
+18:46:32.846 [DEBUG] DownloadsManager: Media poll attempt 67/200: HTTP 503
+18:46:32.857 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:46:37.869 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:46:37.897 [DEBUG] HTTP response: 503 (0 bytes)
+18:46:37.903 [DEBUG] DownloadsManager: Media poll attempt 68/200: HTTP 503
+18:46:37.912 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:46:42.924 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:46:42.953 [DEBUG] HTTP response: 503 (0 bytes)
+18:46:42.958 [DEBUG] DownloadsManager: Media poll attempt 69/200: HTTP 503
+18:46:42.965 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:46:47.975 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:46:48.014 [DEBUG] HTTP response: 503 (0 bytes)
+18:46:48.026 [DEBUG] DownloadsManager: Media poll attempt 70/200: HTTP 503
+18:46:48.032 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:46:53.041 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:46:53.086 [DEBUG] HTTP response: 503 (0 bytes)
+18:46:53.098 [DEBUG] DownloadsManager: Media poll attempt 71/200: HTTP 503
+18:46:53.108 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:46:58.114 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:46:58.150 [DEBUG] HTTP response: 503 (0 bytes)
+18:46:58.159 [DEBUG] DownloadsManager: Media poll attempt 72/200: HTTP 503
+18:46:58.171 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:47:03.180 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:47:03.209 [DEBUG] HTTP response: 503 (0 bytes)
+18:47:03.218 [DEBUG] DownloadsManager: Media poll attempt 73/200: HTTP 503
+18:47:03.228 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:47:08.241 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:47:08.303 [DEBUG] HTTP response: 503 (0 bytes)
+18:47:08.309 [DEBUG] DownloadsManager: Media poll attempt 74/200: HTTP 503
+18:47:08.318 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:47:13.330 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:47:13.422 [DEBUG] HTTP response: 503 (0 bytes)
+18:47:13.427 [DEBUG] DownloadsManager: Media poll attempt 75/200: HTTP 503
+18:47:13.434 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:47:18.444 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:47:18.476 [DEBUG] HTTP response: 503 (0 bytes)
+18:47:18.486 [DEBUG] DownloadsManager: Media poll attempt 76/200: HTTP 503
+18:47:18.492 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:47:23.502 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:47:23.538 [DEBUG] HTTP response: 503 (0 bytes)
+18:47:23.548 [DEBUG] DownloadsManager: Media poll attempt 77/200: HTTP 503
+18:47:23.554 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:47:28.564 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:47:28.596 [DEBUG] HTTP response: 503 (0 bytes)
+18:47:28.606 [DEBUG] DownloadsManager: Media poll attempt 78/200: HTTP 503
+18:47:28.612 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:47:33.622 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:47:33.654 [DEBUG] HTTP response: 503 (0 bytes)
+18:47:33.664 [DEBUG] DownloadsManager: Media poll attempt 79/200: HTTP 503
+18:47:33.670 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:47:38.680 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:47:38.723 [DEBUG] HTTP response: 503 (0 bytes)
+18:47:38.786 [DEBUG] DownloadsManager: Media poll attempt 80/200: HTTP 503
+18:47:38.792 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:47:43.802 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:47:43.834 [DEBUG] HTTP response: 503 (0 bytes)
+18:47:43.844 [DEBUG] DownloadsManager: Media poll attempt 81/200: HTTP 503
+18:47:43.851 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:47:48.861 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:47:48.903 [DEBUG] HTTP response: 503 (0 bytes)
+18:47:48.913 [DEBUG] DownloadsManager: Media poll attempt 82/200: HTTP 503
+18:47:48.919 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:47:53.929 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:47:53.957 [DEBUG] HTTP response: 503 (0 bytes)
+18:47:53.967 [DEBUG] DownloadsManager: Media poll attempt 83/200: HTTP 503
+18:47:53.974 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:47:58.984 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:47:59.017 [DEBUG] HTTP response: 503 (0 bytes)
+18:47:59.027 [DEBUG] DownloadsManager: Media poll attempt 84/200: HTTP 503
+18:47:59.034 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:48:04.044 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:48:04.077 [DEBUG] HTTP response: 503 (0 bytes)
+18:48:04.087 [DEBUG] DownloadsManager: Media poll attempt 85/200: HTTP 503
+18:48:04.093 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:48:09.103 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:48:09.134 [DEBUG] HTTP response: 503 (0 bytes)
+18:48:09.144 [DEBUG] DownloadsManager: Media poll attempt 86/200: HTTP 503
+18:48:09.150 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:48:14.160 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:48:14.195 [DEBUG] HTTP response: 503 (0 bytes)
+18:48:14.205 [DEBUG] DownloadsManager: Media poll attempt 87/200: HTTP 503
+18:48:14.212 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:48:19.221 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:48:20.225 [DEBUG] HTTP response: 503 (0 bytes)
+18:48:20.236 [DEBUG] DownloadsManager: Media poll attempt 88/200: HTTP 503
+18:48:20.242 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:48:25.252 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:48:25.291 [DEBUG] HTTP response: 503 (0 bytes)
+18:48:25.297 [DEBUG] DownloadsManager: Media poll attempt 89/200: HTTP 503
+18:48:25.307 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:48:30.320 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:48:30.352 [DEBUG] HTTP response: 503 (0 bytes)
+18:48:30.360 [DEBUG] DownloadsManager: Media poll attempt 90/200: HTTP 503
+18:48:30.370 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:48:35.383 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:48:35.410 [DEBUG] HTTP response: 503 (0 bytes)
+18:48:35.419 [DEBUG] DownloadsManager: Media poll attempt 91/200: HTTP 503
+18:48:35.431 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:48:40.441 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:48:40.615 [DEBUG] HTTP response: 503 (0 bytes)
+18:48:40.626 [DEBUG] DownloadsManager: Media poll attempt 92/200: HTTP 503
+18:48:40.638 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:48:45.646 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:48:45.689 [DEBUG] HTTP response: 503 (0 bytes)
+18:48:45.701 [DEBUG] DownloadsManager: Media poll attempt 93/200: HTTP 503
+18:48:45.710 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:48:50.721 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:48:50.750 [DEBUG] HTTP response: 503 (0 bytes)
+18:48:50.760 [DEBUG] DownloadsManager: Media poll attempt 94/200: HTTP 503
+18:48:50.763 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:48:55.773 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:48:55.861 [DEBUG] HTTP response: 503 (0 bytes)
+18:48:55.867 [DEBUG] DownloadsManager: Media poll attempt 95/200: HTTP 503
+18:48:55.876 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:49:00.887 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:49:00.925 [DEBUG] HTTP response: 503 (0 bytes)
+18:49:00.931 [DEBUG] DownloadsManager: Media poll attempt 96/200: HTTP 503
+18:49:00.941 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:49:05.955 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:49:05.990 [DEBUG] HTTP response: 503 (0 bytes)
+18:49:05.999 [DEBUG] DownloadsManager: Media poll attempt 97/200: HTTP 503
+18:49:06.010 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:49:11.021 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:49:11.051 [DEBUG] HTTP response: 503 (0 bytes)
+18:49:11.060 [DEBUG] DownloadsManager: Media poll attempt 98/200: HTTP 503
+18:49:11.073 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:49:16.083 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:49:16.114 [DEBUG] HTTP response: 503 (0 bytes)
+18:49:16.126 [DEBUG] DownloadsManager: Media poll attempt 99/200: HTTP 503
+18:49:16.134 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:49:21.142 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:49:21.173 [DEBUG] HTTP response: 503 (0 bytes)
+18:49:21.185 [DEBUG] DownloadsManager: Media poll attempt 100/200: HTTP 503
+18:49:21.194 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:49:26.205 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:49:26.307 [DEBUG] HTTP response: 503 (0 bytes)
+18:49:26.313 [DEBUG] DownloadsManager: Media poll attempt 101/200: HTTP 503
+18:49:26.323 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:49:31.337 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:49:31.372 [DEBUG] HTTP response: 503 (0 bytes)
+18:49:31.381 [DEBUG] DownloadsManager: Media poll attempt 102/200: HTTP 503
+18:49:31.394 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:49:36.404 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:49:36.444 [DEBUG] HTTP response: 503 (0 bytes)
+18:49:36.456 [DEBUG] DownloadsManager: Media poll attempt 103/200: HTTP 503
+18:49:36.466 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:49:41.476 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:49:41.511 [DEBUG] HTTP response: 503 (0 bytes)
+18:49:41.517 [DEBUG] DownloadsManager: Media poll attempt 104/200: HTTP 503
+18:49:41.527 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:49:46.540 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:49:46.564 [DEBUG] HTTP response: 503 (0 bytes)
+18:49:46.573 [DEBUG] DownloadsManager: Media poll attempt 105/200: HTTP 503
+18:49:46.586 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:49:51.596 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:49:51.699 [DEBUG] HTTP response: 503 (0 bytes)
+18:49:51.711 [DEBUG] DownloadsManager: Media poll attempt 106/200: HTTP 503
+18:49:51.720 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:49:56.731 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:49:56.835 [DEBUG] HTTP response: 503 (0 bytes)
+18:49:56.842 [DEBUG] DownloadsManager: Media poll attempt 107/200: HTTP 503
+18:49:56.851 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:50:01.922 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:50:01.950 [DEBUG] HTTP response: 503 (0 bytes)
+18:50:01.959 [DEBUG] DownloadsManager: Media poll attempt 108/200: HTTP 503
+18:50:01.972 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:50:06.982 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:50:07.029 [DEBUG] HTTP response: 503 (0 bytes)
+18:50:07.041 [DEBUG] DownloadsManager: Media poll attempt 109/200: HTTP 503
+18:50:07.050 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:50:12.061 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:50:12.110 [DEBUG] HTTP response: 503 (0 bytes)
+18:50:12.116 [DEBUG] DownloadsManager: Media poll attempt 110/200: HTTP 503
+18:50:12.126 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:50:17.140 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:50:17.164 [DEBUG] HTTP response: 503 (0 bytes)
+18:50:17.174 [DEBUG] DownloadsManager: Media poll attempt 111/200: HTTP 503
+18:50:17.187 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:50:22.197 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:50:22.537 [DEBUG] HTTP response: 503 (0 bytes)
+18:50:22.549 [DEBUG] DownloadsManager: Media poll attempt 112/200: HTTP 503
+18:50:22.559 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:50:27.569 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:50:27.620 [DEBUG] HTTP response: 503 (0 bytes)
+18:50:27.627 [DEBUG] DownloadsManager: Media poll attempt 113/200: HTTP 503
+18:50:27.638 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:50:32.647 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:50:32.689 [DEBUG] HTTP response: 503 (0 bytes)
+18:50:32.701 [DEBUG] DownloadsManager: Media poll attempt 114/200: HTTP 503
+18:50:32.711 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:50:37.722 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:50:37.753 [DEBUG] HTTP response: 503 (0 bytes)
+18:50:37.759 [DEBUG] DownloadsManager: Media poll attempt 115/200: HTTP 503
+18:50:37.770 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:50:42.780 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:50:42.810 [DEBUG] HTTP response: 503 (0 bytes)
+18:50:42.822 [DEBUG] DownloadsManager: Media poll attempt 116/200: HTTP 503
+18:50:42.832 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:50:47.842 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:50:47.879 [DEBUG] HTTP response: 503 (0 bytes)
+18:50:47.886 [DEBUG] DownloadsManager: Media poll attempt 117/200: HTTP 503
+18:50:47.897 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:50:52.906 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:50:52.955 [DEBUG] HTTP response: 503 (0 bytes)
+18:50:52.967 [DEBUG] DownloadsManager: Media poll attempt 118/200: HTTP 503
+18:50:52.977 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:50:57.987 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:50:58.090 [DEBUG] HTTP response: 503 (0 bytes)
+18:50:58.097 [DEBUG] DownloadsManager: Media poll attempt 119/200: HTTP 503
+18:50:58.108 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:51:03.117 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:51:03.163 [DEBUG] HTTP response: 503 (0 bytes)
+18:51:03.175 [DEBUG] DownloadsManager: Media poll attempt 120/200: HTTP 503
+18:51:03.184 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:51:08.195 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:51:08.278 [DEBUG] HTTP response: 503 (0 bytes)
+18:51:08.285 [DEBUG] DownloadsManager: Media poll attempt 121/200: HTTP 503
+18:51:08.297 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:51:13.306 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:51:13.343 [DEBUG] HTTP response: 503 (0 bytes)
+18:51:13.355 [DEBUG] DownloadsManager: Media poll attempt 122/200: HTTP 503
+18:51:13.364 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:51:18.375 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:51:18.436 [DEBUG] HTTP response: 503 (0 bytes)
+18:51:18.442 [DEBUG] DownloadsManager: Media poll attempt 123/200: HTTP 503
+18:51:18.454 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:51:23.463 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:51:23.532 [DEBUG] HTTP response: 503 (0 bytes)
+18:51:23.544 [DEBUG] DownloadsManager: Media poll attempt 124/200: HTTP 503
+18:51:23.554 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:51:28.565 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:51:28.591 [DEBUG] HTTP response: 503 (0 bytes)
+18:51:28.599 [DEBUG] DownloadsManager: Media poll attempt 125/200: HTTP 503
+18:51:28.613 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:51:33.623 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:51:33.660 [DEBUG] HTTP response: 503 (0 bytes)
+18:51:33.671 [DEBUG] DownloadsManager: Media poll attempt 126/200: HTTP 503
+18:51:33.682 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:51:38.696 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:51:38.723 [DEBUG] HTTP response: 503 (0 bytes)
+18:51:38.734 [DEBUG] DownloadsManager: Media poll attempt 127/200: HTTP 503
+18:51:38.745 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:51:43.755 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:51:43.846 [DEBUG] HTTP response: 503 (0 bytes)
+18:51:43.854 [DEBUG] DownloadsManager: Media poll attempt 128/200: HTTP 503
+18:51:43.868 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:51:48.878 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:51:48.915 [DEBUG] HTTP response: 503 (0 bytes)
+18:51:48.979 [DEBUG] DownloadsManager: Media poll attempt 129/200: HTTP 503
+18:51:48.989 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:51:54.003 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:51:54.034 [DEBUG] HTTP response: 503 (0 bytes)
+18:51:54.045 [DEBUG] DownloadsManager: Media poll attempt 130/200: HTTP 503
+18:51:54.055 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:51:59.066 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:51:59.207 [DEBUG] HTTP response: 503 (0 bytes)
+18:51:59.215 [DEBUG] DownloadsManager: Media poll attempt 131/200: HTTP 503
+18:51:59.229 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:52:04.239 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:52:04.276 [DEBUG] HTTP response: 503 (0 bytes)
+18:52:04.287 [DEBUG] DownloadsManager: Media poll attempt 132/200: HTTP 503
+18:52:04.298 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:52:09.312 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:52:09.340 [DEBUG] HTTP response: 503 (0 bytes)
+18:52:09.351 [DEBUG] DownloadsManager: Media poll attempt 133/200: HTTP 503
+18:52:09.361 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:52:14.372 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:52:14.414 [DEBUG] HTTP response: 503 (0 bytes)
+18:52:14.423 [DEBUG] DownloadsManager: Media poll attempt 134/200: HTTP 503
+18:52:14.436 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:52:19.446 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:52:19.493 [DEBUG] HTTP response: 503 (0 bytes)
+18:52:19.504 [DEBUG] DownloadsManager: Media poll attempt 135/200: HTTP 503
+18:52:19.514 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:52:24.515 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:52:24.556 [DEBUG] HTTP response: 503 (0 bytes)
+18:52:24.556 [DEBUG] DownloadsManager: Media poll attempt 136/200: HTTP 503
+18:52:24.557 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:52:29.558 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:52:29.580 [DEBUG] HTTP response: 503 (0 bytes)
+18:52:29.588 [DEBUG] DownloadsManager: Media poll attempt 137/200: HTTP 503
+18:52:29.598 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:52:34.604 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:52:34.649 [DEBUG] HTTP response: 503 (0 bytes)
+18:52:34.656 [DEBUG] DownloadsManager: Media poll attempt 138/200: HTTP 503
+18:52:34.667 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:52:39.678 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:52:39.700 [DEBUG] HTTP response: 503 (0 bytes)
+18:52:39.711 [DEBUG] DownloadsManager: Media poll attempt 139/200: HTTP 503
+18:52:39.719 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:52:44.725 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:52:44.752 [DEBUG] HTTP response: 503 (0 bytes)
+18:52:44.760 [DEBUG] DownloadsManager: Media poll attempt 140/200: HTTP 503
+18:52:44.770 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:52:49.781 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:52:49.811 [DEBUG] HTTP response: 503 (0 bytes)
+18:52:49.822 [DEBUG] DownloadsManager: Media poll attempt 141/200: HTTP 503
+18:52:49.829 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:52:54.836 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:52:54.880 [DEBUG] HTTP response: 503 (0 bytes)
+18:52:54.889 [DEBUG] DownloadsManager: Media poll attempt 142/200: HTTP 503
+18:52:54.898 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:52:59.909 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:52:59.941 [DEBUG] HTTP response: 503 (0 bytes)
+18:52:59.952 [DEBUG] DownloadsManager: Media poll attempt 143/200: HTTP 503
+18:52:59.959 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:53:04.966 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:53:05.035 [DEBUG] HTTP response: 503 (0 bytes)
+18:53:05.044 [DEBUG] DownloadsManager: Media poll attempt 144/200: HTTP 503
+18:53:05.053 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:53:10.064 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:53:10.100 [DEBUG] HTTP response: 503 (0 bytes)
+18:53:10.112 [DEBUG] DownloadsManager: Media poll attempt 145/200: HTTP 503
+18:53:10.119 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:53:15.126 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:53:15.144 [DEBUG] HTTP response: 503 (0 bytes)
+18:53:15.152 [DEBUG] DownloadsManager: Media poll attempt 146/200: HTTP 503
+18:53:15.161 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:53:20.172 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:53:20.204 [DEBUG] HTTP response: 503 (0 bytes)
+18:53:20.215 [DEBUG] DownloadsManager: Media poll attempt 147/200: HTTP 503
+18:53:20.275 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:53:25.282 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:53:25.315 [DEBUG] HTTP response: 503 (0 bytes)
+18:53:25.323 [DEBUG] DownloadsManager: Media poll attempt 148/200: HTTP 503
+18:53:25.332 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:53:30.343 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:53:30.386 [DEBUG] HTTP response: 503 (0 bytes)
+18:53:30.397 [DEBUG] DownloadsManager: Media poll attempt 149/200: HTTP 503
+18:53:30.406 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:53:35.412 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:53:35.443 [DEBUG] HTTP response: 503 (0 bytes)
+18:53:35.451 [DEBUG] DownloadsManager: Media poll attempt 150/200: HTTP 503
+18:53:35.464 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:53:40.476 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:53:40.518 [DEBUG] HTTP response: 503 (0 bytes)
+18:53:40.524 [DEBUG] DownloadsManager: Media poll attempt 151/200: HTTP 503
+18:53:40.533 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:53:45.543 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:53:45.614 [DEBUG] HTTP response: 503 (0 bytes)
+18:53:45.626 [DEBUG] DownloadsManager: Media poll attempt 152/200: HTTP 503
+18:53:45.635 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:53:50.641 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:53:50.675 [DEBUG] HTTP response: 503 (0 bytes)
+18:53:50.684 [DEBUG] DownloadsManager: Media poll attempt 153/200: HTTP 503
+18:53:50.696 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:53:55.708 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:53:55.736 [DEBUG] HTTP response: 503 (0 bytes)
+18:53:55.742 [DEBUG] DownloadsManager: Media poll attempt 154/200: HTTP 503
+18:53:55.751 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:54:00.761 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:54:00.805 [DEBUG] HTTP response: 503 (0 bytes)
+18:54:00.816 [DEBUG] DownloadsManager: Media poll attempt 155/200: HTTP 503
+18:54:00.825 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:54:05.832 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:54:05.862 [DEBUG] HTTP response: 503 (0 bytes)
+18:54:05.871 [DEBUG] DownloadsManager: Media poll attempt 156/200: HTTP 503
+18:54:05.883 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:54:10.895 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:54:10.943 [DEBUG] HTTP response: 503 (0 bytes)
+18:54:10.948 [DEBUG] DownloadsManager: Media poll attempt 157/200: HTTP 503
+18:54:10.958 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:54:15.968 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:54:16.002 [DEBUG] HTTP response: 503 (0 bytes)
+18:54:16.013 [DEBUG] DownloadsManager: Media poll attempt 158/200: HTTP 503
+18:54:16.022 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:54:21.028 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:54:21.073 [DEBUG] HTTP response: 503 (0 bytes)
+18:54:21.081 [DEBUG] DownloadsManager: Media poll attempt 159/200: HTTP 503
+18:54:21.094 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:54:26.106 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:54:26.149 [DEBUG] HTTP response: 503 (0 bytes)
+18:54:26.155 [DEBUG] DownloadsManager: Media poll attempt 160/200: HTTP 503
+18:54:26.164 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:54:31.174 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:54:31.207 [DEBUG] HTTP response: 503 (0 bytes)
+18:54:31.218 [DEBUG] DownloadsManager: Media poll attempt 161/200: HTTP 503
+18:54:31.227 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:54:36.234 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:54:36.275 [DEBUG] HTTP response: 503 (0 bytes)
+18:54:36.285 [DEBUG] DownloadsManager: Media poll attempt 162/200: HTTP 503
+18:54:36.297 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:54:41.307 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:54:41.338 [DEBUG] HTTP response: 503 (0 bytes)
+18:54:41.347 [DEBUG] DownloadsManager: Media poll attempt 163/200: HTTP 503
+18:54:41.359 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:54:46.372 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:54:46.406 [DEBUG] HTTP response: 503 (0 bytes)
+18:54:46.415 [DEBUG] DownloadsManager: Media poll attempt 164/200: HTTP 503
+18:54:46.424 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:54:51.437 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:54:51.537 [DEBUG] HTTP response: 503 (0 bytes)
+18:54:51.543 [DEBUG] DownloadsManager: Media poll attempt 165/200: HTTP 503
+18:54:51.553 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:54:56.563 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:54:56.807 [DEBUG] HTTP response: 503 (0 bytes)
+18:54:56.812 [DEBUG] DownloadsManager: Media poll attempt 166/200: HTTP 503
+18:54:56.818 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:55:01.828 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:55:01.853 [DEBUG] HTTP response: 503 (0 bytes)
+18:55:01.864 [DEBUG] DownloadsManager: Media poll attempt 167/200: HTTP 503
+18:55:01.873 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:55:06.880 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:55:06.904 [DEBUG] HTTP response: 503 (0 bytes)
+18:55:06.915 [DEBUG] DownloadsManager: Media poll attempt 168/200: HTTP 503
+18:55:06.927 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:55:11.937 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:55:11.972 [DEBUG] HTTP response: 503 (0 bytes)
+18:55:11.981 [DEBUG] DownloadsManager: Media poll attempt 169/200: HTTP 503
+18:55:11.993 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:55:17.059 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:55:17.103 [DEBUG] HTTP response: 503 (0 bytes)
+18:55:17.111 [DEBUG] DownloadsManager: Media poll attempt 170/200: HTTP 503
+18:55:17.121 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:55:22.133 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:55:22.471 [DEBUG] HTTP response: 503 (0 bytes)
+18:55:22.477 [DEBUG] DownloadsManager: Media poll attempt 171/200: HTTP 503
+18:55:22.486 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:55:27.497 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:55:27.538 [DEBUG] HTTP response: 503 (0 bytes)
+18:55:27.543 [DEBUG] DownloadsManager: Media poll attempt 172/200: HTTP 503
+18:55:27.549 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:55:32.559 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:55:32.602 [DEBUG] HTTP response: 503 (0 bytes)
+18:55:32.614 [DEBUG] DownloadsManager: Media poll attempt 173/200: HTTP 503
+18:55:32.623 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:55:37.629 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:55:37.670 [DEBUG] HTTP response: 503 (0 bytes)
+18:55:37.681 [DEBUG] DownloadsManager: Media poll attempt 174/200: HTTP 503
+18:55:37.690 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:55:42.696 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:55:42.731 [DEBUG] HTTP response: 503 (0 bytes)
+18:55:42.743 [DEBUG] DownloadsManager: Media poll attempt 175/200: HTTP 503
+18:55:42.751 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:55:47.758 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:55:47.803 [DEBUG] HTTP response: 503 (0 bytes)
+18:55:47.814 [DEBUG] DownloadsManager: Media poll attempt 176/200: HTTP 503
+18:55:47.823 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:55:52.829 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:55:52.863 [DEBUG] HTTP response: 503 (0 bytes)
+18:55:52.874 [DEBUG] DownloadsManager: Media poll attempt 177/200: HTTP 503
+18:55:52.883 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:55:57.889 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:55:57.918 [DEBUG] HTTP response: 503 (0 bytes)
+18:55:57.929 [DEBUG] DownloadsManager: Media poll attempt 178/200: HTTP 503
+18:55:57.937 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:56:02.944 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:56:02.970 [DEBUG] HTTP response: 503 (0 bytes)
+18:56:02.981 [DEBUG] DownloadsManager: Media poll attempt 179/200: HTTP 503
+18:56:02.989 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:56:07.996 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:56:08.040 [DEBUG] HTTP response: 503 (0 bytes)
+18:56:08.051 [DEBUG] DownloadsManager: Media poll attempt 180/200: HTTP 503
+18:56:08.059 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:56:13.066 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:56:13.111 [DEBUG] HTTP response: 503 (0 bytes)
+18:56:13.122 [DEBUG] DownloadsManager: Media poll attempt 181/200: HTTP 503
+18:56:13.131 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:56:18.137 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:56:18.187 [DEBUG] HTTP response: 503 (0 bytes)
+18:56:18.199 [DEBUG] DownloadsManager: Media poll attempt 182/200: HTTP 503
+18:56:18.207 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:56:23.214 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:56:23.358 [DEBUG] HTTP response: 503 (0 bytes)
+18:56:23.369 [DEBUG] DownloadsManager: Media poll attempt 183/200: HTTP 503
+18:56:23.377 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:56:28.384 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:56:28.425 [DEBUG] HTTP response: 503 (0 bytes)
+18:56:28.436 [DEBUG] DownloadsManager: Media poll attempt 184/200: HTTP 503
+18:56:28.444 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:56:33.451 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:56:33.480 [DEBUG] HTTP response: 503 (0 bytes)
+18:56:33.492 [DEBUG] DownloadsManager: Media poll attempt 185/200: HTTP 503
+18:56:33.500 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:56:38.507 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:56:38.541 [DEBUG] HTTP response: 503 (0 bytes)
+18:56:38.609 [DEBUG] DownloadsManager: Media poll attempt 186/200: HTTP 503
+18:56:38.615 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:56:43.626 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:56:43.661 [DEBUG] HTTP response: 503 (0 bytes)
+18:56:43.666 [DEBUG] DownloadsManager: Media poll attempt 187/200: HTTP 503
+18:56:43.674 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:56:48.685 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:56:48.727 [DEBUG] HTTP response: 503 (0 bytes)
+18:56:48.733 [DEBUG] DownloadsManager: Media poll attempt 188/200: HTTP 503
+18:56:48.743 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:56:53.756 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:56:53.778 [DEBUG] HTTP response: 503 (0 bytes)
+18:56:53.787 [DEBUG] DownloadsManager: Media poll attempt 189/200: HTTP 503
+18:56:53.798 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:56:58.811 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:56:58.850 [DEBUG] HTTP response: 503 (0 bytes)
+18:56:58.859 [DEBUG] DownloadsManager: Media poll attempt 190/200: HTTP 503
+18:56:58.872 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:57:03.882 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:57:03.908 [DEBUG] HTTP response: 503 (0 bytes)
+18:57:03.920 [DEBUG] DownloadsManager: Media poll attempt 191/200: HTTP 503
+18:57:03.930 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:57:08.937 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:57:08.960 [DEBUG] HTTP response: 503 (0 bytes)
+18:57:08.972 [DEBUG] DownloadsManager: Media poll attempt 192/200: HTTP 503
+18:57:08.981 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:57:13.992 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:57:14.040 [DEBUG] HTTP response: 503 (0 bytes)
+18:57:14.046 [DEBUG] DownloadsManager: Media poll attempt 193/200: HTTP 503
+18:57:14.054 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:57:19.065 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:57:19.097 [DEBUG] HTTP response: 503 (0 bytes)
+18:57:19.104 [DEBUG] DownloadsManager: Media poll attempt 194/200: HTTP 503
+18:57:19.113 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:57:24.127 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:57:24.169 [DEBUG] HTTP response: 503 (0 bytes)
+18:57:24.178 [DEBUG] DownloadsManager: Media poll attempt 195/200: HTTP 503
+18:57:24.189 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:57:29.202 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:57:29.230 [DEBUG] HTTP response: 503 (0 bytes)
+18:57:29.240 [DEBUG] DownloadsManager: Media poll attempt 196/200: HTTP 503
+18:57:29.252 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:57:34.262 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:57:34.307 [DEBUG] HTTP response: 503 (0 bytes)
+18:57:34.319 [DEBUG] DownloadsManager: Media poll attempt 197/200: HTTP 503
+18:57:34.329 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:57:39.336 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:57:39.368 [DEBUG] HTTP response: 503 (0 bytes)
+18:57:39.380 [DEBUG] DownloadsManager: Media poll attempt 198/200: HTTP 503
+18:57:39.389 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:57:44.400 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:57:44.433 [DEBUG] HTTP response: 503 (0 bytes)
+18:57:44.439 [DEBUG] DownloadsManager: Media poll attempt 199/200: HTTP 503
+18:57:44.449 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:57:49.520 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/95/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:57:49.548 [DEBUG] HTTP response: 503 (0 bytes)
+18:57:49.557 [DEBUG] DownloadsManager: Media poll attempt 200/200: HTTP 503
+18:57:49.570 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:57:54.580 [WARNING] DownloadsManager: Download Queue API failed, will fall back to streaming transcode
+18:57:54.590 [INFO] DownloadsManager: Download Queue API failed, falling back to transcode stream
+18:57:54.603 [INFO] DownloadsManager: Calling decision endpoint for The Retroville 9
+18:57:54.612 [DEBUG] HTTP GET http://192.168.1.28:32400/video/:/transcode/universal/decision?path=%2Flibrary%2Fmetadata%2F4675&mediaIndex=0&partIndex=0&offset=0&directPlay=0&directStream=0&directStreamAudio=1&hasMDE=1&location=lan&audioBoost=100&audioChannelCount=2&protocol=hls&videoBitrate=2000&videoResolution=960x544&videoQuality=100&subtitles=none&session=vitaplex-1773269874-5933&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:57:54.694 [DEBUG] HTTP response: 200 (5777 bytes)
+18:57:54.706 [INFO] DownloadsManager: Decision response: 200 ({"MediaContainer":{"size":1,"allowSync":"1","directPlayDecisionCode":3000,"directPlayDecisionText":"App cannot direct play this item. Direct play is disabled.","generalDecisionCode":1001,"generalDecisionText":"Direct play not available; Conversion OK.","identifier":"com.plexapp.plugins.library","lib)
+18:57:54.716 [INFO] DownloadsManager: Using transcode URL for download
+18:57:54.725 [INFO] DownloadsManager: Waiting for transcode to start...
+18:57:57.739 [INFO] DownloadsManager: Starting HLS segment download for The Retroville 9
+18:57:57.746 [DEBUG] HTTP GET http://192.168.1.28:32400/video/:/transcode/universal/start.m3u8?path=%2Flibrary%2Fmetadata%2F4675&mediaIndex=0&partIndex=0&offset=0&directPlay=0&directStream=0&directStreamAudio=1&hasMDE=1&location=lan&audioBoost=100&audioChannelCount=2&protocol=hls&videoBitrate=2000&videoResolution=960x544&videoQuality=100&subtitles=none&session=vitaplex-1773269874-5933&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:57:57.808 [DEBUG] HTTP response: 200 (146 bytes)
+18:57:57.820 [DEBUG] DownloadsManager: m3u8 playlist (146 bytes): #EXTM3U
+#EXT-X-STREAM-INF:PROGRAM-ID=1,BANDWIDTH=1185000,RESOLUTION=720x544,FRAME-RATE=29.970000
+session/vitaplex-1773269874-5933/base/index.m3u8
+
+18:57:57.861 [INFO] DownloadsManager: Fetching variant playlist: http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/index.m3u8?X-Plex-Token=Vm7_
+18:57:57.871 [DEBUG] HTTP GET http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/index.m3u8?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:57:58.037 [DEBUG] HTTP response: 200 (3630 bytes)
+18:57:58.045 [INFO] DownloadsManager: Found 131 initial segments to download
+18:57:58.101 [DEBUG] DownloadsManager: Downloading segment 1
+18:57:58.116 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00000.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:57:59.619 [INFO] HttpClient: Download completed successfully
+18:57:59.633 [DEBUG] DownloadsManager: Segment 1/131 downloaded (880968 bytes total)
+18:57:59.641 [DEBUG] DownloadsManager: Downloading segment 2
+18:57:59.650 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00001.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:00.333 [INFO] HttpClient: Download completed successfully
+18:58:00.343 [DEBUG] DownloadsManager: Segment 2/131 downloaded (1699144 bytes total)
+18:58:00.354 [DEBUG] DownloadsManager: Downloading segment 3
+18:58:00.367 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00002.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:01.146 [INFO] HttpClient: Download completed successfully
+18:58:01.157 [DEBUG] DownloadsManager: Segment 3/131 downloaded (2279876 bytes total)
+18:58:01.168 [DEBUG] DownloadsManager: Downloading segment 4
+18:58:01.177 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00003.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:02.127 [INFO] HttpClient: Download completed successfully
+18:58:02.137 [DEBUG] DownloadsManager: Segment 4/131 downloaded (3171372 bytes total)
+18:58:02.151 [DEBUG] DownloadsManager: Downloading segment 5
+18:58:02.160 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00004.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:02.893 [INFO] HttpClient: Download completed successfully
+18:58:02.903 [DEBUG] DownloadsManager: Segment 5/131 downloaded (3956648 bytes total)
+18:58:02.916 [DEBUG] DownloadsManager: Downloading segment 6
+18:58:02.925 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00005.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:03.700 [INFO] HttpClient: Download completed successfully
+18:58:03.711 [DEBUG] DownloadsManager: Segment 6/131 downloaded (4763544 bytes total)
+18:58:03.722 [DEBUG] DownloadsManager: Downloading segment 7
+18:58:03.730 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00006.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:04.523 [INFO] HttpClient: Download completed successfully
+18:58:04.536 [DEBUG] DownloadsManager: Segment 7/131 downloaded (5551264 bytes total)
+18:58:04.545 [DEBUG] DownloadsManager: Downloading segment 8
+18:58:04.556 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00007.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:05.278 [INFO] HttpClient: Download completed successfully
+18:58:05.285 [DEBUG] DownloadsManager: Segment 8/131 downloaded (6370756 bytes total)
+18:58:05.297 [DEBUG] DownloadsManager: Downloading segment 9
+18:58:05.305 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00008.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:05.874 [INFO] HttpClient: Download completed successfully
+18:58:05.887 [DEBUG] DownloadsManager: Segment 9/131 downloaded (6962768 bytes total)
+18:58:05.897 [DEBUG] DownloadsManager: Downloading segment 10
+18:58:05.907 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00009.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:06.695 [INFO] HttpClient: Download completed successfully
+18:58:06.710 [DEBUG] DownloadsManager: Segment 10/131 downloaded (7768724 bytes total)
+18:58:06.719 [DEBUG] DownloadsManager: Downloading segment 11
+18:58:06.730 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00010.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:07.410 [INFO] HttpClient: Download completed successfully
+18:58:07.424 [DEBUG] DownloadsManager: Segment 11/131 downloaded (8509632 bytes total)
+18:58:07.433 [DEBUG] DownloadsManager: Downloading segment 12
+18:58:07.443 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00011.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:08.106 [INFO] HttpClient: Download completed successfully
+18:58:08.116 [DEBUG] DownloadsManager: Segment 12/131 downloaded (9161804 bytes total)
+18:58:08.129 [DEBUG] DownloadsManager: Downloading segment 13
+18:58:08.139 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00012.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:08.895 [INFO] HttpClient: Download completed successfully
+18:58:08.910 [DEBUG] DownloadsManager: Segment 13/131 downloaded (9902148 bytes total)
+18:58:08.920 [DEBUG] DownloadsManager: Downloading segment 14
+18:58:08.933 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00013.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:09.645 [INFO] HttpClient: Download completed successfully
+18:58:09.656 [DEBUG] DownloadsManager: Segment 14/131 downloaded (10640236 bytes total)
+18:58:09.667 [DEBUG] DownloadsManager: Downloading segment 15
+18:58:09.677 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00014.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:10.198 [INFO] HttpClient: Download completed successfully
+18:58:10.212 [DEBUG] DownloadsManager: Segment 15/131 downloaded (11237136 bytes total)
+18:58:10.222 [DEBUG] DownloadsManager: Downloading segment 16
+18:58:10.235 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00015.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:11.060 [INFO] HttpClient: Download completed successfully
+18:58:11.068 [DEBUG] DownloadsManager: Segment 16/131 downloaded (12099304 bytes total)
+18:58:11.080 [DEBUG] DownloadsManager: Downloading segment 17
+18:58:11.089 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00016.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:11.771 [INFO] HttpClient: Download completed successfully
+18:58:11.781 [DEBUG] DownloadsManager: Segment 17/131 downloaded (12911652 bytes total)
+18:58:11.795 [DEBUG] DownloadsManager: Downloading segment 18
+18:58:11.804 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00017.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:12.535 [INFO] HttpClient: Download completed successfully
+18:58:12.545 [DEBUG] DownloadsManager: Segment 18/131 downloaded (13746560 bytes total)
+18:58:12.559 [DEBUG] DownloadsManager: Downloading segment 19
+18:58:12.568 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00018.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:13.296 [INFO] HttpClient: Download completed successfully
+18:58:13.309 [DEBUG] DownloadsManager: Segment 19/131 downloaded (14545372 bytes total)
+18:58:13.320 [DEBUG] DownloadsManager: Downloading segment 20
+18:58:13.333 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00019.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:14.173 [INFO] HttpClient: Download completed successfully
+18:58:14.188 [DEBUG] DownloadsManager: Segment 20/131 downloaded (15341740 bytes total)
+18:58:14.201 [DEBUG] DownloadsManager: Downloading segment 21
+18:58:14.211 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00020.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:14.973 [INFO] HttpClient: Download completed successfully
+18:58:14.974 [DEBUG] DownloadsManager: Segment 21/131 downloaded (16146004 bytes total)
+18:58:14.975 [DEBUG] DownloadsManager: Downloading segment 22
+18:58:14.975 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00021.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:15.699 [INFO] HttpClient: Download completed successfully
+18:58:15.700 [DEBUG] DownloadsManager: Segment 22/131 downloaded (16944816 bytes total)
+18:58:15.703 [DEBUG] DownloadsManager: Downloading segment 23
+18:58:15.711 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00022.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:16.470 [INFO] HttpClient: Download completed successfully
+18:58:16.481 [DEBUG] DownloadsManager: Segment 23/131 downloaded (17718248 bytes total)
+18:58:16.493 [DEBUG] DownloadsManager: Downloading segment 24
+18:58:16.499 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00023.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:17.901 [INFO] HttpClient: Download completed successfully
+18:58:17.915 [DEBUG] DownloadsManager: Segment 24/131 downloaded (18455396 bytes total)
+18:58:17.920 [DEBUG] DownloadsManager: Downloading segment 25
+18:58:17.926 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00024.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:18.486 [INFO] HttpClient: Download completed successfully
+18:58:18.494 [DEBUG] DownloadsManager: Segment 25/131 downloaded (19121480 bytes total)
+18:58:18.503 [DEBUG] DownloadsManager: Downloading segment 26
+18:58:18.513 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00025.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:19.163 [INFO] HttpClient: Download completed successfully
+18:58:19.173 [DEBUG] DownloadsManager: Segment 26/131 downloaded (19856560 bytes total)
+18:58:19.184 [DEBUG] DownloadsManager: Downloading segment 27
+18:58:19.195 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00026.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:19.885 [INFO] HttpClient: Download completed successfully
+18:58:19.896 [DEBUG] DownloadsManager: Segment 27/131 downloaded (20483916 bytes total)
+18:58:19.907 [DEBUG] DownloadsManager: Downloading segment 28
+18:58:19.918 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00027.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:20.632 [INFO] HttpClient: Download completed successfully
+18:58:20.643 [DEBUG] DownloadsManager: Segment 28/131 downloaded (21266184 bytes total)
+18:58:20.654 [DEBUG] DownloadsManager: Downloading segment 29
+18:58:20.666 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00028.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:22.426 [INFO] HttpClient: Download completed successfully
+18:58:22.434 [DEBUG] DownloadsManager: Segment 29/131 downloaded (22038300 bytes total)
+18:58:22.443 [DEBUG] DownloadsManager: Downloading segment 30
+18:58:22.452 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00029.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:23.271 [INFO] HttpClient: Download completed successfully
+18:58:23.281 [DEBUG] DownloadsManager: Segment 30/131 downloaded (22637644 bytes total)
+18:58:23.287 [DEBUG] DownloadsManager: Downloading segment 31
+18:58:23.296 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00030.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:23.849 [INFO] HttpClient: Download completed successfully
+18:58:23.861 [DEBUG] DownloadsManager: Segment 31/131 downloaded (23270828 bytes total)
+18:58:23.870 [DEBUG] DownloadsManager: Downloading segment 32
+18:58:23.875 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00031.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:24.560 [INFO] HttpClient: Download completed successfully
+18:58:24.574 [DEBUG] DownloadsManager: Segment 32/131 downloaded (24073588 bytes total)
+18:58:24.586 [DEBUG] DownloadsManager: Downloading segment 33
+18:58:24.591 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00032.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:25.010 [INFO] HttpClient: Download completed successfully
+18:58:25.022 [DEBUG] DownloadsManager: Segment 33/131 downloaded (24534940 bytes total)
+18:58:25.028 [DEBUG] DownloadsManager: Downloading segment 34
+18:58:25.033 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00033.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:25.655 [INFO] HttpClient: Download completed successfully
+18:58:25.668 [DEBUG] DownloadsManager: Segment 34/131 downloaded (25204784 bytes total)
+18:58:25.678 [DEBUG] DownloadsManager: Downloading segment 35
+18:58:25.683 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00034.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:26.572 [INFO] HttpClient: Download completed successfully
+18:58:26.580 [DEBUG] DownloadsManager: Segment 35/131 downloaded (26039504 bytes total)
+18:58:26.589 [DEBUG] DownloadsManager: Downloading segment 36
+18:58:26.598 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00035.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:27.281 [INFO] HttpClient: Download completed successfully
+18:58:27.291 [DEBUG] DownloadsManager: Segment 36/131 downloaded (26732096 bytes total)
+18:58:27.301 [DEBUG] DownloadsManager: Downloading segment 37
+18:58:27.311 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00036.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:28.179 [INFO] HttpClient: Download completed successfully
+18:58:28.191 [DEBUG] DownloadsManager: Segment 37/131 downloaded (27641640 bytes total)
+18:58:28.197 [DEBUG] DownloadsManager: Downloading segment 38
+18:58:28.203 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00037.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:28.961 [INFO] HttpClient: Download completed successfully
+18:58:28.972 [DEBUG] DownloadsManager: Segment 38/131 downloaded (28431804 bytes total)
+18:58:28.978 [DEBUG] DownloadsManager: Downloading segment 39
+18:58:28.987 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00038.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:29.709 [INFO] HttpClient: Download completed successfully
+18:58:29.719 [DEBUG] DownloadsManager: Segment 39/131 downloaded (29234376 bytes total)
+18:58:29.728 [DEBUG] DownloadsManager: Downloading segment 40
+18:58:29.739 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00039.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:30.421 [INFO] HttpClient: Download completed successfully
+18:58:30.428 [DEBUG] DownloadsManager: Segment 40/131 downloaded (29991076 bytes total)
+18:58:30.437 [DEBUG] DownloadsManager: Downloading segment 41
+18:58:30.447 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00040.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:31.197 [INFO] HttpClient: Download completed successfully
+18:58:31.208 [DEBUG] DownloadsManager: Segment 41/131 downloaded (30839144 bytes total)
+18:58:31.219 [DEBUG] DownloadsManager: Downloading segment 42
+18:58:31.230 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00041.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:31.960 [INFO] HttpClient: Download completed successfully
+18:58:31.972 [DEBUG] DownloadsManager: Segment 42/131 downloaded (31592272 bytes total)
+18:58:31.980 [DEBUG] DownloadsManager: Downloading segment 43
+18:58:31.990 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00042.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:32.806 [INFO] HttpClient: Download completed successfully
+18:58:32.817 [DEBUG] DownloadsManager: Segment 43/131 downloaded (32338820 bytes total)
+18:58:32.830 [DEBUG] DownloadsManager: Downloading segment 44
+18:58:32.841 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00043.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:33.424 [INFO] HttpClient: Download completed successfully
+18:58:33.436 [DEBUG] DownloadsManager: Segment 44/131 downloaded (32977268 bytes total)
+18:58:33.448 [DEBUG] DownloadsManager: Downloading segment 45
+18:58:33.454 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00044.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:34.020 [INFO] HttpClient: Download completed successfully
+18:58:34.028 [DEBUG] DownloadsManager: Segment 45/131 downloaded (33525100 bytes total)
+18:58:34.036 [DEBUG] DownloadsManager: Downloading segment 46
+18:58:34.044 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00045.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:34.723 [INFO] HttpClient: Download completed successfully
+18:58:34.735 [DEBUG] DownloadsManager: Segment 46/131 downloaded (34156216 bytes total)
+18:58:34.744 [DEBUG] DownloadsManager: Downloading segment 47
+18:58:34.750 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00046.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:35.403 [INFO] HttpClient: Download completed successfully
+18:58:35.411 [DEBUG] DownloadsManager: Segment 47/131 downloaded (34842604 bytes total)
+18:58:35.417 [DEBUG] DownloadsManager: Downloading segment 48
+18:58:35.426 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00047.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:36.093 [INFO] HttpClient: Download completed successfully
+18:58:36.105 [DEBUG] DownloadsManager: Segment 48/131 downloaded (35561892 bytes total)
+18:58:36.111 [DEBUG] DownloadsManager: Downloading segment 49
+18:58:36.119 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00048.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:36.878 [INFO] HttpClient: Download completed successfully
+18:58:36.891 [DEBUG] DownloadsManager: Segment 49/131 downloaded (36416540 bytes total)
+18:58:36.902 [DEBUG] DownloadsManager: Downloading segment 50
+18:58:36.911 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00049.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:37.598 [INFO] HttpClient: Download completed successfully
+18:58:37.607 [DEBUG] DownloadsManager: Segment 50/131 downloaded (37236220 bytes total)
+18:58:37.620 [DEBUG] DownloadsManager: Downloading segment 51
+18:58:37.630 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00050.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:38.222 [INFO] HttpClient: Download completed successfully
+18:58:38.230 [DEBUG] DownloadsManager: Segment 51/131 downloaded (37911892 bytes total)
+18:58:38.239 [DEBUG] DownloadsManager: Downloading segment 52
+18:58:38.246 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00051.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:39.073 [INFO] HttpClient: Download completed successfully
+18:58:39.086 [DEBUG] DownloadsManager: Segment 52/131 downloaded (38824632 bytes total)
+18:58:39.092 [DEBUG] DownloadsManager: Downloading segment 53
+18:58:39.101 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00052.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:39.934 [INFO] HttpClient: Download completed successfully
+18:58:39.948 [DEBUG] DownloadsManager: Segment 53/131 downloaded (39519480 bytes total)
+18:58:39.956 [DEBUG] DownloadsManager: Downloading segment 54
+18:58:39.962 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00053.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:40.640 [INFO] HttpClient: Download completed successfully
+18:58:40.650 [DEBUG] DownloadsManager: Segment 54/131 downloaded (40227112 bytes total)
+18:58:40.657 [DEBUG] DownloadsManager: Downloading segment 55
+18:58:40.666 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00054.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:41.268 [INFO] HttpClient: Download completed successfully
+18:58:41.276 [DEBUG] DownloadsManager: Segment 55/131 downloaded (40831344 bytes total)
+18:58:41.286 [DEBUG] DownloadsManager: Downloading segment 56
+18:58:41.297 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00055.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:42.006 [INFO] HttpClient: Download completed successfully
+18:58:42.016 [DEBUG] DownloadsManager: Segment 56/131 downloaded (41535592 bytes total)
+18:58:42.085 [DEBUG] DownloadsManager: Downloading segment 57
+18:58:42.091 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00056.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:42.780 [INFO] HttpClient: Download completed successfully
+18:58:42.793 [DEBUG] DownloadsManager: Segment 57/131 downloaded (42222356 bytes total)
+18:58:42.803 [DEBUG] DownloadsManager: Downloading segment 58
+18:58:42.809 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00057.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:43.612 [INFO] HttpClient: Download completed successfully
+18:58:43.618 [DEBUG] DownloadsManager: Segment 58/131 downloaded (43068920 bytes total)
+18:58:43.628 [DEBUG] DownloadsManager: Downloading segment 59
+18:58:43.639 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00058.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:44.374 [INFO] HttpClient: Download completed successfully
+18:58:44.383 [DEBUG] DownloadsManager: Segment 59/131 downloaded (43724852 bytes total)
+18:58:44.393 [DEBUG] DownloadsManager: Downloading segment 60
+18:58:44.405 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00059.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:45.203 [INFO] HttpClient: Download completed successfully
+18:58:45.215 [DEBUG] DownloadsManager: Segment 60/131 downloaded (44524604 bytes total)
+18:58:45.227 [DEBUG] DownloadsManager: Downloading segment 61
+18:58:45.236 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00060.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:46.002 [INFO] HttpClient: Download completed successfully
+18:58:46.010 [DEBUG] DownloadsManager: Segment 61/131 downloaded (45264760 bytes total)
+18:58:46.020 [DEBUG] DownloadsManager: Downloading segment 62
+18:58:46.088 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00061.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:46.859 [INFO] HttpClient: Download completed successfully
+18:58:46.869 [DEBUG] DownloadsManager: Segment 62/131 downloaded (45904524 bytes total)
+18:58:46.879 [DEBUG] DownloadsManager: Downloading segment 63
+18:58:46.891 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00062.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:47.767 [INFO] HttpClient: Download completed successfully
+18:58:47.787 [DEBUG] DownloadsManager: Segment 63/131 downloaded (46534512 bytes total)
+18:58:47.798 [DEBUG] DownloadsManager: Downloading segment 64
+18:58:47.804 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00063.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:48.762 [INFO] HttpClient: Download completed successfully
+18:58:48.772 [DEBUG] DownloadsManager: Segment 64/131 downloaded (47467744 bytes total)
+18:58:48.785 [DEBUG] DownloadsManager: Downloading segment 65
+18:58:48.794 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00064.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:49.519 [INFO] HttpClient: Download completed successfully
+18:58:49.541 [DEBUG] DownloadsManager: Segment 65/131 downloaded (48265240 bytes total)
+18:58:49.548 [DEBUG] DownloadsManager: Downloading segment 66
+18:58:49.557 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00065.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:50.323 [INFO] HttpClient: Download completed successfully
+18:58:50.332 [DEBUG] DownloadsManager: Segment 66/131 downloaded (49047320 bytes total)
+18:58:50.341 [DEBUG] DownloadsManager: Downloading segment 67
+18:58:50.352 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00066.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:51.193 [INFO] HttpClient: Download completed successfully
+18:58:51.206 [DEBUG] DownloadsManager: Segment 67/131 downloaded (49727128 bytes total)
+18:58:51.214 [DEBUG] DownloadsManager: Downloading segment 68
+18:58:51.222 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00067.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:51.984 [INFO] HttpClient: Download completed successfully
+18:58:51.994 [DEBUG] DownloadsManager: Segment 68/131 downloaded (50393776 bytes total)
+18:58:52.002 [DEBUG] DownloadsManager: Downloading segment 69
+18:58:52.013 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00068.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:52.918 [INFO] HttpClient: Download completed successfully
+18:58:52.930 [DEBUG] DownloadsManager: Segment 69/131 downloaded (51199168 bytes total)
+18:58:52.940 [DEBUG] DownloadsManager: Downloading segment 70
+18:58:52.947 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00069.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:53.734 [INFO] HttpClient: Download completed successfully
+18:58:53.744 [DEBUG] DownloadsManager: Segment 70/131 downloaded (52005688 bytes total)
+18:58:53.757 [DEBUG] DownloadsManager: Downloading segment 71
+18:58:53.766 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00070.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:54.442 [INFO] HttpClient: Download completed successfully
+18:58:54.451 [DEBUG] DownloadsManager: Segment 71/131 downloaded (52807508 bytes total)
+18:58:54.464 [DEBUG] DownloadsManager: Downloading segment 72
+18:58:54.473 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00071.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:55.290 [INFO] HttpClient: Download completed successfully
+18:58:55.299 [DEBUG] DownloadsManager: Segment 72/131 downloaded (53601056 bytes total)
+18:58:55.309 [DEBUG] DownloadsManager: Downloading segment 73
+18:58:55.321 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00072.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:56.129 [INFO] HttpClient: Download completed successfully
+18:58:56.142 [DEBUG] DownloadsManager: Segment 73/131 downloaded (54461156 bytes total)
+18:58:56.155 [DEBUG] DownloadsManager: Downloading segment 74
+18:58:56.165 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00073.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:57.053 [INFO] HttpClient: Download completed successfully
+18:58:57.062 [DEBUG] DownloadsManager: Segment 74/131 downloaded (55228008 bytes total)
+18:58:57.074 [DEBUG] DownloadsManager: Downloading segment 75
+18:58:57.084 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00074.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:57.789 [INFO] HttpClient: Download completed successfully
+18:58:57.800 [DEBUG] DownloadsManager: Segment 75/131 downloaded (56016668 bytes total)
+18:58:57.811 [DEBUG] DownloadsManager: Downloading segment 76
+18:58:57.819 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00075.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:58.457 [INFO] HttpClient: Download completed successfully
+18:58:58.466 [DEBUG] DownloadsManager: Segment 76/131 downloaded (56576156 bytes total)
+18:58:58.476 [DEBUG] DownloadsManager: Downloading segment 77
+18:58:58.489 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00076.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:58.979 [INFO] HttpClient: Download completed successfully
+18:58:58.990 [DEBUG] DownloadsManager: Segment 77/131 downloaded (57009684 bytes total)
+18:58:58.998 [DEBUG] DownloadsManager: Downloading segment 78
+18:58:59.009 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00077.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:58:59.547 [INFO] HttpClient: Download completed successfully
+18:58:59.558 [DEBUG] DownloadsManager: Segment 78/131 downloaded (57614104 bytes total)
+18:58:59.569 [DEBUG] DownloadsManager: Downloading segment 79
+18:58:59.577 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00078.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:00.197 [INFO] HttpClient: Download completed successfully
+18:59:00.208 [DEBUG] DownloadsManager: Segment 79/131 downloaded (58308200 bytes total)
+18:59:00.221 [DEBUG] DownloadsManager: Downloading segment 80
+18:59:00.227 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00079.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:00.796 [INFO] HttpClient: Download completed successfully
+18:59:00.808 [DEBUG] DownloadsManager: Segment 80/131 downloaded (58932736 bytes total)
+18:59:00.818 [DEBUG] DownloadsManager: Downloading segment 81
+18:59:00.827 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00080.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:01.311 [INFO] HttpClient: Download completed successfully
+18:59:01.317 [DEBUG] DownloadsManager: Segment 81/131 downloaded (59411948 bytes total)
+18:59:01.328 [DEBUG] DownloadsManager: Downloading segment 82
+18:59:01.340 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00081.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:01.736 [INFO] HttpClient: Download completed successfully
+18:59:01.749 [DEBUG] DownloadsManager: Segment 82/131 downloaded (59865216 bytes total)
+18:59:01.759 [DEBUG] DownloadsManager: Downloading segment 83
+18:59:01.768 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00082.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:02.290 [INFO] HttpClient: Download completed successfully
+18:59:02.299 [DEBUG] DownloadsManager: Segment 83/131 downloaded (60438052 bytes total)
+18:59:02.310 [DEBUG] DownloadsManager: Downloading segment 84
+18:59:02.319 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00083.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:02.844 [INFO] HttpClient: Download completed successfully
+18:59:02.856 [DEBUG] DownloadsManager: Segment 84/131 downloaded (61019160 bytes total)
+18:59:02.866 [DEBUG] DownloadsManager: Downloading segment 85
+18:59:02.876 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00084.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:03.730 [INFO] HttpClient: Download completed successfully
+18:59:03.737 [DEBUG] DownloadsManager: Segment 85/131 downloaded (61713068 bytes total)
+18:59:03.749 [DEBUG] DownloadsManager: Downloading segment 86
+18:59:03.757 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00085.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:04.607 [INFO] HttpClient: Download completed successfully
+18:59:04.615 [DEBUG] DownloadsManager: Segment 86/131 downloaded (62593660 bytes total)
+18:59:04.626 [DEBUG] DownloadsManager: Downloading segment 87
+18:59:04.639 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00086.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:05.453 [INFO] HttpClient: Download completed successfully
+18:59:05.465 [DEBUG] DownloadsManager: Segment 87/131 downloaded (63415972 bytes total)
+18:59:05.478 [DEBUG] DownloadsManager: Downloading segment 88
+18:59:05.487 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00087.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:06.179 [INFO] HttpClient: Download completed successfully
+18:59:06.193 [DEBUG] DownloadsManager: Segment 88/131 downloaded (64216100 bytes total)
+18:59:06.203 [DEBUG] DownloadsManager: Downloading segment 89
+18:59:06.212 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00088.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:06.753 [INFO] HttpClient: Download completed successfully
+18:59:06.768 [DEBUG] DownloadsManager: Segment 89/131 downloaded (64844960 bytes total)
+18:59:06.778 [DEBUG] DownloadsManager: Downloading segment 90
+18:59:06.788 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00089.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:07.313 [INFO] HttpClient: Download completed successfully
+18:59:07.326 [DEBUG] DownloadsManager: Segment 90/131 downloaded (65297664 bytes total)
+18:59:07.335 [DEBUG] DownloadsManager: Downloading segment 91
+18:59:07.346 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00090.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:07.806 [INFO] HttpClient: Download completed successfully
+18:59:07.816 [DEBUG] DownloadsManager: Segment 91/131 downloaded (65793044 bytes total)
+18:59:07.826 [DEBUG] DownloadsManager: Downloading segment 92
+18:59:07.839 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00091.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:08.390 [INFO] HttpClient: Download completed successfully
+18:59:08.403 [DEBUG] DownloadsManager: Segment 92/131 downloaded (66396524 bytes total)
+18:59:08.414 [DEBUG] DownloadsManager: Downloading segment 93
+18:59:08.423 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00092.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:09.169 [INFO] HttpClient: Download completed successfully
+18:59:09.183 [DEBUG] DownloadsManager: Segment 93/131 downloaded (67197028 bytes total)
+18:59:09.193 [DEBUG] DownloadsManager: Downloading segment 94
+18:59:09.203 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00093.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:11.089 [INFO] HttpClient: Download completed successfully
+18:59:11.098 [DEBUG] DownloadsManager: Segment 94/131 downloaded (67968580 bytes total)
+18:59:11.108 [DEBUG] DownloadsManager: Downloading segment 95
+18:59:11.122 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00094.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:11.879 [INFO] HttpClient: Download completed successfully
+18:59:11.889 [DEBUG] DownloadsManager: Segment 95/131 downloaded (68743892 bytes total)
+18:59:11.903 [DEBUG] DownloadsManager: Downloading segment 96
+18:59:11.912 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00095.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:12.807 [INFO] HttpClient: Download completed successfully
+18:59:12.820 [DEBUG] DownloadsManager: Segment 96/131 downloaded (69546840 bytes total)
+18:59:12.830 [DEBUG] DownloadsManager: Downloading segment 97
+18:59:12.841 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00096.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:13.527 [INFO] HttpClient: Download completed successfully
+18:59:13.538 [DEBUG] DownloadsManager: Segment 97/131 downloaded (70244508 bytes total)
+18:59:13.548 [DEBUG] DownloadsManager: Downloading segment 98
+18:59:13.560 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00097.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:14.186 [INFO] HttpClient: Download completed successfully
+18:59:14.193 [DEBUG] DownloadsManager: Segment 98/131 downloaded (70883520 bytes total)
+18:59:14.205 [DEBUG] DownloadsManager: Downloading segment 99
+18:59:14.215 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00098.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:14.782 [INFO] HttpClient: Download completed successfully
+18:59:14.792 [DEBUG] DownloadsManager: Segment 99/131 downloaded (71564644 bytes total)
+18:59:14.806 [DEBUG] DownloadsManager: Downloading segment 100
+18:59:14.815 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00099.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:15.271 [INFO] HttpClient: Download completed successfully
+18:59:15.280 [DEBUG] DownloadsManager: Segment 100/131 downloaded (71931808 bytes total)
+18:59:15.294 [DEBUG] DownloadsManager: Downloading segment 101
+18:59:15.303 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00100.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:16.116 [INFO] HttpClient: Download completed successfully
+18:59:16.127 [DEBUG] DownloadsManager: Segment 101/131 downloaded (72809016 bytes total)
+18:59:16.139 [DEBUG] DownloadsManager: Downloading segment 102
+18:59:16.149 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00101.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:17.684 [INFO] HttpClient: Download completed successfully
+18:59:17.704 [DEBUG] DownloadsManager: Segment 102/131 downloaded (73537140 bytes total)
+18:59:17.705 [DEBUG] DownloadsManager: Downloading segment 103
+18:59:17.705 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00102.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:18.428 [INFO] HttpClient: Download completed successfully
+18:59:18.429 [DEBUG] DownloadsManager: Segment 103/131 downloaded (74238568 bytes total)
+18:59:18.433 [DEBUG] DownloadsManager: Downloading segment 104
+18:59:18.442 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00103.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:19.090 [INFO] HttpClient: Download completed successfully
+18:59:19.102 [DEBUG] DownloadsManager: Segment 104/131 downloaded (75035876 bytes total)
+18:59:19.113 [DEBUG] DownloadsManager: Downloading segment 105
+18:59:19.118 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00104.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:19.777 [INFO] HttpClient: Download completed successfully
+18:59:19.785 [DEBUG] DownloadsManager: Segment 105/131 downloaded (75752156 bytes total)
+18:59:19.791 [DEBUG] DownloadsManager: Downloading segment 106
+18:59:19.800 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00105.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:20.267 [INFO] HttpClient: Download completed successfully
+18:59:20.277 [DEBUG] DownloadsManager: Segment 106/131 downloaded (76213132 bytes total)
+18:59:20.285 [DEBUG] DownloadsManager: Downloading segment 107
+18:59:20.294 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00106.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:20.838 [INFO] HttpClient: Download completed successfully
+18:59:20.847 [DEBUG] DownloadsManager: Segment 107/131 downloaded (76835788 bytes total)
+18:59:20.857 [DEBUG] DownloadsManager: Downloading segment 108
+18:59:20.868 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00107.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:21.269 [INFO] HttpClient: Download completed successfully
+18:59:21.278 [DEBUG] DownloadsManager: Segment 108/131 downloaded (77289432 bytes total)
+18:59:21.288 [DEBUG] DownloadsManager: Downloading segment 109
+18:59:21.299 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00108.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:23.067 [INFO] HttpClient: Download completed successfully
+18:59:23.075 [DEBUG] DownloadsManager: Segment 109/131 downloaded (77818276 bytes total)
+18:59:23.081 [DEBUG] DownloadsManager: Downloading segment 110
+18:59:23.089 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00109.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:23.775 [INFO] HttpClient: Download completed successfully
+18:59:23.785 [DEBUG] DownloadsManager: Segment 110/131 downloaded (78480224 bytes total)
+18:59:23.794 [DEBUG] DownloadsManager: Downloading segment 111
+18:59:23.804 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00110.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:24.609 [INFO] HttpClient: Download completed successfully
+18:59:24.616 [DEBUG] DownloadsManager: Segment 111/131 downloaded (79235796 bytes total)
+18:59:24.622 [DEBUG] DownloadsManager: Downloading segment 112
+18:59:24.627 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00111.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:25.301 [INFO] HttpClient: Download completed successfully
+18:59:25.315 [DEBUG] DownloadsManager: Segment 112/131 downloaded (80008476 bytes total)
+18:59:25.319 [DEBUG] DownloadsManager: Downloading segment 113
+18:59:25.329 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00112.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:25.889 [INFO] HttpClient: Download completed successfully
+18:59:25.899 [DEBUG] DownloadsManager: Segment 113/131 downloaded (80676252 bytes total)
+18:59:25.909 [DEBUG] DownloadsManager: Downloading segment 114
+18:59:25.919 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00113.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:26.600 [INFO] HttpClient: Download completed successfully
+18:59:26.610 [DEBUG] DownloadsManager: Segment 114/131 downloaded (81309812 bytes total)
+18:59:26.621 [DEBUG] DownloadsManager: Downloading segment 115
+18:59:26.632 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00114.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:27.303 [INFO] HttpClient: Download completed successfully
+18:59:27.312 [DEBUG] DownloadsManager: Segment 115/131 downloaded (81981160 bytes total)
+18:59:27.321 [DEBUG] DownloadsManager: Downloading segment 116
+18:59:27.331 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00115.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:27.950 [INFO] HttpClient: Download completed successfully
+18:59:27.961 [DEBUG] DownloadsManager: Segment 116/131 downloaded (82541776 bytes total)
+18:59:27.972 [DEBUG] DownloadsManager: Downloading segment 117
+18:59:27.982 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00116.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:28.677 [INFO] HttpClient: Download completed successfully
+18:59:28.687 [DEBUG] DownloadsManager: Segment 117/131 downloaded (83252040 bytes total)
+18:59:28.699 [DEBUG] DownloadsManager: Downloading segment 118
+18:59:28.711 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00117.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:29.318 [INFO] HttpClient: Download completed successfully
+18:59:29.326 [DEBUG] DownloadsManager: Segment 118/131 downloaded (83911732 bytes total)
+18:59:29.335 [DEBUG] DownloadsManager: Downloading segment 119
+18:59:29.345 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00118.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:30.010 [INFO] HttpClient: Download completed successfully
+18:59:30.023 [DEBUG] DownloadsManager: Segment 119/131 downloaded (84566912 bytes total)
+18:59:30.032 [DEBUG] DownloadsManager: Downloading segment 120
+18:59:30.038 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00119.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:30.933 [INFO] HttpClient: Download completed successfully
+18:59:30.945 [DEBUG] DownloadsManager: Segment 120/131 downloaded (85487360 bytes total)
+18:59:30.957 [DEBUG] DownloadsManager: Downloading segment 121
+18:59:30.965 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00120.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:31.602 [INFO] HttpClient: Download completed successfully
+18:59:31.612 [DEBUG] DownloadsManager: Segment 121/131 downloaded (86222252 bytes total)
+18:59:31.621 [DEBUG] DownloadsManager: Downloading segment 122
+18:59:31.628 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00121.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:31.988 [INFO] HttpClient: Download completed successfully
+18:59:31.996 [DEBUG] DownloadsManager: Segment 122/131 downloaded (86721016 bytes total)
+18:59:32.005 [DEBUG] DownloadsManager: Downloading segment 123
+18:59:32.011 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00122.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:32.432 [INFO] HttpClient: Download completed successfully
+18:59:32.448 [DEBUG] DownloadsManager: Segment 123/131 downloaded (87167140 bytes total)
+18:59:32.459 [DEBUG] DownloadsManager: Downloading segment 124
+18:59:32.470 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00123.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:32.968 [INFO] HttpClient: Download completed successfully
+18:59:32.978 [DEBUG] DownloadsManager: Segment 124/131 downloaded (87670416 bytes total)
+18:59:32.984 [DEBUG] DownloadsManager: Downloading segment 125
+18:59:32.993 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00124.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:33.699 [INFO] HttpClient: Download completed successfully
+18:59:33.709 [DEBUG] DownloadsManager: Segment 125/131 downloaded (88285740 bytes total)
+18:59:33.720 [DEBUG] DownloadsManager: Downloading segment 126
+18:59:33.731 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00125.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:34.420 [INFO] HttpClient: Download completed successfully
+18:59:34.433 [DEBUG] DownloadsManager: Segment 126/131 downloaded (88872676 bytes total)
+18:59:34.442 [DEBUG] DownloadsManager: Downloading segment 127
+18:59:34.451 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00126.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:34.970 [INFO] HttpClient: Download completed successfully
+18:59:34.982 [DEBUG] DownloadsManager: Segment 127/131 downloaded (89432352 bytes total)
+18:59:34.995 [DEBUG] DownloadsManager: Downloading segment 128
+18:59:35.000 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00127.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:35.791 [INFO] HttpClient: Download completed successfully
+18:59:35.802 [DEBUG] DownloadsManager: Segment 128/131 downloaded (90175704 bytes total)
+18:59:35.808 [DEBUG] DownloadsManager: Downloading segment 129
+18:59:35.817 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00128.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:36.341 [INFO] HttpClient: Download completed successfully
+18:59:36.354 [DEBUG] DownloadsManager: Segment 129/131 downloaded (90699284 bytes total)
+18:59:36.362 [DEBUG] DownloadsManager: Downloading segment 130
+18:59:36.368 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00129.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:36.751 [INFO] HttpClient: Download completed successfully
+18:59:36.758 [DEBUG] DownloadsManager: Segment 130/131 downloaded (91089948 bytes total)
+18:59:36.768 [DEBUG] DownloadsManager: Downloading segment 131
+18:59:36.780 [INFO] HttpClient: Starting download from http://192.168.1.28:32400/video/:/transcode/universal/session/vitaplex-1773269874-5933/base/00130.ts?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:36.954 [INFO] HttpClient: Download completed successfully
+18:59:36.967 [DEBUG] DownloadsManager: Segment 131/131 downloaded (91248056 bytes total)
+18:59:36.976 [INFO] DownloadsManager: All 131 segments downloaded
+18:59:36.987 [INFO] DownloadsManager: Completed download of The Retroville 9
+18:59:37.019 [DEBUG] DownloadsManager: Saved state (2 items)
+18:59:37.032 [INFO] DownloadsManager: Found queued item: Grumpy Young Men
+18:59:37.038 [INFO] DownloadsManager: Starting download of Grumpy Young Men
+18:59:37.047 [INFO] DownloadsManager: Starting download of Grumpy Young Men
+18:59:37.057 [INFO] DownloadsManager: Trying Download Queue API for 4676
+18:59:37.069 [DEBUG] HTTP POST http://192.168.1.28:32400/downloadQueue?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:37.092 [DEBUG] HTTP response: 200 (130 bytes)
+18:59:37.098 [DEBUG] DownloadsManager: downloadQueue response: {"MediaContainer":{"size":1,"DownloadQueue":[{"id":3,"owner":1,"clientIdentifier":"VitaPlex","itemCount":1,"status":"deciding"}]}}
+18:59:37.107 [INFO] DownloadsManager: Got download queue ID: 3
+18:59:37.118 [DEBUG] HTTP GET http://192.168.1.28:32400/downloadQueue/3/items?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:37.156 [DEBUG] HTTP response: 200 (484 bytes)
+18:59:37.162 [DEBUG] HTTP DELETE http://192.168.1.28:32400/downloadQueue/3/items/95?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:37.197 [DEBUG] HTTP response: 204 (0 bytes)
+18:59:37.208 [DEBUG] DownloadsManager: Cleaned up old queue item 95
+18:59:37.221 [DEBUG] HTTP POST http://192.168.1.28:32400/downloadQueue/3/add?keys=/library/metadata/4676&protocol=http&directPlay=0&directStream=0&directStreamAudio=1&location=lan&audioBoost=100&audioChannelCount=2&mediaIndex=0&partIndex=0&videoBitrate=2000&videoResolution=960x544&subtitles=burn&X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:37.240 [DEBUG] HTTP response: 200 (90 bytes)
+18:59:37.249 [INFO] DownloadsManager: Added to download queue, response: {"MediaContainer":{"size":1,"AddedQueueItems":[{"key":"/library/metadata/4676","id":96}]}}
+18:59:37.260 [INFO] DownloadsManager: Download queue item ID: 96
+18:59:37.272 [DEBUG] HTTP GET http://192.168.1.28:32400/downloadQueue/3/item/96/decision?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:37.292 [DEBUG] HTTP response: 200 (4 bytes)
+18:59:37.301 [INFO] DownloadsManager: Queue decision response: 200 (null)
+18:59:37.312 [DEBUG] HTTP HEAD http://192.168.1.28:32400/downloadQueue/3/item/96/media?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk
+18:59:37.338 [DEBUG] HTTP response: 503 (0 bytes)
+18:59:37.344 [DEBUG] DownloadsManager: Media poll attempt 1/200: HTTP 503
+18:59:37.353 [DEBUG] DownloadsManager: Transcoding in progress, waiting 5s (Retry-After)
+18:59:37.767 [DEBUG] Giving focus to brls::SidebarItem
+18:59:38.790 [DEBUG] LiveTVTab: Loading content...
+18:59:38.797 [DEBUG] LiveTVTab: Fetching EPG data (async)...
+18:59:38.798 [DEBUG] LiveTVTab: Fetching DVR recordings...
+18:59:38.806 [DEBUG] fetchEPGGrid: fetching 4 hours of programming
+18:59:38.815 [DEBUG] Giving focus to brls::SidebarItem
+18:59:38.830 [DEBUG] fetchLiveTVChannels: Trying EPG channels with lineup: lineup://tv.plex.providers.epg.cloud/5fc76c55dd53a6002dab58e3#Local%20Broadcast%20Listings%20%28106%20channels%29
+18:59:38.845 [DEBUG] HTTP GET http://192.168.1.28:32400/livetv/epg/channels?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk&lineup=lineup://tv.plex.providers.epg.cloud/5fc76c55dd53a6002dab58e3#Local%20Broadcast%20Listings%20%28106%20channels%29
+18:59:39.146 [DEBUG] HTTP response: 200 (28563 bytes)
+18:59:39.159 [DEBUG] fetchLiveTVChannels: EPG channels response (28563 bytes, first 500): {"MediaContainer":{"size":107,"Channel":[{"identifier":"2.1","key":"5fc76c55dd53a6002dab58e3-5fc70600a05ef8002e61645f","channelVcn":"2.1","hd":true,"thumb":"https://provider-static.plex.tv/9/epg/channels/logos/gracenote/92c7c445245f7cb7b3218fc49b52042f.png","title":"CBS","callSign":"KDKADT","language":"en"},{"identifier":"2.2","key":"5fc76c55dd53a6002dab58e3-5fc705ecdd53a6002d8f8fa5","channelVcn":"2.2","thumb":"https://provider-static.plex.tv/8/epg/channels/logos/gracenote/8fd007e786d49a4630f06a
+18:59:39.179 [INFO] fetchLiveTVChannels: Found 107 channels from EPG lineup
+18:59:39.189 [INFO] fetchLiveTVChannels: Found 107 channels total
+18:59:39.201 [DEBUG] fetchEPGGrid: Trying grid endpoint: http://192.168.1.28:32400/tv.plex.providers.epg.cloud:40/grid?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk&type=4&beginsAt%3C=1773284379&endsAt%3E=1773269979
+18:59:39.213 [DEBUG] HTTP GET http://192.168.1.28:32400/tv.plex.providers.epg.cloud:40/grid?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk&type=4&beginsAt%3C=1773284379&endsAt%3E=1773269979
+18:59:39.428 [DEBUG] Giving focus to brls::SidebarItem
+18:59:39.663 [DEBUG] HTTP response: 200 (483860 bytes)
+18:59:39.674 [DEBUG] fetchEPGGrid: Grid response (483860 bytes, type=4), first 1000: {"MediaContainer":{"size":195,"Metadata":[{"ratingKey":"plex%3A%2F%2Fepisode%2F699e637f86c6a8f6b0db8357","key":"/tv.plex.providers.epg.cloud:40/metadata/plex%3A%2F%2Fepisode%2F699e637f86c6a8f6b0db8357","skipParent":true,"grandparentRatingKey":"plex%3A%2F%2Fshow%2F5fc6acb65c7239002d39480f","guid":"plex://episode/699e637f86c6a8f6b0db8357","parentGuid":"plex://season/5fc6acb65c7239002d39480f","grandparentGuid":"plex://show/5fc6acb65c7239002d39480f","type":"episode","title":"KDKA-TV News at 6:30pm","grandparentKey":"/tv.plex.providers.epg.cloud:40/metadata/plex%3A%2F%2Fshow%2F5fc6acb65c7239002d39480f","grandparentTitle":"KDKA-TV News at 6:30pm","parentTitle":"Season 2026","summary":"Stay informed with the latest breaking news and headlines.","parentIndex":2026,"year":2026,"art":"https://metadata-static.plex.tv/4/gracenote/48664e057b9eef9dc425428045c9fe7b.jpg","grandparentThumb":"https://metadata-static.plex.tv/2/gracenote/2e8944c1777e35ad3cf0b470715fd18a.jpg","grandparentArt":"https://meta
+18:59:39.817 [DEBUG] fetchEPGGrid: Trying grid endpoint: http://192.168.1.28:32400/tv.plex.providers.epg.cloud:40/grid?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk&type=1&beginsAt%3C=1773284379&endsAt%3E=1773269979
+18:59:39.826 [DEBUG] HTTP GET http://192.168.1.28:32400/tv.plex.providers.epg.cloud:40/grid?X-Plex-Token=Vm7_CSxwxhVhjs-8TDNk&type=1&beginsAt%3C=1773284379&endsAt%3E=1773269979
+18:59:39.884 [DEBUG] HTTP response: 200 (11588 bytes)
+18:59:39.890 [DEBUG] fetchEPGGrid: Grid response (11588 bytes, type=1), first 1000: {"MediaContainer":{"size":6,"Metadata":[{"ratingKey":"plex%3A%2F%2Fmovie%2F5fc68a431a65df002dd1f957","key":"/tv.plex.providers.epg.cloud:40/metadata/plex%3A%2F%2Fmovie%2F5fc68a431a65df002dd1f957","guid":"plex://movie/5fc68a431a65df002dd1f957","type":"movie","title":"Preacher's Kid","contentRating":"TV-14","summary":"A smooth-talking singer convinces a young woman (LeToya Luckett) to leave the security of her family, friends and church to join a traveling gospel show.","year":2010,"thumb":"https://metadata-static.plex.tv/a/gracenote/a4cdbc7e42ad2df3437476b89559a3a7.jpg","art":"https://metadata-static.plex.tv/1/gracenote/10157f475b134070b1c1ea17d700fbf6.jpg","duration":9000000,"originallyAvailableAt":"2010-01-02 00:00:00","addedAt":1606847044,"Media":[{"id":578,"duration":9000000,"audioChannels":2,"videoResolution":"480","channelCallSign":"KDKADT4","channelIdentifier":"5fc76c55dd53a6002dab58e3-5fee76ac962324002d74f47c","channelThumb":"https://provider-static.plex.tv/f/epg/channels/logos/
+18:59:39.915 [INFO] fetchEPGGrid: Got 107 channels, 7 with program info
+18:59:39.926 [INFO] LiveTVTab: Got 107 channels with EPG
