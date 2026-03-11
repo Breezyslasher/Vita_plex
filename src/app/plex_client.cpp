@@ -568,7 +568,7 @@ bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<
     HttpClient client;
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all");
     if (metadataType > 0) {
-        url += "?type=" + std::to_string(metadataType);
+        url += "&type=" + std::to_string(metadataType);
     }
 
     // Request JSON format
