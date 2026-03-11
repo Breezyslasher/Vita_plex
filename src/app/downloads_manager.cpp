@@ -543,51 +543,58 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     }
 
     // Build transcode URL for Vita-compatible format
-    // URL-encode the path but preserve slashes (Plex expects literal path separators)
-    std::string encodedPath;
-    for (char c : item.partPath) {
-        if (c == '/') {
-            encodedPath += '/';  // Keep path separators literal
-        } else if (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' || c == '.' || c == '~') {
-            encodedPath += c;
-        } else {
-            static const char* hex = "0123456789ABCDEF";
-            encodedPath += '%';
-            encodedPath += hex[(unsigned char)c >> 4];
-            encodedPath += hex[(unsigned char)c & 0x0F];
-        }
-    }
+    // The path parameter must be the metadata path (per API: /library/metadata/{id})
+    std::string metadataPath = "/library/metadata/" + item.ratingKey;
 
     std::string url = serverUrl;
     bool isAudio = (item.mediaType == "track");
+    std::string profileExtra;
 
     if (isAudio) {
         // Audio transcode - convert to MP3 which the Vita can play
         url += "/music/:/transcode/universal/start.mp3?";
-        url += "path=" + encodedPath;
+        url += "path=" + metadataPath;
         url += "&mediaIndex=0&partIndex=0";
         url += "&protocol=http";
-        url += "&directPlay=0&directStream=0";  // Force transcode
-        url += "&audioCodec=mp3&audioBitrate=320";
+        url += "&directPlay=0&directStream=0";
+        url += "&musicBitrate=320";
+        url += "&audioBoost=100";
+
+        profileExtra = "add-transcode-target(type=musicProfile"
+                       "&context=streaming&protocol=http"
+                       "&container=mp3&audioCodec=mp3)";
     } else {
-        // Video transcode - convert to H.264/AAC which the Vita can decode
+        // Video transcode - convert to H.264/AAC MP4 which the Vita can decode
         url += "/video/:/transcode/universal/start.mp4?";
-        url += "path=" + encodedPath;
+        url += "path=" + metadataPath;
         url += "&mediaIndex=0&partIndex=0";
         url += "&protocol=http";
-        url += "&fastSeek=1";
-        url += "&directPlay=0&directStream=0";  // Force transcode
+        url += "&directPlay=0&directStream=0";
 
         // Get quality settings
         AppSettings& settings = Application::getInstance().getSettings();
-        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : 4000;
+        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : 2000;
 
         char bitrateStr[64];
         snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
         url += bitrateStr;
-        url += "&videoCodec=h264";
-        url += "&maxWidth=960&maxHeight=544";  // Vita screen resolution
-        url += "&audioCodec=aac&audioChannels=2";
+        url += "&videoResolution=960x544";
+        url += "&audioBoost=100";
+        url += "&audioChannelCount=2";
+        url += "&location=lan";
+        url += "&subtitles=none";
+
+        // Profile augmentation: tell Plex to transcode to h264+aac in MP4 via HTTP
+        profileExtra = "add-transcode-target(type=videoProfile"
+                       "&context=streaming&protocol=http"
+                       "&container=mp4&videoCodec=h264"
+                       "&audioCodec=aac)"
+                       "+add-limitation(scope=videoCodec&scopeName=h264"
+                       "&type=upperBound&name=video.level&value=40)"
+                       "+add-limitation(scope=videoCodec&scopeName=h264"
+                       "&type=upperBound&name=video.width&value=960)"
+                       "+add-limitation(scope=videoCodec&scopeName=h264"
+                       "&type=upperBound&name=video.height&value=544)";
     }
 
     // Add authentication and client identification
@@ -597,6 +604,9 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     url += "&X-Plex-Version=1.0.0";
     url += "&X-Plex-Platform=PlayStation%20Vita";
     url += "&X-Plex-Device=PS%20Vita";
+    url += "&X-Plex-Device-Name=PS%20Vita";
+    url += "&X-Plex-Client-Profile-Name=Generic";
+    url += "&X-Plex-Client-Profile-Extra=" + HttpClient::urlEncode(profileExtra);
 
     // Generate a session ID for this transcode request
     char sessionId[32];
