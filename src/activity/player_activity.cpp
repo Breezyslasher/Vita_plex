@@ -1314,27 +1314,47 @@ void PlayerActivity::showTrackOverlay(TrackSelectMode mode) {
             if (idx < 0) idx = 0;
             brls::Application::giveFocus(trackList->getChildren()[idx]);
         }
+        // Reset overlay title focusable state (was set temporarily during list rebuild)
+        if (trackOverlayTitle) {
+            trackOverlayTitle->setFocusable(false);
+        }
     }
 }
 
 void PlayerActivity::hideTrackOverlay() {
     TrackSelectMode prevMode = m_trackSelectMode;
     m_trackSelectMode = TrackSelectMode::NONE;
+    // Restore the overlay title's focusable state (may have been set temporarily)
+    if (trackOverlayTitle) {
+        trackOverlayTitle->setFocusable(false);
+    }
     if (trackOverlay) {
         trackOverlay->setVisibility(brls::Visibility::GONE);
     }
-    // Restore focus to the appropriate button
-    if (prevMode == TrackSelectMode::SUBTITLE && subBtn) {
+    // Restore focus to the appropriate button (only if visible and focusable)
+    if (prevMode == TrackSelectMode::SUBTITLE && subBtn &&
+        subBtn->getVisibility() == brls::Visibility::VISIBLE) {
         brls::Application::giveFocus(subBtn);
-    } else if (prevMode == TrackSelectMode::VIDEO && videoBtn) {
+    } else if (prevMode == TrackSelectMode::VIDEO && videoBtn &&
+               videoBtn->getVisibility() == brls::Visibility::VISIBLE) {
         brls::Application::giveFocus(videoBtn);
-    } else if (audioBtn) {
+    } else if (audioBtn && audioBtn->getVisibility() == brls::Visibility::VISIBLE) {
         brls::Application::giveFocus(audioBtn);
+    } else if (m_isQueueMode && musicPlayBtn) {
+        brls::Application::giveFocus(musicPlayBtn);
+    } else if (playBtn) {
+        brls::Application::giveFocus(playBtn);
     }
 }
 
 void PlayerActivity::populateTrackList(TrackSelectMode mode) {
     if (!trackList || !trackOverlayTitle) return;
+
+    // Transfer focus away before clearing, so destroying focused children is safe
+    if (!trackList->getChildren().empty() && trackOverlayTitle) {
+        trackOverlayTitle->setFocusable(true);
+        brls::Application::giveFocus(trackOverlayTitle);
+    }
 
     // Clear existing items
     trackList->clearViews();
@@ -1566,9 +1586,12 @@ void PlayerActivity::populateSubtitleSearchResults() {
 
     trackOverlayTitle->setText("Searching Subtitles...");
 
-    // Give focus to trackList parent before clearing to avoid destroying focused view
-    if (trackOverlay)
-        brls::Application::giveFocus(trackOverlay);
+    // Transfer focus to the overlay title before clearing the track list,
+    // so the previously focused child can be safely destroyed
+    if (trackOverlayTitle) {
+        trackOverlayTitle->setFocusable(true);
+        brls::Application::giveFocus(trackOverlayTitle);
+    }
 
     trackList->clearViews();
 
@@ -1627,9 +1650,12 @@ void PlayerActivity::populateSubtitleSearchResults() {
     // Store results for selection
     m_subtitleSearchResults = results;
 
-    // Give focus to trackList parent before clearing to avoid destroying focused view
-    if (trackOverlay)
-        brls::Application::giveFocus(trackOverlay);
+    // Transfer focus to the overlay title before clearing the track list,
+    // so the previously focused child can be safely destroyed
+    if (trackOverlayTitle) {
+        trackOverlayTitle->setFocusable(true);
+        brls::Application::giveFocus(trackOverlayTitle);
+    }
 
     trackList->clearViews();
     trackOverlayTitle->setText("Subtitle Search Results");
@@ -1723,6 +1749,10 @@ void PlayerActivity::populateSubtitleSearchResults() {
     // Give focus to first item in the results list
     if (!trackList->getChildren().empty()) {
         brls::Application::giveFocus(trackList->getChildren()[0]);
+    }
+    // Reset overlay title focusable state (was set temporarily during list rebuild)
+    if (trackOverlayTitle) {
+        trackOverlayTitle->setFocusable(false);
     }
 }
 
@@ -2096,6 +2126,10 @@ void PlayerActivity::showQueueOverlay() {
             if (focusIdx < 0) focusIdx = 0;
             brls::Application::giveFocus(queueList->getChildren()[focusIdx]);
         }
+        // Reset overlay title focusable state (was set temporarily during list rebuild)
+        if (queueOverlayTitle) {
+            queueOverlayTitle->setFocusable(false);
+        }
     }
 }
 
@@ -2104,9 +2138,13 @@ void PlayerActivity::hideQueueOverlay() {
     if (queueOverlay) {
         queueOverlay->setVisibility(brls::Visibility::GONE);
     }
-    // Restore focus to queue button
-    if (queueBtn) {
+    // Restore focus to queue button (fall back to play button if queue button unavailable)
+    if (queueBtn && queueBtn->getVisibility() == brls::Visibility::VISIBLE) {
         brls::Application::giveFocus(queueBtn);
+    } else if (m_isQueueMode && musicPlayBtn) {
+        brls::Application::giveFocus(musicPlayBtn);
+    } else if (playBtn) {
+        brls::Application::giveFocus(playBtn);
     }
 }
 
@@ -2114,6 +2152,12 @@ void PlayerActivity::populateQueueList() {
     if (!queueList || !queueOverlayTitle) return;
     if (m_queuePopulating) return;  // Prevent re-entrant calls
     m_queuePopulating = true;
+
+    // Transfer focus away from queue items before clearing to avoid destroying focused view
+    if (!queueList->getChildren().empty() && queueOverlayTitle) {
+        queueOverlayTitle->setFocusable(true);
+        brls::Application::giveFocus(queueOverlayTitle);
+    }
 
     // Clear existing items
     m_queueRowData.clear();
@@ -2571,6 +2615,18 @@ void PlayerActivity::removeQueueRow(int displayIdx) {
     // Remove from track index map
     brls::View* rowToRemove = children[displayIdx];
     m_queueRowData.erase(rowToRemove);
+
+    // If the removed row has focus, transfer focus to a neighbor first
+    if (brls::Application::getCurrentFocus() == rowToRemove) {
+        if (displayIdx + 1 < (int)children.size()) {
+            brls::Application::giveFocus(children[displayIdx + 1]);
+        } else if (displayIdx - 1 >= 0) {
+            brls::Application::giveFocus(children[displayIdx - 1]);
+        } else if (queueOverlayTitle) {
+            queueOverlayTitle->setFocusable(true);
+            brls::Application::giveFocus(queueOverlayTitle);
+        }
+    }
 
     // Remove from deferred thumbnails list
     if (displayIdx < (int)m_deferredThumbs.size()) {

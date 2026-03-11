@@ -444,7 +444,9 @@ void MusicTab::onPlaylistSelected(const Playlist& playlist) {
 
                 // Transfer focus to the content grid so the playlist button
                 // doesn't keep its hover state
-                brls::Application::giveFocus(m_contentGrid);
+                if (!m_items.empty()) {
+                    brls::Application::giveFocus(m_contentGrid);
+                }
             });
         } else {
             brls::Logger::error("MusicTab: Failed to load playlist content");
@@ -505,7 +507,9 @@ void MusicTab::onCollectionSelected(const MediaItem& collection) {
 
                 // Transfer focus to the content grid so the collection button
                 // doesn't keep its hover state
-                brls::Application::giveFocus(m_contentGrid);
+                if (!m_items.empty()) {
+                    brls::Application::giveFocus(m_contentGrid);
+                }
             });
         } else {
             brls::Logger::error("MusicTab: Failed to load collection content");
