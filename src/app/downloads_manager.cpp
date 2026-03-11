@@ -997,10 +997,11 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         std::string encodedPath = HttpClient::urlEncode(metadataPath);
 
         // Build query parameters (shared between decision and start endpoints)
+        // Video uses HLS protocol (same as the working player) since HTTP progressive
+        // download (start.mp4 with protocol=http) returns HTTP 400 on many Plex servers.
         std::string queryParams;
         queryParams += "path=" + encodedPath;
         queryParams += "&mediaIndex=0&partIndex=0";
-        queryParams += "&protocol=http";
         queryParams += "&offset=0";
         queryParams += "&directPlay=0&directStream=0";
         queryParams += "&directStreamAudio=1";
@@ -1008,15 +1009,17 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         queryParams += "&location=lan";
         queryParams += "&audioBoost=100";
         queryParams += "&audioChannelCount=2";
-        // Tell the server to buffer before sending - helps prevent empty responses
-        queryParams += "&mediaBufferSize=20480";
 
         if (isAudio) {
+            queryParams += "&protocol=http";
             queryParams += "&musicBitrate=320";
             profileExtra = "add-transcode-target(type=musicProfile"
                            "&context=streaming&protocol=http"
                            "&container=mp3&audioCodec=mp3)";
         } else {
+            // Use HLS protocol - matches the working player configuration
+            queryParams += "&protocol=hls";
+
             AppSettings& settings = Application::getInstance().getSettings();
             int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : 2000;
 
@@ -1024,11 +1027,13 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
             snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
             queryParams += bitrateStr;
             queryParams += "&videoResolution=960x544";
+            queryParams += "&videoQuality=100";
             queryParams += "&subtitles=none";
 
+            // HLS with MPEG-TS segments, h264+aac - matches working player profile
             profileExtra = "add-transcode-target(type=videoProfile"
-                           "&context=streaming&protocol=http"
-                           "&container=mp4&videoCodec=h264"
+                           "&context=streaming&protocol=hls"
+                           "&container=mpegts&videoCodec=h264"
                            "&audioCodec=aac)"
                            "+add-limitation(scope=videoCodec&scopeName=h264"
                            "&type=upperBound&name=video.level&value=40)"
@@ -1053,10 +1058,6 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
 
         brls::Logger::info("DownloadsManager: Calling decision endpoint for {}", item.title);
 
-        // Parse the decision response to extract the actual streaming URL from Part key.
-        // The server includes session-specific parameters in the Part key that are needed
-        // for the start endpoint to work correctly.
-        std::string partKey;
         {
             HttpClient decisionClient;
             HttpRequest decisionReq;
@@ -1072,81 +1073,42 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
             brls::Logger::info("DownloadsManager: Decision response: {} ({})",
                               decisionResp.statusCode, decisionResp.body.substr(0, 300));
 
-            if (decisionResp.statusCode == 200 && !decisionResp.body.empty()) {
-                // Extract the Part key from the decision response.
-                // The response contains Metadata > Media > Part with a "key" field
-                // that has the server-generated streaming URL with correct parameters.
-                // Look for "key":"/video/:/transcode/..." or similar pattern in Part objects.
-                // We search for the transcode key pattern since the response may contain
-                // multiple "key" fields (metadata key, media key, part key).
-                std::string searchPattern = std::string("/") + transcodeType + "/:/transcode/universal/";
-                size_t keyPos = decisionResp.body.find("\"key\":\"" + searchPattern);
-                if (keyPos == std::string::npos) {
-                    // Also try without the leading slash in case of encoding differences
-                    keyPos = decisionResp.body.find("\"key\":\"" + searchPattern.substr(1));
-                }
-                if (keyPos != std::string::npos) {
-                    size_t valueStart = decisionResp.body.find(":\"", keyPos) + 2;
-                    size_t valueEnd = decisionResp.body.find("\"", valueStart);
-                    if (valueEnd != std::string::npos) {
-                        partKey = decisionResp.body.substr(valueStart, valueEnd - valueStart);
-                        brls::Logger::info("DownloadsManager: Extracted Part key from decision: {}",
-                                          partKey.substr(0, 120));
-                    }
-                }
-
-                if (partKey.empty()) {
-                    brls::Logger::debug("DownloadsManager: No transcode Part key in decision, using constructed URL");
-                }
-            } else {
-                brls::Logger::warning("DownloadsManager: Decision returned {}, trying start anyway",
-                                     decisionResp.statusCode);
+            if (decisionResp.statusCode != 200) {
+                brls::Logger::warning("DownloadsManager: Decision returned {}", decisionResp.statusCode);
             }
         }
 
-        // Use the Part key URL from the decision if available, otherwise construct manually
-        if (!partKey.empty()) {
-            // The Part key is a server path - append token and convert to HTTP
-            std::string partUrl = partKey;
-            if (partUrl.find("X-Plex-Token") == std::string::npos) {
-                partUrl += (partUrl.find('?') != std::string::npos ? "&" : "?");
-                partUrl += "X-Plex-Token=" + token;
-            }
-            url = convertToHttpForDownload(serverUrl + partUrl);
-            brls::Logger::info("DownloadsManager: Using decision Part key URL for download");
-        } else {
-            // Fallback: construct the start URL manually
-            const char* container = isAudio ? "mp3" : "mp4";
+        // Build the start URL
+        if (isAudio) {
+            // Audio: HTTP progressive download of mp3
             char startPathBuf[128];
-            snprintf(startPathBuf, sizeof(startPathBuf), "/%s/:/transcode/universal/start.%s?",
-                     transcodeType, container);
+            snprintf(startPathBuf, sizeof(startPathBuf), "/%s/:/transcode/universal/start.mp3?",
+                     transcodeType);
             url = convertToHttpForDownload(serverUrl + startPathBuf + queryParams);
-            brls::Logger::info("DownloadsManager: Using constructed start URL for download");
+        } else {
+            // Video: HLS m3u8 playlist - we'll download segments and concatenate
+            char startPathBuf[128];
+            snprintf(startPathBuf, sizeof(startPathBuf), "/%s/:/transcode/universal/start.m3u8?",
+                     transcodeType);
+            url = convertToHttpForDownload(serverUrl + startPathBuf + queryParams);
         }
+        brls::Logger::info("DownloadsManager: Using transcode URL for download");
 
-        // Give the server time to start the transcode session before we request data.
-        // Without this delay, the server may return an empty/partial response because
-        // the transcode hasn't begun buffering yet (causes CURLE_PARTIAL_FILE).
-        // Video transcodes need more time than audio since the server must decode
-        // and re-encode the video stream before any data is available.
+        // Give the server time to start the transcode session
         if (!isAudio) {
-            brls::Logger::info("DownloadsManager: Waiting for transcode to buffer...");
+            brls::Logger::info("DownloadsManager: Waiting for transcode to start...");
 #ifdef __vita__
-            sceKernelDelayThread(5 * 1000 * 1000);  // 5 seconds
+            sceKernelDelayThread(3 * 1000 * 1000);  // 3 seconds
 #else
-            std::this_thread::sleep_for(std::chrono::seconds(5));
+            std::this_thread::sleep_for(std::chrono::seconds(3));
 #endif
         }
     }
 
-    brls::Logger::debug("DownloadsManager: Downloading from {}", url);
-
     // Transcoding done (or skipped for audio), now downloading the file
     item.state = DownloadState::DOWNLOADING;
 
-    // Build Plex identification headers required by the transcode API.
-    // The API spec requires X-Plex-Client-Identifier, X-Plex-Client-Profile-Extra,
-    // and X-Plex-Client-Profile-Name as HTTP headers, not URL query parameters.
+    // Build Plex identification headers
     std::map<std::string, std::string> dlHeaders;
     dlHeaders["X-Plex-Client-Identifier"] = "VitaPlex";
     dlHeaders["X-Plex-Product"] = "VitaPlex";
@@ -1160,27 +1122,158 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         dlHeaders["X-Plex-Client-Profile-Extra"] = profileExtra;
     }
 
-    // Retry the download connection within the same transcode session.
-    // Streaming transcodes may need time to produce output - the server can return
-    // an empty response (CURLE_PARTIAL_FILE with 0 bytes) if the transcoder hasn't
-    // started producing data yet. Retrying with increasing delays gives the server
-    // time to buffer while reusing the same session.
     bool success = false;
-    const int maxDownloadAttempts = 3;
-    for (int attempt = 0; attempt < maxDownloadAttempts && m_downloading.load(); attempt++) {
-        if (attempt > 0) {
-            int waitSec = attempt * 5;  // 5s, 10s
-            brls::Logger::info("DownloadsManager: Download attempt {}/{}, waiting {}s for transcode to buffer...",
-                              attempt + 1, maxDownloadAttempts, waitSec);
-#ifdef __vita__
-            sceKernelDelayThread(waitSec * 1000 * 1000);
-#else
-            std::this_thread::sleep_for(std::chrono::seconds(waitSec));
-#endif
-            item.downloadedBytes = 0;
+
+    // Check if this is an HLS download (video transcode) - need to download segments
+    bool isHlsDownload = !isAudio && !urlReady &&
+                         url.find("start.m3u8") != std::string::npos;
+
+    if (isHlsDownload) {
+        // HLS download: fetch m3u8 playlist, then download each TS segment
+        brls::Logger::info("DownloadsManager: Starting HLS segment download for {}", item.title);
+
+        // The output file will be .ts (MPEG-TS container) since we concatenate TS segments
+        // Update localPath extension to .ts if it was .mp4
+        if (item.localPath.size() > 4 && item.localPath.substr(item.localPath.size() - 4) == ".mp4") {
+            item.localPath = item.localPath.substr(0, item.localPath.size() - 4) + ".ts";
         }
 
-        // Open local file for writing (re-open on each attempt to truncate partial data)
+        // Fetch the m3u8 master playlist
+        HttpClient playlistHttp;
+        std::string playlistBody;
+        bool gotPlaylist = playlistHttp.get(url, playlistBody, dlHeaders);
+
+        if (!gotPlaylist || playlistBody.empty()) {
+            brls::Logger::error("DownloadsManager: Failed to fetch m3u8 playlist");
+            item.state = DownloadState::FAILED;
+            saveState();
+            return;
+        }
+
+        brls::Logger::debug("DownloadsManager: m3u8 playlist ({} bytes): {}",
+                           playlistBody.size(), playlistBody.substr(0, 500));
+
+        // Parse segment URLs from the m3u8 playlist.
+        // The playlist may be a master playlist (contains stream variants) or a media
+        // playlist (contains segment URLs directly). We handle both cases.
+        std::vector<std::string> segmentUrls;
+
+        // Extract base URL for resolving relative segment paths
+        std::string baseUrl = url;
+        size_t lastSlash = baseUrl.rfind('/');
+        if (lastSlash != std::string::npos) {
+            baseUrl = baseUrl.substr(0, lastSlash + 1);
+        }
+
+        // Extract server base URL for absolute paths
+        std::string serverBaseUrl;
+        {
+            // Find the third slash (after http://host:port/)
+            size_t schemeEnd = url.find("://");
+            if (schemeEnd != std::string::npos) {
+                size_t hostEnd = url.find('/', schemeEnd + 3);
+                if (hostEnd != std::string::npos) {
+                    serverBaseUrl = url.substr(0, hostEnd);
+                }
+            }
+        }
+
+        // Check if this is a master playlist (contains #EXT-X-STREAM-INF)
+        if (playlistBody.find("#EXT-X-STREAM-INF") != std::string::npos) {
+            // Master playlist - find the first variant stream URL
+            std::string variantUrl;
+            std::istringstream masterStream(playlistBody);
+            std::string line;
+            bool nextLineIsUrl = false;
+            while (std::getline(masterStream, line)) {
+                // Trim carriage return
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+
+                if (nextLineIsUrl && !line.empty() && line[0] != '#') {
+                    variantUrl = line;
+                    break;
+                }
+                if (line.find("#EXT-X-STREAM-INF") != std::string::npos) {
+                    nextLineIsUrl = true;
+                }
+            }
+
+            if (variantUrl.empty()) {
+                brls::Logger::error("DownloadsManager: No variant stream found in master playlist");
+                item.state = DownloadState::FAILED;
+                saveState();
+                return;
+            }
+
+            // Resolve variant URL
+            if (variantUrl[0] == '/') {
+                variantUrl = serverBaseUrl + variantUrl;
+            } else if (variantUrl.find("://") == std::string::npos) {
+                variantUrl = baseUrl + variantUrl;
+            }
+
+            // Add token if not present
+            if (variantUrl.find("X-Plex-Token") == std::string::npos) {
+                variantUrl += (variantUrl.find('?') != std::string::npos ? "&" : "?");
+                variantUrl += "X-Plex-Token=" + token;
+            }
+
+            brls::Logger::info("DownloadsManager: Fetching variant playlist: {}",
+                              variantUrl.substr(0, 120));
+
+            // Fetch the variant/media playlist
+            HttpClient variantHttp;
+            std::string variantBody;
+            bool gotVariant = variantHttp.get(variantUrl, variantBody, dlHeaders);
+
+            if (!gotVariant || variantBody.empty()) {
+                brls::Logger::error("DownloadsManager: Failed to fetch variant playlist");
+                item.state = DownloadState::FAILED;
+                saveState();
+                return;
+            }
+
+            // Update base URL for segment resolution
+            lastSlash = variantUrl.rfind('/');
+            if (lastSlash != std::string::npos) {
+                baseUrl = variantUrl.substr(0, lastSlash + 1);
+            }
+            playlistBody = variantBody;
+        }
+
+        // Parse media playlist for segment URLs
+        {
+            std::istringstream segStream(playlistBody);
+            std::string line;
+            while (std::getline(segStream, line)) {
+                if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (line.empty() || line[0] == '#') continue;
+
+                // This is a segment URL
+                std::string segUrl = line;
+                if (segUrl[0] == '/') {
+                    segUrl = serverBaseUrl + segUrl;
+                } else if (segUrl.find("://") == std::string::npos) {
+                    segUrl = baseUrl + segUrl;
+                }
+                // Add token if not present
+                if (segUrl.find("X-Plex-Token") == std::string::npos) {
+                    segUrl += (segUrl.find('?') != std::string::npos ? "&" : "?");
+                    segUrl += "X-Plex-Token=" + token;
+                }
+                segmentUrls.push_back(segUrl);
+            }
+        }
+
+        if (segmentUrls.empty()) {
+            // Playlist may not have all segments yet (live-style HLS).
+            // Wait and re-fetch until we get #EXT-X-ENDLIST or segments appear.
+            brls::Logger::warning("DownloadsManager: No segments in initial playlist, will poll for segments");
+        }
+
+        brls::Logger::info("DownloadsManager: Found {} initial segments to download", segmentUrls.size());
+
+        // Open output file
 #ifdef __vita__
         SceUID fd = sceIoOpen(item.localPath.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
         if (fd < 0) {
@@ -1199,41 +1292,169 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         }
 #endif
 
-        // Download with progress tracking
-        HttpClient http;
-        success = http.downloadFile(url,
-            [&](const char* data, size_t size) {
-                // Write chunk to file
+        // Download segments. For live-style HLS playlists (no #EXT-X-ENDLIST),
+        // we poll for new segments until the playlist is finalized.
+        int totalSegments = 0;
+        int downloadedSegments = 0;
+        bool playlistFinished = (playlistBody.find("#EXT-X-ENDLIST") != std::string::npos);
+        size_t nextSegmentIndex = 0;
+        std::string lastSegmentUrl;  // Track last downloaded to avoid duplicates
+        success = true;
+
+        while (m_downloading.load() && item.state != DownloadState::CANCELLED) {
+            // Download any pending segments
+            while (nextSegmentIndex < segmentUrls.size() && m_downloading.load() &&
+                   item.state != DownloadState::CANCELLED) {
+                const std::string& segUrl = segmentUrls[nextSegmentIndex];
+
+                brls::Logger::debug("DownloadsManager: Downloading segment {}", nextSegmentIndex + 1);
+
+                HttpClient segHttp;
+                bool segSuccess = segHttp.downloadFile(segUrl,
+                    [&](const char* data, size_t size) {
 #ifdef __vita__
-                int written = sceIoWrite(fd, data, size);
-                if (written < 0 || (size_t)written != size) {
-                    brls::Logger::error("DownloadsManager: Write failed (disk full?), wrote {}/{}", written, size);
-                    return false;  // Cancel download on write error
-                }
+                        int written = sceIoWrite(fd, data, size);
+                        if (written < 0 || (size_t)written != size) {
+                            brls::Logger::error("DownloadsManager: Write failed, wrote {}/{}", written, size);
+                            return false;
+                        }
 #else
-                file.write(data, size);
-                if (!file.good()) {
-                    brls::Logger::error("DownloadsManager: Write failed (disk full?)");
-                    return false;  // Cancel download on write error
-                }
+                        file.write(data, size);
+                        if (!file.good()) {
+                            brls::Logger::error("DownloadsManager: Write failed (disk full?)");
+                            return false;
+                        }
 #endif
-                item.downloadedBytes += size;
+                        item.downloadedBytes += size;
 
-                // Call progress callback (copy to local to avoid race if cleared by UI thread)
-                auto cb = m_progressCallback;
-                if (cb) {
-                    cb(item.downloadedBytes, item.totalBytes);
+                        auto cb = m_progressCallback;
+                        if (cb) {
+                            cb(item.downloadedBytes, item.totalBytes);
+                        }
+                        return m_downloading.load() && item.state != DownloadState::CANCELLED;
+                    },
+                    [&](int64_t total) {
+                        // Estimate total from segment sizes
+                        if (total > 0 && segmentUrls.size() > 0) {
+                            item.totalBytes = total * (int64_t)segmentUrls.size();
+                        }
+                    },
+                    dlHeaders
+                );
+
+                if (!segSuccess) {
+                    brls::Logger::error("DownloadsManager: Failed to download segment {}",
+                                       nextSegmentIndex + 1);
+                    success = false;
+                    break;
                 }
 
-                // Return false to cancel download
-                return m_downloading.load() && item.state != DownloadState::CANCELLED;
-            },
-            [&](int64_t total) {
-                item.totalBytes = total;
-                brls::Logger::debug("DownloadsManager: Total size: {} bytes", total);
-            },
-            dlHeaders
-        );
+                lastSegmentUrl = segUrl;
+                downloadedSegments++;
+                nextSegmentIndex++;
+
+                brls::Logger::debug("DownloadsManager: Segment {}/{} downloaded ({} bytes total)",
+                                   downloadedSegments,
+                                   playlistFinished ? (int)segmentUrls.size() : -1,
+                                   item.downloadedBytes);
+            }
+
+            if (!success || !m_downloading.load() || item.state == DownloadState::CANCELLED) {
+                break;
+            }
+
+            // If playlist is finished and all segments downloaded, we're done
+            if (playlistFinished && nextSegmentIndex >= segmentUrls.size()) {
+                brls::Logger::info("DownloadsManager: All {} segments downloaded", downloadedSegments);
+                break;
+            }
+
+            // Playlist not finished yet - wait and re-fetch for new segments
+#ifdef __vita__
+            sceKernelDelayThread(2 * 1000 * 1000);  // 2 seconds
+#else
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+#endif
+
+            // Re-fetch the media playlist (use the variant URL if we had a master playlist)
+            HttpClient refreshHttp;
+            std::string refreshBody;
+            bool gotRefresh = refreshHttp.get(url, refreshBody, dlHeaders);
+
+            if (!gotRefresh || refreshBody.empty()) {
+                brls::Logger::warning("DownloadsManager: Failed to refresh playlist, retrying...");
+                continue;
+            }
+
+            // Re-check if this is a master playlist and get the media playlist
+            if (refreshBody.find("#EXT-X-STREAM-INF") != std::string::npos) {
+                // Master playlist - re-extract variant URL (same logic as above)
+                std::istringstream masterStream(refreshBody);
+                std::string variantUrl2;
+                std::string line;
+                bool nextLineIsUrl = false;
+                while (std::getline(masterStream, line)) {
+                    if (!line.empty() && line.back() == '\r') line.pop_back();
+                    if (nextLineIsUrl && !line.empty() && line[0] != '#') {
+                        variantUrl2 = line;
+                        break;
+                    }
+                    if (line.find("#EXT-X-STREAM-INF") != std::string::npos) {
+                        nextLineIsUrl = true;
+                    }
+                }
+                if (!variantUrl2.empty()) {
+                    if (variantUrl2[0] == '/') variantUrl2 = serverBaseUrl + variantUrl2;
+                    else if (variantUrl2.find("://") == std::string::npos)
+                        variantUrl2 = baseUrl + variantUrl2;
+                    if (variantUrl2.find("X-Plex-Token") == std::string::npos) {
+                        variantUrl2 += (variantUrl2.find('?') != std::string::npos ? "&" : "?");
+                        variantUrl2 += "X-Plex-Token=" + token;
+                    }
+                    HttpClient vHttp;
+                    std::string vBody;
+                    if (vHttp.get(variantUrl2, vBody, dlHeaders)) {
+                        refreshBody = vBody;
+                    }
+                }
+            }
+
+            // Parse new segments
+            playlistFinished = (refreshBody.find("#EXT-X-ENDLIST") != std::string::npos);
+            std::vector<std::string> newSegUrls;
+            {
+                std::string refreshBase = baseUrl;
+                std::istringstream segStream(refreshBody);
+                std::string line;
+                while (std::getline(segStream, line)) {
+                    if (!line.empty() && line.back() == '\r') line.pop_back();
+                    if (line.empty() || line[0] == '#') continue;
+
+                    std::string segUrl = line;
+                    if (segUrl[0] == '/') segUrl = serverBaseUrl + segUrl;
+                    else if (segUrl.find("://") == std::string::npos) segUrl = refreshBase + segUrl;
+                    if (segUrl.find("X-Plex-Token") == std::string::npos) {
+                        segUrl += (segUrl.find('?') != std::string::npos ? "&" : "?");
+                        segUrl += "X-Plex-Token=" + token;
+                    }
+                    newSegUrls.push_back(segUrl);
+                }
+            }
+
+            // Add only truly new segments (not already in our list)
+            for (const auto& newSeg : newSegUrls) {
+                bool found = false;
+                for (const auto& existing : segmentUrls) {
+                    if (existing == newSeg) { found = true; break; }
+                }
+                if (!found) {
+                    segmentUrls.push_back(newSeg);
+                }
+            }
+
+            brls::Logger::debug("DownloadsManager: Playlist refresh: {} total segments, finished={}",
+                               segmentUrls.size(), playlistFinished);
+        }
 
 #ifdef __vita__
         sceIoClose(fd);
@@ -1241,19 +1462,91 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         file.close();
 #endif
 
-        if (success || !m_downloading.load() || item.state == DownloadState::CANCELLED) {
-            break;  // Success, paused, or cancelled - stop retrying
-        }
+    } else {
+        // Non-HLS download (audio direct download, or Download Queue API URL)
+        const int maxDownloadAttempts = 3;
+        for (int attempt = 0; attempt < maxDownloadAttempts && m_downloading.load(); attempt++) {
+            if (attempt > 0) {
+                int waitSec = attempt * 5;
+                brls::Logger::info("DownloadsManager: Download attempt {}/{}, waiting {}s...",
+                                  attempt + 1, maxDownloadAttempts, waitSec);
+#ifdef __vita__
+                sceKernelDelayThread(waitSec * 1000 * 1000);
+#else
+                std::this_thread::sleep_for(std::chrono::seconds(waitSec));
+#endif
+                item.downloadedBytes = 0;
+            }
 
-        // If we got some data but failed, don't retry within this loop (let outer retry handle it)
-        if (item.downloadedBytes > 0) {
-            brls::Logger::info("DownloadsManager: Download got {} bytes before failing, not retrying within session",
-                              item.downloadedBytes);
-            break;
-        }
+#ifdef __vita__
+            SceUID fd = sceIoOpen(item.localPath.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+            if (fd < 0) {
+                brls::Logger::error("DownloadsManager: Failed to create file {}", item.localPath);
+                item.state = DownloadState::FAILED;
+                saveState();
+                return;
+            }
+#else
+            std::ofstream file(item.localPath, std::ios::binary);
+            if (!file.is_open()) {
+                brls::Logger::error("DownloadsManager: Failed to create file {}", item.localPath);
+                item.state = DownloadState::FAILED;
+                saveState();
+                return;
+            }
+#endif
 
-        brls::Logger::warning("DownloadsManager: Download returned 0 bytes (attempt {}/{})",
-                             attempt + 1, maxDownloadAttempts);
+            brls::Logger::debug("DownloadsManager: Downloading from {}", url);
+
+            HttpClient http;
+            success = http.downloadFile(url,
+                [&](const char* data, size_t size) {
+#ifdef __vita__
+                    int written = sceIoWrite(fd, data, size);
+                    if (written < 0 || (size_t)written != size) {
+                        brls::Logger::error("DownloadsManager: Write failed, wrote {}/{}", written, size);
+                        return false;
+                    }
+#else
+                    file.write(data, size);
+                    if (!file.good()) {
+                        brls::Logger::error("DownloadsManager: Write failed (disk full?)");
+                        return false;
+                    }
+#endif
+                    item.downloadedBytes += size;
+                    auto cb = m_progressCallback;
+                    if (cb) {
+                        cb(item.downloadedBytes, item.totalBytes);
+                    }
+                    return m_downloading.load() && item.state != DownloadState::CANCELLED;
+                },
+                [&](int64_t total) {
+                    item.totalBytes = total;
+                    brls::Logger::debug("DownloadsManager: Total size: {} bytes", total);
+                },
+                dlHeaders
+            );
+
+#ifdef __vita__
+            sceIoClose(fd);
+#else
+            file.close();
+#endif
+
+            if (success || !m_downloading.load() || item.state == DownloadState::CANCELLED) {
+                break;
+            }
+
+            if (item.downloadedBytes > 0) {
+                brls::Logger::info("DownloadsManager: Download got {} bytes before failing",
+                                  item.downloadedBytes);
+                break;
+            }
+
+            brls::Logger::warning("DownloadsManager: Download returned 0 bytes (attempt {}/{})",
+                                 attempt + 1, maxDownloadAttempts);
+        }
     }
 
     // Don't overwrite CANCELLED state - it was already handled
