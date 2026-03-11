@@ -20,7 +20,7 @@ jobs:
           apk add cmake ninja git zstd tar pkgconf
 
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           submodules: recursive
 
@@ -40,7 +40,7 @@ jobs:
           cmake --build build
 
       - name: Upload VPK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: VitaPlex-${{ github.run_number }}
           path: build/VitaPlex.vpk
