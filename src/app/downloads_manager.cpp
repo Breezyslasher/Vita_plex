@@ -794,6 +794,8 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     // Poll /downloadQueue/{queueId}/items/{itemId} for item-level status every 3 seconds.
     const int maxPollAttempts = 100;  // 100 * 3s = 5 minutes max
     const int pollIntervalMs = 3000;
+    const int maxErrorRestarts = 5;   // Max consecutive error restarts before giving up
+    int errorRestarts = 0;
     bool mediaReady = false;
 
     for (int attempt = 0; attempt < maxPollAttempts && downloading.load(); attempt++) {
@@ -821,8 +823,16 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         }
 
         if (status == "error" || status == "failed") {
-            brls::Logger::error("DownloadsManager: Item transcoding failed with status: {}", status);
-            // Try restarting the item processing
+            errorRestarts++;
+            brls::Logger::error("DownloadsManager: Item transcoding failed with status: {} (error {}/{})",
+                               status, errorRestarts, maxErrorRestarts);
+
+            if (errorRestarts >= maxErrorRestarts) {
+                brls::Logger::error("DownloadsManager: Giving up after {} consecutive transcode errors", errorRestarts);
+                break;
+            }
+
+            // Try restarting the item processing with exponential backoff
             HttpClient restartHttp;
             HttpRequest restartReq;
             restartReq.url = baseUrl + "/downloadQueue/" + queueId + "/items/" + itemId
@@ -832,14 +842,20 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
             restartReq.timeout = 30;
             HttpResponse restartResp = restartHttp.request(restartReq);
             brls::Logger::info("DownloadsManager: Restart response: {}", restartResp.statusCode);
-            // Continue polling after restart
+
+            // Exponential backoff: 3s, 6s, 12s, 24s, 48s
+            int backoffMs = pollIntervalMs * (1 << (errorRestarts - 1));
+            brls::Logger::info("DownloadsManager: Waiting {}ms before next poll", backoffMs);
 #ifdef __vita__
-            sceKernelDelayThread(pollIntervalMs * 1000);
+            sceKernelDelayThread(backoffMs * 1000);
 #else
-            std::this_thread::sleep_for(std::chrono::milliseconds(pollIntervalMs));
+            std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
 #endif
             continue;
         }
+
+        // Status is not an error - reset error counter
+        errorRestarts = 0;
 
         // Still processing ("deciding", "transcoding", etc.) - wait and poll again
 #ifdef __vita__
