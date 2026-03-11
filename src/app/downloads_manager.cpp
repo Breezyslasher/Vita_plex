@@ -1029,21 +1029,11 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
             }
         }
 
-        // Build the /start URL for downloading
-        std::string startQuery = queryParams;
-        startQuery += "&X-Plex-Client-Identifier=VitaPlex";
-        startQuery += "&X-Plex-Product=VitaPlex";
-        startQuery += "&X-Plex-Version=1.0.0";
-        startQuery += "&X-Plex-Platform=PlayStation%20Vita";
-        startQuery += "&X-Plex-Device=PS%20Vita";
-        startQuery += "&X-Plex-Device-Name=PS%20Vita";
-        startQuery += "&X-Plex-Client-Profile-Name=Generic";
-        startQuery += "&X-Plex-Client-Profile-Extra=" + HttpClient::urlEncode(profileExtra);
-
+        // Build the /start URL for downloading (transcode params as query, Plex identity as headers per API spec)
         const char* container = isAudio ? "mp3" : "mp4";
         char startPathBuf[128];
         snprintf(startPathBuf, sizeof(startPathBuf), "/%s/:/transcode/universal/start.%s?", transcodeType, container);
-        url = convertToHttpForDownload(serverUrl + startPathBuf + startQuery);
+        url = convertToHttpForDownload(serverUrl + startPathBuf + queryParams);
 
         // Give the server time to start the transcode session before we request data.
         // Without this delay, the server may return an empty/partial response because
@@ -1082,6 +1072,18 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     }
 #endif
 
+    // Build Plex identification headers required by the transcode API.
+    // The API spec requires X-Plex-Client-Identifier, X-Plex-Client-Profile-Extra,
+    // and X-Plex-Client-Profile-Name as HTTP headers, not URL query parameters.
+    std::map<std::string, std::string> dlHeaders;
+    dlHeaders["X-Plex-Client-Identifier"] = "VitaPlex";
+    dlHeaders["X-Plex-Product"] = "VitaPlex";
+    dlHeaders["X-Plex-Version"] = "1.0.0";
+    dlHeaders["X-Plex-Platform"] = "PlayStation Vita";
+    dlHeaders["X-Plex-Device"] = "PS Vita";
+    dlHeaders["X-Plex-Device-Name"] = "PS Vita";
+    dlHeaders["X-Plex-Token"] = token;
+
     // Download with progress tracking
     HttpClient http;
     bool success = http.downloadFile(url,
@@ -1114,7 +1116,8 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         [&](int64_t total) {
             item.totalBytes = total;
             brls::Logger::debug("DownloadsManager: Total size: {} bytes", total);
-        }
+        },
+        dlHeaders
     );
 
 #ifdef __vita__

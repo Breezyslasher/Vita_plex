@@ -388,7 +388,8 @@ static size_t downloadHeaderCallback(void* contents, size_t size, size_t nmemb, 
     return totalSize;
 }
 
-bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallback, SizeCallback sizeCallback) {
+bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallback, SizeCallback sizeCallback,
+                              const std::map<std::string, std::string>& headers) {
     if (!m_curl) {
         brls::Logger::error("CURL not initialized for download");
         return false;
@@ -453,10 +454,24 @@ bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallbac
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, 100L);
     curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, 120L);
 
+    // Set custom headers (e.g. Plex identification headers required by transcode API)
+    struct curl_slist* headerList = nullptr;
+    for (const auto& h : headers) {
+        std::string header = h.first + ": " + h.second;
+        headerList = curl_slist_append(headerList, header.c_str());
+    }
+    if (headerList) {
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headerList);
+    }
+
     brls::Logger::info("HttpClient: Starting download from {}", url);
 
     // Perform download
     CURLcode res = curl_easy_perform(curl);
+
+    if (headerList) {
+        curl_slist_free_all(headerList);
+    }
 
     if (callbackData.cancelled) {
         brls::Logger::info("HttpClient: Download cancelled by user");
