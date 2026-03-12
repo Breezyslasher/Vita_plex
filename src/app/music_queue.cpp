@@ -41,7 +41,10 @@ QueueItem MusicQueue::mediaItemToQueueItem(const MediaItem& item, int index) {
     qi.title = item.title;
     qi.artist = item.grandparentTitle;  // Artist for tracks
     qi.album = item.parentTitle;        // Album for tracks
+    // Use track thumb, falling back to album (parent) then artist (grandparent) thumb
     qi.thumb = item.thumb;
+    if (qi.thumb.empty()) qi.thumb = item.parentThumb;
+    if (qi.thumb.empty()) qi.thumb = item.grandparentThumb;
     qi.duration = item.duration / 1000; // Convert ms to seconds
     qi.index = index;
     return qi;

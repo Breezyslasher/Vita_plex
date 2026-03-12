@@ -1451,6 +1451,11 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
         item.type = extractJsonValue(obj, "type");
         item.mediaType = parseMediaType(item.type);
         item.year = extractJsonInt(obj, "year");
+        item.duration = extractJsonInt(obj, "duration");
+        item.grandparentTitle = extractJsonValue(obj, "grandparentTitle");
+        item.parentTitle = extractJsonValue(obj, "parentTitle");
+        item.parentThumb = extractJsonValue(obj, "parentThumb");
+        item.grandparentThumb = extractJsonValue(obj, "grandparentThumb");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
             results.push_back(item);

@@ -601,7 +601,8 @@ void PlayerActivity::loadFromQueue() {
         if (titleLabel) titleLabel->setText(track->title);
         if (artistLabel) {
             artistLabel->setText(track->artist);
-            artistLabel->setVisibility(brls::Visibility::VISIBLE);
+            artistLabel->setVisibility(track->artist.empty()
+                ? brls::Visibility::GONE : brls::Visibility::VISIBLE);
         }
         updateQueueDisplay();
 
@@ -615,7 +616,7 @@ void PlayerActivity::loadFromQueue() {
                 }
             } else if (!track->thumb.empty()) {
                 PlexClient& client = PlexClient::getInstance();
-                std::string thumbUrl = client.getThumbnailUrl(track->thumb, 400, 400);
+                std::string thumbUrl = client.getThumbnailUrl(track->thumb, 300, 300);
                 ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
                     img->setVisibility(brls::Visibility::VISIBLE);
                 }, albumArt, m_alive);
@@ -646,7 +647,9 @@ void PlayerActivity::loadFromQueue() {
     }
     if (artistLabel) {
         artistLabel->setText(track->artist);
-        artistLabel->setVisibility(brls::Visibility::VISIBLE);
+        // Only show the artist label if there's actually text to display
+        artistLabel->setVisibility(track->artist.empty()
+            ? brls::Visibility::GONE : brls::Visibility::VISIBLE);
     }
 
     // Update queue info display
@@ -660,6 +663,7 @@ void PlayerActivity::loadFromQueue() {
     DownloadsManager& downloads = DownloadsManager::getInstance();
     DownloadItem dlItem;
     bool useLocalFile = false;
+    bool coverLoaded = false;
     if (downloads.getDownloadCopy(track->ratingKey, dlItem) && dlItem.state == DownloadState::COMPLETED) {
         url = dlItem.localPath;
         useLocalFile = true;
@@ -669,6 +673,7 @@ void PlayerActivity::loadFromQueue() {
         if (albumArt && !dlItem.thumbPath.empty()) {
             if (ImageLoader::loadFromFile(dlItem.thumbPath, albumArt)) {
                 albumArt->setVisibility(brls::Visibility::VISIBLE);
+                coverLoaded = true;
             }
         }
     } else {
@@ -683,7 +688,8 @@ void PlayerActivity::loadFromQueue() {
         // Load album art from server (only when streaming, not offline)
         if (albumArt && !track->thumb.empty()) {
             PlexClient& artClient = PlexClient::getInstance();
-            std::string thumbUrl = artClient.getThumbnailUrl(track->thumb, 400, 400);
+            std::string thumbUrl = artClient.getThumbnailUrl(track->thumb, 300, 300);
+            // Temporarily unpause image loading if needed so the cover art can load
             bool wasPaused = ImageLoader::isPaused();
             if (wasPaused) ImageLoader::setPaused(false);
             ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
@@ -691,18 +697,30 @@ void PlayerActivity::loadFromQueue() {
             }, albumArt, m_alive);
             if (wasPaused) ImageLoader::setPaused(true);
             albumArt->setVisibility(brls::Visibility::VISIBLE);
+            coverLoaded = true;
         }
     }
 
-    // Pause image loading and free cache to reclaim memory for MPV.
+    // Pause image loading to avoid bandwidth contention with MPV streaming.
+    // Only cancel in-flight loads if no cover art was just requested -
+    // cancelAll() increments the generation counter which would discard
+    // our own cover art load.
     ImageLoader::setPaused(true);
-    ImageLoader::cancelAll();
-    ImageLoader::clearCache();
+    if (!coverLoaded) {
+        ImageLoader::cancelAll();
+    }
 
     MpvPlayer& player = MpvPlayer::getInstance();
 
     // Set audio-only mode BEFORE initializing
     player.setAudioOnly(true);
+
+    // Only clear image cache on first MPV init to free memory for the player.
+    // On subsequent track changes MPV is already allocated, and clearing the
+    // cache forces covers/queue thumbnails to be re-downloaded from the server.
+    if (!player.isInitialized()) {
+        ImageLoader::clearCache();
+    }
 
     // Stream audio directly via MPV (transcode API returns mp3 stream or local file)
     if (!player.isInitialized()) {
