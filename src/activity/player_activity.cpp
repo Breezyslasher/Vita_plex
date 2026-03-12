@@ -2640,44 +2640,158 @@ void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB) {
     if (displayIdxB < 0 || displayIdxB >= (int)children.size()) return;
     if (displayIdxA == displayIdxB) return;
 
-    // Swap the children in the parent's children list
-    std::swap(children[displayIdxA], children[displayIdxB]);
+    brls::Box* rowA = (brls::Box*)children[displayIdxA];
+    brls::Box* rowB = (brls::Box*)children[displayIdxB];
 
-    // Keep deferred thumbs in sync with display order
-    if (displayIdxA < (int)m_deferredThumbs.size() &&
-        displayIdxB < (int)m_deferredThumbs.size()) {
-        std::swap(m_deferredThumbs[displayIdxA], m_deferredThumbs[displayIdxB]);
-    }
-
-    // Update the number labels on both swapped rows
     // Row structure: [thumb(Image)] [textBox(Box)] [durLbl(Label, optional)]
     // textBox children: [titleLbl(Label)] [artistLbl(Label, optional)]
+    auto& childrenA = rowA->getChildren();
+    auto& childrenB = rowB->getChildren();
+    if (childrenA.size() < 2 || childrenB.size() < 2) return;
+
     MusicQueue& queue = MusicQueue::getInstance();
-    for (int idx : {displayIdxA, displayIdxB}) {
-        brls::View* child = children[idx];
-        auto it = m_queueRowData.find(child);
-        if (it == m_queueRowData.end()) continue;
 
-        bool isCurr = (it->second.trackIdx == queue.getCurrentIndex());
-        const std::string& trackTitle = it->second.title;
+    // --- Swap QueueRowData between the two rows ---
+    auto itA = m_queueRowData.find(rowA);
+    auto itB = m_queueRowData.find(rowB);
+    if (itA == m_queueRowData.end() || itB == m_queueRowData.end()) return;
 
-        auto& rowChildren = ((brls::Box*)child)->getChildren();
-        if (rowChildren.size() >= 2) {
-            auto& textBoxChildren = ((brls::Box*)rowChildren[1])->getChildren();
-            if (!textBoxChildren.empty()) {
-                brls::Label* titleLbl = (brls::Label*)textBoxChildren[0];
-                if (isCurr) {
-                    titleLbl->setText("> " + trackTitle);
-                } else {
-                    char numBuf[8];
-                    snprintf(numBuf, sizeof(numBuf), "%d. ", idx + 1);
-                    titleLbl->setText(numBuf + trackTitle);
-                }
-            }
+    QueueRowData dataA = itA->second;
+    QueueRowData dataB = itB->second;
+    itA->second = dataB;
+    itB->second = dataA;
+    // Swap trackIdx back - moveTrack already rearranged the queue array
+    // so each display position's trackIdx should stay pointing to its
+    // corresponding queue slot (the items swapped in the queue too)
+    std::swap(itA->second.trackIdx, itB->second.trackIdx);
+
+    // --- Swap thumbnail images ---
+    brls::Image* thumbA = (brls::Image*)childrenA[0];
+    brls::Image* thumbB = (brls::Image*)childrenB[0];
+    if (displayIdxA < (int)m_deferredThumbs.size() &&
+        displayIdxB < (int)m_deferredThumbs.size()) {
+        auto& dtA = m_deferredThumbs[displayIdxA];
+        auto& dtB = m_deferredThumbs[displayIdxB];
+        // Swap deferred thumb entries (url, loaded state)
+        std::swap(dtA.url, dtB.url);
+        std::swap(dtA.loaded, dtB.loaded);
+        // Re-point image pointers to their current rows
+        dtA.image = thumbA;
+        dtB.image = thumbB;
+        // Reload thumbnails to reflect the swap
+        if (dtA.loaded && !dtA.url.empty()) {
+            ImageLoader::loadAsync(dtA.url, [](brls::Image*) {}, thumbA, m_alive);
+        } else {
+            thumbA->setImageFromRes("img/default_music.png");
+        }
+        if (dtB.loaded && !dtB.url.empty()) {
+            ImageLoader::loadAsync(dtB.url, [](brls::Image*) {}, thumbB, m_alive);
+        } else {
+            thumbB->setImageFromRes("img/default_music.png");
         }
     }
 
-    // Mark layout dirty so borealis re-renders
+    // --- Swap title and artist labels ---
+    brls::Box* textBoxA = (brls::Box*)childrenA[1];
+    brls::Box* textBoxB = (brls::Box*)childrenB[1];
+    auto& textChildrenA = textBoxA->getChildren();
+    auto& textChildrenB = textBoxB->getChildren();
+
+    // Determine current-track status after the data swap
+    bool isCurrA = (itA->second.trackIdx == queue.getCurrentIndex());
+    bool isCurrB = (itB->second.trackIdx == queue.getCurrentIndex());
+
+    // Update title label for row A (now has dataB's content)
+    if (!textChildrenA.empty()) {
+        brls::Label* titleLblA = (brls::Label*)textChildrenA[0];
+        if (isCurrA) {
+            titleLblA->setText("> " + itA->second.title);
+            titleLblA->setTextColor(nvgRGB(170, 210, 255));
+        } else {
+            char numBuf[8];
+            snprintf(numBuf, sizeof(numBuf), "%d. ", displayIdxA + 1);
+            titleLblA->setText(numBuf + itA->second.title);
+            titleLblA->setTextColor(nvgRGB(240, 240, 240));
+        }
+    }
+    // Update artist label for row A
+    if (textChildrenA.size() >= 2) {
+        brls::Label* artistLblA = (brls::Label*)textChildrenA[1];
+        // Get the artist from the queue data
+        int tIdxA = itA->second.trackIdx;
+        if (tIdxA >= 0 && tIdxA < queue.getQueueSize()) {
+            const QueueItem& trackA = queue.getQueue()[tIdxA];
+            artistLblA->setText(trackA.artist);
+            artistLblA->setTextColor(isCurrA ? nvgRGBA(170, 210, 255, 180) : nvgRGB(170, 170, 170));
+        }
+    }
+
+    // Update title label for row B (now has dataA's content)
+    if (!textChildrenB.empty()) {
+        brls::Label* titleLblB = (brls::Label*)textChildrenB[0];
+        if (isCurrB) {
+            titleLblB->setText("> " + itB->second.title);
+            titleLblB->setTextColor(nvgRGB(170, 210, 255));
+        } else {
+            char numBuf[8];
+            snprintf(numBuf, sizeof(numBuf), "%d. ", displayIdxB + 1);
+            titleLblB->setText(numBuf + itB->second.title);
+            titleLblB->setTextColor(nvgRGB(240, 240, 240));
+        }
+    }
+    // Update artist label for row B
+    if (textChildrenB.size() >= 2) {
+        brls::Label* artistLblB = (brls::Label*)textChildrenB[1];
+        int tIdxB = itB->second.trackIdx;
+        if (tIdxB >= 0 && tIdxB < queue.getQueueSize()) {
+            const QueueItem& trackB = queue.getQueue()[tIdxB];
+            artistLblB->setText(trackB.artist);
+            artistLblB->setTextColor(isCurrB ? nvgRGBA(170, 210, 255, 180) : nvgRGB(170, 170, 170));
+        }
+    }
+
+    // --- Swap duration labels using queue data ---
+    bool hasDurA = (childrenA.size() >= 3);
+    bool hasDurB = (childrenB.size() >= 3);
+    if (hasDurA && hasDurB) {
+        brls::Label* durA = (brls::Label*)childrenA[2];
+        brls::Label* durB = (brls::Label*)childrenB[2];
+        // Get durations from queue data (itA/itB already swapped above)
+        int tA = itA->second.trackIdx;
+        int tB = itB->second.trackIdx;
+        auto& tracks = queue.getQueue();
+        if (tA >= 0 && tA < (int)tracks.size() && tracks[tA].duration > 0) {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%d:%02d", tracks[tA].duration / 60, tracks[tA].duration % 60);
+            durA->setText(buf);
+        }
+        if (tB >= 0 && tB < (int)tracks.size() && tracks[tB].duration > 0) {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%d:%02d", tracks[tB].duration / 60, tracks[tB].duration % 60);
+            durB->setText(buf);
+        }
+    }
+
+    // --- Swap background/border colors (current track highlighting) ---
+    if (isCurrA) {
+        rowA->setBackgroundColor(nvgRGBA(70, 90, 210, 150));
+        rowA->setBorderColor(nvgRGBA(120, 160, 255, 200));
+        rowA->setBorderThickness(1.5f);
+    } else {
+        rowA->setBackgroundColor(nvgRGBA(255, 255, 255, 8));
+        rowA->setBorderColor(nvgRGBA(0, 0, 0, 0));
+        rowA->setBorderThickness(0);
+    }
+    if (isCurrB) {
+        rowB->setBackgroundColor(nvgRGBA(70, 90, 210, 150));
+        rowB->setBorderColor(nvgRGBA(120, 160, 255, 200));
+        rowB->setBorderThickness(1.5f);
+    } else {
+        rowB->setBackgroundColor(nvgRGBA(255, 255, 255, 8));
+        rowB->setBorderColor(nvgRGBA(0, 0, 0, 0));
+        rowB->setBorderThickness(0);
+    }
+
     queueList->invalidate();
 }
 
