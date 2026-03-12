@@ -131,11 +131,12 @@ private:
         bool active = false;                 // Whether a drag is in progress
         brls::View* draggedRow = nullptr;     // The row being dragged
         int lastSwappedDisplay = -1;          // Last display index after swaps
+        int swapCount = 0;                    // Net swaps from start (+ = moved down, - = moved up)
         std::chrono::steady_clock::time_point holdStart;  // When touch began
         bool holdMet = false;                 // Whether hold threshold was met
     };
     DragState m_dragState;
-    static constexpr int HOLD_THRESHOLD_MS = 300;  // ms to hold before drag starts
+    static constexpr int HOLD_THRESHOLD_MS = 200;  // ms to hold before drag starts
     static constexpr float ROW_HEIGHT_PX = 62.0f;  // Approx row height for swap threshold
 
     std::string m_mediaKey;
