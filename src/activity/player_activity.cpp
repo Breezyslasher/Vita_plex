@@ -673,6 +673,7 @@ void PlayerActivity::loadFromQueue() {
     if (downloads.getDownloadCopy(track->ratingKey, dlItem) && dlItem.state == DownloadState::COMPLETED) {
         url = dlItem.localPath;
         useLocalFile = true;
+        m_isLocalFile = true;  // Suppress timeline reports when offline
         brls::Logger::info("PlayerActivity: Using downloaded file for track: {}", url);
 
         // Load cover art from local file if available (preferred over server URL)
@@ -683,6 +684,7 @@ void PlayerActivity::loadFromQueue() {
         }
     } else {
         // Stream from server
+        m_isLocalFile = false;  // Reset in case previous track was local
         PlexClient& client = PlexClient::getInstance();
         if (!client.getTranscodeUrl(track->ratingKey, url, 0)) {
             brls::Logger::error("Failed to get transcode URL for track: {}", track->ratingKey);
