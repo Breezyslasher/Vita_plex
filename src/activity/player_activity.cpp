@@ -2319,46 +2319,72 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
             }
         }, brls::PanAxis::HORIZONTAL));
 
-    // Vertical drag to reorder - hold to activate, then live row swapping
+    // Vertical pan: scroll passthrough OR hold-to-drag reorder
+    // When the user touches a row and moves vertically, this gesture fires
+    // (which blocks the ScrollingFrame's own scroll). To fix scrolling:
+    //  - If hold threshold NOT met: programmatically scroll the ScrollingFrame
+    //  - If hold threshold met (finger held still): switch to drag-reorder mode
+    // The STAY state is handled so the dragged row follows the finger in real time.
     row->addGestureRecognizer(new brls::PanGestureRecognizer(
         [this, row](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
             float deltaY = status.position.y - status.startPosition.y;
 
             if (status.state == brls::GestureState::UNSURE) {
-                // First touch - record hold start time
+                // First touch - record hold start time and initial scroll position
                 if (!m_dragState.active && m_dragState.draggedRow != row) {
                     m_dragState.holdStart = std::chrono::steady_clock::now();
                     m_dragState.holdMet = false;
                     m_dragState.draggedRow = row;
                     m_dragState.lastSwappedDisplay = findQueueRowDisplayIndex(row);
                     m_dragState.swapCount = 0;
+                    m_dragState.scrollPassthrough = true;
+                    m_dragState.initialScrollY = queueScroll ? queueScroll->getContentOffsetY() : 0.0f;
+                    m_dragState.dragStartY = 0.0f;
                     // Capture the dragged track's queue index so multi-step swaps
                     // always move the correct track (not the swapped-in data)
                     auto it = m_queueRowData.find(row);
                     m_dragState.draggedTrackIdx = (it != m_queueRowData.end()) ? it->second.trackIdx : -1;
                 }
-            } else if (status.state == brls::GestureState::START) {
-                // Check if hold threshold met
+            } else if (status.state == brls::GestureState::START ||
+                       status.state == brls::GestureState::STAY) {
+                // Check if we should transition from scroll mode to drag mode
                 if (!m_dragState.holdMet) {
                     auto now = std::chrono::steady_clock::now();
                     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                         now - m_dragState.holdStart).count();
-                    if (elapsed >= HOLD_THRESHOLD_MS) {
+                    // Transition to drag mode only if held long enough AND finger
+                    // hasn't moved far (if they moved a lot, they're scrolling)
+                    if (elapsed >= HOLD_THRESHOLD_MS && std::abs(deltaY) < ROW_HEIGHT_PX * 0.5f) {
                         m_dragState.holdMet = true;
                         m_dragState.active = true;
+                        m_dragState.scrollPassthrough = false;
                         m_dragState.lastSwappedDisplay = findQueueRowDisplayIndex(row);
                         m_dragState.swapCount = 0;
+                        m_dragState.dragStartY = status.position.y;
                         // Visual feedback: elevate the dragged row
                         row->setBackgroundColor(nvgRGBA(90, 110, 220, 160));
                     }
                 }
 
+                if (m_dragState.scrollPassthrough) {
+                    // Hold not met - forward the gesture as scroll
+                    // Programmatically scroll the ScrollingFrame since this gesture
+                    // intercepted the touch that would normally scroll it
+                    if (queueScroll) {
+                        float newOffset = m_dragState.initialScrollY - deltaY;
+                        if (newOffset < 0) newOffset = 0;
+                        queueScroll->setContentOffsetY(newOffset, false);
+                    }
+                    return;
+                }
+
                 if (!m_dragState.holdMet) return;
 
-                // The row's DOM position doesn't change during swaps (only the data swaps),
-                // so we offset the visual translation by how many rows we've swapped past.
-                // This keeps the row visually glued to the finger.
-                float visualDelta = deltaY - (float)m_dragState.swapCount * ROW_HEIGHT_PX;
+                // -- Drag mode: row follows finger in real time --
+                // Calculate delta from when drag mode activated (not from touch start)
+                float dragDelta = status.position.y - m_dragState.dragStartY;
+                // Offset by swap count so the row stays glued to the finger
+                float visualDelta = dragDelta - (float)m_dragState.swapCount * ROW_HEIGHT_PX;
                 row->setTranslationY(visualDelta);
 
                 // Live reorder: check if finger has crossed a row boundary
@@ -2381,7 +2407,6 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     int toTrackIdx = (isShuffled && targetDisplay < (int)sOrder.size())
                                 ? sOrder[targetDisplay] : targetDisplay;
                     queue.moveTrack(m_dragState.draggedTrackIdx, toTrackIdx);
-                    // Update our tracked index to where moveTrack placed it
                     m_dragState.draggedTrackIdx = toTrackIdx;
                     swapQueueRows(logicalPos, targetDisplay);
                     m_dragState.lastSwappedDisplay = targetDisplay;
@@ -2393,7 +2418,6 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     int toTrackIdx = (isShuffled && targetDisplay < (int)sOrder.size())
                                 ? sOrder[targetDisplay] : targetDisplay;
                     queue.moveTrack(m_dragState.draggedTrackIdx, toTrackIdx);
-                    // Update our tracked index to where moveTrack placed it
                     m_dragState.draggedTrackIdx = toTrackIdx;
                     swapQueueRows(logicalPos, targetDisplay);
                     m_dragState.lastSwappedDisplay = targetDisplay;
@@ -2433,6 +2457,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 m_dragState.lastSwappedDisplay = -1;
                 m_dragState.swapCount = 0;
                 m_dragState.draggedTrackIdx = -1;
+                m_dragState.scrollPassthrough = false;
             } else if (status.state == brls::GestureState::FAILED) {
                 row->setTranslationY(0);
 
@@ -2459,6 +2484,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 m_dragState.lastSwappedDisplay = -1;
                 m_dragState.swapCount = 0;
                 m_dragState.draggedTrackIdx = -1;
+                m_dragState.scrollPassthrough = false;
             }
         }, brls::PanAxis::VERTICAL));
 

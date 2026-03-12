@@ -136,6 +136,9 @@ private:
         std::chrono::steady_clock::time_point holdStart;  // When touch began
         bool holdMet = false;                 // Whether hold threshold was met
         bool justEnded = false;              // Suppress tap/click right after drag ends
+        bool scrollPassthrough = false;      // True when forwarding touch as scroll (hold not met)
+        float initialScrollY = 0.0f;         // ScrollingFrame offset when touch began
+        float dragStartY = 0.0f;             // Finger Y when drag mode activated (for row translation)
     };
     DragState m_dragState;
     static constexpr int HOLD_THRESHOLD_MS = 200;  // ms to hold before drag starts
