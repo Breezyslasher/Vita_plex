@@ -2357,6 +2357,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                         m_dragState.originalDisplayIdx = findQueueRowDisplayIndex(row);
                         m_dragState.targetDisplayIdx = m_dragState.originalDisplayIdx;
                         m_dragState.dragStartY = status.position.y;
+                        m_dragState.dragStartScrollY = queueScroll ? queueScroll->getContentOffsetY() : 0.0f;
                         // Visual feedback: elevate the dragged row
                         row->setBackgroundColor(nvgRGBA(90, 110, 220, 160));
                     }
@@ -2375,7 +2376,48 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
 
                 // -- Drag mode: dragged row follows finger --
                 float dragDelta = status.position.y - m_dragState.dragStartY;
-                row->setTranslationY(dragDelta);
+
+                // Auto-scroll when finger is near top/bottom of scroll view
+                constexpr float AUTO_SCROLL_ZONE = 50.0f;  // pixels from edge to trigger
+                constexpr float AUTO_SCROLL_SPEED = 8.0f;   // pixels per frame
+                if (queueScroll) {
+                    float scrollViewHeight = queueScroll->getHeight();
+                    // Get finger position relative to scroll view
+                    float scrollTop = queueScroll->getY();
+                    brls::View* parent = queueScroll->getParent();
+                    while (parent) {
+                        scrollTop += parent->getY();
+                        parent = parent->getParent();
+                    }
+                    float fingerInScroll = status.position.y - scrollTop;
+
+                    float scrollY = queueScroll->getContentOffsetY();
+                    float maxScroll = queueList ? (queueList->getHeight() - scrollViewHeight) : 0.0f;
+                    if (maxScroll < 0) maxScroll = 0;
+
+                    if (fingerInScroll < AUTO_SCROLL_ZONE && scrollY > 0) {
+                        // Near top edge - scroll up
+                        float speed = AUTO_SCROLL_SPEED * (1.0f - fingerInScroll / AUTO_SCROLL_ZONE);
+                        float newScroll = scrollY - speed;
+                        if (newScroll < 0) newScroll = 0;
+                        queueScroll->setContentOffsetY(newScroll, false);
+                    } else if (fingerInScroll > scrollViewHeight - AUTO_SCROLL_ZONE && scrollY < maxScroll) {
+                        // Near bottom edge - scroll down
+                        float speed = AUTO_SCROLL_SPEED * (1.0f - (scrollViewHeight - fingerInScroll) / AUTO_SCROLL_ZONE);
+                        float newScroll = scrollY + speed;
+                        if (newScroll > maxScroll) newScroll = maxScroll;
+                        queueScroll->setContentOffsetY(newScroll, false);
+                    }
+                }
+
+                // Account for scroll changes since drag started: when the scroll
+                // view scrolls during drag, the row's layout position shifts on screen.
+                // Add the scroll delta so the row stays under the finger and the
+                // target calculation reflects the actual list position.
+                float scrollDelta = queueScroll
+                    ? (queueScroll->getContentOffsetY() - m_dragState.dragStartScrollY) : 0.0f;
+                row->setTranslationY(dragDelta + scrollDelta);
+                float effectiveDelta = dragDelta + scrollDelta;
 
                 // Calculate which display position the finger is over
                 int origIdx = m_dragState.originalDisplayIdx;
@@ -2386,10 +2428,10 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
 
                 // Determine target position based on how many rows the finger crossed
                 int rowsOffset = 0;
-                if (dragDelta > ROW_HEIGHT_PX * 0.5f) {
-                    rowsOffset = (int)((dragDelta + ROW_HEIGHT_PX * 0.5f) / ROW_HEIGHT_PX);
-                } else if (dragDelta < -ROW_HEIGHT_PX * 0.5f) {
-                    rowsOffset = -(int)((-dragDelta + ROW_HEIGHT_PX * 0.5f) / ROW_HEIGHT_PX);
+                if (effectiveDelta > ROW_HEIGHT_PX * 0.5f) {
+                    rowsOffset = (int)((effectiveDelta + ROW_HEIGHT_PX * 0.5f) / ROW_HEIGHT_PX);
+                } else if (effectiveDelta < -ROW_HEIGHT_PX * 0.5f) {
+                    rowsOffset = -(int)((-effectiveDelta + ROW_HEIGHT_PX * 0.5f) / ROW_HEIGHT_PX);
                 }
                 int newTarget = origIdx + rowsOffset;
                 if (newTarget < 0) newTarget = 0;

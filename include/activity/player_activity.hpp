@@ -139,6 +139,7 @@ private:
         bool scrollPassthrough = false;      // True when forwarding touch as scroll (hold not met)
         float initialScrollY = 0.0f;         // ScrollingFrame offset when touch began
         float dragStartY = 0.0f;             // Finger Y when drag mode activated (for row translation)
+        float dragStartScrollY = 0.0f;       // Scroll offset when drag mode activated
     };
     DragState m_dragState;
     static constexpr int HOLD_THRESHOLD_MS = 200;  // ms to hold before drag starts
