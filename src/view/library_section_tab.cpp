@@ -885,6 +885,10 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
                         brls::Application::notify("Playlist added to queue");
                     }
                 });
+            } else {
+                brls::sync([]() {
+                    brls::Application::notify("Cannot queue playlist - server unreachable");
+                });
             }
         });
         return true;
@@ -894,20 +898,31 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
         dialog->dismiss();
         std::string playlistId = capturedPlaylist.ratingKey;
         std::string playlistTitle = capturedPlaylist.title;
-        asyncRun([playlistId, playlistTitle]() {
+        std::string playlistThumb = capturedPlaylist.thumb.empty() ? capturedPlaylist.composite : capturedPlaylist.thumb;
+        asyncRun([playlistId, playlistTitle, playlistThumb]() {
             PlexClient& client = PlexClient::getInstance();
             std::vector<PlaylistItem> items;
             int queued = 0;
+            int skipped = 0;
 
             if (client.fetchPlaylistItems(playlistId, items)) {
+                auto& mgr = DownloadsManager::getInstance();
                 for (const auto& item : items) {
+                    // Skip items already downloaded or in queue
+                    if (mgr.isDownloaded(item.media.ratingKey) ||
+                        mgr.getDownload(item.media.ratingKey) != nullptr) {
+                        skipped++;
+                        continue;
+                    }
                     MediaItem fullItem;
                     if (client.fetchMediaDetails(item.media.ratingKey, fullItem) && !fullItem.partPath.empty()) {
-                        if (DownloadsManager::getInstance().queueDownload(
+                        if (mgr.queueDownload(
                             fullItem.ratingKey, fullItem.title, fullItem.partPath,
                             fullItem.duration, "track",
                             playlistTitle, 0, fullItem.index,
-                            fullItem.thumb)) {
+                            fullItem.thumb,
+                            DownloadGroupType::PLAYLIST, playlistId,
+                            playlistTitle, playlistThumb)) {
                             queued++;
                         }
                     }
@@ -915,8 +930,12 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
             }
 
             DownloadsManager::getInstance().startDownloads();
-            brls::sync([queued]() {
-                brls::Application::notify("Queued " + std::to_string(queued) + " tracks for download");
+            brls::sync([queued, skipped]() {
+                std::string msg = "Queued " + std::to_string(queued) + " tracks for download";
+                if (skipped > 0) {
+                    msg += " (" + std::to_string(skipped) + " already downloaded)";
+                }
+                brls::Application::notify(msg);
             });
         });
         return true;
@@ -1009,6 +1028,10 @@ void LibrarySectionTab::playPlaylistWithQueue(const std::string& playlistId, int
                 brls::Application::pushActivity(
                     PlayerActivity::createWithQueue(tracks, startIndex)
                 );
+            });
+        } else {
+            brls::sync([]() {
+                brls::Application::notify("Cannot play playlist - server unreachable");
             });
         }
     });

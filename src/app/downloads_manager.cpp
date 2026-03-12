@@ -143,7 +143,12 @@ bool DownloadsManager::queueDownload(const std::string& ratingKey, const std::st
                                       const std::string& mediaType,
                                       const std::string& parentTitle,
                                       int seasonNum, int episodeNum,
-                                      const std::string& thumbUrl) {
+                                      const std::string& thumbUrl,
+                                      DownloadGroupType groupType,
+                                      const std::string& groupKey,
+                                      const std::string& groupTitle,
+                                      const std::string& groupThumb,
+                                      const std::string& albumTitle) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     // Check if already in queue
@@ -165,6 +170,11 @@ bool DownloadsManager::queueDownload(const std::string& ratingKey, const std::st
     item.episodeNum = episodeNum;
     item.thumbUrl = thumbUrl;
     item.state = DownloadState::QUEUED;
+    item.groupType = groupType;
+    item.groupKey = groupKey;
+    item.groupTitle = groupTitle;
+    item.groupThumb = groupThumb;
+    item.albumTitle = albumTitle;
 
     // Generate local path - extract extension from the original file's part path
     // (e.g., /library/parts/19779/1760220985/file.mp4 -> .mp4)
@@ -181,8 +191,8 @@ bool DownloadsManager::queueDownload(const std::string& ratingKey, const std::st
     std::string filename = ratingKey + extension;
     item.localPath = m_downloadsPath + "/" + filename;
 
-    // Generate cover art path for music tracks
-    if (mediaType == "track" && !thumbUrl.empty()) {
+    // Generate cover art path for all media types with thumbnails
+    if (!thumbUrl.empty()) {
         item.thumbPath = m_downloadsPath + "/" + ratingKey + "_cover.jpg";
     }
 
@@ -364,6 +374,18 @@ bool DownloadsManager::getDownloadCopy(const std::string& ratingKey, DownloadIte
         }
     }
     return false;
+}
+
+std::vector<DownloadItem> DownloadsManager::getDownloadsByGroup(DownloadGroupType type, const std::string& groupKey) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    std::vector<DownloadItem> result;
+    for (const auto& item : m_downloads) {
+        if (item.state != DownloadState::CANCELLED &&
+            item.groupType == type && item.groupKey == groupKey) {
+            result.push_back(item);
+        }
+    }
+    return result;
 }
 
 bool DownloadsManager::isDownloaded(const std::string& ratingKey) const {
@@ -1720,7 +1742,12 @@ void DownloadsManager::saveStateUnlocked() {
            << "\"episodeNum\":" << item.episodeNum << ",\n"
            << "\"thumbUrl\":\"" << escapeJson(item.thumbUrl) << "\",\n"
            << "\"thumbPath\":\"" << escapeJson(item.thumbPath) << "\",\n"
-           << "\"lastSynced\":" << item.lastSynced << "\n"
+           << "\"lastSynced\":" << item.lastSynced << ",\n"
+           << "\"groupType\":" << static_cast<int>(item.groupType) << ",\n"
+           << "\"groupKey\":\"" << escapeJson(item.groupKey) << "\",\n"
+           << "\"groupTitle\":\"" << escapeJson(item.groupTitle) << "\",\n"
+           << "\"groupThumb\":\"" << escapeJson(item.groupThumb) << "\",\n"
+           << "\"albumTitle\":\"" << escapeJson(item.albumTitle) << "\"\n"
            << "}";
     }
 
@@ -1818,6 +1845,11 @@ void DownloadsManager::loadState() {
         item.thumbUrl = extractJsonString(objStr, "thumbUrl");
         item.thumbPath = extractJsonString(objStr, "thumbPath");
         item.lastSynced = static_cast<time_t>(extractJsonInt(objStr, "lastSynced"));
+        item.groupType = static_cast<DownloadGroupType>(extractJsonInt(objStr, "groupType"));
+        item.groupKey = extractJsonString(objStr, "groupKey");
+        item.groupTitle = extractJsonString(objStr, "groupTitle");
+        item.groupThumb = extractJsonString(objStr, "groupThumb");
+        item.albumTitle = extractJsonString(objStr, "albumTitle");
 
         if (!item.ratingKey.empty()) {
             m_downloads.push_back(item);

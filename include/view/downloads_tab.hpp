@@ -2,6 +2,7 @@
  * VitaPlex - Downloads Tab
  * View for managing offline downloads with queue display,
  * start/stop/pause controls, and auto-refresh progress.
+ * Groups downloads by playlist/album/artist with cover art.
  *
  * Based on Vita_Suwayomi's downloads tab patterns.
  */
@@ -13,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include "app/downloads_manager.hpp"
 
 namespace vitaplex {
 
@@ -26,8 +28,28 @@ public:
 
 private:
     void refresh();
+    void rebuildList();
     void startAutoRefresh();
     void stopAutoRefresh();
+
+    // Show the track list for a group
+    void showGroupDetail(DownloadGroupType groupType, const std::string& groupKey,
+                         const std::string& groupTitle);
+
+    // Show context menu for a group (START button)
+    void showGroupContextMenu(DownloadGroupType groupType, const std::string& groupKey,
+                              const std::string& groupTitle);
+
+    // Show context menu for a single completed item
+    void showItemContextMenu(const DownloadItem& item);
+
+    // Build a row for a grouped entry (playlist/album/artist)
+    brls::Box* buildGroupRow(DownloadGroupType groupType, const std::string& groupKey,
+                             const std::string& groupTitle, const std::string& groupThumb,
+                             int totalItems, int completedItems, int downloadingItems);
+
+    // Build a row for an individual (ungrouped) download item
+    brls::Box* buildItemRow(const DownloadItem& item);
 
     // Action buttons
     brls::Box* m_actionsRow = nullptr;
@@ -45,7 +67,7 @@ private:
     brls::Box* m_listContainer = nullptr;
     brls::Label* m_emptyLabel = nullptr;
 
-    // Cached state for smart refresh
+    // State tracking for smart refresh
     struct CachedItem {
         std::string ratingKey;
         int64_t downloadedBytes = 0;
@@ -56,14 +78,6 @@ private:
     };
     std::vector<CachedItem> m_lastState;
 
-    // UI element tracking for incremental updates
-    struct RowElements {
-        brls::Box* row = nullptr;
-        brls::Label* statusLabel = nullptr;
-        std::string ratingKey;
-    };
-    std::vector<RowElements> m_rowElements;
-
     // Auto-refresh
     std::atomic<bool> m_autoRefreshEnabled{false};
     std::chrono::steady_clock::time_point m_lastRefresh;
@@ -71,6 +85,7 @@ private:
 
     // Alive flag for async safety
     std::shared_ptr<bool> m_alive;
+    std::shared_ptr<std::atomic<bool>> m_aliveAtomic;
 };
 
 } // namespace vitaplex

@@ -36,6 +36,15 @@ enum class DownloadState {
     CANCELLED   // Marked for removal - will be purged when safe
 };
 
+// Group type for organizing downloads in the UI
+enum class DownloadGroupType {
+    NONE = 0,       // Standalone item (single track, movie)
+    PLAYLIST = 1,   // Part of a downloaded playlist
+    ALBUM = 2,      // Part of a downloaded album
+    ARTIST = 3,     // Part of a downloaded artist
+    SHOW = 4        // Part of a downloaded TV show
+};
+
 // Download item information
 struct DownloadItem {
     std::string ratingKey;      // Plex rating key
@@ -58,6 +67,13 @@ struct DownloadItem {
     // Transcoding progress tracking
     int transcodeElapsedSeconds = 0;  // How long transcoding has been running
     int transcodePollAttempt = 0;     // Current poll attempt number
+
+    // Grouping fields for organized display in downloads tab
+    DownloadGroupType groupType = DownloadGroupType::NONE;
+    std::string groupKey;       // ratingKey of the parent (playlist/album/artist/show)
+    std::string groupTitle;     // Display title of the group
+    std::string groupThumb;     // Thumbnail URL of the group (for cover art)
+    std::string albumTitle;     // Album title (for tracks in an artist group)
 };
 
 // Progress callback: (downloadedBytes, totalBytes)
@@ -76,7 +92,15 @@ public:
                        const std::string& mediaType = "movie",
                        const std::string& parentTitle = "",
                        int seasonNum = 0, int episodeNum = 0,
-                       const std::string& thumbUrl = "");
+                       const std::string& thumbUrl = "",
+                       DownloadGroupType groupType = DownloadGroupType::NONE,
+                       const std::string& groupKey = "",
+                       const std::string& groupTitle = "",
+                       const std::string& groupThumb = "",
+                       const std::string& albumTitle = "");
+
+    // Get all downloads belonging to a specific group
+    std::vector<DownloadItem> getDownloadsByGroup(DownloadGroupType type, const std::string& groupKey) const;
 
     // Start downloading queued items
     void startDownloads();

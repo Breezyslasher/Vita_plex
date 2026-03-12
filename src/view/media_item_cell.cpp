@@ -18,12 +18,13 @@ MediaItemCell::MediaItemCell()
     this->setCornerRadius(8);
     this->setBackgroundColor(nvgRGBA(50, 50, 50, 255));
 
-    // Thumbnail image
+    // Thumbnail image - hidden until texture loads to prevent null texture crash on Vita
     m_thumbnailImage = new brls::Image();
     m_thumbnailImage->setWidth(110);
     m_thumbnailImage->setHeight(165);
     m_thumbnailImage->setScalingType(brls::ImageScalingType::FIT);
     m_thumbnailImage->setCornerRadius(4);
+    m_thumbnailImage->setVisibility(brls::Visibility::INVISIBLE);
     this->addView(m_thumbnailImage);
 
     // Title label
@@ -213,7 +214,8 @@ void MediaItemCell::loadThumbnail() {
     std::string url = client.getThumbnailUrl(thumbPath, width, height);
 
     ImageLoader::loadAsync(url, [](brls::Image* image) {
-        // Image loaded callback
+        // Show thumbnail once texture is loaded successfully
+        image->setVisibility(brls::Visibility::VISIBLE);
     }, m_thumbnailImage, m_alive);
 }
 
