@@ -132,8 +132,10 @@ private:
         brls::View* draggedRow = nullptr;     // The row being dragged
         int lastSwappedDisplay = -1;          // Last display index after swaps
         int swapCount = 0;                    // Net swaps from start (+ = moved down, - = moved up)
+        int draggedTrackIdx = -1;            // Queue index of the track being dragged (updated after each swap)
         std::chrono::steady_clock::time_point holdStart;  // When touch began
         bool holdMet = false;                 // Whether hold threshold was met
+        bool justEnded = false;              // Suppress tap/click right after drag ends
     };
     DragState m_dragState;
     static constexpr int HOLD_THRESHOLD_MS = 200;  // ms to hold before drag starts

@@ -944,6 +944,11 @@ void MpvPlayer::handlePropertyChange(mpv_event_property* prop, uint64_t id) {
                 bool eof = *(int*)prop->data != 0;
                 if (eof) {
                     brls::Logger::debug("MpvPlayer: EOF reached");
+                    // In audio-only mode on Vita, EVENT_END_FILE may not fire,
+                    // so transition to ENDED here to trigger auto-advance
+                    if (m_state == MpvPlayerState::PLAYING || m_state == MpvPlayerState::PAUSED) {
+                        setState(MpvPlayerState::ENDED);
+                    }
                 }
             }
             break;

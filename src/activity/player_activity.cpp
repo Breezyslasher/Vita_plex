@@ -2332,6 +2332,10 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     m_dragState.draggedRow = row;
                     m_dragState.lastSwappedDisplay = findQueueRowDisplayIndex(row);
                     m_dragState.swapCount = 0;
+                    // Capture the dragged track's queue index so multi-step swaps
+                    // always move the correct track (not the swapped-in data)
+                    auto it = m_queueRowData.find(row);
+                    m_dragState.draggedTrackIdx = (it != m_queueRowData.end()) ? it->second.trackIdx : -1;
                 }
             } else if (status.state == brls::GestureState::START) {
                 // Check if hold threshold met
@@ -2359,7 +2363,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
 
                 // Live reorder: check if finger has crossed a row boundary
                 int logicalPos = m_dragState.lastSwappedDisplay;
-                if (logicalPos < 0) return;
+                if (logicalPos < 0 || m_dragState.draggedTrackIdx < 0) return;
 
                 float threshold = ROW_HEIGHT_PX * 0.6f;
                 MusicQueue& queue = MusicQueue::getInstance();
@@ -2368,38 +2372,42 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 int queueSize = queue.getQueueSize();
 
                 // Use the visual delta to decide when to swap - this way
-                // each swap triggers at a consistent finger distance
+                // each swap triggers at a consistent finger distance.
+                // Use draggedTrackIdx (tracked separately) so multi-position
+                // drags always move the correct track.
                 if (visualDelta < -threshold && logicalPos > 0) {
                     // Moving up
-                    auto it = m_queueRowData.find(row);
-                    if (it != m_queueRowData.end()) {
-                        int fromTrackIdx = it->second.trackIdx;
-                        int targetDisplay = logicalPos - 1;
-                        int toTrackIdx = (isShuffled && targetDisplay < (int)sOrder.size())
-                                    ? sOrder[targetDisplay] : targetDisplay;
-                        queue.moveTrack(fromTrackIdx, toTrackIdx);
-                        swapQueueRows(logicalPos, targetDisplay);
-                        m_dragState.lastSwappedDisplay = targetDisplay;
-                        m_dragState.swapCount--;
-                        renumberQueueRows();
-                    }
+                    int targetDisplay = logicalPos - 1;
+                    int toTrackIdx = (isShuffled && targetDisplay < (int)sOrder.size())
+                                ? sOrder[targetDisplay] : targetDisplay;
+                    queue.moveTrack(m_dragState.draggedTrackIdx, toTrackIdx);
+                    // Update our tracked index to where moveTrack placed it
+                    m_dragState.draggedTrackIdx = toTrackIdx;
+                    swapQueueRows(logicalPos, targetDisplay);
+                    m_dragState.lastSwappedDisplay = targetDisplay;
+                    m_dragState.swapCount--;
+                    renumberQueueRows();
                 } else if (visualDelta > threshold && logicalPos < queueSize - 1) {
                     // Moving down
-                    auto it = m_queueRowData.find(row);
-                    if (it != m_queueRowData.end()) {
-                        int fromTrackIdx = it->second.trackIdx;
-                        int targetDisplay = logicalPos + 1;
-                        int toTrackIdx = (isShuffled && targetDisplay < (int)sOrder.size())
-                                    ? sOrder[targetDisplay] : targetDisplay;
-                        queue.moveTrack(fromTrackIdx, toTrackIdx);
-                        swapQueueRows(logicalPos, targetDisplay);
-                        m_dragState.lastSwappedDisplay = targetDisplay;
-                        m_dragState.swapCount++;
-                        renumberQueueRows();
-                    }
+                    int targetDisplay = logicalPos + 1;
+                    int toTrackIdx = (isShuffled && targetDisplay < (int)sOrder.size())
+                                ? sOrder[targetDisplay] : targetDisplay;
+                    queue.moveTrack(m_dragState.draggedTrackIdx, toTrackIdx);
+                    // Update our tracked index to where moveTrack placed it
+                    m_dragState.draggedTrackIdx = toTrackIdx;
+                    swapQueueRows(logicalPos, targetDisplay);
+                    m_dragState.lastSwappedDisplay = targetDisplay;
+                    m_dragState.swapCount++;
+                    renumberQueueRows();
                 }
             } else if (status.state == brls::GestureState::END) {
                 row->setTranslationY(0);
+
+                // Suppress tap/click that fires right after drag ends
+                // so the queue overlay doesn't close from playFromQueue
+                if (m_dragState.holdMet) {
+                    m_dragState.justEnded = true;
+                }
 
                 // Restore proper background
                 auto it = m_queueRowData.find(row);
@@ -2424,8 +2432,15 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 m_dragState.holdMet = false;
                 m_dragState.lastSwappedDisplay = -1;
                 m_dragState.swapCount = 0;
+                m_dragState.draggedTrackIdx = -1;
             } else if (status.state == brls::GestureState::FAILED) {
                 row->setTranslationY(0);
+
+                // Suppress tap/click that fires right after drag ends
+                if (m_dragState.holdMet) {
+                    m_dragState.justEnded = true;
+                }
+
                 // Restore background color (may have been changed during drag)
                 auto it = m_queueRowData.find(row);
                 if (it != m_queueRowData.end()) {
@@ -2443,12 +2458,18 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 m_dragState.holdMet = false;
                 m_dragState.lastSwappedDisplay = -1;
                 m_dragState.swapCount = 0;
+                m_dragState.draggedTrackIdx = -1;
             }
         }, brls::PanAxis::VERTICAL));
 
     // Click handler to play this track - defer to next frame to avoid
-    // crash from modifying focus/views while gesture processing is active
+    // crash from modifying focus/views while gesture processing is active.
+    // Suppress click if a drag just ended (prevents queue from closing after reorder).
     row->registerClickAction([this, row](brls::View* view) {
+        if (m_dragState.justEnded) {
+            m_dragState.justEnded = false;
+            return true;
+        }
         auto it = m_queueRowData.find(row);
         if (it != m_queueRowData.end()) {
             int idx = it->second.trackIdx;
