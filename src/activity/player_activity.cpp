@@ -443,6 +443,13 @@ void PlayerActivity::onContentAvailable() {
         }
     }
 
+    // Block downward D-pad navigation from the bottom button row so focus
+    // doesn't escape to off-screen elements (absolutely-positioned overlays)
+    if (queueBtn) queueBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, queueBtn);
+    if (audioBtn) audioBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, audioBtn);
+    if (subBtn) subBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, subBtn);
+    if (videoBtn) videoBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, videoBtn);
+
     // Wire up skip button for intro/credits
     if (skipBtn) {
         skipBtn->registerClickAction([this](brls::View* view) {
