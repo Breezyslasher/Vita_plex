@@ -2372,7 +2372,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                             return;
 
                         // Dampen so scrolling feels more natural on the small screen
-                        constexpr float SCROLL_DAMPING = 0.55f;
+                        constexpr float SCROLL_DAMPING = 0.75f;
                         float adjusted = (deltaY > 0)
                             ? (deltaY - SCROLL_DEAD_ZONE) * SCROLL_DAMPING
                             : (deltaY + SCROLL_DEAD_ZONE) * SCROLL_DAMPING;
