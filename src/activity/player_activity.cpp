@@ -2382,8 +2382,9 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                         // Clamp to valid range
                         if (newOffset < 0) newOffset = 0;
                         float scrollViewHeight = queueScroll->getHeight();
-                        float maxScroll = queueList
-                            ? (queueList->getHeight() - scrollViewHeight) : 0.0f;
+                        int numRows = queueList ? (int)queueList->getChildren().size() : 0;
+                        float contentHeight = numRows * ROW_HEIGHT_PX + 8.0f; // +8 for padding
+                        float maxScroll = contentHeight - scrollViewHeight;
                         if (maxScroll < 0) maxScroll = 0;
                         if (newOffset > maxScroll) newOffset = maxScroll;
 
@@ -2427,7 +2428,8 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 if (queueScroll && queueList) {
                     float scrollY = queueScroll->getContentOffsetY();
                     float scrollViewHeight = queueScroll->getHeight();
-                    float maxScroll = queueList->getHeight() - scrollViewHeight;
+                    float contentHeight = queueSize * ROW_HEIGHT_PX + 8.0f; // +8 for padding
+                    float maxScroll = contentHeight - scrollViewHeight;
                     if (maxScroll < 0) maxScroll = 0;
 
                     // Which rows are currently visible?
