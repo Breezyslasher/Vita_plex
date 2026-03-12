@@ -2357,6 +2357,11 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                         m_dragState.originalDisplayIdx = findQueueRowDisplayIndex(row);
                         m_dragState.targetDisplayIdx = m_dragState.originalDisplayIdx;
                         m_dragState.dragStartY = status.position.y;
+                        m_dragState.dragStartScrollY = queueScroll ? queueScroll->getContentOffsetY() : 0.0f;
+                        // Compute scroll view's absolute screen Y from the row's
+                        // known content position and its absolute screen position
+                        float rowContentY = m_dragState.originalDisplayIdx * ROW_HEIGHT_PX + 4.0f;
+                        m_dragState.scrollViewTop = row->getY() - rowContentY + m_dragState.dragStartScrollY;
                         // Visual feedback: elevate the dragged row
                         row->setBackgroundColor(nvgRGBA(90, 110, 220, 160));
                     }
@@ -2364,8 +2369,29 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
 
                 if (m_dragState.scrollPassthrough) {
                     if (queueScroll) {
-                        float newOffset = m_dragState.initialScrollY - deltaY;
+                        // Dead zone: ignore small movements so the list doesn't
+                        // jump the instant the finger twitches
+                        constexpr float SCROLL_DEAD_ZONE = 12.0f;
+                        if (std::abs(deltaY) < SCROLL_DEAD_ZONE)
+                            return;
+
+                        // Dampen so scrolling feels more natural on the small screen
+                        constexpr float SCROLL_DAMPING = 0.55f;
+                        float adjusted = (deltaY > 0)
+                            ? (deltaY - SCROLL_DEAD_ZONE) * SCROLL_DAMPING
+                            : (deltaY + SCROLL_DEAD_ZONE) * SCROLL_DAMPING;
+
+                        float newOffset = m_dragState.initialScrollY - adjusted;
+
+                        // Clamp to valid range
                         if (newOffset < 0) newOffset = 0;
+                        float scrollViewHeight = queueScroll->getHeight();
+                        int numRows = queueList ? (int)queueList->getChildren().size() : 0;
+                        float contentHeight = numRows * ROW_HEIGHT_PX + 8.0f; // +8 for padding
+                        float maxScroll = contentHeight - scrollViewHeight;
+                        if (maxScroll < 0) maxScroll = 0;
+                        if (newOffset > maxScroll) newOffset = maxScroll;
+
                         queueScroll->setContentOffsetY(newOffset, false);
                     }
                     return;
@@ -2375,7 +2401,11 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
 
                 // -- Drag mode: dragged row follows finger --
                 float dragDelta = status.position.y - m_dragState.dragStartY;
-                row->setTranslationY(dragDelta);
+                float scrollDelta = queueScroll
+                    ? (queueScroll->getContentOffsetY() - m_dragState.dragStartScrollY) : 0.0f;
+
+                row->setTranslationY(dragDelta + scrollDelta);
+                float effectiveDelta = dragDelta + scrollDelta;
 
                 // Calculate which display position the finger is over
                 int origIdx = m_dragState.originalDisplayIdx;
@@ -2386,15 +2416,48 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
 
                 // Determine target position based on how many rows the finger crossed
                 int rowsOffset = 0;
-                if (dragDelta > ROW_HEIGHT_PX * 0.5f) {
-                    rowsOffset = (int)((dragDelta + ROW_HEIGHT_PX * 0.5f) / ROW_HEIGHT_PX);
-                } else if (dragDelta < -ROW_HEIGHT_PX * 0.5f) {
-                    rowsOffset = -(int)((-dragDelta + ROW_HEIGHT_PX * 0.5f) / ROW_HEIGHT_PX);
+                if (effectiveDelta > ROW_HEIGHT_PX * 0.5f) {
+                    rowsOffset = (int)((effectiveDelta + ROW_HEIGHT_PX * 0.5f) / ROW_HEIGHT_PX);
+                } else if (effectiveDelta < -ROW_HEIGHT_PX * 0.5f) {
+                    rowsOffset = -(int)((-effectiveDelta + ROW_HEIGHT_PX * 0.5f) / ROW_HEIGHT_PX);
                 }
                 int newTarget = origIdx + rowsOffset;
                 if (newTarget < 0) newTarget = 0;
                 if (newTarget >= queueSize) newTarget = queueSize - 1;
                 m_dragState.targetDisplayIdx = newTarget;
+
+                // Auto-scroll when the finger is near the top/bottom
+                // edge of the scroll view.
+                constexpr float AUTO_SCROLL_EDGE = 40.0f;
+                constexpr float AUTO_SCROLL_SPEED = 7.0f;
+                if (queueScroll && queueList) {
+                    float scrollY = queueScroll->getContentOffsetY();
+                    float scrollViewHeight = queueScroll->getHeight();
+                    float contentHeight = queueSize * ROW_HEIGHT_PX + 8.0f;
+                    float maxScroll = contentHeight - scrollViewHeight;
+                    if (maxScroll < 0) maxScroll = 0;
+
+                    float fingerInView = status.position.y - m_dragState.scrollViewTop;
+
+                    if (fingerInView > scrollViewHeight - AUTO_SCROLL_EDGE
+                        && scrollY < maxScroll) {
+                        // Finger near bottom edge - scroll down
+                        float newScroll = scrollY + AUTO_SCROLL_SPEED;
+                        if (newScroll > maxScroll) newScroll = maxScroll;
+                        queueScroll->setContentOffsetY(newScroll, false);
+                    } else if (fingerInView < AUTO_SCROLL_EDGE
+                               && scrollY > 0) {
+                        // Finger near top edge - scroll up
+                        float newScroll = scrollY - AUTO_SCROLL_SPEED;
+                        if (newScroll < 0) newScroll = 0;
+                        queueScroll->setContentOffsetY(newScroll, false);
+                    }
+
+                    // Re-read scroll delta after possible auto-scroll
+                    scrollDelta = queueScroll->getContentOffsetY() - m_dragState.dragStartScrollY;
+                    row->setTranslationY(dragDelta + scrollDelta);
+                    effectiveDelta = dragDelta + scrollDelta;
+                }
 
                 // Shift displaced rows visually (no data changes yet)
                 if (!queueList) return;
