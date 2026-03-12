@@ -132,6 +132,10 @@ public:
     const std::string& getUsername() const { return m_username; }
     void setUsername(const std::string& name) { m_username = name; }
 
+    // Offline mode
+    bool isOfflineMode() const { return m_offlineMode; }
+    void setOfflineMode(bool offline) { m_offlineMode = offline; }
+
     // Application settings access
     AppSettings& getSettings() { return m_settings; }
     const AppSettings& getSettings() const { return m_settings; }
@@ -154,6 +158,7 @@ private:
     Application& operator=(const Application&) = delete;
 
     bool m_initialized = false;
+    bool m_offlineMode = false;
     std::string m_authToken;
     std::string m_serverUrl;
     std::string m_username;

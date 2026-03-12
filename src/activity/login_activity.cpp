@@ -230,6 +230,9 @@ void LoginActivity::onOfflinePressed() {
 
     if (statusLabel) statusLabel->setText("Entering offline mode...");
 
+    // Set offline flag so main activity only shows relevant tabs
+    Application::getInstance().setOfflineMode(true);
+
     // Push main activity in offline mode - downloads tab will show available content
     Application::getInstance().pushMainActivity();
 }
