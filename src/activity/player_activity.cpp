@@ -701,7 +701,7 @@ void PlayerActivity::loadFromQueue() {
         }
     }
 
-    // Pause image loading and free cache to reclaim memory for MPV.
+    // Pause image loading to avoid bandwidth contention with MPV streaming.
     // Only cancel in-flight loads if no cover art was just requested -
     // cancelAll() increments the generation counter which would discard
     // our own cover art load.
@@ -709,12 +709,18 @@ void PlayerActivity::loadFromQueue() {
     if (!coverLoaded) {
         ImageLoader::cancelAll();
     }
-    ImageLoader::clearCache();
 
     MpvPlayer& player = MpvPlayer::getInstance();
 
     // Set audio-only mode BEFORE initializing
     player.setAudioOnly(true);
+
+    // Only clear image cache on first MPV init to free memory for the player.
+    // On subsequent track changes MPV is already allocated, and clearing the
+    // cache forces covers/queue thumbnails to be re-downloaded from the server.
+    if (!player.isInitialized()) {
+        ImageLoader::clearCache();
+    }
 
     // Stream audio directly via MPV (transcode API returns mp3 stream or local file)
     if (!player.isInitialized()) {
