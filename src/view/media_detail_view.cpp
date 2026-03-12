@@ -77,6 +77,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         posterContainer->setHeight(300);
     }
     m_posterImage->setScalingType(brls::ImageScalingType::FIT);
+    m_posterImage->setVisibility(brls::Visibility::INVISIBLE);
     posterContainer->addView(m_posterImage);
 
     // Star/rating icon overlay in top-right corner of album art
@@ -454,7 +455,7 @@ void MediaDetailView::loadDetails() {
                 PlexClient& client = PlexClient::getInstance();
                 std::string url = client.getThumbnailUrl(thumb, width, height);
                 ImageLoader::loadAsync(url, [](brls::Image* image) {
-                    // Image loaded
+                    image->setVisibility(brls::Visibility::VISIBLE);
                 }, m_posterImage, m_alive);
             }
 

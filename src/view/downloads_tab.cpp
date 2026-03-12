@@ -458,22 +458,28 @@ brls::Box* DownloadsTab::buildGroupRow(DownloadGroupType groupType, const std::s
     thumbImage->setCornerRadius(4);
 
     // Try to load cover from first completed item in this group, or use async URL
+    // Hide thumbnail initially to prevent null texture rendering crash on Vita
+    thumbImage->setVisibility(brls::Visibility::GONE);
     if (!groupThumb.empty()) {
         // Check if any item in the group has a downloaded cover
         auto groupItems = DownloadsManager::getInstance().getDownloadsByGroup(groupType, groupKey);
         bool loaded = false;
         for (const auto& gi : groupItems) {
             if (!gi.thumbPath.empty() && gi.state == DownloadState::COMPLETED) {
-                ImageLoader::loadFromFile(gi.thumbPath, thumbImage);
-                loaded = true;
-                break;
+                if (ImageLoader::loadFromFile(gi.thumbPath, thumbImage)) {
+                    thumbImage->setVisibility(brls::Visibility::VISIBLE);
+                    loaded = true;
+                    break;
+                }
             }
         }
         if (!loaded) {
-            // Load from server URL
+            // Load from server URL - show only when texture loads successfully
             std::string thumbUrl = PlexClient::getInstance().getThumbnailUrl(groupThumb, thumbW * 2, thumbH * 2);
             if (!thumbUrl.empty()) {
-                ImageLoader::loadAsync(thumbUrl, [](brls::Image*) {}, thumbImage, m_aliveAtomic);
+                ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
+                    img->setVisibility(brls::Visibility::VISIBLE);
+                }, thumbImage, m_aliveAtomic);
             }
         }
     }
@@ -553,13 +559,18 @@ brls::Box* DownloadsTab::buildItemRow(const DownloadItem& item) {
     thumbImage->setMargins(0, 10, 0, 0);
     thumbImage->setCornerRadius(4);
 
-    // Load thumbnail
+    // Load thumbnail - hide initially to prevent null texture rendering crash on Vita
+    thumbImage->setVisibility(brls::Visibility::GONE);
     if (!item.thumbPath.empty() && item.state == DownloadState::COMPLETED) {
-        ImageLoader::loadFromFile(item.thumbPath, thumbImage);
+        if (ImageLoader::loadFromFile(item.thumbPath, thumbImage)) {
+            thumbImage->setVisibility(brls::Visibility::VISIBLE);
+        }
     } else if (!item.thumbUrl.empty()) {
         std::string thumbUrl = PlexClient::getInstance().getThumbnailUrl(item.thumbUrl, thumbW * 2, thumbH * 2);
         if (!thumbUrl.empty()) {
-            ImageLoader::loadAsync(thumbUrl, [](brls::Image*) {}, thumbImage, m_aliveAtomic);
+            ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
+                img->setVisibility(brls::Visibility::VISIBLE);
+            }, thumbImage, m_aliveAtomic);
         }
     }
     row->addView(thumbImage);
@@ -726,18 +737,23 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
         row->setCornerRadius(6);
         row->setBackgroundColor(getStateColor(item.state));
 
-        // Small thumbnail
+        // Small thumbnail - hide initially to prevent null texture rendering crash on Vita
         auto* thumbImage = new brls::Image();
         thumbImage->setSize(brls::Size(40, 40));
         thumbImage->setScalingType(brls::ImageScalingType::FIT);
         thumbImage->setMargins(0, 8, 0, 0);
         thumbImage->setCornerRadius(3);
+        thumbImage->setVisibility(brls::Visibility::GONE);
         if (!item.thumbPath.empty() && item.state == DownloadState::COMPLETED) {
-            ImageLoader::loadFromFile(item.thumbPath, thumbImage);
+            if (ImageLoader::loadFromFile(item.thumbPath, thumbImage)) {
+                thumbImage->setVisibility(brls::Visibility::VISIBLE);
+            }
         } else if (!item.thumbUrl.empty()) {
             std::string thumbUrl = PlexClient::getInstance().getThumbnailUrl(item.thumbUrl, 80, 80);
             if (!thumbUrl.empty()) {
-                ImageLoader::loadAsync(thumbUrl, [](brls::Image*) {}, thumbImage, dialogAlive);
+                ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
+                    img->setVisibility(brls::Visibility::VISIBLE);
+                }, thumbImage, dialogAlive);
             }
         }
         row->addView(thumbImage);

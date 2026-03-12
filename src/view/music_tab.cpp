@@ -450,6 +450,11 @@ void MusicTab::onPlaylistSelected(const Playlist& playlist) {
             });
         } else {
             brls::Logger::error("MusicTab: Failed to load playlist content");
+            brls::sync([aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+                brls::Application::notify("Cannot load playlist - server unreachable");
+            });
         }
     });
 }
@@ -476,6 +481,10 @@ void MusicTab::playPlaylistWithQueue(const std::string& playlistId, int startInd
                 brls::Application::pushActivity(
                     PlayerActivity::createWithQueue(tracks, startIndex)
                 );
+            });
+        } else {
+            brls::sync([]() {
+                brls::Application::notify("Cannot play playlist - server unreachable");
             });
         }
     });
@@ -693,6 +702,10 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
                         queue.addTracks(tracks);
                         brls::Application::notify("Playlist added to queue");
                     }
+                });
+            } else {
+                brls::sync([]() {
+                    brls::Application::notify("Cannot queue playlist - server unreachable");
                 });
             }
         });

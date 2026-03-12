@@ -605,12 +605,21 @@ void PlayerActivity::loadFromQueue() {
         }
         updateQueueDisplay();
 
-        // Load album art
-        if (albumArt && !track->thumb.empty()) {
-            PlexClient& client = PlexClient::getInstance();
-            std::string thumbUrl = client.getThumbnailUrl(track->thumb, 400, 400);
-            ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {}, albumArt, m_alive);
-            albumArt->setVisibility(brls::Visibility::VISIBLE);
+        // Load album art - prefer local file for downloaded tracks
+        if (albumArt && !track->ratingKey.empty()) {
+            DownloadItem resumeDlItem;
+            if (DownloadsManager::getInstance().getDownloadCopy(track->ratingKey, resumeDlItem) &&
+                resumeDlItem.state == DownloadState::COMPLETED && !resumeDlItem.thumbPath.empty()) {
+                if (ImageLoader::loadFromFile(resumeDlItem.thumbPath, albumArt)) {
+                    albumArt->setVisibility(brls::Visibility::VISIBLE);
+                }
+            } else if (!track->thumb.empty()) {
+                PlexClient& client = PlexClient::getInstance();
+                std::string thumbUrl = client.getThumbnailUrl(track->thumb, 400, 400);
+                ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
+                    img->setVisibility(brls::Visibility::VISIBLE);
+                }, albumArt, m_alive);
+            }
         }
 
         // Show music UI elements
@@ -643,19 +652,6 @@ void PlayerActivity::loadFromQueue() {
     // Update queue info display
     updateQueueDisplay();
 
-    // Load album art - temporarily unpause the image loader for this one load
-    if (albumArt && !track->thumb.empty()) {
-        PlexClient& client = PlexClient::getInstance();
-        std::string thumbUrl = client.getThumbnailUrl(track->thumb, 400, 400);
-        bool wasPaused = ImageLoader::isPaused();
-        if (wasPaused) ImageLoader::setPaused(false);
-        ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {
-            // Art loaded
-        }, albumArt, m_alive);
-        if (wasPaused) ImageLoader::setPaused(true);
-        albumArt->setVisibility(brls::Visibility::VISIBLE);
-    }
-
     // Use the rating key to get the playback URL
     m_mediaKey = track->ratingKey;
     std::string url;
@@ -669,10 +665,11 @@ void PlayerActivity::loadFromQueue() {
         useLocalFile = true;
         brls::Logger::info("PlayerActivity: Using downloaded file for track: {}", url);
 
-        // Load cover art from local file if available
+        // Load cover art from local file if available (preferred over server URL)
         if (albumArt && !dlItem.thumbPath.empty()) {
-            ImageLoader::loadFromFile(dlItem.thumbPath, albumArt);
-            albumArt->setVisibility(brls::Visibility::VISIBLE);
+            if (ImageLoader::loadFromFile(dlItem.thumbPath, albumArt)) {
+                albumArt->setVisibility(brls::Visibility::VISIBLE);
+            }
         }
     } else {
         // Stream from server
@@ -681,6 +678,19 @@ void PlayerActivity::loadFromQueue() {
             brls::Logger::error("Failed to get transcode URL for track: {}", track->ratingKey);
             m_loadingMedia = false;
             return;
+        }
+
+        // Load album art from server (only when streaming, not offline)
+        if (albumArt && !track->thumb.empty()) {
+            PlexClient& artClient = PlexClient::getInstance();
+            std::string thumbUrl = artClient.getThumbnailUrl(track->thumb, 400, 400);
+            bool wasPaused = ImageLoader::isPaused();
+            if (wasPaused) ImageLoader::setPaused(false);
+            ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
+                img->setVisibility(brls::Visibility::VISIBLE);
+            }, albumArt, m_alive);
+            if (wasPaused) ImageLoader::setPaused(true);
+            albumArt->setVisibility(brls::Visibility::VISIBLE);
         }
     }
 
