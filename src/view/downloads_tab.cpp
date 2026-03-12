@@ -1239,6 +1239,10 @@ void DownloadsTab::showGroupContextMenu(DownloadGroupType groupType, const std::
     });
 
     dialog->addView(optionsBox);
+    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
+        dialog->dismiss();
+        return true;
+    });
     dialog->open();
 }
 
@@ -1314,6 +1318,10 @@ void DownloadsTab::showItemContextMenu(const DownloadItem& item) {
     });
 
     dialog->addView(optionsBox);
+    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
+        dialog->dismiss();
+        return true;
+    });
     dialog->open();
 }
 

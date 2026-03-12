@@ -140,6 +140,12 @@ void HomeTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>
                     MediaDetailView::showArtistContextMenuStatic(capturedItem);
                     return true;
                 });
+        } else if (capturedItem.mediaType == MediaType::MUSIC_ALBUM) {
+            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                [capturedItem](brls::View* view) {
+                    MediaDetailView::showAlbumContextMenuStatic(capturedItem);
+                    return true;
+                });
         }
 
         row->addView(cell);

@@ -104,19 +104,33 @@ SearchTab::SearchTab() {
     m_episodesRow->setVisibility(brls::Visibility::GONE);
     m_scrollContent->addView(m_episodesRow);
 
-    // Music row
-    m_musicLabel = new brls::Label();
-    m_musicLabel->setText("Music");
-    m_musicLabel->setFontSize(20);
-    m_musicLabel->setMarginBottom(10);
-    m_musicLabel->setVisibility(brls::Visibility::GONE);
-    m_scrollContent->addView(m_musicLabel);
+    // Albums row
+    m_albumsLabel = new brls::Label();
+    m_albumsLabel->setText("Albums");
+    m_albumsLabel->setFontSize(20);
+    m_albumsLabel->setMarginBottom(10);
+    m_albumsLabel->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(m_albumsLabel);
 
-    m_musicRow = new HorizontalScrollRow();
-    m_musicRow->setHeight(160);
-    m_musicRow->setMarginBottom(15);
-    m_musicRow->setVisibility(brls::Visibility::GONE);
-    m_scrollContent->addView(m_musicRow);
+    m_albumsRow = new HorizontalScrollRow();
+    m_albumsRow->setHeight(160);
+    m_albumsRow->setMarginBottom(15);
+    m_albumsRow->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(m_albumsRow);
+
+    // Tracks row
+    m_tracksLabel = new brls::Label();
+    m_tracksLabel->setText("Tracks");
+    m_tracksLabel->setFontSize(20);
+    m_tracksLabel->setMarginBottom(10);
+    m_tracksLabel->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(m_tracksLabel);
+
+    m_tracksRow = new HorizontalScrollRow();
+    m_tracksRow->setHeight(160);
+    m_tracksRow->setMarginBottom(15);
+    m_tracksRow->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(m_tracksRow);
 
     m_scrollView->setContentView(m_scrollContent);
     this->addView(m_scrollView);
@@ -185,6 +199,12 @@ void SearchTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaIte
                     MediaDetailView::showArtistContextMenuStatic(capturedItem);
                     return true;
                 });
+        } else if (capturedItem.mediaType == MediaType::MUSIC_ALBUM) {
+            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                [capturedItem](brls::View* view) {
+                    MediaDetailView::showAlbumContextMenuStatic(capturedItem);
+                    return true;
+                });
         }
 
         row->addView(cell);
@@ -198,7 +218,8 @@ void SearchTab::performSearch(const std::string& query) {
         m_movies.clear();
         m_shows.clear();
         m_episodes.clear();
-        m_music.clear();
+        m_albums.clear();
+        m_tracks.clear();
 
         // Hide all rows and labels
         m_moviesLabel->setVisibility(brls::Visibility::GONE);
@@ -207,8 +228,10 @@ void SearchTab::performSearch(const std::string& query) {
         m_showsRow->setVisibility(brls::Visibility::GONE);
         m_episodesLabel->setVisibility(brls::Visibility::GONE);
         m_episodesRow->setVisibility(brls::Visibility::GONE);
-        m_musicLabel->setVisibility(brls::Visibility::GONE);
-        m_musicRow->setVisibility(brls::Visibility::GONE);
+        m_albumsLabel->setVisibility(brls::Visibility::GONE);
+        m_albumsRow->setVisibility(brls::Visibility::GONE);
+        m_tracksLabel->setVisibility(brls::Visibility::GONE);
+        m_tracksRow->setVisibility(brls::Visibility::GONE);
         return;
     }
 
@@ -234,7 +257,8 @@ void SearchTab::performSearch(const std::string& query) {
                 m_movies.clear();
                 m_shows.clear();
                 m_episodes.clear();
-                m_music.clear();
+                m_albums.clear();
+                m_tracks.clear();
 
                 for (const auto& item : m_results) {
                     if (item.mediaType == MediaType::MOVIE) {
@@ -243,10 +267,11 @@ void SearchTab::performSearch(const std::string& query) {
                         m_shows.push_back(item);
                     } else if (item.mediaType == MediaType::EPISODE) {
                         m_episodes.push_back(item);
-                    } else if (item.mediaType == MediaType::MUSIC_ARTIST ||
-                               item.mediaType == MediaType::MUSIC_ALBUM ||
-                               item.mediaType == MediaType::MUSIC_TRACK) {
-                        m_music.push_back(item);
+                    } else if (item.mediaType == MediaType::MUSIC_ALBUM ||
+                               item.mediaType == MediaType::MUSIC_ARTIST) {
+                        m_albums.push_back(item);
+                    } else if (item.mediaType == MediaType::MUSIC_TRACK) {
+                        m_tracks.push_back(item);
                     }
                 }
 
@@ -284,14 +309,24 @@ void SearchTab::performSearch(const std::string& query) {
                     m_episodesRow->setVisibility(brls::Visibility::GONE);
                 }
 
-                if (!m_music.empty()) {
-                    m_musicLabel->setText("Music (" + std::to_string(m_music.size()) + ")");
-                    m_musicLabel->setVisibility(brls::Visibility::VISIBLE);
-                    m_musicRow->setVisibility(brls::Visibility::VISIBLE);
-                    populateRow(m_musicRow, m_music);
+                if (!m_albums.empty()) {
+                    m_albumsLabel->setText("Albums (" + std::to_string(m_albums.size()) + ")");
+                    m_albumsLabel->setVisibility(brls::Visibility::VISIBLE);
+                    m_albumsRow->setVisibility(brls::Visibility::VISIBLE);
+                    populateRow(m_albumsRow, m_albums);
                 } else {
-                    m_musicLabel->setVisibility(brls::Visibility::GONE);
-                    m_musicRow->setVisibility(brls::Visibility::GONE);
+                    m_albumsLabel->setVisibility(brls::Visibility::GONE);
+                    m_albumsRow->setVisibility(brls::Visibility::GONE);
+                }
+
+                if (!m_tracks.empty()) {
+                    m_tracksLabel->setText("Tracks (" + std::to_string(m_tracks.size()) + ")");
+                    m_tracksLabel->setVisibility(brls::Visibility::VISIBLE);
+                    m_tracksRow->setVisibility(brls::Visibility::VISIBLE);
+                    populateRow(m_tracksRow, m_tracks);
+                } else {
+                    m_tracksLabel->setVisibility(brls::Visibility::GONE);
+                    m_tracksRow->setVisibility(brls::Visibility::GONE);
                 }
 
             } else {
@@ -303,9 +338,9 @@ void SearchTab::performSearch(const std::string& query) {
 }
 
 void SearchTab::onItemSelected(const MediaItem& item) {
-    // For tracks, play directly instead of showing detail view
+    // For tracks, follow the default track action setting
     if (item.mediaType == MediaType::MUSIC_TRACK) {
-        Application::getInstance().pushPlayerActivity(item.ratingKey);
+        MediaDetailView::performTrackActionStatic(item);
         return;
     }
 

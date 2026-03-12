@@ -131,6 +131,10 @@ void LoginActivity::showServerSelectionDialog(const std::vector<PlexServer>& ser
     dialog->addView(list);
     dialog->addButton("Cancel", []() {});
 
+    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
+        dialog->dismiss();
+        return true;
+    });
     brls::Application::pushActivity(new brls::Activity(dialog));
 }
 
