@@ -2439,27 +2439,17 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
 
                     float fingerInView = status.position.y - m_dragState.scrollViewTop;
 
-                    // DEBUG: log all auto-scroll values
-                    brls::Logger::debug("DRAG-AUTO: fingerY={:.0f} svTop={:.0f} "
-                        "fingerInView={:.0f} scrollViewH={:.0f} edge={:.0f} "
-                        "scrollY={:.0f} origIdx={} target={} queueSize={}",
-                        status.position.y, m_dragState.scrollViewTop,
-                        fingerInView, scrollViewHeight, AUTO_SCROLL_EDGE,
-                        scrollY, origIdx, newTarget, queueSize);
-
                     if (fingerInView > scrollViewHeight - AUTO_SCROLL_EDGE
                         && scrollY < maxScroll) {
                         // Finger near bottom edge - scroll down
                         float newScroll = scrollY + AUTO_SCROLL_SPEED;
                         if (newScroll > maxScroll) newScroll = maxScroll;
-                        brls::Logger::debug("DRAG-AUTO: SCROLLING DOWN newScroll={:.0f} maxScroll={:.0f}", newScroll, maxScroll);
                         queueScroll->setContentOffsetY(newScroll, false);
                     } else if (fingerInView < AUTO_SCROLL_EDGE
                                && scrollY > 0) {
                         // Finger near top edge - scroll up
                         float newScroll = scrollY - AUTO_SCROLL_SPEED;
                         if (newScroll < 0) newScroll = 0;
-                        brls::Logger::debug("DRAG-AUTO: SCROLLING UP newScroll={:.0f}", newScroll);
                         queueScroll->setContentOffsetY(newScroll, false);
                     }
 
