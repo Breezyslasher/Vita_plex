@@ -109,6 +109,7 @@ private:
     struct DeferredThumb {
         brls::Image* image;
         std::string url;
+        std::string localPath;  // Local thumbnail path for offline playback
         bool loaded;
     };
     std::vector<DeferredThumb> m_deferredThumbs;

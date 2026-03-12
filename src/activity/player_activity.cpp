@@ -2233,11 +2233,22 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     thumb->setMarginRight(14);
 
     // Defer thumbnail loading - will be loaded lazily when row becomes visible
-    if (!track.thumb.empty()) {
-        std::string thumbUrl = client.getThumbnailUrl(track.thumb, 100, 100);
-        m_deferredThumbs.push_back({thumb, thumbUrl, false});
+    // Check for locally downloaded cover art first (for offline playback)
+    std::string localThumbPath;
+    {
+        DownloadsManager& downloads = DownloadsManager::getInstance();
+        DownloadItem dlItem;
+        if (downloads.getDownloadCopy(track.ratingKey, dlItem) &&
+            dlItem.state == DownloadState::COMPLETED && !dlItem.thumbPath.empty()) {
+            localThumbPath = dlItem.thumbPath;
+        }
+    }
+
+    if (!track.thumb.empty() || !localThumbPath.empty()) {
+        std::string thumbUrl = track.thumb.empty() ? "" : client.getThumbnailUrl(track.thumb, 100, 100);
+        m_deferredThumbs.push_back({thumb, thumbUrl, localThumbPath, false});
     } else {
-        m_deferredThumbs.push_back({thumb, "", true});  // No thumb to load
+        m_deferredThumbs.push_back({thumb, "", "", true});  // No thumb to load
     }
     row->addView(thumb);
 
@@ -2756,11 +2767,17 @@ void PlayerActivity::loadQueueThumbsAroundIndex(int displayIndex) {
 
     for (int i = start; i < end; i++) {
         auto& dt = m_deferredThumbs[i];
-        if (!dt.loaded && !dt.url.empty()) {
+        if (!dt.loaded && (!dt.url.empty() || !dt.localPath.empty())) {
             dt.loaded = true;
-            ImageLoader::loadAsync(dt.url, [](brls::Image* image) {
-                // Thumbnail loaded
-            }, dt.image, m_alive);
+            // Try local file first (works offline), fall back to server URL
+            if (!dt.localPath.empty() && ImageLoader::loadFromFile(dt.localPath, dt.image)) {
+                continue;
+            }
+            if (!dt.url.empty()) {
+                ImageLoader::loadAsync(dt.url, [](brls::Image* image) {
+                    // Thumbnail loaded
+                }, dt.image, m_alive);
+            }
         }
     }
 
