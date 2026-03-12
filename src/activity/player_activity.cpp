@@ -2422,10 +2422,12 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 if (newTarget >= queueSize) newTarget = queueSize - 1;
                 m_dragState.targetDisplayIdx = newTarget;
 
-                // Auto-scroll when the finger is near/past the edge of
-                // the scroll view. Uses finger screen position (not the
-                // row) because the row translation compensates for scroll
-                // changes and its screen position never actually moves.
+                // Auto-scroll when the finger is near the top/bottom
+                // edge of the scroll view. Derive the finger's position
+                // in the scroll view from known values — no parent chain
+                // walk needed. At drag start the finger was over the row,
+                // so scrollViewTop = dragStartY - (row layoutY - dragStartScrollY).
+                // Therefore fingerInView = dragDelta + row->getY() - dragStartScrollY.
                 constexpr float AUTO_SCROLL_EDGE = 40.0f;
                 constexpr float AUTO_SCROLL_SPEED = 7.0f;
                 if (queueScroll && queueList) {
@@ -2435,24 +2437,18 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     float maxScroll = contentHeight - scrollViewHeight;
                     if (maxScroll < 0) maxScroll = 0;
 
-                    // Finger position relative to the scroll view
-                    float scrollTop = queueScroll->getY();
-                    brls::View* parent = queueScroll->getParent();
-                    while (parent) {
-                        scrollTop += parent->getY();
-                        parent = parent->getParent();
-                    }
-                    float fingerInView = status.position.y - scrollTop;
+                    float fingerInView = dragDelta + row->getY()
+                                         - m_dragState.dragStartScrollY;
 
                     if (fingerInView > scrollViewHeight - AUTO_SCROLL_EDGE
                         && scrollY < maxScroll) {
-                        // Finger near/past bottom edge - scroll down
+                        // Finger near bottom edge - scroll down
                         float newScroll = scrollY + AUTO_SCROLL_SPEED;
                         if (newScroll > maxScroll) newScroll = maxScroll;
                         queueScroll->setContentOffsetY(newScroll, false);
                     } else if (fingerInView < AUTO_SCROLL_EDGE
                                && scrollY > 0) {
-                        // Finger near/past top edge - scroll up
+                        // Finger near top edge - scroll up
                         float newScroll = scrollY - AUTO_SCROLL_SPEED;
                         if (newScroll < 0) newScroll = 0;
                         queueScroll->setContentOffsetY(newScroll, false);
