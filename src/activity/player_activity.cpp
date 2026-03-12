@@ -2422,29 +2422,31 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 if (newTarget >= queueSize) newTarget = queueSize - 1;
                 m_dragState.targetDisplayIdx = newTarget;
 
-                // Auto-scroll when the dragged track reaches the first or
-                // last visible row in the scroll view
-                constexpr float AUTO_SCROLL_SPEED = 3.0f;
+                // Auto-scroll when the dragged track is near the edge of
+                // the visible area.  Use the finger's position in list
+                // coordinates so scrolling keeps going while the finger
+                // is held past the boundary.
+                constexpr float AUTO_SCROLL_SPEED = 5.0f;
                 if (queueScroll && queueList) {
                     float scrollY = queueScroll->getContentOffsetY();
                     float scrollViewHeight = queueScroll->getHeight();
-                    float contentHeight = queueSize * ROW_HEIGHT_PX + 8.0f; // +8 for padding
+                    float contentHeight = queueSize * ROW_HEIGHT_PX + 8.0f;
                     float maxScroll = contentHeight - scrollViewHeight;
                     if (maxScroll < 0) maxScroll = 0;
 
-                    // Which rows are currently visible?
-                    int firstVisible = (int)(scrollY / ROW_HEIGHT_PX);
-                    int lastVisible = (int)((scrollY + scrollViewHeight) / ROW_HEIGHT_PX);
+                    // Where is the dragged row center in the visible area?
+                    float rowPosInList = row->getY() + dragDelta + scrollDelta;
+                    float rowCenterInView = rowPosInList - scrollY + ROW_HEIGHT_PX * 0.5f;
 
-                    if (newTarget <= firstVisible && scrollY > 0) {
-                        // Dragged to first visible row or above - scroll up
-                        float newScroll = scrollY - AUTO_SCROLL_SPEED;
-                        if (newScroll < 0) newScroll = 0;
-                        queueScroll->setContentOffsetY(newScroll, false);
-                    } else if (newTarget >= lastVisible && scrollY < maxScroll) {
-                        // Dragged to last visible row or below - scroll down
+                    if (rowCenterInView > scrollViewHeight - ROW_HEIGHT_PX && scrollY < maxScroll) {
+                        // Row is in the last row zone - scroll down
                         float newScroll = scrollY + AUTO_SCROLL_SPEED;
                         if (newScroll > maxScroll) newScroll = maxScroll;
+                        queueScroll->setContentOffsetY(newScroll, false);
+                    } else if (rowCenterInView < ROW_HEIGHT_PX && scrollY > 0) {
+                        // Row is in the first row zone - scroll up
+                        float newScroll = scrollY - AUTO_SCROLL_SPEED;
+                        if (newScroll < 0) newScroll = 0;
                         queueScroll->setContentOffsetY(newScroll, false);
                     }
 
