@@ -2426,7 +2426,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 // the visible area.  Use the finger's position in list
                 // coordinates so scrolling keeps going while the finger
                 // is held past the boundary.
-                constexpr float AUTO_SCROLL_SPEED = 5.0f;
+                constexpr float AUTO_SCROLL_SPEED = 7.0f;
                 if (queueScroll && queueList) {
                     float scrollY = queueScroll->getContentOffsetY();
                     float scrollViewHeight = queueScroll->getHeight();
