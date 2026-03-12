@@ -2357,6 +2357,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                         m_dragState.originalDisplayIdx = findQueueRowDisplayIndex(row);
                         m_dragState.targetDisplayIdx = m_dragState.originalDisplayIdx;
                         m_dragState.dragStartY = status.position.y;
+                        m_dragState.prevFingerY = status.position.y;
                         m_dragState.dragStartScrollY = queueScroll ? queueScroll->getContentOffsetY() : 0.0f;
                         // Visual feedback: elevate the dragged row
                         row->setBackgroundColor(nvgRGBA(90, 110, 220, 160));
@@ -2422,10 +2423,9 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 if (newTarget >= queueSize) newTarget = queueSize - 1;
                 m_dragState.targetDisplayIdx = newTarget;
 
-                // Auto-scroll when the dragged track is near the edge of
-                // the visible area.  Use the finger's position in list
-                // coordinates so scrolling keeps going while the finger
-                // is held past the boundary.
+                // Auto-scroll when the dragged track is past the edge.
+                // Check the finger's movement direction so that reversing
+                // the finger immediately stops (or reverses) auto-scroll.
                 constexpr float AUTO_SCROLL_SPEED = 7.0f;
                 if (queueScroll && queueList) {
                     float scrollY = queueScroll->getContentOffsetY();
@@ -2434,18 +2434,25 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     float maxScroll = contentHeight - scrollViewHeight;
                     if (maxScroll < 0) maxScroll = 0;
 
-                    // Where is the dragged row's bottom/top in the visible area?
+                    // Finger direction: positive = moving down, negative = up
+                    float fingerDir = status.position.y - m_dragState.prevFingerY;
+                    m_dragState.prevFingerY = status.position.y;
+
+                    // Row position in the visible area (note: scroll terms
+                    // cancel so this only changes with finger movement)
                     float rowPosInList = row->getY() + dragDelta + scrollDelta;
                     float rowBottomInView = rowPosInList + ROW_HEIGHT_PX - scrollY;
                     float rowTopInView = rowPosInList - scrollY;
 
-                    if (rowBottomInView >= scrollViewHeight && scrollY < maxScroll) {
-                        // Row has reached/passed the bottom edge - scroll down
+                    if (rowBottomInView >= scrollViewHeight && scrollY < maxScroll
+                        && fingerDir >= 0) {
+                        // Row past bottom edge and finger not moving up
                         float newScroll = scrollY + AUTO_SCROLL_SPEED;
                         if (newScroll > maxScroll) newScroll = maxScroll;
                         queueScroll->setContentOffsetY(newScroll, false);
-                    } else if (rowTopInView <= 0 && scrollY > 0) {
-                        // Row has reached/passed the top edge - scroll up
+                    } else if (rowTopInView <= 0 && scrollY > 0
+                               && fingerDir <= 0) {
+                        // Row past top edge and finger not moving down
                         float newScroll = scrollY - AUTO_SCROLL_SPEED;
                         if (newScroll < 0) newScroll = 0;
                         queueScroll->setContentOffsetY(newScroll, false);

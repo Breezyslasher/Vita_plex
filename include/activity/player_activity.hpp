@@ -140,6 +140,7 @@ private:
         float initialScrollY = 0.0f;         // ScrollingFrame offset when touch began
         float dragStartY = 0.0f;             // Finger Y when drag mode activated (for row translation)
         float dragStartScrollY = 0.0f;       // Scroll offset when drag mode activated
+        float prevFingerY = 0.0f;            // Previous frame finger Y for direction detection
     };
     DragState m_dragState;
     static constexpr int HOLD_THRESHOLD_MS = 200;  // ms to hold before drag starts
