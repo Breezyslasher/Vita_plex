@@ -2365,8 +2365,28 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
 
                 if (m_dragState.scrollPassthrough) {
                     if (queueScroll) {
-                        float newOffset = m_dragState.initialScrollY - deltaY;
+                        // Dead zone: ignore small movements so the list doesn't
+                        // jump the instant the finger twitches
+                        constexpr float SCROLL_DEAD_ZONE = 12.0f;
+                        if (std::abs(deltaY) < SCROLL_DEAD_ZONE)
+                            return;
+
+                        // Dampen so scrolling feels more natural on the small screen
+                        constexpr float SCROLL_DAMPING = 0.55f;
+                        float adjusted = (deltaY > 0)
+                            ? (deltaY - SCROLL_DEAD_ZONE) * SCROLL_DAMPING
+                            : (deltaY + SCROLL_DEAD_ZONE) * SCROLL_DAMPING;
+
+                        float newOffset = m_dragState.initialScrollY - adjusted;
+
+                        // Clamp to valid range
                         if (newOffset < 0) newOffset = 0;
+                        float scrollViewHeight = queueScroll->getHeight();
+                        float maxScroll = queueList
+                            ? (queueList->getHeight() - scrollViewHeight) : 0.0f;
+                        if (maxScroll < 0) maxScroll = 0;
+                        if (newOffset > maxScroll) newOffset = maxScroll;
+
                         queueScroll->setContentOffsetY(newOffset, false);
                     }
                     return;
@@ -2376,46 +2396,9 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
 
                 // -- Drag mode: dragged row follows finger --
                 float dragDelta = status.position.y - m_dragState.dragStartY;
-
-                // Auto-scroll when finger is near top/bottom of scroll view
-                constexpr float AUTO_SCROLL_ZONE = 50.0f;  // pixels from edge to trigger
-                constexpr float AUTO_SCROLL_SPEED = 8.0f;   // pixels per frame
-                if (queueScroll) {
-                    float scrollViewHeight = queueScroll->getHeight();
-                    // Get finger position relative to scroll view
-                    float scrollTop = queueScroll->getY();
-                    brls::View* parent = queueScroll->getParent();
-                    while (parent) {
-                        scrollTop += parent->getY();
-                        parent = parent->getParent();
-                    }
-                    float fingerInScroll = status.position.y - scrollTop;
-
-                    float scrollY = queueScroll->getContentOffsetY();
-                    float maxScroll = queueList ? (queueList->getHeight() - scrollViewHeight) : 0.0f;
-                    if (maxScroll < 0) maxScroll = 0;
-
-                    if (fingerInScroll < AUTO_SCROLL_ZONE && scrollY > 0) {
-                        // Near top edge - scroll up
-                        float speed = AUTO_SCROLL_SPEED * (1.0f - fingerInScroll / AUTO_SCROLL_ZONE);
-                        float newScroll = scrollY - speed;
-                        if (newScroll < 0) newScroll = 0;
-                        queueScroll->setContentOffsetY(newScroll, false);
-                    } else if (fingerInScroll > scrollViewHeight - AUTO_SCROLL_ZONE && scrollY < maxScroll) {
-                        // Near bottom edge - scroll down
-                        float speed = AUTO_SCROLL_SPEED * (1.0f - (scrollViewHeight - fingerInScroll) / AUTO_SCROLL_ZONE);
-                        float newScroll = scrollY + speed;
-                        if (newScroll > maxScroll) newScroll = maxScroll;
-                        queueScroll->setContentOffsetY(newScroll, false);
-                    }
-                }
-
-                // Account for scroll changes since drag started: when the scroll
-                // view scrolls during drag, the row's layout position shifts on screen.
-                // Add the scroll delta so the row stays under the finger and the
-                // target calculation reflects the actual list position.
                 float scrollDelta = queueScroll
                     ? (queueScroll->getContentOffsetY() - m_dragState.dragStartScrollY) : 0.0f;
+
                 row->setTranslationY(dragDelta + scrollDelta);
                 float effectiveDelta = dragDelta + scrollDelta;
 
@@ -2437,6 +2420,37 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 if (newTarget < 0) newTarget = 0;
                 if (newTarget >= queueSize) newTarget = queueSize - 1;
                 m_dragState.targetDisplayIdx = newTarget;
+
+                // Auto-scroll when the dragged track reaches the first or
+                // last visible row in the scroll view
+                constexpr float AUTO_SCROLL_SPEED = 3.0f;
+                if (queueScroll && queueList) {
+                    float scrollY = queueScroll->getContentOffsetY();
+                    float scrollViewHeight = queueScroll->getHeight();
+                    float maxScroll = queueList->getHeight() - scrollViewHeight;
+                    if (maxScroll < 0) maxScroll = 0;
+
+                    // Which rows are currently visible?
+                    int firstVisible = (int)(scrollY / ROW_HEIGHT_PX);
+                    int lastVisible = (int)((scrollY + scrollViewHeight) / ROW_HEIGHT_PX);
+
+                    if (newTarget <= firstVisible && scrollY > 0) {
+                        // Dragged to first visible row or above - scroll up
+                        float newScroll = scrollY - AUTO_SCROLL_SPEED;
+                        if (newScroll < 0) newScroll = 0;
+                        queueScroll->setContentOffsetY(newScroll, false);
+                    } else if (newTarget >= lastVisible && scrollY < maxScroll) {
+                        // Dragged to last visible row or below - scroll down
+                        float newScroll = scrollY + AUTO_SCROLL_SPEED;
+                        if (newScroll > maxScroll) newScroll = maxScroll;
+                        queueScroll->setContentOffsetY(newScroll, false);
+                    }
+
+                    // Re-read scroll delta after possible auto-scroll
+                    scrollDelta = queueScroll->getContentOffsetY() - m_dragState.dragStartScrollY;
+                    row->setTranslationY(dragDelta + scrollDelta);
+                    effectiveDelta = dragDelta + scrollDelta;
+                }
 
                 // Shift displaced rows visually (no data changes yet)
                 if (!queueList) return;
