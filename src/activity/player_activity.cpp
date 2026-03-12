@@ -617,8 +617,11 @@ void PlayerActivity::loadFromQueue() {
             } else if (!track->thumb.empty()) {
                 PlexClient& client = PlexClient::getInstance();
                 std::string thumbUrl = client.getThumbnailUrl(track->thumb, 300, 300);
+                // Ensure unpaused so the async worker can complete the HTTP request
+                ImageLoader::setPaused(false);
                 ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
                     img->setVisibility(brls::Visibility::VISIBLE);
+                    ImageLoader::setPaused(true);
                 }, albumArt, m_alive);
             }
         }
@@ -689,24 +692,27 @@ void PlayerActivity::loadFromQueue() {
         if (albumArt && !track->thumb.empty()) {
             PlexClient& artClient = PlexClient::getInstance();
             std::string thumbUrl = artClient.getThumbnailUrl(track->thumb, 300, 300);
-            // Temporarily unpause image loading if needed so the cover art can load
-            bool wasPaused = ImageLoader::isPaused();
-            if (wasPaused) ImageLoader::setPaused(false);
+            // Ensure image loading is unpaused so the async worker thread
+            // can complete the HTTP request. The callback re-pauses after
+            // the image is loaded. Previously we re-paused immediately,
+            // which caused the worker to see paused=true and skip the load.
+            ImageLoader::setPaused(false);
             ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
                 img->setVisibility(brls::Visibility::VISIBLE);
+                // Re-pause now that the cover art has loaded
+                ImageLoader::setPaused(true);
             }, albumArt, m_alive);
-            if (wasPaused) ImageLoader::setPaused(true);
             albumArt->setVisibility(brls::Visibility::VISIBLE);
             coverLoaded = true;
         }
     }
 
     // Pause image loading to avoid bandwidth contention with MPV streaming.
-    // Only cancel in-flight loads if no cover art was just requested -
-    // cancelAll() increments the generation counter which would discard
-    // our own cover art load.
-    ImageLoader::setPaused(true);
+    // If cover art was requested above, it stays unpaused until the async
+    // callback fires and re-pauses. This ensures the worker thread sees
+    // paused=false when it runs the HTTP request.
     if (!coverLoaded) {
+        ImageLoader::setPaused(true);
         ImageLoader::cancelAll();
     }
 
