@@ -2357,7 +2357,6 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                         m_dragState.originalDisplayIdx = findQueueRowDisplayIndex(row);
                         m_dragState.targetDisplayIdx = m_dragState.originalDisplayIdx;
                         m_dragState.dragStartY = status.position.y;
-                        m_dragState.prevFingerY = status.position.y;
                         m_dragState.dragStartScrollY = queueScroll ? queueScroll->getContentOffsetY() : 0.0f;
                         // Visual feedback: elevate the dragged row
                         row->setBackgroundColor(nvgRGBA(90, 110, 220, 160));
@@ -2423,9 +2422,11 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 if (newTarget >= queueSize) newTarget = queueSize - 1;
                 m_dragState.targetDisplayIdx = newTarget;
 
-                // Auto-scroll when the dragged track is past the edge.
-                // Check the finger's movement direction so that reversing
-                // the finger immediately stops (or reverses) auto-scroll.
+                // Auto-scroll when the finger is near/past the edge of
+                // the scroll view. Uses finger screen position (not the
+                // row) because the row translation compensates for scroll
+                // changes and its screen position never actually moves.
+                constexpr float AUTO_SCROLL_EDGE = 40.0f;
                 constexpr float AUTO_SCROLL_SPEED = 7.0f;
                 if (queueScroll && queueList) {
                     float scrollY = queueScroll->getContentOffsetY();
@@ -2434,25 +2435,24 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     float maxScroll = contentHeight - scrollViewHeight;
                     if (maxScroll < 0) maxScroll = 0;
 
-                    // Finger direction: positive = moving down, negative = up
-                    float fingerDir = status.position.y - m_dragState.prevFingerY;
-                    m_dragState.prevFingerY = status.position.y;
+                    // Finger position relative to the scroll view
+                    float scrollTop = queueScroll->getY();
+                    brls::View* parent = queueScroll->getParent();
+                    while (parent) {
+                        scrollTop += parent->getY();
+                        parent = parent->getParent();
+                    }
+                    float fingerInView = status.position.y - scrollTop;
 
-                    // Row position in the visible area (note: scroll terms
-                    // cancel so this only changes with finger movement)
-                    float rowPosInList = row->getY() + dragDelta + scrollDelta;
-                    float rowBottomInView = rowPosInList + ROW_HEIGHT_PX - scrollY;
-                    float rowTopInView = rowPosInList - scrollY;
-
-                    if (rowBottomInView >= scrollViewHeight && scrollY < maxScroll
-                        && fingerDir >= 0) {
-                        // Row past bottom edge and finger not moving up
+                    if (fingerInView > scrollViewHeight - AUTO_SCROLL_EDGE
+                        && scrollY < maxScroll) {
+                        // Finger near/past bottom edge - scroll down
                         float newScroll = scrollY + AUTO_SCROLL_SPEED;
                         if (newScroll > maxScroll) newScroll = maxScroll;
                         queueScroll->setContentOffsetY(newScroll, false);
-                    } else if (rowTopInView <= 0 && scrollY > 0
-                               && fingerDir <= 0) {
-                        // Row past top edge and finger not moving down
+                    } else if (fingerInView < AUTO_SCROLL_EDGE
+                               && scrollY > 0) {
+                        // Finger near/past top edge - scroll up
                         float newScroll = scrollY - AUTO_SCROLL_SPEED;
                         if (newScroll < 0) newScroll = 0;
                         queueScroll->setContentOffsetY(newScroll, false);
