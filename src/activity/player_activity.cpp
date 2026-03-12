@@ -2459,12 +2459,34 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     fingerInScroll = status.position.y - scrollTop;
                 }
 
-                // Determine target based on where the finger is in the
-                // content, not cumulative delta from drag start. This
-                // ensures correct targeting after auto-scroll changes
-                // the visible rows (e.g. reversing scroll direction).
+                // Determine target based on which row the finger is
+                // actually over on screen, not the cumulative delta from
+                // drag start. This ensures correct targeting after
+                // auto-scroll changes the visible rows (e.g. when the
+                // user reverses scroll direction).
                 float fingerInContent = fingerInScroll + scrollY;
-                int newTarget = (int)(fingerInContent / ROW_HEIGHT_PX);
+                int newTarget = origIdx;  // fallback
+                if (queueList) {
+                    auto& rows = queueList->getChildren();
+                    for (int i = 0; i < (int)rows.size(); i++) {
+                        float childTop = rows[i]->getY();
+                        float childBot = childTop + rows[i]->getHeight()
+                                         + 3.0f; // marginBottom
+                        if (fingerInContent >= childTop && fingerInContent < childBot) {
+                            newTarget = i;
+                            break;
+                        }
+                    }
+                    // Clamp to edges
+                    if (fingerInContent >= 0 && !rows.empty()) {
+                        float lastBot = rows.back()->getY()
+                                        + rows.back()->getHeight();
+                        if (fingerInContent >= lastBot) {
+                            newTarget = (int)rows.size() - 1;
+                        }
+                    }
+                    if (fingerInContent < 0) newTarget = 0;
+                }
                 if (newTarget < 0) newTarget = 0;
                 if (newTarget >= queueSize) newTarget = queueSize - 1;
                 m_dragState.targetDisplayIdx = newTarget;
