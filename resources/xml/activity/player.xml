@@ -38,10 +38,10 @@
         alignItems="center">
         <brls:Image
             id="player/album_art"
-            width="260"
-            height="260"
+            width="180"
+            height="180"
             scalingType="fit"
-            cornerRadius="16"
+            cornerRadius="12"
             visibility="gone"/>
 
     </brls:Box>
