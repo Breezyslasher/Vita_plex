@@ -55,8 +55,12 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
 
     // Load asynchronously
     brls::async([url, callback, target, alive, gen]() {
-        // Check if cancelled or paused before making the HTTP request
-        if (!alive->load() || gen != s_generation.load() || s_paused.load()) return;
+        // Check if cancelled before making the HTTP request.
+        // Note: we intentionally do NOT check s_paused here. If a load was
+        // accepted at queue time (passed the pause check in loadAsync), it
+        // should complete. The generation counter from cancelAll() is
+        // sufficient to invalidate stale loads from previous pages.
+        if (!alive->load() || gen != s_generation.load()) return;
 
         HttpClient client;
         HttpResponse resp = client.get(url);

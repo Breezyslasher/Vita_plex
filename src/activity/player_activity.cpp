@@ -617,12 +617,11 @@ void PlayerActivity::loadFromQueue() {
             } else if (!track->thumb.empty()) {
                 PlexClient& client = PlexClient::getInstance();
                 std::string thumbUrl = client.getThumbnailUrl(track->thumb, 300, 300);
-                // Ensure unpaused so the async worker can complete the HTTP request
                 ImageLoader::setPaused(false);
                 ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
                     img->setVisibility(brls::Visibility::VISIBLE);
-                    ImageLoader::setPaused(true);
                 }, albumArt, m_alive);
+                ImageLoader::setPaused(true);
             }
         }
 
@@ -662,11 +661,15 @@ void PlayerActivity::loadFromQueue() {
     m_mediaKey = track->ratingKey;
     std::string url;
 
+    // Pause image loading and invalidate stale in-flight loads from previous
+    // pages before queuing any new loads for this track.
+    ImageLoader::setPaused(true);
+    ImageLoader::cancelAll();
+
     // Check if this track is downloaded locally - play from local file if available
     DownloadsManager& downloads = DownloadsManager::getInstance();
     DownloadItem dlItem;
     bool useLocalFile = false;
-    bool coverLoaded = false;
     if (downloads.getDownloadCopy(track->ratingKey, dlItem) && dlItem.state == DownloadState::COMPLETED) {
         url = dlItem.localPath;
         useLocalFile = true;
@@ -676,7 +679,6 @@ void PlayerActivity::loadFromQueue() {
         if (albumArt && !dlItem.thumbPath.empty()) {
             if (ImageLoader::loadFromFile(dlItem.thumbPath, albumArt)) {
                 albumArt->setVisibility(brls::Visibility::VISIBLE);
-                coverLoaded = true;
             }
         }
     } else {
@@ -688,32 +690,19 @@ void PlayerActivity::loadFromQueue() {
             return;
         }
 
-        // Load album art from server (only when streaming, not offline)
+        // Load album art from server - temporarily unpause so loadAsync
+        // accepts the request, then re-pause to block other page loads.
+        // The async worker no longer checks pause, so the load will complete.
         if (albumArt && !track->thumb.empty()) {
             PlexClient& artClient = PlexClient::getInstance();
             std::string thumbUrl = artClient.getThumbnailUrl(track->thumb, 300, 300);
-            // Ensure image loading is unpaused so the async worker thread
-            // can complete the HTTP request. The callback re-pauses after
-            // the image is loaded. Previously we re-paused immediately,
-            // which caused the worker to see paused=true and skip the load.
             ImageLoader::setPaused(false);
             ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
                 img->setVisibility(brls::Visibility::VISIBLE);
-                // Re-pause now that the cover art has loaded
-                ImageLoader::setPaused(true);
             }, albumArt, m_alive);
+            ImageLoader::setPaused(true);
             albumArt->setVisibility(brls::Visibility::VISIBLE);
-            coverLoaded = true;
         }
-    }
-
-    // Pause image loading to avoid bandwidth contention with MPV streaming.
-    // If cover art was requested above, it stays unpaused until the async
-    // callback fires and re-pauses. This ensures the worker thread sees
-    // paused=false when it runs the HTTP request.
-    if (!coverLoaded) {
-        ImageLoader::setPaused(true);
-        ImageLoader::cancelAll();
     }
 
     MpvPlayer& player = MpvPlayer::getInstance();
@@ -2755,13 +2744,15 @@ void PlayerActivity::populateQueueBatch() {
 void PlayerActivity::loadQueueThumbsAroundIndex(int displayIndex) {
     if (m_deferredThumbs.empty()) return;
 
-    bool wasPaused = ImageLoader::isPaused();
-    if (wasPaused) ImageLoader::setPaused(false);
-
     // Load thumbnails for a window around the given display index
     // Queue scroll is 320px with ~62px rows = ~5 visible rows
     int start = std::max(0, displayIndex - QUEUE_THUMB_BUFFER);
     int end = std::min((int)m_deferredThumbs.size(), displayIndex + QUEUE_THUMB_BUFFER + 6);
+
+    // Temporarily unpause so loadAsync accepts the requests, then re-pause.
+    // The async workers no longer check the pause flag, so queued loads
+    // will complete even after we re-pause here.
+    ImageLoader::setPaused(false);
 
     for (int i = start; i < end; i++) {
         auto& dt = m_deferredThumbs[i];
@@ -2773,7 +2764,7 @@ void PlayerActivity::loadQueueThumbsAroundIndex(int displayIndex) {
         }
     }
 
-    if (wasPaused) ImageLoader::setPaused(true);
+    ImageLoader::setPaused(true);
 }
 
 int PlayerActivity::findQueueRowDisplayIndex(brls::View* row) {
