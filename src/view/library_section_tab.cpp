@@ -186,7 +186,11 @@ void LibrarySectionTab::loadContent() {
                 }
 
                 m_items = items;
-                m_contentGrid->setDataSource(m_items);
+                // Only update grid if still in default view (user may have
+                // switched to playlists/collections/categories while loading)
+                if (m_viewMode == LibraryViewMode::ALL_ITEMS) {
+                    m_contentGrid->setDataSource(m_items);
+                }
                 m_loaded = true;
             });
         } else {
