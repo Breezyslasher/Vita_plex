@@ -885,6 +885,10 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
                         brls::Application::notify("Playlist added to queue");
                     }
                 });
+            } else {
+                brls::sync([]() {
+                    brls::Application::notify("Cannot queue playlist - server unreachable");
+                });
             }
         });
         return true;
@@ -1024,6 +1028,10 @@ void LibrarySectionTab::playPlaylistWithQueue(const std::string& playlistId, int
                 brls::Application::pushActivity(
                     PlayerActivity::createWithQueue(tracks, startIndex)
                 );
+            });
+        } else {
+            brls::sync([]() {
+                brls::Application::notify("Cannot play playlist - server unreachable");
             });
         }
     });
