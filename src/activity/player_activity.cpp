@@ -2434,17 +2434,18 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     float maxScroll = contentHeight - scrollViewHeight;
                     if (maxScroll < 0) maxScroll = 0;
 
-                    // Where is the dragged row center in the visible area?
+                    // Where is the dragged row's bottom/top in the visible area?
                     float rowPosInList = row->getY() + dragDelta + scrollDelta;
-                    float rowCenterInView = rowPosInList - scrollY + ROW_HEIGHT_PX * 0.5f;
+                    float rowBottomInView = rowPosInList + ROW_HEIGHT_PX - scrollY;
+                    float rowTopInView = rowPosInList - scrollY;
 
-                    if (rowCenterInView > scrollViewHeight - ROW_HEIGHT_PX && scrollY < maxScroll) {
-                        // Row is in the last row zone - scroll down
+                    if (rowBottomInView >= scrollViewHeight && scrollY < maxScroll) {
+                        // Row has reached/passed the bottom edge - scroll down
                         float newScroll = scrollY + AUTO_SCROLL_SPEED;
                         if (newScroll > maxScroll) newScroll = maxScroll;
                         queueScroll->setContentOffsetY(newScroll, false);
-                    } else if (rowCenterInView < ROW_HEIGHT_PX && scrollY > 0) {
-                        // Row is in the first row zone - scroll up
+                    } else if (rowTopInView <= 0 && scrollY > 0) {
+                        // Row has reached/passed the top edge - scroll up
                         float newScroll = scrollY - AUTO_SCROLL_SPEED;
                         if (newScroll < 0) newScroll = 0;
                         queueScroll->setContentOffsetY(newScroll, false);
