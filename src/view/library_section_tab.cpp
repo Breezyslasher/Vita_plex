@@ -899,12 +899,20 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
             PlexClient& client = PlexClient::getInstance();
             std::vector<PlaylistItem> items;
             int queued = 0;
+            int skipped = 0;
 
             if (client.fetchPlaylistItems(playlistId, items)) {
+                auto& mgr = DownloadsManager::getInstance();
                 for (const auto& item : items) {
+                    // Skip items already downloaded or in queue
+                    if (mgr.isDownloaded(item.media.ratingKey) ||
+                        mgr.getDownload(item.media.ratingKey) != nullptr) {
+                        skipped++;
+                        continue;
+                    }
                     MediaItem fullItem;
                     if (client.fetchMediaDetails(item.media.ratingKey, fullItem) && !fullItem.partPath.empty()) {
-                        if (DownloadsManager::getInstance().queueDownload(
+                        if (mgr.queueDownload(
                             fullItem.ratingKey, fullItem.title, fullItem.partPath,
                             fullItem.duration, "track",
                             playlistTitle, 0, fullItem.index,
@@ -918,8 +926,12 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
             }
 
             DownloadsManager::getInstance().startDownloads();
-            brls::sync([queued]() {
-                brls::Application::notify("Queued " + std::to_string(queued) + " tracks for download");
+            brls::sync([queued, skipped]() {
+                std::string msg = "Queued " + std::to_string(queued) + " tracks for download";
+                if (skipped > 0) {
+                    msg += " (" + std::to_string(skipped) + " already downloaded)";
+                }
+                brls::Application::notify(msg);
             });
         });
         return true;

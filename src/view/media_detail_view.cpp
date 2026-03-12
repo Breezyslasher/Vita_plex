@@ -914,6 +914,7 @@ void MediaDetailView::downloadAll() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
         int queued = 0;
+        int skipped = 0;
 
         if (mediaType == MediaType::SHOW) {
             // Get all seasons first, then all episodes
@@ -971,8 +972,23 @@ void MediaDetailView::downloadAll() {
         else if (mediaType == MediaType::SEASON) dlGroupType = DownloadGroupType::SHOW;
 
         // Queue each item for download
+        auto& mgr = DownloadsManager::getInstance();
         for (size_t i = 0; i < items.size(); i++) {
             const auto& item = items[i];
+
+            // Skip items already downloaded or in queue
+            if (mgr.isDownloaded(item.ratingKey) ||
+                mgr.getDownload(item.ratingKey) != nullptr) {
+                skipped++;
+                size_t currentIndex = i;
+                brls::sync([progressDialog, currentIndex, itemCount, queued, skipped]() {
+                    progressDialog->setStatus("Queued " + std::to_string(queued) + " of " +
+                                             std::to_string(itemCount) +
+                                             (skipped > 0 ? " (" + std::to_string(skipped) + " skipped)" : ""));
+                    progressDialog->setProgress(0.1f + 0.9f * static_cast<float>(currentIndex + 1) / itemCount);
+                });
+                continue;
+            }
 
             // Get full details to get the part path
             MediaItem fullItem;
@@ -984,7 +1000,7 @@ void MediaDetailView::downloadAll() {
                 // For music tracks, pass thumb for cover art download
                 std::string trackThumb = (itemMediaType == "track") ? fullItem.thumb : "";
 
-                if (DownloadsManager::getInstance().queueDownload(
+                if (mgr.queueDownload(
                     fullItem.ratingKey,
                     fullItem.title,
                     fullItem.partPath,
@@ -1005,18 +1021,23 @@ void MediaDetailView::downloadAll() {
             }
 
             size_t currentIndex = i;
-            brls::sync([progressDialog, currentIndex, itemCount, queued]() {
+            brls::sync([progressDialog, currentIndex, itemCount, queued, skipped]() {
                 progressDialog->setStatus("Queued " + std::to_string(queued) + " of " +
-                                         std::to_string(itemCount));
+                                         std::to_string(itemCount) +
+                                         (skipped > 0 ? " (" + std::to_string(skipped) + " skipped)" : ""));
                 progressDialog->setProgress(0.1f + 0.9f * static_cast<float>(currentIndex + 1) / itemCount);
             });
         }
 
         // Start downloads
-        DownloadsManager::getInstance().startDownloads();
+        mgr.startDownloads();
 
-        brls::sync([progressDialog, queued]() {
-            progressDialog->setStatus("Queued " + std::to_string(queued) + " downloads");
+        brls::sync([progressDialog, queued, skipped]() {
+            std::string msg = "Queued " + std::to_string(queued) + " downloads";
+            if (skipped > 0) {
+                msg += " (" + std::to_string(skipped) + " already downloaded)";
+            }
+            progressDialog->setStatus(msg);
             brls::delay(1500, [progressDialog]() {
                 progressDialog->dismiss();
             });
@@ -1039,6 +1060,7 @@ void MediaDetailView::downloadUnwatched(int maxCount) {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> unwatchedItems;
         int queued = 0;
+        int skipped = 0;
 
         if (mediaType == MediaType::SHOW) {
             // Get all seasons first, then unwatched episodes
@@ -1097,15 +1119,30 @@ void MediaDetailView::downloadUnwatched(int maxCount) {
         DownloadGroupType dlGroupType = DownloadGroupType::SHOW;
 
         // Queue each unwatched item for download
+        auto& mgr = DownloadsManager::getInstance();
         for (size_t i = 0; i < unwatchedItems.size(); i++) {
             const auto& item = unwatchedItems[i];
+
+            // Skip items already downloaded or in queue
+            if (mgr.isDownloaded(item.ratingKey) ||
+                mgr.getDownload(item.ratingKey) != nullptr) {
+                skipped++;
+                size_t currentIndex = i;
+                brls::sync([progressDialog, currentIndex, itemCount, queued, skipped]() {
+                    progressDialog->setStatus("Queued " + std::to_string(queued) + " of " +
+                                             std::to_string(itemCount) +
+                                             (skipped > 0 ? " (" + std::to_string(skipped) + " skipped)" : ""));
+                    progressDialog->setProgress(0.1f + 0.9f * static_cast<float>(currentIndex + 1) / itemCount);
+                });
+                continue;
+            }
 
             // Get full details to get the part path
             MediaItem fullItem;
             if (client.fetchMediaDetails(item.ratingKey, fullItem) && !fullItem.partPath.empty()) {
                 std::string itemMediaType = "episode";
 
-                if (DownloadsManager::getInstance().queueDownload(
+                if (mgr.queueDownload(
                     fullItem.ratingKey,
                     fullItem.title,
                     fullItem.partPath,
@@ -1125,18 +1162,23 @@ void MediaDetailView::downloadUnwatched(int maxCount) {
             }
 
             size_t currentIndex = i;
-            brls::sync([progressDialog, currentIndex, itemCount, queued]() {
+            brls::sync([progressDialog, currentIndex, itemCount, queued, skipped]() {
                 progressDialog->setStatus("Queued " + std::to_string(queued) + " of " +
-                                         std::to_string(itemCount));
+                                         std::to_string(itemCount) +
+                                         (skipped > 0 ? " (" + std::to_string(skipped) + " skipped)" : ""));
                 progressDialog->setProgress(0.1f + 0.9f * static_cast<float>(currentIndex + 1) / itemCount);
             });
         }
 
         // Start downloads
-        DownloadsManager::getInstance().startDownloads();
+        mgr.startDownloads();
 
-        brls::sync([progressDialog, queued]() {
-            progressDialog->setStatus("Queued " + std::to_string(queued) + " downloads");
+        brls::sync([progressDialog, queued, skipped]() {
+            std::string msg = "Queued " + std::to_string(queued) + " downloads";
+            if (skipped > 0) {
+                msg += " (" + std::to_string(skipped) + " already downloaded)";
+            }
+            progressDialog->setStatus(msg);
             brls::delay(1500, [progressDialog]() {
                 progressDialog->dismiss();
             });
@@ -1927,16 +1969,23 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
         // Use the downloadAll pattern from existing code
         asyncRun([capturedShow]() {
             PlexClient& client = PlexClient::getInstance();
+            auto& mgr = DownloadsManager::getInstance();
             std::vector<MediaItem> seasons;
             int queued = 0;
+            int skipped = 0;
             if (client.fetchChildren(capturedShow.ratingKey, seasons)) {
                 for (const auto& season : seasons) {
                     std::vector<MediaItem> episodes;
                     if (client.fetchChildren(season.ratingKey, episodes)) {
                         for (const auto& ep : episodes) {
+                            if (mgr.isDownloaded(ep.ratingKey) ||
+                                mgr.getDownload(ep.ratingKey) != nullptr) {
+                                skipped++;
+                                continue;
+                            }
                             MediaItem fullItem;
                             if (client.fetchMediaDetails(ep.ratingKey, fullItem) && !fullItem.partPath.empty()) {
-                                if (DownloadsManager::getInstance().queueDownload(
+                                if (mgr.queueDownload(
                                     fullItem.ratingKey, fullItem.title, fullItem.partPath,
                                     fullItem.duration, "episode", capturedShow.title,
                                     fullItem.parentIndex, fullItem.index,
@@ -1950,9 +1999,11 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
                     }
                 }
             }
-            DownloadsManager::getInstance().startDownloads();
-            brls::sync([queued]() {
-                brls::Application::notify("Queued " + std::to_string(queued) + " episodes");
+            mgr.startDownloads();
+            brls::sync([queued, skipped]() {
+                std::string msg = "Queued " + std::to_string(queued) + " episodes";
+                if (skipped > 0) msg += " (" + std::to_string(skipped) + " already downloaded)";
+                brls::Application::notify(msg);
             });
         });
         return true;
@@ -1962,17 +2013,24 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
         dialog->dismiss();
         asyncRun([capturedShow]() {
             PlexClient& client = PlexClient::getInstance();
+            auto& mgr = DownloadsManager::getInstance();
             std::vector<MediaItem> seasons;
             int queued = 0;
+            int skipped = 0;
             if (client.fetchChildren(capturedShow.ratingKey, seasons)) {
                 for (const auto& season : seasons) {
                     std::vector<MediaItem> episodes;
                     if (client.fetchChildren(season.ratingKey, episodes)) {
                         for (const auto& ep : episodes) {
                             if (!ep.watched && ep.viewOffset == 0) {
+                                if (mgr.isDownloaded(ep.ratingKey) ||
+                                    mgr.getDownload(ep.ratingKey) != nullptr) {
+                                    skipped++;
+                                    continue;
+                                }
                                 MediaItem fullItem;
                                 if (client.fetchMediaDetails(ep.ratingKey, fullItem) && !fullItem.partPath.empty()) {
-                                    if (DownloadsManager::getInstance().queueDownload(
+                                    if (mgr.queueDownload(
                                         fullItem.ratingKey, fullItem.title, fullItem.partPath,
                                         fullItem.duration, "episode", capturedShow.title,
                                         fullItem.parentIndex, fullItem.index,
@@ -1987,9 +2045,11 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
                     }
                 }
             }
-            DownloadsManager::getInstance().startDownloads();
-            brls::sync([queued]() {
-                brls::Application::notify("Queued " + std::to_string(queued) + " unwatched episodes");
+            mgr.startDownloads();
+            brls::sync([queued, skipped]() {
+                std::string msg = "Queued " + std::to_string(queued) + " unwatched episodes";
+                if (skipped > 0) msg += " (" + std::to_string(skipped) + " already downloaded)";
+                brls::Application::notify(msg);
             });
         });
         return true;
@@ -2028,13 +2088,20 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
                         seasonDialog->dismiss();
                         asyncRun([capturedSeason, showTitle, showThumb, showKey]() {
                             PlexClient& client = PlexClient::getInstance();
+                            auto& mgr = DownloadsManager::getInstance();
                             std::vector<MediaItem> episodes;
                             int queued = 0;
+                            int skipped = 0;
                             if (client.fetchChildren(capturedSeason.ratingKey, episodes)) {
                                 for (const auto& ep : episodes) {
+                                    if (mgr.isDownloaded(ep.ratingKey) ||
+                                        mgr.getDownload(ep.ratingKey) != nullptr) {
+                                        skipped++;
+                                        continue;
+                                    }
                                     MediaItem fullItem;
                                     if (client.fetchMediaDetails(ep.ratingKey, fullItem) && !fullItem.partPath.empty()) {
-                                        if (DownloadsManager::getInstance().queueDownload(
+                                        if (mgr.queueDownload(
                                             fullItem.ratingKey, fullItem.title, fullItem.partPath,
                                             fullItem.duration, "episode", showTitle,
                                             fullItem.parentIndex, fullItem.index,
@@ -2046,10 +2113,12 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
                                     }
                                 }
                             }
-                            DownloadsManager::getInstance().startDownloads();
-                            brls::sync([queued, capturedSeason]() {
-                                brls::Application::notify("Queued " + std::to_string(queued) +
-                                    " episodes from " + capturedSeason.title);
+                            mgr.startDownloads();
+                            brls::sync([queued, skipped, capturedSeason]() {
+                                std::string msg = "Queued " + std::to_string(queued) +
+                                    " episodes from " + capturedSeason.title;
+                                if (skipped > 0) msg += " (" + std::to_string(skipped) + " already downloaded)";
+                                brls::Application::notify(msg);
                             });
                         });
                         return true;
@@ -2179,14 +2248,21 @@ void MediaDetailView::showSeasonContextMenuStatic(const MediaItem& season) {
         dialog->dismiss();
         asyncRun([capturedSeason]() {
             PlexClient& client = PlexClient::getInstance();
+            auto& mgr = DownloadsManager::getInstance();
             std::vector<MediaItem> episodes;
             int queued = 0;
+            int skipped = 0;
             std::string showTitle = capturedSeason.parentTitle.empty() ? capturedSeason.title : capturedSeason.parentTitle;
             if (client.fetchChildren(capturedSeason.ratingKey, episodes)) {
                 for (const auto& ep : episodes) {
+                    if (mgr.isDownloaded(ep.ratingKey) ||
+                        mgr.getDownload(ep.ratingKey) != nullptr) {
+                        skipped++;
+                        continue;
+                    }
                     MediaItem fullItem;
                     if (client.fetchMediaDetails(ep.ratingKey, fullItem) && !fullItem.partPath.empty()) {
-                        if (DownloadsManager::getInstance().queueDownload(
+                        if (mgr.queueDownload(
                             fullItem.ratingKey, fullItem.title, fullItem.partPath,
                             fullItem.duration, "episode", showTitle,
                             fullItem.parentIndex, fullItem.index,
@@ -2198,9 +2274,11 @@ void MediaDetailView::showSeasonContextMenuStatic(const MediaItem& season) {
                     }
                 }
             }
-            DownloadsManager::getInstance().startDownloads();
-            brls::sync([queued]() {
-                brls::Application::notify("Queued " + std::to_string(queued) + " episodes");
+            mgr.startDownloads();
+            brls::sync([queued, skipped]() {
+                std::string msg = "Queued " + std::to_string(queued) + " episodes";
+                if (skipped > 0) msg += " (" + std::to_string(skipped) + " already downloaded)";
+                brls::Application::notify(msg);
             });
         });
         return true;
@@ -2211,15 +2289,22 @@ void MediaDetailView::showSeasonContextMenuStatic(const MediaItem& season) {
         dialog->dismiss();
         asyncRun([capturedSeason]() {
             PlexClient& client = PlexClient::getInstance();
+            auto& mgr = DownloadsManager::getInstance();
             std::vector<MediaItem> episodes;
             int queued = 0;
+            int skipped = 0;
             std::string showTitle = capturedSeason.parentTitle.empty() ? capturedSeason.title : capturedSeason.parentTitle;
             if (client.fetchChildren(capturedSeason.ratingKey, episodes)) {
                 for (const auto& ep : episodes) {
                     if (!ep.watched && ep.viewOffset == 0) {
+                        if (mgr.isDownloaded(ep.ratingKey) ||
+                            mgr.getDownload(ep.ratingKey) != nullptr) {
+                            skipped++;
+                            continue;
+                        }
                         MediaItem fullItem;
                         if (client.fetchMediaDetails(ep.ratingKey, fullItem) && !fullItem.partPath.empty()) {
-                            if (DownloadsManager::getInstance().queueDownload(
+                            if (mgr.queueDownload(
                                 fullItem.ratingKey, fullItem.title, fullItem.partPath,
                                 fullItem.duration, "episode", showTitle,
                                 fullItem.parentIndex, fullItem.index,
@@ -2232,9 +2317,11 @@ void MediaDetailView::showSeasonContextMenuStatic(const MediaItem& season) {
                     }
                 }
             }
-            DownloadsManager::getInstance().startDownloads();
-            brls::sync([queued]() {
-                brls::Application::notify("Queued " + std::to_string(queued) + " unwatched episodes");
+            mgr.startDownloads();
+            brls::sync([queued, skipped]() {
+                std::string msg = "Queued " + std::to_string(queued) + " unwatched episodes";
+                if (skipped > 0) msg += " (" + std::to_string(skipped) + " already downloaded)";
+                brls::Application::notify(msg);
             });
         });
         return true;
@@ -2368,17 +2455,24 @@ void MediaDetailView::showArtistContextMenuStatic(const MediaItem& artist) {
         dialog->dismiss();
         asyncRun([capturedArtist]() {
             PlexClient& client = PlexClient::getInstance();
+            auto& mgr = DownloadsManager::getInstance();
             std::vector<MediaItem> albums;
             int queued = 0;
+            int skipped = 0;
 
             if (client.fetchChildren(capturedArtist.ratingKey, albums)) {
                 for (const auto& album : albums) {
                     std::vector<MediaItem> tracks;
                     if (client.fetchChildren(album.ratingKey, tracks)) {
                         for (const auto& track : tracks) {
+                            if (mgr.isDownloaded(track.ratingKey) ||
+                                mgr.getDownload(track.ratingKey) != nullptr) {
+                                skipped++;
+                                continue;
+                            }
                             MediaItem fullItem;
                             if (client.fetchMediaDetails(track.ratingKey, fullItem) && !fullItem.partPath.empty()) {
-                                if (DownloadsManager::getInstance().queueDownload(
+                                if (mgr.queueDownload(
                                     fullItem.ratingKey, fullItem.title, fullItem.partPath,
                                     fullItem.duration, "track",
                                     capturedArtist.title, 0, fullItem.index,
@@ -2394,9 +2488,11 @@ void MediaDetailView::showArtistContextMenuStatic(const MediaItem& artist) {
                 }
             }
 
-            DownloadsManager::getInstance().startDownloads();
-            brls::sync([queued]() {
-                brls::Application::notify("Queued " + std::to_string(queued) + " tracks");
+            mgr.startDownloads();
+            brls::sync([queued, skipped]() {
+                std::string msg = "Queued " + std::to_string(queued) + " tracks";
+                if (skipped > 0) msg += " (" + std::to_string(skipped) + " already downloaded)";
+                brls::Application::notify(msg);
             });
         });
         return true;

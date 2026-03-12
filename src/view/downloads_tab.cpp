@@ -347,6 +347,12 @@ void DownloadsTab::refresh() {
 void DownloadsTab::rebuildList() {
     auto downloads = DownloadsManager::getInstance().getDownloads();
 
+    // Invalidate all in-flight async image loads from previous rebuild cycle.
+    // This prevents use-after-free when old brls::Image* targets are destroyed
+    // below but their async callbacks haven't fired yet.
+    m_aliveAtomic->store(false);
+    m_aliveAtomic = std::make_shared<std::atomic<bool>>(true);
+
     // Clear existing items (except empty label which is always last)
     while (m_listContainer->getChildren().size() > 1) {
         m_listContainer->removeView(m_listContainer->getChildren()[0]);
@@ -686,6 +692,9 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
     auto items = DownloadsManager::getInstance().getDownloadsByGroup(groupType, groupKey);
     if (items.empty()) return;
 
+    // Separate alive flag for dialog images - invalidated when dialog closes
+    auto dialogAlive = std::make_shared<std::atomic<bool>>(true);
+
     auto* dialog = new brls::Dialog(groupTitle);
 
     auto* scrollView = new brls::ScrollingFrame();
@@ -728,7 +737,7 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
         } else if (!item.thumbUrl.empty()) {
             std::string thumbUrl = PlexClient::getInstance().getThumbnailUrl(item.thumbUrl, 80, 80);
             if (!thumbUrl.empty()) {
-                ImageLoader::loadAsync(thumbUrl, [](brls::Image*) {}, thumbImage, m_aliveAtomic);
+                ImageLoader::loadAsync(thumbUrl, [](brls::Image*) {}, thumbImage, dialogAlive);
             }
         }
         row->addView(thumbImage);
@@ -761,7 +770,8 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
     closeBtn->setText("Close");
     closeBtn->setHeight(40);
     closeBtn->setMarginTop(10);
-    closeBtn->registerClickAction([dialog](brls::View*) {
+    closeBtn->registerClickAction([dialog, dialogAlive](brls::View*) {
+        dialogAlive->store(false);  // Invalidate in-flight image loads
         dialog->dismiss();
         return true;
     });
