@@ -40,6 +40,8 @@ public:
     static void showShowContextMenuStatic(const MediaItem& show);
     static void showSeasonContextMenuStatic(const MediaItem& season);
     static void showArtistContextMenuStatic(const MediaItem& artist);
+    static void showAlbumContextMenuStatic(const MediaItem& album);
+    static void performTrackActionStatic(const MediaItem& track);
     void performTrackAction(const MediaItem& track, size_t trackIndex);  // Handle track default action
     void showTrackActionDialog(const MediaItem& track, size_t trackIndex);  // Ask user what to do
 

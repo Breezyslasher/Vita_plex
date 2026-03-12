@@ -640,6 +640,10 @@ void MusicTab::showAlbumContextMenu(const MediaItem& album) {
     });
 
     dialog->addView(optionsBox);
+    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
+        dialog->dismiss();
+        return true;
+    });
     brls::Application::pushActivity(new brls::Activity(dialog));
 }
 
@@ -795,6 +799,10 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
     });
 
     dialog->addView(optionsBox);
+    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
+        dialog->dismiss();
+        return true;
+    });
     brls::Application::pushActivity(new brls::Activity(dialog));
 }
 
