@@ -2358,6 +2358,10 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                         m_dragState.targetDisplayIdx = m_dragState.originalDisplayIdx;
                         m_dragState.dragStartY = status.position.y;
                         m_dragState.dragStartScrollY = queueScroll ? queueScroll->getContentOffsetY() : 0.0f;
+                        // Compute scroll view's absolute screen Y from the row's
+                        // known content position and its absolute screen position
+                        float rowContentY = m_dragState.originalDisplayIdx * ROW_HEIGHT_PX + 4.0f;
+                        m_dragState.scrollViewTop = row->getY() - rowContentY + m_dragState.dragStartScrollY;
                         // Visual feedback: elevate the dragged row
                         row->setBackgroundColor(nvgRGBA(90, 110, 220, 160));
                     }
@@ -2433,18 +2437,15 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     float maxScroll = contentHeight - scrollViewHeight;
                     if (maxScroll < 0) maxScroll = 0;
 
-                    float fingerInView = dragDelta + row->getY()
-                                         - m_dragState.dragStartScrollY;
+                    float fingerInView = status.position.y - m_dragState.scrollViewTop;
 
                     // DEBUG: log all auto-scroll values
-                    brls::Logger::debug("DRAG-AUTO: fingerY={:.0f} dragStartY={:.0f} dragDelta={:.0f} "
-                        "rowGetY={:.0f} dragStartScrollY={:.0f} scrollY={:.0f} "
+                    brls::Logger::debug("DRAG-AUTO: fingerY={:.0f} svTop={:.0f} "
                         "fingerInView={:.0f} scrollViewH={:.0f} edge={:.0f} "
-                        "origIdx={} target={} queueSize={}",
-                        status.position.y, m_dragState.dragStartY, dragDelta,
-                        row->getY(), m_dragState.dragStartScrollY, scrollY,
+                        "scrollY={:.0f} origIdx={} target={} queueSize={}",
+                        status.position.y, m_dragState.scrollViewTop,
                         fingerInView, scrollViewHeight, AUTO_SCROLL_EDGE,
-                        origIdx, newTarget, queueSize);
+                        scrollY, origIdx, newTarget, queueSize);
 
                     if (fingerInView > scrollViewHeight - AUTO_SCROLL_EDGE
                         && scrollY < maxScroll) {
