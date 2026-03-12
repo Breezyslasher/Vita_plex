@@ -2335,13 +2335,11 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     m_dragState.holdStart = std::chrono::steady_clock::now();
                     m_dragState.holdMet = false;
                     m_dragState.draggedRow = row;
-                    m_dragState.lastSwappedDisplay = findQueueRowDisplayIndex(row);
-                    m_dragState.swapCount = 0;
+                    m_dragState.originalDisplayIdx = findQueueRowDisplayIndex(row);
+                    m_dragState.targetDisplayIdx = m_dragState.originalDisplayIdx;
                     m_dragState.scrollPassthrough = true;
                     m_dragState.initialScrollY = queueScroll ? queueScroll->getContentOffsetY() : 0.0f;
                     m_dragState.dragStartY = 0.0f;
-                    // Capture the dragged track's queue index so multi-step swaps
-                    // always move the correct track (not the swapped-in data)
                     auto it = m_queueRowData.find(row);
                     m_dragState.draggedTrackIdx = (it != m_queueRowData.end()) ? it->second.trackIdx : -1;
                 }
@@ -2352,14 +2350,12 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     auto now = std::chrono::steady_clock::now();
                     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                         now - m_dragState.holdStart).count();
-                    // Transition to drag mode only if held long enough AND finger
-                    // hasn't moved far (if they moved a lot, they're scrolling)
                     if (elapsed >= HOLD_THRESHOLD_MS && std::abs(deltaY) < ROW_HEIGHT_PX * 0.5f) {
                         m_dragState.holdMet = true;
                         m_dragState.active = true;
                         m_dragState.scrollPassthrough = false;
-                        m_dragState.lastSwappedDisplay = findQueueRowDisplayIndex(row);
-                        m_dragState.swapCount = 0;
+                        m_dragState.originalDisplayIdx = findQueueRowDisplayIndex(row);
+                        m_dragState.targetDisplayIdx = m_dragState.originalDisplayIdx;
                         m_dragState.dragStartY = status.position.y;
                         // Visual feedback: elevate the dragged row
                         row->setBackgroundColor(nvgRGBA(90, 110, 220, 160));
@@ -2367,9 +2363,6 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 }
 
                 if (m_dragState.scrollPassthrough) {
-                    // Hold not met - forward the gesture as scroll
-                    // Programmatically scroll the ScrollingFrame since this gesture
-                    // intercepted the touch that would normally scroll it
                     if (queueScroll) {
                         float newOffset = m_dragState.initialScrollY - deltaY;
                         if (newOffset < 0) newOffset = 0;
@@ -2380,60 +2373,85 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
 
                 if (!m_dragState.holdMet) return;
 
-                // -- Drag mode: row follows finger in real time --
-                // Calculate delta from when drag mode activated (not from touch start)
+                // -- Drag mode: dragged row follows finger --
                 float dragDelta = status.position.y - m_dragState.dragStartY;
-                // Offset by swap count so the row stays glued to the finger
-                float visualDelta = dragDelta - (float)m_dragState.swapCount * ROW_HEIGHT_PX;
-                row->setTranslationY(visualDelta);
+                row->setTranslationY(dragDelta);
 
-                // Live reorder: check if finger has crossed a row boundary
-                int logicalPos = m_dragState.lastSwappedDisplay;
-                if (logicalPos < 0 || m_dragState.draggedTrackIdx < 0) return;
+                // Calculate which display position the finger is over
+                int origIdx = m_dragState.originalDisplayIdx;
+                if (origIdx < 0 || m_dragState.draggedTrackIdx < 0) return;
 
-                float threshold = ROW_HEIGHT_PX * 0.6f;
                 MusicQueue& queue = MusicQueue::getInstance();
-                bool isShuffled = queue.isShuffleEnabled();
-                const auto& sOrder = queue.getShuffleOrder();
                 int queueSize = queue.getQueueSize();
 
-                // Use the visual delta to decide when to swap - this way
-                // each swap triggers at a consistent finger distance.
-                // Use draggedTrackIdx (tracked separately) so multi-position
-                // drags always move the correct track.
-                if (visualDelta < -threshold && logicalPos > 0) {
-                    // Moving up
-                    int targetDisplay = logicalPos - 1;
-                    int toTrackIdx = (isShuffled && targetDisplay < (int)sOrder.size())
-                                ? sOrder[targetDisplay] : targetDisplay;
-                    queue.moveTrack(m_dragState.draggedTrackIdx, toTrackIdx);
-                    m_dragState.draggedTrackIdx = toTrackIdx;
-                    swapQueueRows(logicalPos, targetDisplay);
-                    m_dragState.lastSwappedDisplay = targetDisplay;
-                    m_dragState.swapCount--;
-                    renumberQueueRows();
-                } else if (visualDelta > threshold && logicalPos < queueSize - 1) {
-                    // Moving down
-                    int targetDisplay = logicalPos + 1;
-                    int toTrackIdx = (isShuffled && targetDisplay < (int)sOrder.size())
-                                ? sOrder[targetDisplay] : targetDisplay;
-                    queue.moveTrack(m_dragState.draggedTrackIdx, toTrackIdx);
-                    m_dragState.draggedTrackIdx = toTrackIdx;
-                    swapQueueRows(logicalPos, targetDisplay);
-                    m_dragState.lastSwappedDisplay = targetDisplay;
-                    m_dragState.swapCount++;
-                    renumberQueueRows();
+                // Determine target position based on how many rows the finger crossed
+                int rowsOffset = 0;
+                if (dragDelta > ROW_HEIGHT_PX * 0.5f) {
+                    rowsOffset = (int)((dragDelta + ROW_HEIGHT_PX * 0.5f) / ROW_HEIGHT_PX);
+                } else if (dragDelta < -ROW_HEIGHT_PX * 0.5f) {
+                    rowsOffset = -(int)((-dragDelta + ROW_HEIGHT_PX * 0.5f) / ROW_HEIGHT_PX);
+                }
+                int newTarget = origIdx + rowsOffset;
+                if (newTarget < 0) newTarget = 0;
+                if (newTarget >= queueSize) newTarget = queueSize - 1;
+                m_dragState.targetDisplayIdx = newTarget;
+
+                // Shift displaced rows visually (no data changes yet)
+                if (!queueList) return;
+                auto& children = queueList->getChildren();
+                for (int i = 0; i < (int)children.size(); i++) {
+                    if (i == origIdx) continue; // dragged row handled above
+                    float shift = 0.0f;
+                    if (newTarget > origIdx) {
+                        // Dragging down: rows between (origIdx, newTarget] shift up
+                        if (i > origIdx && i <= newTarget) {
+                            shift = -ROW_HEIGHT_PX;
+                        }
+                    } else if (newTarget < origIdx) {
+                        // Dragging up: rows between [newTarget, origIdx) shift down
+                        if (i >= newTarget && i < origIdx) {
+                            shift = ROW_HEIGHT_PX;
+                        }
+                    }
+                    children[i]->setTranslationY(shift);
                 }
             } else if (status.state == brls::GestureState::END) {
-                row->setTranslationY(0);
-
                 // Suppress tap/click that fires right after drag ends
-                // so the queue overlay doesn't close from playFromQueue
                 if (m_dragState.holdMet) {
                     m_dragState.justEnded = true;
                 }
 
-                // Restore proper background
+                // Reset all visual translations
+                if (queueList) {
+                    auto& children = queueList->getChildren();
+                    for (auto* child : children) {
+                        child->setTranslationY(0);
+                    }
+                }
+
+                // Perform the actual queue reorder now
+                int origIdx = m_dragState.originalDisplayIdx;
+                int targetIdx = m_dragState.targetDisplayIdx;
+                if (m_dragState.holdMet && origIdx >= 0 && targetIdx >= 0 &&
+                    origIdx != targetIdx && m_dragState.draggedTrackIdx >= 0) {
+                    MusicQueue& queue = MusicQueue::getInstance();
+                    bool isShuffled = queue.isShuffleEnabled();
+                    const auto& sOrder = queue.getShuffleOrder();
+
+                    int toTrackIdx = (isShuffled && targetIdx < (int)sOrder.size())
+                                ? sOrder[targetIdx] : targetIdx;
+                    queue.moveTrack(m_dragState.draggedTrackIdx, toTrackIdx);
+
+                    // Move the visual row data to match: swap the dragged row
+                    // step by step from origIdx to targetIdx
+                    int step = (targetIdx > origIdx) ? 1 : -1;
+                    for (int i = origIdx; i != targetIdx; i += step) {
+                        swapQueueRows(i, i + step);
+                    }
+                    renumberQueueRows();
+                }
+
+                // Restore proper background for dragged row
                 auto it = m_queueRowData.find(row);
                 if (it != m_queueRowData.end()) {
                     MusicQueue& queue = MusicQueue::getInstance();
@@ -2446,27 +2464,31 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     row->setBackgroundColor(nvgRGBA(255, 255, 255, 8));
                 }
 
-                // Renumber all rows to ensure consistency
-                renumberQueueRows();
                 if (queueList) queueList->invalidate();
 
                 // Reset drag state
                 m_dragState.active = false;
                 m_dragState.draggedRow = nullptr;
                 m_dragState.holdMet = false;
-                m_dragState.lastSwappedDisplay = -1;
-                m_dragState.swapCount = 0;
+                m_dragState.originalDisplayIdx = -1;
+                m_dragState.targetDisplayIdx = -1;
                 m_dragState.draggedTrackIdx = -1;
                 m_dragState.scrollPassthrough = false;
             } else if (status.state == brls::GestureState::FAILED) {
-                row->setTranslationY(0);
-
                 // Suppress tap/click that fires right after drag ends
                 if (m_dragState.holdMet) {
                     m_dragState.justEnded = true;
                 }
 
-                // Restore background color (may have been changed during drag)
+                // Reset all visual translations
+                if (queueList) {
+                    auto& children = queueList->getChildren();
+                    for (auto* child : children) {
+                        child->setTranslationY(0);
+                    }
+                }
+
+                // Restore background color
                 auto it = m_queueRowData.find(row);
                 if (it != m_queueRowData.end()) {
                     MusicQueue& queue = MusicQueue::getInstance();
@@ -2481,8 +2503,8 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 m_dragState.active = false;
                 m_dragState.draggedRow = nullptr;
                 m_dragState.holdMet = false;
-                m_dragState.lastSwappedDisplay = -1;
-                m_dragState.swapCount = 0;
+                m_dragState.originalDisplayIdx = -1;
+                m_dragState.targetDisplayIdx = -1;
                 m_dragState.draggedTrackIdx = -1;
                 m_dragState.scrollPassthrough = false;
             }
