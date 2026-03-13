@@ -438,6 +438,7 @@ void MusicQueue::onTrackEnded() {
 }
 
 void MusicQueue::notifyQueueChanged() {
+    ++m_version;
     if (m_queueChangedCallback) {
         m_queueChangedCallback();
     }

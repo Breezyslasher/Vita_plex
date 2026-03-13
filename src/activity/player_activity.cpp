@@ -2118,7 +2118,32 @@ void PlayerActivity::showQueueOverlay() {
     }
 
     m_queueOverlayVisible = true;
-    populateQueueList();
+
+    // Only rebuild the queue list if the queue has actually changed since we
+    // last populated it.  Otherwise reuse the cached rows for instant reopen.
+    MusicQueue& showQueue = MusicQueue::getInstance();
+    uint32_t currentVersion = showQueue.getVersion();
+    if (m_cachedQueueVersion == 0 || m_cachedQueueVersion != currentVersion ||
+        !queueList || queueList->getChildren().empty()) {
+        populateQueueList();
+    } else {
+        // Rows are cached - just update the current-track highlight
+        int currentIdx = showQueue.getCurrentIndex();
+        for (auto& pair : m_queueRowData) {
+            brls::Box* row = static_cast<brls::Box*>(pair.first);
+            bool isCurrent = (pair.second.trackIdx == currentIdx);
+            if (isCurrent) {
+                row->setBackgroundColor(nvgRGBA(70, 90, 210, 150));
+                row->setBorderColor(nvgRGBA(120, 160, 255, 200));
+                row->setBorderThickness(1.5f);
+            } else {
+                row->setBackgroundColor(nvgRGBA(255, 255, 255, 8));
+                row->setBorderColor(nvgRGBA(0, 0, 0, 0));
+                row->setBorderThickness(0);
+            }
+        }
+        updateQueueTitle();
+    }
 
     if (queueOverlay) {
         queueOverlay->setVisibility(brls::Visibility::VISIBLE);
@@ -2143,6 +2168,7 @@ void PlayerActivity::showQueueOverlay() {
                         queue.moveTrack(fromIdx, toIdx);
                         swapQueueRows(i, i - 1);
                         renumberQueueRows();
+                        m_cachedQueueVersion = queue.getVersion();
                         // Give focus to the moved row at its new position
                         if (i - 1 >= 0 && i - 1 < (int)queueList->getChildren().size()) {
                             brls::Application::giveFocus(queueList->getChildren()[i - 1]);
@@ -2170,6 +2196,7 @@ void PlayerActivity::showQueueOverlay() {
                         queue.moveTrack(fromIdx, toIdx);
                         swapQueueRows(i, i + 1);
                         renumberQueueRows();
+                        m_cachedQueueVersion = queue.getVersion();
                         // Give focus to the moved row at its new position
                         if (i + 1 < (int)queueList->getChildren().size()) {
                             brls::Application::giveFocus(queueList->getChildren()[i + 1]);
@@ -2542,6 +2569,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                         swapQueueRows(i, i + step);
                     }
                     renumberQueueRows();
+                    m_cachedQueueVersion = queue.getVersion();
                 }
 
                 // Restore proper background for dragged row
@@ -2682,6 +2710,9 @@ void PlayerActivity::populateQueueList() {
     m_deferredThumbs.reserve(tracks.size());
 
     int count = (int)tracks.size();
+
+    // Update cached version so reopening the overlay can skip the rebuild
+    m_cachedQueueVersion = queue.getVersion();
 
     // For small queues, create all rows immediately (no batching needed)
     if (count <= QUEUE_BATCH_SIZE) {
@@ -3080,8 +3111,9 @@ void PlayerActivity::removeQueueRow(int displayIdx) {
         }
     }
 
-    // Update title
+    // Update title and sync cached version (rows were updated in-place)
     updateQueueTitle();
+    m_cachedQueueVersion = queue.getVersion();
     queueList->invalidate();
 }
 

@@ -82,6 +82,7 @@ private:
     void playFromQueue(int index);  // Play a specific track from queue list
     bool m_queueOverlayVisible = false;
     bool m_queuePopulating = false;     // Guard against re-entrant populateQueueList
+    uint32_t m_cachedQueueVersion = 0; // Queue version when rows were last built (0 = never)
 
     // Batched queue population - creates rows across multiple frames to avoid UI freeze
     static constexpr int QUEUE_BATCH_SIZE = 12;  // Rows to create per frame (keep low for Vita perf)
