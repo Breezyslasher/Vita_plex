@@ -212,14 +212,18 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
 
     rightBox->addView(metaBox);
 
-    // Summary (collapsible - shows 2 lines by default, L to expand)
-    m_summaryLabel = new brls::Label();
-    m_summaryLabel->setFontSize(16);
-    m_summaryLabel->setMarginBottom(20);
+    // Summary (collapsible - shows preview by default, L to expand with scroll)
+    m_fullDescription = m_item.summary;
+    m_descriptionExpanded = false;
 
-    if (!m_item.summary.empty()) {
-        m_fullDescription = m_item.summary;
-        m_descriptionExpanded = false;
+    if (!m_fullDescription.empty()) {
+        // Container box for the description area
+        m_summaryContainer = new brls::Box();
+        m_summaryContainer->setAxis(brls::Axis::COLUMN);
+        m_summaryContainer->setMarginBottom(20);
+
+        m_summaryLabel = new brls::Label();
+        m_summaryLabel->setFontSize(16);
 
         // Show first ~80 chars (approximately 2 lines) when collapsed
         std::string truncatedDesc = m_fullDescription;
@@ -227,25 +231,24 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             truncatedDesc = truncatedDesc.substr(0, 77) + "... [L]";
         }
         m_summaryLabel->setText(truncatedDesc);
-    } else {
-        m_fullDescription = "";
-        m_summaryLabel->setText("");
+
+        m_summaryContainer->addView(m_summaryLabel);
+        rightBox->addView(m_summaryContainer);
+
+        // Register L trigger for description toggle
+        this->registerAction("Summary", brls::ControllerButton::BUTTON_LB, [this](brls::View* view) {
+            toggleDescription();
+            return true;
+        });
+
+        // Make summary tappable for touch (tap to expand/collapse)
+        m_summaryLabel->setFocusable(true);
+        m_summaryLabel->registerClickAction([this](brls::View* view) {
+            toggleDescription();
+            return true;
+        });
+        m_summaryLabel->addGestureRecognizer(new brls::TapGestureRecognizer(m_summaryLabel));
     }
-    rightBox->addView(m_summaryLabel);
-
-    // Register L trigger for description toggle
-    this->registerAction("Summary", brls::ControllerButton::BUTTON_LB, [this](brls::View* view) {
-        toggleDescription();
-        return true;
-    });
-
-    // Make summary tappable for touch (tap to expand/collapse)
-    m_summaryLabel->setFocusable(true);
-    m_summaryLabel->registerClickAction([this](brls::View* view) {
-        toggleDescription();
-        return true;
-    });
-    m_summaryLabel->addGestureRecognizer(new brls::TapGestureRecognizer(m_summaryLabel));
 
     topRow->addView(rightBox);
     m_mainContent->addView(topRow);
@@ -2856,23 +2859,45 @@ void MediaDetailView::performTrackActionStatic(const MediaItem& track) {
 }
 
 void MediaDetailView::toggleDescription() {
-    if (!m_summaryLabel || m_fullDescription.empty()) return;
+    if (!m_summaryLabel || !m_summaryContainer || m_fullDescription.empty()) return;
 
     m_descriptionExpanded = !m_descriptionExpanded;
 
     if (m_descriptionExpanded) {
-        // Expand inline: show full text, set max height so it scrolls within the page
-        m_summaryLabel->setText(m_fullDescription + "\n\n[L] Collapse");
-        // Allow the label to grow tall - the parent ScrollingFrame handles scrolling
-        m_summaryLabel->setMarginBottom(20);
+        // Remove the label from the container temporarily
+        m_summaryContainer->removeView(m_summaryLabel, false);
+
+        // Remove old scroll frame if it exists
+        if (m_summaryScroll) {
+            m_summaryContainer->removeView(m_summaryScroll);
+            m_summaryScroll = nullptr;
+        }
+
+        // Create a scroll frame for the expanded description with its own scrolling
+        m_summaryScroll = new brls::ScrollingFrame();
+        m_summaryScroll->setHeight(200);
+
+        // Create a new label for the full description inside the scroll frame
+        auto* expandedLabel = new brls::Label();
+        expandedLabel->setFontSize(16);
+        expandedLabel->setText(m_fullDescription + "\n\n[L] Collapse");
+
+        m_summaryScroll->setContentView(expandedLabel);
+        m_summaryContainer->addView(m_summaryScroll);
     } else {
+        // Remove the scroll frame
+        if (m_summaryScroll) {
+            m_summaryContainer->removeView(m_summaryScroll);
+            m_summaryScroll = nullptr;
+        }
+
         // Collapse back to truncated preview
         std::string truncatedDesc = m_fullDescription;
         if (truncatedDesc.length() > 80) {
             truncatedDesc = truncatedDesc.substr(0, 77) + "... [L]";
         }
         m_summaryLabel->setText(truncatedDesc);
-        m_summaryLabel->setMarginBottom(20);
+        m_summaryContainer->addView(m_summaryLabel);
     }
 }
 

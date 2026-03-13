@@ -74,6 +74,8 @@ public:
     // Collapsible description
     bool m_descriptionExpanded = false;
     std::string m_fullDescription;
+    brls::Box* m_summaryContainer = nullptr;           // Container for summary label
+    brls::ScrollingFrame* m_summaryScroll = nullptr;   // Scroll frame for expanded description
 
     // Music category rows for artists
     brls::Box* m_musicCategoriesBox = nullptr;
