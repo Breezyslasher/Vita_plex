@@ -225,6 +225,22 @@ void SettingsTab::createContentDisplaySection() {
     });
     m_contentBox->addView(m_genresToggle);
 
+    // Hide titles toggle
+    m_hideTitlesToggle = new brls::BooleanCell();
+    m_hideTitlesToggle->init("Hide Movie/Show Titles", settings.hideTitlesInGrid, [&settings](bool value) {
+        settings.hideTitlesInGrid = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_hideTitlesToggle);
+
+    // Skip single season toggle
+    m_skipSingleSeasonToggle = new brls::BooleanCell();
+    m_skipSingleSeasonToggle->init("Skip Season for Single-Season Shows", settings.skipSingleSeason, [&settings](bool value) {
+        settings.skipSingleSeason = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(m_skipSingleSeasonToggle);
+
     // Info label
     auto* contentInfoLabel = new brls::Label();
     contentInfoLabel->setText("Hides empty sections automatically");

@@ -254,32 +254,32 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     if (m_item.mediaType == MediaType::SHOW ||
         m_item.mediaType == MediaType::SEASON) {
 
-        auto* childrenLabel = new brls::Label();
+        m_childrenLabel = new brls::Label();
         if (m_item.mediaType == MediaType::SHOW) {
-            childrenLabel->setText("Seasons");
+            m_childrenLabel->setText("Seasons");
         } else {
-            childrenLabel->setText("Episodes");
+            m_childrenLabel->setText("Episodes");
         }
-        childrenLabel->setFontSize(20);
-        childrenLabel->setMarginBottom(10);
-        m_mainContent->addView(childrenLabel);
+        m_childrenLabel->setFontSize(20);
+        m_childrenLabel->setMarginBottom(10);
+        m_mainContent->addView(m_childrenLabel);
 
-        auto* childrenScroll = new brls::HScrollingFrame();
+        m_childrenScroll = new brls::HScrollingFrame();
         // Episodes use landscape cells (~150x125), seasons use portrait (~120x200)
-        childrenScroll->setHeight(m_item.mediaType == MediaType::SEASON ? 135 : 210);
-        childrenScroll->setMarginBottom(20);
+        m_childrenScroll->setHeight(m_item.mediaType == MediaType::SEASON ? 135 : 210);
+        m_childrenScroll->setMarginBottom(20);
 
         m_childrenBox = new brls::Box();
         m_childrenBox->setAxis(brls::Axis::ROW);
         m_childrenBox->setJustifyContent(brls::JustifyContent::FLEX_START);
 
-        childrenScroll->setContentView(m_childrenBox);
-        m_mainContent->addView(childrenScroll);
+        m_childrenScroll->setContentView(m_childrenBox);
+        m_mainContent->addView(m_childrenScroll);
     }
 
-    // Extras container (trailers, featurettes, etc.) for movies and episodes
+    // Extras container (trailers, featurettes, etc.) for movies and shows
     if (m_item.mediaType == MediaType::MOVIE ||
-        m_item.mediaType == MediaType::EPISODE) {
+        m_item.mediaType == MediaType::SHOW) {
 
         m_extrasLabel = new brls::Label();
         m_extrasLabel->setText("Extras");
@@ -480,9 +480,9 @@ void MediaDetailView::loadDetails() {
                 loadTrackList();
             } else {
                 loadChildren();
-                // Load extras (trailers, featurettes) for movies and episodes
+                // Load extras (trailers, featurettes) for movies and shows
                 if (m_item.mediaType == MediaType::MOVIE ||
-                    m_item.mediaType == MediaType::EPISODE) {
+                    m_item.mediaType == MediaType::SHOW) {
                     loadExtras();
                 }
             }
@@ -496,6 +496,41 @@ void MediaDetailView::loadChildren() {
     PlexClient& client = PlexClient::getInstance();
 
     if (client.fetchChildren(m_item.ratingKey, m_children)) {
+        // Skip single season: if show has exactly one season and setting is enabled,
+        // fetch episodes directly and display them instead of the season
+        AppSettings& settings = Application::getInstance().getSettings();
+        if (m_item.mediaType == MediaType::SHOW &&
+            settings.skipSingleSeason &&
+            m_children.size() == 1 &&
+            m_children[0].mediaType == MediaType::SEASON) {
+
+            MediaItem singleSeason = m_children[0];
+            std::vector<MediaItem> episodes;
+            if (client.fetchChildren(singleSeason.ratingKey, episodes) && !episodes.empty()) {
+                m_children = episodes;
+
+                // Update label and scroll height for episodes
+                if (m_childrenLabel) m_childrenLabel->setText("Episodes");
+                if (m_childrenScroll) m_childrenScroll->setHeight(135);
+
+                m_childrenBox->clearViews();
+                for (const auto& child : m_children) {
+                    auto* cell = new MediaItemCell();
+                    cell->setItem(child);
+                    cell->setMarginRight(10);
+
+                    cell->registerClickAction([child](brls::View* view) {
+                        Application::getInstance().pushPlayerActivity(child.ratingKey);
+                        return true;
+                    });
+                    cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+
+                    m_childrenBox->addView(cell);
+                }
+                return;
+            }
+        }
+
         m_childrenBox->clearViews();
 
         for (const auto& child : m_children) {

@@ -65,6 +65,8 @@ public:
     brls::Button* m_resumeButton = nullptr;
     brls::Button* m_downloadButton = nullptr;
     brls::Box* m_childrenBox = nullptr;
+    brls::Label* m_childrenLabel = nullptr;
+    brls::HScrollingFrame* m_childrenScroll = nullptr;
 
     // Track list for albums (vertical list with its own nested scroll)
     brls::Box* m_trackListBox = nullptr;

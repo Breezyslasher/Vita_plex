@@ -4,6 +4,7 @@
 
 #include "view/media_item_cell.hpp"
 #include "app/plex_client.hpp"
+#include "app/application.hpp"
 #include "utils/image_loader.hpp"
 
 namespace vitaplex {
@@ -135,6 +136,11 @@ void MediaItemCell::setItem(const MediaItem& item) {
         }
         m_originalTitle = title;  // Store truncated title for focus restore
         m_titleLabel->setText(title);
+
+        // Hide titles for movies and shows if setting is enabled
+        bool hideTitle = Application::getInstance().getSettings().hideTitlesInGrid &&
+            (item.mediaType == MediaType::MOVIE || item.mediaType == MediaType::SHOW);
+        m_titleLabel->setVisibility(hideTitle ? brls::Visibility::GONE : brls::Visibility::VISIBLE);
     }
 
     // Set subtitle for episodes
