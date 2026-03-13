@@ -141,10 +141,21 @@ void PlayerActivity::onContentAvailable() {
 
     // If music is currently playing in the background and we're starting
     // a non-queue playback (video/episode), stop the music first.
+    // Send a "stopped" timeline so the server clears the music session.
     if (!m_isQueueMode) {
         MusicQueue& existingQueue = MusicQueue::getInstance();
         if (!existingQueue.isEmpty()) {
             brls::Logger::info("PlayerActivity: Stopping background music for video playback");
+
+            // Report stopped timeline for the current music track
+            const QueueItem* track = existingQueue.getCurrentTrack();
+            if (track && !track->ratingKey.empty()) {
+                std::string key = "/library/metadata/" + track->ratingKey;
+                int pqItemID = track->playQueueItemID;
+                PlexClient::getInstance().reportTimeline(
+                    track->ratingKey, key, "stopped", 0, track->duration * 1000, pqItemID);
+            }
+
             MpvPlayer::getInstance().stop();
             existingQueue.clear();
         }
