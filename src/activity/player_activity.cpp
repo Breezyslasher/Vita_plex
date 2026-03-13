@@ -2575,14 +2575,6 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     m_dragState.justEnded = true;
                 }
 
-                // Reset all visual translations
-                if (queueList) {
-                    auto& children = queueList->getChildren();
-                    for (auto* child : children) {
-                        child->setTranslationY(0);
-                    }
-                }
-
                 // Perform the actual queue reorder now
                 int origIdx = m_dragState.originalDisplayIdx;
                 int targetIdx = m_dragState.targetDisplayIdx;
@@ -2598,11 +2590,22 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                         origIdx, targetIdx, m_dragState.draggedTrackIdx, toTrackIdx, isShuffled);
                     queue.moveTrack(m_dragState.draggedTrackIdx, toTrackIdx);
 
-                    // Move the row widget via borealis API (triggers proper
-                    // layout recalc) and update metadata for affected range.
+                    // The displaced rows are already visually in their new
+                    // positions (shifted by setTranslationY during the drag).
+                    // Commit that order into the layout via removeView/addView,
+                    // then clear translations. Since layout and translation
+                    // reset happen in the same frame, there's no visible snap.
                     reassignQueueRange(origIdx, targetIdx);
                     renumberQueueRows();
                     m_cachedQueueVersion = queue.getVersion();
+                }
+
+                // Clear translations after layout is committed - the views
+                // are now at their correct layout positions
+                if (queueList) {
+                    for (auto* child : queueList->getChildren()) {
+                        child->setTranslationY(0);
+                    }
                 }
 
                 // Reset drag state
