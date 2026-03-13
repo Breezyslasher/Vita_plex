@@ -2598,27 +2598,12 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                         origIdx, targetIdx, m_dragState.draggedTrackIdx, toTrackIdx, isShuffled);
                     queue.moveTrack(m_dragState.draggedTrackIdx, toTrackIdx);
 
-                    // Bulk-reassign the affected row range in a single pass
-                    // instead of O(n) swap chain (which took seconds on Vita).
+                    // Move the row widget via borealis API (triggers proper
+                    // layout recalc) and update metadata for affected range.
                     reassignQueueRange(origIdx, targetIdx);
                     renumberQueueRows();
                     m_cachedQueueVersion = queue.getVersion();
                 }
-
-                // Restore proper background for dragged row
-                auto it = m_queueRowData.find(row);
-                if (it != m_queueRowData.end()) {
-                    MusicQueue& queue = MusicQueue::getInstance();
-                    if (it->second.trackIdx == queue.getCurrentIndex()) {
-                        row->setBackgroundColor(nvgRGBA(70, 90, 210, 150));
-                    } else {
-                        row->setBackgroundColor(nvgRGBA(255, 255, 255, 8));
-                    }
-                } else {
-                    row->setBackgroundColor(nvgRGBA(255, 255, 255, 8));
-                }
-
-                if (queueList) queueList->invalidate();
 
                 // Reset drag state
                 m_dragState.active = false;
@@ -3149,22 +3134,20 @@ void PlayerActivity::reassignQueueRange(int origIdx, int targetIdx) {
     bool shuffled = queue.isShuffleEnabled();
     const auto& shuffleOrder = queue.getShuffleOrder();
 
-    // Rotate the view pointers in the children vector so each row widget
-    // (with its already-loaded cover texture) moves to its new position.
-    // No thumbnail re-fetch needed - the GPU textures travel with the widget.
-    if (origIdx < targetIdx) {
-        // Moving down: rotate [orig, target+1) left by 1
-        std::rotate(children.begin() + origIdx,
-                     children.begin() + origIdx + 1,
-                     children.begin() + targetIdx + 1);
-    } else {
-        // Moving up: rotate [target, orig+1) right by 1
-        std::rotate(children.begin() + targetIdx,
-                     children.begin() + origIdx,
-                     children.begin() + origIdx + 1);
-    }
+    // Move the dragged row widget using borealis's own API so the Yoga
+    // layout engine properly recalculates positions. The widget keeps
+    // its loaded cover texture - no re-fetch needed.
+    brls::View* draggedView = children[origIdx];
+    queueList->removeView(draggedView, false);  // detach without deleting
+    // After removal, indices above origIdx shift down by 1.
+    // To land at the correct final position we must adjust:
+    // Moving down (orig < target): target was shifted down, so insert at target
+    //   (the gap closes above, target-1 is now correct but addView inserts
+    //    BEFORE the element at that index, so we still use target)
+    // Moving up (orig > target): nothing above target shifted, insert at target
+    queueList->addView(draggedView, (size_t)targetIdx);
 
-    // Also rotate the deferred thumbnails to stay in sync with children
+    // Rotate the deferred thumbnails to stay in sync with children order
     int rangeStart = std::min(origIdx, targetIdx);
     int rangeEnd = std::max(origIdx, targetIdx);
     if (rangeEnd < (int)m_deferredThumbs.size()) {
@@ -3179,28 +3162,22 @@ void PlayerActivity::reassignQueueRange(int origIdx, int targetIdx) {
         }
     }
 
-    // Now update lightweight metadata for each row in the affected range:
-    // QueueRowData (trackIdx, title) and background/border colors.
-    // The actual view content (cover, title text, artist, duration) already
-    // moved with the widget - we only need to fix the metadata mapping
-    // and update which row has the "current track" highlight.
-    for (int di = rangeStart; di <= rangeEnd && di < childCount; di++) {
+    // Update lightweight metadata for each row in the affected range:
+    // QueueRowData trackIdx and current-track highlight colors.
+    // The view content (cover, title text, artist, duration) moved with
+    // the widget - we only fix the metadata mapping.
+    for (int di = rangeStart; di <= rangeEnd && di < (int)children.size(); di++) {
         brls::Box* rowBox = (brls::Box*)children[di];
 
-        // Determine which track this display position should now show
         int queueDisplayIdx = di + m_queueWindowStart;
         int trackIdx = (shuffled && queueDisplayIdx < (int)shuffleOrder.size())
                         ? shuffleOrder[queueDisplayIdx] : queueDisplayIdx;
 
-        // Update QueueRowData to point to the correct track
         auto it = m_queueRowData.find(rowBox);
         if (it != m_queueRowData.end()) {
             it->second.trackIdx = trackIdx;
-            // title stays cached from the row's original creation - it's still correct
-            // since the widget moved with its content
         }
 
-        // Update current-track highlight (only thing that changes visually)
         bool isCurr = (trackIdx == currentTrackIdx);
         if (isCurr) {
             rowBox->setBackgroundColor(nvgRGBA(70, 90, 210, 150));
@@ -3213,8 +3190,7 @@ void PlayerActivity::reassignQueueRange(int origIdx, int targetIdx) {
         }
     }
 
-    queueList->invalidate();
-    brls::Logger::debug("Drag: rotated rows {} -> {} (no re-fetch)", origIdx, targetIdx);
+    brls::Logger::debug("Drag: moved row {} -> {} via removeView/addView (no re-fetch)", origIdx, targetIdx);
 }
 
 void PlayerActivity::renumberQueueRows() {
