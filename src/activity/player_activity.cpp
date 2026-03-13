@@ -139,6 +139,17 @@ void PlayerActivity::onContentAvailable() {
     // right before MPV starts streaming.
     ImageLoader::cancelAll();
 
+    // If music is currently playing in the background and we're starting
+    // a non-queue playback (video/episode), stop the music first.
+    if (!m_isQueueMode) {
+        MusicQueue& existingQueue = MusicQueue::getInstance();
+        if (!existingQueue.isEmpty()) {
+            brls::Logger::info("PlayerActivity: Stopping background music for video playback");
+            MpvPlayer::getInstance().stop();
+            existingQueue.clear();
+        }
+    }
+
     // Load media details
     if (m_isQueueMode) {
         loadFromQueue();
