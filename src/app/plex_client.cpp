@@ -624,6 +624,7 @@ bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<
         item.viewOffset = extractJsonInt(obj, "viewOffset");
         item.rating = extractJsonFloat(obj, "rating");
         item.contentRating = extractJsonValue(obj, "contentRating");
+        item.subtype = extractJsonValue(obj, "subtype");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
             items.push_back(item);

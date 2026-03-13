@@ -607,6 +607,9 @@ void MediaDetailView::loadExtras() {
             }
 
             brls::Logger::info("Loaded {} extras into UI", extras.size());
+
+            // Re-run focus setup so extras get proper UP/DOWN navigation
+            setupChildrenFocusTransfer();
         });
     });
 }
@@ -640,61 +643,41 @@ void MediaDetailView::loadMusicCategories() {
         if (useHubs && !hubs.empty()) {
             brls::Logger::info("Artist hubs: {} categories", hubs.size());
 
-            // Collect all album items from hubs, then group by subtype
-            std::vector<MediaItem> allAlbumItems;
+            // Filter hubs to only album hubs (skip track hubs like "Most Popular Tracks")
+            std::vector<Hub> albumHubs;
             for (const auto& hub : hubs) {
+                bool hasAlbums = false;
                 for (const auto& item : hub.items) {
                     if (item.mediaType == MediaType::MUSIC_ALBUM) {
-                        allAlbumItems.push_back(item);
+                        hasAlbums = true;
+                        break;
                     }
                 }
-            }
-
-            brls::Logger::info("Artist hubs: {} total album items to group by subtype", allAlbumItems.size());
-
-            // Group items by subtype
-            std::vector<MediaItem> albums;
-            std::vector<MediaItem> singles;
-            std::vector<MediaItem> eps;
-            std::vector<MediaItem> compilations;
-            std::vector<MediaItem> soundtracks;
-            std::vector<MediaItem> live;
-            std::vector<MediaItem> other;
-
-            for (const auto& item : allAlbumItems) {
-                std::string subtype = item.subtype;
-                for (char& c : subtype) c = tolower(c);
-
-                if (subtype == "single") {
-                    singles.push_back(item);
-                } else if (subtype == "ep") {
-                    eps.push_back(item);
-                } else if (subtype == "compilation") {
-                    compilations.push_back(item);
-                } else if (subtype == "soundtrack") {
-                    soundtracks.push_back(item);
-                } else if (subtype == "live") {
-                    live.push_back(item);
-                } else if (subtype == "album" || subtype.empty()) {
-                    albums.push_back(item);
-                } else {
-                    other.push_back(item);
+                if (hasAlbums) {
+                    albumHubs.push_back(hub);
                 }
             }
 
-            brls::Logger::info("Grouped: {} albums, {} singles, {} EPs, {} compilations, {} soundtracks, {} live, {} other",
-                albums.size(), singles.size(), eps.size(), compilations.size(), soundtracks.size(), live.size(), other.size());
+            brls::Logger::info("Artist hubs: {} album categories from {} total hubs", albumHubs.size(), hubs.size());
 
-            brls::sync([this, albums, singles, eps, compilations, soundtracks, live, other, musicVideos]() {
+            brls::sync([this, albumHubs, musicVideos]() {
                 m_musicCategoriesBox->clearViews();
 
-                auto addCategory = [this](const std::string& title, const std::vector<MediaItem>& items) {
-                    if (items.empty()) return;
+                // Use hub titles directly as category names (the Plex API
+                // already groups albums by type: "Albums", "Singles & EPs", etc.)
+                for (const auto& hub : albumHubs) {
+                    std::vector<MediaItem> albumItems;
+                    for (const auto& item : hub.items) {
+                        if (item.mediaType == MediaType::MUSIC_ALBUM) {
+                            albumItems.push_back(item);
+                        }
+                    }
+                    if (albumItems.empty()) continue;
 
                     brls::Box* content = nullptr;
-                    createMediaRow(title + " (" + std::to_string(items.size()) + ")", &content);
+                    createMediaRow(hub.title + " (" + std::to_string(albumItems.size()) + ")", &content);
 
-                    for (const auto& item : items) {
+                    for (const auto& item : albumItems) {
                         auto* cell = new MediaItemCell();
                         cell->setItem(item);
                         cell->setMarginRight(10);
@@ -714,15 +697,7 @@ void MediaDetailView::loadMusicCategories() {
 
                         content->addView(cell);
                     }
-                };
-
-                addCategory("Albums", albums);
-                addCategory("Singles", singles);
-                addCategory("EPs", eps);
-                addCategory("Compilations", compilations);
-                addCategory("Soundtracks", soundtracks);
-                addCategory("Live", live);
-                addCategory("Other", other);
+                }
 
                 // Add music videos row
                 if (!musicVideos.empty()) {
@@ -2917,46 +2892,82 @@ void MediaDetailView::performTrackActionStatic(const MediaItem& track) {
 }
 
 void MediaDetailView::setupChildrenFocusTransfer() {
-    if (!m_childrenBox || m_childrenBox->getChildren().empty()) return;
+    bool hasChildren = m_childrenBox && !m_childrenBox->getChildren().empty();
+    bool hasExtras = m_extrasBox && !m_extrasBox->getChildren().empty();
 
-    // Determine the UP navigation target:
+    if (!hasChildren && !hasExtras) return;
+
+    // Determine the UP navigation target for children (seasons/episodes):
     // - If description exists, navigate UP to description label
-    // - If description is empty, navigate UP to play button (if exists) or first child
+    // - If description is empty, navigate UP to play button (if exists)
     brls::View* upTarget = nullptr;
     if (m_summaryLabel && !m_fullDescription.empty()) {
         upTarget = m_summaryLabel;
     } else if (m_playButton) {
         upTarget = m_playButton;
-    } else if (!m_childrenBox->getChildren().empty()) {
-        upTarget = m_childrenBox->getChildren().front();
     }
 
-    if (upTarget) {
+    if (hasChildren && upTarget) {
         for (auto* child : m_childrenBox->getChildren()) {
             child->setCustomNavigationRoute(brls::FocusDirection::UP, upTarget);
         }
     }
 
-    // If description exists, set DOWN from description to first child
-    if (m_summaryLabel && !m_fullDescription.empty() && !m_childrenBox->getChildren().empty()) {
-        m_summaryLabel->setCustomNavigationRoute(brls::FocusDirection::DOWN,
-            m_childrenBox->getChildren().front());
+    // If description exists, set DOWN from description to first child (or extras if no children)
+    if (m_summaryLabel && !m_fullDescription.empty()) {
+        brls::View* downFromDesc = nullptr;
+        if (hasChildren) {
+            downFromDesc = m_childrenBox->getChildren().front();
+        } else if (hasExtras) {
+            downFromDesc = m_extrasBox->getChildren().front();
+        }
+        if (downFromDesc) {
+            m_summaryLabel->setCustomNavigationRoute(brls::FocusDirection::DOWN, downFromDesc);
+        }
+    }
+
+    // Set UP/DOWN navigation between children and extras
+    if (hasChildren && hasExtras) {
+        // DOWN from children goes to first extra
+        brls::View* firstExtra = m_extrasBox->getChildren().front();
+        for (auto* child : m_childrenBox->getChildren()) {
+            child->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstExtra);
+        }
+
+        // UP from extras goes to first child (seasons/episodes)
+        brls::View* firstChild = m_childrenBox->getChildren().front();
+        for (auto* extra : m_extrasBox->getChildren()) {
+            extra->setCustomNavigationRoute(brls::FocusDirection::UP, firstChild);
+        }
+    } else if (hasExtras && !hasChildren) {
+        // No children, extras UP goes to description/play button
+        if (upTarget) {
+            for (auto* extra : m_extrasBox->getChildren()) {
+                extra->setCustomNavigationRoute(brls::FocusDirection::UP, upTarget);
+            }
+        }
     }
 
     // If description is empty, transfer initial focus to first media item
-    if (m_fullDescription.empty() && !m_childrenBox->getChildren().empty()) {
-        brls::View* firstChild = m_childrenBox->getChildren().front();
-        brls::Application::giveFocus(firstChild);
+    brls::View* firstFocusable = nullptr;
+    if (hasChildren) {
+        firstFocusable = m_childrenBox->getChildren().front();
+    } else if (hasExtras) {
+        firstFocusable = m_extrasBox->getChildren().front();
+    }
 
-        // Set DOWN from play/resume buttons to first child
+    if (m_fullDescription.empty() && firstFocusable) {
+        brls::Application::giveFocus(firstFocusable);
+
+        // Set DOWN from play/resume buttons to first focusable item
         if (m_playButton) {
-            m_playButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstChild);
+            m_playButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstFocusable);
         }
         if (m_resumeButton) {
-            m_resumeButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstChild);
+            m_resumeButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstFocusable);
         }
         if (m_downloadButton) {
-            m_downloadButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstChild);
+            m_downloadButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstFocusable);
         }
     }
 }
