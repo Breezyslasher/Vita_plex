@@ -30,7 +30,7 @@ private:
     void showDownloadOptions();
     void downloadAll();
     void downloadUnwatched(int maxCount = -1);
-    void toggleDescription();          // Collapse/expand description
+    void setupChildrenFocusTransfer();  // Set up focus navigation for children items
     void showAlbumContextMenu(const MediaItem& album);  // Context menu for albums
     void showMovieContextMenu(const MediaItem& movie);  // Context menu for movies
     void showShowContextMenu(const MediaItem& show);    // Context menu for TV shows
@@ -71,11 +71,9 @@ public:
     // Track list for albums (vertical list with its own nested scroll)
     brls::Box* m_trackListBox = nullptr;
 
-    // Collapsible description
-    bool m_descriptionExpanded = false;
+    // Description
     std::string m_fullDescription;
-    brls::Box* m_summaryContainer = nullptr;           // Container for summary label
-    brls::ScrollingFrame* m_summaryScroll = nullptr;   // Scroll frame for expanded description
+    brls::ScrollingFrame* m_summaryScroll = nullptr;   // Scroll frame for description
 
     // Music category rows for artists
     brls::Box* m_musicCategoriesBox = nullptr;
