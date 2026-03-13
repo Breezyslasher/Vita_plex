@@ -2401,6 +2401,8 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     m_dragState.dragStartY = 0.0f;
                     auto it = m_queueRowData.find(row);
                     m_dragState.draggedTrackIdx = (it != m_queueRowData.end()) ? it->second.trackIdx : -1;
+                    brls::Logger::debug("Drag: touch start on displayIdx={} trackIdx={} scrollY={:.1f}",
+                        m_dragState.originalDisplayIdx, m_dragState.draggedTrackIdx, m_dragState.initialScrollY);
                 }
             } else if (status.state == brls::GestureState::START ||
                        status.state == brls::GestureState::STAY) {
@@ -2417,6 +2419,8 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                         m_dragState.targetDisplayIdx = m_dragState.originalDisplayIdx;
                         m_dragState.dragStartY = status.position.y;
                         m_dragState.dragStartScrollY = queueScroll ? queueScroll->getContentOffsetY() : 0.0f;
+                        brls::Logger::debug("Drag: activated at displayIdx={} trackIdx={} fingerY={:.1f}",
+                            m_dragState.originalDisplayIdx, m_dragState.draggedTrackIdx, status.position.y);
                         // Compute scroll view's absolute screen Y from the row's
                         // known content position and its absolute screen position
                         float rowContentY = m_dragState.originalDisplayIdx * ROW_HEIGHT_PX + 4.0f;
@@ -2452,6 +2456,19 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                         if (newOffset > maxScroll) newOffset = maxScroll;
 
                         queueScroll->setContentOffsetY(newOffset, false);
+
+                        // Auto-expand the queue window when scrolling near the
+                        // bottom of rendered rows (focus events don't fire during
+                        // touch scroll, so expansion must be triggered here)
+                        if (numRows > 0 && m_queueWindowEnd < m_queueTotalCount) {
+                            float bottomVisible = newOffset + scrollViewHeight;
+                            float triggerY = (numRows - QUEUE_EXPAND_TRIGGER) * ROW_HEIGHT_PX;
+                            if (bottomVisible >= triggerY) {
+                                brls::Logger::debug("Scroll: expanding window at row {} (windowEnd={} total={})",
+                                    numRows, m_queueWindowEnd, m_queueTotalCount);
+                                expandQueueWindow(1);
+                            }
+                        }
                     }
                     return;
                 }
@@ -2483,6 +2500,11 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 int newTarget = origIdx + rowsOffset;
                 if (newTarget < 0) newTarget = 0;
                 if (newTarget >= queueSize) newTarget = queueSize - 1;
+                if (newTarget != m_dragState.targetDisplayIdx) {
+                    brls::Logger::debug("Drag: target changed {} -> {} (delta={:.1f} rows={} queueSize={} childCount={})",
+                        m_dragState.targetDisplayIdx, newTarget, effectiveDelta, rowsOffset,
+                        queueSize, queueList ? (int)queueList->getChildren().size() : 0);
+                }
                 m_dragState.targetDisplayIdx = newTarget;
 
                 // Auto-scroll when the finger is near the top/bottom
@@ -2492,7 +2514,9 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 if (queueScroll && queueList) {
                     float scrollY = queueScroll->getContentOffsetY();
                     float scrollViewHeight = queueScroll->getHeight();
-                    float contentHeight = queueSize * ROW_HEIGHT_PX + 8.0f;
+                    // Use rendered row count (not total queue size) for scroll bounds
+                    int numRendered = (int)queueList->getChildren().size();
+                    float contentHeight = numRendered * ROW_HEIGHT_PX + 8.0f;
                     float maxScroll = contentHeight - scrollViewHeight;
                     if (maxScroll < 0) maxScroll = 0;
 
@@ -2504,6 +2528,14 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                         float newScroll = scrollY + AUTO_SCROLL_SPEED;
                         if (newScroll > maxScroll) newScroll = maxScroll;
                         queueScroll->setContentOffsetY(newScroll, false);
+                        // Expand window if nearing the end of rendered rows
+                        if (numRendered > 0 && m_queueWindowEnd < m_queueTotalCount) {
+                            float bottomVisible = newScroll + scrollViewHeight;
+                            float triggerY = (numRendered - QUEUE_EXPAND_TRIGGER) * ROW_HEIGHT_PX;
+                            if (bottomVisible >= triggerY) {
+                                expandQueueWindow(1);
+                            }
+                        }
                     } else if (fingerInView < AUTO_SCROLL_EDGE
                                && scrollY > 0) {
                         // Finger near top edge - scroll up
@@ -2562,16 +2594,30 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
 
                     int toTrackIdx = (isShuffled && targetIdx < (int)sOrder.size())
                                 ? sOrder[targetIdx] : targetIdx;
+                    brls::Logger::info("Drag: drop displayIdx {} -> {} (trackIdx {} -> {}, shuffled={})",
+                        origIdx, targetIdx, m_dragState.draggedTrackIdx, toTrackIdx, isShuffled);
                     queue.moveTrack(m_dragState.draggedTrackIdx, toTrackIdx);
 
                     // Move the visual row data to match: swap the dragged row
-                    // step by step from origIdx to targetIdx
+                    // step by step from origIdx to targetIdx.
+                    // Pass skipThumbReload=true to avoid race conditions from
+                    // multiple async loads on the same image widgets.
                     int step = (targetIdx > origIdx) ? 1 : -1;
                     for (int i = origIdx; i != targetIdx; i += step) {
-                        swapQueueRows(i, i + step);
+                        swapQueueRows(i, i + step, true);
                     }
                     renumberQueueRows();
                     m_cachedQueueVersion = queue.getVersion();
+
+                    // Force-reload thumbnails for the affected range now that
+                    // all metadata is in its final position (no race conditions).
+                    int rangeStart = std::min(origIdx, targetIdx);
+                    int rangeEnd = std::max(origIdx, targetIdx);
+                    for (int i = rangeStart; i <= rangeEnd && i < (int)m_deferredThumbs.size(); i++) {
+                        m_deferredThumbs[i].loaded = false;
+                    }
+                    int rangeMid = (rangeStart + rangeEnd) / 2;
+                    loadQueueThumbsAroundIndex(rangeMid);
                 }
 
                 // Restore proper background for dragged row
@@ -2824,6 +2870,26 @@ void PlayerActivity::populateQueueBatch() {
 void PlayerActivity::expandQueueWindow(int direction) {
     if (!queueList || m_queueBatchActive || m_destroying) return;
 
+    if (direction > 0) {
+        // Expand downward - kick off async batch creation
+        MusicQueue& queue = MusicQueue::getInstance();
+        int count = (int)queue.getQueue().size();
+        if (m_queueWindowEnd >= count) return;  // Already at the end
+        if (m_expandActive) return;  // Already expanding
+
+        m_expandNext = m_queueWindowEnd;
+        m_expandEnd = std::min(count, m_queueWindowEnd + QUEUE_EXPAND_CHUNK);
+        m_expandActive = true;
+        brls::Logger::debug("Queue: starting async expand {} -> {} (total={})",
+            m_expandNext, m_expandEnd, count);
+        // Create first batch immediately so content appears right away
+        expandQueueBatch();
+    }
+}
+
+void PlayerActivity::expandQueueBatch() {
+    if (!m_expandActive || !queueList || m_destroying) return;
+
     MusicQueue& queue = MusicQueue::getInstance();
     const auto& tracks = queue.getQueue();
     int count = (int)tracks.size();
@@ -2831,26 +2897,35 @@ void PlayerActivity::expandQueueWindow(int direction) {
     const auto& shuffleOrder = queue.getShuffleOrder();
     int currentIndex = queue.getCurrentIndex();
 
-    if (direction > 0) {
-        // Expand downward - append more rows
-        if (m_queueWindowEnd >= count) return;  // Already at the end
-        int newEnd = std::min(count, m_queueWindowEnd + QUEUE_EXPAND_CHUNK);
-        for (int i = m_queueWindowEnd; i < newEnd; i++) {
-            int trackIdx = (shuffled && i < (int)shuffleOrder.size())
-                            ? shuffleOrder[i] : i;
-            if (trackIdx < 0 || trackIdx >= count) continue;
-            const QueueItem& track = tracks[trackIdx];
-            bool isCurrent = (trackIdx == currentIndex);
-            createQueueRow(i, trackIdx, track, isCurrent);
-        }
-        int oldEnd = m_queueWindowEnd;
-        m_queueWindowEnd = newEnd;
-        // Load thumbnails for newly added rows (child index = old window size)
-        int thumbStart = oldEnd - m_queueWindowStart;
-        loadQueueThumbsAroundIndex(std::max(0, thumbStart));
+    int batchEnd = std::min(m_expandNext + QUEUE_EXPAND_BATCH, m_expandEnd);
+
+    for (int i = m_expandNext; i < batchEnd; i++) {
+        int trackIdx = (shuffled && i < (int)shuffleOrder.size())
+                        ? shuffleOrder[i] : i;
+        if (trackIdx < 0 || trackIdx >= count) continue;
+        const QueueItem& track = tracks[trackIdx];
+        bool isCurrent = (trackIdx == currentIndex);
+        createQueueRow(i, trackIdx, track, isCurrent);
     }
-    // Note: upward expansion not supported - window starts near current track
-    // which is the natural viewing position
+
+    int oldWindowEnd = m_queueWindowEnd;
+    m_queueWindowEnd = batchEnd;
+    m_expandNext = batchEnd;
+
+    // Load thumbnails for newly added rows
+    int thumbStart = oldWindowEnd - m_queueWindowStart;
+    loadQueueThumbsAroundIndex(std::max(0, thumbStart));
+
+    if (m_expandNext >= m_expandEnd) {
+        // Expansion complete
+        m_expandActive = false;
+        brls::Logger::debug("Queue: async expand complete, windowEnd={}", m_queueWindowEnd);
+    } else {
+        // Schedule next batch on the next frame
+        brls::sync([this]() {
+            expandQueueBatch();
+        });
+    }
 }
 
 void PlayerActivity::loadQueueThumbsAroundIndex(int displayIndex) {
@@ -2907,7 +2982,7 @@ int PlayerActivity::findQueueRowDisplayIndex(brls::View* row) {
     return -1;
 }
 
-void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB) {
+void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB, bool skipThumbReload) {
     if (!queueList) return;
     auto& children = queueList->getChildren();
     if (displayIdxA < 0 || displayIdxA >= (int)children.size()) return;
@@ -2953,19 +3028,22 @@ void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB) {
         // Re-point image pointers to their current rows
         dtA.image = thumbA;
         dtB.image = thumbB;
-        // Reload thumbnails to reflect the swap
-        PlexClient& swapClient = PlexClient::getInstance();
-        if (dtA.loaded && !dtA.thumbPath.empty()) {
-            std::string urlA = swapClient.getThumbnailUrl(dtA.thumbPath, 100, 100);
-            ImageLoader::loadAsync(urlA, [](brls::Image*) {}, thumbA, m_alive);
-        } else {
-            thumbA->setImageFromRes("img/default_music.png");
-        }
-        if (dtB.loaded && !dtB.thumbPath.empty()) {
-            std::string urlB = swapClient.getThumbnailUrl(dtB.thumbPath, 100, 100);
-            ImageLoader::loadAsync(urlB, [](brls::Image*) {}, thumbB, m_alive);
-        } else {
-            thumbB->setImageFromRes("img/default_music.png");
+        // Reload thumbnails to reflect the swap (skip during chained swaps
+        // to avoid race conditions - caller will reload after all swaps)
+        if (!skipThumbReload) {
+            PlexClient& swapClient = PlexClient::getInstance();
+            if (dtA.loaded && !dtA.thumbPath.empty()) {
+                std::string urlA = swapClient.getThumbnailUrl(dtA.thumbPath, 100, 100);
+                ImageLoader::loadAsync(urlA, [](brls::Image*) {}, thumbA, m_alive);
+            } else {
+                thumbA->setImageFromRes("img/default_music.png");
+            }
+            if (dtB.loaded && !dtB.thumbPath.empty()) {
+                std::string urlB = swapClient.getThumbnailUrl(dtB.thumbPath, 100, 100);
+                ImageLoader::loadAsync(urlB, [](brls::Image*) {}, thumbB, m_alive);
+            } else {
+                thumbB->setImageFromRes("img/default_music.png");
+            }
         }
     }
 
