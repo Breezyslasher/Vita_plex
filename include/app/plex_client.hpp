@@ -22,6 +22,7 @@ enum class MediaType {
     MUSIC_ARTIST,
     MUSIC_ALBUM,
     MUSIC_TRACK,
+    CLIP,
     PHOTO,
     LIVE_TV_CHANNEL,
     LIVE_TV_PROGRAM

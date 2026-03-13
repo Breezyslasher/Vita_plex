@@ -48,6 +48,7 @@ MediaType PlexClient::parseMediaType(const std::string& typeStr) {
     if (typeStr == "artist") return MediaType::MUSIC_ARTIST;
     if (typeStr == "album") return MediaType::MUSIC_ALBUM;
     if (typeStr == "track") return MediaType::MUSIC_TRACK;
+    if (typeStr == "clip") return MediaType::CLIP;
     if (typeStr == "photo") return MediaType::PHOTO;
     return MediaType::UNKNOWN;
 }
