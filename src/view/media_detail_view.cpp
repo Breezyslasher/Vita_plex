@@ -94,11 +94,8 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
 
     leftBox->addView(posterContainer);
 
-    // Play buttons (only for movies and music tracks - seasons/episodes/artists/albums excluded)
-    if (m_item.mediaType != MediaType::MUSIC_ARTIST &&
-        m_item.mediaType != MediaType::MUSIC_ALBUM &&
-        m_item.mediaType != MediaType::SEASON &&
-        m_item.mediaType != MediaType::EPISODE) {
+    // Play/resume/download buttons (movies only)
+    if (m_item.mediaType == MediaType::MOVIE) {
         m_playButton = new brls::Button();
         m_playButton->setText("Play");
         m_playButton->setWidth(200);
@@ -125,65 +122,45 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             leftBox->addView(m_resumeButton);
         }
 
-        // Download button (for movies, episodes, and individual tracks only)
-        if (m_item.mediaType == MediaType::MOVIE || m_item.mediaType == MediaType::EPISODE ||
-            m_item.mediaType == MediaType::MUSIC_TRACK) {
-            m_downloadButton = new brls::Button();
-
-            // Check current download state
-            {
-                DownloadItem dlCheck;
-                if (DownloadsManager::getInstance().getDownloadCopy(m_item.ratingKey, dlCheck)) {
-                    switch (dlCheck.state) {
-                        case DownloadState::COMPLETED:
-                            m_downloadButton->setText("Downloaded");
-                            break;
-                        case DownloadState::TRANSCODING:
-                            m_downloadButton->setText("Transcoding...");
-                            break;
-                        case DownloadState::DOWNLOADING:
-                            m_downloadButton->setText("Downloading...");
-                            break;
-                        case DownloadState::QUEUED:
-                            m_downloadButton->setText("Queued");
-                            break;
-                        case DownloadState::PAUSED:
-                            m_downloadButton->setText("Paused");
-                            break;
-                        case DownloadState::FAILED:
-                            m_downloadButton->setText("Retry Download");
-                            break;
-                        default:
-                            m_downloadButton->setText("Download");
-                            break;
-                    }
-                } else {
-                    m_downloadButton->setText("Download");
-                }
-            }
-
-            m_downloadButton->setWidth(200);
-            m_downloadButton->setHeight(44);
-            m_downloadButton->setMarginTop(10);
-            m_downloadButton->registerClickAction([this](brls::View* view) {
-                onDownload();
-                return true;
-            });
-            m_downloadButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_downloadButton));
-            leftBox->addView(m_downloadButton);
-        }
-    }
-
-    // Download options for shows (albums use context menu instead)
-    if (m_item.mediaType == MediaType::SHOW) {
-
         m_downloadButton = new brls::Button();
-        m_downloadButton->setText("Download...");
+
+        // Check current download state
+        {
+            DownloadItem dlCheck;
+            if (DownloadsManager::getInstance().getDownloadCopy(m_item.ratingKey, dlCheck)) {
+                switch (dlCheck.state) {
+                    case DownloadState::COMPLETED:
+                        m_downloadButton->setText("Downloaded");
+                        break;
+                    case DownloadState::TRANSCODING:
+                        m_downloadButton->setText("Transcoding...");
+                        break;
+                    case DownloadState::DOWNLOADING:
+                        m_downloadButton->setText("Downloading...");
+                        break;
+                    case DownloadState::QUEUED:
+                        m_downloadButton->setText("Queued");
+                        break;
+                    case DownloadState::PAUSED:
+                        m_downloadButton->setText("Paused");
+                        break;
+                    case DownloadState::FAILED:
+                        m_downloadButton->setText("Retry Download");
+                        break;
+                    default:
+                        m_downloadButton->setText("Download");
+                        break;
+                }
+            } else {
+                m_downloadButton->setText("Download");
+            }
+        }
+
         m_downloadButton->setWidth(200);
         m_downloadButton->setHeight(44);
         m_downloadButton->setMarginTop(10);
         m_downloadButton->registerClickAction([this](brls::View* view) {
-            showDownloadOptions();
+            onDownload();
             return true;
         });
         m_downloadButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_downloadButton));
