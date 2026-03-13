@@ -127,6 +127,7 @@ brls::Box* MusicTab::createHorizontalRow(const std::string& title) {
         newBtn->setText("+ New");
         newBtn->setHeight(30);
         newBtn->setCornerRadius(16);
+        newBtn->setHighlightCornerRadius(16);
         newBtn->setPadding(4, 14, 4, 14);
         newBtn->setBackgroundColor(nvgRGBA(50, 130, 80, 200));
         newBtn->registerClickAction([this](brls::View* view) {
@@ -161,6 +162,7 @@ brls::Box* MusicTab::createHorizontalRow(const std::string& title) {
 
 void MusicTab::styleButton(brls::Button* btn, bool active) {
     btn->setCornerRadius(16);
+    btn->setHighlightCornerRadius(16);
     btn->setPadding(6, 16, 6, 16);
     if (active) {
         btn->setBackgroundColor(nvgRGBA(70, 90, 210, 220));

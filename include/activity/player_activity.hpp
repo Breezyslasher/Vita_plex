@@ -84,6 +84,16 @@ private:
     bool m_queuePopulating = false;     // Guard against re-entrant populateQueueList
     uint32_t m_cachedQueueVersion = 0; // Queue version when rows were last built (0 = never)
 
+    // Windowed queue rendering - only create rows for a window around the current track
+    // to avoid creating thousands of views for large queues
+    static constexpr int QUEUE_RENDER_LIMIT = 60;  // Max rows to create at once
+    static constexpr int QUEUE_EXPAND_CHUNK = 20;   // Rows to add when expanding window
+    static constexpr int QUEUE_EXPAND_TRIGGER = 5;   // Expand when focus is within this many rows of edge
+    int m_queueWindowStart = 0;     // First queue display index in the rendered window
+    int m_queueWindowEnd = 0;       // One past last queue display index in the window
+    int m_queueTotalCount = 0;      // Total queue items
+    void expandQueueWindow(int direction);  // +1 = expand down, -1 = expand up
+
     // Batched queue population - creates rows across multiple frames to avoid UI freeze
     static constexpr int QUEUE_BATCH_SIZE = 12;  // Rows to create per frame (keep low for Vita perf)
     int m_queueBatchNext = 0;                    // Next row index to create

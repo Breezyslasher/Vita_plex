@@ -362,6 +362,7 @@ void LibrarySectionTab::showCategories() {
 
 void LibrarySectionTab::styleButton(brls::Button* btn, bool active) {
     btn->setCornerRadius(16);
+    btn->setHighlightCornerRadius(16);
     btn->setPadding(6, 16, 6, 16);
     if (active) {
         btn->setBackgroundColor(nvgRGBA(70, 90, 210, 220));

@@ -2218,10 +2218,12 @@ void PlayerActivity::showQueueOverlay() {
             } else {
                 focusIdx = queue.getCurrentIndex();
             }
+            // Convert absolute queue index to child index within rendered window
+            int childFocusIdx = focusIdx - m_queueWindowStart;
             if (queueList && !queueList->getChildren().empty()) {
-                focusIdx = std::min(focusIdx, (int)queueList->getChildren().size() - 1);
-                if (focusIdx < 0) focusIdx = 0;
-                brls::Application::giveFocus(queueList->getChildren()[focusIdx]);
+                childFocusIdx = std::min(childFocusIdx, (int)queueList->getChildren().size() - 1);
+                if (childFocusIdx < 0) childFocusIdx = 0;
+                brls::Application::giveFocus(queueList->getChildren()[childFocusIdx]);
             }
             // Reset overlay title focusable state (was set temporarily during list rebuild)
             if (queueOverlayTitle) {
@@ -2653,10 +2655,17 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     // Lazy-load nearby thumbnails when this row gains focus
     // Use dynamic lookup instead of captured index, since drag reordering
     // changes row positions and would make a captured index stale
+    // Also auto-expand the queue window when focus nears the edges
     row->getFocusEvent()->subscribe([this, row](brls::View*) {
         int actualIdx = findQueueRowDisplayIndex(row);
         if (actualIdx >= 0) {
             loadQueueThumbsAroundIndex(actualIdx);
+            // Auto-expand window when near the bottom edge
+            int childCount = queueList ? (int)queueList->getChildren().size() : 0;
+            if (actualIdx >= childCount - QUEUE_EXPAND_TRIGGER &&
+                m_queueWindowEnd < m_queueTotalCount) {
+                expandQueueWindow(1);
+            }
         }
     });
 
@@ -2710,13 +2719,35 @@ void PlayerActivity::populateQueueList() {
     m_deferredThumbs.reserve(tracks.size());
 
     int count = (int)tracks.size();
+    m_queueTotalCount = count;
 
     // Update cached version so reopening the overlay can skip the rebuild
     m_cachedQueueVersion = queue.getVersion();
 
-    // For small queues, create all rows immediately (no batching needed)
-    if (count <= QUEUE_BATCH_SIZE) {
-        for (int i = 0; i < count; i++) {
+    // Determine the render window - for large queues only render a window
+    // around the current track to avoid creating thousands of views
+    int focusDisplayIdx = shuffled ? queue.getShufflePosition() : currentIndex;
+    if (focusDisplayIdx < 0) focusDisplayIdx = 0;
+
+    if (count <= QUEUE_RENDER_LIMIT) {
+        // Small queue: render everything
+        m_queueWindowStart = 0;
+        m_queueWindowEnd = count;
+    } else {
+        // Large queue: center window around current track
+        m_queueWindowStart = std::max(0, focusDisplayIdx - 8);
+        m_queueWindowEnd = std::min(count, m_queueWindowStart + QUEUE_RENDER_LIMIT);
+        // Adjust start if we hit the end
+        if (m_queueWindowEnd == count) {
+            m_queueWindowStart = std::max(0, count - QUEUE_RENDER_LIMIT);
+        }
+    }
+
+    int windowSize = m_queueWindowEnd - m_queueWindowStart;
+
+    // For small windows, create all rows immediately (no batching needed)
+    if (windowSize <= QUEUE_BATCH_SIZE) {
+        for (int i = m_queueWindowStart; i < m_queueWindowEnd; i++) {
             int trackIdx = (shuffled && i < (int)shuffleOrder.size())
                             ? shuffleOrder[i] : i;
             if (trackIdx < 0 || trackIdx >= (int)tracks.size()) continue;
@@ -2726,19 +2757,18 @@ void PlayerActivity::populateQueueList() {
         }
 
         // Load thumbnails for the initially visible window
-        int focusIdx = shuffled ? queue.getShufflePosition() : currentIndex;
-        loadQueueThumbsAroundIndex(focusIdx);
+        loadQueueThumbsAroundIndex(focusDisplayIdx - m_queueWindowStart);
         m_queuePopulating = false;
         return;
     }
 
-    // For large queues, snapshot the data and create rows in batches across frames
+    // For larger windows, snapshot the data and create rows in batches across frames
     m_queueBatchTracks.assign(tracks.begin(), tracks.end());
     m_queueBatchShuffleOrder.assign(shuffleOrder.begin(), shuffleOrder.end());
     m_queueBatchCurrentIndex = currentIndex;
     m_queueBatchShuffled = shuffled;
-    m_queueBatchNext = 0;
-    m_queueBatchTotal = count;
+    m_queueBatchNext = m_queueWindowStart;
+    m_queueBatchTotal = m_queueWindowEnd;
     m_queueBatchActive = true;
 
     // Create first batch immediately so the UI isn't empty
@@ -2772,13 +2802,15 @@ void PlayerActivity::populateQueueBatch() {
         // Load thumbnails for the initially visible window
         MusicQueue& queue = MusicQueue::getInstance();
         int focusIdx = queue.isShuffleEnabled() ? queue.getShufflePosition() : queue.getCurrentIndex();
-        loadQueueThumbsAroundIndex(focusIdx);
+        // Convert absolute display index to child index within rendered window
+        int childFocusIdx = focusIdx - m_queueWindowStart;
+        loadQueueThumbsAroundIndex(childFocusIdx);
 
         // Give focus to the current track now that all rows exist
         if (m_queueOverlayVisible && queueList && !queueList->getChildren().empty()) {
-            focusIdx = std::min(focusIdx, (int)queueList->getChildren().size() - 1);
-            if (focusIdx < 0) focusIdx = 0;
-            brls::Application::giveFocus(queueList->getChildren()[focusIdx]);
+            childFocusIdx = std::min(childFocusIdx, (int)queueList->getChildren().size() - 1);
+            if (childFocusIdx < 0) childFocusIdx = 0;
+            brls::Application::giveFocus(queueList->getChildren()[childFocusIdx]);
             if (queueOverlayTitle) queueOverlayTitle->setFocusable(false);
         }
     } else {
@@ -2787,6 +2819,38 @@ void PlayerActivity::populateQueueBatch() {
             populateQueueBatch();
         });
     }
+}
+
+void PlayerActivity::expandQueueWindow(int direction) {
+    if (!queueList || m_queueBatchActive || m_destroying) return;
+
+    MusicQueue& queue = MusicQueue::getInstance();
+    const auto& tracks = queue.getQueue();
+    int count = (int)tracks.size();
+    bool shuffled = queue.isShuffleEnabled();
+    const auto& shuffleOrder = queue.getShuffleOrder();
+    int currentIndex = queue.getCurrentIndex();
+
+    if (direction > 0) {
+        // Expand downward - append more rows
+        if (m_queueWindowEnd >= count) return;  // Already at the end
+        int newEnd = std::min(count, m_queueWindowEnd + QUEUE_EXPAND_CHUNK);
+        for (int i = m_queueWindowEnd; i < newEnd; i++) {
+            int trackIdx = (shuffled && i < (int)shuffleOrder.size())
+                            ? shuffleOrder[i] : i;
+            if (trackIdx < 0 || trackIdx >= count) continue;
+            const QueueItem& track = tracks[trackIdx];
+            bool isCurrent = (trackIdx == currentIndex);
+            createQueueRow(i, trackIdx, track, isCurrent);
+        }
+        int oldEnd = m_queueWindowEnd;
+        m_queueWindowEnd = newEnd;
+        // Load thumbnails for newly added rows (child index = old window size)
+        int thumbStart = oldEnd - m_queueWindowStart;
+        loadQueueThumbsAroundIndex(std::max(0, thumbStart));
+    }
+    // Note: upward expansion not supported - window starts near current track
+    // which is the natural viewing position
 }
 
 void PlayerActivity::loadQueueThumbsAroundIndex(int displayIndex) {
@@ -2923,7 +2987,7 @@ void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB) {
             titleLblA->setTextColor(nvgRGB(170, 210, 255));
         } else {
             char numBuf[8];
-            snprintf(numBuf, sizeof(numBuf), "%d. ", displayIdxA + 1);
+            snprintf(numBuf, sizeof(numBuf), "%d. ", displayIdxA + m_queueWindowStart + 1);
             titleLblA->setText(numBuf + itA->second.title);
             titleLblA->setTextColor(nvgRGB(240, 240, 240));
         }
@@ -2948,7 +3012,7 @@ void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB) {
             titleLblB->setTextColor(nvgRGB(170, 210, 255));
         } else {
             char numBuf[8];
-            snprintf(numBuf, sizeof(numBuf), "%d. ", displayIdxB + 1);
+            snprintf(numBuf, sizeof(numBuf), "%d. ", displayIdxB + m_queueWindowStart + 1);
             titleLblB->setText(numBuf + itB->second.title);
             titleLblB->setTextColor(nvgRGB(240, 240, 240));
         }
@@ -3022,6 +3086,9 @@ void PlayerActivity::renumberQueueRows() {
         bool isCurr = (it->second.trackIdx == queue.getCurrentIndex());
         const std::string& trackTitle = it->second.title;
 
+        // Use window-offset display number so rows show correct position
+        int displayNum = i + m_queueWindowStart + 1;
+
         auto& rowChildren = ((brls::Box*)child)->getChildren();
         if (rowChildren.size() >= 2) {
             auto& textBoxChildren = ((brls::Box*)rowChildren[1])->getChildren();
@@ -3031,7 +3098,7 @@ void PlayerActivity::renumberQueueRows() {
                     titleLbl->setText("> " + trackTitle);
                 } else {
                     char numBuf[8];
-                    snprintf(numBuf, sizeof(numBuf), "%d. ", i + 1);
+                    snprintf(numBuf, sizeof(numBuf), "%d. ", displayNum);
                     titleLbl->setText(numBuf + trackTitle);
                 }
             }
@@ -3068,6 +3135,10 @@ void PlayerActivity::removeQueueRow(int displayIdx) {
     // Remove the view from the list
     queueList->removeView(rowToRemove);
 
+    // Update window tracking after removal
+    if (m_queueWindowEnd > 0) m_queueWindowEnd--;
+    m_queueTotalCount = MusicQueue::getInstance().getQueueSize();
+
     // Update track index mappings - indices in MusicQueue shifted after removeTrack
     // We need to update any entries that had track indices > the removed one
     // The removeTrack already happened, so indices have been adjusted in the queue
@@ -3079,8 +3150,9 @@ void PlayerActivity::removeQueueRow(int displayIdx) {
 
     auto& remainingChildren = queueList->getChildren();
     for (int i = 0; i < (int)remainingChildren.size(); i++) {
-        int trackIdx = (shuffled && i < (int)shuffleOrder.size())
-                        ? shuffleOrder[i] : i;
+        int queueIdx = i + m_queueWindowStart;
+        int trackIdx = (shuffled && queueIdx < (int)shuffleOrder.size())
+                        ? shuffleOrder[queueIdx] : queueIdx;
         if (trackIdx >= 0 && trackIdx < (int)tracks.size()) {
             m_queueRowData[remainingChildren[i]] = {trackIdx, tracks[trackIdx].title};
         }
@@ -3094,6 +3166,7 @@ void PlayerActivity::removeQueueRow(int displayIdx) {
 
         bool isCurr = (it->second.trackIdx == queue.getCurrentIndex());
         const std::string& trackTitle = it->second.title;
+        int displayNum = i + m_queueWindowStart + 1;
 
         auto& rowChildren = ((brls::Box*)child)->getChildren();
         if (rowChildren.size() >= 2) {
@@ -3104,7 +3177,7 @@ void PlayerActivity::removeQueueRow(int displayIdx) {
                     titleLbl->setText("> " + trackTitle);
                 } else {
                     char numBuf[8];
-                    snprintf(numBuf, sizeof(numBuf), "%d. ", i + 1);
+                    snprintf(numBuf, sizeof(numBuf), "%d. ", displayNum);
                     titleLbl->setText(numBuf + trackTitle);
                 }
             }
