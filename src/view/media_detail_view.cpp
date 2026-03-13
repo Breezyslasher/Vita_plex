@@ -240,6 +240,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
 
         m_mediaContentScroll = new brls::ScrollingFrame();
         m_mediaContentScroll->setGrow(1.0f);
+        m_mediaContentScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
 
         m_mediaContentBox = new brls::Box();
         m_mediaContentBox->setAxis(brls::Axis::COLUMN);
@@ -660,24 +661,47 @@ void MediaDetailView::loadMusicCategories() {
 
             brls::Logger::info("Artist hubs: {} album categories from {} total hubs", albumHubs.size(), hubs.size());
 
-            brls::sync([this, albumHubs, musicVideos]() {
+            // Collect all album items from all album hubs, then group by subtype
+            std::vector<MediaItem> allAlbumItems;
+            for (const auto& hub : albumHubs) {
+                for (const auto& item : hub.items) {
+                    if (item.mediaType == MediaType::MUSIC_ALBUM) {
+                        allAlbumItems.push_back(item);
+                    }
+                }
+            }
+
+            brls::sync([this, allAlbumItems, musicVideos]() {
                 m_musicCategoriesBox->clearViews();
 
-                // Use hub titles directly as category names (the Plex API
-                // already groups albums by type: "Albums", "Singles & EPs", etc.)
-                for (const auto& hub : albumHubs) {
-                    std::vector<MediaItem> albumItems;
-                    for (const auto& item : hub.items) {
-                        if (item.mediaType == MediaType::MUSIC_ALBUM) {
-                            albumItems.push_back(item);
-                        }
+                // Group albums by subtype
+                std::vector<MediaItem> albums, singles, eps, compilations, soundtracks, other;
+                for (const auto& item : allAlbumItems) {
+                    std::string subtype = item.subtype;
+                    for (char& c : subtype) c = tolower(c);
+
+                    if (subtype == "single") {
+                        singles.push_back(item);
+                    } else if (subtype == "ep") {
+                        eps.push_back(item);
+                    } else if (subtype == "compilation") {
+                        compilations.push_back(item);
+                    } else if (subtype == "soundtrack") {
+                        soundtracks.push_back(item);
+                    } else if (subtype == "album" || subtype.empty()) {
+                        albums.push_back(item);
+                    } else {
+                        other.push_back(item);
                     }
-                    if (albumItems.empty()) continue;
+                }
+
+                auto addCategory = [this](const std::string& title, const std::vector<MediaItem>& items) {
+                    if (items.empty()) return;
 
                     brls::Box* content = nullptr;
-                    createMediaRow(hub.title + " (" + std::to_string(albumItems.size()) + ")", &content);
+                    createMediaRow(title + " (" + std::to_string(items.size()) + ")", &content);
 
-                    for (const auto& item : albumItems) {
+                    for (const auto& item : items) {
                         auto* cell = new MediaItemCell();
                         cell->setItem(item);
                         cell->setMarginRight(10);
@@ -697,7 +721,14 @@ void MediaDetailView::loadMusicCategories() {
 
                         content->addView(cell);
                     }
-                }
+                };
+
+                addCategory("Albums", albums);
+                addCategory("Singles", singles);
+                addCategory("EPs", eps);
+                addCategory("Compilations", compilations);
+                addCategory("Soundtracks", soundtracks);
+                addCategory("Other", other);
 
                 // Add music videos row
                 if (!musicVideos.empty()) {
