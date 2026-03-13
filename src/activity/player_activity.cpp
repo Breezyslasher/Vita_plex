@@ -443,6 +443,14 @@ void PlayerActivity::onContentAvailable() {
         }
     }
 
+    // Block upward D-pad navigation from center transport controls so focus
+    // doesn't escape to off-screen elements (absolutely-positioned overlays)
+    if (!m_isQueueMode) {
+        if (playBtn) playBtn->setCustomNavigationRoute(brls::FocusDirection::UP, playBtn);
+        if (rewindBtn) rewindBtn->setCustomNavigationRoute(brls::FocusDirection::UP, rewindBtn);
+        if (forwardBtn) forwardBtn->setCustomNavigationRoute(brls::FocusDirection::UP, forwardBtn);
+    }
+
     // Block downward D-pad navigation from the bottom button row so focus
     // doesn't escape to off-screen elements (absolutely-positioned overlays)
     // Only set on focusable buttons — in music mode audioBtn/subBtn/videoBtn are non-focusable
