@@ -54,17 +54,57 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
     PlayerActivity* activity = new PlayerActivity("", false);
     activity->m_isQueueMode = true;
 
-    // Set up the queue
     MusicQueue& queue = MusicQueue::getInstance();
-    queue.setQueue(tracks, startIndex);
+
+    // Try to create a server-side play queue when online
+    // Uses the parent ratingKey (album/season) or the first track's ratingKey
+    bool serverOk = false;
+    if (!tracks.empty() && !PlexClient::getInstance().getServerUrl().empty()) {
+        PlexClient& client = PlexClient::getInstance();
+        PlexClient::PlayQueueContainer pq;
+
+        // Determine queue type
+        std::string queueType = "audio";
+        if (!tracks.empty() && (tracks[0].mediaType == MediaType::EPISODE ||
+                                 tracks[0].mediaType == MediaType::MOVIE)) {
+            queueType = "video";
+        }
+
+        // Build URI from parent ratingKey (album/season) if available,
+        // otherwise from first track
+        std::string uri;
+        if (!tracks[0].parentRatingKey.empty()) {
+            uri = client.buildPlayQueueDirectoryURI(tracks[0].parentRatingKey);
+        } else if (tracks.size() == 1) {
+            uri = client.buildPlayQueueURI(tracks[0].ratingKey);
+        } else {
+            // Multiple tracks without parent - use first track's URI
+            uri = client.buildPlayQueueURI(tracks[0].ratingKey);
+        }
+
+        std::string startKey = (startIndex >= 0 && startIndex < (int)tracks.size())
+            ? tracks[startIndex].ratingKey : "";
+
+        serverOk = client.createPlayQueue(uri, queueType, pq, startKey);
+        if (serverOk && !pq.items.empty()) {
+            queue.setFromPlayQueue(pq, pq.playQueueShuffled);
+            brls::Logger::info("PlayerActivity: Server play queue {} created ({} items)",
+                               pq.playQueueID, pq.playQueueTotalCount);
+        }
+    }
+
+    if (!serverOk) {
+        // Offline or server failed - use client-side queue
+        queue.setQueue(tracks, startIndex);
+    }
 
     // Set up track ended callback
     queue.setTrackEndedCallback([activity](const QueueItem* nextTrack) {
         activity->onTrackEnded(nextTrack);
     });
 
-    brls::Logger::info("PlayerActivity created with queue of {} tracks, starting at {}",
-                      tracks.size(), startIndex);
+    brls::Logger::info("PlayerActivity created with queue of {} tracks, starting at {} (server={})",
+                      tracks.size(), startIndex, serverOk);
     return activity;
 }
 
@@ -1233,17 +1273,20 @@ void PlayerActivity::updateProgress() {
             int durationMs = (int)(duration * 1000);
 
             std::string ratingKey = m_mediaKey;
-            // In queue mode, use the current track's ratingKey
+            int pqItemID = 0;
+            // In queue mode, use the current track's ratingKey and playQueueItemID
             if (m_isQueueMode) {
-                const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
+                MusicQueue& queue = MusicQueue::getInstance();
+                const QueueItem* track = queue.getCurrentTrack();
                 if (track) {
                     ratingKey = track->ratingKey;
+                    pqItemID = track->playQueueItemID;
                 }
             }
 
             std::string key = "/library/metadata/" + ratingKey;
             PlexClient::getInstance().reportTimeline(
-                ratingKey, key, currentState, timeMs, durationMs);
+                ratingKey, key, currentState, timeMs, durationMs, pqItemID);
         }
     }
 
@@ -2067,7 +2110,25 @@ void PlayerActivity::toggleShuffle() {
     if (!m_isQueueMode) return;
 
     MusicQueue& queue = MusicQueue::getInstance();
-    queue.setShuffle(!queue.isShuffleEnabled());
+    bool newShuffle = !queue.isShuffleEnabled();
+
+    // If synced to server, use server-side shuffle/unshuffle
+    if (queue.isServerSynced()) {
+        PlexClient& client = PlexClient::getInstance();
+        PlexClient::PlayQueueContainer pq;
+        bool ok = newShuffle
+            ? client.shufflePlayQueue(queue.getPlayQueueID(), pq)
+            : client.unshufflePlayQueue(queue.getPlayQueueID(), pq);
+
+        if (ok && !pq.items.empty()) {
+            queue.setFromPlayQueue(pq, newShuffle);
+        } else {
+            // Server call failed - fall back to client-side
+            queue.setShuffle(newShuffle);
+        }
+    } else {
+        queue.setShuffle(newShuffle);
+    }
 
     updateQueueDisplay();
     updateShuffleIcon();
@@ -2453,6 +2514,14 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                         MusicQueue& queue = MusicQueue::getInstance();
                         if (tIdx != queue.getCurrentIndex()) {
                             int dIdx = findQueueRowDisplayIndex(row);
+                            // Sync remove to server
+                            if (queue.isServerSynced() && tIdx < (int)queue.getQueue().size()) {
+                                int pqItemID = queue.getQueue()[tIdx].playQueueItemID;
+                                if (pqItemID > 0) {
+                                    PlexClient::getInstance().removeFromPlayQueue(
+                                        queue.getPlayQueueID(), pqItemID);
+                                }
+                            }
                             queue.removeTrack(tIdx);
                             if (dIdx >= 0) {
                                 brls::sync([this, dIdx]() {
@@ -2684,6 +2753,21 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                                 ? sOrder[targetIdx] : targetIdx;
                     brls::Logger::info("Drag: drop displayIdx {} -> {} (trackIdx {} -> {}, shuffled={})",
                         origIdx, targetIdx, m_dragState.draggedTrackIdx, toTrackIdx, isShuffled);
+                    // Sync move to server if connected
+                    if (queue.isServerSynced()) {
+                        int pqItemID = m_dragState.draggedTrackIdx < (int)queue.getQueue().size()
+                            ? queue.getQueue()[m_dragState.draggedTrackIdx].playQueueItemID : 0;
+                        // Find the item to insert after (the one before target position)
+                        int afterPQItemID = 0;
+                        if (toTrackIdx > 0 && toTrackIdx - 1 < (int)queue.getQueue().size()) {
+                            afterPQItemID = queue.getQueue()[toTrackIdx - 1].playQueueItemID;
+                        }
+                        if (pqItemID > 0) {
+                            PlexClient::getInstance().movePlayQueueItem(
+                                queue.getPlayQueueID(), pqItemID, afterPQItemID);
+                        }
+                    }
+
                     queue.moveTrack(m_dragState.draggedTrackIdx, toTrackIdx);
 
                     // The displaced rows are already visually in their new

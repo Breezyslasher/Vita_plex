@@ -32,6 +32,7 @@ void MusicQueue::clear() {
     m_shuffleOrder.clear();
     m_currentIndex = -1;
     m_shufflePosition = -1;
+    m_playQueueID = 0;  // Clear server sync
     notifyQueueChanged();
 }
 
@@ -495,6 +496,72 @@ void MusicQueue::loadState() {
     file.close();
     brls::Logger::debug("MusicQueue: State loaded (shuffle={}, repeat={})",
                        m_shuffleEnabled, (int)m_repeatMode);
+}
+
+// ============================================================================
+// Server-side play queue sync
+// ============================================================================
+
+void MusicQueue::syncToServer(int playQueueID) {
+    m_playQueueID = playQueueID;
+    brls::Logger::info("MusicQueue: Synced to server play queue {}", playQueueID);
+}
+
+void MusicQueue::clearServerSync() {
+    m_playQueueID = 0;
+    brls::Logger::info("MusicQueue: Cleared server sync");
+}
+
+int MusicQueue::getCurrentPlayQueueItemID() const {
+    const QueueItem* track = getCurrentTrack();
+    if (track) return track->playQueueItemID;
+    return 0;
+}
+
+void MusicQueue::setFromPlayQueue(const PlexClient::PlayQueueContainer& pq, bool isShuffled) {
+    m_queue.clear();
+    m_shuffleOrder.clear();
+    m_shufflePosition = -1;
+    m_shuffleEnabled = isShuffled;
+
+    m_queue.reserve(pq.items.size());
+    int selectedIdx = 0;
+
+    for (size_t i = 0; i < pq.items.size(); i++) {
+        const auto& pqItem = pq.items[i];
+        QueueItem qi;
+        qi.ratingKey = pqItem.ratingKey;
+        qi.title = pqItem.title;
+        qi.artist = pqItem.grandparentTitle;
+        qi.album = pqItem.parentTitle;
+        qi.thumb = pqItem.thumb;
+        if (qi.thumb.empty()) qi.thumb = pqItem.parentThumb;
+        if (qi.thumb.empty()) qi.thumb = pqItem.grandparentThumb;
+        qi.duration = pqItem.duration / 1000;  // ms to seconds
+        qi.index = (int)i;
+        qi.playQueueItemID = pqItem.playQueueItemID;
+        m_queue.push_back(qi);
+
+        if (pqItem.playQueueItemID == pq.playQueueSelectedItemID) {
+            selectedIdx = (int)i;
+        }
+    }
+
+    m_currentIndex = selectedIdx;
+    m_playQueueID = pq.playQueueID;
+
+    // If shuffled, the server already gave us shuffled order - items are in play order
+    if (isShuffled) {
+        m_shuffleOrder.reserve(m_queue.size());
+        for (int i = 0; i < (int)m_queue.size(); i++) {
+            m_shuffleOrder.push_back(i);
+        }
+        m_shufflePosition = selectedIdx;
+    }
+
+    notifyQueueChanged();
+    brls::Logger::info("MusicQueue: Loaded {} items from server PQ {} (selected={})",
+                       m_queue.size(), m_playQueueID, m_currentIndex);
 }
 
 } // namespace vitaplex

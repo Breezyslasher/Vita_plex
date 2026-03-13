@@ -2384,14 +2384,18 @@ bool PlexClient::updatePlayProgress(const std::string& ratingKey, int timeMs) {
 }
 
 bool PlexClient::reportTimeline(const std::string& ratingKey, const std::string& key,
-                                const std::string& state, int timeMs, int durationMs) {
+                                const std::string& state, int timeMs, int durationMs,
+                                int playQueueItemID) {
     HttpClient client;
-    std::string url = buildApiUrl(
-        "/:/timeline?ratingKey=" + ratingKey +
+    std::string params = "/:/timeline?ratingKey=" + ratingKey +
         "&key=" + key +
         "&state=" + state +
         "&time=" + std::to_string(timeMs) +
-        "&duration=" + std::to_string(durationMs));
+        "&duration=" + std::to_string(durationMs);
+    if (playQueueItemID > 0) {
+        params += "&playQueueItemID=" + std::to_string(playQueueItemID);
+    }
+    std::string url = buildApiUrl(params);
 
     HttpRequest req;
     req.url = url;
@@ -3621,6 +3625,277 @@ bool PlexClient::movePlaylistItem(const std::string& playlistId, const std::stri
     }
 
     brls::Logger::info("movePlaylistItem: Moved item {} after {} in playlist {}", playlistItemId, afterItemId, playlistId);
+    return true;
+}
+
+// ============================================================================
+// Play Queue API
+// ============================================================================
+
+static void parsePlayQueueItems(const std::string& json, PlexClient& client,
+                                 PlexClient::PlayQueueContainer& result) {
+    // Parse container-level fields
+    result.playQueueID = client.extractJsonIntPublic(json, "playQueueID");
+    result.playQueueSelectedItemID = client.extractJsonIntPublic(json, "playQueueSelectedItemID");
+    result.playQueueSelectedItemOffset = client.extractJsonIntPublic(json, "playQueueSelectedItemOffset");
+    result.playQueueSelectedMetadataItemID = client.extractJsonIntPublic(json, "playQueueSelectedMetadataItemID");
+    result.playQueueTotalCount = client.extractJsonIntPublic(json, "playQueueTotalCount");
+    result.playQueueVersion = client.extractJsonIntPublic(json, "playQueueVersion");
+
+    // playQueueShuffled is a boolean in JSON
+    std::string shuffledStr = client.extractJsonValuePublic(json, "playQueueShuffled");
+    result.playQueueShuffled = (shuffledStr == "true" || shuffledStr == "1");
+
+    result.playQueueSourceURI = client.extractJsonValuePublic(json, "playQueueSourceURI");
+
+    // Parse Metadata array items
+    result.items.clear();
+    size_t metaPos = json.find("\"Metadata\"");
+    if (metaPos == std::string::npos) return;
+
+    // Find the array start
+    size_t arrStart = json.find('[', metaPos);
+    if (arrStart == std::string::npos) return;
+
+    // Parse each object in the Metadata array
+    size_t pos = arrStart;
+    while ((pos = json.find('{', pos)) != std::string::npos) {
+        // Find matching closing brace
+        int depth = 1;
+        size_t objEnd = pos + 1;
+        while (objEnd < json.size() && depth > 0) {
+            if (json[objEnd] == '{') depth++;
+            else if (json[objEnd] == '}') depth--;
+            objEnd++;
+        }
+
+        // Check if we've gone past the Metadata array
+        size_t arrEnd = json.find(']', arrStart);
+        if (arrEnd != std::string::npos && pos > arrEnd) break;
+
+        std::string obj = json.substr(pos, objEnd - pos);
+
+        // Only parse if it has playQueueItemID (skip nested objects)
+        std::string pqItemId = client.extractJsonValuePublic(obj, "playQueueItemID");
+        if (!pqItemId.empty()) {
+            PlexClient::PlayQueueItem item;
+            item.playQueueItemID = std::stoi(pqItemId);
+            item.ratingKey = client.extractJsonValuePublic(obj, "ratingKey");
+            item.title = client.extractJsonValuePublic(obj, "title");
+            item.grandparentTitle = client.extractJsonValuePublic(obj, "grandparentTitle");
+            item.parentTitle = client.extractJsonValuePublic(obj, "parentTitle");
+            item.thumb = client.extractJsonValuePublic(obj, "thumb");
+            item.parentThumb = client.extractJsonValuePublic(obj, "parentThumb");
+            item.grandparentThumb = client.extractJsonValuePublic(obj, "grandparentThumb");
+            item.duration = client.extractJsonIntPublic(obj, "duration");
+            item.index = client.extractJsonIntPublic(obj, "index");
+            item.type = client.extractJsonValuePublic(obj, "type");
+
+            if (!item.ratingKey.empty()) {
+                result.items.push_back(item);
+            }
+        }
+
+        pos = objEnd;
+    }
+}
+
+std::string PlexClient::buildPlayQueueURI(const std::string& ratingKey) {
+    // library://{machineId}/item/%2Flibrary%2Fmetadata%2F{ratingKey}
+    return "library://" + m_currentServer.machineIdentifier +
+           "/item/%2Flibrary%2Fmetadata%2F" + ratingKey;
+}
+
+std::string PlexClient::buildPlayQueueDirectoryURI(const std::string& ratingKey) {
+    // library://{machineId}/directory/%2Flibrary%2Fmetadata%2F{ratingKey}%2Fchildren
+    return "library://" + m_currentServer.machineIdentifier +
+           "/directory/%2Flibrary%2Fmetadata%2F" + ratingKey + "%2Fchildren";
+}
+
+bool PlexClient::createPlayQueue(const std::string& uri, const std::string& type,
+                                  PlayQueueContainer& result,
+                                  const std::string& key,
+                                  int shuffle, int repeat, int continuous) {
+    std::string params = "?type=" + type + "&uri=" + HttpClient::urlEncode(uri);
+    if (!key.empty()) {
+        params += "&key=" + HttpClient::urlEncode("/library/metadata/" + key);
+    }
+    if (shuffle) params += "&shuffle=1";
+    if (repeat) params += "&repeat=1";
+    if (continuous) params += "&continuous=1";
+
+    std::string url = buildApiUrl("/playQueues" + params);
+
+    HttpClient client;
+    HttpRequest req;
+    req.url = url;
+    req.method = "POST";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("createPlayQueue: Failed ({})", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
+        return false;
+    }
+
+    parsePlayQueueItems(resp.body, *this, result);
+    brls::Logger::info("createPlayQueue: Created PQ {} with {} items (type={})",
+                       result.playQueueID, result.playQueueTotalCount, type);
+    return result.playQueueID > 0;
+}
+
+bool PlexClient::createPlayQueueFromPlaylist(int playlistID, const std::string& type,
+                                              PlayQueueContainer& result, int shuffle) {
+    std::string params = "?type=" + type + "&playlistID=" + std::to_string(playlistID);
+    if (shuffle) params += "&shuffle=1";
+
+    std::string url = buildApiUrl("/playQueues" + params);
+
+    HttpClient client;
+    HttpRequest req;
+    req.url = url;
+    req.method = "POST";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("createPlayQueueFromPlaylist: Failed ({})", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
+        return false;
+    }
+
+    parsePlayQueueItems(resp.body, *this, result);
+    brls::Logger::info("createPlayQueueFromPlaylist: Created PQ {} from playlist {} ({} items)",
+                       result.playQueueID, playlistID, result.playQueueTotalCount);
+    return result.playQueueID > 0;
+}
+
+bool PlexClient::getPlayQueue(int playQueueID, PlayQueueContainer& result) {
+    std::string url = buildApiUrl("/playQueues/" + std::to_string(playQueueID));
+
+    HttpClient client;
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("getPlayQueue: Failed to get PQ {} ({})", playQueueID, resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
+        return false;
+    }
+
+    parsePlayQueueItems(resp.body, *this, result);
+    return result.playQueueID > 0;
+}
+
+bool PlexClient::addToPlayQueue(int playQueueID, const std::string& uri, bool playNext) {
+    std::string params = "?uri=" + HttpClient::urlEncode(uri);
+    if (playNext) params += "&next=1";
+
+    std::string url = buildApiUrl("/playQueues/" + std::to_string(playQueueID) + params);
+
+    HttpClient client;
+    std::string response;
+    if (!client.put(url, "", response)) {
+        brls::Logger::error("addToPlayQueue: Failed to add to PQ {}", playQueueID);
+        return false;
+    }
+
+    brls::Logger::info("addToPlayQueue: Added to PQ {} (next={})", playQueueID, playNext);
+    return true;
+}
+
+bool PlexClient::clearPlayQueue(int playQueueID) {
+    std::string url = buildApiUrl("/playQueues/" + std::to_string(playQueueID) + "/items");
+
+    HttpClient client;
+    std::string response;
+    if (!client.del(url, response)) {
+        brls::Logger::error("clearPlayQueue: Failed to clear PQ {}", playQueueID);
+        return false;
+    }
+
+    brls::Logger::info("clearPlayQueue: Cleared PQ {}", playQueueID);
+    return true;
+}
+
+bool PlexClient::removeFromPlayQueue(int playQueueID, int playQueueItemID) {
+    std::string url = buildApiUrl("/playQueues/" + std::to_string(playQueueID) +
+                                  "/items/" + std::to_string(playQueueItemID));
+
+    HttpClient client;
+    std::string response;
+    if (!client.del(url, response)) {
+        brls::Logger::error("removeFromPlayQueue: Failed to remove item {} from PQ {}",
+                           playQueueItemID, playQueueID);
+        return false;
+    }
+
+    brls::Logger::info("removeFromPlayQueue: Removed item {} from PQ {}",
+                       playQueueItemID, playQueueID);
+    return true;
+}
+
+bool PlexClient::movePlayQueueItem(int playQueueID, int playQueueItemID, int afterItemID) {
+    std::string url = buildApiUrl("/playQueues/" + std::to_string(playQueueID) +
+                                  "/items/" + std::to_string(playQueueItemID) + "/move");
+    if (afterItemID > 0) {
+        url += "?after=" + std::to_string(afterItemID);
+    }
+
+    HttpClient client;
+    std::string response;
+    if (!client.put(url, "", response)) {
+        brls::Logger::error("movePlayQueueItem: Failed to move item {} in PQ {}",
+                           playQueueItemID, playQueueID);
+        return false;
+    }
+
+    brls::Logger::info("movePlayQueueItem: Moved item {} after {} in PQ {}",
+                       playQueueItemID, afterItemID, playQueueID);
+    return true;
+}
+
+bool PlexClient::shufflePlayQueue(int playQueueID, PlayQueueContainer& result) {
+    std::string url = buildApiUrl("/playQueues/" + std::to_string(playQueueID) + "/shuffle");
+
+    HttpClient client;
+    HttpRequest req;
+    req.url = url;
+    req.method = "PUT";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("shufflePlayQueue: Failed ({})", resp.statusCode);
+        return false;
+    }
+
+    parsePlayQueueItems(resp.body, *this, result);
+    brls::Logger::info("shufflePlayQueue: Shuffled PQ {} ({} items)", playQueueID, result.playQueueTotalCount);
+    return true;
+}
+
+bool PlexClient::unshufflePlayQueue(int playQueueID, PlayQueueContainer& result) {
+    std::string url = buildApiUrl("/playQueues/" + std::to_string(playQueueID) + "/unshuffle");
+
+    HttpClient client;
+    HttpRequest req;
+    req.url = url;
+    req.method = "PUT";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("unshufflePlayQueue: Failed ({})", resp.statusCode);
+        return false;
+    }
+
+    parsePlayQueueItems(resp.body, *this, result);
+    brls::Logger::info("unshufflePlayQueue: Unshuffled PQ {} ({} items)", playQueueID, result.playQueueTotalCount);
     return true;
 }
 

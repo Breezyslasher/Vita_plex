@@ -39,6 +39,8 @@ public:
     static PlayerActivity* createForStream(const std::string& streamUrl, const std::string& title);
 
     // Play from queue (album, playlist, etc.)
+    // Automatically creates a server-side play queue when online,
+    // falls back to client-side queue when offline
     static PlayerActivity* createWithQueue(const std::vector<MediaItem>& tracks, int startIndex = 0);
 
     // Resume existing queue (return to player without resetting queue)
