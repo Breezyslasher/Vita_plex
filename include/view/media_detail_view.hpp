@@ -24,6 +24,7 @@ private:
     void loadChildren();
     void loadMusicCategories();
     void loadTrackList();              // Load tracks in vertical list (like Suwayomi chapters)
+    void loadExtras();                 // Load extras (trailers, featurettes, etc.)
     void onPlay(bool resume = false);
     void onDownload();
     void showDownloadOptions();
@@ -79,6 +80,9 @@ public:
     brls::Box* m_epsContent = nullptr;
     brls::Box* m_compilationsContent = nullptr;
     brls::Box* m_soundtracksContent = nullptr;
+
+    // Extras (trailers, featurettes, deleted scenes)
+    brls::Box* m_extrasBox = nullptr;
 
     // Track currently focused hint icon (like Suwayomi's m_currentFocusedIcon)
     brls::Image* m_currentFocusedHint = nullptr;

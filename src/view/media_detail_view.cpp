@@ -277,6 +277,24 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_mainContent->addView(childrenScroll);
     }
 
+    // Extras container (trailers, featurettes, etc.) for movies and episodes
+    if (m_item.mediaType == MediaType::MOVIE ||
+        m_item.mediaType == MediaType::EPISODE) {
+
+        auto* extrasScroll = new brls::HScrollingFrame();
+        extrasScroll->setHeight(150);
+        extrasScroll->setMarginBottom(20);
+
+        m_extrasBox = new brls::Box();
+        m_extrasBox->setAxis(brls::Axis::ROW);
+        m_extrasBox->setJustifyContent(brls::JustifyContent::FLEX_START);
+
+        extrasScroll->setContentView(m_extrasBox);
+        // Don't add to mainContent yet - will be added in loadExtras() if extras exist
+        extrasScroll->setVisibility(brls::Visibility::GONE);
+        m_mainContent->addView(extrasScroll);
+    }
+
     // Track list for albums (vertical list with nested scrolling)
     if (m_item.mediaType == MediaType::MUSIC_ALBUM) {
         auto* tracksLabel = new brls::Label();
@@ -455,6 +473,11 @@ void MediaDetailView::loadDetails() {
                 loadTrackList();
             } else {
                 loadChildren();
+                // Load extras (trailers, featurettes) for movies and episodes
+                if (m_item.mediaType == MediaType::MOVIE ||
+                    m_item.mediaType == MediaType::EPISODE) {
+                    loadExtras();
+                }
             }
         });
     });
@@ -494,6 +517,76 @@ void MediaDetailView::loadChildren() {
             m_childrenBox->addView(cell);
         }
     }
+}
+
+void MediaDetailView::loadExtras() {
+    if (!m_extrasBox) return;
+
+    std::string ratingKey = m_item.ratingKey;
+
+    asyncRun([this, ratingKey]() {
+        PlexClient& client = PlexClient::getInstance();
+
+        std::vector<MediaItem> extras;
+        bool ok = client.fetchExtras(ratingKey, extras);
+
+        brls::sync([this, ok, extras]() {
+            if (!m_alive || !m_alive->load()) return;
+            if (!ok || extras.empty()) return;
+
+            m_extrasBox->clearViews();
+
+            // Show the extras section - make scroll parent visible
+            if (m_extrasBox->getParent()) {
+                m_extrasBox->getParent()->setVisibility(brls::Visibility::VISIBLE);
+            }
+
+            // Add "Extras" label before the scroll frame
+            // Find the scroll frame parent and insert label before it
+            auto* scrollParent = m_extrasBox->getParent();
+            if (scrollParent && scrollParent->getParent()) {
+                auto* container = dynamic_cast<brls::Box*>(scrollParent->getParent());
+                if (container) {
+                    // Find index of the scroll frame in the container
+                    int scrollIdx = -1;
+                    for (size_t i = 0; i < container->getChildCount(); i++) {
+                        if (container->getChild(i) == scrollParent) {
+                            scrollIdx = (int)i;
+                            break;
+                        }
+                    }
+                    if (scrollIdx >= 0) {
+                        auto* extrasLabel = new brls::Label();
+                        extrasLabel->setText("Extras (" + std::to_string(extras.size()) + ")");
+                        extrasLabel->setFontSize(20);
+                        extrasLabel->setMarginBottom(10);
+                        extrasLabel->setMarginTop(15);
+                        // Insert label before the scroll frame
+                        container->removeView(scrollIdx, false);
+                        container->addView(extrasLabel, scrollIdx);
+                        container->addView(scrollParent, scrollIdx + 1);
+                    }
+                }
+            }
+
+            for (const auto& extra : extras) {
+                auto* cell = new MediaItemCell();
+                cell->setItem(extra);
+                cell->setMarginRight(10);
+
+                cell->registerClickAction([extra](brls::View* view) {
+                    // Play the extra directly
+                    Application::getInstance().pushPlayerActivity(extra.ratingKey);
+                    return true;
+                });
+                cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+
+                m_extrasBox->addView(cell);
+            }
+
+            brls::Logger::info("Loaded {} extras into UI", extras.size());
+        });
+    });
 }
 
 void MediaDetailView::loadMusicCategories() {
