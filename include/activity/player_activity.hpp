@@ -84,7 +84,7 @@ private:
     bool m_queuePopulating = false;     // Guard against re-entrant populateQueueList
 
     // Batched queue population - creates rows across multiple frames to avoid UI freeze
-    static constexpr int QUEUE_BATCH_SIZE = 30;  // Rows to create per frame
+    static constexpr int QUEUE_BATCH_SIZE = 12;  // Rows to create per frame (keep low for Vita perf)
     int m_queueBatchNext = 0;                    // Next row index to create
     int m_queueBatchTotal = 0;                   // Total rows to create
     bool m_queueBatchActive = false;             // Whether batched creation is in progress
@@ -108,8 +108,8 @@ private:
     // visible rows instead of all tracks at once
     struct DeferredThumb {
         brls::Image* image;
-        std::string url;
-        std::string localPath;  // Local thumbnail path for offline playback
+        std::string thumbPath;      // Raw Plex thumb path (resolved lazily)
+        std::string ratingKey;      // For checking local downloads lazily
         bool loaded;
     };
     std::vector<DeferredThumb> m_deferredThumbs;

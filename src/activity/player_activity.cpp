@@ -2252,24 +2252,10 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     thumb->setScalingType(brls::ImageScalingType::FIT);
     thumb->setMarginRight(14);
 
-    // Defer thumbnail loading - will be loaded lazily when row becomes visible
-    // Check for locally downloaded cover art first (for offline playback)
-    std::string localThumbPath;
-    {
-        DownloadsManager& downloads = DownloadsManager::getInstance();
-        DownloadItem dlItem;
-        if (downloads.getDownloadCopy(track.ratingKey, dlItem) &&
-            dlItem.state == DownloadState::COMPLETED && !dlItem.thumbPath.empty()) {
-            localThumbPath = dlItem.thumbPath;
-        }
-    }
-
-    if (!track.thumb.empty() || !localThumbPath.empty()) {
-        std::string thumbUrl = track.thumb.empty() ? "" : client.getThumbnailUrl(track.thumb, 100, 100);
-        m_deferredThumbs.push_back({thumb, thumbUrl, localThumbPath, false});
-    } else {
-        m_deferredThumbs.push_back({thumb, "", "", true});  // No thumb to load
-    }
+    // Defer thumbnail loading - URL and local path resolved lazily when row
+    // becomes visible, avoiding expensive DownloadsManager + PlexClient calls
+    // for every row during queue population
+    m_deferredThumbs.push_back({thumb, track.thumb, track.ratingKey, false});
     row->addView(thumb);
 
     // Text container: title on top, artist below
@@ -2785,19 +2771,32 @@ void PlayerActivity::loadQueueThumbsAroundIndex(int displayIndex) {
     // will complete even after we re-pause here.
     ImageLoader::setPaused(false);
 
+    PlexClient& client = PlexClient::getInstance();
+
     for (int i = start; i < end; i++) {
         auto& dt = m_deferredThumbs[i];
-        if (!dt.loaded && (!dt.url.empty() || !dt.localPath.empty())) {
-            dt.loaded = true;
-            // Try local file first (works offline), fall back to server URL
-            if (!dt.localPath.empty() && ImageLoader::loadFromFile(dt.localPath, dt.image)) {
-                continue;
+        if (dt.loaded) continue;
+        if (dt.thumbPath.empty() && dt.ratingKey.empty()) continue;
+
+        dt.loaded = true;
+
+        // Try local file first (works offline)
+        if (!dt.ratingKey.empty()) {
+            DownloadItem dlItem;
+            if (DownloadsManager::getInstance().getDownloadCopy(dt.ratingKey, dlItem) &&
+                dlItem.state == DownloadState::COMPLETED && !dlItem.thumbPath.empty()) {
+                if (ImageLoader::loadFromFile(dlItem.thumbPath, dt.image)) {
+                    continue;
+                }
             }
-            if (!dt.url.empty()) {
-                ImageLoader::loadAsync(dt.url, [](brls::Image* image) {
-                    // Thumbnail loaded
-                }, dt.image, m_alive);
-            }
+        }
+
+        // Fall back to server URL
+        if (!dt.thumbPath.empty()) {
+            std::string thumbUrl = client.getThumbnailUrl(dt.thumbPath, 100, 100);
+            ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {
+                // Thumbnail loaded
+            }, dt.image, m_alive);
         }
     }
 
