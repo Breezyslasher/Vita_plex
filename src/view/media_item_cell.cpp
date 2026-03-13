@@ -285,12 +285,12 @@ void MediaItemCell::updateFocusInfo(bool focused) {
                 info = std::to_string(minutes) + " min";
             }
             if (!m_item.summary.empty()) {
-                // Show first 50 chars of summary
+                // Show first 30 chars of summary to avoid overflow
                 std::string summary = m_item.summary;
-                if (summary.length() > 50) {
-                    summary = summary.substr(0, 47) + "...";
+                if (summary.length() > 30) {
+                    summary = summary.substr(0, 27) + "...";
                 }
-                if (!info.empty()) info += " - ";
+                if (!info.empty()) info += "\n";
                 info += summary;
             }
             if (!info.empty()) {
