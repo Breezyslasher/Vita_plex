@@ -46,6 +46,7 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     m_allBtn = new brls::Button();
     m_allBtn->setText("All");
     m_allBtn->setMarginRight(10);
+    styleButton(m_allBtn, true);  // Active by default
     m_allBtn->registerClickAction([this](brls::View* view) {
         showAllItems();
         return true;
@@ -57,6 +58,7 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
         m_collectionsBtn = new brls::Button();
         m_collectionsBtn->setText("Collections");
         m_collectionsBtn->setMarginRight(10);
+        styleButton(m_collectionsBtn, false);
         m_collectionsBtn->registerClickAction([this](brls::View* view) {
             showCollections();
             return true;
@@ -69,6 +71,7 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
         m_categoriesBtn = new brls::Button();
         m_categoriesBtn->setText("Categories");
         m_categoriesBtn->setMarginRight(10);
+        styleButton(m_categoriesBtn, false);
         m_categoriesBtn->registerClickAction([this](brls::View* view) {
             showCategories();
             return true;
@@ -81,6 +84,7 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
         m_playlistsBtn = new brls::Button();
         m_playlistsBtn->setText("Playlists");
         m_playlistsBtn->setMarginRight(10);
+        styleButton(m_playlistsBtn, false);
         m_playlistsBtn->registerClickAction([this](brls::View* view) {
             showPlaylists();
             return true;
@@ -92,6 +96,8 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     m_backBtn = new brls::Button();
     m_backBtn->setText("< Back");
     m_backBtn->setVisibility(brls::Visibility::GONE);
+    styleButton(m_backBtn, false);
+    m_backBtn->setBackgroundColor(nvgRGBA(80, 60, 50, 200));
     m_backBtn->registerClickAction([this](brls::View* view) {
         showAllItems();
         return true;
@@ -354,6 +360,20 @@ void LibrarySectionTab::showCategories() {
     updateViewModeButtons();
 }
 
+void LibrarySectionTab::styleButton(brls::Button* btn, bool active) {
+    btn->setCornerRadius(16);
+    btn->setPadding(6, 16, 6, 16);
+    if (active) {
+        btn->setBackgroundColor(nvgRGBA(70, 90, 210, 220));
+        btn->setBorderColor(nvgRGBA(120, 160, 255, 200));
+        btn->setBorderThickness(1.5f);
+    } else {
+        btn->setBackgroundColor(nvgRGBA(60, 60, 70, 180));
+        btn->setBorderColor(nvgRGBA(0, 0, 0, 0));
+        btn->setBorderThickness(0);
+    }
+}
+
 void LibrarySectionTab::updateViewModeButtons() {
     // Show/hide back button
     bool inFilteredView = (m_viewMode == LibraryViewMode::FILTERED);
@@ -370,6 +390,14 @@ void LibrarySectionTab::updateViewModeButtons() {
     }
     if (m_playlistsBtn) {
         m_playlistsBtn->setVisibility(showModeButtons && !m_playlists.empty() ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
+    }
+
+    // Update active styling on mode buttons
+    if (showModeButtons) {
+        styleButton(m_allBtn, m_viewMode == LibraryViewMode::ALL_ITEMS);
+        if (m_collectionsBtn) styleButton(m_collectionsBtn, m_viewMode == LibraryViewMode::COLLECTIONS);
+        if (m_categoriesBtn) styleButton(m_categoriesBtn, m_viewMode == LibraryViewMode::CATEGORIES);
+        if (m_playlistsBtn) styleButton(m_playlistsBtn, m_viewMode == LibraryViewMode::PLAYLISTS);
     }
 }
 

@@ -126,6 +126,9 @@ brls::Box* MusicTab::createHorizontalRow(const std::string& title) {
         auto* newBtn = new brls::Button();
         newBtn->setText("+ New");
         newBtn->setHeight(30);
+        newBtn->setCornerRadius(16);
+        newBtn->setPadding(4, 14, 4, 14);
+        newBtn->setBackgroundColor(nvgRGBA(50, 130, 80, 200));
         newBtn->registerClickAction([this](brls::View* view) {
             showCreatePlaylistDialog();
             return true;
@@ -154,6 +157,30 @@ brls::Box* MusicTab::createHorizontalRow(const std::string& title) {
     }
 
     return rowBox;
+}
+
+void MusicTab::styleButton(brls::Button* btn, bool active) {
+    btn->setCornerRadius(16);
+    btn->setPadding(6, 16, 6, 16);
+    if (active) {
+        btn->setBackgroundColor(nvgRGBA(70, 90, 210, 220));
+        btn->setBorderColor(nvgRGBA(120, 160, 255, 200));
+        btn->setBorderThickness(1.5f);
+    } else {
+        btn->setBackgroundColor(nvgRGBA(60, 60, 70, 180));
+        btn->setBorderColor(nvgRGBA(0, 0, 0, 0));
+        btn->setBorderThickness(0);
+    }
+}
+
+void MusicTab::updateSectionButtonStyles() {
+    if (!m_sectionsBox) return;
+    for (auto* child : m_sectionsBox->getChildren()) {
+        auto* btn = dynamic_cast<brls::Button*>(child);
+        if (btn) {
+            styleButton(btn, btn == m_activeSectionBtn);
+        }
+    }
 }
 
 void MusicTab::willDisappear(bool resetState) {
@@ -205,12 +232,15 @@ void MusicTab::loadSections() {
                     auto* btn = new brls::Button();
                     btn->setText(section.title);
                     btn->setMarginRight(10);
+                    styleButton(btn, false);
 
                     LibrarySection capturedSection = section;
-                    btn->registerClickAction([this, capturedSection](brls::View* view) {
+                    btn->registerClickAction([this, capturedSection, btn](brls::View* view) {
                         m_currentSection = capturedSection.key;
                         m_viewingPlaylist = false;
                         m_titleLabel->setText("Music - " + capturedSection.title);
+                        m_activeSectionBtn = btn;
+                        updateSectionButtonStyles();
                         loadContent(capturedSection.key);
                         loadCollections(capturedSection.key);
                         loadPlaylists();
@@ -225,6 +255,11 @@ void MusicTab::loadSections() {
                     brls::Logger::debug("MusicTab: Loading first section: {}", m_sections[0].title);
                     m_currentSection = m_sections[0].key;
                     m_titleLabel->setText("Music - " + m_sections[0].title);
+                    // Mark first button as active
+                    if (!m_sectionsBox->getChildren().empty()) {
+                        m_activeSectionBtn = dynamic_cast<brls::Button*>(m_sectionsBox->getChildren()[0]);
+                        updateSectionButtonStyles();
+                    }
                     loadContent(m_sections[0].key);
                     loadCollections(m_sections[0].key);
                 }
@@ -306,6 +341,7 @@ void MusicTab::loadPlaylists() {
                         btn->setText(label);
                         btn->setMarginRight(10);
                         btn->setHeight(40);
+                        styleButton(btn, false);
 
                         Playlist capturedPlaylist = playlist;
                         btn->registerClickAction([this, capturedPlaylist](brls::View* view) {
@@ -360,6 +396,7 @@ void MusicTab::loadCollections(const std::string& sectionKey) {
                         btn->setText(collection.title);
                         btn->setMarginRight(10);
                         btn->setHeight(40);
+                        styleButton(btn, false);
 
                         MediaItem capturedCollection = collection;
                         btn->registerClickAction([this, capturedCollection](brls::View* view) {

@@ -51,6 +51,7 @@ private:
     void appendTrackListPage();
     void performPlaylistTrackAction(size_t trackIndex);
     void updateViewModeButtons();
+    void styleButton(brls::Button* btn, bool active);
 
     // Check if this tab is still valid (not destroyed)
     bool isValid() const { return m_alive && *m_alive; }
