@@ -94,9 +94,11 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
 
     leftBox->addView(posterContainer);
 
-    // Play buttons (not for artists or albums - albums use track list actions)
+    // Play buttons (only for movies and music tracks - seasons/episodes/artists/albums excluded)
     if (m_item.mediaType != MediaType::MUSIC_ARTIST &&
-        m_item.mediaType != MediaType::MUSIC_ALBUM) {
+        m_item.mediaType != MediaType::MUSIC_ALBUM &&
+        m_item.mediaType != MediaType::SEASON &&
+        m_item.mediaType != MediaType::EPISODE) {
         m_playButton = new brls::Button();
         m_playButton->setText("Play");
         m_playButton->setWidth(200);
@@ -172,9 +174,8 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         }
     }
 
-    // Download options for shows and seasons (albums use context menu instead)
-    if (m_item.mediaType == MediaType::SHOW ||
-        m_item.mediaType == MediaType::SEASON) {
+    // Download options for shows (albums use context menu instead)
+    if (m_item.mediaType == MediaType::SHOW) {
 
         m_downloadButton = new brls::Button();
         m_downloadButton->setText("Download...");
@@ -1312,6 +1313,12 @@ void MediaDetailView::loadTrackList() {
                     return true;
                 });
                 row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
+
+                // START button always shows track action dialog
+                row->registerAction("Options", brls::ControllerButton::BUTTON_START, [this, capturedTrack, i](brls::View* view) {
+                    showTrackActionDialog(capturedTrack, i);
+                    return true;
+                });
 
                 // Square button (X on PS Vita) adds to download queue
                 row->registerAction("Download", brls::ControllerButton::BUTTON_X, [this, capturedTrack](brls::View* view) {
