@@ -212,42 +212,21 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
 
     rightBox->addView(metaBox);
 
-    // Summary (collapsible - shows preview by default, L to expand with scroll)
+    // Summary - always shown in a scrolling frame
     m_fullDescription = m_item.summary;
-    m_descriptionExpanded = false;
 
     if (!m_fullDescription.empty()) {
-        // Container box for the description area
-        m_summaryContainer = new brls::Box();
-        m_summaryContainer->setAxis(brls::Axis::COLUMN);
-        m_summaryContainer->setMarginBottom(20);
+        m_summaryScroll = new brls::ScrollingFrame();
+        m_summaryScroll->setHeight(200);
+        m_summaryScroll->setMarginBottom(20);
 
         m_summaryLabel = new brls::Label();
         m_summaryLabel->setFontSize(16);
-
-        // Show first ~80 chars (approximately 2 lines) when collapsed
-        std::string truncatedDesc = m_fullDescription;
-        if (truncatedDesc.length() > 80) {
-            truncatedDesc = truncatedDesc.substr(0, 77) + "... [L]";
-        }
-        m_summaryLabel->setText(truncatedDesc);
-
-        m_summaryContainer->addView(m_summaryLabel);
-        rightBox->addView(m_summaryContainer);
-
-        // Register L trigger for description toggle
-        this->registerAction("Summary", brls::ControllerButton::BUTTON_LB, [this](brls::View* view) {
-            toggleDescription();
-            return true;
-        });
-
-        // Make summary tappable for touch (tap to expand/collapse)
+        m_summaryLabel->setText(m_fullDescription);
         m_summaryLabel->setFocusable(true);
-        m_summaryLabel->registerClickAction([this](brls::View* view) {
-            toggleDescription();
-            return true;
-        });
-        m_summaryLabel->addGestureRecognizer(new brls::TapGestureRecognizer(m_summaryLabel));
+
+        m_summaryScroll->setContentView(m_summaryLabel);
+        rightBox->addView(m_summaryScroll);
     }
 
     topRow->addView(rightBox);
@@ -468,12 +447,7 @@ void MediaDetailView::loadDetails() {
             // Update description if full details loaded
             if (!m_item.summary.empty() && m_summaryLabel) {
                 m_fullDescription = m_item.summary;
-                m_descriptionExpanded = false;
-                std::string truncatedDesc = m_fullDescription;
-                if (truncatedDesc.length() > 80) {
-                    truncatedDesc = truncatedDesc.substr(0, 77) + "... [L]";
-                }
-                m_summaryLabel->setText(truncatedDesc);
+                m_summaryLabel->setText(m_fullDescription);
             }
 
             // Load children if applicable
@@ -530,6 +504,9 @@ void MediaDetailView::loadChildren() {
 
                     m_childrenBox->addView(cell);
                 }
+
+                // Set up focus transfer: UP from children goes to description or first child
+                setupChildrenFocusTransfer();
                 return;
             }
         }
@@ -561,6 +538,9 @@ void MediaDetailView::loadChildren() {
 
             m_childrenBox->addView(cell);
         }
+
+        // Set up focus transfer: UP from children goes to description or first child
+        setupChildrenFocusTransfer();
     }
 }
 
@@ -2858,46 +2838,29 @@ void MediaDetailView::performTrackActionStatic(const MediaItem& track) {
     }
 }
 
-void MediaDetailView::toggleDescription() {
-    if (!m_summaryLabel || !m_summaryContainer || m_fullDescription.empty()) return;
+void MediaDetailView::setupChildrenFocusTransfer() {
+    if (!m_childrenBox || m_childrenBox->getChildren().empty()) return;
 
-    m_descriptionExpanded = !m_descriptionExpanded;
+    // Determine the UP navigation target:
+    // - If description exists, navigate UP to description label
+    // - If description is empty, navigate UP to first child item (wrap around)
+    brls::View* upTarget = nullptr;
+    if (m_summaryLabel && !m_fullDescription.empty()) {
+        upTarget = m_summaryLabel;
+    } else if (!m_childrenBox->getChildren().empty()) {
+        upTarget = m_childrenBox->getChildren().front();
+    }
 
-    if (m_descriptionExpanded) {
-        // Remove the label from the container temporarily
-        m_summaryContainer->removeView(m_summaryLabel, false);
-
-        // Remove old scroll frame if it exists
-        if (m_summaryScroll) {
-            m_summaryContainer->removeView(m_summaryScroll);
-            m_summaryScroll = nullptr;
+    if (upTarget) {
+        for (auto* child : m_childrenBox->getChildren()) {
+            child->setCustomNavigationRoute(brls::FocusDirection::UP, upTarget);
         }
+    }
 
-        // Create a scroll frame for the expanded description with its own scrolling
-        m_summaryScroll = new brls::ScrollingFrame();
-        m_summaryScroll->setHeight(200);
-
-        // Create a new label for the full description inside the scroll frame
-        auto* expandedLabel = new brls::Label();
-        expandedLabel->setFontSize(16);
-        expandedLabel->setText(m_fullDescription + "\n\n[L] Collapse");
-
-        m_summaryScroll->setContentView(expandedLabel);
-        m_summaryContainer->addView(m_summaryScroll);
-    } else {
-        // Remove the scroll frame
-        if (m_summaryScroll) {
-            m_summaryContainer->removeView(m_summaryScroll);
-            m_summaryScroll = nullptr;
-        }
-
-        // Collapse back to truncated preview
-        std::string truncatedDesc = m_fullDescription;
-        if (truncatedDesc.length() > 80) {
-            truncatedDesc = truncatedDesc.substr(0, 77) + "... [L]";
-        }
-        m_summaryLabel->setText(truncatedDesc);
-        m_summaryContainer->addView(m_summaryLabel);
+    // If description exists, set DOWN from description to first child
+    if (m_summaryLabel && !m_fullDescription.empty() && !m_childrenBox->getChildren().empty()) {
+        m_summaryLabel->setCustomNavigationRoute(brls::FocusDirection::DOWN,
+            m_childrenBox->getChildren().front());
     }
 }
 
