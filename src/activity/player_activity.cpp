@@ -3146,72 +3146,62 @@ void PlayerActivity::reassignQueueRange(int origIdx, int targetIdx) {
 
     MusicQueue& queue = MusicQueue::getInstance();
     int currentTrackIdx = queue.getCurrentIndex();
-    const auto& tracks = queue.getQueue();
-    int queueSize = (int)tracks.size();
     bool shuffled = queue.isShuffleEnabled();
     const auto& shuffleOrder = queue.getShuffleOrder();
 
+    // Rotate the view pointers in the children vector so each row widget
+    // (with its already-loaded cover texture) moves to its new position.
+    // No thumbnail re-fetch needed - the GPU textures travel with the widget.
+    if (origIdx < targetIdx) {
+        // Moving down: rotate [orig, target+1) left by 1
+        std::rotate(children.begin() + origIdx,
+                     children.begin() + origIdx + 1,
+                     children.begin() + targetIdx + 1);
+    } else {
+        // Moving up: rotate [target, orig+1) right by 1
+        std::rotate(children.begin() + targetIdx,
+                     children.begin() + origIdx,
+                     children.begin() + origIdx + 1);
+    }
+
+    // Also rotate the deferred thumbnails to stay in sync with children
     int rangeStart = std::min(origIdx, targetIdx);
     int rangeEnd = std::max(origIdx, targetIdx);
+    if (rangeEnd < (int)m_deferredThumbs.size()) {
+        if (origIdx < targetIdx) {
+            std::rotate(m_deferredThumbs.begin() + origIdx,
+                         m_deferredThumbs.begin() + origIdx + 1,
+                         m_deferredThumbs.begin() + targetIdx + 1);
+        } else {
+            std::rotate(m_deferredThumbs.begin() + targetIdx,
+                         m_deferredThumbs.begin() + origIdx,
+                         m_deferredThumbs.begin() + origIdx + 1);
+        }
+    }
 
-    // After queue.moveTrack() has already been called, the queue array
-    // is in its final state. We just need to reassign each row in the
-    // affected range to display its new track data.
-    PlexClient& client = PlexClient::getInstance();
-    ImageLoader::setPaused(false);
-
-    for (int di = rangeStart; di <= rangeEnd; di++) {
-        if (di >= childCount) break;
+    // Now update lightweight metadata for each row in the affected range:
+    // QueueRowData (trackIdx, title) and background/border colors.
+    // The actual view content (cover, title text, artist, duration) already
+    // moved with the widget - we only need to fix the metadata mapping
+    // and update which row has the "current track" highlight.
+    for (int di = rangeStart; di <= rangeEnd && di < childCount; di++) {
         brls::Box* rowBox = (brls::Box*)children[di];
-        auto& rowChildren = rowBox->getChildren();
-        if (rowChildren.size() < 2) continue;
 
         // Determine which track this display position should now show
         int queueDisplayIdx = di + m_queueWindowStart;
         int trackIdx = (shuffled && queueDisplayIdx < (int)shuffleOrder.size())
                         ? shuffleOrder[queueDisplayIdx] : queueDisplayIdx;
-        if (trackIdx < 0 || trackIdx >= queueSize) continue;
-        const QueueItem& track = tracks[trackIdx];
-        bool isCurr = (trackIdx == currentTrackIdx);
 
-        // Update QueueRowData
+        // Update QueueRowData to point to the correct track
         auto it = m_queueRowData.find(rowBox);
         if (it != m_queueRowData.end()) {
             it->second.trackIdx = trackIdx;
-            it->second.title = track.title;
+            // title stays cached from the row's original creation - it's still correct
+            // since the widget moved with its content
         }
 
-        // Update title label
-        brls::Box* textBox = (brls::Box*)rowChildren[1];
-        auto& textChildren = textBox->getChildren();
-        if (!textChildren.empty()) {
-            brls::Label* titleLbl = (brls::Label*)textChildren[0];
-            if (isCurr) {
-                titleLbl->setText("> " + track.title);
-                titleLbl->setTextColor(nvgRGB(170, 210, 255));
-            } else {
-                char numBuf[8];
-                snprintf(numBuf, sizeof(numBuf), "%d. ", queueDisplayIdx + 1);
-                titleLbl->setText(numBuf + track.title);
-                titleLbl->setTextColor(nvgRGB(240, 240, 240));
-            }
-        }
-        // Update artist label
-        if (textChildren.size() >= 2) {
-            brls::Label* artistLbl = (brls::Label*)textChildren[1];
-            artistLbl->setText(track.artist);
-            artistLbl->setTextColor(isCurr ? nvgRGBA(170, 210, 255, 180) : nvgRGB(170, 170, 170));
-        }
-
-        // Update duration label
-        if (rowChildren.size() >= 3 && track.duration > 0) {
-            brls::Label* durLbl = (brls::Label*)rowChildren[2];
-            char buf[16];
-            snprintf(buf, sizeof(buf), "%d:%02d", track.duration / 60, track.duration % 60);
-            durLbl->setText(buf);
-        }
-
-        // Update background/border
+        // Update current-track highlight (only thing that changes visually)
+        bool isCurr = (trackIdx == currentTrackIdx);
         if (isCurr) {
             rowBox->setBackgroundColor(nvgRGBA(70, 90, 210, 150));
             rowBox->setBorderColor(nvgRGBA(120, 160, 255, 200));
@@ -3221,40 +3211,10 @@ void PlayerActivity::reassignQueueRange(int origIdx, int targetIdx) {
             rowBox->setBorderColor(nvgRGBA(0, 0, 0, 0));
             rowBox->setBorderThickness(0);
         }
-
-        // Update thumbnail - directly assign from queue data
-        brls::Image* thumb = (brls::Image*)rowChildren[0];
-        if (di < (int)m_deferredThumbs.size()) {
-            auto& dt = m_deferredThumbs[di];
-            std::string newThumbPath = track.thumb;
-
-            dt.thumbPath = newThumbPath;
-            dt.ratingKey = track.ratingKey;
-            dt.image = thumb;
-            dt.loaded = true;
-
-            // Try local file first
-            bool loadedLocal = false;
-            if (!dt.ratingKey.empty()) {
-                DownloadItem dlItem;
-                if (DownloadsManager::getInstance().getDownloadCopy(dt.ratingKey, dlItem) &&
-                    dlItem.state == DownloadState::COMPLETED && !dlItem.thumbPath.empty()) {
-                    loadedLocal = ImageLoader::loadFromFile(dlItem.thumbPath, thumb);
-                }
-            }
-            if (!loadedLocal && !newThumbPath.empty()) {
-                std::string thumbUrl = client.getThumbnailUrl(newThumbPath, 100, 100);
-                ImageLoader::loadAsync(thumbUrl, [](brls::Image*) {}, thumb, m_alive);
-            } else if (!loadedLocal) {
-                thumb->setImageFromRes("img/default_music.png");
-            }
-        }
     }
 
-    ImageLoader::setPaused(true);
     queueList->invalidate();
-    brls::Logger::debug("Drag: reassigned rows {} to {} ({}ms total)",
-        rangeStart, rangeEnd, rangeEnd - rangeStart + 1);
+    brls::Logger::debug("Drag: rotated rows {} -> {} (no re-fetch)", origIdx, targetIdx);
 }
 
 void PlayerActivity::renumberQueueRows() {
