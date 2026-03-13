@@ -443,6 +443,24 @@ void PlayerActivity::onContentAvailable() {
         }
     }
 
+    // Block upward D-pad navigation from center transport controls so focus
+    // doesn't escape to off-screen elements (absolutely-positioned overlays)
+    if (!m_isQueueMode) {
+        if (playBtn) playBtn->setCustomNavigationRoute(brls::FocusDirection::UP, playBtn);
+        if (rewindBtn) rewindBtn->setCustomNavigationRoute(brls::FocusDirection::UP, rewindBtn);
+        if (forwardBtn) forwardBtn->setCustomNavigationRoute(brls::FocusDirection::UP, forwardBtn);
+    }
+
+    // Block downward D-pad navigation from the bottom button row so focus
+    // doesn't escape to off-screen elements (absolutely-positioned overlays)
+    // Only set on focusable buttons — in music mode audioBtn/subBtn/videoBtn are non-focusable
+    if (queueBtn) queueBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, queueBtn);
+    if (!m_isQueueMode) {
+        if (audioBtn) audioBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, audioBtn);
+        if (subBtn) subBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, subBtn);
+        if (videoBtn) videoBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, videoBtn);
+    }
+
     // Wire up skip button for intro/credits
     if (skipBtn) {
         skipBtn->registerClickAction([this](brls::View* view) {
@@ -617,9 +635,11 @@ void PlayerActivity::loadFromQueue() {
             } else if (!track->thumb.empty()) {
                 PlexClient& client = PlexClient::getInstance();
                 std::string thumbUrl = client.getThumbnailUrl(track->thumb, 300, 300);
+                ImageLoader::setPaused(false);
                 ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
                     img->setVisibility(brls::Visibility::VISIBLE);
                 }, albumArt, m_alive);
+                ImageLoader::setPaused(true);
             }
         }
 
@@ -659,25 +679,30 @@ void PlayerActivity::loadFromQueue() {
     m_mediaKey = track->ratingKey;
     std::string url;
 
+    // Pause image loading and invalidate stale in-flight loads from previous
+    // pages before queuing any new loads for this track.
+    ImageLoader::setPaused(true);
+    ImageLoader::cancelAll();
+
     // Check if this track is downloaded locally - play from local file if available
     DownloadsManager& downloads = DownloadsManager::getInstance();
     DownloadItem dlItem;
     bool useLocalFile = false;
-    bool coverLoaded = false;
     if (downloads.getDownloadCopy(track->ratingKey, dlItem) && dlItem.state == DownloadState::COMPLETED) {
         url = dlItem.localPath;
         useLocalFile = true;
+        m_isLocalFile = true;  // Suppress timeline reports when offline
         brls::Logger::info("PlayerActivity: Using downloaded file for track: {}", url);
 
         // Load cover art from local file if available (preferred over server URL)
         if (albumArt && !dlItem.thumbPath.empty()) {
             if (ImageLoader::loadFromFile(dlItem.thumbPath, albumArt)) {
                 albumArt->setVisibility(brls::Visibility::VISIBLE);
-                coverLoaded = true;
             }
         }
     } else {
         // Stream from server
+        m_isLocalFile = false;  // Reset in case previous track was local
         PlexClient& client = PlexClient::getInstance();
         if (!client.getTranscodeUrl(track->ratingKey, url, 0)) {
             brls::Logger::error("Failed to get transcode URL for track: {}", track->ratingKey);
@@ -685,29 +710,19 @@ void PlayerActivity::loadFromQueue() {
             return;
         }
 
-        // Load album art from server (only when streaming, not offline)
+        // Load album art from server - temporarily unpause so loadAsync
+        // accepts the request, then re-pause to block other page loads.
+        // The async worker no longer checks pause, so the load will complete.
         if (albumArt && !track->thumb.empty()) {
             PlexClient& artClient = PlexClient::getInstance();
             std::string thumbUrl = artClient.getThumbnailUrl(track->thumb, 300, 300);
-            // Temporarily unpause image loading if needed so the cover art can load
-            bool wasPaused = ImageLoader::isPaused();
-            if (wasPaused) ImageLoader::setPaused(false);
+            ImageLoader::setPaused(false);
             ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
                 img->setVisibility(brls::Visibility::VISIBLE);
             }, albumArt, m_alive);
-            if (wasPaused) ImageLoader::setPaused(true);
+            ImageLoader::setPaused(true);
             albumArt->setVisibility(brls::Visibility::VISIBLE);
-            coverLoaded = true;
         }
-    }
-
-    // Pause image loading to avoid bandwidth contention with MPV streaming.
-    // Only cancel in-flight loads if no cover art was just requested -
-    // cancelAll() increments the generation counter which would discard
-    // our own cover art load.
-    ImageLoader::setPaused(true);
-    if (!coverLoaded) {
-        ImageLoader::cancelAll();
     }
 
     MpvPlayer& player = MpvPlayer::getInstance();
@@ -2238,11 +2253,22 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     thumb->setMarginRight(14);
 
     // Defer thumbnail loading - will be loaded lazily when row becomes visible
-    if (!track.thumb.empty()) {
-        std::string thumbUrl = client.getThumbnailUrl(track.thumb, 100, 100);
-        m_deferredThumbs.push_back({thumb, thumbUrl, false});
+    // Check for locally downloaded cover art first (for offline playback)
+    std::string localThumbPath;
+    {
+        DownloadsManager& downloads = DownloadsManager::getInstance();
+        DownloadItem dlItem;
+        if (downloads.getDownloadCopy(track.ratingKey, dlItem) &&
+            dlItem.state == DownloadState::COMPLETED && !dlItem.thumbPath.empty()) {
+            localThumbPath = dlItem.thumbPath;
+        }
+    }
+
+    if (!track.thumb.empty() || !localThumbPath.empty()) {
+        std::string thumbUrl = track.thumb.empty() ? "" : client.getThumbnailUrl(track.thumb, 100, 100);
+        m_deferredThumbs.push_back({thumb, thumbUrl, localThumbPath, false});
     } else {
-        m_deferredThumbs.push_back({thumb, "", true});  // No thumb to load
+        m_deferredThumbs.push_back({thumb, "", "", true});  // No thumb to load
     }
     row->addView(thumb);
 
@@ -2749,25 +2775,33 @@ void PlayerActivity::populateQueueBatch() {
 void PlayerActivity::loadQueueThumbsAroundIndex(int displayIndex) {
     if (m_deferredThumbs.empty()) return;
 
-    bool wasPaused = ImageLoader::isPaused();
-    if (wasPaused) ImageLoader::setPaused(false);
-
     // Load thumbnails for a window around the given display index
     // Queue scroll is 320px with ~62px rows = ~5 visible rows
     int start = std::max(0, displayIndex - QUEUE_THUMB_BUFFER);
     int end = std::min((int)m_deferredThumbs.size(), displayIndex + QUEUE_THUMB_BUFFER + 6);
 
+    // Temporarily unpause so loadAsync accepts the requests, then re-pause.
+    // The async workers no longer check the pause flag, so queued loads
+    // will complete even after we re-pause here.
+    ImageLoader::setPaused(false);
+
     for (int i = start; i < end; i++) {
         auto& dt = m_deferredThumbs[i];
-        if (!dt.loaded && !dt.url.empty()) {
+        if (!dt.loaded && (!dt.url.empty() || !dt.localPath.empty())) {
             dt.loaded = true;
-            ImageLoader::loadAsync(dt.url, [](brls::Image* image) {
-                // Thumbnail loaded
-            }, dt.image, m_alive);
+            // Try local file first (works offline), fall back to server URL
+            if (!dt.localPath.empty() && ImageLoader::loadFromFile(dt.localPath, dt.image)) {
+                continue;
+            }
+            if (!dt.url.empty()) {
+                ImageLoader::loadAsync(dt.url, [](brls::Image* image) {
+                    // Thumbnail loaded
+                }, dt.image, m_alive);
+            }
         }
     }
 
-    if (wasPaused) ImageLoader::setPaused(true);
+    ImageLoader::setPaused(true);
 }
 
 int PlayerActivity::findQueueRowDisplayIndex(brls::View* row) {

@@ -59,8 +59,8 @@ void MainActivity::onContentAvailable() {
             sidebarWidth = std::max(sidebarWidth, calculateTextWidth(tab));
         }
 
-        // If showing libraries in sidebar, check library names too
-        if (settings.showLibrariesInSidebar) {
+        // If showing libraries in sidebar, check library names too (skip in offline mode)
+        if (settings.showLibrariesInSidebar && !Application::getInstance().isOfflineMode()) {
             PlexClient& client = PlexClient::getInstance();
             std::vector<LibrarySection> sections;
             if (client.fetchLibrarySections(sections)) {
