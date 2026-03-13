@@ -2072,8 +2072,13 @@ void PlayerActivity::updateQueueDisplay() {
             status += " [Repeat]";
         }
 
+        // Show shuffle position when shuffled, otherwise raw queue index
+        int displayPos = queue.isShuffleEnabled()
+            ? queue.getShufflePosition() + 1
+            : queue.getCurrentIndex() + 1;
+
         snprintf(queueInfo, sizeof(queueInfo), "Track %d of %d%s",
-                queue.getCurrentIndex() + 1,
+                displayPos,
                 queue.getQueueSize(),
                 status.c_str());
 
@@ -2081,12 +2086,13 @@ void PlayerActivity::updateQueueDisplay() {
         queueLabel->setVisibility(brls::Visibility::VISIBLE);
     }
 
-    // Refresh queue list overlay if visible - use lightweight update when
-    // only the current track changed (avoids full rebuild for large queues)
+    // Refresh queue list overlay if visible - rebuild when the queue
+    // version changed (size, order, or shuffle toggle), otherwise just
+    // update the current-track highlight
     if (m_queueOverlayVisible && queueList) {
-        int rowCount = (int)queueList->getChildren().size();
-        if (rowCount != queue.getQueueSize()) {
-            // Queue size changed - need full rebuild
+        uint32_t currentVersion = queue.getVersion();
+        if (m_cachedQueueVersion != currentVersion) {
+            // Queue changed (shuffle toggled, tracks added/removed, etc.)
             populateQueueList();
         } else {
             // Just update highlight on current track rows
