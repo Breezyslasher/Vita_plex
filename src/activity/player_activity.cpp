@@ -2851,20 +2851,24 @@ void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB) {
         displayIdxB < (int)m_deferredThumbs.size()) {
         auto& dtA = m_deferredThumbs[displayIdxA];
         auto& dtB = m_deferredThumbs[displayIdxB];
-        // Swap deferred thumb entries (url, loaded state)
-        std::swap(dtA.url, dtB.url);
+        // Swap deferred thumb entries (thumbPath, ratingKey, loaded state)
+        std::swap(dtA.thumbPath, dtB.thumbPath);
+        std::swap(dtA.ratingKey, dtB.ratingKey);
         std::swap(dtA.loaded, dtB.loaded);
         // Re-point image pointers to their current rows
         dtA.image = thumbA;
         dtB.image = thumbB;
         // Reload thumbnails to reflect the swap
-        if (dtA.loaded && !dtA.url.empty()) {
-            ImageLoader::loadAsync(dtA.url, [](brls::Image*) {}, thumbA, m_alive);
+        PlexClient& swapClient = PlexClient::getInstance();
+        if (dtA.loaded && !dtA.thumbPath.empty()) {
+            std::string urlA = swapClient.getThumbnailUrl(dtA.thumbPath, 100, 100);
+            ImageLoader::loadAsync(urlA, [](brls::Image*) {}, thumbA, m_alive);
         } else {
             thumbA->setImageFromRes("img/default_music.png");
         }
-        if (dtB.loaded && !dtB.url.empty()) {
-            ImageLoader::loadAsync(dtB.url, [](brls::Image*) {}, thumbB, m_alive);
+        if (dtB.loaded && !dtB.thumbPath.empty()) {
+            std::string urlB = swapClient.getThumbnailUrl(dtB.thumbPath, 100, 100);
+            ImageLoader::loadAsync(urlB, [](brls::Image*) {}, thumbB, m_alive);
         } else {
             thumbB->setImageFromRes("img/default_music.png");
         }
