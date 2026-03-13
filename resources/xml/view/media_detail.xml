@@ -14,16 +14,6 @@
             width="200"
             height="300"
             scalingType="fit"/>
-        <brls:Button
-            id="detail/play_button"
-            text="Play"
-            width="200"
-            marginTop="20"/>
-        <brls:Button
-            id="detail/resume_button"
-            text="Resume"
-            width="200"
-            marginTop="10"/>
     </brls:Box>
     <!-- Right side - Details -->
     <brls:Box
