@@ -48,6 +48,7 @@ MediaType PlexClient::parseMediaType(const std::string& typeStr) {
     if (typeStr == "artist") return MediaType::MUSIC_ARTIST;
     if (typeStr == "album") return MediaType::MUSIC_ALBUM;
     if (typeStr == "track") return MediaType::MUSIC_TRACK;
+    if (typeStr == "clip") return MediaType::CLIP;
     if (typeStr == "photo") return MediaType::PHOTO;
     return MediaType::UNKNOWN;
 }
@@ -893,6 +894,69 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
         }
     }
 
+    return true;
+}
+
+bool PlexClient::fetchExtras(const std::string& ratingKey, std::vector<MediaItem>& items) {
+    brls::Logger::debug("fetchExtras: ratingKey={}", ratingKey);
+
+    HttpClient client;
+    std::string url = buildApiUrl("/library/metadata/" + ratingKey + "/extras");
+
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+
+    brls::Logger::debug("Extras response: {} - {} bytes", resp.statusCode, resp.body.length());
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("Failed to fetch extras: {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
+        return false;
+    }
+
+    items.clear();
+
+    // Parse media items by looking for objects with ratingKey
+    size_t pos = 0;
+    while ((pos = resp.body.find("\"ratingKey\"", pos)) != std::string::npos) {
+        size_t objStart = resp.body.rfind('{', pos);
+        if (objStart == std::string::npos) {
+            pos++;
+            continue;
+        }
+
+        int braceCount = 1;
+        size_t objEnd = objStart + 1;
+        while (braceCount > 0 && objEnd < resp.body.length()) {
+            if (resp.body[objEnd] == '{') braceCount++;
+            else if (resp.body[objEnd] == '}') braceCount--;
+            objEnd++;
+        }
+
+        std::string obj = resp.body.substr(objStart, objEnd - objStart);
+
+        MediaItem item;
+        item.ratingKey = extractJsonValue(obj, "ratingKey");
+        item.key = extractJsonValue(obj, "key");
+        item.title = extractJsonValue(obj, "title");
+        item.summary = extractJsonValue(obj, "summary");
+        item.thumb = extractJsonValue(obj, "thumb");
+        item.type = extractJsonValue(obj, "type");
+        item.mediaType = parseMediaType(item.type);
+        item.duration = extractJsonInt(obj, "duration");
+        item.subtype = extractJsonValue(obj, "subtype");
+
+        if (!item.ratingKey.empty() && !item.title.empty()) {
+            items.push_back(item);
+        }
+
+        pos = objEnd;
+    }
+
+    brls::Logger::info("Found {} extras", items.size());
     return true;
 }
 

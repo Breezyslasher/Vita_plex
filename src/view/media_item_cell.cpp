@@ -4,6 +4,7 @@
 
 #include "view/media_item_cell.hpp"
 #include "app/plex_client.hpp"
+#include "app/application.hpp"
 #include "utils/image_loader.hpp"
 
 namespace vitaplex {
@@ -102,6 +103,7 @@ void MediaItemCell::setItem(const MediaItem& item) {
                     item.mediaType == MediaType::MUSIC_TRACK ||
                     item.type == "playlist");
     bool isEpisode = (item.mediaType == MediaType::EPISODE);
+    bool isClip = (item.mediaType == MediaType::CLIP);
 
     if (isMusic) {
         // Square album art
@@ -110,8 +112,8 @@ void MediaItemCell::setItem(const MediaItem& item) {
         // Adjust box to fit square art + text
         this->setWidth(120);
         this->setHeight(150);
-    } else if (isEpisode) {
-        // Landscape episode still
+    } else if (isEpisode || isClip) {
+        // Landscape episode still / extras clip
         m_thumbnailImage->setWidth(140);
         m_thumbnailImage->setHeight(80);
         // Adjust box to fit landscape image + text
@@ -135,6 +137,16 @@ void MediaItemCell::setItem(const MediaItem& item) {
         }
         m_originalTitle = title;  // Store truncated title for focus restore
         m_titleLabel->setText(title);
+
+        // Hide titles for movies and shows if setting is enabled
+        bool hideTitle = Application::getInstance().getSettings().hideTitlesInGrid &&
+            (item.mediaType == MediaType::MOVIE || item.mediaType == MediaType::SHOW);
+        m_titleLabel->setVisibility(hideTitle ? brls::Visibility::GONE : brls::Visibility::VISIBLE);
+
+        // Shrink box height when title is hidden to remove blank space
+        if (hideTitle && !isMusic && !isEpisode) {
+            this->setHeight(178);
+        }
     }
 
     // Set subtitle for episodes
@@ -192,12 +204,13 @@ void MediaItemCell::loadThumbnail() {
                     m_item.mediaType == MediaType::MUSIC_TRACK ||
                     m_item.type == "playlist");
     bool isEpisode = (m_item.mediaType == MediaType::EPISODE);
+    bool isClip = (m_item.mediaType == MediaType::CLIP);
 
     int width, height;
     if (isMusic) {
         width = 110; height = 110;
-    } else if (isEpisode) {
-        width = 280; height = 160;  // Landscape episode still (2x display for quality)
+    } else if (isEpisode || isClip) {
+        width = 280; height = 160;  // Landscape still (2x display for quality)
     } else {
         width = 110; height = 165;
     }
@@ -411,6 +424,26 @@ void MediaItemCell::updateFocusInfo(bool focused) {
         } else {
             m_titleLabel->setText(m_originalTitle);
             if (m_buttonHintBox) m_buttonHintBox->setVisibility(brls::Visibility::GONE);
+        }
+    } else if (m_item.mediaType == MediaType::CLIP) {
+        // Show full title and duration for extras on focus
+        if (focused) {
+            m_titleLabel->setText(m_item.title);
+            if (m_item.duration > 0) {
+                int minutes = m_item.duration / 60000;
+                std::string info;
+                if (minutes > 0) {
+                    info = std::to_string(minutes) + " min";
+                } else {
+                    int seconds = m_item.duration / 1000;
+                    info = std::to_string(seconds) + " sec";
+                }
+                m_descriptionLabel->setText(info);
+                m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
+            }
+        } else {
+            m_titleLabel->setText(m_originalTitle);
+            m_descriptionLabel->setVisibility(brls::Visibility::GONE);
         }
     }
 }

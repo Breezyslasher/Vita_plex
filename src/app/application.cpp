@@ -257,6 +257,8 @@ bool Application::loadSettings() {
     m_settings.showCollections = extractBool("showCollections", true);
     m_settings.showPlaylists = extractBool("showPlaylists", true);
     m_settings.showGenres = extractBool("showGenres", true);
+    m_settings.hideTitlesInGrid = extractBool("hideTitlesInGrid", false);
+    m_settings.skipSingleSeason = extractBool("skipSingleSeason", false);
 
     // Load playback settings
     m_settings.autoPlayNext = extractBool("autoPlayNext", true);
@@ -329,6 +331,8 @@ bool Application::saveSettings() {
     json += "  \"showCollections\": " + std::string(m_settings.showCollections ? "true" : "false") + ",\n";
     json += "  \"showPlaylists\": " + std::string(m_settings.showPlaylists ? "true" : "false") + ",\n";
     json += "  \"showGenres\": " + std::string(m_settings.showGenres ? "true" : "false") + ",\n";
+    json += "  \"hideTitlesInGrid\": " + std::string(m_settings.hideTitlesInGrid ? "true" : "false") + ",\n";
+    json += "  \"skipSingleSeason\": " + std::string(m_settings.skipSingleSeason ? "true" : "false") + ",\n";
 
     // Playback settings
     json += "  \"autoPlayNext\": " + std::string(m_settings.autoPlayNext ? "true" : "false") + ",\n";

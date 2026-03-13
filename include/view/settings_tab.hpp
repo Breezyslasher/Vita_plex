@@ -58,6 +58,8 @@ private:
     brls::BooleanCell* m_collectionsToggle = nullptr;
     brls::BooleanCell* m_playlistsToggle = nullptr;
     brls::BooleanCell* m_genresToggle = nullptr;
+    brls::BooleanCell* m_hideTitlesToggle = nullptr;
+    brls::BooleanCell* m_skipSingleSeasonToggle = nullptr;
 
     // Playback section
     brls::BooleanCell* m_autoPlayToggle = nullptr;

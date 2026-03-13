@@ -71,6 +71,8 @@ struct AppSettings {
     bool showCollections = true;          // Show collections in library sections
     bool showPlaylists = true;            // Show playlists
     bool showGenres = true;               // Show genre categories
+    bool hideTitlesInGrid = false;        // Hide titles under movie/show posters in grid
+    bool skipSingleSeason = false;        // Skip season view for single-season shows
 
     // Playback Settings
     bool autoPlayNext = true;

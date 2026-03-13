@@ -41,20 +41,7 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
         currentRow->setAxis(brls::Axis::ROW);
         currentRow->setJustifyContent(brls::JustifyContent::FLEX_START);
         currentRow->setMarginBottom(10);
-        // Insert before "Load More" button if it exists, otherwise at end
-        if (m_loadMoreBtn) {
-            size_t btnIdx = 0;
-            auto& children = m_contentBox->getChildren();
-            for (size_t c = 0; c < children.size(); c++) {
-                if (children[c] == m_loadMoreBtn) {
-                    btnIdx = c;
-                    break;
-                }
-            }
-            m_contentBox->addView(currentRow, btnIdx);
-        } else {
-            m_contentBox->addView(currentRow);
-        }
+        m_contentBox->addView(currentRow);
     }
 
     auto* cell = new MediaItemCell();
@@ -142,7 +129,6 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
 
 void RecyclingGrid::rebuildGrid() {
     m_contentBox->clearViews();
-    m_loadMoreBtn = nullptr;
     m_renderedCount = 0;
 
     if (m_items.empty()) return;
@@ -151,13 +137,7 @@ void RecyclingGrid::rebuildGrid() {
 }
 
 void RecyclingGrid::appendPage() {
-    size_t end = std::min(m_renderedCount + PAGE_SIZE, m_items.size());
-
-    // Remove existing "Load More" button before adding new rows
-    if (m_loadMoreBtn) {
-        m_contentBox->removeView(m_loadMoreBtn);
-        m_loadMoreBtn = nullptr;
-    }
+    size_t end = m_items.size();
 
     brls::Box* currentRow = nullptr;
     // If we have items already, check if the last row is incomplete
@@ -176,25 +156,6 @@ void RecyclingGrid::appendPage() {
     }
 
     m_renderedCount = end;
-
-    // Add "Load More" button if there are remaining items
-    if (m_renderedCount < m_items.size()) {
-        size_t remaining = m_items.size() - m_renderedCount;
-        m_loadMoreBtn = new brls::Button();
-        auto* label = new brls::Label();
-        label->setText("Load More (" + std::to_string(remaining) + " remaining)");
-        label->setFontSize(16);
-        label->setHorizontalAlign(brls::HorizontalAlign::CENTER);
-        m_loadMoreBtn->addView(label);
-        m_loadMoreBtn->setMarginTop(10);
-        m_loadMoreBtn->setHeight(44);
-        m_loadMoreBtn->registerClickAction([this](brls::View*) {
-            appendPage();
-            return true;
-        });
-        m_loadMoreBtn->addGestureRecognizer(new brls::TapGestureRecognizer(m_loadMoreBtn));
-        m_contentBox->addView(m_loadMoreBtn);
-    }
 }
 
 void RecyclingGrid::onItemClicked(int index) {

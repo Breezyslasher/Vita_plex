@@ -32,7 +32,6 @@ private:
     std::function<void(const MediaItem&)> m_onItemStartAction;
 
     brls::Box* m_contentBox = nullptr;
-    brls::Button* m_loadMoreBtn = nullptr;
     int m_columns = 4;
     int m_visibleRows = 3;
     size_t m_renderedCount = 0;  // How many items are currently rendered

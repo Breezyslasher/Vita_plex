@@ -187,7 +187,12 @@ void PlayerActivity::onContentAvailable() {
             }
             if (duration <= 0)
                 duration = player.getDuration();
-            player.seekTo(duration * progress);
+            // Slider represents full video duration (including resume offset).
+            // Convert slider position back to MPV-relative seek position.
+            double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
+            double absDuration = baseOffsetSec + duration;
+            double seekPos = std::max(0.0, absDuration * progress - baseOffsetSec);
+            player.seekTo(seekPos);
         });
     }
 
@@ -1229,16 +1234,23 @@ void PlayerActivity::updateProgress() {
         duration = player.getDuration();
 
     if (duration > 0) {
+        // For transcoded streams with a resume offset, MPV position/duration are
+        // relative to the stream start (offset point). Compute absolute values
+        // for correct UI display.
+        double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
+        double absPosition = baseOffsetSec + position;
+        double absDuration = baseOffsetSec + duration;
+
         if (progressSlider) {
             m_updatingSlider = true;
-            progressSlider->setProgress((float)(position / duration));
+            progressSlider->setProgress((float)(absPosition / absDuration));
             m_updatingSlider = false;
         }
 
         // Update time labels: elapsed on left, remaining on right
         {
-            int posMin = (int)position / 60;
-            int posSec = (int)position % 60;
+            int posMin = (int)absPosition / 60;
+            int posSec = (int)absPosition % 60;
             int remaining = std::max(0, (int)(duration - position));
             int remMin = remaining / 60;
             int remSec = remaining % 60;
@@ -1253,8 +1265,8 @@ void PlayerActivity::updateProgress() {
 
             // Keep legacy time label updated for video mode
             if (timeLabel) {
-                int durMin = (int)duration / 60;
-                int durSec = (int)duration % 60;
+                int durMin = (int)absDuration / 60;
+                int durSec = (int)absDuration % 60;
                 char timeStr[32];
                 snprintf(timeStr, sizeof(timeStr), "%02d:%02d / %02d:%02d",
                          posMin, posSec, durMin, durSec);
