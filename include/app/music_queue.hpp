@@ -91,6 +91,9 @@ public:
     void saveState();
     void loadState();
 
+    // Version counter - incremented on every queue mutation (add/remove/reorder/set/clear)
+    uint32_t getVersion() const { return m_version; }
+
 private:
     MusicQueue();
     ~MusicQueue() = default;
@@ -112,6 +115,7 @@ private:
     TrackEndedCallback m_trackEndedCallback;
     QueueChangedCallback m_queueChangedCallback;
 
+    uint32_t m_version = 0;  // Incremented on every queue mutation
     std::mt19937 m_rng;  // Random number generator for shuffle
 };
 

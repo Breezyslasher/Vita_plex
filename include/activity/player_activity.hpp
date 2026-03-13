@@ -82,9 +82,26 @@ private:
     void playFromQueue(int index);  // Play a specific track from queue list
     bool m_queueOverlayVisible = false;
     bool m_queuePopulating = false;     // Guard against re-entrant populateQueueList
+    uint32_t m_cachedQueueVersion = 0; // Queue version when rows were last built (0 = never)
+
+    // Windowed queue rendering - only create rows for a window around the current track
+    // to avoid creating thousands of views for large queues
+    static constexpr int QUEUE_RENDER_LIMIT = 60;  // Max rows to create at once
+    static constexpr int QUEUE_EXPAND_CHUNK = 20;   // Rows to add when expanding window
+    static constexpr int QUEUE_EXPAND_TRIGGER = 5;   // Expand when focus is within this many rows of edge
+    static constexpr int QUEUE_EXPAND_BATCH = 4;     // Rows to create per frame during async expansion
+    int m_queueWindowStart = 0;     // First queue display index in the rendered window
+    int m_queueWindowEnd = 0;       // One past last queue display index in the window
+    int m_queueTotalCount = 0;      // Total queue items
+    void expandQueueWindow(int direction);  // +1 = expand down, -1 = expand up
+    // Async expansion state - creates rows across frames to avoid freezing
+    bool m_expandActive = false;
+    int m_expandNext = 0;           // Next queue display index to create
+    int m_expandEnd = 0;            // One past last index to create
+    void expandQueueBatch();        // Create next batch of expansion rows
 
     // Batched queue population - creates rows across multiple frames to avoid UI freeze
-    static constexpr int QUEUE_BATCH_SIZE = 30;  // Rows to create per frame
+    static constexpr int QUEUE_BATCH_SIZE = 12;  // Rows to create per frame (keep low for Vita perf)
     int m_queueBatchNext = 0;                    // Next row index to create
     int m_queueBatchTotal = 0;                   // Total rows to create
     bool m_queueBatchActive = false;             // Whether batched creation is in progress
@@ -108,8 +125,8 @@ private:
     // visible rows instead of all tracks at once
     struct DeferredThumb {
         brls::Image* image;
-        std::string url;
-        std::string localPath;  // Local thumbnail path for offline playback
+        std::string thumbPath;      // Raw Plex thumb path (resolved lazily)
+        std::string ratingKey;      // For checking local downloads lazily
         bool loaded;
     };
     std::vector<DeferredThumb> m_deferredThumbs;
@@ -119,7 +136,9 @@ private:
     // Helper to find a row's current display position in the queue list
     int findQueueRowDisplayIndex(brls::View* row);
     // Swap two adjacent queue rows visually (no rebuild)
-    void swapQueueRows(int displayIdxA, int displayIdxB);
+    void swapQueueRows(int displayIdxA, int displayIdxB, bool skipThumbReload = false);
+    // Bulk-reassign all rows in [origIdx..targetIdx] from queue data (O(range) not O(n) swaps)
+    void reassignQueueRange(int origIdx, int targetIdx);
     // Renumber all queue row labels after a reorder
     void renumberQueueRows();
     // Remove a single queue row from the display (no rebuild)

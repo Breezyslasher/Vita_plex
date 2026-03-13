@@ -94,23 +94,25 @@ void MusicQueue::insertTrackAfterCurrent(const MediaItem& item) {
 
 void MusicQueue::addTracks(const std::vector<MediaItem>& items) {
     int startIndex = (int)m_queue.size();
+    m_queue.reserve(m_queue.size() + items.size());
     for (size_t i = 0; i < items.size(); i++) {
         m_queue.push_back(mediaItemToQueueItem(items[i], startIndex + (int)i));
     }
 
-    // Append new tracks at random positions in the remaining shuffle order
-    // instead of regenerating the entire order (O(new) instead of O(total))
+    // Append new indices to the end of shuffle order, then Fisher-Yates
+    // shuffle only the unplayed tail portion — O(n) instead of O(n²)
     if (m_shuffleEnabled && !m_queue.empty()) {
-        int remaining = (int)m_shuffleOrder.size() - m_shufflePosition - 1;
+        // Append new track indices
+        m_shuffleOrder.reserve(m_shuffleOrder.size() + items.size());
         for (size_t i = 0; i < items.size(); i++) {
-            int newIdx = startIndex + (int)i;
-            // Insert at random position after current shuffle position
-            int insertPos = m_shufflePosition + 1;
-            if (remaining > 0) {
-                insertPos += m_rng() % (remaining + 1);
-            }
-            m_shuffleOrder.insert(m_shuffleOrder.begin() + insertPos, newIdx);
-            remaining++;
+            m_shuffleOrder.push_back(startIndex + (int)i);
+        }
+        // Shuffle the unplayed tail (everything after current shuffle position)
+        int tailStart = m_shufflePosition + 1;
+        int tailSize = (int)m_shuffleOrder.size() - tailStart;
+        for (int i = tailSize - 1; i > 0; i--) {
+            int j = m_rng() % (i + 1);
+            std::swap(m_shuffleOrder[tailStart + i], m_shuffleOrder[tailStart + j]);
         }
     }
 
@@ -188,6 +190,7 @@ void MusicQueue::moveTrack(int fromIndex, int toIndex) {
 void MusicQueue::setQueue(const std::vector<MediaItem>& items, int startIndex) {
     clear();
 
+    m_queue.reserve(items.size());
     for (size_t i = 0; i < items.size(); i++) {
         m_queue.push_back(mediaItemToQueueItem(items[i], (int)i));
     }
@@ -435,6 +438,7 @@ void MusicQueue::onTrackEnded() {
 }
 
 void MusicQueue::notifyQueueChanged() {
+    ++m_version;
     if (m_queueChangedCallback) {
         m_queueChangedCallback();
     }

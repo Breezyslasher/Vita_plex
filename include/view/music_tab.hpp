@@ -37,6 +37,11 @@ private:
     void playPlaylistWithQueue(const std::string& playlistId, int startIndex = 0);
     void refreshPlaylists();
 
+    // Button styling helpers
+    void styleButton(brls::Button* btn, bool active = false);
+    void updateSectionButtonStyles();
+    brls::Button* m_activeSectionBtn = nullptr;
+
     brls::ScrollingFrame* m_scrollView = nullptr;
     brls::Box* m_mainContainer = nullptr;
     brls::Label* m_titleLabel = nullptr;
