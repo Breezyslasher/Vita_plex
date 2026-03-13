@@ -141,6 +141,11 @@ void MediaItemCell::setItem(const MediaItem& item) {
         bool hideTitle = Application::getInstance().getSettings().hideTitlesInGrid &&
             (item.mediaType == MediaType::MOVIE || item.mediaType == MediaType::SHOW);
         m_titleLabel->setVisibility(hideTitle ? brls::Visibility::GONE : brls::Visibility::VISIBLE);
+
+        // Shrink box height when title is hidden to remove blank space
+        if (hideTitle && !isMusic && !isEpisode) {
+            this->setHeight(178);
+        }
     }
 
     // Set subtitle for episodes
