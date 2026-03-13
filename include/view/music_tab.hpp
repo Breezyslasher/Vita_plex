@@ -23,12 +23,14 @@ public:
 private:
     void loadSections();
     void loadContent(const std::string& sectionKey);
+    void loadAlbumsByType(const std::string& sectionKey);
     void loadPlaylists();
     void loadCollections(const std::string& sectionKey);
     void onItemSelected(const MediaItem& item);
     void onPlaylistSelected(const Playlist& playlist);
     void onCollectionSelected(const MediaItem& collection);
     brls::Box* createHorizontalRow(const std::string& title);
+    brls::Box* createAlbumScrollRow(const std::string& title, const std::vector<MediaItem>& items);
 
     // Playlist management
     void showCreatePlaylistDialog();
@@ -57,6 +59,10 @@ private:
     // Collections row
     brls::Box* m_collectionsRow = nullptr;
     brls::Box* m_collectionsContainer = nullptr;
+
+    // Album categories (scrolling rows by type)
+    brls::ScrollingFrame* m_albumCategoriesScroll = nullptr;
+    brls::Box* m_albumCategoriesBox = nullptr;
 
     // Main content grid
     RecyclingGrid* m_contentGrid = nullptr;

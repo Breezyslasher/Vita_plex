@@ -232,56 +232,74 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     topRow->addView(rightBox);
     m_mainContent->addView(topRow);
 
-    // Children container (for shows/seasons - horizontal cards)
+    // Combined scrolling container for seasons/episodes + extras
+    // This keeps the header/description fixed while only the media rows scroll
     if (m_item.mediaType == MediaType::SHOW ||
-        m_item.mediaType == MediaType::SEASON) {
+        m_item.mediaType == MediaType::SEASON ||
+        m_item.mediaType == MediaType::MOVIE) {
 
-        m_childrenLabel = new brls::Label();
-        if (m_item.mediaType == MediaType::SHOW) {
-            m_childrenLabel->setText("Seasons");
-        } else {
-            m_childrenLabel->setText("Episodes");
+        m_mediaContentScroll = new brls::ScrollingFrame();
+        m_mediaContentScroll->setGrow(1.0f);
+
+        m_mediaContentBox = new brls::Box();
+        m_mediaContentBox->setAxis(brls::Axis::COLUMN);
+        m_mediaContentBox->setJustifyContent(brls::JustifyContent::FLEX_START);
+        m_mediaContentBox->setAlignItems(brls::AlignItems::STRETCH);
+
+        // Children container (for shows/seasons - horizontal cards)
+        if (m_item.mediaType == MediaType::SHOW ||
+            m_item.mediaType == MediaType::SEASON) {
+
+            m_childrenLabel = new brls::Label();
+            if (m_item.mediaType == MediaType::SHOW) {
+                m_childrenLabel->setText("Seasons");
+            } else {
+                m_childrenLabel->setText("Episodes");
+            }
+            m_childrenLabel->setFontSize(20);
+            m_childrenLabel->setMarginBottom(10);
+            m_mediaContentBox->addView(m_childrenLabel);
+
+            m_childrenScroll = new brls::HScrollingFrame();
+            // Episodes use landscape cells (~150x125), seasons use portrait (~120x200)
+            m_childrenScroll->setHeight(m_item.mediaType == MediaType::SEASON ? 135 : 210);
+            m_childrenScroll->setMarginBottom(20);
+
+            m_childrenBox = new brls::Box();
+            m_childrenBox->setAxis(brls::Axis::ROW);
+            m_childrenBox->setJustifyContent(brls::JustifyContent::FLEX_START);
+
+            m_childrenScroll->setContentView(m_childrenBox);
+            m_mediaContentBox->addView(m_childrenScroll);
         }
-        m_childrenLabel->setFontSize(20);
-        m_childrenLabel->setMarginBottom(10);
-        m_mainContent->addView(m_childrenLabel);
 
-        m_childrenScroll = new brls::HScrollingFrame();
-        // Episodes use landscape cells (~150x125), seasons use portrait (~120x200)
-        m_childrenScroll->setHeight(m_item.mediaType == MediaType::SEASON ? 135 : 210);
-        m_childrenScroll->setMarginBottom(20);
+        // Extras container (trailers, featurettes, etc.) for movies and shows
+        if (m_item.mediaType == MediaType::MOVIE ||
+            m_item.mediaType == MediaType::SHOW) {
 
-        m_childrenBox = new brls::Box();
-        m_childrenBox->setAxis(brls::Axis::ROW);
-        m_childrenBox->setJustifyContent(brls::JustifyContent::FLEX_START);
+            m_extrasLabel = new brls::Label();
+            m_extrasLabel->setText("Extras");
+            m_extrasLabel->setFontSize(20);
+            m_extrasLabel->setMarginBottom(10);
+            m_extrasLabel->setMarginTop(15);
+            m_extrasLabel->setVisibility(brls::Visibility::GONE);
+            m_mediaContentBox->addView(m_extrasLabel);
 
-        m_childrenScroll->setContentView(m_childrenBox);
-        m_mainContent->addView(m_childrenScroll);
-    }
+            m_extrasScroll = new brls::HScrollingFrame();
+            m_extrasScroll->setHeight(150);
+            m_extrasScroll->setMarginBottom(20);
+            m_extrasScroll->setVisibility(brls::Visibility::GONE);
 
-    // Extras container (trailers, featurettes, etc.) for movies and shows
-    if (m_item.mediaType == MediaType::MOVIE ||
-        m_item.mediaType == MediaType::SHOW) {
+            m_extrasBox = new brls::Box();
+            m_extrasBox->setAxis(brls::Axis::ROW);
+            m_extrasBox->setJustifyContent(brls::JustifyContent::FLEX_START);
 
-        m_extrasLabel = new brls::Label();
-        m_extrasLabel->setText("Extras");
-        m_extrasLabel->setFontSize(20);
-        m_extrasLabel->setMarginBottom(10);
-        m_extrasLabel->setMarginTop(15);
-        m_extrasLabel->setVisibility(brls::Visibility::GONE);
-        m_mainContent->addView(m_extrasLabel);
+            m_extrasScroll->setContentView(m_extrasBox);
+            m_mediaContentBox->addView(m_extrasScroll);
+        }
 
-        m_extrasScroll = new brls::HScrollingFrame();
-        m_extrasScroll->setHeight(150);
-        m_extrasScroll->setMarginBottom(20);
-        m_extrasScroll->setVisibility(brls::Visibility::GONE);
-
-        m_extrasBox = new brls::Box();
-        m_extrasBox->setAxis(brls::Axis::ROW);
-        m_extrasBox->setJustifyContent(brls::JustifyContent::FLEX_START);
-
-        m_extrasScroll->setContentView(m_extrasBox);
-        m_mainContent->addView(m_extrasScroll);
+        m_mediaContentScroll->setContentView(m_mediaContentBox);
+        m_mainContent->addView(m_mediaContentScroll);
     }
 
     // Track list for albums (vertical list with nested scrolling)
@@ -319,8 +337,11 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     }
 
     if (m_item.mediaType == MediaType::MUSIC_ALBUM ||
-        m_item.mediaType == MediaType::MUSIC_ARTIST) {
-        // For albums and artists: top info is fixed, only content below scrolls
+        m_item.mediaType == MediaType::MUSIC_ARTIST ||
+        m_item.mediaType == MediaType::SHOW ||
+        m_item.mediaType == MediaType::SEASON ||
+        m_item.mediaType == MediaType::MOVIE) {
+        // Top info is fixed, only media content below scrolls in its own container
         m_mainContent->setGrow(1.0f);
         this->addView(m_mainContent);
     } else {
@@ -596,6 +617,21 @@ void MediaDetailView::loadMusicCategories() {
     asyncRun([this]() {
         PlexClient& client = PlexClient::getInstance();
 
+        // Fetch music videos (extras) for this artist
+        std::vector<MediaItem> musicVideos;
+        std::vector<MediaItem> allExtras;
+        if (client.fetchExtras(m_item.ratingKey, allExtras)) {
+            for (const auto& extra : allExtras) {
+                // Music videos are clips with subtype "musicVideo" or just clips from artists
+                std::string subtype = extra.subtype;
+                for (char& c : subtype) c = tolower(c);
+                if (extra.mediaType == MediaType::CLIP || subtype == "musicvideo") {
+                    musicVideos.push_back(extra);
+                }
+            }
+            brls::Logger::info("Artist: Found {} music videos from {} extras", musicVideos.size(), allExtras.size());
+        }
+
         // Use the hubs API which returns albums pre-grouped by type
         // (Albums, Singles & EPs, Compilations, Appears On, etc.)
         std::vector<Hub> hubs;
@@ -649,7 +685,7 @@ void MediaDetailView::loadMusicCategories() {
             brls::Logger::info("Grouped: {} albums, {} singles, {} EPs, {} compilations, {} soundtracks, {} live, {} other",
                 albums.size(), singles.size(), eps.size(), compilations.size(), soundtracks.size(), live.size(), other.size());
 
-            brls::sync([this, albums, singles, eps, compilations, soundtracks, live, other]() {
+            brls::sync([this, albums, singles, eps, compilations, soundtracks, live, other, musicVideos]() {
                 m_musicCategoriesBox->clearViews();
 
                 auto addCategory = [this](const std::string& title, const std::vector<MediaItem>& items) {
@@ -687,6 +723,27 @@ void MediaDetailView::loadMusicCategories() {
                 addCategory("Soundtracks", soundtracks);
                 addCategory("Live", live);
                 addCategory("Other", other);
+
+                // Add music videos row
+                if (!musicVideos.empty()) {
+                    brls::Box* mvContent = nullptr;
+                    createMediaRow("Music Videos (" + std::to_string(musicVideos.size()) + ")", &mvContent);
+
+                    for (const auto& mv : musicVideos) {
+                        auto* cell = new MediaItemCell();
+                        cell->setItem(mv);
+                        cell->setMarginRight(10);
+
+                        MediaItem capturedMv = mv;
+                        cell->registerClickAction([capturedMv](brls::View* view) {
+                            Application::getInstance().pushPlayerActivity(capturedMv.ratingKey);
+                            return true;
+                        });
+                        cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+
+                        mvContent->addView(cell);
+                    }
+                }
             });
             return;
         }
@@ -726,7 +783,7 @@ void MediaDetailView::loadMusicCategories() {
             }
         }
 
-        brls::sync([this, albums, singles, eps, compilations, soundtracks, other]() {
+        brls::sync([this, albums, singles, eps, compilations, soundtracks, other, musicVideos]() {
             m_musicCategoriesBox->clearViews();
 
             auto addCategory = [this](const std::string& title, const std::vector<MediaItem>& items) {
@@ -763,6 +820,27 @@ void MediaDetailView::loadMusicCategories() {
             addCategory("Compilations", compilations);
             addCategory("Soundtracks", soundtracks);
             addCategory("Other", other);
+
+            // Add music videos row
+            if (!musicVideos.empty()) {
+                brls::Box* mvContent = nullptr;
+                createMediaRow("Music Videos (" + std::to_string(musicVideos.size()) + ")", &mvContent);
+
+                for (const auto& mv : musicVideos) {
+                    auto* cell = new MediaItemCell();
+                    cell->setItem(mv);
+                    cell->setMarginRight(10);
+
+                    MediaItem capturedMv = mv;
+                    cell->registerClickAction([capturedMv](brls::View* view) {
+                        Application::getInstance().pushPlayerActivity(capturedMv.ratingKey);
+                        return true;
+                    });
+                    cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+
+                    mvContent->addView(cell);
+                }
+            }
         });
     });
 }
@@ -2843,10 +2921,12 @@ void MediaDetailView::setupChildrenFocusTransfer() {
 
     // Determine the UP navigation target:
     // - If description exists, navigate UP to description label
-    // - If description is empty, navigate UP to first child item (wrap around)
+    // - If description is empty, navigate UP to play button (if exists) or first child
     brls::View* upTarget = nullptr;
     if (m_summaryLabel && !m_fullDescription.empty()) {
         upTarget = m_summaryLabel;
+    } else if (m_playButton) {
+        upTarget = m_playButton;
     } else if (!m_childrenBox->getChildren().empty()) {
         upTarget = m_childrenBox->getChildren().front();
     }
@@ -2861,6 +2941,23 @@ void MediaDetailView::setupChildrenFocusTransfer() {
     if (m_summaryLabel && !m_fullDescription.empty() && !m_childrenBox->getChildren().empty()) {
         m_summaryLabel->setCustomNavigationRoute(brls::FocusDirection::DOWN,
             m_childrenBox->getChildren().front());
+    }
+
+    // If description is empty, transfer initial focus to first media item
+    if (m_fullDescription.empty() && !m_childrenBox->getChildren().empty()) {
+        brls::View* firstChild = m_childrenBox->getChildren().front();
+        brls::Application::giveFocus(firstChild);
+
+        // Set DOWN from play/resume buttons to first child
+        if (m_playButton) {
+            m_playButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstChild);
+        }
+        if (m_resumeButton) {
+            m_resumeButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstChild);
+        }
+        if (m_downloadButton) {
+            m_downloadButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstChild);
+        }
     }
 }
 
