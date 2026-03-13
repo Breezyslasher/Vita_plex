@@ -445,10 +445,13 @@ void PlayerActivity::onContentAvailable() {
 
     // Block downward D-pad navigation from the bottom button row so focus
     // doesn't escape to off-screen elements (absolutely-positioned overlays)
+    // Only set on focusable buttons — in music mode audioBtn/subBtn/videoBtn are non-focusable
     if (queueBtn) queueBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, queueBtn);
-    if (audioBtn) audioBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, audioBtn);
-    if (subBtn) subBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, subBtn);
-    if (videoBtn) videoBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, videoBtn);
+    if (!m_isQueueMode) {
+        if (audioBtn) audioBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, audioBtn);
+        if (subBtn) subBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, subBtn);
+        if (videoBtn) videoBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, videoBtn);
+    }
 
     // Wire up skip button for intro/credits
     if (skipBtn) {
