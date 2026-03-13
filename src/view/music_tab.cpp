@@ -69,6 +69,19 @@ MusicTab::MusicTab() {
         m_mainContainer->addView(m_collectionsRow);
     }
 
+    // Album categories (scrolling rows organized by type)
+    m_albumCategoriesScroll = new brls::ScrollingFrame();
+    m_albumCategoriesScroll->setGrow(1.0f);
+    m_albumCategoriesScroll->setVisibility(brls::Visibility::GONE);
+
+    m_albumCategoriesBox = new brls::Box();
+    m_albumCategoriesBox->setAxis(brls::Axis::COLUMN);
+    m_albumCategoriesBox->setJustifyContent(brls::JustifyContent::FLEX_START);
+    m_albumCategoriesBox->setAlignItems(brls::AlignItems::STRETCH);
+
+    m_albumCategoriesScroll->setContentView(m_albumCategoriesBox);
+    m_mainContainer->addView(m_albumCategoriesScroll);
+
     // "Artists" label
     auto* artistsLabel = new brls::Label();
     artistsLabel->setText("Artists");
@@ -311,6 +324,138 @@ void MusicTab::loadContent(const std::string& sectionKey) {
         } else {
             brls::Logger::error("MusicTab: Failed to load content for section {}", key);
         }
+    });
+
+    // Also load albums organized by type
+    loadAlbumsByType(sectionKey);
+}
+
+brls::Box* MusicTab::createAlbumScrollRow(const std::string& title, const std::vector<MediaItem>& items) {
+    if (items.empty()) return nullptr;
+
+    auto* rowBox = new brls::Box();
+    rowBox->setAxis(brls::Axis::COLUMN);
+    rowBox->setMarginBottom(15);
+
+    auto* titleLabel = new brls::Label();
+    titleLabel->setText(title + " (" + std::to_string(items.size()) + ")");
+    titleLabel->setFontSize(20);
+    titleLabel->setMarginBottom(10);
+    rowBox->addView(titleLabel);
+
+    auto* scrollFrame = new brls::HScrollingFrame();
+    scrollFrame->setHeight(150);
+
+    auto* container = new brls::Box();
+    container->setAxis(brls::Axis::ROW);
+    container->setJustifyContent(brls::JustifyContent::FLEX_START);
+    container->setAlignItems(brls::AlignItems::CENTER);
+
+    for (const auto& item : items) {
+        auto* cell = new MediaItemCell();
+        cell->setItem(item);
+        cell->setMarginRight(10);
+
+        MediaItem capturedItem = item;
+        cell->registerClickAction([this, capturedItem](brls::View* view) {
+            onItemSelected(capturedItem);
+            return true;
+        });
+        cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+
+        cell->registerAction("Options", brls::ControllerButton::BUTTON_START, [this, capturedItem](brls::View* view) {
+            showAlbumContextMenu(capturedItem);
+            return true;
+        });
+
+        container->addView(cell);
+    }
+
+    scrollFrame->setContentView(container);
+    rowBox->addView(scrollFrame);
+
+    return rowBox;
+}
+
+void MusicTab::loadAlbumsByType(const std::string& sectionKey) {
+    std::string key = sectionKey;
+    std::weak_ptr<bool> aliveWeak = m_alive;
+
+    asyncRun([this, key, aliveWeak]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> allAlbums;
+
+        // type=9 for albums
+        if (!client.fetchLibraryContent(key, allAlbums, 9)) {
+            brls::Logger::error("MusicTab: Failed to load albums for section {}", key);
+            return;
+        }
+
+        brls::Logger::info("MusicTab: Got {} albums for section {}", allAlbums.size(), key);
+
+        // Group albums by subtype
+        std::vector<MediaItem> albums;
+        std::vector<MediaItem> singles;
+        std::vector<MediaItem> eps;
+        std::vector<MediaItem> compilations;
+        std::vector<MediaItem> soundtracks;
+        std::vector<MediaItem> live;
+        std::vector<MediaItem> other;
+
+        for (const auto& album : allAlbums) {
+            std::string subtype = album.subtype;
+            for (char& c : subtype) c = tolower(c);
+
+            if (subtype == "single") {
+                singles.push_back(album);
+            } else if (subtype == "ep") {
+                eps.push_back(album);
+            } else if (subtype == "compilation") {
+                compilations.push_back(album);
+            } else if (subtype == "soundtrack") {
+                soundtracks.push_back(album);
+            } else if (subtype == "live") {
+                live.push_back(album);
+            } else if (subtype == "album" || subtype.empty()) {
+                albums.push_back(album);
+            } else {
+                other.push_back(album);
+            }
+        }
+
+        brls::Logger::info("MusicTab albums grouped: {} albums, {} singles, {} EPs, {} compilations, {} soundtracks, {} live, {} other",
+            albums.size(), singles.size(), eps.size(), compilations.size(), soundtracks.size(), live.size(), other.size());
+
+        brls::sync([this, albums, singles, eps, compilations, soundtracks, live, other, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+
+            if (!m_albumCategoriesBox) return;
+
+            m_albumCategoriesBox->clearViews();
+
+            auto addRow = [this](const std::string& title, const std::vector<MediaItem>& items) {
+                auto* row = createAlbumScrollRow(title, items);
+                if (row) {
+                    m_albumCategoriesBox->addView(row);
+                }
+            };
+
+            addRow("Albums", albums);
+            addRow("Singles", singles);
+            addRow("EPs", eps);
+            addRow("Compilations", compilations);
+            addRow("Soundtracks", soundtracks);
+            addRow("Live", live);
+            addRow("Other", other);
+
+            // Show the categories section if we have any content
+            bool hasContent = !albums.empty() || !singles.empty() || !eps.empty() ||
+                             !compilations.empty() || !soundtracks.empty() || !live.empty() || !other.empty();
+            if (m_albumCategoriesScroll) {
+                m_albumCategoriesScroll->setVisibility(hasContent ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
+            }
+        });
     });
 }
 

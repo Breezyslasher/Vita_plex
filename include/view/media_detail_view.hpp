@@ -83,10 +83,17 @@ public:
     brls::Box* m_compilationsContent = nullptr;
     brls::Box* m_soundtracksContent = nullptr;
 
+    // Scrolling container for seasons+extras (prevents whole page from scrolling)
+    brls::ScrollingFrame* m_mediaContentScroll = nullptr;
+    brls::Box* m_mediaContentBox = nullptr;
+
     // Extras (trailers, featurettes, deleted scenes)
     brls::Label* m_extrasLabel = nullptr;
     brls::HScrollingFrame* m_extrasScroll = nullptr;
     brls::Box* m_extrasBox = nullptr;
+
+    // Music videos row for artists
+    brls::Box* m_musicVideosContent = nullptr;
 
     // Track currently focused hint icon (like Suwayomi's m_currentFocusedIcon)
     brls::Image* m_currentFocusedHint = nullptr;
