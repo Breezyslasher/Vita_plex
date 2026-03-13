@@ -74,6 +74,7 @@ private:
     void updateRepeatIcon();        // Update repeat button icon based on state
     void onTrackEnded(const QueueItem* nextTrack);  // Called when track ends
     void updateQueueDisplay();      // Update UI with queue info
+    void playNextEpisode();         // Auto-play next episode in season/show
 
     // Queue list overlay
     void showQueueOverlay();
@@ -171,7 +172,9 @@ private:
     std::string m_streamTitle;     // Title for stream playback (Live TV)
     MediaType m_mediaType = MediaType::UNKNOWN;  // Type of media being played
     std::string m_parentRatingKey;  // Season/album ratingKey for auto-play-next
+    std::string m_grandparentRatingKey;  // Show ratingKey for cross-season auto-play-next
     int m_episodeIndex = 0;         // Episode index within season for auto-play-next
+    bool m_endHandled = false;      // Prevent multiple triggers when playback ends
     bool m_isPlaying = false;
     bool m_isPhoto = false;
     bool m_isLocalFile = false;    // Playing from local download

@@ -826,6 +826,7 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
     item.grandparentTitle = extractJsonValue(resp.body, "grandparentTitle");
     item.parentTitle = extractJsonValue(resp.body, "parentTitle");
     item.parentRatingKey = extractJsonValue(resp.body, "parentRatingKey");
+    item.grandparentRatingKey = extractJsonValue(resp.body, "grandparentRatingKey");
     item.index = extractJsonInt(resp.body, "index");
     item.parentIndex = extractJsonInt(resp.body, "parentIndex");
 
