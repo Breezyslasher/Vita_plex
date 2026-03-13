@@ -29,6 +29,7 @@ struct QueueItem {
     std::string thumb;
     int duration = 0;         // Duration in seconds
     int index = 0;            // Position in original queue (for unshuffle)
+    int playQueueItemID = 0;  // Server-side play queue item ID (0 = offline/unsynced)
 };
 
 /**
@@ -94,6 +95,19 @@ public:
     // Version counter - incremented on every queue mutation (add/remove/reorder/set/clear)
     uint32_t getVersion() const { return m_version; }
 
+    // Server-side play queue sync
+    // Creates a server play queue from the current queue state.
+    // When synced, shuffle/move/add/remove operations are mirrored to server.
+    void syncToServer(int playQueueID);
+    void clearServerSync();
+    bool isServerSynced() const { return m_playQueueID > 0; }
+    int getPlayQueueID() const { return m_playQueueID; }
+    // Get the playQueueItemID for the current track (for timeline reports)
+    int getCurrentPlayQueueItemID() const;
+
+    // Set queue from server play queue response (replaces local state)
+    void setFromPlayQueue(const PlexClient::PlayQueueContainer& pq, bool isShuffled);
+
 private:
     MusicQueue();
     ~MusicQueue() = default;
@@ -117,6 +131,9 @@ private:
 
     uint32_t m_version = 0;  // Incremented on every queue mutation
     std::mt19937 m_rng;  // Random number generator for shuffle
+
+    // Server-side play queue state
+    int m_playQueueID = 0;  // 0 = offline/not synced
 };
 
 } // namespace vitaplex

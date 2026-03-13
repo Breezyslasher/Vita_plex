@@ -51,6 +51,7 @@ struct MediaItem {
     std::string grandparentThumb;  // Series/show poster for episodes
     std::string parentThumb;       // Season poster for episodes
     std::string parentRatingKey;   // Season ratingKey (for auto-play-next)
+    std::string grandparentRatingKey;  // Show ratingKey (for cross-season auto-play-next)
     int parentIndex = 0;
     int index = 0;
     int seasonNumber = 0;
@@ -261,7 +262,8 @@ public:
     void stopTranscode();  // Stop the current transcode session
     bool updatePlayProgress(const std::string& ratingKey, int timeMs);
     bool reportTimeline(const std::string& ratingKey, const std::string& key,
-                        const std::string& state, int timeMs, int durationMs);
+                        const std::string& state, int timeMs, int durationMs,
+                        int playQueueItemID = 0);
     bool markAsWatched(const std::string& ratingKey);
     bool markAsUnwatched(const std::string& ratingKey);
 
@@ -284,6 +286,67 @@ public:
     bool selectSearchedSubtitle(const std::string& ratingKey, int partId,
                                 const std::string& subtitleKey);
 
+    // Play Queues (server-side queue management for music + video)
+    struct PlayQueueItem {
+        int playQueueItemID = 0;       // Unique ID within the queue (for move/delete)
+        std::string ratingKey;
+        std::string title;
+        std::string grandparentTitle;  // Artist/show name
+        std::string parentTitle;       // Album/season name
+        std::string thumb;
+        std::string parentThumb;
+        std::string grandparentThumb;
+        int duration = 0;              // Duration in ms
+        int index = 0;                 // Track/episode number
+        std::string type;              // "track", "episode", "movie", etc.
+        MediaType mediaType = MediaType::UNKNOWN;
+    };
+
+    struct PlayQueueContainer {
+        int playQueueID = 0;
+        int playQueueSelectedItemID = 0;
+        int playQueueSelectedItemOffset = 0;
+        int playQueueSelectedMetadataItemID = 0;
+        bool playQueueShuffled = false;
+        std::string playQueueSourceURI;
+        int playQueueTotalCount = 0;
+        int playQueueVersion = 0;
+        std::vector<PlayQueueItem> items;
+    };
+
+    // Create a play queue from a library URI (album, show, season, playlist, single item)
+    // type: "audio", "video", "photo"
+    // key: ratingKey of the item to start playing (optional, defaults to first)
+    // shuffle/repeat/continuous: 0 or 1
+    bool createPlayQueue(const std::string& uri, const std::string& type,
+                         PlayQueueContainer& result,
+                         const std::string& key = "",
+                         int shuffle = 0, int repeat = 0, int continuous = 0);
+    // Create a play queue from a playlist ID
+    bool createPlayQueueFromPlaylist(int playlistID, const std::string& type,
+                                     PlayQueueContainer& result, int shuffle = 0);
+    // Retrieve an existing play queue
+    bool getPlayQueue(int playQueueID, PlayQueueContainer& result);
+    // Add items to an existing play queue (party mode / play next)
+    bool addToPlayQueue(int playQueueID, const std::string& uri, bool playNext = false);
+    // Clear all items from a play queue
+    bool clearPlayQueue(int playQueueID);
+    // Remove a single item from a play queue
+    bool removeFromPlayQueue(int playQueueID, int playQueueItemID);
+    // Move an item in the play queue (after=0 means move to beginning)
+    bool movePlayQueueItem(int playQueueID, int playQueueItemID, int afterItemID = 0);
+    // Shuffle the play queue
+    bool shufflePlayQueue(int playQueueID, PlayQueueContainer& result);
+    // Unshuffle (restore natural order)
+    bool unshufflePlayQueue(int playQueueID, PlayQueueContainer& result);
+
+    // Helper: build a library URI for play queue creation
+    // e.g., "library://{machineId}/item/%2Flibrary%2Fmetadata%2F{ratingKey}"
+    std::string buildPlayQueueURI(const std::string& ratingKey);
+    // Build a library URI for a directory (album, season, show)
+    // e.g., "library://{machineId}/directory/%2Flibrary%2Fmetadata%2F{ratingKey}%2Fchildren"
+    std::string buildPlayQueueDirectoryURI(const std::string& ratingKey);
+
     // Live TV
     bool fetchLiveTVChannels(std::vector<LiveTVChannel>& channels);
     bool fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, int hoursAhead = 4);
@@ -304,6 +367,10 @@ public:
     const std::string& getAuthToken() const { return m_authToken; }
     void setServerUrl(const std::string& url) { m_serverUrl = url; }
     const std::string& getServerUrl() const { return m_serverUrl; }
+
+    // Public JSON helpers (used by play queue parsing helper)
+    std::string extractJsonValuePublic(const std::string& json, const std::string& key) { return extractJsonValue(json, key); }
+    int extractJsonIntPublic(const std::string& json, const std::string& key) { return extractJsonInt(json, key); }
 
 private:
     PlexClient() = default;

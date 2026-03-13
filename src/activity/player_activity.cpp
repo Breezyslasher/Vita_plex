@@ -54,17 +54,57 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
     PlayerActivity* activity = new PlayerActivity("", false);
     activity->m_isQueueMode = true;
 
-    // Set up the queue
     MusicQueue& queue = MusicQueue::getInstance();
-    queue.setQueue(tracks, startIndex);
+
+    // Try to create a server-side play queue when online
+    // Uses the parent ratingKey (album/season) or the first track's ratingKey
+    bool serverOk = false;
+    if (!tracks.empty() && !PlexClient::getInstance().getServerUrl().empty()) {
+        PlexClient& client = PlexClient::getInstance();
+        PlexClient::PlayQueueContainer pq;
+
+        // Determine queue type
+        std::string queueType = "audio";
+        if (!tracks.empty() && (tracks[0].mediaType == MediaType::EPISODE ||
+                                 tracks[0].mediaType == MediaType::MOVIE)) {
+            queueType = "video";
+        }
+
+        // Build URI from parent ratingKey (album/season) if available,
+        // otherwise from first track
+        std::string uri;
+        if (!tracks[0].parentRatingKey.empty()) {
+            uri = client.buildPlayQueueDirectoryURI(tracks[0].parentRatingKey);
+        } else if (tracks.size() == 1) {
+            uri = client.buildPlayQueueURI(tracks[0].ratingKey);
+        } else {
+            // Multiple tracks without parent - use first track's URI
+            uri = client.buildPlayQueueURI(tracks[0].ratingKey);
+        }
+
+        std::string startKey = (startIndex >= 0 && startIndex < (int)tracks.size())
+            ? tracks[startIndex].ratingKey : "";
+
+        serverOk = client.createPlayQueue(uri, queueType, pq, startKey);
+        if (serverOk && !pq.items.empty()) {
+            queue.setFromPlayQueue(pq, pq.playQueueShuffled);
+            brls::Logger::info("PlayerActivity: Server play queue {} created ({} items)",
+                               pq.playQueueID, pq.playQueueTotalCount);
+        }
+    }
+
+    if (!serverOk) {
+        // Offline or server failed - use client-side queue
+        queue.setQueue(tracks, startIndex);
+    }
 
     // Set up track ended callback
     queue.setTrackEndedCallback([activity](const QueueItem* nextTrack) {
         activity->onTrackEnded(nextTrack);
     });
 
-    brls::Logger::info("PlayerActivity created with queue of {} tracks, starting at {}",
-                      tracks.size(), startIndex);
+    brls::Logger::info("PlayerActivity created with queue of {} tracks, starting at {} (server={})",
+                      tracks.size(), startIndex, serverOk);
     return activity;
 }
 
@@ -944,6 +984,7 @@ void PlayerActivity::loadMedia() {
         if (item.mediaType == MediaType::EPISODE) {
             m_episodeIndex = item.index;
             m_parentRatingKey = item.parentRatingKey;
+            m_grandparentRatingKey = item.grandparentRatingKey;
         }
 
         // Store markers for intro/credits skip
@@ -1232,25 +1273,31 @@ void PlayerActivity::updateProgress() {
             int durationMs = (int)(duration * 1000);
 
             std::string ratingKey = m_mediaKey;
-            // In queue mode, use the current track's ratingKey
+            int pqItemID = 0;
+            // In queue mode, use the current track's ratingKey and playQueueItemID
             if (m_isQueueMode) {
-                const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
+                MusicQueue& queue = MusicQueue::getInstance();
+                const QueueItem* track = queue.getCurrentTrack();
                 if (track) {
                     ratingKey = track->ratingKey;
+                    pqItemID = track->playQueueItemID;
                 }
             }
 
             std::string key = "/library/metadata/" + ratingKey;
             PlexClient::getInstance().reportTimeline(
-                ratingKey, key, currentState, timeMs, durationMs);
+                ratingKey, key, currentState, timeMs, durationMs, pqItemID);
         }
     }
 
-    // Check if playback ended BEFORE syncing play/pause state,
-    // because hasEnded() means isPlaying() is already false - if we sync
-    // m_isPlaying first, we'd clear the flag and never detect the end.
-    if (m_isPlaying && player.hasEnded()) {
-        m_isPlaying = false;  // Prevent multiple triggers
+    // Detect playback end: check hasEnded() regardless of m_isPlaying
+    // to avoid missing the event if m_isPlaying was synced to false
+    // in a previous frame before the ENDED state was set.
+    if (player.hasEnded() && !m_endHandled) {
+        m_endHandled = true;  // Prevent multiple triggers
+        m_isPlaying = false;
+        brls::Logger::info("PlayerActivity: Playback ended (mediaType={}, queueMode={})",
+            (int)m_mediaType, m_isQueueMode);
 
         if (m_isQueueMode) {
             // Notify queue that track ended - it will call onTrackEnded
@@ -1269,32 +1316,118 @@ void PlayerActivity::updateProgress() {
                 && m_mediaType == MediaType::EPISODE
                 && !m_parentRatingKey.empty()
                 && !m_isLocalFile) {
-                // Fetch siblings (episodes in the same season)
-                std::vector<MediaItem> episodes;
-                if (PlexClient::getInstance().fetchChildren(m_parentRatingKey, episodes)) {
-                    // Find next episode by index
-                    for (const auto& ep : episodes) {
-                        if (ep.index == m_episodeIndex + 1) {
-                            brls::Logger::info("PlayerActivity: Auto-playing next episode: {}", ep.title);
-                            brls::Application::popActivity();
-                            Application::getInstance().pushPlayerActivity(ep.ratingKey);
-                            return;
-                        }
-                    }
-                }
+                brls::Logger::info("PlayerActivity: Looking for next episode (parent={}, index={})",
+                    m_parentRatingKey, m_episodeIndex);
+                playNextEpisode();
+                return;
             }
 
-            brls::Application::popActivity();
+            // No auto-play - just exit
+            brls::sync([this]() {
+                brls::Application::popActivity();
+            });
         }
     }
 
     // Keep play/pause label in sync with actual player state
-    // (must come after the hasEnded check above)
     bool actuallyPlaying = player.isPlaying();
     if (actuallyPlaying != m_isPlaying) {
         m_isPlaying = actuallyPlaying;
         updatePlayPauseLabel();
     }
+}
+
+void PlayerActivity::playNextEpisode() {
+    // Fetch sibling episodes in the same season
+    std::string seasonKey = m_parentRatingKey;
+    std::string showKey = m_grandparentRatingKey;
+    int currentIndex = m_episodeIndex;
+
+    brls::async([this, seasonKey, showKey, currentIndex]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> siblings;
+        if (!client.fetchChildren(seasonKey, siblings)) {
+            brls::Logger::error("PlayerActivity: Failed to fetch season children for auto-play-next");
+            brls::sync([this]() { brls::Application::popActivity(); });
+            return;
+        }
+
+        // Find next episode in same season (index = currentIndex + 1)
+        std::string nextKey;
+        for (const auto& ep : siblings) {
+            if (ep.index == currentIndex + 1) {
+                nextKey = ep.ratingKey;
+                break;
+            }
+        }
+
+        // If not found in same season, try next season (cross-season)
+        if (nextKey.empty() && !showKey.empty()) {
+            brls::Logger::info("PlayerActivity: Last episode of season, checking next season");
+
+            // Fetch all seasons of the show
+            std::vector<MediaItem> seasons;
+            if (client.fetchChildren(showKey, seasons)) {
+                // Find current season's parentIndex, then look for next season
+                // Current season's parentIndex is stored in item.parentIndex during loadMedia
+                // but we can find it by matching seasonKey
+                std::string nextSeasonKey;
+                bool foundCurrent = false;
+                for (const auto& season : seasons) {
+                    if (foundCurrent && season.mediaType == MediaType::SEASON) {
+                        nextSeasonKey = season.ratingKey;
+                        break;
+                    }
+                    if (season.ratingKey == seasonKey) {
+                        foundCurrent = true;
+                    }
+                }
+
+                if (!nextSeasonKey.empty()) {
+                    // Fetch episodes of next season and take the first one
+                    std::vector<MediaItem> nextSeasonEps;
+                    if (client.fetchChildren(nextSeasonKey, nextSeasonEps) && !nextSeasonEps.empty()) {
+                        // Find episode with lowest index (usually 1)
+                        int lowestIdx = INT_MAX;
+                        for (const auto& ep : nextSeasonEps) {
+                            if (ep.index < lowestIdx && ep.mediaType == MediaType::EPISODE) {
+                                lowestIdx = ep.index;
+                                nextKey = ep.ratingKey;
+                            }
+                        }
+                        brls::Logger::info("PlayerActivity: Found first episode of next season: {}",
+                            nextKey);
+                    }
+                }
+            }
+        }
+
+        if (nextKey.empty()) {
+            brls::Logger::info("PlayerActivity: No next episode found, exiting player");
+            brls::sync([this]() { brls::Application::popActivity(); });
+            return;
+        }
+
+        brls::Logger::info("PlayerActivity: Auto-playing next episode: {}", nextKey);
+
+        brls::sync([this, nextKey]() {
+            // Stop current playback
+            MpvPlayer::getInstance().stop();
+
+            // Reset state for new episode
+            m_mediaKey = nextKey;
+            m_endHandled = false;
+            m_introSkipped = false;
+            m_creditsSkipped = false;
+            m_markers.clear();
+            m_activeMarkerType.clear();
+            m_skipButtonVisible = false;
+            if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
+
+            // Load the new episode
+            loadMedia();
+        });
+    });
 }
 
 void PlayerActivity::togglePlayPause() {
@@ -1977,7 +2110,25 @@ void PlayerActivity::toggleShuffle() {
     if (!m_isQueueMode) return;
 
     MusicQueue& queue = MusicQueue::getInstance();
-    queue.setShuffle(!queue.isShuffleEnabled());
+    bool newShuffle = !queue.isShuffleEnabled();
+
+    // If synced to server, use server-side shuffle/unshuffle
+    if (queue.isServerSynced()) {
+        PlexClient& client = PlexClient::getInstance();
+        PlexClient::PlayQueueContainer pq;
+        bool ok = newShuffle
+            ? client.shufflePlayQueue(queue.getPlayQueueID(), pq)
+            : client.unshufflePlayQueue(queue.getPlayQueueID(), pq);
+
+        if (ok && !pq.items.empty()) {
+            queue.setFromPlayQueue(pq, newShuffle);
+        } else {
+            // Server call failed - fall back to client-side
+            queue.setShuffle(newShuffle);
+        }
+    } else {
+        queue.setShuffle(newShuffle);
+    }
 
     updateQueueDisplay();
     updateShuffleIcon();
@@ -2363,6 +2514,14 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                         MusicQueue& queue = MusicQueue::getInstance();
                         if (tIdx != queue.getCurrentIndex()) {
                             int dIdx = findQueueRowDisplayIndex(row);
+                            // Sync remove to server
+                            if (queue.isServerSynced() && tIdx < (int)queue.getQueue().size()) {
+                                int pqItemID = queue.getQueue()[tIdx].playQueueItemID;
+                                if (pqItemID > 0) {
+                                    PlexClient::getInstance().removeFromPlayQueue(
+                                        queue.getPlayQueueID(), pqItemID);
+                                }
+                            }
                             queue.removeTrack(tIdx);
                             if (dIdx >= 0) {
                                 brls::sync([this, dIdx]() {
@@ -2594,6 +2753,21 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                                 ? sOrder[targetIdx] : targetIdx;
                     brls::Logger::info("Drag: drop displayIdx {} -> {} (trackIdx {} -> {}, shuffled={})",
                         origIdx, targetIdx, m_dragState.draggedTrackIdx, toTrackIdx, isShuffled);
+                    // Sync move to server if connected
+                    if (queue.isServerSynced()) {
+                        int pqItemID = m_dragState.draggedTrackIdx < (int)queue.getQueue().size()
+                            ? queue.getQueue()[m_dragState.draggedTrackIdx].playQueueItemID : 0;
+                        // Find the item to insert after (the one before target position)
+                        int afterPQItemID = 0;
+                        if (toTrackIdx > 0 && toTrackIdx - 1 < (int)queue.getQueue().size()) {
+                            afterPQItemID = queue.getQueue()[toTrackIdx - 1].playQueueItemID;
+                        }
+                        if (pqItemID > 0) {
+                            PlexClient::getInstance().movePlayQueueItem(
+                                queue.getPlayQueueID(), pqItemID, afterPQItemID);
+                        }
+                    }
+
                     queue.moveTrack(m_dragState.draggedTrackIdx, toTrackIdx);
 
                     // The displaced rows are already visually in their new
@@ -3385,14 +3559,26 @@ void PlayerActivity::updateSkipButton(double positionMs) {
         if (autoSkip && !alreadySkipped) {
             // Auto-skip: seek to end of marker
             alreadySkipped = true;
-            double seekToSec = (activeEnd - m_transcodeBaseOffsetMs) / 1000.0;
-            if (seekToSec > 0) {
-                MpvPlayer::getInstance().seekTo(seekToSec);
-                brls::Logger::info("PlayerActivity: Auto-skipped {} to {}ms", activeType, activeEnd);
-                // Hide skip button
-                if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
-                m_skipButtonVisible = false;
-                m_activeMarkerType.clear();
+            brls::Logger::info("PlayerActivity: Auto-skipped {} to {}ms", activeType, activeEnd);
+            // Hide skip button
+            if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
+            m_skipButtonVisible = false;
+            m_activeMarkerType.clear();
+
+            // If credits auto-skip + auto-play-next, go straight to next episode
+            if (!isIntro && settings.autoPlayNext
+                && m_mediaType == MediaType::EPISODE
+                && !m_parentRatingKey.empty()
+                && !m_isLocalFile) {
+                brls::Logger::info("PlayerActivity: Credits auto-skipped, starting next episode");
+                PlexClient::getInstance().markAsWatched(m_mediaKey);
+                m_endHandled = true;
+                playNextEpisode();
+            } else {
+                double seekToSec = (activeEnd - m_transcodeBaseOffsetMs) / 1000.0;
+                if (seekToSec > 0) {
+                    MpvPlayer::getInstance().seekTo(seekToSec);
+                }
             }
             return;
         }
