@@ -137,6 +137,8 @@ private:
     int findQueueRowDisplayIndex(brls::View* row);
     // Swap two adjacent queue rows visually (no rebuild)
     void swapQueueRows(int displayIdxA, int displayIdxB, bool skipThumbReload = false);
+    // Bulk-reassign all rows in [origIdx..targetIdx] from queue data (O(range) not O(n) swaps)
+    void reassignQueueRange(int origIdx, int targetIdx);
     // Renumber all queue row labels after a reorder
     void renumberQueueRows();
     // Remove a single queue row from the display (no rebuild)
