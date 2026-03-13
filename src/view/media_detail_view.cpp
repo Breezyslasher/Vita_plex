@@ -281,18 +281,25 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     if (m_item.mediaType == MediaType::MOVIE ||
         m_item.mediaType == MediaType::EPISODE) {
 
-        auto* extrasScroll = new brls::HScrollingFrame();
-        extrasScroll->setHeight(150);
-        extrasScroll->setMarginBottom(20);
+        m_extrasLabel = new brls::Label();
+        m_extrasLabel->setText("Extras");
+        m_extrasLabel->setFontSize(20);
+        m_extrasLabel->setMarginBottom(10);
+        m_extrasLabel->setMarginTop(15);
+        m_extrasLabel->setVisibility(brls::Visibility::GONE);
+        m_mainContent->addView(m_extrasLabel);
+
+        m_extrasScroll = new brls::HScrollingFrame();
+        m_extrasScroll->setHeight(150);
+        m_extrasScroll->setMarginBottom(20);
+        m_extrasScroll->setVisibility(brls::Visibility::GONE);
 
         m_extrasBox = new brls::Box();
         m_extrasBox->setAxis(brls::Axis::ROW);
         m_extrasBox->setJustifyContent(brls::JustifyContent::FLEX_START);
 
-        extrasScroll->setContentView(m_extrasBox);
-        // Don't add to mainContent yet - will be added in loadExtras() if extras exist
-        extrasScroll->setVisibility(brls::Visibility::GONE);
-        m_mainContent->addView(extrasScroll);
+        m_extrasScroll->setContentView(m_extrasBox);
+        m_mainContent->addView(m_extrasScroll);
     }
 
     // Track list for albums (vertical list with nested scrolling)
@@ -536,37 +543,13 @@ void MediaDetailView::loadExtras() {
 
             m_extrasBox->clearViews();
 
-            // Show the extras section - make scroll parent visible
-            if (m_extrasBox->getParent()) {
-                m_extrasBox->getParent()->setVisibility(brls::Visibility::VISIBLE);
+            // Show the pre-created label and scroll frame
+            if (m_extrasLabel) {
+                m_extrasLabel->setText("Extras (" + std::to_string(extras.size()) + ")");
+                m_extrasLabel->setVisibility(brls::Visibility::VISIBLE);
             }
-
-            // Add "Extras" label before the scroll frame
-            // Find the scroll frame parent and insert label before it
-            auto* scrollParent = m_extrasBox->getParent();
-            if (scrollParent && scrollParent->getParent()) {
-                auto* container = dynamic_cast<brls::Box*>(scrollParent->getParent());
-                if (container) {
-                    // Find index of the scroll frame in the container
-                    int scrollIdx = -1;
-                    for (size_t i = 0; i < container->getChildCount(); i++) {
-                        if (container->getChild(i) == scrollParent) {
-                            scrollIdx = (int)i;
-                            break;
-                        }
-                    }
-                    if (scrollIdx >= 0) {
-                        auto* extrasLabel = new brls::Label();
-                        extrasLabel->setText("Extras (" + std::to_string(extras.size()) + ")");
-                        extrasLabel->setFontSize(20);
-                        extrasLabel->setMarginBottom(10);
-                        extrasLabel->setMarginTop(15);
-                        // Insert label before the scroll frame
-                        container->removeView(scrollIdx, false);
-                        container->addView(extrasLabel, scrollIdx);
-                        container->addView(scrollParent, scrollIdx + 1);
-                    }
-                }
+            if (m_extrasScroll) {
+                m_extrasScroll->setVisibility(brls::Visibility::VISIBLE);
             }
 
             for (const auto& extra : extras) {

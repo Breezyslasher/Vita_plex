@@ -82,6 +82,8 @@ public:
     brls::Box* m_soundtracksContent = nullptr;
 
     // Extras (trailers, featurettes, deleted scenes)
+    brls::Label* m_extrasLabel = nullptr;
+    brls::HScrollingFrame* m_extrasScroll = nullptr;
     brls::Box* m_extrasBox = nullptr;
 
     // Track currently focused hint icon (like Suwayomi's m_currentFocusedIcon)
