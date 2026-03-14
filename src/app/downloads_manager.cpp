@@ -1382,8 +1382,8 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                         return m_downloading.load() && item.state != DownloadState::CANCELLED;
                     },
                     [&](int64_t total) {
-                        // Estimate total from segment sizes
-                        if (total > 0 && segmentUrls.size() > 0) {
+                        // Estimate total from segment sizes - only set once to keep Y stable
+                        if (item.totalBytes <= 0 && total > 0 && segmentUrls.size() > 0) {
                             item.totalBytes = total * (int64_t)segmentUrls.size();
                         }
                     },
