@@ -14,6 +14,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <map>
 #include "app/downloads_manager.hpp"
 
 namespace vitaplex {
@@ -29,6 +30,7 @@ public:
 private:
     void refresh();
     void rebuildList();
+    void updateProgressInPlace(const std::vector<DownloadItem>& downloads);
     void startAutoRefresh();
     void stopAutoRefresh();
 
@@ -77,6 +79,11 @@ private:
         int transcodeElapsedSeconds = 0;
     };
     std::vector<CachedItem> m_lastState;
+
+    // In-place update: maps for updating text without full rebuild
+    std::map<std::string, brls::Label*> m_itemStatusLabels;   // ratingKey -> status label
+    std::map<std::string, brls::Box*> m_itemRows;             // ratingKey -> row box
+    std::map<std::string, brls::Label*> m_groupStatusLabels;  // compositeKey -> status label
 
     // Auto-refresh
     std::atomic<bool> m_autoRefreshEnabled{false};

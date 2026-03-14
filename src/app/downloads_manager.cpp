@@ -209,8 +209,10 @@ void DownloadsManager::startDownloads() {
 
     brls::Logger::info("DownloadsManager: Starting download queue");
 
-    // Process downloads in background using asyncRun
-    asyncRun([this]() {
+    // Process downloads in background with larger stack size.
+    // downloadItem() has deep call stacks (HTTP, HLS parsing, file I/O)
+    // that can overflow the Vita's default 256KB thread stack.
+    asyncRunLargeStack([this]() {
         m_downloadThreadActive.store(true);
         brls::Logger::info("DownloadsManager: Download thread started");
 
@@ -1217,8 +1219,9 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
             while (std::getline(masterStream, line)) {
                 // Trim carriage return
                 if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (line.empty()) continue;
 
-                if (nextLineIsUrl && !line.empty() && line[0] != '#') {
+                if (nextLineIsUrl && line[0] != '#') {
                     variantUrl = line;
                     break;
                 }
@@ -1280,7 +1283,7 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
 
                 // This is a segment URL
                 std::string segUrl = line;
-                if (segUrl[0] == '/') {
+                if (!segUrl.empty() && segUrl[0] == '/') {
                     segUrl = serverBaseUrl + segUrl;
                 } else if (segUrl.find("://") == std::string::npos) {
                     segUrl = baseUrl + segUrl;
@@ -1424,7 +1427,8 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                 bool nextLineIsUrl = false;
                 while (std::getline(masterStream, line)) {
                     if (!line.empty() && line.back() == '\r') line.pop_back();
-                    if (nextLineIsUrl && !line.empty() && line[0] != '#') {
+                    if (line.empty()) continue;
+                    if (nextLineIsUrl && line[0] != '#') {
                         variantUrl2 = line;
                         break;
                     }
@@ -1460,7 +1464,7 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                     if (line.empty() || line[0] == '#') continue;
 
                     std::string segUrl = line;
-                    if (segUrl[0] == '/') segUrl = serverBaseUrl + segUrl;
+                    if (!segUrl.empty() && segUrl[0] == '/') segUrl = serverBaseUrl + segUrl;
                     else if (segUrl.find("://") == std::string::npos) segUrl = refreshBase + segUrl;
                     if (segUrl.find("X-Plex-Token") == std::string::npos) {
                         segUrl += (segUrl.find('?') != std::string::npos ? "&" : "?");

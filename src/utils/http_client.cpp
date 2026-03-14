@@ -380,9 +380,13 @@ static size_t downloadHeaderCallback(void* contents, size_t size, size_t nmemb, 
                 while (!value.empty() && (value[0] == ' ' || value[0] == '\t')) {
                     value = value.substr(1);
                 }
-                int64_t contentLength = std::stoll(value);
-                data->sizeCallback(contentLength);
-                data->sizeReported = true;
+                // Use strtoll instead of stoll to avoid exceptions (fatal on Vita)
+                char* endPtr = nullptr;
+                int64_t contentLength = strtoll(value.c_str(), &endPtr, 10);
+                if (endPtr != value.c_str() && contentLength > 0) {
+                    data->sizeCallback(contentLength);
+                    data->sizeReported = true;
+                }
             }
         }
     }
