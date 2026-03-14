@@ -215,43 +215,57 @@ void DownloadsManager::startDownloads() {
         brls::Logger::info("DownloadsManager: Download thread started");
 
         while (m_downloading.load()) {
-            DownloadItem* nextItem = nullptr;
+            std::string nextRatingKey;
 
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
                 for (auto& item : m_downloads) {
                     if (item.state == DownloadState::QUEUED) {
                         item.state = DownloadState::DOWNLOADING;
-                        nextItem = &item;
+                        nextRatingKey = item.ratingKey;
                         brls::Logger::info("DownloadsManager: Found queued item: {}", item.title);
                         break;
                     }
                 }
             }
 
-            if (nextItem && nextItem->state != DownloadState::CANCELLED) {
-                brls::Logger::info("DownloadsManager: Starting download of {}", nextItem->title);
-                downloadItem(*nextItem);
-
-                // Retry failed downloads up to 5 times with exponential backoff
-                // Video transcodes especially need retries as the server may need time to prepare
-                int retries = 0;
-                int maxRetries = (nextItem->mediaType == "track") ? 3 : 5;
-                while (nextItem->state == DownloadState::FAILED && retries < maxRetries && m_downloading.load()) {
-                    retries++;
-                    int waitSec = retries * 5;  // 5s, 10s, 15s, 20s, 25s
-                    brls::Logger::info("DownloadsManager: Retry {}/{} for {} in {}s",
-                                      retries, maxRetries, nextItem->title, waitSec);
-#ifdef __vita__
-                    sceKernelDelayThread(waitSec * 1000 * 1000);
-#else
-                    std::this_thread::sleep_for(std::chrono::seconds(waitSec));
-#endif
-                    nextItem->state = DownloadState::DOWNLOADING;
-                    nextItem->downloadedBytes = 0;
+            if (!nextRatingKey.empty()) {
+                // Access the item safely through the mutex for each operation.
+                // We hold the ratingKey (stable identifier) instead of a raw
+                // pointer to the deque element, which would be invalidated if
+                // the deque is modified (e.g. by clearCompleted/purge).
+                DownloadItem* nextItem = findItemByKey(nextRatingKey);
+                if (nextItem && nextItem->state != DownloadState::CANCELLED) {
+                    brls::Logger::info("DownloadsManager: Starting download of {}", nextItem->title);
                     downloadItem(*nextItem);
+
+                    // Retry failed downloads with exponential backoff
+                    int retries = 0;
+                    int maxRetries = (nextItem->mediaType == "track") ? 3 : 5;
+                    while (m_downloading.load()) {
+                        // Re-lookup item each retry iteration — deque may have changed
+                        nextItem = findItemByKey(nextRatingKey);
+                        if (!nextItem || nextItem->state != DownloadState::FAILED || retries >= maxRetries) break;
+
+                        retries++;
+                        int waitSec = retries * 5;  // 5s, 10s, 15s, 20s, 25s
+                        brls::Logger::info("DownloadsManager: Retry {}/{} for {} in {}s",
+                                          retries, maxRetries, nextRatingKey, waitSec);
+#ifdef __vita__
+                        sceKernelDelayThread(waitSec * 1000 * 1000);
+#else
+                        std::this_thread::sleep_for(std::chrono::seconds(waitSec));
+#endif
+                        // Re-lookup again after sleep — item may have been cancelled/removed
+                        nextItem = findItemByKey(nextRatingKey);
+                        if (!nextItem || nextItem->state == DownloadState::CANCELLED) break;
+
+                        nextItem->state = DownloadState::DOWNLOADING;
+                        nextItem->downloadedBytes = 0;
+                        downloadItem(*nextItem);
+                    }
                 }
-            } else if (!nextItem) {
+            } else {
                 // No more queued items
                 brls::Logger::info("DownloadsManager: No more queued items");
                 break;
@@ -600,6 +614,16 @@ void DownloadsManager::purgeCancelledUnlocked() {
             ++it;
         }
     }
+}
+
+DownloadItem* DownloadsManager::findItemByKey(const std::string& ratingKey) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (auto& item : m_downloads) {
+        if (item.ratingKey == ratingKey) {
+            return &item;
+        }
+    }
+    return nullptr;
 }
 
 // Convert .plex.direct HTTPS URL to plain HTTP with real IP.

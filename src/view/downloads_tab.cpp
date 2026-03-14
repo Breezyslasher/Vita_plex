@@ -191,6 +191,12 @@ DownloadsTab::DownloadsTab()
     m_clearBtn->addView(clearLabel);
     m_clearBtn->setMargins(0, 10, 0, 0);
     m_clearBtn->registerClickAction([this](brls::View*) {
+        // Debounce: ignore rapid double-taps (< 500ms apart)
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastClearTime).count();
+        if (elapsed < 500) return true;
+        m_lastClearTime = now;
+
         DownloadsManager::getInstance().clearCompleted();
         brls::Application::notify("Cleared completed downloads");
         m_lastState.clear();
@@ -352,6 +358,12 @@ void DownloadsTab::rebuildList() {
     // below but their async callbacks haven't fired yet.
     m_aliveAtomic->store(false);
     m_aliveAtomic = std::make_shared<std::atomic<bool>>(true);
+
+    // Move focus away from list items before removing them to prevent
+    // focus-related crashes when the currently-focused view is destroyed
+    if (m_clearBtn) {
+        brls::Application::giveFocus(m_clearBtn);
+    }
 
     // Clear existing items (except empty label which is always last)
     while (m_listContainer->getChildren().size() > 1) {

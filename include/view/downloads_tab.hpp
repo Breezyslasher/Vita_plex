@@ -81,6 +81,7 @@ private:
     // Auto-refresh
     std::atomic<bool> m_autoRefreshEnabled{false};
     std::chrono::steady_clock::time_point m_lastRefresh;
+    std::chrono::steady_clock::time_point m_lastClearTime;
     static constexpr int REFRESH_INTERVAL_MS = 1000;
 
     // Alive flag for async safety
