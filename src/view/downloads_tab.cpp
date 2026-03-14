@@ -170,7 +170,8 @@ DownloadsTab::DownloadsTab()
     m_actionsRow->addView(m_resumeBtn);
 
     // Sync button
-    auto syncBtn = new brls::Button();
+    m_syncBtn = new brls::Button();
+    auto syncBtn = m_syncBtn;
     auto syncLabel = new brls::Label();
     syncLabel->setText("Sync");
     syncLabel->setFontSize(16);
@@ -409,6 +410,7 @@ void DownloadsTab::rebuildList() {
         std::string title;
         std::string thumb;
         int total = 0;
+        int contentTotal = 0;  // Stable total from groupTotalItems
         int completed = 0;
         int downloading = 0;
     };
@@ -429,12 +431,14 @@ void DownloadsTab::rebuildList() {
                 gi.title = item.groupTitle;
                 gi.thumb = item.groupThumb;
                 gi.total = 1;
+                gi.contentTotal = item.groupTotalItems;
                 gi.completed = (item.state == DownloadState::COMPLETED) ? 1 : 0;
                 gi.downloading = (item.state == DownloadState::DOWNLOADING || item.state == DownloadState::TRANSCODING) ? 1 : 0;
                 groups[compositeKey] = gi;
                 groupOrder.push_back(compositeKey);
             } else {
                 it->second.total++;
+                if (item.groupTotalItems > it->second.contentTotal) it->second.contentTotal = item.groupTotalItems;
                 if (item.state == DownloadState::COMPLETED) it->second.completed++;
                 if (item.state == DownloadState::DOWNLOADING || item.state == DownloadState::TRANSCODING) it->second.downloading++;
                 // Use first non-empty thumb
@@ -451,7 +455,8 @@ void DownloadsTab::rebuildList() {
     for (const auto& compositeKey : groupOrder) {
         const auto& gi = groups[compositeKey];
         auto* row = buildGroupRow(gi.type, gi.key, gi.title, gi.thumb,
-                                   gi.total, gi.completed, gi.downloading);
+                                   gi.total, gi.completed, gi.downloading,
+                                   gi.contentTotal);
         m_listContainer->addView(row, m_listContainer->getChildren().size() - 1);
     }
 
@@ -459,6 +464,31 @@ void DownloadsTab::rebuildList() {
     for (const auto& item : ungrouped) {
         auto* row = buildItemRow(item);
         m_listContainer->addView(row, m_listContainer->getChildren().size() - 1);
+    }
+
+    // Set up focus navigation between action buttons and list items
+    auto& children = m_listContainer->getChildren();
+    brls::View* firstListItem = nullptr;
+    for (auto* child : children) {
+        if (child != m_emptyLabel && child->isFocusable()) {
+            firstListItem = child;
+            break;
+        }
+    }
+
+    if (firstListItem) {
+        // DOWN from each action button -> first list item
+        if (m_startStopBtn) m_startStopBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstListItem);
+        if (m_resumeBtn) m_resumeBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstListItem);
+        if (m_syncBtn) m_syncBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstListItem);
+        if (m_clearBtn) m_clearBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstListItem);
+
+        // UP from each list item -> first action button (Start/Stop)
+        for (auto* child : children) {
+            if (child != m_emptyLabel && child->isFocusable()) {
+                child->setCustomNavigationRoute(brls::FocusDirection::UP, m_startStopBtn);
+            }
+        }
     }
 }
 
@@ -475,6 +505,7 @@ void DownloadsTab::updateProgressInPlace(const std::vector<DownloadItem>& downlo
     struct GroupProgress {
         std::string typePrefix;
         int total = 0;
+        int contentTotal = 0;  // Stable total from groupTotalItems
         int completed = 0;
         int downloading = 0;
     };
@@ -494,6 +525,7 @@ void DownloadsTab::updateProgressInPlace(const std::vector<DownloadItem>& downlo
                 }
             }
             gp.total++;
+            if (item.groupTotalItems > gp.contentTotal) gp.contentTotal = item.groupTotalItems;
             if (item.state == DownloadState::COMPLETED) gp.completed++;
             if (item.state == DownloadState::DOWNLOADING || item.state == DownloadState::TRANSCODING) gp.downloading++;
         }
@@ -503,8 +535,9 @@ void DownloadsTab::updateProgressInPlace(const std::vector<DownloadItem>& downlo
         auto it = m_groupStatusLabels.find(pair.first);
         if (it != m_groupStatusLabels.end()) {
             const auto& gp = pair.second;
+            int displayTotal = (gp.contentTotal > 0) ? gp.contentTotal : gp.total;
             std::string statusText = gp.typePrefix + " - " + std::to_string(gp.completed) + "/" +
-                                     std::to_string(gp.total) + " ready";
+                                     std::to_string(displayTotal) + " ready";
             if (gp.downloading > 0) {
                 statusText += " (" + std::to_string(gp.downloading) + " downloading)";
             }
@@ -515,7 +548,10 @@ void DownloadsTab::updateProgressInPlace(const std::vector<DownloadItem>& downlo
 
 brls::Box* DownloadsTab::buildGroupRow(DownloadGroupType groupType, const std::string& groupKey,
                                         const std::string& groupTitle, const std::string& groupThumb,
-                                        int totalItems, int completedItems, int downloadingItems) {
+                                        int totalItems, int completedItems, int downloadingItems,
+                                        int contentTotal) {
+    // Use contentTotal (stable) for Y if available, otherwise fall back to current count
+    int displayTotal = (contentTotal > 0) ? contentTotal : totalItems;
     auto* row = new brls::Box();
     row->setAxis(brls::Axis::ROW);
     row->setAlignItems(brls::AlignItems::CENTER);
@@ -525,7 +561,7 @@ brls::Box* DownloadsTab::buildGroupRow(DownloadGroupType groupType, const std::s
     row->setFocusable(true);
 
     // Background color based on completion status
-    if (completedItems == totalItems) {
+    if (completedItems == displayTotal) {
         row->setBackgroundColor(nvgRGBA(20, 40, 60, 200));  // Blue - all done
     } else if (downloadingItems > 0) {
         row->setBackgroundColor(nvgRGBA(20, 60, 20, 200));  // Green - downloading
@@ -597,7 +633,7 @@ brls::Box* DownloadsTab::buildGroupRow(DownloadGroupType groupType, const std::s
     statusLabel->setFontSize(14);
     statusLabel->setTextColor(nvgRGBA(200, 200, 200, 255));
     std::string statusText = typePrefix + " - " + std::to_string(completedItems) + "/" +
-                             std::to_string(totalItems) + " ready";
+                             std::to_string(displayTotal) + " ready";
     if (downloadingItems > 0) {
         statusText += " (" + std::to_string(downloadingItems) + " downloading)";
     }
@@ -880,16 +916,19 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
     }
 
     int completed = 0, total = (int)items.size();
+    int contentTotal = 0;
     for (const auto& item : items) {
         if (item.state == DownloadState::COMPLETED) completed++;
+        if (item.groupTotalItems > contentTotal) contentTotal = item.groupTotalItems;
     }
+    int stableTotal = (contentTotal > 0) ? contentTotal : total;
 
     auto* typeLabel = new brls::Label();
     typeLabel->setFontSize(16);
     typeLabel->setTextColor(nvgRGBA(180, 180, 180, 255));
     std::string itemWord = isMusic ? "tracks" : "items";
     typeLabel->setText(typeStr + " - " + std::to_string(completed) + "/" +
-                       std::to_string(total) + " " + itemWord + " ready");
+                       std::to_string(stableTotal) + " " + itemWord + " ready");
     typeLabel->setMarginBottom(15);
     infoBox->addView(typeLabel);
 
@@ -1250,11 +1289,14 @@ void DownloadsTab::showGroupContextMenu(DownloadGroupType groupType, const std::
 
     // Track count info
     int completed = 0;
+    int contentTotal = 0;
     for (const auto& item : items) {
         if (item.state == DownloadState::COMPLETED) completed++;
+        if (item.groupTotalItems > contentTotal) contentTotal = item.groupTotalItems;
     }
+    int stableTotal = (contentTotal > 0) ? contentTotal : (int)items.size();
     auto* infoLabel = new brls::Label();
-    infoLabel->setText(std::to_string(completed) + "/" + std::to_string((int)items.size()) + " tracks ready");
+    infoLabel->setText(std::to_string(completed) + "/" + std::to_string(stableTotal) + " tracks ready");
     infoLabel->setFontSize(14);
     infoLabel->setTextColor(nvgRGBA(180, 180, 180, 255));
     infoLabel->setMarginBottom(10);

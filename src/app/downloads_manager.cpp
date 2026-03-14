@@ -197,6 +197,22 @@ bool DownloadsManager::queueDownload(const std::string& ratingKey, const std::st
     }
 
     m_downloads.push_back(item);
+
+    // Update groupTotalItems on all items in this group so Y stays stable
+    if (groupType != DownloadGroupType::NONE && !groupKey.empty()) {
+        int groupCount = 0;
+        for (const auto& d : m_downloads) {
+            if (d.groupType == groupType && d.groupKey == groupKey) {
+                groupCount++;
+            }
+        }
+        for (auto& d : m_downloads) {
+            if (d.groupType == groupType && d.groupKey == groupKey) {
+                d.groupTotalItems = groupCount;
+            }
+        }
+    }
+
     saveStateUnlocked();
 
     brls::Logger::info("DownloadsManager: Queued {} for download", title);
@@ -1775,7 +1791,8 @@ void DownloadsManager::saveStateUnlocked() {
            << "\"groupKey\":\"" << escapeJson(item.groupKey) << "\",\n"
            << "\"groupTitle\":\"" << escapeJson(item.groupTitle) << "\",\n"
            << "\"groupThumb\":\"" << escapeJson(item.groupThumb) << "\",\n"
-           << "\"albumTitle\":\"" << escapeJson(item.albumTitle) << "\"\n"
+           << "\"albumTitle\":\"" << escapeJson(item.albumTitle) << "\",\n"
+           << "\"groupTotalItems\":" << item.groupTotalItems << "\n"
            << "}";
     }
 
@@ -1878,6 +1895,7 @@ void DownloadsManager::loadState() {
         item.groupTitle = extractJsonString(objStr, "groupTitle");
         item.groupThumb = extractJsonString(objStr, "groupThumb");
         item.albumTitle = extractJsonString(objStr, "albumTitle");
+        item.groupTotalItems = static_cast<int>(extractJsonInt(objStr, "groupTotalItems"));
 
         if (!item.ratingKey.empty()) {
             m_downloads.push_back(item);
