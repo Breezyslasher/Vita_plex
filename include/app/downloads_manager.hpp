@@ -190,12 +190,12 @@ private:
     // Remove items marked as CANCELLED from the deque (only safe when download thread is idle)
     void purgeCancelledUnlocked();
 
+    // Find an item by ratingKey (returns nullptr if not found)
+    DownloadItem* findItemByKey(const std::string& ratingKey);
+
     // Internal save without locking (caller must hold m_mutex)
     void saveStateUnlocked();
 
-    // Use deque so push_back never invalidates references/pointers to
-    // existing elements. The download thread holds a DownloadItem&
-    // reference while other threads may queue new items via push_back.
     std::deque<DownloadItem> m_downloads;
     mutable std::mutex m_mutex;
     std::atomic<bool> m_downloading{false};

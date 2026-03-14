@@ -191,6 +191,12 @@ DownloadsTab::DownloadsTab()
     m_clearBtn->addView(clearLabel);
     m_clearBtn->setMargins(0, 10, 0, 0);
     m_clearBtn->registerClickAction([this](brls::View*) {
+        // Debounce: ignore rapid double-taps (< 500ms apart)
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastClearTime).count();
+        if (elapsed < 500) return true;
+        m_lastClearTime = now;
+
         DownloadsManager::getInstance().clearCompleted();
         brls::Application::notify("Cleared completed downloads");
         m_lastState.clear();
@@ -324,34 +330,65 @@ void DownloadsTab::refresh() {
         currentState.push_back(ci);
     }
 
-    // Check if state changed
-    bool stateChanged = (currentState.size() != m_lastState.size());
-    if (!stateChanged) {
+    // Check if anything changed at all
+    bool anyChange = (currentState.size() != m_lastState.size());
+    if (!anyChange) {
         for (size_t i = 0; i < currentState.size(); i++) {
             if (currentState[i].ratingKey != m_lastState[i].ratingKey ||
                 currentState[i].state != m_lastState[i].state ||
                 currentState[i].downloadedBytes != m_lastState[i].downloadedBytes ||
                 currentState[i].transcodeElapsedSeconds != m_lastState[i].transcodeElapsedSeconds) {
-                stateChanged = true;
+                anyChange = true;
                 break;
             }
         }
     }
 
-    if (!stateChanged) return;
+    if (!anyChange) return;
+
+    // Check if only progress changed (same items, same states, just bytes/transcode time differ)
+    // If so, update labels in-place without rebuilding the whole UI
+    bool structureChanged = (currentState.size() != m_lastState.size());
+    if (!structureChanged) {
+        for (size_t i = 0; i < currentState.size(); i++) {
+            if (currentState[i].ratingKey != m_lastState[i].ratingKey ||
+                currentState[i].state != m_lastState[i].state) {
+                structureChanged = true;
+                break;
+            }
+        }
+    }
+
     m_lastState = currentState;
 
-    rebuildList();
+    if (structureChanged) {
+        // Full rebuild needed: items added/removed or state type changed
+        rebuildList();
+    } else {
+        // Progress-only update: just update status text labels in-place
+        updateProgressInPlace(downloads);
+    }
 }
 
 void DownloadsTab::rebuildList() {
     auto downloads = DownloadsManager::getInstance().getDownloads();
+
+    // Clear in-place update maps (old pointers are about to be destroyed)
+    m_itemStatusLabels.clear();
+    m_itemRows.clear();
+    m_groupStatusLabels.clear();
 
     // Invalidate all in-flight async image loads from previous rebuild cycle.
     // This prevents use-after-free when old brls::Image* targets are destroyed
     // below but their async callbacks haven't fired yet.
     m_aliveAtomic->store(false);
     m_aliveAtomic = std::make_shared<std::atomic<bool>>(true);
+
+    // Move focus away from list items before removing them to prevent
+    // focus-related crashes when the currently-focused view is destroyed
+    if (m_clearBtn) {
+        brls::Application::giveFocus(m_clearBtn);
+    }
 
     // Clear existing items (except empty label which is always last)
     while (m_listContainer->getChildren().size() > 1) {
@@ -422,6 +459,57 @@ void DownloadsTab::rebuildList() {
     for (const auto& item : ungrouped) {
         auto* row = buildItemRow(item);
         m_listContainer->addView(row, m_listContainer->getChildren().size() - 1);
+    }
+}
+
+void DownloadsTab::updateProgressInPlace(const std::vector<DownloadItem>& downloads) {
+    // Update individual item status labels
+    for (const auto& item : downloads) {
+        auto it = m_itemStatusLabels.find(item.ratingKey);
+        if (it != m_itemStatusLabels.end()) {
+            it->second->setText(buildItemStatusText(item));
+        }
+    }
+
+    // Update group status labels
+    struct GroupProgress {
+        std::string typePrefix;
+        int total = 0;
+        int completed = 0;
+        int downloading = 0;
+    };
+    std::map<std::string, GroupProgress> groupStats;
+
+    for (const auto& item : downloads) {
+        if (item.groupType != DownloadGroupType::NONE && !item.groupKey.empty()) {
+            std::string compositeKey = std::to_string(static_cast<int>(item.groupType)) + ":" + item.groupKey;
+            auto& gp = groupStats[compositeKey];
+            if (gp.total == 0) {
+                switch (item.groupType) {
+                    case DownloadGroupType::PLAYLIST: gp.typePrefix = "Playlist"; break;
+                    case DownloadGroupType::ALBUM:    gp.typePrefix = "Album"; break;
+                    case DownloadGroupType::ARTIST:   gp.typePrefix = "Artist"; break;
+                    case DownloadGroupType::SHOW:     gp.typePrefix = "Show"; break;
+                    default: break;
+                }
+            }
+            gp.total++;
+            if (item.state == DownloadState::COMPLETED) gp.completed++;
+            if (item.state == DownloadState::DOWNLOADING || item.state == DownloadState::TRANSCODING) gp.downloading++;
+        }
+    }
+
+    for (const auto& pair : groupStats) {
+        auto it = m_groupStatusLabels.find(pair.first);
+        if (it != m_groupStatusLabels.end()) {
+            const auto& gp = pair.second;
+            std::string statusText = gp.typePrefix + " - " + std::to_string(gp.completed) + "/" +
+                                     std::to_string(gp.total) + " ready";
+            if (gp.downloading > 0) {
+                statusText += " (" + std::to_string(gp.downloading) + " downloading)";
+            }
+            it->second->setText(statusText);
+        }
     }
 }
 
@@ -516,6 +604,10 @@ brls::Box* DownloadsTab::buildGroupRow(DownloadGroupType groupType, const std::s
     statusLabel->setText(statusText);
     infoBox->addView(statusLabel);
 
+    // Track for in-place progress updates
+    std::string compositeKey = std::to_string(static_cast<int>(groupType)) + ":" + groupKey;
+    m_groupStatusLabels[compositeKey] = statusLabel;
+
     row->addView(infoBox);
 
     // Click to view tracks in this group
@@ -599,6 +691,10 @@ brls::Box* DownloadsTab::buildItemRow(const DownloadItem& item) {
     statusLabel->setText(buildItemStatusText(item));
     statusLabel->setTextColor(nvgRGBA(200, 200, 200, 255));
     infoBox->addView(statusLabel);
+
+    // Track for in-place progress updates
+    m_itemStatusLabels[item.ratingKey] = statusLabel;
+    m_itemRows[item.ratingKey] = row;
 
     row->addView(infoBox);
 

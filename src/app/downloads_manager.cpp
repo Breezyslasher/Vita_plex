@@ -209,49 +209,65 @@ void DownloadsManager::startDownloads() {
 
     brls::Logger::info("DownloadsManager: Starting download queue");
 
-    // Process downloads in background using asyncRun
-    asyncRun([this]() {
+    // Process downloads in background with larger stack size.
+    // downloadItem() has deep call stacks (HTTP, HLS parsing, file I/O)
+    // that can overflow the Vita's default 256KB thread stack.
+    asyncRunLargeStack([this]() {
         m_downloadThreadActive.store(true);
         brls::Logger::info("DownloadsManager: Download thread started");
 
         while (m_downloading.load()) {
-            DownloadItem* nextItem = nullptr;
+            std::string nextRatingKey;
 
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
                 for (auto& item : m_downloads) {
                     if (item.state == DownloadState::QUEUED) {
                         item.state = DownloadState::DOWNLOADING;
-                        nextItem = &item;
+                        nextRatingKey = item.ratingKey;
                         brls::Logger::info("DownloadsManager: Found queued item: {}", item.title);
                         break;
                     }
                 }
             }
 
-            if (nextItem && nextItem->state != DownloadState::CANCELLED) {
-                brls::Logger::info("DownloadsManager: Starting download of {}", nextItem->title);
-                downloadItem(*nextItem);
-
-                // Retry failed downloads up to 5 times with exponential backoff
-                // Video transcodes especially need retries as the server may need time to prepare
-                int retries = 0;
-                int maxRetries = (nextItem->mediaType == "track") ? 3 : 5;
-                while (nextItem->state == DownloadState::FAILED && retries < maxRetries && m_downloading.load()) {
-                    retries++;
-                    int waitSec = retries * 5;  // 5s, 10s, 15s, 20s, 25s
-                    brls::Logger::info("DownloadsManager: Retry {}/{} for {} in {}s",
-                                      retries, maxRetries, nextItem->title, waitSec);
-#ifdef __vita__
-                    sceKernelDelayThread(waitSec * 1000 * 1000);
-#else
-                    std::this_thread::sleep_for(std::chrono::seconds(waitSec));
-#endif
-                    nextItem->state = DownloadState::DOWNLOADING;
-                    nextItem->downloadedBytes = 0;
+            if (!nextRatingKey.empty()) {
+                // Access the item safely through the mutex for each operation.
+                // We hold the ratingKey (stable identifier) instead of a raw
+                // pointer to the deque element, which would be invalidated if
+                // the deque is modified (e.g. by clearCompleted/purge).
+                DownloadItem* nextItem = findItemByKey(nextRatingKey);
+                if (nextItem && nextItem->state != DownloadState::CANCELLED) {
+                    brls::Logger::info("DownloadsManager: Starting download of {}", nextItem->title);
                     downloadItem(*nextItem);
+
+                    // Retry failed downloads with exponential backoff
+                    int retries = 0;
+                    int maxRetries = (nextItem->mediaType == "track") ? 3 : 5;
+                    while (m_downloading.load()) {
+                        // Re-lookup item each retry iteration — deque may have changed
+                        nextItem = findItemByKey(nextRatingKey);
+                        if (!nextItem || nextItem->state != DownloadState::FAILED || retries >= maxRetries) break;
+
+                        retries++;
+                        int waitSec = retries * 5;  // 5s, 10s, 15s, 20s, 25s
+                        brls::Logger::info("DownloadsManager: Retry {}/{} for {} in {}s",
+                                          retries, maxRetries, nextRatingKey, waitSec);
+#ifdef __vita__
+                        sceKernelDelayThread(waitSec * 1000 * 1000);
+#else
+                        std::this_thread::sleep_for(std::chrono::seconds(waitSec));
+#endif
+                        // Re-lookup again after sleep — item may have been cancelled/removed
+                        nextItem = findItemByKey(nextRatingKey);
+                        if (!nextItem || nextItem->state == DownloadState::CANCELLED) break;
+
+                        nextItem->state = DownloadState::DOWNLOADING;
+                        nextItem->downloadedBytes = 0;
+                        downloadItem(*nextItem);
+                    }
                 }
-            } else if (!nextItem) {
+            } else {
                 // No more queued items
                 brls::Logger::info("DownloadsManager: No more queued items");
                 break;
@@ -600,6 +616,16 @@ void DownloadsManager::purgeCancelledUnlocked() {
             ++it;
         }
     }
+}
+
+DownloadItem* DownloadsManager::findItemByKey(const std::string& ratingKey) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (auto& item : m_downloads) {
+        if (item.ratingKey == ratingKey) {
+            return &item;
+        }
+    }
+    return nullptr;
 }
 
 // Convert .plex.direct HTTPS URL to plain HTTP with real IP.
@@ -1193,8 +1219,9 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
             while (std::getline(masterStream, line)) {
                 // Trim carriage return
                 if (!line.empty() && line.back() == '\r') line.pop_back();
+                if (line.empty()) continue;
 
-                if (nextLineIsUrl && !line.empty() && line[0] != '#') {
+                if (nextLineIsUrl && line[0] != '#') {
                     variantUrl = line;
                     break;
                 }
@@ -1256,7 +1283,7 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
 
                 // This is a segment URL
                 std::string segUrl = line;
-                if (segUrl[0] == '/') {
+                if (!segUrl.empty() && segUrl[0] == '/') {
                     segUrl = serverBaseUrl + segUrl;
                 } else if (segUrl.find("://") == std::string::npos) {
                     segUrl = baseUrl + segUrl;
@@ -1400,7 +1427,8 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                 bool nextLineIsUrl = false;
                 while (std::getline(masterStream, line)) {
                     if (!line.empty() && line.back() == '\r') line.pop_back();
-                    if (nextLineIsUrl && !line.empty() && line[0] != '#') {
+                    if (line.empty()) continue;
+                    if (nextLineIsUrl && line[0] != '#') {
                         variantUrl2 = line;
                         break;
                     }
@@ -1436,7 +1464,7 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                     if (line.empty() || line[0] == '#') continue;
 
                     std::string segUrl = line;
-                    if (segUrl[0] == '/') segUrl = serverBaseUrl + segUrl;
+                    if (!segUrl.empty() && segUrl[0] == '/') segUrl = serverBaseUrl + segUrl;
                     else if (segUrl.find("://") == std::string::npos) segUrl = refreshBase + segUrl;
                     if (segUrl.find("X-Plex-Token") == std::string::npos) {
                         segUrl += (segUrl.find('?') != std::string::npos ? "&" : "?");
