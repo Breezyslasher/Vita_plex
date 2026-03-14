@@ -3098,21 +3098,23 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
                                 }
                             }
 
-                            // Strategy 2: Match by callSign (prefix matching both directions)
-                            // Grid may have suffix (e.g., "KDKADT4" vs "KDKADT")
-                            if (!matched && !chanCallSign.empty() && !channel.callSign.empty()) {
-                                if (chanCallSign == channel.callSign) {
-                                    matched = true;
-                                } else if (chanCallSign.length() > channel.callSign.length() &&
-                                           chanCallSign.substr(0, channel.callSign.length()) == channel.callSign) {
-                                    matched = true;
-                                } else if (channel.callSign.length() > chanCallSign.length() &&
-                                           channel.callSign.substr(0, chanCallSign.length()) == chanCallSign) {
+                            // Strategy 2: Match by VCN (channel number string like "2.1")
+                            // This is a strong match since VCN uniquely identifies a channel
+                            if (!matched && !chanVcn.empty() && !channel.channelIdentifier.empty()) {
+                                if (chanVcn == channel.channelIdentifier) {
                                     matched = true;
                                 }
                             }
 
-                            // Strategy 3: Match by channel title
+                            // Strategy 3: Match by exact callSign
+                            // Do NOT use prefix matching - "KDKADT4" and "KDKADT" are different sub-channels
+                            if (!matched && !chanCallSign.empty() && !channel.callSign.empty()) {
+                                if (chanCallSign == channel.callSign) {
+                                    matched = true;
+                                }
+                            }
+
+                            // Strategy 4: Match by channel title
                             if (!matched && !channel.title.empty()) {
                                 if (!chanShortTitle.empty() && chanShortTitle == channel.title) {
                                     matched = true;
@@ -3122,36 +3124,11 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
                                 }
                             }
 
-                            // Strategy 4: Match by channelIdentifier containing channel key or vice versa
+                            // Strategy 5: Match by channelIdentifier containing channel key or vice versa
                             if (!matched && !chanId.empty() && !channel.key.empty()) {
-                                if (chanId.find(channel.key) != std::string::npos ||
+                                if (chanId == channel.key ||
+                                    chanId.find(channel.key) != std::string::npos ||
                                     channel.key.find(chanId) != std::string::npos) {
-                                    matched = true;
-                                }
-                            }
-
-                            // Strategy 5: Match by lineup prefix - both share the same lineup ID prefix
-                            if (!matched && !chanId.empty() && !channel.key.empty()) {
-                                // Extract lineup prefix (everything before first '-')
-                                size_t chanIdDash = chanId.find('-');
-                                size_t keyDash = channel.key.find('-');
-                                if (chanIdDash != std::string::npos && keyDash != std::string::npos) {
-                                    std::string chanIdPrefix = chanId.substr(0, chanIdDash);
-                                    std::string keyPrefix = channel.key.substr(0, keyDash);
-                                    // Same lineup, and the suffix part after the dash matches
-                                    if (chanIdPrefix == keyPrefix) {
-                                        std::string chanIdSuffix = chanId.substr(chanIdDash + 1);
-                                        std::string keySuffix = channel.key.substr(keyDash + 1);
-                                        if (chanIdSuffix == keySuffix) {
-                                            matched = true;
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Strategy 6: Match by VCN (channel number string like "2.1")
-                            if (!matched && !chanVcn.empty() && !channel.channelIdentifier.empty()) {
-                                if (chanVcn == channel.channelIdentifier) {
                                     matched = true;
                                 }
                             }
@@ -3222,26 +3199,26 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
     return !channelsWithPrograms.empty();
 }
 
-bool PlexClient::tuneLiveTVChannelByKey(const std::string& channelVcn, const std::string& epgChannelKey, std::string& streamUrl) {
-    brls::Logger::info("tuneLiveTVChannelByKey: vcn={}, epgKey={}", channelVcn, epgChannelKey);
+bool PlexClient::tuneLiveTVChannelByKey(const std::string& channelVcn, const std::string& epgChannelKey, std::string& streamUrl, const std::string& programMetadataKey) {
+    brls::Logger::info("tuneLiveTVChannelByKey: vcn={}, epgKey={}, metadataKey={}", channelVcn, epgChannelKey, programMetadataKey);
 
     // Try with the full EPG channel key first, then fall back to VCN
     if (!epgChannelKey.empty()) {
-        if (tuneLiveTVChannel(epgChannelKey, streamUrl)) {
+        if (tuneLiveTVChannel(epgChannelKey, streamUrl, programMetadataKey)) {
             return true;
         }
         brls::Logger::info("tuneLiveTVChannelByKey: EPG key failed, trying VCN...");
     }
 
     if (!channelVcn.empty() && channelVcn != epgChannelKey) {
-        return tuneLiveTVChannel(channelVcn, streamUrl);
+        return tuneLiveTVChannel(channelVcn, streamUrl, programMetadataKey);
     }
 
     return false;
 }
 
-bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl) {
-    brls::Logger::info("tuneLiveTVChannel: channelKey={}", channelKey);
+bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl, const std::string& programMetadataKey) {
+    brls::Logger::info("tuneLiveTVChannel: channelKey={}, programMetadataKey={}", channelKey, programMetadataKey);
 
     // Need a DVR ID to tune. If we don't have one, try to fetch it.
     if (m_dvrId.empty()) {
@@ -3254,27 +3231,9 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
 
     HttpClient client;
 
-    // URL-encode the channel key for use in URLs (it may contain special chars)
-    std::string encodedKey = HttpClient::urlEncode(channelKey);
-
-    // Helper lambda: try the transcode/universal approach
-    auto tryTranscodeApproach = [&]() -> bool {
-        brls::Logger::info("tuneLiveTVChannel: Trying transcode/universal approach...");
-
-        // Build the path for the transcode decision endpoint
-        // Use the EPG provider metadata path if the key looks like a plex:// URI
-        std::string liveTvPath;
-        if (channelKey.find("plex://") != std::string::npos || channelKey.length() > 30) {
-            // Full EPG key - use the EPG provider grid metadata path
-            liveTvPath = "%2Flivetv%2Fdvrs%2F" + m_dvrId + "%2Fchannels%2F" + encodedKey;
-        } else {
-            // Short VCN like "11.1"
-            liveTvPath = "%2Flivetv%2Fdvrs%2F" + m_dvrId + "%2Fchannels%2F" + encodedKey;
-        }
-
-        std::string decisionUrl = buildApiUrl(
-            "/video/:/transcode/universal/decision?"
-            "path=" + liveTvPath +
+    // Build transcode params shared between decision and start URLs
+    auto buildTranscodeParams = [&](const std::string& encodedPath) -> std::string {
+        return "path=" + encodedPath +
             "&mediaIndex=0&partIndex=0"
             "&directPlay=0&directStream=1&directStreamAudio=1"
             "&hasMDE=1&location=lan"
@@ -3286,7 +3245,15 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
             "&X-Plex-Version=1.0.0"
             "&X-Plex-Platform=PlayStation%20Vita"
             "&X-Plex-Device=PS%20Vita"
-            "&X-Plex-Device-Name=PS%20Vita");
+            "&X-Plex-Device-Name=PS%20Vita";
+    };
+
+    // Helper: try transcoding with a given path, return true if stream URL was set
+    auto tryTranscode = [&](const std::string& mediaPath) -> bool {
+        std::string encodedPath = HttpClient::urlEncode(mediaPath);
+        std::string params = buildTranscodeParams(encodedPath);
+
+        std::string decisionUrl = buildApiUrl("/video/:/transcode/universal/decision?" + params);
 
         HttpRequest decReq;
         decReq.url = decisionUrl;
@@ -3301,113 +3268,57 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
             brls::Logger::debug("tuneLiveTVChannel: Decision response ({} bytes): {}",
                                 decResp.body.length(), decResp.body.substr(0, 500));
 
-            // Check if the decision response also has an error
+            // Check if the decision response has an error
             std::string decStatus = extractJsonValue(decResp.body, "status");
             if (!decStatus.empty() && decStatus != "0") {
                 std::string decMsg = extractJsonValue(decResp.body, "message");
                 if (!decMsg.empty() && decMsg.find("Could not") != std::string::npos) {
-                    brls::Logger::error("tuneLiveTVChannel: Decision also returned error: {}", decMsg);
+                    brls::Logger::error("tuneLiveTVChannel: Decision returned error: {}", decMsg);
                     return false;
                 }
             }
 
-            // Build stream URL using the same pattern as video playback
-            streamUrl = buildApiUrl(
-                "/video/:/transcode/universal/start.m3u8?"
-                "path=" + liveTvPath +
-                "&mediaIndex=0&partIndex=0"
-                "&directPlay=0&directStream=1&directStreamAudio=1"
-                "&hasMDE=1&location=lan"
-                "&audioBoost=100&audioChannelCount=2"
-                "&protocol=hls&videoBitrate=2000&videoResolution=960x544&videoQuality=100"
-                "&subtitles=none"
-                "&X-Plex-Client-Identifier=" + std::string(PLEX_CLIENT_ID) +
-                "&X-Plex-Product=" + std::string(PLEX_CLIENT_NAME) +
-                "&X-Plex-Version=1.0.0"
-                "&X-Plex-Platform=PlayStation%20Vita"
-                "&X-Plex-Device=PS%20Vita"
-                "&X-Plex-Device-Name=PS%20Vita");
-
+            streamUrl = buildApiUrl("/video/:/transcode/universal/start.m3u8?" + params);
             brls::Logger::info("tuneLiveTVChannel: Stream URL (transcode) = {}", streamUrl);
             return true;
         }
 
-        brls::Logger::error("tuneLiveTVChannel: Decision approach failed: {} body: {}",
+        brls::Logger::error("tuneLiveTVChannel: Decision failed: {} body: {}",
                             decResp.statusCode, decResp.body.substr(0, 500));
         return false;
     };
 
-    // Step 1: Tune the channel via POST /livetv/dvrs/{dvrId}/channels/{channel}/tune
-    // URL-encode the channel key in the path
-    std::string tuneUrl = buildApiUrl("/livetv/dvrs/" + m_dvrId + "/channels/" + encodedKey + "/tune");
-    HttpRequest tuneReq;
-    tuneReq.url = tuneUrl;
-    tuneReq.method = "POST";
-    tuneReq.headers["Accept"] = "application/json";
-    tuneReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
-    tuneReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
-    tuneReq.headers["X-Plex-Version"] = "1.0.0";
-    tuneReq.headers["X-Plex-Platform"] = "PlayStation Vita";
-    tuneReq.headers["X-Plex-Device"] = "PS Vita";
-    tuneReq.headers["X-Plex-Device-Name"] = "PS Vita";
-    tuneReq.timeout = 15;
-
-    brls::Logger::debug("tuneLiveTVChannel: POST {}", tuneUrl);
-    HttpResponse tuneResp = client.request(tuneReq);
-
-    if (tuneResp.statusCode != 200) {
-        brls::Logger::error("tuneLiveTVChannel: Tune failed with status {} body: {}",
-                            tuneResp.statusCode, tuneResp.body.substr(0, 500));
-        return tryTranscodeApproach();
-    }
-
-    brls::Logger::debug("tuneLiveTVChannel: Tune response ({} bytes): {}",
-                        tuneResp.body.length(), tuneResp.body.substr(0, 500));
-
-    // Check for error in the tune response body (HTTP 200 but status -1 in JSON)
-    std::string tuneStatus = extractJsonValue(tuneResp.body, "status");
-    if (tuneStatus == "-1") {
-        std::string tuneMessage = extractJsonValue(tuneResp.body, "message");
-        brls::Logger::warning("tuneLiveTVChannel: Tune returned error in body: {}", tuneMessage);
-        // The tune API reported failure - try the transcode approach instead
-        return tryTranscodeApproach();
-    }
-
-    // Step 2: Extract sessionId and consumerId from tune response
-    std::string sessionId = extractJsonValue(tuneResp.body, "sessionId");
-    if (sessionId.empty()) {
-        sessionId = extractJsonValue(tuneResp.body, "key");
-        if (!sessionId.empty()) {
-            size_t lastSlash = sessionId.rfind('/');
-            if (lastSlash != std::string::npos) {
-                sessionId = sessionId.substr(lastSlash + 1);
-            }
+    // Strategy 1: Use the program's EPG metadata key with transcode/universal
+    // This is how Plex clients stream live TV - the metadata key references the
+    // currently-airing program which tells the server to tune the channel.
+    if (!programMetadataKey.empty()) {
+        brls::Logger::info("tuneLiveTVChannel: Trying transcode with program metadata key...");
+        if (tryTranscode(programMetadataKey)) {
+            return true;
         }
     }
-    if (sessionId.empty()) {
-        sessionId = extractJsonValue(tuneResp.body, "ratingKey");
+
+    // Strategy 2: Try the EPG provider metadata path constructed from channel key
+    // Format: /{epgProviderKey}/metadata/{channelKey}
+    if (!m_epgProviderKey.empty() && !channelKey.empty()) {
+        std::string epgMetaPath = "/" + m_epgProviderKey + "/metadata/" + channelKey;
+        brls::Logger::info("tuneLiveTVChannel: Trying transcode with EPG provider metadata path...");
+        if (tryTranscode(epgMetaPath)) {
+            return true;
+        }
     }
 
-    std::string consumerId = extractJsonValue(tuneResp.body, "consumerId");
-    if (consumerId.empty()) {
-        consumerId = extractJsonValue(tuneResp.body, "mediaSubscriptionId");
-    }
-    if (consumerId.empty()) {
-        consumerId = "0";
-    }
-
-    if (sessionId.empty()) {
-        brls::Logger::warning("tuneLiveTVChannel: Could not extract session ID, trying transcode approach");
-        return tryTranscodeApproach();
+    // Strategy 3: Try direct channel path with transcode
+    if (!channelKey.empty()) {
+        std::string channelPath = "/livetv/dvrs/" + m_dvrId + "/channels/" + channelKey;
+        brls::Logger::info("tuneLiveTVChannel: Trying transcode with channel path...");
+        if (tryTranscode(channelPath)) {
+            return true;
+        }
     }
 
-    brls::Logger::info("tuneLiveTVChannel: sessionId={}, consumerId={}", sessionId, consumerId);
-
-    // Step 3: Build the HLS stream URL
-    streamUrl = buildApiUrl("/livetv/sessions/" + sessionId + "/" + consumerId + "/index.m3u8");
-
-    brls::Logger::info("tuneLiveTVChannel: Stream URL = {}", streamUrl);
-    return true;
+    brls::Logger::error("tuneLiveTVChannel: All tuning strategies failed for channel {}", channelKey);
+    return false;
 }
 
 std::string PlexClient::getThumbnailUrl(const std::string& thumb, int width, int height) {

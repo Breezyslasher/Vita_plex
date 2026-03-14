@@ -18,6 +18,7 @@ struct GuideProgram {
     int64_t startTime = 0;
     int64_t endTime = 0;
     std::string ratingKey;
+    std::string metadataKey;  // EPG metadata path for transcode/recording
     bool isRecording = false;
     int durationMinutes = 30;  // Duration in minutes
 };

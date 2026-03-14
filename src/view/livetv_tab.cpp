@@ -567,6 +567,7 @@ void LiveTVTab::buildEPGGrid() {
                 gp.startTime = prog.startTime;
                 gp.endTime = prog.endTime;
                 gp.ratingKey = prog.ratingKey;
+                gp.metadataKey = prog.metadataKey;
 
                 progCell->registerClickAction([this, gp, capturedChannel](brls::View* view) {
                     onProgramSelected(gp, capturedChannel);
@@ -813,12 +814,23 @@ void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
     // The full EPG channel key (e.g., "5fc76c55dd53a6002dab58e3-5fc70600a05ef8002e61645f")
     std::string epgKey = channel.key;
 
-    asyncRun([this, channel, channelVcn, epgKey, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+    // Find the currently-airing program's metadata key for transcode-based tuning
+    std::string programMetadataKey;
+    time_t now = time(nullptr);
+    for (const auto& prog : channel.programs) {
+        if (prog.startTime <= (int64_t)now && prog.endTime > (int64_t)now && !prog.metadataKey.empty()) {
+            programMetadataKey = prog.metadataKey;
+            brls::Logger::info("LiveTVTab: Current program metadata key: {}", programMetadataKey);
+            break;
+        }
+    }
+
+    asyncRun([this, channel, channelVcn, epgKey, programMetadataKey, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         PlexClient& client = PlexClient::getInstance();
         std::string streamUrl;
 
         // Try with EPG key first (more reliable), then fall back to VCN
-        if (client.tuneLiveTVChannelByKey(channelVcn, epgKey, streamUrl)) {
+        if (client.tuneLiveTVChannelByKey(channelVcn, epgKey, streamUrl, programMetadataKey)) {
             brls::Logger::info("LiveTVTab: Got stream URL for channel {}", channel.title);
             brls::sync([streamUrl, channel]() {
                 std::string title = channel.title;
@@ -882,10 +894,19 @@ void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChann
         std::string params = "type=clip";  // One-time recording (vs "show" for series)
         params += "&includeGrabs=1";
 
-        // The key param should be the program's EPG metadata key
-        if (!program.ratingKey.empty()) {
-            // Use the ratingKey as the key parameter - needs URL encoding
-            params += "&key=" + HttpClient::urlEncode(program.ratingKey);
+        // The key param should be the program's EPG metadata path
+        // (e.g., /tv.plex.providers.epg.cloud:40/metadata/plex%3A%2F%2Fepisode%2F...)
+        if (!program.metadataKey.empty()) {
+            params += "&key=" + HttpClient::urlEncode(program.metadataKey);
+        } else if (!program.ratingKey.empty()) {
+            // Fallback: construct metadata path from ratingKey if metadataKey not available
+            std::string epgKey = client.getEpgProviderKey();
+            if (!epgKey.empty()) {
+                std::string metaPath = "/" + epgKey + "/metadata/" + program.ratingKey;
+                params += "&key=" + HttpClient::urlEncode(metaPath);
+            } else {
+                params += "&key=" + HttpClient::urlEncode(program.ratingKey);
+            }
         }
 
         // Add recording preferences
