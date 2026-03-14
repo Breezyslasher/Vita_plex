@@ -36,6 +36,7 @@ struct DVRRecording {
     int64_t scheduledTime = 0;
     std::string status;  // scheduled, recording, completed
     std::string channelTitle;
+    std::string mediaSubscriptionId;  // For cancellation
 };
 
 class LiveTVTab : public brls::Box {
@@ -48,12 +49,15 @@ public:
 
 private:
     void loadChannels();
+    void refreshCurrentPrograms();  // Lightweight refresh: only update "now playing" info
     void loadGuide();
     void loadRecordings();
     void buildEPGGrid();
+    void updateQuickAccessPrograms();  // Update current program labels without rebuilding
     void onChannelSelected(const LiveTVChannel& channel);
     void onProgramSelected(const GuideProgram& program, const LiveTVChannel& channel);
     void scheduleRecording(const GuideProgram& program, const LiveTVChannel& channel);
+    void cancelRecording(const DVRRecording& recording);
     std::string formatTime(int64_t timestamp);
 
     // UI Components
@@ -84,8 +88,13 @@ private:
     std::vector<EPGChannel> m_epgChannels;
     std::vector<DVRRecording> m_recordings;
     int64_t m_guideStartTime = 0;  // Current time rounded to 30 min
-    int m_hoursToShow = 4;         // Hours of programming to show
+    int m_hoursToShow = 12;        // Hours of programming to show (12 hours)
     bool m_loaded = false;
+    int64_t m_lastFullLoadTime = 0;   // Timestamp of last full channel/EPG load
+    int64_t m_lastRefreshTime = 0;    // Timestamp of last "now playing" refresh
+
+    // Quick access program labels (for lightweight refresh)
+    std::vector<brls::Label*> m_quickAccessProgLabels;
 
     // Alive flag for crash prevention on quick tab switching
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);

@@ -376,6 +376,9 @@ public:
     std::string extractJsonValuePublic(const std::string& json, const std::string& key) { return extractJsonValue(json, key); }
     int extractJsonIntPublic(const std::string& json, const std::string& key) { return extractJsonInt(json, key); }
 
+    // Public API URL builder (used by Live TV tab for DVR operations)
+    std::string buildApiUrlPublic(const std::string& endpoint) { return buildApiUrl(endpoint); }
+
 private:
     PlexClient() = default;
     ~PlexClient() = default;

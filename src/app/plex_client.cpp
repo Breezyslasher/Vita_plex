@@ -3187,30 +3187,9 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
 
     HttpClient client;
 
-    // Step 1: Tune the channel via POST /livetv/dvrs/{dvrId}/channels/{channel}/tune
-    std::string tuneUrl = buildApiUrl("/livetv/dvrs/" + m_dvrId + "/channels/" + channelKey + "/tune");
-    HttpRequest tuneReq;
-    tuneReq.url = tuneUrl;
-    tuneReq.method = "POST";
-    tuneReq.headers["Accept"] = "application/json";
-    tuneReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
-    tuneReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
-    tuneReq.headers["X-Plex-Version"] = "1.0.0";
-    tuneReq.headers["X-Plex-Platform"] = "PlayStation Vita";
-    tuneReq.headers["X-Plex-Device"] = "PS Vita";
-    tuneReq.headers["X-Plex-Device-Name"] = "PS Vita";
-    tuneReq.timeout = 15;
-
-    brls::Logger::debug("tuneLiveTVChannel: POST {}", tuneUrl);
-    HttpResponse tuneResp = client.request(tuneReq);
-
-    if (tuneResp.statusCode != 200) {
-        brls::Logger::error("tuneLiveTVChannel: Tune failed with status {} body: {}",
-                            tuneResp.statusCode, tuneResp.body.substr(0, 500));
-
-        // Fallback: Try to use Plex transcode/universal decision endpoint for live TV
-        // This works by treating the live TV channel as a regular media item
-        brls::Logger::info("tuneLiveTVChannel: Trying transcode/universal fallback...");
+    // Helper lambda: try the transcode/universal approach
+    auto tryTranscodeApproach = [&]() -> bool {
+        brls::Logger::info("tuneLiveTVChannel: Trying transcode/universal approach...");
 
         std::string decisionUrl = buildApiUrl(
             "/video/:/transcode/universal/decision?"
@@ -3241,6 +3220,16 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
             brls::Logger::debug("tuneLiveTVChannel: Decision response ({} bytes): {}",
                                 decResp.body.length(), decResp.body.substr(0, 500));
 
+            // Check if the decision response also has an error
+            std::string decStatus = extractJsonValue(decResp.body, "status");
+            if (!decStatus.empty() && decStatus != "0") {
+                std::string decMsg = extractJsonValue(decResp.body, "message");
+                if (!decMsg.empty() && decMsg.find("Could not") != std::string::npos) {
+                    brls::Logger::error("tuneLiveTVChannel: Decision also returned error: {}", decMsg);
+                    return false;
+                }
+            }
+
             // Build stream URL using the same pattern as video playback
             streamUrl = buildApiUrl(
                 "/video/:/transcode/universal/start.m3u8?"
@@ -3262,13 +3251,45 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
             return true;
         }
 
-        brls::Logger::error("tuneLiveTVChannel: Decision fallback also failed: {} body: {}",
+        brls::Logger::error("tuneLiveTVChannel: Decision approach failed: {} body: {}",
                             decResp.statusCode, decResp.body.substr(0, 500));
         return false;
+    };
+
+    // Step 1: Tune the channel via POST /livetv/dvrs/{dvrId}/channels/{channel}/tune
+    std::string tuneUrl = buildApiUrl("/livetv/dvrs/" + m_dvrId + "/channels/" + channelKey + "/tune");
+    HttpRequest tuneReq;
+    tuneReq.url = tuneUrl;
+    tuneReq.method = "POST";
+    tuneReq.headers["Accept"] = "application/json";
+    tuneReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+    tuneReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+    tuneReq.headers["X-Plex-Version"] = "1.0.0";
+    tuneReq.headers["X-Plex-Platform"] = "PlayStation Vita";
+    tuneReq.headers["X-Plex-Device"] = "PS Vita";
+    tuneReq.headers["X-Plex-Device-Name"] = "PS Vita";
+    tuneReq.timeout = 15;
+
+    brls::Logger::debug("tuneLiveTVChannel: POST {}", tuneUrl);
+    HttpResponse tuneResp = client.request(tuneReq);
+
+    if (tuneResp.statusCode != 200) {
+        brls::Logger::error("tuneLiveTVChannel: Tune failed with status {} body: {}",
+                            tuneResp.statusCode, tuneResp.body.substr(0, 500));
+        return tryTranscodeApproach();
     }
 
     brls::Logger::debug("tuneLiveTVChannel: Tune response ({} bytes): {}",
                         tuneResp.body.length(), tuneResp.body.substr(0, 500));
+
+    // Check for error in the tune response body (HTTP 200 but status -1 in JSON)
+    std::string tuneStatus = extractJsonValue(tuneResp.body, "status");
+    if (tuneStatus == "-1") {
+        std::string tuneMessage = extractJsonValue(tuneResp.body, "message");
+        brls::Logger::warning("tuneLiveTVChannel: Tune returned error in body: {}", tuneMessage);
+        // The tune API reported failure - try the transcode approach instead
+        return tryTranscodeApproach();
+    }
 
     // Step 2: Extract sessionId and consumerId from tune response
     std::string sessionId = extractJsonValue(tuneResp.body, "sessionId");
@@ -3294,32 +3315,8 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     }
 
     if (sessionId.empty()) {
-        brls::Logger::error("tuneLiveTVChannel: Could not extract session ID from tune response");
-        // Try to get it from /livetv/sessions
-        std::string sessUrl = buildApiUrl("/livetv/sessions");
-        HttpRequest sessReq;
-        sessReq.url = sessUrl;
-        sessReq.method = "GET";
-        sessReq.headers["Accept"] = "application/json";
-        HttpResponse sessResp = client.request(sessReq);
-
-        if (sessResp.statusCode == 200) {
-            sessionId = extractJsonValue(sessResp.body, "ratingKey");
-            if (sessionId.empty()) {
-                sessionId = extractJsonValue(sessResp.body, "key");
-                if (!sessionId.empty()) {
-                    size_t lastSlash = sessionId.rfind('/');
-                    if (lastSlash != std::string::npos) {
-                        sessionId = sessionId.substr(lastSlash + 1);
-                    }
-                }
-            }
-        }
-    }
-
-    if (sessionId.empty()) {
-        brls::Logger::error("tuneLiveTVChannel: Failed to get session ID");
-        return false;
+        brls::Logger::warning("tuneLiveTVChannel: Could not extract session ID, trying transcode approach");
+        return tryTranscodeApproach();
     }
 
     brls::Logger::info("tuneLiveTVChannel: sessionId={}, consumerId={}", sessionId, consumerId);

@@ -750,6 +750,19 @@ void MediaDetailView::loadMusicCategories() {
                         mvContent->addView(cell);
                     }
                 }
+
+                // Focus setup: if no description, transfer focus to first category item
+                if (m_fullDescription.empty() && m_musicCategoriesBox &&
+                    !m_musicCategoriesBox->getChildren().empty()) {
+                    // Find first focusable view in the categories
+                    for (auto* child : m_musicCategoriesBox->getChildren()) {
+                        auto* hScroll = dynamic_cast<brls::HScrollingFrame*>(child);
+                        if (hScroll) {
+                            brls::Application::giveFocus(hScroll);
+                            break;
+                        }
+                    }
+                }
             });
             return;
         }
@@ -845,6 +858,18 @@ void MediaDetailView::loadMusicCategories() {
                     cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
 
                     mvContent->addView(cell);
+                }
+            }
+
+            // Focus setup: if no description, transfer focus to first category item
+            if (m_fullDescription.empty() && m_musicCategoriesBox &&
+                !m_musicCategoriesBox->getChildren().empty()) {
+                for (auto* child : m_musicCategoriesBox->getChildren()) {
+                    auto* hScroll = dynamic_cast<brls::HScrollingFrame*>(child);
+                    if (hScroll) {
+                        brls::Application::giveFocus(hScroll);
+                        break;
+                    }
                 }
             }
         });
@@ -1511,6 +1536,34 @@ void MediaDetailView::loadTrackList() {
                 });
 
                 m_trackListBox->addView(row);
+            }
+
+            // Set up focus transfer for album track list
+            if (!m_trackListBox->getChildren().empty()) {
+                brls::View* firstTrack = m_trackListBox->getChildren().front();
+
+                if (m_summaryLabel && !m_fullDescription.empty()) {
+                    // Description exists: DOWN from description goes to first track
+                    m_summaryLabel->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstTrack);
+                    // UP from tracks goes to description
+                    for (auto* child : m_trackListBox->getChildren()) {
+                        child->setCustomNavigationRoute(brls::FocusDirection::UP, m_summaryLabel);
+                    }
+                } else {
+                    // No description: transfer focus to first track to avoid focus errors
+                    brls::Application::giveFocus(firstTrack);
+
+                    // UP from tracks goes to play button if it exists
+                    if (m_playButton) {
+                        for (auto* child : m_trackListBox->getChildren()) {
+                            child->setCustomNavigationRoute(brls::FocusDirection::UP, m_playButton);
+                        }
+                        m_playButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstTrack);
+                    }
+                    if (m_downloadButton) {
+                        m_downloadButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstTrack);
+                    }
+                }
             }
         });
     });
