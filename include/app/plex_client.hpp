@@ -138,6 +138,8 @@ struct ChannelProgram {
     std::string summary;
     int64_t startTime = 0;
     int64_t endTime = 0;
+    std::string ratingKey;   // EPG rating key (e.g., "plex://episode/...")
+    std::string metadataKey; // EPG metadata path (e.g., "/tv.plex.providers.epg.cloud:40/metadata/...")
 };
 
 // Live TV Channel
@@ -355,6 +357,7 @@ public:
     bool fetchLiveTVChannels(std::vector<LiveTVChannel>& channels);
     bool fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, int hoursAhead = 4);
     bool tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl);
+    bool tuneLiveTVChannelByKey(const std::string& channelKey, const std::string& epgChannelKey, std::string& streamUrl);
     bool hasLiveTV() const { return m_hasLiveTV; }
 
     // Thumbnail URL

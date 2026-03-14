@@ -3038,6 +3038,10 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
                         displayTitle = progTitle;
                     }
 
+                    // Extract the program's ratingKey and metadata key for recording
+                    std::string progRatingKey = extractJsonValue(metaObj, "ratingKey");
+                    std::string progMetadataKey = extractJsonValue(metaObj, "key");
+
                     // Check onAir flag (some entries may not be currently airing)
                     std::string onAir = extractJsonValue(metaObj, "onAir");
 
@@ -3079,32 +3083,75 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
                         // Extract channel identifiers from Media object
                         std::string chanCallSign = extractJsonValue(mediaObj, "channelCallSign");
                         std::string chanShortTitle = extractJsonValue(mediaObj, "channelShortTitle");
+                        std::string chanTitle = extractJsonValue(mediaObj, "channelTitle");
                         std::string chanId = extractJsonValue(mediaObj, "channelIdentifier");
+                        std::string chanVcn = extractJsonValue(mediaObj, "channelVcn");
 
-                        // Match to our channel list
+                        // Match to our channel list using multiple strategies
                         for (auto& channel : channelsWithPrograms) {
                             bool matched = false;
 
-                            // Match by callSign — grid may have suffix (e.g., "KDKADT4" vs "KDKADT")
-                            // Use prefix matching: channel.callSign is a prefix of grid's channelCallSign
-                            if (!chanCallSign.empty() && !channel.callSign.empty()) {
-                                if (chanCallSign == channel.callSign ||
-                                    (chanCallSign.length() > channel.callSign.length() &&
-                                     chanCallSign.substr(0, channel.callSign.length()) == channel.callSign)) {
-                                    matched = true;
-                                }
-                            }
-
-                            // Match by channelIdentifier containing the channel's key
+                            // Strategy 1: Exact match by channelIdentifier == channel.key
                             if (!matched && !chanId.empty() && !channel.key.empty()) {
-                                if (chanId == channel.key || chanId.find(channel.key) != std::string::npos) {
+                                if (chanId == channel.key) {
                                     matched = true;
                                 }
                             }
 
-                            // Match by channel short title
-                            if (!matched && !chanShortTitle.empty() && !channel.title.empty()) {
-                                if (chanShortTitle == channel.title) {
+                            // Strategy 2: Match by callSign (prefix matching both directions)
+                            // Grid may have suffix (e.g., "KDKADT4" vs "KDKADT")
+                            if (!matched && !chanCallSign.empty() && !channel.callSign.empty()) {
+                                if (chanCallSign == channel.callSign) {
+                                    matched = true;
+                                } else if (chanCallSign.length() > channel.callSign.length() &&
+                                           chanCallSign.substr(0, channel.callSign.length()) == channel.callSign) {
+                                    matched = true;
+                                } else if (channel.callSign.length() > chanCallSign.length() &&
+                                           channel.callSign.substr(0, chanCallSign.length()) == chanCallSign) {
+                                    matched = true;
+                                }
+                            }
+
+                            // Strategy 3: Match by channel title
+                            if (!matched && !channel.title.empty()) {
+                                if (!chanShortTitle.empty() && chanShortTitle == channel.title) {
+                                    matched = true;
+                                }
+                                if (!matched && !chanTitle.empty() && chanTitle == channel.title) {
+                                    matched = true;
+                                }
+                            }
+
+                            // Strategy 4: Match by channelIdentifier containing channel key or vice versa
+                            if (!matched && !chanId.empty() && !channel.key.empty()) {
+                                if (chanId.find(channel.key) != std::string::npos ||
+                                    channel.key.find(chanId) != std::string::npos) {
+                                    matched = true;
+                                }
+                            }
+
+                            // Strategy 5: Match by lineup prefix - both share the same lineup ID prefix
+                            if (!matched && !chanId.empty() && !channel.key.empty()) {
+                                // Extract lineup prefix (everything before first '-')
+                                size_t chanIdDash = chanId.find('-');
+                                size_t keyDash = channel.key.find('-');
+                                if (chanIdDash != std::string::npos && keyDash != std::string::npos) {
+                                    std::string chanIdPrefix = chanId.substr(0, chanIdDash);
+                                    std::string keyPrefix = channel.key.substr(0, keyDash);
+                                    // Same lineup, and the suffix part after the dash matches
+                                    if (chanIdPrefix == keyPrefix) {
+                                        std::string chanIdSuffix = chanId.substr(chanIdDash + 1);
+                                        std::string keySuffix = channel.key.substr(keyDash + 1);
+                                        if (chanIdSuffix == keySuffix) {
+                                            matched = true;
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Strategy 6: Match by VCN (channel number string like "2.1")
+                            if (!matched && !chanVcn.empty() && !channel.channelIdentifier.empty()) {
+                                if (chanVcn == channel.channelIdentifier) {
                                     matched = true;
                                 }
                             }
@@ -3115,6 +3162,8 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
                                 prog.title = displayTitle;
                                 prog.startTime = progStart;
                                 prog.endTime = progEnd;
+                                prog.ratingKey = progRatingKey;
+                                prog.metadataKey = progMetadataKey;
                                 // Avoid duplicate programs (same title+start)
                                 bool duplicate = false;
                                 for (const auto& existing : channel.programs) {
@@ -3173,6 +3222,24 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
     return !channelsWithPrograms.empty();
 }
 
+bool PlexClient::tuneLiveTVChannelByKey(const std::string& channelVcn, const std::string& epgChannelKey, std::string& streamUrl) {
+    brls::Logger::info("tuneLiveTVChannelByKey: vcn={}, epgKey={}", channelVcn, epgChannelKey);
+
+    // Try with the full EPG channel key first, then fall back to VCN
+    if (!epgChannelKey.empty()) {
+        if (tuneLiveTVChannel(epgChannelKey, streamUrl)) {
+            return true;
+        }
+        brls::Logger::info("tuneLiveTVChannelByKey: EPG key failed, trying VCN...");
+    }
+
+    if (!channelVcn.empty() && channelVcn != epgChannelKey) {
+        return tuneLiveTVChannel(channelVcn, streamUrl);
+    }
+
+    return false;
+}
+
 bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl) {
     brls::Logger::info("tuneLiveTVChannel: channelKey={}", channelKey);
 
@@ -3187,13 +3254,27 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
 
     HttpClient client;
 
+    // URL-encode the channel key for use in URLs (it may contain special chars)
+    std::string encodedKey = HttpClient::urlEncode(channelKey);
+
     // Helper lambda: try the transcode/universal approach
     auto tryTranscodeApproach = [&]() -> bool {
         brls::Logger::info("tuneLiveTVChannel: Trying transcode/universal approach...");
 
+        // Build the path for the transcode decision endpoint
+        // Use the EPG provider metadata path if the key looks like a plex:// URI
+        std::string liveTvPath;
+        if (channelKey.find("plex://") != std::string::npos || channelKey.length() > 30) {
+            // Full EPG key - use the EPG provider grid metadata path
+            liveTvPath = "%2Flivetv%2Fdvrs%2F" + m_dvrId + "%2Fchannels%2F" + encodedKey;
+        } else {
+            // Short VCN like "11.1"
+            liveTvPath = "%2Flivetv%2Fdvrs%2F" + m_dvrId + "%2Fchannels%2F" + encodedKey;
+        }
+
         std::string decisionUrl = buildApiUrl(
             "/video/:/transcode/universal/decision?"
-            "path=%2Flivetv%2Fdvrs%2F" + m_dvrId + "%2Fchannels%2F" + channelKey +
+            "path=" + liveTvPath +
             "&mediaIndex=0&partIndex=0"
             "&directPlay=0&directStream=1&directStreamAudio=1"
             "&hasMDE=1&location=lan"
@@ -3233,7 +3314,7 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
             // Build stream URL using the same pattern as video playback
             streamUrl = buildApiUrl(
                 "/video/:/transcode/universal/start.m3u8?"
-                "path=%2Flivetv%2Fdvrs%2F" + m_dvrId + "%2Fchannels%2F" + channelKey +
+                "path=" + liveTvPath +
                 "&mediaIndex=0&partIndex=0"
                 "&directPlay=0&directStream=1&directStreamAudio=1"
                 "&hasMDE=1&location=lan"
@@ -3257,7 +3338,8 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     };
 
     // Step 1: Tune the channel via POST /livetv/dvrs/{dvrId}/channels/{channel}/tune
-    std::string tuneUrl = buildApiUrl("/livetv/dvrs/" + m_dvrId + "/channels/" + channelKey + "/tune");
+    // URL-encode the channel key in the path
+    std::string tuneUrl = buildApiUrl("/livetv/dvrs/" + m_dvrId + "/channels/" + encodedKey + "/tune");
     HttpRequest tuneReq;
     tuneReq.url = tuneUrl;
     tuneReq.method = "POST";

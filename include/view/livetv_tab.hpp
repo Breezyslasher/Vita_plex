@@ -46,8 +46,11 @@ public:
 
     void onFocusGained() override;
     void willDisappear(bool resetState) override;
+    brls::View* getNextFocus(brls::FocusDirection direction, brls::View* currentView) override;
 
 private:
+    brls::View* findFirstFocusableInBox(brls::Box* box);
+    bool isDescendantOf(brls::View* view, brls::View* ancestor);
     void loadChannels();
     void refreshCurrentPrograms();  // Lightweight refresh: only update "now playing" info
     void loadGuide();

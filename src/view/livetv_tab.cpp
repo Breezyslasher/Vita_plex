@@ -141,6 +141,66 @@ void LiveTVTab::willDisappear(bool resetState) {
     ImageLoader::cancelAll();
 }
 
+bool LiveTVTab::isDescendantOf(brls::View* view, brls::View* ancestor) {
+    brls::View* current = view;
+    while (current) {
+        if (current == ancestor) return true;
+        current = current->getParent();
+    }
+    return false;
+}
+
+brls::View* LiveTVTab::findFirstFocusableInBox(brls::Box* box) {
+    if (!box) return nullptr;
+    for (auto* child : box->getChildren()) {
+        if (child->isFocusable()) return child;
+        brls::Box* childBox = dynamic_cast<brls::Box*>(child);
+        if (childBox) {
+            brls::View* found = findFirstFocusableInBox(childBox);
+            if (found) return found;
+        }
+    }
+    return nullptr;
+}
+
+brls::View* LiveTVTab::getNextFocus(brls::FocusDirection direction, brls::View* currentView) {
+    // Handle vertical navigation between the three sections:
+    // Quick Access (m_channelsRow) -> Program Guide (m_guideContainer) -> DVR Recordings (m_dvrRow)
+    if (direction == brls::FocusDirection::DOWN) {
+        // If in quick access section, go to program guide
+        if (isDescendantOf(currentView, m_channelsRow) || isDescendantOf(currentView, m_channelsContent)) {
+            brls::View* target = findFirstFocusableInBox(m_guideBox);
+            if (target) return target;
+            // Fall through to DVR if no guide items
+            target = findFirstFocusableInBox(m_dvrContent);
+            if (target) return target;
+        }
+        // If in program guide section, go to DVR recordings
+        if (isDescendantOf(currentView, m_guideContainer) || isDescendantOf(currentView, m_guideBox)) {
+            brls::View* target = findFirstFocusableInBox(m_dvrContent);
+            if (target) return target;
+        }
+    }
+    else if (direction == brls::FocusDirection::UP) {
+        // If in DVR section, go to program guide
+        if (isDescendantOf(currentView, m_dvrRow) || isDescendantOf(currentView, m_dvrContent)) {
+            brls::View* target = findFirstFocusableInBox(m_guideBox);
+            if (target) return target;
+            // Fall through to quick access if no guide items
+            target = findFirstFocusableInBox(m_channelsContent);
+            if (target) return target;
+        }
+        // If in program guide section, go to quick access
+        if (isDescendantOf(currentView, m_guideContainer) || isDescendantOf(currentView, m_guideBox)) {
+            brls::View* target = findFirstFocusableInBox(m_channelsContent);
+            if (target) return target;
+        }
+    }
+
+    // Default behavior for left/right and unhandled cases
+    return brls::Box::getNextFocus(direction, currentView);
+}
+
 void LiveTVTab::onFocusGained() {
     brls::Box::onFocusGained();
     m_alive = std::make_shared<bool>(true);
@@ -506,6 +566,7 @@ void LiveTVTab::buildEPGGrid() {
                 gp.title = prog.title;
                 gp.startTime = prog.startTime;
                 gp.endTime = prog.endTime;
+                gp.ratingKey = prog.ratingKey;
 
                 progCell->registerClickAction([this, gp, capturedChannel](brls::View* view) {
                     onProgramSelected(gp, capturedChannel);
@@ -743,20 +804,21 @@ void LiveTVTab::loadRecordings() {
 void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
     brls::Logger::info("LiveTVTab: Selected channel: {} ({})", channel.title, channel.channelNumber);
 
-    // Use the channelIdentifier for tuning (e.g., "2.1")
-    std::string channelKey = channel.channelIdentifier;
-    if (channelKey.empty()) {
-        channelKey = std::to_string(channel.channelNumber);
-    }
-    if (channelKey == "0" && !channel.ratingKey.empty()) {
-        channelKey = channel.ratingKey;  // Last resort fallback
+    // Use the VCN (e.g., "2.1") and the full EPG key for tuning
+    std::string channelVcn = channel.channelIdentifier;
+    if (channelVcn.empty()) {
+        channelVcn = std::to_string(channel.channelNumber);
     }
 
-    asyncRun([this, channel, channelKey, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+    // The full EPG channel key (e.g., "5fc76c55dd53a6002dab58e3-5fc70600a05ef8002e61645f")
+    std::string epgKey = channel.key;
+
+    asyncRun([this, channel, channelVcn, epgKey, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         PlexClient& client = PlexClient::getInstance();
         std::string streamUrl;
 
-        if (client.tuneLiveTVChannel(channelKey, streamUrl)) {
+        // Try with EPG key first (more reliable), then fall back to VCN
+        if (client.tuneLiveTVChannelByKey(channelVcn, epgKey, streamUrl)) {
             brls::Logger::info("LiveTVTab: Got stream URL for channel {}", channel.title);
             brls::sync([streamUrl, channel]() {
                 std::string title = channel.title;
@@ -806,38 +868,64 @@ void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChann
         PlexClient& client = PlexClient::getInstance();
         HttpClient httpClient;
 
-        // POST to /media/subscriptions to schedule a recording
-        // The API expects parameters: prefs[minVideoQuality], prefs[replaceLowerQuality],
-        // type (show/movie), targetLibrarySectionID, targetSectionID
+        // Plex recording API: POST /media/subscriptions
+        // Required query params: type, targetSectionID, key (EPG metadata key)
+        // prefs: minVideoQuality, replaceLowerQuality, recordPartials, startOffsetMinutes, endOffsetMinutes
+        //        lineupChannel, startTimestamp, comskipEnabled, comskipMethod
+        //
+        // The 'key' param is the EPG metadata path (e.g., /tv.plex.providers.epg.cloud:40/metadata/plex%3A%2F%2Fepisode%2F...)
+        // The 'type' is the subscription type: "clip" for one-time, "show" for series
+
         std::string subUrl = client.buildApiUrlPublic("/media/subscriptions");
 
-        // Build parameters
-        std::string params = "type=1";  // 1 = recording
-        if (program.startTime > 0) {
-            params += "&beginsAt=" + std::to_string(program.startTime);
-        }
-        if (program.endTime > 0) {
-            params += "&endsAt=" + std::to_string(program.endTime);
-        }
+        // Build query parameters
+        std::string params = "type=clip";  // One-time recording (vs "show" for series)
+        params += "&includeGrabs=1";
+
+        // The key param should be the program's EPG metadata key
         if (!program.ratingKey.empty()) {
+            // Use the ratingKey as the key parameter - needs URL encoding
             params += "&key=" + HttpClient::urlEncode(program.ratingKey);
         }
-        if (!channel.channelIdentifier.empty()) {
-            params += "&channelIdentifier=" + HttpClient::urlEncode(channel.channelIdentifier);
+
+        // Add recording preferences
+        params += "&prefs[minVideoQuality]=0";
+        params += "&prefs[replaceLowerQuality]=true";
+        params += "&prefs[recordPartials]=true";
+        params += "&prefs[startOffsetMinutes]=2";
+        params += "&prefs[endOffsetMinutes]=2";
+        params += "&prefs[comskipEnabled]=-1";
+        params += "&prefs[comskipMethod]=-1";
+
+        // Add channel info for the recording
+        if (!channel.key.empty()) {
+            params += "&prefs[lineupChannel]=" + HttpClient::urlEncode(channel.key);
+        } else if (!channel.channelIdentifier.empty()) {
+            params += "&prefs[lineupChannel]=" + HttpClient::urlEncode(channel.channelIdentifier);
         }
 
+        if (program.startTime > 0) {
+            params += "&prefs[startTimestamp]=" + std::to_string(program.startTime);
+        }
+
+        // Append params as query string (Plex expects query params, not POST body for this endpoint)
+        std::string fullUrl = subUrl + "&" + params;
+
         HttpRequest req;
-        req.url = subUrl;
+        req.url = fullUrl;
         req.method = "POST";
-        req.body = params;
         req.headers["Accept"] = "application/json";
-        req.headers["Content-Type"] = "application/x-www-form-urlencoded";
         req.timeout = 15;
 
+        brls::Logger::debug("LiveTVTab: Recording request URL: {}", fullUrl);
         HttpResponse resp = httpClient.request(req);
 
         bool success = (resp.statusCode == 200 || resp.statusCode == 201);
         std::string title = program.title;
+
+        brls::Logger::debug("LiveTVTab: Recording response: {} ({} bytes): {}",
+                            resp.statusCode, resp.body.length(),
+                            resp.body.substr(0, 500));
 
         brls::sync([this, success, title, aliveWeak]() {
             auto alive = aliveWeak.lock();
