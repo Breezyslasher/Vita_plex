@@ -138,6 +138,8 @@ struct ChannelProgram {
     std::string summary;
     int64_t startTime = 0;
     int64_t endTime = 0;
+    std::string ratingKey;   // EPG rating key (e.g., "plex://episode/...")
+    std::string metadataKey; // EPG metadata path (e.g., "/tv.plex.providers.epg.cloud:40/metadata/...")
 };
 
 // Live TV Channel
@@ -354,8 +356,10 @@ public:
     // Live TV
     bool fetchLiveTVChannels(std::vector<LiveTVChannel>& channels);
     bool fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, int hoursAhead = 4);
-    bool tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl);
+    bool tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl, const std::string& programMetadataKey = "");
+    bool tuneLiveTVChannelByKey(const std::string& channelKey, const std::string& epgChannelKey, std::string& streamUrl, const std::string& programMetadataKey = "");
     bool hasLiveTV() const { return m_hasLiveTV; }
+    std::string getEpgProviderKey() const { return m_epgProviderKey; }
 
     // Thumbnail URL
     std::string getThumbnailUrl(const std::string& thumb, int width = 300, int height = 450);
@@ -375,6 +379,9 @@ public:
     // Public JSON helpers (used by play queue parsing helper)
     std::string extractJsonValuePublic(const std::string& json, const std::string& key) { return extractJsonValue(json, key); }
     int extractJsonIntPublic(const std::string& json, const std::string& key) { return extractJsonInt(json, key); }
+
+    // Public API URL builder (used by Live TV tab for DVR operations)
+    std::string buildApiUrlPublic(const std::string& endpoint) { return buildApiUrl(endpoint); }
 
 private:
     PlexClient() = default;

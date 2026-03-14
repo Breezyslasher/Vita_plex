@@ -6,6 +6,7 @@
 #include "app/application.hpp"
 #include "utils/async.hpp"
 #include "utils/image_loader.hpp"
+#include "utils/http_client.hpp"
 #include <algorithm>
 #include <ctime>
 
@@ -16,6 +17,10 @@ static const int CHANNEL_COLUMN_WIDTH = 100;  // Width of channel name column
 static const int TIME_SLOT_WIDTH = 120;       // Width per 30-minute slot
 static const int ROW_HEIGHT = 60;             // Height of each channel row
 static const int TIME_HEADER_HEIGHT = 30;     // Height of time header
+
+// Cache durations
+static const int64_t FULL_RELOAD_INTERVAL = 300;   // 5 minutes between full EPG reloads
+static const int64_t REFRESH_INTERVAL = 60;         // 1 minute between "now playing" refreshes
 
 LiveTVTab::LiveTVTab() {
     this->setAxis(brls::Axis::COLUMN);
@@ -100,14 +105,14 @@ LiveTVTab::LiveTVTab() {
 
     // DVR Recordings section
     m_dvrLabel = new brls::Label();
-    m_dvrLabel->setText("Scheduled Recordings");
+    m_dvrLabel->setText("DVR Recordings");
     m_dvrLabel->setFontSize(22);
     m_dvrLabel->setMarginBottom(10);
     m_dvrLabel->setMarginTop(10);
     m_scrollContent->addView(m_dvrLabel);
 
     m_dvrRow = new brls::HScrollingFrame();
-    m_dvrRow->setHeight(80);
+    m_dvrRow->setHeight(100);
     m_dvrRow->setMarginBottom(20);
 
     m_dvrContent = new brls::Box();
@@ -136,12 +141,87 @@ void LiveTVTab::willDisappear(bool resetState) {
     ImageLoader::cancelAll();
 }
 
+bool LiveTVTab::isDescendantOf(brls::View* view, brls::View* ancestor) {
+    brls::View* current = view;
+    while (current) {
+        if (current == ancestor) return true;
+        current = current->getParent();
+    }
+    return false;
+}
+
+brls::View* LiveTVTab::findFirstFocusableInBox(brls::Box* box) {
+    if (!box) return nullptr;
+    for (auto* child : box->getChildren()) {
+        if (child->isFocusable()) return child;
+        brls::Box* childBox = dynamic_cast<brls::Box*>(child);
+        if (childBox) {
+            brls::View* found = findFirstFocusableInBox(childBox);
+            if (found) return found;
+        }
+    }
+    return nullptr;
+}
+
+brls::View* LiveTVTab::getNextFocus(brls::FocusDirection direction, brls::View* currentView) {
+    // Handle vertical navigation between the three sections:
+    // Quick Access (m_channelsRow) -> Program Guide (m_guideContainer) -> DVR Recordings (m_dvrRow)
+    if (direction == brls::FocusDirection::DOWN) {
+        // If in quick access section, go to program guide
+        if (isDescendantOf(currentView, m_channelsRow) || isDescendantOf(currentView, m_channelsContent)) {
+            brls::View* target = findFirstFocusableInBox(m_guideBox);
+            if (target) return target;
+            // Fall through to DVR if no guide items
+            target = findFirstFocusableInBox(m_dvrContent);
+            if (target) return target;
+        }
+        // If in program guide section, go to DVR recordings
+        if (isDescendantOf(currentView, m_guideContainer) || isDescendantOf(currentView, m_guideBox)) {
+            brls::View* target = findFirstFocusableInBox(m_dvrContent);
+            if (target) return target;
+        }
+    }
+    else if (direction == brls::FocusDirection::UP) {
+        // If in DVR section, go to program guide
+        if (isDescendantOf(currentView, m_dvrRow) || isDescendantOf(currentView, m_dvrContent)) {
+            brls::View* target = findFirstFocusableInBox(m_guideBox);
+            if (target) return target;
+            // Fall through to quick access if no guide items
+            target = findFirstFocusableInBox(m_channelsContent);
+            if (target) return target;
+        }
+        // If in program guide section, go to quick access
+        if (isDescendantOf(currentView, m_guideContainer) || isDescendantOf(currentView, m_guideBox)) {
+            brls::View* target = findFirstFocusableInBox(m_channelsContent);
+            if (target) return target;
+        }
+    }
+
+    // Default behavior for left/right and unhandled cases
+    return brls::Box::getNextFocus(direction, currentView);
+}
+
 void LiveTVTab::onFocusGained() {
     brls::Box::onFocusGained();
     m_alive = std::make_shared<bool>(true);
 
     if (!m_loaded) {
+        // First load
         loadChannels();
+    } else {
+        // Already loaded - check if we need a refresh
+        int64_t now = time(nullptr);
+
+        if (now - m_lastFullLoadTime > FULL_RELOAD_INTERVAL) {
+            // Full reload if EPG data is stale (> 5 min)
+            brls::Logger::debug("LiveTVTab: Full EPG reload (stale data)");
+            loadChannels();
+        } else if (now - m_lastRefreshTime > REFRESH_INTERVAL) {
+            // Lightweight refresh: just update "now playing" labels
+            brls::Logger::debug("LiveTVTab: Refreshing current programs only");
+            refreshCurrentPrograms();
+        }
+        // Otherwise: data is fresh, do nothing (no rebuild)
     }
 }
 
@@ -155,8 +235,74 @@ std::string LiveTVTab::formatTime(int64_t timestamp) {
     struct tm* tm_info = localtime(&t);
 
     char buffer[16];
-    strftime(buffer, sizeof(buffer), "%H:%M", tm_info);
+    strftime(buffer, sizeof(buffer), "%I:%M %p", tm_info);
+    // Remove leading zero from hour
+    if (buffer[0] == '0') {
+        return std::string(buffer + 1);
+    }
     return std::string(buffer);
+}
+
+void LiveTVTab::refreshCurrentPrograms() {
+    // Lightweight refresh: fetch EPG data and only update "now playing" text
+    // without rebuilding the entire UI
+    asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<LiveTVChannel> freshChannels;
+        bool success = client.fetchEPGGrid(freshChannels, m_hoursToShow);
+
+        if (success) {
+            brls::sync([this, freshChannels, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
+                m_lastRefreshTime = time(nullptr);
+
+                // Update current program info in cached channel data
+                time_t now = time(nullptr);
+                for (size_t i = 0; i < m_channels.size() && i < freshChannels.size(); i++) {
+                    // Find matching channel in fresh data
+                    for (const auto& freshCh : freshChannels) {
+                        if (freshCh.channelIdentifier == m_channels[i].channelIdentifier ||
+                            freshCh.channelNumber == m_channels[i].channelNumber) {
+                            m_channels[i].currentProgram = freshCh.currentProgram;
+                            m_channels[i].programs = freshCh.programs;
+                            m_channels[i].programStart = freshCh.programStart;
+                            m_channels[i].programEnd = freshCh.programEnd;
+                            break;
+                        }
+                    }
+                }
+
+                // Update quick access "now playing" labels
+                updateQuickAccessPrograms();
+
+                // Rebuild the EPG grid with fresh program data
+                buildEPGGrid();
+            });
+        }
+    });
+}
+
+void LiveTVTab::updateQuickAccessPrograms() {
+    // Update the current program text on quick access cards
+    for (size_t i = 0; i < m_quickAccessProgLabels.size() && i < m_channels.size(); i++) {
+        if (m_quickAccessProgLabels[i]) {
+            std::string prog = m_channels[i].currentProgram;
+            if (prog.empty()) {
+                // Find current program from programs list
+                time_t now = time(nullptr);
+                for (const auto& p : m_channels[i].programs) {
+                    if (p.startTime <= (int64_t)now && p.endTime > (int64_t)now) {
+                        prog = p.title;
+                        break;
+                    }
+                }
+            }
+            if (prog.length() > 14) prog = prog.substr(0, 13) + "..";
+            m_quickAccessProgLabels[i]->setText(prog.empty() ? "" : prog);
+        }
+    }
 }
 
 void LiveTVTab::loadChannels() {
@@ -175,6 +321,7 @@ void LiveTVTab::loadChannels() {
                 if (!alive || !*alive) return;
                 m_channels = channels;
                 m_channelsContent->clearViews();
+                m_quickAccessProgLabels.clear();
 
                 // Build quick access channel buttons
                 for (const auto& channel : m_channels) {
@@ -202,16 +349,25 @@ void LiveTVTab::loadChannels() {
                     nameLabel->setFontSize(12);
                     card->addView(nameLabel);
 
-                    // Current program
-                    if (!channel.currentProgram.empty()) {
-                        auto* progLabel = new brls::Label();
-                        std::string prog = channel.currentProgram;
-                        if (prog.length() > 14) prog = prog.substr(0, 13) + "..";
-                        progLabel->setText(prog);
-                        progLabel->setFontSize(10);
-                        progLabel->setMarginTop(4);
-                        card->addView(progLabel);
+                    // Current program (stored for lightweight updates)
+                    auto* progLabel = new brls::Label();
+                    std::string prog = channel.currentProgram;
+                    if (prog.empty()) {
+                        // Check programs list for current
+                        time_t now = time(nullptr);
+                        for (const auto& p : channel.programs) {
+                            if (p.startTime <= (int64_t)now && p.endTime > (int64_t)now) {
+                                prog = p.title;
+                                break;
+                            }
+                        }
                     }
+                    if (prog.length() > 14) prog = prog.substr(0, 13) + "..";
+                    progLabel->setText(prog);
+                    progLabel->setFontSize(10);
+                    progLabel->setMarginTop(4);
+                    card->addView(progLabel);
+                    m_quickAccessProgLabels.push_back(progLabel);
 
                     LiveTVChannel capturedChannel = channel;
                     card->registerClickAction([this, capturedChannel](brls::View* view) {
@@ -233,6 +389,8 @@ void LiveTVTab::loadChannels() {
                 buildEPGGrid();
 
                 m_loaded = true;
+                m_lastFullLoadTime = time(nullptr);
+                m_lastRefreshTime = m_lastFullLoadTime;
             });
         } else {
             brls::Logger::error("LiveTVTab: Failed to fetch EPG data");
@@ -408,6 +566,8 @@ void LiveTVTab::buildEPGGrid() {
                 gp.title = prog.title;
                 gp.startTime = prog.startTime;
                 gp.endTime = prog.endTime;
+                gp.ratingKey = prog.ratingKey;
+                gp.metadataKey = prog.metadataKey;
 
                 progCell->registerClickAction([this, gp, capturedChannel](brls::View* view) {
                     onProgramSelected(gp, capturedChannel);
@@ -460,32 +620,27 @@ void LiveTVTab::buildEPGGrid() {
 
             programsBox->addView(progCell);
         } else {
-            // No program data - show placeholder across the grid
-            for (int i = 0; i < totalSlots; i++) {
-                auto* emptyCell = new brls::Box();
-                emptyCell->setWidth(TIME_SLOT_WIDTH);
-                emptyCell->setHeight(ROW_HEIGHT - 4);
-                emptyCell->setMargins(2, 2, 2, 2);
-                emptyCell->setBackgroundColor(nvgRGBA(40, 40, 50, 255));
-                emptyCell->setCornerRadius(4);
-                emptyCell->setFocusable(true);
+            // No program data - show "No guide data" across the grid
+            auto* emptyCell = new brls::Box();
+            emptyCell->setWidth(TIME_SLOT_WIDTH * 2);  // Span 2 slots
+            emptyCell->setHeight(ROW_HEIGHT - 4);
+            emptyCell->setMargins(2, 2, 2, 2);
+            emptyCell->setBackgroundColor(nvgRGBA(40, 40, 50, 255));
+            emptyCell->setCornerRadius(4);
+            emptyCell->setFocusable(true);
+            emptyCell->setPadding(4);
 
-                if (i == 0) {
-                    auto* noInfo = new brls::Label();
-                    noInfo->setText("No info");
-                    noInfo->setFontSize(10);
-                    noInfo->setMarginLeft(4);
-                    noInfo->setMarginTop(4);
-                    emptyCell->addView(noInfo);
-                }
+            auto* noInfo = new brls::Label();
+            noInfo->setText("No guide data");
+            noInfo->setFontSize(10);
+            emptyCell->addView(noInfo);
 
-                emptyCell->registerClickAction([this, capturedChannel](brls::View* view) {
-                    onChannelSelected(capturedChannel);
-                    return true;
-                });
+            emptyCell->registerClickAction([this, capturedChannel](brls::View* view) {
+                onChannelSelected(capturedChannel);
+                return true;
+            });
 
-                programsBox->addView(emptyCell);
-            }
+            programsBox->addView(emptyCell);
         }
 
         rowBox->addView(programsBox);
@@ -501,19 +656,148 @@ void LiveTVTab::loadRecordings() {
     asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         brls::Logger::debug("LiveTVTab: Fetching DVR recordings...");
 
-        // TODO: Implement fetchDVRRecordings in PlexClient
-        // For now, just clear the DVR section
+        PlexClient& client = PlexClient::getInstance();
+        HttpClient httpClient;
 
-        brls::sync([this, aliveWeak]() {
+        // Fetch scheduled recordings via /media/subscriptions
+        std::string subsUrl = client.buildApiUrlPublic("/media/subscriptions");
+        HttpRequest req;
+        req.url = subsUrl;
+        req.method = "GET";
+        req.headers["Accept"] = "application/json";
+        req.timeout = 15;
+
+        HttpResponse resp = httpClient.request(req);
+
+        std::vector<DVRRecording> recordings;
+
+        if (resp.statusCode == 200 && !resp.body.empty()) {
+            brls::Logger::debug("LiveTVTab: DVR subscriptions response ({} bytes)", resp.body.length());
+
+            // Parse subscriptions - look for MediaSubscription objects
+            size_t pos = 0;
+            while (pos < resp.body.length()) {
+                // Find next object with a "title" field
+                size_t titlePos = resp.body.find("\"title\"", pos);
+                if (titlePos == std::string::npos) break;
+
+                // Find the enclosing object
+                size_t objStart = resp.body.rfind('{', titlePos);
+                if (objStart == std::string::npos) { pos = titlePos + 7; continue; }
+
+                // Extract object
+                int braceCount = 1;
+                size_t objEnd = objStart + 1;
+                while (braceCount > 0 && objEnd < resp.body.length()) {
+                    if (resp.body[objEnd] == '{') braceCount++;
+                    else if (resp.body[objEnd] == '}') braceCount--;
+                    objEnd++;
+                }
+                std::string obj = resp.body.substr(objStart, objEnd - objStart);
+
+                std::string title = client.extractJsonValuePublic(obj, "title");
+                std::string key = client.extractJsonValuePublic(obj, "key");
+                std::string ratingKey = client.extractJsonValuePublic(obj, "ratingKey");
+                std::string type = client.extractJsonValuePublic(obj, "type");
+
+                if (!title.empty() && !ratingKey.empty()) {
+                    DVRRecording rec;
+                    rec.title = title;
+                    rec.ratingKey = ratingKey;
+                    rec.mediaSubscriptionId = ratingKey;
+                    rec.summary = client.extractJsonValuePublic(obj, "summary");
+
+                    std::string beginsAt = client.extractJsonValuePublic(obj, "beginsAt");
+                    if (!beginsAt.empty()) {
+                        rec.scheduledTime = atoll(beginsAt.c_str());
+                    }
+
+                    // Determine status
+                    std::string status = client.extractJsonValuePublic(obj, "status");
+                    if (status == "2" || status == "recording") {
+                        rec.status = "recording";
+                    } else if (status == "1" || status == "scheduled") {
+                        rec.status = "scheduled";
+                    } else {
+                        rec.status = "scheduled";
+                    }
+
+                    recordings.push_back(rec);
+                }
+
+                pos = objEnd;
+            }
+        }
+
+        brls::Logger::info("LiveTVTab: Found {} DVR recordings/subscriptions", recordings.size());
+
+        brls::sync([this, recordings, aliveWeak]() {
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
 
+            m_recordings = recordings;
             m_dvrContent->clearViews();
 
-            auto* placeholder = new brls::Label();
-            placeholder->setText("No scheduled recordings");
-            placeholder->setFontSize(14);
-            m_dvrContent->addView(placeholder);
+            if (m_recordings.empty()) {
+                auto* placeholder = new brls::Label();
+                placeholder->setText("No scheduled recordings");
+                placeholder->setFontSize(14);
+                m_dvrContent->addView(placeholder);
+                return;
+            }
+
+            for (const auto& rec : m_recordings) {
+                auto* card = new brls::Box();
+                card->setAxis(brls::Axis::COLUMN);
+                card->setWidth(180);
+                card->setHeight(80);
+                card->setMarginRight(10);
+                card->setPadding(8);
+                card->setFocusable(true);
+                card->setCornerRadius(8);
+
+                // Color based on status
+                if (rec.status == "recording") {
+                    card->setBackgroundColor(nvgRGBA(120, 40, 40, 255));  // Red for recording
+                } else {
+                    card->setBackgroundColor(nvgRGBA(50, 60, 80, 255));   // Blue for scheduled
+                }
+
+                // Title
+                auto* titleLabel = new brls::Label();
+                std::string title = rec.title;
+                if (title.length() > 20) title = title.substr(0, 19) + "..";
+                titleLabel->setText(title);
+                titleLabel->setFontSize(13);
+                card->addView(titleLabel);
+
+                // Status
+                auto* statusLabel = new brls::Label();
+                std::string statusText = rec.status;
+                if (rec.scheduledTime > 0) {
+                    statusText += " - " + formatTime(rec.scheduledTime);
+                }
+                statusLabel->setText(statusText);
+                statusLabel->setFontSize(10);
+                statusLabel->setMarginTop(4);
+                card->addView(statusLabel);
+
+                // Click to show options (cancel, etc.)
+                DVRRecording capturedRec = rec;
+                card->registerClickAction([this, capturedRec](brls::View* view) {
+                    brls::Dialog* dialog = new brls::Dialog(capturedRec.title);
+
+                    dialog->addButton("Cancel Recording", [this, capturedRec]() {
+                        cancelRecording(capturedRec);
+                    });
+
+                    dialog->addButton("Close", []() {});
+                    dialog->open();
+                    return true;
+                });
+
+                m_dvrContent->addView(card);
+            }
         });
     });
 }
@@ -521,21 +805,32 @@ void LiveTVTab::loadRecordings() {
 void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
     brls::Logger::info("LiveTVTab: Selected channel: {} ({})", channel.title, channel.channelNumber);
 
-    // Tune the Live TV channel and get HLS stream URL
-    // The DVR tune API expects the channel identifier (e.g., "2.1"), not the ratingKey
-    std::string channelKey = channel.channelIdentifier;
-    if (channelKey.empty()) {
-        channelKey = std::to_string(channel.channelNumber);
-    }
-    if (channelKey == "0" && !channel.ratingKey.empty()) {
-        channelKey = channel.ratingKey;  // Last resort fallback
+    // Use the VCN (e.g., "2.1") and the full EPG key for tuning
+    std::string channelVcn = channel.channelIdentifier;
+    if (channelVcn.empty()) {
+        channelVcn = std::to_string(channel.channelNumber);
     }
 
-    asyncRun([this, channel, channelKey, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+    // The full EPG channel key (e.g., "5fc76c55dd53a6002dab58e3-5fc70600a05ef8002e61645f")
+    std::string epgKey = channel.key;
+
+    // Find the currently-airing program's metadata key for transcode-based tuning
+    std::string programMetadataKey;
+    time_t now = time(nullptr);
+    for (const auto& prog : channel.programs) {
+        if (prog.startTime <= (int64_t)now && prog.endTime > (int64_t)now && !prog.metadataKey.empty()) {
+            programMetadataKey = prog.metadataKey;
+            brls::Logger::info("LiveTVTab: Current program metadata key: {}", programMetadataKey);
+            break;
+        }
+    }
+
+    asyncRun([this, channel, channelVcn, epgKey, programMetadataKey, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         PlexClient& client = PlexClient::getInstance();
         std::string streamUrl;
 
-        if (client.tuneLiveTVChannel(channelKey, streamUrl)) {
+        // Try with EPG key first (more reliable), then fall back to VCN
+        if (client.tuneLiveTVChannelByKey(channelVcn, epgKey, streamUrl, programMetadataKey)) {
             brls::Logger::info("LiveTVTab: Got stream URL for channel {}", channel.title);
             brls::sync([streamUrl, channel]() {
                 std::string title = channel.title;
@@ -581,12 +876,128 @@ void LiveTVTab::onProgramSelected(const GuideProgram& program, const LiveTVChann
 }
 
 void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChannel& channel) {
-    // TODO: Implement recording scheduling via Plex API
-    // POST to /media/subscriptions with program details
+    asyncRun([this, program, channel, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+        PlexClient& client = PlexClient::getInstance();
+        HttpClient httpClient;
 
-    brls::Dialog* dialog = new brls::Dialog("Recording scheduled for: " + program.title);
-    dialog->addButton("OK", []() {});
-    dialog->open();
+        // Plex recording API: POST /media/subscriptions
+        // Required query params: type, targetSectionID, key (EPG metadata key)
+        // prefs: minVideoQuality, replaceLowerQuality, recordPartials, startOffsetMinutes, endOffsetMinutes
+        //        lineupChannel, startTimestamp, comskipEnabled, comskipMethod
+        //
+        // The 'key' param is the EPG metadata path (e.g., /tv.plex.providers.epg.cloud:40/metadata/plex%3A%2F%2Fepisode%2F...)
+        // The 'type' is the subscription type: "clip" for one-time, "show" for series
+
+        std::string subUrl = client.buildApiUrlPublic("/media/subscriptions");
+
+        // Build query parameters
+        std::string params = "type=clip";  // One-time recording (vs "show" for series)
+        params += "&includeGrabs=1";
+
+        // The key param should be the program's EPG metadata path
+        // (e.g., /tv.plex.providers.epg.cloud:40/metadata/plex%3A%2F%2Fepisode%2F...)
+        if (!program.metadataKey.empty()) {
+            params += "&key=" + HttpClient::urlEncode(program.metadataKey);
+        } else if (!program.ratingKey.empty()) {
+            // Fallback: construct metadata path from ratingKey if metadataKey not available
+            std::string epgKey = client.getEpgProviderKey();
+            if (!epgKey.empty()) {
+                std::string metaPath = "/" + epgKey + "/metadata/" + program.ratingKey;
+                params += "&key=" + HttpClient::urlEncode(metaPath);
+            } else {
+                params += "&key=" + HttpClient::urlEncode(program.ratingKey);
+            }
+        }
+
+        // Add recording preferences
+        params += "&prefs[minVideoQuality]=0";
+        params += "&prefs[replaceLowerQuality]=true";
+        params += "&prefs[recordPartials]=true";
+        params += "&prefs[startOffsetMinutes]=2";
+        params += "&prefs[endOffsetMinutes]=2";
+        params += "&prefs[comskipEnabled]=-1";
+        params += "&prefs[comskipMethod]=-1";
+
+        // Add channel info for the recording
+        if (!channel.key.empty()) {
+            params += "&prefs[lineupChannel]=" + HttpClient::urlEncode(channel.key);
+        } else if (!channel.channelIdentifier.empty()) {
+            params += "&prefs[lineupChannel]=" + HttpClient::urlEncode(channel.channelIdentifier);
+        }
+
+        if (program.startTime > 0) {
+            params += "&prefs[startTimestamp]=" + std::to_string(program.startTime);
+        }
+
+        // Append params as query string (Plex expects query params, not POST body for this endpoint)
+        std::string fullUrl = subUrl + "&" + params;
+
+        HttpRequest req;
+        req.url = fullUrl;
+        req.method = "POST";
+        req.headers["Accept"] = "application/json";
+        req.timeout = 15;
+
+        brls::Logger::debug("LiveTVTab: Recording request URL: {}", fullUrl);
+        HttpResponse resp = httpClient.request(req);
+
+        bool success = (resp.statusCode == 200 || resp.statusCode == 201);
+        std::string title = program.title;
+
+        brls::Logger::debug("LiveTVTab: Recording response: {} ({} bytes): {}",
+                            resp.statusCode, resp.body.length(),
+                            resp.body.substr(0, 500));
+
+        brls::sync([this, success, title, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+
+            if (success) {
+                brls::Dialog* dialog = new brls::Dialog("Recording scheduled: " + title);
+                dialog->addButton("OK", []() {});
+                dialog->open();
+                // Refresh recordings list
+                loadRecordings();
+            } else {
+                brls::Dialog* dialog = new brls::Dialog("Failed to schedule recording: " + title);
+                dialog->addButton("OK", []() {});
+                dialog->open();
+            }
+        });
+    });
+}
+
+void LiveTVTab::cancelRecording(const DVRRecording& recording) {
+    asyncRun([this, recording, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+        PlexClient& client = PlexClient::getInstance();
+        HttpClient httpClient;
+
+        // DELETE /media/subscriptions/{id}
+        std::string delUrl = client.buildApiUrlPublic("/media/subscriptions/" + recording.mediaSubscriptionId);
+
+        HttpRequest req;
+        req.url = delUrl;
+        req.method = "DELETE";
+        req.headers["Accept"] = "application/json";
+        req.timeout = 15;
+
+        HttpResponse resp = httpClient.request(req);
+
+        bool success = (resp.statusCode == 200 || resp.statusCode == 204);
+        std::string title = recording.title;
+
+        brls::sync([this, success, title, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+
+            if (success) {
+                brls::Application::notify("Recording cancelled: " + title);
+                loadRecordings();
+            } else {
+                brls::Application::notify("Failed to cancel recording");
+            }
+        });
+    });
 }
 
 } // namespace vitaplex
