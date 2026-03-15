@@ -142,15 +142,22 @@ struct ChannelProgram {
     std::string metadataKey; // EPG metadata path (e.g., "/tv.plex.providers.epg.cloud:40/metadata/...")
 };
 
+// DVR ChannelMapping entry (from official /livetv/dvrs API)
+struct ChannelMapping {
+    std::string channelKey;         // EPG channel key (e.g., "5cc83d73af4a72001e9b16d7-...")
+    std::string deviceIdentifier;   // Device channel number (e.g., "48.1") - used for tuning
+    std::string lineupIdentifier;   // Lineup channel identifier (e.g., "002")
+};
+
 // Live TV Channel
 struct LiveTVChannel {
     std::string ratingKey;
-    std::string key;
+    std::string key;                    // EPG channel key
     std::string title;
     std::string thumb;
     std::string callSign;
     int channelNumber = 0;
-    std::string channelIdentifier;  // Channel ID for DVR tuning (e.g., "2.1")
+    std::string channelIdentifier;      // Device channel ID for DVR tuning (e.g., "2.1")
     std::string currentProgram;
     std::string nextProgram;
     int64_t programStart = 0;
@@ -409,10 +416,11 @@ private:
     std::string m_lastSessionId;  // Last transcode session ID for stop/restart
     PlexServer m_currentServer;
     bool m_hasLiveTV = false;
-    std::string m_dvrId;  // DVR ID for Live TV tuning
-    std::vector<std::string> m_deviceIds;  // Device IDs from DVR for channel listing
-    std::string m_lineupUri;  // Lineup URI from DVR for EPG channel listing
-    std::string m_epgProviderKey;  // EPG provider key for grid queries (e.g., "tv.plex.providers.epg.cloud:2-...")
+    std::string m_dvrId;  // DVR ID (key) from GET /livetv/dvrs
+    std::vector<std::string> m_deviceIds;  // Device UUIDs from DVR (e.g., "device://tv.plex.grabbers.hdhomerun/...")
+    std::string m_lineupUri;  // Lineup URI from DVR (e.g., "lineup://tv.plex.providers.epg.onconnect/...")
+    std::vector<ChannelMapping> m_channelMappings;  // Channel mappings from DVR response
+    std::string m_epgProviderKey;  // EPG provider key for grid queries (extracted from lineup URI)
 };
 
 } // namespace vitaplex
