@@ -659,8 +659,10 @@ void LiveTVTab::loadRecordings() {
         PlexClient& client = PlexClient::getInstance();
         HttpClient httpClient;
 
-        // Fetch scheduled recordings via /media/subscriptions
-        std::string subsUrl = client.buildApiUrlPublic("/media/subscriptions");
+        // Official API: GET /media/subscriptions?includeGrabs=1
+        // Returns MediaContainer with MediaSubscription array
+        // Per openapi.json: MediaSubscription has key, type, targetLibrarySectionID, title, Setting[]
+        std::string subsUrl = client.buildApiUrlPublic("/media/subscriptions?includeGrabs=1");
         HttpRequest req;
         req.url = subsUrl;
         req.method = "GET";
@@ -674,58 +676,59 @@ void LiveTVTab::loadRecordings() {
         if (resp.statusCode == 200 && !resp.body.empty()) {
             brls::Logger::debug("LiveTVTab: DVR subscriptions response ({} bytes)", resp.body.length());
 
-            // Parse subscriptions - look for MediaSubscription objects
-            size_t pos = 0;
-            while (pos < resp.body.length()) {
-                // Find next object with a "title" field
-                size_t titlePos = resp.body.find("\"title\"", pos);
-                if (titlePos == std::string::npos) break;
+            // Parse MediaSubscription array
+            // Per openapi.json example: "key": "1", "type": 2, "title": "fresh off the boat"
+            // Video sub-objects contain: beginsAt, endsAt, status, mediaSubscriptionID
+            size_t msPos = resp.body.find("\"MediaSubscription\"");
+            if (msPos != std::string::npos) {
+                size_t arrStart = resp.body.find('[', msPos);
+                if (arrStart != std::string::npos) {
+                    size_t pos = arrStart + 1;
+                    while (pos < resp.body.length()) {
+                        size_t objStart = resp.body.find('{', pos);
+                        if (objStart == std::string::npos) break;
 
-                // Find the enclosing object
-                size_t objStart = resp.body.rfind('{', titlePos);
-                if (objStart == std::string::npos) { pos = titlePos + 7; continue; }
+                        // Check if we've gone past the end of the array
+                        std::string between = resp.body.substr(pos, objStart - pos);
+                        if (between.find(']') != std::string::npos) break;
 
-                // Extract object
-                int braceCount = 1;
-                size_t objEnd = objStart + 1;
-                while (braceCount > 0 && objEnd < resp.body.length()) {
-                    if (resp.body[objEnd] == '{') braceCount++;
-                    else if (resp.body[objEnd] == '}') braceCount--;
-                    objEnd++;
-                }
-                std::string obj = resp.body.substr(objStart, objEnd - objStart);
+                        int braceCount = 1;
+                        size_t objEnd = objStart + 1;
+                        while (braceCount > 0 && objEnd < resp.body.length()) {
+                            if (resp.body[objEnd] == '{') braceCount++;
+                            else if (resp.body[objEnd] == '}') braceCount--;
+                            objEnd++;
+                        }
+                        std::string obj = resp.body.substr(objStart, objEnd - objStart);
 
-                std::string title = client.extractJsonValuePublic(obj, "title");
-                std::string key = client.extractJsonValuePublic(obj, "key");
-                std::string ratingKey = client.extractJsonValuePublic(obj, "ratingKey");
-                std::string type = client.extractJsonValuePublic(obj, "type");
+                        std::string title = client.extractJsonValuePublic(obj, "title");
+                        std::string key = client.extractJsonValuePublic(obj, "key");
 
-                if (!title.empty() && !ratingKey.empty()) {
-                    DVRRecording rec;
-                    rec.title = title;
-                    rec.ratingKey = ratingKey;
-                    rec.mediaSubscriptionId = ratingKey;
-                    rec.summary = client.extractJsonValuePublic(obj, "summary");
+                        if (!title.empty() && !key.empty()) {
+                            DVRRecording rec;
+                            rec.title = title;
+                            rec.ratingKey = key;
+                            rec.mediaSubscriptionId = key;  // key is the subscription ID for DELETE
 
-                    std::string beginsAt = client.extractJsonValuePublic(obj, "beginsAt");
-                    if (!beginsAt.empty()) {
-                        rec.scheduledTime = atoll(beginsAt.c_str());
+                            // Look for Video sub-object with beginsAt/status
+                            std::string beginsAt = client.extractJsonValuePublic(obj, "beginsAt");
+                            if (!beginsAt.empty()) {
+                                rec.scheduledTime = atoll(beginsAt.c_str());
+                            }
+
+                            std::string status = client.extractJsonValuePublic(obj, "status");
+                            if (status == "2" || status == "recording") {
+                                rec.status = "recording";
+                            } else {
+                                rec.status = "scheduled";
+                            }
+
+                            recordings.push_back(rec);
+                        }
+
+                        pos = objEnd;
                     }
-
-                    // Determine status
-                    std::string status = client.extractJsonValuePublic(obj, "status");
-                    if (status == "2" || status == "recording") {
-                        rec.status = "recording";
-                    } else if (status == "1" || status == "scheduled") {
-                        rec.status = "scheduled";
-                    } else {
-                        rec.status = "scheduled";
-                    }
-
-                    recordings.push_back(rec);
                 }
-
-                pos = objEnd;
             }
         }
 
@@ -880,56 +883,40 @@ void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChann
         PlexClient& client = PlexClient::getInstance();
         HttpClient httpClient;
 
-        // Plex recording API: POST /media/subscriptions
-        // Required query params: type, targetSectionID, key (EPG metadata key)
-        // prefs: minVideoQuality, replaceLowerQuality, recordPartials, startOffsetMinutes, endOffsetMinutes
-        //        lineupChannel, startTimestamp, comskipEnabled, comskipMethod
-        //
-        // The 'key' param is the EPG metadata path (e.g., /tv.plex.providers.epg.cloud:40/metadata/plex%3A%2F%2Fepisode%2F...)
-        // The 'type' is the subscription type: "clip" for one-time, "show" for series
-
+        // Official Plex API: POST /media/subscriptions
+        // Per openapi.json, query params: type, targetLibrarySectionID, hints[title],
+        //   prefs[minVideoQuality], prefs[lineupChannel], prefs[startOffsetSeconds],
+        //   prefs[endOffsetSeconds], prefs[recordPartials]
         std::string subUrl = client.buildApiUrlPublic("/media/subscriptions");
 
-        // Build query parameters
-        std::string params = "type=clip";  // One-time recording (vs "show" for series)
+        // Build query parameters per official API
+        std::string params = "type=2";  // type=2 for show/episode subscription
         params += "&includeGrabs=1";
 
-        // The key param should be the program's EPG metadata path
-        // (e.g., /tv.plex.providers.epg.cloud:40/metadata/plex%3A%2F%2Fepisode%2F...)
-        if (!program.metadataKey.empty()) {
-            params += "&key=" + HttpClient::urlEncode(program.metadataKey);
-        } else if (!program.ratingKey.empty()) {
-            // Fallback: construct metadata path from ratingKey if metadataKey not available
-            std::string epgKey = client.getEpgProviderKey();
-            if (!epgKey.empty()) {
-                std::string metaPath = "/" + epgKey + "/metadata/" + program.ratingKey;
-                params += "&key=" + HttpClient::urlEncode(metaPath);
-            } else {
-                params += "&key=" + HttpClient::urlEncode(program.ratingKey);
-            }
+        // hints[title] - the program title for matching
+        if (!program.title.empty()) {
+            params += "&hints[title]=" + HttpClient::urlEncode(program.title);
         }
 
-        // Add recording preferences
+        // hints[ratingKey] - EPG rating key for specific program identification
+        if (!program.ratingKey.empty()) {
+            params += "&hints[ratingKey]=" + HttpClient::urlEncode(program.ratingKey);
+        }
+
+        // Add recording preferences per official API schema
         params += "&prefs[minVideoQuality]=0";
-        params += "&prefs[replaceLowerQuality]=true";
         params += "&prefs[recordPartials]=true";
-        params += "&prefs[startOffsetMinutes]=2";
-        params += "&prefs[endOffsetMinutes]=2";
-        params += "&prefs[comskipEnabled]=-1";
-        params += "&prefs[comskipMethod]=-1";
+        params += "&prefs[startOffsetSeconds]=120";   // 2 min padding before
+        params += "&prefs[endOffsetSeconds]=120";     // 2 min padding after
 
-        // Add channel info for the recording
-        if (!channel.key.empty()) {
-            params += "&prefs[lineupChannel]=" + HttpClient::urlEncode(channel.key);
-        } else if (!channel.channelIdentifier.empty()) {
+        // lineupChannel - the channel to record from
+        if (!channel.channelIdentifier.empty()) {
             params += "&prefs[lineupChannel]=" + HttpClient::urlEncode(channel.channelIdentifier);
+        } else if (!channel.key.empty()) {
+            params += "&prefs[lineupChannel]=" + HttpClient::urlEncode(channel.key);
         }
 
-        if (program.startTime > 0) {
-            params += "&prefs[startTimestamp]=" + std::to_string(program.startTime);
-        }
-
-        // Append params as query string (Plex expects query params, not POST body for this endpoint)
+        // Append params as query string (official API uses query params for POST)
         std::string fullUrl = subUrl + "&" + params;
 
         HttpRequest req;
@@ -956,7 +943,6 @@ void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChann
                 brls::Dialog* dialog = new brls::Dialog("Recording scheduled: " + title);
                 dialog->addButton("OK", []() {});
                 dialog->open();
-                // Refresh recordings list
                 loadRecordings();
             } else {
                 brls::Dialog* dialog = new brls::Dialog("Failed to schedule recording: " + title);
