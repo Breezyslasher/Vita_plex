@@ -112,6 +112,10 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     m_contentGrid->setOnItemSelected([this](const MediaItem& item) {
         onItemSelected(item);
     });
+    // Infinite scroll: load next page when user scrolls to bottom
+    m_contentGrid->setOnLoadMore([this]() {
+        loadNextPage();
+    });
     m_contentGrid->setOnItemStartAction([this](const MediaItem& item) {
         if (item.type == "playlist") {
             // Find the matching Playlist struct for full metadata
@@ -171,10 +175,14 @@ void LibrarySectionTab::loadContent() {
     std::string key = m_sectionKey;
     std::weak_ptr<bool> aliveWeak = m_alive;  // Capture weak_ptr for async safety
 
+    m_pageOffset = 0;
+    m_totalItemCount = 0;
+
     std::string sectionType = m_sectionType;
     asyncRun([this, key, sectionType, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
+        int totalCount = 0;
 
         // Plex type codes: 1=movie, 2=show, 8=artist, 9=album, 10=track
         int metadataType = 0;
@@ -182,16 +190,15 @@ void LibrarySectionTab::loadContent() {
         else if (sectionType == "show") metadataType = 2;
         else if (sectionType == "artist") metadataType = 8;
 
-        if (client.fetchLibraryContent(key, items, metadataType)) {
-            brls::Logger::info("LibrarySectionTab: Got {} items for section {}", items.size(), key);
+        if (client.fetchLibraryContent(key, items, metadataType, PAGE_SIZE, 0, &totalCount)) {
+            brls::Logger::info("LibrarySectionTab: Got {} of {} items for section {}", items.size(), totalCount, key);
 
             // Trim heavy fields to reduce per-item memory in large libraries
             for (auto& item : items) {
                 item.trimForGrid();
             }
 
-            brls::sync([this, items, aliveWeak]() {
-                // Check if object is still alive before updating UI
+            brls::sync([this, items, totalCount, aliveWeak]() {
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) {
                     brls::Logger::debug("LibrarySectionTab: Tab destroyed, skipping UI update");
@@ -199,10 +206,12 @@ void LibrarySectionTab::loadContent() {
                 }
 
                 m_items = items;
-                // Only update grid if still in default view (user may have
-                // switched to playlists/collections/categories while loading)
+                m_pageOffset = items.size();
+                m_totalItemCount = totalCount;
+
                 if (m_viewMode == LibraryViewMode::ALL_ITEMS) {
                     m_contentGrid->setDataSource(m_items);
+                    m_contentGrid->setHasMore(m_pageOffset < (size_t)m_totalItemCount);
                 }
                 m_loaded = true;
             });
@@ -300,6 +309,51 @@ void LibrarySectionTab::loadGenres() {
     });
 }
 
+void LibrarySectionTab::loadNextPage() {
+    if (m_pageOffset >= (size_t)m_totalItemCount) {
+        m_contentGrid->setHasMore(false);
+        return;
+    }
+
+    std::string key = m_sectionKey;
+    std::string sectionType = m_sectionType;
+    size_t offset = m_pageOffset;
+    std::weak_ptr<bool> aliveWeak = m_alive;
+
+    asyncRun([this, key, sectionType, offset, aliveWeak]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> items;
+
+        int metadataType = 0;
+        if (sectionType == "movie") metadataType = 1;
+        else if (sectionType == "show") metadataType = 2;
+        else if (sectionType == "artist") metadataType = 8;
+
+        if (client.fetchLibraryContent(key, items, metadataType, PAGE_SIZE, (int)offset)) {
+            for (auto& item : items) {
+                item.trimForGrid();
+            }
+
+            brls::sync([this, items, offset, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+
+                m_pageOffset = offset + items.size();
+                // Append to our stored items too
+                m_items.insert(m_items.end(), items.begin(), items.end());
+                m_contentGrid->appendItems(items);
+                m_contentGrid->setHasMore(m_pageOffset < (size_t)m_totalItemCount);
+            });
+        } else {
+            brls::sync([this, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+                m_contentGrid->setHasMore(false);
+            });
+        }
+    });
+}
+
 void LibrarySectionTab::showAllItems() {
     m_viewMode = LibraryViewMode::ALL_ITEMS;
     m_titleLabel->setText(m_title);
@@ -312,6 +366,7 @@ void LibrarySectionTab::showAllItems() {
     m_trackListScroll->setVisibility(brls::Visibility::GONE);
     m_contentGrid->setVisibility(brls::Visibility::VISIBLE);
     m_contentGrid->setDataSource(m_items);
+    m_contentGrid->setHasMore(m_pageOffset < (size_t)m_totalItemCount);
     updateViewModeButtons();
 }
 

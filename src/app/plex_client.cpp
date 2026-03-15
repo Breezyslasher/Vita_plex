@@ -615,8 +615,8 @@ bool PlexClient::fetchLibrarySections(std::vector<LibrarySection>& sections) {
     return !sections.empty();
 }
 
-bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items, int metadataType, int limit) {
-    brls::Logger::debug("fetchLibraryContent: section={} type={} limit={}", sectionKey, metadataType, limit);
+bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items, int metadataType, int limit, int offset, int* totalCount) {
+    brls::Logger::debug("fetchLibraryContent: section={} type={} limit={} offset={}", sectionKey, metadataType, limit, offset);
 
     HttpClient& client = HttpClient::shared();
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all");
@@ -625,9 +625,10 @@ bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<
     }
 
     // Server-side pagination: only fetch what we need to reduce response size.
-    // Default to 60 items (enough for 10 rows of 6) - the UI only shows 30 at a time.
+    // Default to 60 items per page.
     int fetchLimit = (limit > 0) ? limit : 60;
-    url += "&X-Plex-Container-Start=0&X-Plex-Container-Size=" + std::to_string(fetchLimit);
+    url += "&X-Plex-Container-Start=" + std::to_string(offset) +
+           "&X-Plex-Container-Size=" + std::to_string(fetchLimit);
 
     // Request JSON format
     HttpRequest req;
@@ -646,6 +647,15 @@ bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<
 
     items.clear();
     items.reserve(fetchLimit);
+
+    // Extract total count from Plex container metadata (for pagination)
+    if (totalCount) {
+        *totalCount = extractJsonInt(resp.body, "totalSize");
+        if (*totalCount <= 0) {
+            // Fallback: some Plex versions use "size" for container total
+            *totalCount = extractJsonInt(resp.body, "size");
+        }
+    }
 
     // Parse items in-place without creating per-object substrings.
     // Uses extractJsonValueRange to search within [objStart, objEnd) of resp.body.

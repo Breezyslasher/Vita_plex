@@ -77,6 +77,12 @@ private:
     brls::ScrollingFrame* m_trackListScroll = nullptr;
     brls::Box* m_trackListBox = nullptr;
 
+    // Pagination for infinite scroll
+    void loadNextPage();
+    size_t m_pageOffset = 0;
+    int m_totalItemCount = 0;
+    static constexpr size_t PAGE_SIZE = 60;
+
     // Data
     std::vector<MediaItem> m_items;
     std::vector<MediaItem> m_collections;
