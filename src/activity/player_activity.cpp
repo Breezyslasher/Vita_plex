@@ -18,6 +18,7 @@
 
 #ifdef __vita__
 #include <psp2/power.h>
+extern "C" int sceAppMgrAcquireBgmPortWithPriority(int priority);
 #endif
 
 namespace vitaplex {
@@ -816,6 +817,12 @@ void PlayerActivity::loadFromQueue() {
 
     // Set audio-only mode BEFORE initializing
     player.setAudioOnly(true);
+
+    // Acquire the BGM port so MPV audio continues when the app is backgrounded
+    // (PS button / quick menu). ElevenMPV-A uses priority 0x81 for software decoders.
+#ifdef __vita__
+    sceAppMgrAcquireBgmPortWithPriority(0x81);
+#endif
 
     // Only clear image cache on first MPV init to free memory for the player.
     // On subsequent track changes MPV is already allocated, and clearing the
