@@ -152,6 +152,8 @@ void LibrarySectionTab::willDisappear(bool resetState) {
     brls::Box::willDisappear(resetState);
     if (m_alive) *m_alive = false;
     ImageLoader::cancelAll();
+    // Free image cache when leaving tab to reclaim memory
+    ImageLoader::clearCache();
 }
 
 void LibrarySectionTab::onFocusGained() {
@@ -182,6 +184,11 @@ void LibrarySectionTab::loadContent() {
 
         if (client.fetchLibraryContent(key, items, metadataType)) {
             brls::Logger::info("LibrarySectionTab: Got {} items for section {}", items.size(), key);
+
+            // Trim heavy fields to reduce per-item memory in large libraries
+            for (auto& item : items) {
+                item.trimForGrid();
+            }
 
             brls::sync([this, items, aliveWeak]() {
                 // Check if object is still alive before updating UI

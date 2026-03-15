@@ -139,6 +139,7 @@ void LiveTVTab::willDisappear(bool resetState) {
     brls::Box::willDisappear(resetState);
     if (m_alive) *m_alive = false;
     ImageLoader::cancelAll();
+    ImageLoader::clearCache();
 }
 
 bool LiveTVTab::isDescendantOf(brls::View* view, brls::View* ancestor) {

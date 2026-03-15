@@ -170,6 +170,21 @@ void HomeTab::willDisappear(bool resetState) {
     // Invalidate alive flag so pending async callbacks bail out
     if (m_alive) *m_alive = false;
     ImageLoader::cancelAll();
+    // Free image cache when leaving home tab to reclaim memory
+    ImageLoader::clearCache();
+
+    // Free stored item data to reduce baseline memory
+    m_continueWatching.clear();
+    m_continueWatching.shrink_to_fit();
+    m_recentMovies.clear();
+    m_recentMovies.shrink_to_fit();
+    m_recentShows.clear();
+    m_recentShows.shrink_to_fit();
+    m_recentMusic.clear();
+    m_recentMusic.shrink_to_fit();
+
+    // Mark as not loaded so data is re-fetched when returning
+    m_loaded = false;
 }
 
 void HomeTab::onFocusGained() {
@@ -193,6 +208,9 @@ void HomeTab::loadContent() {
 
         if (client.fetchContinueWatching(items)) {
             brls::Logger::info("HomeTab: Got {} continue watching items", items.size());
+
+            // Trim heavy fields to reduce memory
+            for (auto& item : items) item.trimForGrid();
 
             brls::sync([this, items, aliveWeak]() {
                 auto alive = aliveWeak.lock();
@@ -251,11 +269,11 @@ void HomeTab::loadContent() {
                 // Sort items by type
                 for (auto& item : sectionItems) {
                     if (section.type == "movie") {
-                        if (movies.size() < 10) movies.push_back(item);
+                        if (movies.size() < 8) movies.push_back(item);
                     } else if (section.type == "show") {
-                        if (shows.size() < 10) shows.push_back(item);
+                        if (shows.size() < 8) shows.push_back(item);
                     } else if (section.type == "artist") {
-                        if (music.size() < 10) music.push_back(item);
+                        if (music.size() < 8) music.push_back(item);
                     }
                 }
             }
@@ -263,6 +281,11 @@ void HomeTab::loadContent() {
 
         brls::Logger::info("HomeTab: Got {} movies, {} shows, {} music items",
                            movies.size(), shows.size(), music.size());
+
+        // Trim heavy fields to reduce memory for grid display
+        for (auto& item : movies) item.trimForGrid();
+        for (auto& item : shows) item.trimForGrid();
+        for (auto& item : music) item.trimForGrid();
 
         // Update UI on main thread
         brls::sync([this, movies, shows, music, aliveWeak]() {

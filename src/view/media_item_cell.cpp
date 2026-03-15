@@ -210,7 +210,7 @@ void MediaItemCell::loadThumbnail() {
     if (isMusic) {
         width = 110; height = 110;
     } else if (isEpisode || isClip) {
-        width = 280; height = 160;  // Landscape still (2x display for quality)
+        width = 140; height = 80;   // Match display size (save ~75% memory vs 2x)
     } else {
         width = 110; height = 165;
     }

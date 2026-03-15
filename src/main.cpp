@@ -32,12 +32,16 @@
 #include <cstring>
 
 // Memory configuration
-int _newlib_heap_size_user = 192 * 1024 * 1024;  // 192 MB heap
+// Reduced from 192 MB to 172 MB - leaves more room for GPU VRAM and system.
+// With optimized view recycling and image caching, the app uses significantly
+// less heap, so this headroom is no longer needed.
+int _newlib_heap_size_user = 172 * 1024 * 1024;  // 172 MB heap
 unsigned int sceUserMainThreadStackSize = 2 * 1024 * 1024;  // 2 MB stack
 
-#define NET_MEMORY_SIZE (4 * 1024 * 1024)
+// Reduced network buffer from 4 MB to 2 MB - sufficient for API calls + thumbnails
+#define NET_MEMORY_SIZE (2 * 1024 * 1024)
 #define SSL_MEMORY_SIZE (512 * 1024)
-#define HTTP_MEMORY_SIZE (2 * 1024 * 1024)
+#define HTTP_MEMORY_SIZE (1 * 1024 * 1024)
 
 static char __attribute__((aligned(64))) netMemory[NET_MEMORY_SIZE];
 

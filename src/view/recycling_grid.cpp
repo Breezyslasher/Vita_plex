@@ -1,5 +1,7 @@
 /**
  * VitaPlex - Recycling Grid implementation
+ * Only renders a window of items around the current scroll position.
+ * This drastically reduces memory usage for large libraries.
  */
 
 #include "view/recycling_grid.hpp"
@@ -17,7 +19,7 @@ RecyclingGrid::RecyclingGrid() {
     m_contentBox->setPadding(10);
     this->setContentView(m_contentBox);
 
-    // PS Vita screen: 960x544, so 4 columns of ~120px items works well
+    // PS Vita screen: 960x544, so 6 columns of ~120px items
     m_columns = 6;
     m_visibleRows = 3;
 }
@@ -127,35 +129,35 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
     }
 }
 
-void RecyclingGrid::rebuildGrid() {
+void RecyclingGrid::renderWindow(size_t startIdx, size_t endIdx) {
     m_contentBox->clearViews();
-    m_renderedCount = 0;
 
-    if (m_items.empty()) return;
+    if (startIdx >= endIdx || startIdx >= m_items.size()) return;
 
-    appendPage();
-}
-
-void RecyclingGrid::appendPage() {
-    size_t end = m_items.size();
+    // Clamp end to items size
+    if (endIdx > m_items.size()) endIdx = m_items.size();
 
     brls::Box* currentRow = nullptr;
-    // If we have items already, check if the last row is incomplete
-    int itemsInRow = (int)(m_renderedCount % m_columns);
-    if (itemsInRow > 0 && m_contentBox->getChildren().size() > 0) {
-        // Get the last row to continue filling it
-        auto& children = m_contentBox->getChildren();
-        currentRow = dynamic_cast<brls::Box*>(children.back());
-        if (!currentRow) itemsInRow = 0;
-    } else {
-        itemsInRow = 0;
-    }
+    int itemsInRow = 0;
 
-    for (size_t i = m_renderedCount; i < end; i++) {
+    for (size_t i = startIdx; i < endIdx; i++) {
         addCellForItem(currentRow, itemsInRow, i);
     }
 
-    m_renderedCount = end;
+    m_windowStart = startIdx;
+    m_windowEnd = endIdx;
+}
+
+void RecyclingGrid::rebuildGrid() {
+    m_contentBox->clearViews();
+    m_windowStart = 0;
+    m_windowEnd = 0;
+
+    if (m_items.empty()) return;
+
+    // Render only the first window of items
+    size_t end = std::min(m_items.size(), WINDOW_SIZE);
+    renderWindow(0, end);
 }
 
 void RecyclingGrid::onItemClicked(int index) {

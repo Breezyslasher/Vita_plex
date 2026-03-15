@@ -202,6 +202,7 @@ void MusicTab::willDisappear(bool resetState) {
     brls::Box::willDisappear(resetState);
     if (m_alive) *m_alive = false;
     ImageLoader::cancelAll();
+    ImageLoader::clearCache();
 }
 
 void MusicTab::onFocusGained() {
