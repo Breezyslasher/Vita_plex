@@ -48,7 +48,8 @@ private:
     // Build a row for a grouped entry (playlist/album/artist)
     brls::Box* buildGroupRow(DownloadGroupType groupType, const std::string& groupKey,
                              const std::string& groupTitle, const std::string& groupThumb,
-                             int totalItems, int completedItems, int downloadingItems);
+                             int totalItems, int completedItems, int downloadingItems,
+                             int contentTotal = 0);
 
     // Build a row for an individual (ungrouped) download item
     brls::Box* buildItemRow(const DownloadItem& item);
@@ -59,6 +60,7 @@ private:
     brls::Label* m_startStopLabel = nullptr;
     brls::Button* m_pauseBtn = nullptr;
     brls::Button* m_resumeBtn = nullptr;
+    brls::Button* m_syncBtn = nullptr;
     brls::Button* m_clearBtn = nullptr;
 
     // Download status

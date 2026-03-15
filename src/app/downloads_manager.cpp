@@ -197,6 +197,22 @@ bool DownloadsManager::queueDownload(const std::string& ratingKey, const std::st
     }
 
     m_downloads.push_back(item);
+
+    // Update groupTotalItems on all items in this group so Y stays stable
+    if (groupType != DownloadGroupType::NONE && !groupKey.empty()) {
+        int groupCount = 0;
+        for (const auto& d : m_downloads) {
+            if (d.groupType == groupType && d.groupKey == groupKey) {
+                groupCount++;
+            }
+        }
+        for (auto& d : m_downloads) {
+            if (d.groupType == groupType && d.groupKey == groupKey) {
+                d.groupTotalItems = groupCount;
+            }
+        }
+    }
+
     saveStateUnlocked();
 
     brls::Logger::info("DownloadsManager: Queued {} for download", title);
@@ -996,6 +1012,15 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     std::string serverUrl = client.getServerUrl();
     std::string token = client.getAuthToken();
 
+    // Fetch exact file size from Plex metadata API if not already known
+    if (item.totalBytes <= 0) {
+        MediaItem mediaInfo;
+        if (client.fetchMediaDetails(item.ratingKey, mediaInfo) && mediaInfo.partSize > 0) {
+            item.totalBytes = mediaInfo.partSize;
+            brls::Logger::info("DownloadsManager: Got file size from API: {} bytes", item.totalBytes);
+        }
+    }
+
     if (serverUrl.empty() || token.empty()) {
         brls::Logger::error("DownloadsManager: Not connected to server");
         item.state = DownloadState::FAILED;
@@ -1366,8 +1391,8 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                         return m_downloading.load() && item.state != DownloadState::CANCELLED;
                     },
                     [&](int64_t total) {
-                        // Estimate total from segment sizes
-                        if (total > 0 && segmentUrls.size() > 0) {
+                        // Estimate total from segment sizes - only set once to keep Y stable
+                        if (item.totalBytes <= 0 && total > 0 && segmentUrls.size() > 0) {
                             item.totalBytes = total * (int64_t)segmentUrls.size();
                         }
                     },
@@ -1775,7 +1800,8 @@ void DownloadsManager::saveStateUnlocked() {
            << "\"groupKey\":\"" << escapeJson(item.groupKey) << "\",\n"
            << "\"groupTitle\":\"" << escapeJson(item.groupTitle) << "\",\n"
            << "\"groupThumb\":\"" << escapeJson(item.groupThumb) << "\",\n"
-           << "\"albumTitle\":\"" << escapeJson(item.albumTitle) << "\"\n"
+           << "\"albumTitle\":\"" << escapeJson(item.albumTitle) << "\",\n"
+           << "\"groupTotalItems\":" << item.groupTotalItems << "\n"
            << "}";
     }
 
@@ -1878,6 +1904,7 @@ void DownloadsManager::loadState() {
         item.groupTitle = extractJsonString(objStr, "groupTitle");
         item.groupThumb = extractJsonString(objStr, "groupThumb");
         item.albumTitle = extractJsonString(objStr, "albumTitle");
+        item.groupTotalItems = static_cast<int>(extractJsonInt(objStr, "groupTotalItems"));
 
         if (!item.ratingKey.empty()) {
             m_downloads.push_back(item);

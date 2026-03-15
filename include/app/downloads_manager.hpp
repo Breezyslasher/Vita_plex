@@ -74,6 +74,7 @@ struct DownloadItem {
     std::string groupTitle;     // Display title of the group
     std::string groupThumb;     // Thumbnail URL of the group (for cover art)
     std::string albumTitle;     // Album title (for tracks in an artist group)
+    int groupTotalItems = 0;    // Total items originally in the group (stable Y for X/Y display)
 };
 
 // Progress callback: (downloadedBytes, totalBytes)
