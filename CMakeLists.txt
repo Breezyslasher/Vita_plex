@@ -157,6 +157,7 @@ target_link_libraries(${PROJECT_NAME}
     ScePgf_stub
     SceRtc_stub
     SceShellSvc_stub
+    SceShellUtil_stub
     SceAudiodec_stub
     SceVideodec_stub
     SceAvcodec_stub
