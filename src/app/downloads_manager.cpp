@@ -1012,6 +1012,15 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     std::string serverUrl = client.getServerUrl();
     std::string token = client.getAuthToken();
 
+    // Fetch exact file size from Plex metadata API if not already known
+    if (item.totalBytes <= 0) {
+        MediaItem mediaInfo;
+        if (client.fetchMediaDetails(item.ratingKey, mediaInfo) && mediaInfo.partSize > 0) {
+            item.totalBytes = mediaInfo.partSize;
+            brls::Logger::info("DownloadsManager: Got file size from API: {} bytes", item.totalBytes);
+        }
+    }
+
     if (serverUrl.empty() || token.empty()) {
         brls::Logger::error("DownloadsManager: Not connected to server");
         item.state = DownloadState::FAILED;
