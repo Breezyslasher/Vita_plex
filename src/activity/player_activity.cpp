@@ -818,11 +818,6 @@ void PlayerActivity::loadFromQueue() {
     // Set audio-only mode BEFORE initializing
     player.setAudioOnly(true);
 
-    // Acquire the BGM port so MPV audio continues when the app is backgrounded
-    // (PS button / quick menu). ElevenMPV-A uses priority 0x81 for software decoders.
-#ifdef __vita__
-    sceAppMgrAcquireBgmPortWithPriority(0x81);
-#endif
 
     // Only clear image cache on first MPV init to free memory for the player.
     // On subsequent track changes MPV is already allocated, and clearing the
@@ -841,6 +836,11 @@ void PlayerActivity::loadFromQueue() {
         m_loadingMedia = false;
         return;
     }
+
+    // Re-acquire BGM port on track change (player already initialized)
+#ifdef __vita__
+    sceAppMgrAcquireBgmPortWithPriority(0x81);
+#endif
 
     // Player already initialized (track change) - load immediately
     if (!player.loadUrl(url, track->title)) {
@@ -1197,6 +1197,16 @@ void PlayerActivity::updateProgress() {
                 return;
             }
         }
+
+        // Acquire the BGM port AFTER MPV has initialized and opened its audio
+        // port (sceAudioOutOpenPort). The system needs the audio port to exist
+        // before the BGM acquisition takes effect for background playback.
+#ifdef __vita__
+        {
+            int ret = sceAppMgrAcquireBgmPortWithPriority(0x81);
+            brls::Logger::info("PlayerActivity: sceAppMgrAcquireBgmPortWithPriority(0x81) = 0x{:08X}", (unsigned)ret);
+        }
+#endif
 
         // Phase 2: schedule loadUrl for the NEXT main-loop iteration.
         // brls::sync callbacks execute between frames, so NanoVG will draw one
