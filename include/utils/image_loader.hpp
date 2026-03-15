@@ -1,5 +1,6 @@
 /**
  * VitaPlex - Asynchronous Image Loader
+ * Memory-optimized with LRU cache eviction and reduced cache size.
  */
 
 #pragma once
@@ -8,6 +9,7 @@
 #include <string>
 #include <functional>
 #include <map>
+#include <list>
 #include <mutex>
 #include <atomic>
 #include <memory>
@@ -40,11 +42,25 @@ public:
     static void setPaused(bool paused);
     static bool isPaused();
 
+    // Get current cache size (for debug display)
+    static size_t getCacheSize();
+
 private:
-    static std::map<std::string, std::vector<uint8_t>> s_cache;
+    // LRU cache: list stores URL keys in order of recent use (front = most recent)
+    // map stores the data + iterator into the list for O(1) promotion
+    struct CacheEntry {
+        std::vector<uint8_t> data;
+        std::list<std::string>::iterator lruIt;
+    };
+
+    static std::map<std::string, CacheEntry> s_cache;
+    static std::list<std::string> s_lruOrder;
     static std::mutex s_cacheMutex;
     static std::atomic<uint64_t> s_generation;
     static std::atomic<bool> s_paused;
+
+    // Max cached images - reduced from 30 to 20 to save ~2-4 MB on Vita
+    static constexpr size_t MAX_CACHE_SIZE = 20;
 };
 
 } // namespace vitaplex

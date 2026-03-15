@@ -83,6 +83,31 @@ struct MediaItem {
         int endTimeMs = 0;
     };
     std::vector<Marker> markers;
+
+    // Trim heavy fields not needed for grid/list display.
+    // Call this on items stored in bulk lists to reduce memory.
+    void trimForGrid() {
+        // Keep first 60 chars of summary (only used in focus tooltip)
+        if (summary.length() > 60) {
+            summary = summary.substr(0, 57) + "...";
+        }
+        // Art is only used for detail view backgrounds
+        art.clear();
+        art.shrink_to_fit();
+        // Stream info not needed for grid cells
+        streamUrl.clear();
+        streamUrl.shrink_to_fit();
+        videoCodec.clear();
+        videoCodec.shrink_to_fit();
+        audioCodec.clear();
+        audioCodec.shrink_to_fit();
+        // Part info not needed for grid
+        partPath.clear();
+        partPath.shrink_to_fit();
+        // Markers not needed for grid
+        markers.clear();
+        markers.shrink_to_fit();
+    }
 };
 
 // Library section info

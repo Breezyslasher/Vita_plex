@@ -145,6 +145,7 @@ void SearchTab::willDisappear(bool resetState) {
     if (m_alive) *m_alive = false;
     m_loadGeneration++;
     ImageLoader::cancelAll();
+    ImageLoader::clearCache();
 }
 
 void SearchTab::onFocusGained() {

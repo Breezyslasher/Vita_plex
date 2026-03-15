@@ -1,5 +1,6 @@
 /**
  * VitaPlex - Asynchronous Image Loader implementation
+ * Uses LRU eviction to keep memory bounded instead of clearing entire cache.
  */
 
 #include "utils/image_loader.hpp"
@@ -13,7 +14,8 @@
 
 namespace vitaplex {
 
-std::map<std::string, std::vector<uint8_t>> ImageLoader::s_cache;
+std::map<std::string, ImageLoader::CacheEntry> ImageLoader::s_cache;
+std::list<std::string> ImageLoader::s_lruOrder;
 std::mutex ImageLoader::s_cacheMutex;
 std::atomic<uint64_t> ImageLoader::s_generation{0};
 std::atomic<bool> ImageLoader::s_paused{false};
@@ -31,6 +33,11 @@ bool ImageLoader::isPaused() {
     return s_paused.load();
 }
 
+size_t ImageLoader::getCacheSize() {
+    std::lock_guard<std::mutex> lock(s_cacheMutex);
+    return s_cache.size();
+}
+
 void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
                             brls::Image* target, std::shared_ptr<std::atomic<bool>> alive) {
     if (url.empty() || !target || !alive) return;
@@ -46,8 +53,13 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
         std::lock_guard<std::mutex> lock(s_cacheMutex);
         auto it = s_cache.find(url);
         if (it != s_cache.end()) {
+            // Promote to front of LRU list (most recently used)
+            s_lruOrder.erase(it->second.lruIt);
+            s_lruOrder.push_front(url);
+            it->second.lruIt = s_lruOrder.begin();
+
             // Load from cache (we're on the main thread, target is valid right now)
-            target->setImageFromMem(it->second.data(), it->second.size());
+            target->setImageFromMem(it->second.data.data(), it->second.data.size());
             if (callback) callback(target);
             return;
         }
@@ -56,10 +68,6 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
     // Load asynchronously
     brls::async([url, callback, target, alive, gen]() {
         // Check if cancelled before making the HTTP request.
-        // Note: we intentionally do NOT check s_paused here. If a load was
-        // accepted at queue time (passed the pause check in loadAsync), it
-        // should complete. The generation counter from cancelAll() is
-        // sufficient to invalidate stale loads from previous pages.
         if (!alive->load() || gen != s_generation.load()) return;
 
         HttpClient client;
@@ -71,11 +79,20 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
 
             {
                 std::lock_guard<std::mutex> lock(s_cacheMutex);
-                // Limit cache size - keep low to preserve memory on Vita (256MB total)
-                if (s_cache.size() > 30) {
-                    s_cache.clear();
+
+                // LRU eviction: remove oldest entries until we're under the limit
+                while (s_cache.size() >= MAX_CACHE_SIZE && !s_lruOrder.empty()) {
+                    const std::string& oldest = s_lruOrder.back();
+                    s_cache.erase(oldest);
+                    s_lruOrder.pop_back();
                 }
-                s_cache[url] = imageData;
+
+                // Insert new entry at front of LRU
+                s_lruOrder.push_front(url);
+                CacheEntry entry;
+                entry.data = imageData;
+                entry.lruIt = s_lruOrder.begin();
+                s_cache[url] = std::move(entry);
             }
 
             // Update UI on main thread - check alive flag AND generation to prevent
@@ -131,6 +148,7 @@ bool ImageLoader::loadFromFile(const std::string& path, brls::Image* target) {
 void ImageLoader::clearCache() {
     std::lock_guard<std::mutex> lock(s_cacheMutex);
     s_cache.clear();
+    s_lruOrder.clear();
 }
 
 void ImageLoader::cancelAll() {
