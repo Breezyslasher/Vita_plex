@@ -161,14 +161,16 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "volume-max", "150");
 
 #ifdef __vita__
+    // Explicitly select the vita audio output driver (ao_vita) which uses
+    // SCE_AUDIO_OUT_PORT_TYPE_BGM for sample rates < 48kHz.  The BGM port
+    // is required for audio to continue when the app is in the background.
+    mpv_set_option_string(m_mpv, "ao", "vita");
+
     // Audio-specific optimizations for Vita
     if (m_audioOnly) {
-        // Pre-buffer more audio to prevent stuttering during playback
-        mpv_set_option_string(m_mpv, "audio-buffer", "0.5");  // 500ms audio buffer
-
-        // Demuxer settings for smoother audio
-        mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "5");  // Read 5 seconds ahead
-        mpv_set_option_string(m_mpv, "demuxer-max-bytes", "512KiB");  // Allow some buffering for audio
+        // Pre-buffer more decoded audio so the ao_vita thread can keep
+        // feeding the BGM port while the app is backgrounded.
+        mpv_set_option_string(m_mpv, "audio-buffer", "2.0");  // 2s decoded audio buffer
     }
 #endif
 
@@ -178,9 +180,12 @@ bool MpvPlayer::init() {
 
 #ifdef __vita__
     if (m_audioOnly) {
-        // Audio streaming needs cache enabled for network playback
+        // Audio streaming needs cache and readahead for network playback.
+        // Larger demuxer buffer keeps more compressed data ready so the
+        // ao_vita thread can continue outputting during background playback.
         mpv_set_option_string(m_mpv, "cache", "yes");
-        mpv_set_option_string(m_mpv, "demuxer-max-bytes", "1MiB");
+        mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "10");
+        mpv_set_option_string(m_mpv, "demuxer-max-bytes", "2MiB");
         mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "512KiB");
     } else {
         // Video: disable cache to conserve memory (Vita has 256MB)
@@ -1015,9 +1020,13 @@ void MpvPlayer::updatePlaybackInfo() {
         m_playbackInfo.sampleRate = (int)sr;
 
         if (m_playbackInfo.audioChannels > 0) {
-            brls::Logger::info("MpvPlayer: Audio {}ch @ {}Hz codec={}",
+            // Log the audio output driver so we can confirm ao_vita is active
+            char* aoName = mpv_get_property_string(m_mpv, "current-ao");
+            brls::Logger::info("MpvPlayer: Audio {}ch @ {}Hz codec={} ao={}",
                               m_playbackInfo.audioChannels, m_playbackInfo.sampleRate,
-                              m_playbackInfo.audioCodec);
+                              m_playbackInfo.audioCodec,
+                              aoName ? aoName : "unknown");
+            if (aoName) mpv_free(aoName);
         }
     }
 }
