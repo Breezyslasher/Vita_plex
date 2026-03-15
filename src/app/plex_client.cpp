@@ -205,7 +205,7 @@ std::string PlexClient::extractXmlAttrStr(const std::string& xml, const std::str
 bool PlexClient::login(const std::string& username, const std::string& password) {
     brls::Logger::info("Attempting login for user: {}", username);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     HttpRequest req;
     req.url = "https://plex.tv/api/v2/users/signin";
     req.method = "POST";
@@ -238,7 +238,7 @@ bool PlexClient::login(const std::string& username, const std::string& password)
 bool PlexClient::requestPin(PinAuth& pinAuth) {
     brls::Logger::info("Requesting PIN for plex.tv/link authentication");
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     HttpRequest req;
     req.url = "https://plex.tv/api/v2/pins";
     req.method = "POST";
@@ -269,7 +269,7 @@ bool PlexClient::requestPin(PinAuth& pinAuth) {
 }
 
 bool PlexClient::checkPin(PinAuth& pinAuth) {
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     HttpRequest req;
     req.url = "https://plex.tv/api/v2/pins/" + std::to_string(pinAuth.id);
     req.method = "GET";
@@ -309,7 +309,7 @@ bool PlexClient::validateToken() {
     if (m_authToken.empty()) return false;
 
     // Check token validity by hitting plex.tv/api/v2/user
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     HttpRequest req;
     req.url = "https://plex.tv/api/v2/user";
     req.method = "GET";
@@ -354,7 +354,7 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers) {
         return false;
     }
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     HttpRequest req;
     req.url = "https://plex.tv/api/v2/resources?includeHttps=1&includeRelay=1&includeIPv6=0";
     req.method = "GET";
@@ -495,7 +495,7 @@ bool PlexClient::connectToServer(const std::string& url, int timeoutSeconds) {
     }
     Application::getInstance().setServerUrl(m_serverUrl);  // Use normalized URL
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     HttpRequest req;
     req.url = buildApiUrl("/");
     req.method = "GET";
@@ -535,7 +535,7 @@ bool PlexClient::fetchLibrarySections(std::vector<LibrarySection>& sections) {
     brls::Logger::debug("fetchLibrarySections: serverUrl={}, hasToken={}",
                         m_serverUrl, !m_authToken.empty());
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/library/sections");
     brls::Logger::debug("Fetching: {}", url);
 
@@ -618,7 +618,7 @@ bool PlexClient::fetchLibrarySections(std::vector<LibrarySection>& sections) {
 bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items, int metadataType, int limit, int offset, int* totalCount) {
     brls::Logger::debug("fetchLibraryContent: section={} type={} limit={} offset={}", sectionKey, metadataType, limit, offset);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all");
     if (metadataType > 0) {
         url += "&type=" + std::to_string(metadataType);
@@ -705,7 +705,7 @@ bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<
 bool PlexClient::fetchSectionRecentlyAdded(const std::string& sectionKey, std::vector<MediaItem>& items) {
     brls::Logger::debug("fetchSectionRecentlyAdded: section={}", sectionKey);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     // Correct endpoint: /library/sections/{key}/recentlyAdded (no /all)
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/recentlyAdded");
 
@@ -779,7 +779,7 @@ bool PlexClient::fetchSectionRecentlyAdded(const std::string& sectionKey, std::v
 bool PlexClient::fetchChildren(const std::string& ratingKey, std::vector<MediaItem>& items) {
     brls::Logger::debug("fetchChildren: ratingKey={}", ratingKey);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/library/metadata/" + ratingKey + "/children");
 
     // Request JSON format
@@ -860,7 +860,7 @@ bool PlexClient::fetchChildren(const std::string& ratingKey, std::vector<MediaIt
 }
 
 bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item) {
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/library/metadata/" + ratingKey);
 
     // Request JSON format
@@ -966,7 +966,7 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
 bool PlexClient::fetchExtras(const std::string& ratingKey, std::vector<MediaItem>& items) {
     brls::Logger::debug("fetchExtras: ratingKey={}", ratingKey);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/library/metadata/" + ratingKey + "/extras");
 
     HttpRequest req;
@@ -1029,7 +1029,7 @@ bool PlexClient::fetchExtras(const std::string& ratingKey, std::vector<MediaItem
 bool PlexClient::fetchArtistHubs(const std::string& ratingKey, std::vector<Hub>& hubs) {
     brls::Logger::debug("fetchArtistHubs: ratingKey={}", ratingKey);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/hubs/metadata/" + ratingKey + "?count=999");
 
     HttpRequest req;
@@ -1197,7 +1197,7 @@ bool PlexClient::fetchArtistHubs(const std::string& ratingKey, std::vector<Hub>&
 bool PlexClient::fetchHubs(std::vector<Hub>& hubs) {
     brls::Logger::debug("fetchHubs: serverUrl={}", m_serverUrl);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/hubs");
 
     // Request JSON format
@@ -1296,7 +1296,7 @@ bool PlexClient::fetchHubs(std::vector<Hub>& hubs) {
 bool PlexClient::fetchContinueWatching(std::vector<MediaItem>& items) {
     brls::Logger::debug("fetchContinueWatching: serverUrl={}", m_serverUrl);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/hubs/continueWatching");
 
     // Request JSON format
@@ -1370,7 +1370,7 @@ bool PlexClient::fetchContinueWatching(std::vector<MediaItem>& items) {
 bool PlexClient::fetchRecentlyAdded(std::vector<MediaItem>& items) {
     brls::Logger::debug("fetchRecentlyAdded: serverUrl={}", m_serverUrl);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/library/recentlyAdded");
 
     // Request JSON format
@@ -1467,7 +1467,7 @@ bool PlexClient::fetchRecentlyAddedByType(MediaType type, std::vector<MediaItem>
             return fetchRecentlyAdded(items);  // Fallback to all types
     }
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/library/recentlyAdded?type=" + std::to_string(typeCode));
 
     HttpRequest req;
@@ -1531,7 +1531,7 @@ bool PlexClient::fetchRecentlyAddedByType(MediaType type, std::vector<MediaItem>
 bool PlexClient::search(const std::string& query, std::vector<MediaItem>& results) {
     brls::Logger::debug("Searching for: {}", query);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/hubs/search?query=" + HttpClient::urlEncode(query));
 
     // Request JSON format
@@ -1602,7 +1602,7 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
 bool PlexClient::fetchCollections(const std::string& sectionKey, std::vector<MediaItem>& collections) {
     brls::Logger::debug("Fetching collections for section: {}", sectionKey);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     // Use proper Plex API: /library/sections/{key}/all?type=18 (18 = collection type)
     // Also try /library/sections/{key}/collections as fallback
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all?type=18");
@@ -1675,7 +1675,7 @@ bool PlexClient::fetchCollections(const std::string& sectionKey, std::vector<Med
 bool PlexClient::fetchPlaylists(std::vector<MediaItem>& playlists) {
     brls::Logger::debug("Fetching playlists");
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/playlists");
 
     HttpRequest req;
@@ -1738,7 +1738,7 @@ bool PlexClient::fetchPlaylists(std::vector<MediaItem>& playlists) {
 bool PlexClient::fetchGenres(const std::string& sectionKey, std::vector<std::string>& genres) {
     brls::Logger::debug("Fetching genres for section: {}", sectionKey);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     // Plex API: /library/sections/{key}/genre returns list of genres
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/genre");
 
@@ -1779,7 +1779,7 @@ bool PlexClient::fetchGenres(const std::string& sectionKey, std::vector<std::str
 bool PlexClient::fetchGenreItems(const std::string& sectionKey, std::vector<GenreItem>& genres) {
     brls::Logger::debug("Fetching genre items for section: {}", sectionKey);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     // Plex API: /library/sections/{key}/genre returns genres with keys for filtering
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/genre");
 
@@ -1845,7 +1845,7 @@ bool PlexClient::fetchGenreItems(const std::string& sectionKey, std::vector<Genr
 bool PlexClient::fetchByGenre(const std::string& sectionKey, const std::string& genre, std::vector<MediaItem>& items, int metadataType) {
     brls::Logger::debug("Fetching items by genre: {} in section {} type={}", genre, sectionKey, metadataType);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     // Plex API: /library/sections/{key}/all?genre={genreId}&type={metadataType}
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all?genre=" + HttpClient::urlEncode(genre));
     if (metadataType > 0) {
@@ -1911,7 +1911,7 @@ bool PlexClient::fetchByGenre(const std::string& sectionKey, const std::string& 
 bool PlexClient::fetchByGenreKey(const std::string& sectionKey, const std::string& genreKey, std::vector<MediaItem>& items, int metadataType) {
     brls::Logger::debug("Fetching items by genre key: {} in section {} type={}", genreKey, sectionKey, metadataType);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     // Plex API: Use the fastKey or construct filter with genre key/ID
     // The genreKey is typically the numeric ID from the genre list
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all?genre=" + genreKey);
@@ -1979,7 +1979,7 @@ bool PlexClient::getPlaybackUrl(const std::string& ratingKey, std::string& url) 
     brls::Logger::debug("getPlaybackUrl: ratingKey={}", ratingKey);
 
     // Fetch media details to get the Part key for streaming
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string apiUrl = buildApiUrl("/library/metadata/" + ratingKey);
 
     HttpRequest req;
@@ -2024,7 +2024,7 @@ bool PlexClient::getPlaybackUrl(const std::string& ratingKey, std::string& url) 
 }
 
 bool PlexClient::fetchStreams(const std::string& ratingKey, std::vector<PlexStream>& streams, int& partId) {
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/library/metadata/" + ratingKey);
 
     HttpRequest req;
@@ -2123,7 +2123,7 @@ bool PlexClient::setStreamSelection(int partId, int audioStreamID, int subtitleS
         endpoint += "&subtitleStreamID=" + std::to_string(subtitleStreamID);
     }
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl(endpoint);
 
     HttpRequest req;
@@ -2142,7 +2142,7 @@ bool PlexClient::setStreamSelection(int partId, int audioStreamID, int subtitleS
 
 bool PlexClient::searchSubtitles(const std::string& ratingKey, const std::string& language,
                                   std::vector<SubtitleResult>& results) {
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string endpoint = "/library/metadata/" + ratingKey + "/subtitles?language=" + language;
     std::string url = buildApiUrl(endpoint);
 
@@ -2261,7 +2261,7 @@ bool PlexClient::selectSearchedSubtitle(const std::string& ratingKey, int partId
     //   with key and partId as query parameters
     brls::Logger::debug("selectSearchedSubtitle: ratingKey={} partId={} key={}", ratingKey, partId, subtitleKey);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string endpoint = "/library/metadata/" + ratingKey + "/subtitles"
                           + "?key=" + HttpClient::urlEncode(subtitleKey)
                           + "&partId=" + std::to_string(partId);
@@ -2286,7 +2286,7 @@ bool PlexClient::selectSearchedSubtitle(const std::string& ratingKey, int partId
 void PlexClient::stopTranscode() {
     if (m_lastSessionId.empty()) return;
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/video/:/transcode/universal/stop?session=" + m_lastSessionId);
 
     HttpRequest req;
@@ -2302,7 +2302,7 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     brls::Logger::debug("getTranscodeUrl: ratingKey={}, offsetMs={}", ratingKey, offsetMs);
 
     // Fetch media details to get the Part key and determine if audio or video
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string apiUrl = buildApiUrl("/library/metadata/" + ratingKey);
 
     HttpRequest req;
@@ -2507,7 +2507,7 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
 }
 
 bool PlexClient::updatePlayProgress(const std::string& ratingKey, int timeMs) {
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/:/progress?key=" + ratingKey + "&time=" + std::to_string(timeMs) + "&identifier=com.plexapp.plugins.library");
     HttpResponse resp = client.get(url);
     return resp.statusCode == 200;
@@ -2516,7 +2516,7 @@ bool PlexClient::updatePlayProgress(const std::string& ratingKey, int timeMs) {
 bool PlexClient::reportTimeline(const std::string& ratingKey, const std::string& key,
                                 const std::string& state, int timeMs, int durationMs,
                                 int playQueueItemID) {
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string params = "/:/timeline?ratingKey=" + ratingKey +
         "&key=" + key +
         "&state=" + state +
@@ -2538,14 +2538,14 @@ bool PlexClient::reportTimeline(const std::string& ratingKey, const std::string&
 }
 
 bool PlexClient::markAsWatched(const std::string& ratingKey) {
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/:/scrobble?key=" + ratingKey + "&identifier=com.plexapp.plugins.library");
     HttpResponse resp = client.get(url);
     return resp.statusCode == 200;
 }
 
 bool PlexClient::markAsUnwatched(const std::string& ratingKey) {
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/:/unscrobble?key=" + ratingKey + "&identifier=com.plexapp.plugins.library");
     HttpResponse resp = client.get(url);
     return resp.statusCode == 200;
@@ -2554,7 +2554,7 @@ bool PlexClient::markAsUnwatched(const std::string& ratingKey) {
 void PlexClient::checkLiveTVAvailability() {
     // Official Plex API: GET /livetv/dvrs
     // Returns DVR list with key, lineup, uuid, Device array, and ChannelMapping
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string url = buildApiUrl("/livetv/dvrs");
     HttpRequest req;
     req.url = url;
@@ -2669,7 +2669,7 @@ void PlexClient::checkLiveTVAvailability() {
 }
 
 bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
 
     // Ensure DVR info is loaded
     if (m_dvrId.empty()) {
@@ -2861,7 +2861,7 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
     time_t now = time(nullptr);
     time_t endTime = now + (hoursAhead * 3600);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     HttpRequest req;
     req.method = "GET";
     req.headers["Accept"] = "application/json";
@@ -3089,7 +3089,7 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
         }
     }
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
 
     // Official API: POST /livetv/dvrs/{dvrId}/channels/{channel}/tune
     // Per openapi.json: channel param is a string like "2.1" (the deviceIdentifier)
@@ -3228,7 +3228,7 @@ bool PlexClient::fetchMusicPlaylists(std::vector<Playlist>& playlists) {
     // Returns non-smart (dumb) audio playlists
     std::string url = buildApiUrl("/playlists?playlistType=audio");
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string response;
 
     if (!client.get(url, response, {{"Accept", "application/json"}})) {
@@ -3294,7 +3294,7 @@ bool PlexClient::fetchPlaylistItems(const std::string& playlistId, std::vector<P
     // GET /playlists/{playlistId}/items
     std::string url = buildApiUrl("/playlists/" + playlistId + "/items");
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string response;
 
     if (!client.get(url, response, {{"Accept", "application/json"}})) {
@@ -3361,7 +3361,7 @@ bool PlexClient::createPlaylist(const std::string& title, const std::string& pla
     std::string url = buildApiUrl("/playlists?type=15&title=" + HttpClient::urlEncode(title) +
                                   "&smart=0&playlistType=" + playlistType);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string response;
 
     if (!client.post(url, "", response, {{"Accept", "application/json"}})) {
@@ -3419,7 +3419,7 @@ bool PlexClient::createPlaylistWithItems(const std::string& title, const std::ve
     std::string url = buildApiUrl("/playlists?type=15&title=" + HttpClient::urlEncode(title) +
                                   "&smart=0&playlistType=audio&uri=" + HttpClient::urlEncode(uri));
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string response;
 
     if (!client.post(url, "", response, {{"Accept", "application/json"}})) {
@@ -3462,7 +3462,7 @@ bool PlexClient::deletePlaylist(const std::string& playlistId) {
     // DELETE /playlists/{playlistId}
     std::string url = buildApiUrl("/playlists/" + playlistId);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string response;
 
     if (!client.del(url, response)) {
@@ -3478,7 +3478,7 @@ bool PlexClient::renamePlaylist(const std::string& playlistId, const std::string
     // PUT /playlists/{playlistId}?title={newTitle}
     std::string url = buildApiUrl("/playlists/" + playlistId + "?title=" + HttpClient::urlEncode(newTitle));
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string response;
 
     if (!client.put(url, "", response)) {
@@ -3506,7 +3506,7 @@ bool PlexClient::addToPlaylist(const std::string& playlistId, const std::vector<
     // PUT /playlists/{playlistId}/items?uri={uri}
     std::string url = buildApiUrl("/playlists/" + playlistId + "/items?uri=" + HttpClient::urlEncode(uri));
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string response;
 
     if (!client.put(url, "", response)) {
@@ -3522,7 +3522,7 @@ bool PlexClient::removeFromPlaylist(const std::string& playlistId, const std::st
     // DELETE /playlists/{playlistId}/items/{playlistItemId}
     std::string url = buildApiUrl("/playlists/" + playlistId + "/items/" + playlistItemId);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string response;
 
     if (!client.del(url, response)) {
@@ -3538,7 +3538,7 @@ bool PlexClient::clearPlaylist(const std::string& playlistId) {
     // DELETE /playlists/{playlistId}/items
     std::string url = buildApiUrl("/playlists/" + playlistId + "/items");
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string response;
 
     if (!client.del(url, response)) {
@@ -3557,7 +3557,7 @@ bool PlexClient::movePlaylistItem(const std::string& playlistId, const std::stri
         url += "&after=" + afterItemId;
     }
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string response;
 
     if (!client.put(url, "", response)) {
@@ -3667,7 +3667,7 @@ bool PlexClient::createPlayQueue(const std::string& uri, const std::string& type
 
     std::string url = buildApiUrl("/playQueues" + params);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     HttpRequest req;
     req.url = url;
     req.method = "POST";
@@ -3693,7 +3693,7 @@ bool PlexClient::createPlayQueueFromPlaylist(int playlistID, const std::string& 
 
     std::string url = buildApiUrl("/playQueues" + params);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     HttpRequest req;
     req.url = url;
     req.method = "POST";
@@ -3715,7 +3715,7 @@ bool PlexClient::createPlayQueueFromPlaylist(int playlistID, const std::string& 
 bool PlexClient::getPlayQueue(int playQueueID, PlayQueueContainer& result) {
     std::string url = buildApiUrl("/playQueues/" + std::to_string(playQueueID));
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     HttpRequest req;
     req.url = url;
     req.method = "GET";
@@ -3738,7 +3738,7 @@ bool PlexClient::addToPlayQueue(int playQueueID, const std::string& uri, bool pl
 
     std::string url = buildApiUrl("/playQueues/" + std::to_string(playQueueID) + params);
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string response;
     if (!client.put(url, "", response)) {
         brls::Logger::error("addToPlayQueue: Failed to add to PQ {}", playQueueID);
@@ -3752,7 +3752,7 @@ bool PlexClient::addToPlayQueue(int playQueueID, const std::string& uri, bool pl
 bool PlexClient::clearPlayQueue(int playQueueID) {
     std::string url = buildApiUrl("/playQueues/" + std::to_string(playQueueID) + "/items");
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string response;
     if (!client.del(url, response)) {
         brls::Logger::error("clearPlayQueue: Failed to clear PQ {}", playQueueID);
@@ -3767,7 +3767,7 @@ bool PlexClient::removeFromPlayQueue(int playQueueID, int playQueueItemID) {
     std::string url = buildApiUrl("/playQueues/" + std::to_string(playQueueID) +
                                   "/items/" + std::to_string(playQueueItemID));
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string response;
     if (!client.del(url, response)) {
         brls::Logger::error("removeFromPlayQueue: Failed to remove item {} from PQ {}",
@@ -3787,7 +3787,7 @@ bool PlexClient::movePlayQueueItem(int playQueueID, int playQueueItemID, int aft
         url += "?after=" + std::to_string(afterItemID);
     }
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     std::string response;
     if (!client.put(url, "", response)) {
         brls::Logger::error("movePlayQueueItem: Failed to move item {} in PQ {}",
@@ -3803,7 +3803,7 @@ bool PlexClient::movePlayQueueItem(int playQueueID, int playQueueItemID, int aft
 bool PlexClient::shufflePlayQueue(int playQueueID, PlayQueueContainer& result) {
     std::string url = buildApiUrl("/playQueues/" + std::to_string(playQueueID) + "/shuffle");
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     HttpRequest req;
     req.url = url;
     req.method = "PUT";
@@ -3823,7 +3823,7 @@ bool PlexClient::shufflePlayQueue(int playQueueID, PlayQueueContainer& result) {
 bool PlexClient::unshufflePlayQueue(int playQueueID, PlayQueueContainer& result) {
     std::string url = buildApiUrl("/playQueues/" + std::to_string(playQueueID) + "/unshuffle");
 
-    HttpClient& client = HttpClient::shared();
+    HttpClient client;
     HttpRequest req;
     req.url = url;
     req.method = "PUT";
