@@ -2566,9 +2566,17 @@ void PlexClient::checkLiveTVAvailability() {
         }
         brls::Logger::info("Live TV: Found {} channel mappings", m_channelMappings.size());
 
-        // Extract EPG provider key from the lineup URI
-        // Format: "lineup://tv.plex.providers.epg.onconnect/USA-HI51418-X"
-        // The provider identifier is the host part: "tv.plex.providers.epg.onconnect"
+        // Extract EPG provider key from the DVR response's "epgIdentifier" field
+        // This is the full provider key including DVR-specific suffix (e.g., "tv.plex.providers.epg.cloud:40")
+        // The grid endpoint uses this as: GET /{epgIdentifier}/grid
+        if (m_epgProviderKey.empty()) {
+            m_epgProviderKey = extractJsonValue(resp.body, "epgIdentifier");
+            if (!m_epgProviderKey.empty()) {
+                brls::Logger::info("Live TV EPG provider key (from epgIdentifier): {}", m_epgProviderKey);
+            }
+        }
+
+        // Fallback: derive from lineup URI if epgIdentifier not found
         if (m_epgProviderKey.empty() && !m_lineupUri.empty()) {
             size_t protoEnd = m_lineupUri.find("://");
             if (protoEnd != std::string::npos) {
@@ -2581,7 +2589,7 @@ void PlexClient::checkLiveTVAvailability() {
                 }
             }
             if (!m_epgProviderKey.empty()) {
-                brls::Logger::info("Live TV EPG provider key (from lineup): {}", m_epgProviderKey);
+                brls::Logger::info("Live TV EPG provider key (from lineup URI): {}", m_epgProviderKey);
             }
         }
     }
@@ -3021,12 +3029,14 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     // Official API: POST /livetv/dvrs/{dvrId}/channels/{channel}/tune
     // Per openapi.json: channel param is a string like "2.1" (the deviceIdentifier)
     // Returns Media with uuid (session ID) which can be used for HLS streaming
-    std::string tuneUrl = buildApiUrl("/livetv/dvrs/" + m_dvrId + "/channels/" + HttpClient::urlEncode(channelKey) + "/tune");
+    std::string tuneUrl = buildApiUrl("/livetv/dvrs/" + m_dvrId + "/channels/" + channelKey + "/tune");
 
     HttpRequest tuneReq;
     tuneReq.url = tuneUrl;
     tuneReq.method = "POST";
     tuneReq.headers["Accept"] = "application/json";
+    tuneReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+    tuneReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
     tuneReq.timeout = 15;
 
     brls::Logger::debug("tuneLiveTVChannel: POST {}", tuneUrl);
@@ -3054,7 +3064,9 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     } else if (tuneResp.statusCode == 500) {
         brls::Logger::error("tuneLiveTVChannel: Tune failed (500 - server error) for channel {}", channelKey);
     } else {
-        brls::Logger::error("tuneLiveTVChannel: Tune returned {} for channel {}", tuneResp.statusCode, channelKey);
+        brls::Logger::error("tuneLiveTVChannel: Tune returned {} for channel {}, body: {}",
+                            tuneResp.statusCode, channelKey,
+                            tuneResp.body.empty() ? "(empty)" : tuneResp.body.substr(0, 200));
     }
 
     // Fallback: try transcode/universal with program metadata key
