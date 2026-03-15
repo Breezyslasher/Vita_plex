@@ -3037,7 +3037,9 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     tuneReq.headers["Accept"] = "application/json";
     tuneReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
     tuneReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
-    tuneReq.timeout = 15;
+    // Use longer timeout - tune can take time, especially with EPG channel keys
+    // that may create MediaSubscription responses with chunked data
+    tuneReq.timeout = 30;
 
     brls::Logger::debug("tuneLiveTVChannel: POST {}", tuneUrl);
     HttpResponse tuneResp = client.request(tuneReq);
@@ -3046,21 +3048,45 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
         brls::Logger::debug("tuneLiveTVChannel: Tune response ({} bytes): {}",
                             tuneResp.body.length(), tuneResp.body.substr(0, 500));
 
-        // Extract session UUID from Media object in response
-        // Per openapi.json: Media[].uuid is the session ID
-        std::string sessionUuid = extractJsonValue(tuneResp.body, "uuid");
+        // Check for "Could not tune" error (status -1)
+        // Server returns 200 but with {"MediaContainer":{"status":-1,"message":"Could not tune..."}}
+        std::string tuneStatus = extractJsonValue(tuneResp.body, "status");
+        std::string tuneMessage = extractJsonValue(tuneResp.body, "message");
+        if (tuneStatus == "-1" || tuneResp.body.find("Could not tune") != std::string::npos) {
+            brls::Logger::warning("tuneLiveTVChannel: Server reported tune failure: {}", tuneMessage);
+            // Don't return - fall through to transcode fallback
+        } else {
+            // Extract session UUID from Media object in response
+            // Per openapi.json: Media[].uuid is the session ID
+            std::string sessionUuid = extractJsonValue(tuneResp.body, "uuid");
 
-        if (!sessionUuid.empty()) {
-            // Build HLS stream URL using session endpoint
-            // Official API: GET /livetv/sessions/{sessionId}/{consumerId}/index.m3u8
-            // Use client identifier as consumerId
-            streamUrl = buildApiUrl("/livetv/sessions/" + sessionUuid + "/" +
-                                    std::string(PLEX_CLIENT_ID) + "/index.m3u8");
-            brls::Logger::info("tuneLiveTVChannel: Stream URL (session HLS) = {}", streamUrl);
-            return true;
+            if (!sessionUuid.empty()) {
+                // Build HLS stream URL using session endpoint
+                // Official API: GET /livetv/sessions/{sessionId}/{consumerId}/index.m3u8
+                // Use client identifier as consumerId
+                streamUrl = buildApiUrl("/livetv/sessions/" + sessionUuid + "/" +
+                                        std::string(PLEX_CLIENT_ID) + "/index.m3u8");
+                brls::Logger::info("tuneLiveTVChannel: Stream URL (session HLS) = {}", streamUrl);
+                return true;
+            }
+
+            brls::Logger::warning("tuneLiveTVChannel: No session UUID in tune response");
         }
-
-        brls::Logger::warning("tuneLiveTVChannel: No session UUID in tune response");
+    } else if (tuneResp.statusCode == 0 || tuneResp.statusCode == -1) {
+        // Connection drop / timeout - may happen with EPG key tunes that return chunked data
+        brls::Logger::warning("tuneLiveTVChannel: Connection dropped (status {}), body so far ({} bytes): {}",
+                              tuneResp.statusCode, tuneResp.body.length(),
+                              tuneResp.body.empty() ? "(empty)" : tuneResp.body.substr(0, 300));
+        // Try to extract UUID from partial response if we got any data
+        if (!tuneResp.body.empty()) {
+            std::string sessionUuid = extractJsonValue(tuneResp.body, "uuid");
+            if (!sessionUuid.empty()) {
+                streamUrl = buildApiUrl("/livetv/sessions/" + sessionUuid + "/" +
+                                        std::string(PLEX_CLIENT_ID) + "/index.m3u8");
+                brls::Logger::info("tuneLiveTVChannel: Stream URL from partial response = {}", streamUrl);
+                return true;
+            }
+        }
     } else if (tuneResp.statusCode == 500) {
         brls::Logger::error("tuneLiveTVChannel: Tune failed (500 - server error) for channel {}", channelKey);
     } else {
@@ -3074,8 +3100,9 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     if (!programMetadataKey.empty()) {
         brls::Logger::info("tuneLiveTVChannel: Falling back to transcode with program metadata key...");
 
-        std::string encodedPath = HttpClient::urlEncode(programMetadataKey);
-        std::string params = "path=" + encodedPath +
+        // programMetadataKey from EPG grid is already URL-encoded (e.g. plex%3A%2F%2Fepisode%2F...)
+        // Do NOT re-encode it or we get double-encoding (plex%253A%252F%252F...) causing 400 errors
+        std::string params = "path=" + programMetadataKey +
             "&mediaIndex=0&partIndex=0"
             "&directPlay=0&directStream=1&directStreamAudio=1"
             "&hasMDE=1&location=lan"
@@ -3106,7 +3133,9 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
             return true;
         }
 
-        brls::Logger::error("tuneLiveTVChannel: Transcode decision failed: {}", decResp.statusCode);
+        brls::Logger::error("tuneLiveTVChannel: Transcode decision failed: {} body: {}",
+                            decResp.statusCode,
+                            decResp.body.empty() ? "(empty)" : decResp.body.substr(0, 300));
     }
 
     brls::Logger::error("tuneLiveTVChannel: All tuning strategies failed for channel {}", channelKey);
