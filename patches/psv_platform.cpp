@@ -20,7 +20,6 @@ limitations under the License.
 #include <psp2/net/netctl.h>
 #include <psp2/power.h>
 #include <psp2/registrymgr.h>
-#include <psp2/shellutil.h>
 #include <psp2/system_param.h>
 #include <sys/unistd.h>
 
@@ -60,21 +59,6 @@ extern "C" void vitaplex_signal_video_frame()
     s_videoFrameReady.store(true, std::memory_order_release);
 }
 
-// PS button lock for background audio playback.
-// When locked, the PS button won't trigger app suspension, so audio keeps
-// playing.  The user must stop playback before they can return to LiveArea.
-static std::atomic<bool> s_psBtnLocked{false};
-
-extern "C" void vitaplex_lock_ps_button(bool lock)
-{
-    bool wasLocked = s_psBtnLocked.exchange(lock);
-    if (lock && !wasLocked) {
-        sceShellUtilLock(SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN);
-    } else if (!lock && wasLocked) {
-        sceShellUtilUnlock(SCE_SHELL_UTIL_LOCK_TYPE_PS_BTN);
-    }
-}
-
 namespace brls
 {
 
@@ -110,10 +94,6 @@ PsvPlatform::PsvPlatform()
     int thid = sceKernelCreateThread("callbackThread", CallbackThread, 0x10000100, 0x10000, 0, 0, NULL);
     if (thid >= 0)
         sceKernelStartThread(thid, 0, NULL);
-
-    // Initialize shell utility events so we can lock the PS button during
-    // audio playback to prevent the OS from suspending our process.
-    sceShellUtilInitEvents(0);
 
     SceAppUtilInitParam initParam;
     SceAppUtilBootParam bootParam;

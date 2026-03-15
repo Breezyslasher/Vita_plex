@@ -19,7 +19,6 @@
 #ifdef __vita__
 #include <psp2/power.h>
 extern "C" int sceAppMgrAcquireBgmPortWithPriority(int priority);
-extern "C" void vitaplex_lock_ps_button(bool lock);
 #endif
 
 namespace vitaplex {
@@ -664,12 +663,6 @@ void PlayerActivity::willDisappear(bool resetState) {
         player.stop();
     }
 
-#ifdef __vita__
-    // Unlock PS button so the user can return to LiveArea
-    vitaplex_lock_ps_button(false);
-    brls::Logger::info("PlayerActivity: PS button unlocked (playback stopped)");
-#endif
-
     m_isPlaying = false;
 }
 
@@ -847,7 +840,6 @@ void PlayerActivity::loadFromQueue() {
     // Re-acquire BGM port on track change (player already initialized)
 #ifdef __vita__
     sceAppMgrAcquireBgmPortWithPriority(0x81);
-    vitaplex_lock_ps_button(true);
 #endif
 
     // Player already initialized (track change) - load immediately
@@ -1209,13 +1201,10 @@ void PlayerActivity::updateProgress() {
         // Acquire the BGM port AFTER MPV has initialized and opened its audio
         // port (sceAudioOutOpenPort). The system needs the audio port to exist
         // before the BGM acquisition takes effect for background playback.
-        // Also lock the PS button so the OS won't suspend us while audio plays.
 #ifdef __vita__
         {
             int ret = sceAppMgrAcquireBgmPortWithPriority(0x81);
             brls::Logger::info("PlayerActivity: sceAppMgrAcquireBgmPortWithPriority(0x81) = 0x{:08X}", (unsigned)ret);
-            vitaplex_lock_ps_button(true);
-            brls::Logger::info("PlayerActivity: PS button locked for background audio");
         }
 #endif
 
