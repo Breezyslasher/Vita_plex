@@ -32,6 +32,11 @@ void HttpClient::globalCleanup() {
     curl_global_cleanup();
 }
 
+HttpClient& HttpClient::shared() {
+    static HttpClient instance;
+    return instance;
+}
+
 HttpClient::HttpClient() {
     m_curl = curl_easy_init();
     m_userAgent = PLEX_CLIENT_NAME "/" PLEX_CLIENT_VERSION " (" PLEX_PLATFORM ")";

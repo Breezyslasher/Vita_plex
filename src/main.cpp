@@ -74,11 +74,13 @@ static bool initVitaSystem() {
     memset(&bootParam, 0, sizeof(bootParam));
     sceAppUtilInit(&initParam, &bootParam);
 
-    // Set max clock speeds
-    scePowerSetArmClockFrequency(444);
-    scePowerSetBusClockFrequency(222);
-    scePowerSetGpuClockFrequency(222);
-    scePowerSetGpuXbarClockFrequency(166);
+    // Start with reduced clock speeds for browsing (saves battery).
+    // PlayerActivity raises clocks to max when playback starts,
+    // and lowers them again when playback ends.
+    scePowerSetArmClockFrequency(333);
+    scePowerSetBusClockFrequency(166);
+    scePowerSetGpuClockFrequency(166);
+    scePowerSetGpuXbarClockFrequency(111);
 
     // Load shader compiler
     loadShaderCompiler();

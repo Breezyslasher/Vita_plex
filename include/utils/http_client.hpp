@@ -85,6 +85,11 @@ public:
     static std::string urlEncode(const std::string& str);
     static std::string urlDecode(const std::string& str);
 
+    // Shared instance for API calls - reuses the same curl handle
+    // to avoid curl_easy_init/cleanup overhead on every request.
+    // NOT thread-safe - only use from the main/API thread.
+    static HttpClient& shared();
+
 private:
     void* m_curl = nullptr;
     int m_timeout = 30;

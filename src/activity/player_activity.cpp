@@ -16,6 +16,10 @@
 #include <fstream>
 #include <sys/stat.h>
 
+#ifdef __vita__
+#include <psp2/power.h>
+#endif
+
 namespace vitaplex {
 
 // Base temp file path for streaming audio (MPV's HTTP handling crashes on Vita)
@@ -131,6 +135,14 @@ brls::View* PlayerActivity::createContentView() {
 
 void PlayerActivity::onContentAvailable() {
     brls::Logger::debug("PlayerActivity content available");
+
+#ifdef __vita__
+    // Boost CPU/GPU clocks to max for smooth media playback
+    scePowerSetArmClockFrequency(444);
+    scePowerSetBusClockFrequency(222);
+    scePowerSetGpuClockFrequency(222);
+    scePowerSetGpuXbarClockFrequency(166);
+#endif
 
     // Cancel pending background thumbnail loads (HomeTab, MediaDetailView)
     // to free up network bandwidth for media streaming.
@@ -555,6 +567,14 @@ void PlayerActivity::willDisappear(bool resetState) {
 
     // Re-enable background thumbnail loading now that playback is ending
     ImageLoader::setPaused(false);
+
+#ifdef __vita__
+    // Restore reduced clock speeds for browsing (saves battery)
+    scePowerSetArmClockFrequency(333);
+    scePowerSetBusClockFrequency(166);
+    scePowerSetGpuClockFrequency(166);
+    scePowerSetGpuXbarClockFrequency(111);
+#endif
 
     // If background music is enabled and we're in queue mode, don't stop playback
     if (m_isQueueMode && Application::getInstance().getSettings().backgroundMusic && !m_destroying) {

@@ -251,7 +251,7 @@ public:
 
     // Library operations
     bool fetchLibrarySections(std::vector<LibrarySection>& sections);
-    bool fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items, int metadataType = 0);
+    bool fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items, int metadataType = 0, int limit = 0, int offset = 0, int* totalCount = nullptr);
     bool fetchSectionRecentlyAdded(const std::string& sectionKey, std::vector<MediaItem>& items);
     bool fetchChildren(const std::string& ratingKey, std::vector<MediaItem>& items);
     bool fetchMediaDetails(const std::string& ratingKey, MediaItem& item);
@@ -425,6 +425,12 @@ private:
     int extractJsonInt(const std::string& json, const std::string& key);
     float extractJsonFloat(const std::string& json, const std::string& key);
     bool extractJsonBool(const std::string& json, const std::string& key);
+
+    // In-place extraction: works on a range [start, end) of a string without creating a substring.
+    // Saves CPU and memory for large JSON responses.
+    std::string extractJsonValueRange(const std::string& json, size_t start, size_t end, const std::string& key);
+    int extractJsonIntRange(const std::string& json, size_t start, size_t end, const std::string& key);
+    float extractJsonFloatRange(const std::string& json, size_t start, size_t end, const std::string& key);
     std::string base64Encode(const std::string& input);
     int extractXmlAttr(const std::string& xml, const std::string& attr);
     std::string extractXmlAttrStr(const std::string& xml, const std::string& attr);

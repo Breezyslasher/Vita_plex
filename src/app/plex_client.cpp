@@ -103,6 +103,58 @@ bool PlexClient::extractJsonBool(const std::string& json, const std::string& key
     return (value == "true" || value == "1");
 }
 
+// In-place extraction: searches within [start, end) of json without creating a substring.
+std::string PlexClient::extractJsonValueRange(const std::string& json, size_t start, size_t end, const std::string& key) {
+    std::string searchKey = "\"" + key + "\"";
+    size_t keyPos = json.find(searchKey, start);
+    if (keyPos == std::string::npos || keyPos >= end) return "";
+
+    size_t colonPos = json.find(':', keyPos);
+    if (colonPos == std::string::npos || colonPos >= end) return "";
+
+    size_t valueStart = colonPos + 1;
+    while (valueStart < end && (json[valueStart] == ' ' || json[valueStart] == '\t' ||
+           json[valueStart] == '\n' || json[valueStart] == '\r')) {
+        valueStart++;
+    }
+    if (valueStart >= end) return "";
+
+    if (json[valueStart] == '"') {
+        size_t valueEnd = valueStart + 1;
+        while (valueEnd < end) {
+            if (json[valueEnd] == '"' && json[valueEnd - 1] != '\\') break;
+            valueEnd++;
+        }
+        if (valueEnd >= end) return "";
+        return json.substr(valueStart + 1, valueEnd - valueStart - 1);
+    } else if (valueStart + 4 <= end && json[valueStart] == 'n' &&
+               json[valueStart+1] == 'u' && json[valueStart+2] == 'l' && json[valueStart+3] == 'l') {
+        return "";
+    } else {
+        size_t valueEnd = valueStart;
+        while (valueEnd < end && json[valueEnd] != ',' && json[valueEnd] != '}' && json[valueEnd] != ']') {
+            valueEnd++;
+        }
+        std::string value = json.substr(valueStart, valueEnd - valueStart);
+        while (!value.empty() && (value.back() == ' ' || value.back() == '\n' || value.back() == '\r')) {
+            value.pop_back();
+        }
+        return value;
+    }
+}
+
+int PlexClient::extractJsonIntRange(const std::string& json, size_t start, size_t end, const std::string& key) {
+    std::string value = extractJsonValueRange(json, start, end, key);
+    if (value.empty()) return 0;
+    return atoi(value.c_str());
+}
+
+float PlexClient::extractJsonFloatRange(const std::string& json, size_t start, size_t end, const std::string& key) {
+    std::string value = extractJsonValueRange(json, start, end, key);
+    if (value.empty()) return 0.0f;
+    return (float)atof(value.c_str());
+}
+
 std::string PlexClient::base64Encode(const std::string& input) {
     static const char* base64_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string output;
@@ -563,14 +615,20 @@ bool PlexClient::fetchLibrarySections(std::vector<LibrarySection>& sections) {
     return !sections.empty();
 }
 
-bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items, int metadataType) {
-    brls::Logger::debug("fetchLibraryContent: section={} type={}", sectionKey, metadataType);
+bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items, int metadataType, int limit, int offset, int* totalCount) {
+    brls::Logger::debug("fetchLibraryContent: section={} type={} limit={} offset={}", sectionKey, metadataType, limit, offset);
 
     HttpClient client;
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all");
     if (metadataType > 0) {
         url += "&type=" + std::to_string(metadataType);
     }
+
+    // Server-side pagination: only fetch what we need to reduce response size.
+    // Default to 60 items per page.
+    int fetchLimit = (limit > 0) ? limit : 60;
+    url += "&X-Plex-Container-Start=" + std::to_string(offset) +
+           "&X-Plex-Container-Size=" + std::to_string(fetchLimit);
 
     // Request JSON format
     HttpRequest req;
@@ -588,18 +646,27 @@ bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<
     }
 
     items.clear();
+    items.reserve(fetchLimit);
 
-    // Parse items by looking for objects with "ratingKey" (media items have this)
+    // Extract total count from Plex container metadata (for pagination)
+    if (totalCount) {
+        *totalCount = extractJsonInt(resp.body, "totalSize");
+        if (*totalCount <= 0) {
+            // Fallback: some Plex versions use "size" for container total
+            *totalCount = extractJsonInt(resp.body, "size");
+        }
+    }
+
+    // Parse items in-place without creating per-object substrings.
+    // Uses extractJsonValueRange to search within [objStart, objEnd) of resp.body.
     size_t pos = 0;
     while ((pos = resp.body.find("\"ratingKey\"", pos)) != std::string::npos) {
-        // Go back to find start of this object
         size_t objStart = resp.body.rfind('{', pos);
         if (objStart == std::string::npos) {
             pos++;
             continue;
         }
 
-        // Find end of object
         int braceCount = 1;
         size_t objEnd = objStart + 1;
         while (braceCount > 0 && objEnd < resp.body.length()) {
@@ -608,26 +675,24 @@ bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<
             objEnd++;
         }
 
-        std::string obj = resp.body.substr(objStart, objEnd - objStart);
-
+        // Parse in-place - no substr copy of the object
         MediaItem item;
-        item.ratingKey = extractJsonValue(obj, "ratingKey");
-        item.key = extractJsonValue(obj, "key");
-        item.title = extractJsonValue(obj, "title");
-        item.summary = extractJsonValue(obj, "summary");
-        item.thumb = extractJsonValue(obj, "thumb");
-        item.art = extractJsonValue(obj, "art");
-        item.type = extractJsonValue(obj, "type");
+        item.ratingKey = extractJsonValueRange(resp.body, objStart, objEnd, "ratingKey");
+        item.key = extractJsonValueRange(resp.body, objStart, objEnd, "key");
+        item.title = extractJsonValueRange(resp.body, objStart, objEnd, "title");
+        item.thumb = extractJsonValueRange(resp.body, objStart, objEnd, "thumb");
+        item.type = extractJsonValueRange(resp.body, objStart, objEnd, "type");
         item.mediaType = parseMediaType(item.type);
-        item.year = extractJsonInt(obj, "year");
-        item.duration = extractJsonInt(obj, "duration");
-        item.viewOffset = extractJsonInt(obj, "viewOffset");
-        item.rating = extractJsonFloat(obj, "rating");
-        item.contentRating = extractJsonValue(obj, "contentRating");
-        item.subtype = extractJsonValue(obj, "subtype");
+        item.year = extractJsonIntRange(resp.body, objStart, objEnd, "year");
+        item.duration = extractJsonIntRange(resp.body, objStart, objEnd, "duration");
+        item.viewOffset = extractJsonIntRange(resp.body, objStart, objEnd, "viewOffset");
+        item.rating = extractJsonFloatRange(resp.body, objStart, objEnd, "rating");
+        item.contentRating = extractJsonValueRange(resp.body, objStart, objEnd, "contentRating");
+        item.subtype = extractJsonValueRange(resp.body, objStart, objEnd, "subtype");
+        // Skip summary and art for grid display - saves ~200-500 bytes per item
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
-            items.push_back(item);
+            items.push_back(std::move(item));
         }
 
         pos = objEnd;

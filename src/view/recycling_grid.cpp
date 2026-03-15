@@ -1,7 +1,7 @@
 /**
  * VitaPlex - Recycling Grid implementation
- * Only renders a window of items around the current scroll position.
- * This drastically reduces memory usage for large libraries.
+ * Infinite scroll: automatically fetches next page when user navigates
+ * to the last row. Server-side pagination keeps memory low.
  */
 
 #include "view/recycling_grid.hpp"
@@ -26,7 +26,36 @@ RecyclingGrid::RecyclingGrid() {
 
 void RecyclingGrid::setDataSource(const std::vector<MediaItem>& items) {
     m_items = items;
+    m_loading = false;
     rebuildGrid();
+}
+
+void RecyclingGrid::appendItems(const std::vector<MediaItem>& newItems) {
+    if (newItems.empty()) {
+        m_loading = false;
+        return;
+    }
+
+    size_t oldSize = m_items.size();
+    m_items.insert(m_items.end(), newItems.begin(), newItems.end());
+
+    // Render the new items continuing from where we left off
+    brls::Box* currentRow = nullptr;
+    int itemsInRow = (int)(oldSize % m_columns);
+    if (itemsInRow > 0 && m_contentBox->getChildren().size() > 0) {
+        auto& children = m_contentBox->getChildren();
+        currentRow = dynamic_cast<brls::Box*>(children.back());
+        if (!currentRow) itemsInRow = 0;
+    } else {
+        itemsInRow = 0;
+    }
+
+    for (size_t i = oldSize; i < m_items.size(); i++) {
+        addCellForItem(currentRow, itemsInRow, i);
+    }
+
+    m_renderedCount = m_items.size();
+    m_loading = false;
 }
 
 void RecyclingGrid::setOnItemSelected(std::function<void(const MediaItem&)> callback) {
@@ -35,6 +64,32 @@ void RecyclingGrid::setOnItemSelected(std::function<void(const MediaItem&)> call
 
 void RecyclingGrid::setOnItemStartAction(std::function<void(const MediaItem&)> callback) {
     m_onItemStartAction = callback;
+}
+
+void RecyclingGrid::setOnLoadMore(std::function<void()> callback) {
+    m_onLoadMore = callback;
+}
+
+void RecyclingGrid::setHasMore(bool hasMore) {
+    m_hasMore = hasMore;
+    m_loading = false;
+}
+
+brls::View* RecyclingGrid::getNextFocus(brls::FocusDirection direction, brls::View* currentView) {
+    brls::View* next = brls::ScrollingFrame::getNextFocus(direction, currentView);
+
+    // If navigating DOWN and there's nowhere to go, we're at the bottom.
+    // Trigger loading the next page if more items are available.
+    if (direction == brls::FocusDirection::DOWN && next == nullptr &&
+        m_hasMore && !m_loading && m_onLoadMore) {
+        m_loading = true;
+        // Use brls::sync to defer the fetch so focus resolution completes first
+        brls::sync([this]() {
+            if (m_onLoadMore) m_onLoadMore();
+        });
+    }
+
+    return next;
 }
 
 void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size_t index) {
@@ -129,35 +184,20 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
     }
 }
 
-void RecyclingGrid::renderWindow(size_t startIdx, size_t endIdx) {
+void RecyclingGrid::rebuildGrid() {
     m_contentBox->clearViews();
+    m_renderedCount = 0;
 
-    if (startIdx >= endIdx || startIdx >= m_items.size()) return;
-
-    // Clamp end to items size
-    if (endIdx > m_items.size()) endIdx = m_items.size();
+    if (m_items.empty()) return;
 
     brls::Box* currentRow = nullptr;
     int itemsInRow = 0;
 
-    for (size_t i = startIdx; i < endIdx; i++) {
+    for (size_t i = 0; i < m_items.size(); i++) {
         addCellForItem(currentRow, itemsInRow, i);
     }
 
-    m_windowStart = startIdx;
-    m_windowEnd = endIdx;
-}
-
-void RecyclingGrid::rebuildGrid() {
-    m_contentBox->clearViews();
-    m_windowStart = 0;
-    m_windowEnd = 0;
-
-    if (m_items.empty()) return;
-
-    // Render only the first window of items
-    size_t end = std::min(m_items.size(), WINDOW_SIZE);
-    renderWindow(0, end);
+    m_renderedCount = m_items.size();
 }
 
 void RecyclingGrid::onItemClicked(int index) {
