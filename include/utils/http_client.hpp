@@ -8,6 +8,7 @@
 #include <string>
 #include <map>
 #include <functional>
+#include <cstdint>
 
 namespace vitaplex {
 
