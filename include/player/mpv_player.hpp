@@ -14,16 +14,9 @@
 #include <mpv/client.h>
 #include <mpv/render.h>
 #include <mpv/render_gxm.h>
-#elif !defined(__ANDROID__)
-// Desktop/Switch/PS4 builds use libmpv client API.
+#else
 #include <mpv/client.h>
 #include <mpv/render.h>
-#else
-// Android build intentionally omits video playback (no libmpv dependency).
-typedef struct mpv_handle mpv_handle;
-typedef struct mpv_event mpv_event;
-typedef struct mpv_event_property mpv_event_property;
-typedef struct mpv_render_context mpv_render_context;
 #endif
 
 namespace vitaplex {
