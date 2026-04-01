@@ -1,0 +1,747 @@
+name: Build
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: which platform to build
+        type: choice
+        options:
+        - mingw64
+        - macos
+        - nx
+        - psvita
+        - ps4
+        - flatpak
+        - android
+        - aur
+        - deb
+      disable_builtin_nsp:
+        description: disable builtin NSP
+        type: boolean
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Build matrix
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+
+  upload-release:
+    needs: [ build-mingw, build-nx, build-macos, build-flatpak, build-aur, build-ps4, build-vita, build-android ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download Assets
+        uses: actions/download-artifact@v4
+      - name: Package Windows assets
+        run: |
+          for p in VitaSuwayomi-windows-*; do
+            [[ -d $p ]] && 7z a -mx=9 $p.7z ./$p/* && rm -rf $p
+          done
+      - name: Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          name: VitaSuwayomi ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: true
+          files: |
+            VitaSuwayomi-windows-*.7z
+            VitaSuwayomi-macos-*/*
+            VitaSuwayomi-nx-*/*.nro
+            VitaSuwayomi-ps4-*/*
+            VitaSuwayomi-vita-*/*.vpk
+            VitaSuwayomi-Flatpak-*/*
+            VitaSuwayomi-aur-*/*.pkg.tar.*
+            VitaSuwayomi-android-*/*
+
+  # ───────────────────────────────────────────────
+  # PS Vita — VPK
+  # ───────────────────────────────────────────────
+  build-vita:
+    if: ${{ inputs.platform == 'psvita' || github.event_name != 'workflow_dispatch' }}
+    name: PS Vita
+    runs-on: ubuntu-latest
+    container:
+      image: vitasdk/vitasdk:latest
+
+    steps:
+      - name: Install build requirements
+        run: apk update && apk add cmake ninja git zstd tar pkgconf
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Vita dependencies
+        env:
+          BASE_URL: https://github.com/dragonflylee/switchfin/releases/download/vita-packages
+        run: |
+          for pkg in mbedtls-3.6.5-1 curl-8.16.0-2 ffmpeg-n6.0-3 mpv-0.36.0-3; do
+            wget "$BASE_URL/${pkg}-arm.tar.xz"
+          done
+          vdpm libass harfbuzz fribidi freetype libpng libwebp $PWD/*-arm.tar.xz
+          git config --system --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build
+        run: |
+          cmake -B build -G Ninja -DPLATFORM_PSV=ON
+          cmake --build build
+
+      - name: Upload VPK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitaSuwayomi-vita-${{ github.run_number }}
+          path: build/VitaSuwayomi.vpk
+
+  # ───────────────────────────────────────────────
+  # Android — switchfin-style APK build
+  # ───────────────────────────────────────────────
+  build-android:
+    if: ${{ inputs.platform == 'android' || github.event_name != 'workflow_dispatch' }}
+    name: Android
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - uses: nttld/setup-ndk@v1
+      id: setup-ndk
+      with:
+        ndk-version: r27d
+        link-to-sdk: true
+    - name: Install dependency
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build pkg-config meson nasm make zstd
+    - name: Cache depends
+      id: cache-deps
+      uses: actions/cache@v4
+      with:
+        path: jniLibs
+        key: jniLibs-${{ hashFiles('scripts/android/Makefile') }}
+    - name: Build packages
+      if: steps.cache-deps.outputs.cache-hit != 'true'
+      run: |
+        make -C scripts/android TMPDIR=${{ runner.temp }} download
+        make -C scripts/android TMPDIR=${{ runner.temp }} ABI=armeabi-v7a \
+          ANDROID_NDK=${{ steps.setup-ndk.outputs.ndk-path }} build
+        make -C scripts/android TMPDIR=${{ runner.temp }} ABI=arm64-v8a \
+          ANDROID_NDK=${{ steps.setup-ndk.outputs.ndk-path }} build
+    - name: Bump version
+      uses: chkfung/android-version-actions@v1.2.2
+      with:
+        gradlePath: app/platform/android/app/build.gradle
+        versionCode: ${{ github.run_number }}
+        versionName: ${{ github.ref_name }}
+    - name: Prepare Android sources and native dependencies
+      run: |
+        rm -rf app/platform/android/app/libs
+        mkdir -p app/platform/android/app/libs
+        for abi in armeabi-v7a arm64-v8a x86_64; do
+          src_libdir="jniLibs/${abi}/lib"
+          [ -d "${src_libdir}" ] || continue
+
+          # Normalize optional linker names for CMake (-lpng/-lbz2/-lzstd).
+          for missing in png bz2 zstd; do
+            [ -e "${src_libdir}/lib${missing}.so" ] && continue
+            [ -e "${src_libdir}/lib${missing}.a" ] && continue
+            candidate="$(find "${src_libdir}" -maxdepth 1 -type f \( -name "lib${missing}*.so*" -o -name "lib${missing}*.a" \) | head -n1)"
+            [ -n "${candidate}" ] || continue
+            ln -sfn "$(basename "${candidate}")" "${src_libdir}/lib${missing}.so"
+            echo "Aliased ${src_libdir}/lib${missing}.so -> $(basename "${candidate}")"
+          done
+
+          # Only stage runtime .so files for packaging to keep Gradle memory low.
+          dst_libdir="app/platform/android/app/libs/${abi}"
+          mkdir -p "${dst_libdir}"
+          find "${src_libdir}" -maxdepth 1 \( -name "*.so" -o -name "*.so.*" \) -exec cp -a {} "${dst_libdir}/" \;
+        done
+    - name: Build APK
+      # build_libromfs_generator.sh must run before Gradle/CMake configure because
+      # borealis's toolchain.cmake unconditionally checks that the generator binary
+      # exists when PLATFORM_ANDROID is set — even though USE_LIBROMFS=OFF means
+      # the generator is never actually used to embed anything.
+      # Resources are loaded via APK assets (see build.gradle syncBorealisResources).
+      run: |
+        ${{ github.workspace }}/lib/borealis/build_libromfs_generator.sh
+        cd app/platform/android && ./gradlew assembleRelease
+    - name: Upload dist
+      uses: actions/upload-artifact@v4
+      with:
+        name: VitaSuwayomi-android-${{ github.run_number }}
+        path: app/platform/android/app/build/outputs/apk/release/*.apk
+
+  # ───────────────────────────────────────────────
+  # Desktop — Windows Matrix via MSYS2 (x64/x86/arm64)
+  # ───────────────────────────────────────────────
+  build-desktop-windows-matrix:
+    name: Desktop (Windows ${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { arch: x64, sys: mingw64, env: x86_64, runner: windows-latest }
+        - { arch: x86, sys: mingw32, env: i686, runner: windows-latest }
+        - { arch: arm64, sys: clangarm64, env: clang-aarch64, runner: windows-11-arm }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.sys }}
+          path-type: inherit
+          cache: false
+          release: ${{ contains(matrix.sys, 'arm64') }}
+          install: >-
+            mingw-w64-${{ matrix.env }}-ninja
+            mingw-w64-${{ matrix.env }}-cc
+            mingw-w64-${{ matrix.env }}-cmake
+            mingw-w64-${{ matrix.env }}-glfw
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install dependency
+        run: |
+          for pkg in glfw-3.5.0-1 curl-8.16.0-1 mpv-0.41.0-1 libwebp-1.6.0-1; do
+            curl -sLO https://github.com/dragonflylee/switchfin/releases/download/mingw-packages/${MINGW_PACKAGE_PREFIX}-${pkg}-any.pkg.tar.zst
+          done
+          pacman -U --noconfirm *.pkg.tar.zst
+      - name: Build
+        run: |
+          cmake -B build -G Ninja \
+            -DPLATFORM_DESKTOP=ON \
+            -DWIN32_TERMINAL=OFF \
+            -DZLIB_USE_STATIC_LIBS=ON \
+            -DUSE_SYSTEM_GLFW=ON \
+            -DUSE_D3D11=ON
+          cmake --build build
+      - name: Bundle runtime DLLs
+        run: |
+          EXE="build/VitaSuwayomi.exe"
+          DLL_DIR="${MINGW_PREFIX}/bin"
+          if [ ! -f "$EXE" ]; then
+            echo "Expected binary not found: $EXE"
+            exit 1
+          fi
+          if [ ! -d "$DLL_DIR" ]; then
+            echo "Expected DLL directory not found: $DLL_DIR"
+            exit 1
+          fi
+
+          queue=("$EXE")
+          declare -A scanned
+          declare -A bundled
+          while [ ${#queue[@]} -gt 0 ]; do
+            current="${queue[0]}"
+            queue=("${queue[@]:1}")
+            scanned["$current"]=1
+
+            mapfile -t dlls < <(objdump -p "$current" | awk '/DLL Name:/{print $3}' | sort -u)
+            for dll in "${dlls[@]}"; do
+              candidate="$DLL_DIR/$dll"
+              target="build/$dll"
+              if [ -f "$candidate" ]; then
+                if [ -z "${bundled[$dll]+x}" ]; then
+                  cp -f "$candidate" "$target"
+                  bundled["$dll"]=1
+                  echo "Bundled $dll (from $(basename "$current"))"
+                fi
+                if [ -z "${scanned[$target]+x}" ]; then
+                  queue+=("$target")
+                fi
+              fi
+            done
+          done
+
+          echo "DLLs bundled into build/:"
+          ls -1 build/*.dll
+      - name: Upload Windows binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitaSuwayomi-windows-${{ matrix.arch }}-${{ github.run_number }}
+          path: |
+            build/VitaSuwayomi.exe
+            build/*.dll
+            build/resources/
+
+  # ───────────────────────────────────────────────
+  # Flatpak — Linux Matrix (x86_64 + aarch64, OpenGL)
+  # ───────────────────────────────────────────────
+  build-flatpak:
+    if: ${{ inputs.platform == 'flatpak' || github.event_name != 'workflow_dispatch' }}
+    name: Flatpak (${{ matrix.arch }}-${{ matrix.driver }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { arch: x86_64, runner: ubuntu-24.04, driver: gl, gles2: "OFF" }
+        - { arch: aarch64, runner: ubuntu-24.04-arm, driver: gl, gles2: "OFF" }
+        - { arch: aarch64, runner: ubuntu-24.04-arm, driver: gles2, gles2: "ON" }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Set workspace permissions
+        run: git config --global --add safe.directory $GITHUB_WORKSPACE
+      - name: Install dependencies
+        run: |
+          if command -v apt-get >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends \
+              cmake ninja-build pkg-config \
+              libcurl4-openssl-dev libmbedtls-dev libmpv-dev \
+              libavcodec-dev libavformat-dev libavfilter-dev libswresample-dev libswscale-dev libavutil-dev \
+              libmp3lame-dev libass-dev libfreetype-dev libharfbuzz-dev libfribidi-dev \
+              libpng-dev libwebp-dev libzstd-dev libdbus-1-dev \
+              libwayland-dev libxkbcommon-dev xorg-dev
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y \
+              cmake ninja-build pkgconf-pkg-config \
+              libcurl-devel mbedtls-devel mpv-devel \
+              ffmpeg-devel lame-devel libass-devel freetype-devel harfbuzz-devel fribidi-devel \
+              libpng-devel libwebp-devel libzstd-devel dbus-devel \
+              wayland-devel libxkbcommon-devel libX11-devel libXrandr-devel libXi-devel libXinerama-devel libXcursor-devel
+          elif command -v microdnf >/dev/null 2>&1; then
+            microdnf install -y \
+              cmake ninja-build pkgconf-pkg-config \
+              libcurl-devel mbedtls-devel mpv-devel \
+              ffmpeg-devel lame-devel libass-devel freetype-devel harfbuzz-devel fribidi-devel \
+              libpng-devel libwebp-devel libzstd-devel dbus-devel \
+              wayland-devel libxkbcommon-devel libX11-devel libXrandr-devel libXi-devel libXinerama-devel libXcursor-devel
+          elif command -v apk >/dev/null 2>&1; then
+            apk add --no-cache \
+              cmake ninja pkgconf \
+              curl-dev mbedtls-dev mpv-dev ffmpeg-dev lame-dev libass-dev freetype-dev harfbuzz-dev fribidi-dev \
+              libpng-dev libwebp-dev zstd-dev dbus-dev wayland-dev libxkbcommon-dev libx11-dev libxrandr-dev libxi-dev libxinerama-dev libxcursor-dev
+          else
+            echo "No supported package manager found; assuming container image already has required build dependencies"
+          fi
+      - name: Build desktop target in flatpak container
+        run: |
+          cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON -DUSE_GLES2=${{ matrix.gles2 }}
+          cmake --build build
+          tar -czf VitaSuwayomi-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz -C build VitaSuwayomi resources
+      - name: Upload Flatpak artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitaSuwayomi-Flatpak-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}
+          path: VitaSuwayomi-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz
+
+  # ───────────────────────────────────────────────
+  # Nintendo Switch — Matrix (opengl + deko3d)
+  # ───────────────────────────────────────────────
+  build-nx:
+    if: ${{ inputs.platform == 'nx' || github.event_name != 'workflow_dispatch' }}
+    name: NX (${{ matrix.driver }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { driver: opengl, mpv_pkg: switch-libmpv-0.41.0-5-any.pkg.tar.zst, cmake_extra: "" }
+        - { driver: deko3d, mpv_pkg: switch-libmpv-deko3d-0.41.0-5-any.pkg.tar.zst, cmake_extra: "-DUSE_DEKO3D=ON" }
+    container:
+      image: devkitpro/devkita64:20260219
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install switchfin portlibs
+        run: |
+          BASE_URL="https://github.com/dragonflylee/switchfin/releases/download/switch-portlibs"
+          dkp-pacman --noconfirm -Rdd switch-libmpv || true
+          dkp-pacman --noconfirm -Rdd switch-libmpv-deko3d || true
+          dkp-pacman --noconfirm -U \
+            $BASE_URL/hacBrewPack-3.05-1-x86_64.pkg.tar.zst \
+            $BASE_URL/libuam-master-1-any.pkg.tar.zst \
+            $BASE_URL/switch-dav1d-1.5.3-1-any.pkg.tar.zst \
+            $BASE_URL/${{ matrix.mpv_pkg }}
+      - name: Build
+        run: |
+          cmake -B build -G Ninja \
+            -DPLATFORM_SWITCH=ON \
+            ${{ matrix.cmake_extra }}
+          cmake --build build
+      - name: Upload NRO
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitaSuwayomi-nx-${{ matrix.driver }}-${{ github.run_number }}
+          path: build/VitaSuwayomi.nro
+
+  # ───────────────────────────────────────────────
+  # PS4
+  # ───────────────────────────────────────────────
+  build-ps4:
+    if: ${{ inputs.platform == 'ps4' || github.event_name != 'workflow_dispatch' }}
+    name: PS4
+    runs-on: ubuntu-latest
+    container:
+      image: xfangfang/pacbrew:250221
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install PS4 portlibs
+        env:
+          BASE_URL: https://github.com/dragonflylee/switchfin/releases/download/pacbrew
+        run: |
+          for pkg in musl-1.5-3 mbedtls-2.28.10-2 sdl2-2.0.18-19 libcurl-7.80.0-5; do
+            pacman --noconfirm -U "$BASE_URL/ps4-openorbis-${pkg}-any.pkg.tar.gz"
+          done
+      - name: Build
+        env:
+          OPENORBIS: /opt/pacbrew/ps4/openorbis
+        run: |
+          cmake -B build -DPLATFORM_PS4=ON
+          cmake --build build
+      - name: Upload PS4 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitaSuwayomi-ps4-${{ github.run_number }}
+          if-no-files-found: warn
+          path: |
+            build/**/*.pkg
+            build/**/*.oelf
+
+  # ───────────────────────────────────────────────
+  # macOS matrix (explicit job name parity)
+  # ───────────────────────────────────────────────
+  build-macos:
+    if: ${{ inputs.platform == 'macos' || github.event_name != 'workflow_dispatch' }}
+    name: macOS (${{ matrix.tag }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { tag: Silicon, arch: arm64, target: "11.0", runner: macos-14 }
+        - { tag: Intel, arch: x86_64, target: "11.0", runner: macos-15-intel }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install deps
+        run: brew install cmake ninja pkg-config curl mbedtls mpv libass freetype harfbuzz fribidi libpng webp zstd glfw
+      - name: Build
+        run: |
+          cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON \
+            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ matrix.target }}
+          cmake --build build
+      - name: Bundle macOS dylibs
+        run: |
+          BIN="build/VitaSuwayomi"
+          if [ ! -f "$BIN" ]; then
+            echo "Expected binary not found: $BIN"
+            exit 1
+          fi
+
+          tmpdir="$(mktemp -d)"
+          queue_file="$tmpdir/queue.txt"
+          scanned_file="$tmpdir/scanned.txt"
+          bundled_file="$tmpdir/bundled.txt"
+          printf '%s\n' "$BIN" > "$queue_file"
+          : > "$scanned_file"
+          : > "$bundled_file"
+
+          while [ -s "$queue_file" ]; do
+            current="$(head -n 1 "$queue_file")"
+            tail -n +2 "$queue_file" > "$queue_file.next" || true
+            mv "$queue_file.next" "$queue_file"
+            printf '%s\n' "$current" >> "$scanned_file"
+
+            while IFS= read -r dep; do
+              resolved_dep="$dep"
+              case "$dep" in
+                /usr/lib/*|/System/*|@executable_path/*|@loader_path/*)
+                  continue
+                  ;;
+                @rpath/*)
+                  base_from_rpath="${dep#@rpath/}"
+                  resolved_dep=""
+                  for probe in \
+                    "/usr/local/lib/$base_from_rpath" \
+                    "/opt/homebrew/lib/$base_from_rpath" \
+                    /usr/local/opt/*/lib/"$base_from_rpath" \
+                    /opt/homebrew/opt/*/lib/"$base_from_rpath"; do
+                    if [ -f "$probe" ]; then
+                      resolved_dep="$probe"
+                      break
+                    fi
+                  done
+                  if [ -z "$resolved_dep" ]; then
+                    echo "Skipping unresolved @rpath dependency: $dep"
+                    continue
+                  fi
+                  ;;
+              esac
+
+              if [ ! -f "$resolved_dep" ]; then
+                echo "Skipping missing dependency reference: $dep"
+                continue
+              fi
+
+              base="$(basename "$resolved_dep")"
+              target="build/$base"
+
+              if ! grep -Fxq "$base" "$bundled_file"; then
+                cp -f "$resolved_dep" "$target"
+                install_name_tool -id "@executable_path/$base" "$target"
+                install_name_tool -add_rpath "@executable_path" "$target" 2>/dev/null || true
+                printf '%s\n' "$base" >> "$bundled_file"
+                echo "Bundled $base (from $(basename "$current"))"
+              fi
+
+              install_name_tool -change "$dep" "@executable_path/$base" "$current"
+
+              if ! grep -Fxq "$target" "$scanned_file" && ! grep -Fxq "$target" "$queue_file"; then
+                printf '%s\n' "$target" >> "$queue_file"
+              fi
+            done < <(otool -L "$current" | tail -n +2 | awk '{print $1}')
+          done
+
+          install_name_tool -add_rpath "@executable_path" "$BIN" 2>/dev/null || true
+
+          rm -rf "$tmpdir"
+      - name: Package macOS DMG
+        run: |
+          APP_ROOT="build/dmg-root"
+          APP_DIR="$APP_ROOT/VitaSuwayomi.app"
+          MACOS_DIR="$APP_DIR/Contents/MacOS"
+
+          rm -rf "$APP_ROOT"
+          mkdir -p "$MACOS_DIR"
+
+          cp -f build/VitaSuwayomi "$MACOS_DIR/VitaSuwayomi"
+          cp -R build/resources "$MACOS_DIR/resources"
+          cp -f build/*.dylib "$MACOS_DIR/" 2>/dev/null || true
+          chmod +x "$MACOS_DIR/VitaSuwayomi"
+
+          cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>VitaSuwayomi</string>
+            <key>CFBundleDisplayName</key><string>VitaSuwayomi</string>
+            <key>CFBundleIdentifier</key><string>com.vitasuwayomi.app</string>
+            <key>CFBundleVersion</key><string>1</string>
+            <key>CFBundleShortVersionString</key><string>1.0</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleExecutable</key><string>VitaSuwayomi</string>
+          </dict>
+          </plist>
+          PLIST
+
+          hdiutil create \
+            -volname "VitaSuwayomi" \
+            -srcfolder "$APP_ROOT" \
+            -ov \
+            -format UDZO \
+            "build/VitaSuwayomi-${{ matrix.tag }}.dmg"
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitaSuwayomi-macos-${{ matrix.tag }}-${{ github.run_number }}
+          path: |
+            build/VitaSuwayomi
+            build/VitaSuwayomi-*.dmg
+            build/*.dylib
+            build/resources/
+
+  # ───────────────────────────────────────────────
+  # MinGW matrix (x64/x86/arm64)
+  # ───────────────────────────────────────────────
+  build-mingw:
+    if: ${{ inputs.platform == 'mingw64' || github.event_name != 'workflow_dispatch' }}
+    name: MinGW (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { arch: x64, sys: mingw64, env: x86_64, runner: windows-latest }
+        - { arch: x86, sys: mingw32, env: i686, runner: windows-latest }
+        - { arch: arm64, sys: clangarm64, env: clang-aarch64, runner: windows-11-arm }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.sys }}
+          path-type: inherit
+          cache: false
+          release: ${{ contains(matrix.sys, 'arm64') }}
+          install: >-
+            mingw-w64-${{ matrix.env }}-ninja
+            mingw-w64-${{ matrix.env }}-cc
+            mingw-w64-${{ matrix.env }}-cmake
+            mingw-w64-${{ matrix.env }}-glfw
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install dependency
+        run: |
+          for pkg in glfw-3.5.0-1 curl-8.16.0-1 mpv-0.41.0-1 libwebp-1.6.0-1; do
+            curl -sLO https://github.com/dragonflylee/switchfin/releases/download/mingw-packages/${MINGW_PACKAGE_PREFIX}-${pkg}-any.pkg.tar.zst
+          done
+          pacman -U --noconfirm *.pkg.tar.zst
+      - name: Build
+        run: |
+          cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON -DUSE_SYSTEM_GLFW=ON -DUSE_D3D11=ON
+          cmake --build build
+      - name: Bundle runtime DLLs
+        run: |
+          EXE="build/VitaSuwayomi.exe"
+          DLL_DIR="${MINGW_PREFIX}/bin"
+          if [ ! -f "$EXE" ]; then
+            echo "Expected binary not found: $EXE"
+            exit 1
+          fi
+          if [ ! -d "$DLL_DIR" ]; then
+            echo "Expected DLL directory not found: $DLL_DIR"
+            exit 1
+          fi
+
+          queue=("$EXE")
+          declare -A scanned
+          declare -A bundled
+          while [ ${#queue[@]} -gt 0 ]; do
+            current="${queue[0]}"
+            queue=("${queue[@]:1}")
+            scanned["$current"]=1
+
+            mapfile -t dlls < <(objdump -p "$current" | awk '/DLL Name:/{print $3}' | sort -u)
+            for dll in "${dlls[@]}"; do
+              candidate="$DLL_DIR/$dll"
+              target="build/$dll"
+              if [ -f "$candidate" ]; then
+                if [ -z "${bundled[$dll]+x}" ]; then
+                  cp -f "$candidate" "$target"
+                  bundled["$dll"]=1
+                  echo "Bundled $dll (from $(basename "$current"))"
+                fi
+                if [ -z "${scanned[$target]+x}" ]; then
+                  queue+=("$target")
+                fi
+              fi
+            done
+          done
+
+          echo "DLLs bundled into build/:"
+          ls -1 build/*.dll
+      - name: Upload mingw artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitaSuwayomi-mingw-${{ matrix.arch }}-${{ github.run_number }}
+          path: |
+            build/VitaSuwayomi.exe
+            build/*.dll
+            build/resources/
+
+  # ───────────────────────────────────────────────
+  # Debian package-like build
+  # ───────────────────────────────────────────────
+  build-deb:
+    if: ${{ inputs.platform == 'deb' || github.event_name != 'workflow_dispatch' }}
+    name: Deb build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build build-essential git pkg-config zstd \
+            libcurl4-openssl-dev libmbedtls-dev libmpv-dev \
+            libavcodec-dev libavformat-dev libavfilter-dev libswresample-dev libswscale-dev libavutil-dev \
+            libmp3lame-dev libass-dev libfreetype-dev libharfbuzz-dev libfribidi-dev \
+            libpng-dev libwebp-dev libdbus-1-dev \
+            wayland-protocols libwayland-bin libwayland-dev libxkbcommon-dev xorg-dev
+      - name: Build
+        run: |
+          cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON
+          cmake --build build
+          PKGROOT="pkgroot"
+          rm -rf "$PKGROOT"
+          mkdir -p "$PKGROOT/DEBIAN" "$PKGROOT/usr/bin" "$PKGROOT/usr/lib/VitaSuwayomi" "$PKGROOT/usr/share/VitaSuwayomi" "$PKGROOT/usr/share/applications" "$PKGROOT/usr/share/pixmaps"
+          install -m 755 build/VitaSuwayomi "$PKGROOT/usr/lib/VitaSuwayomi/VitaSuwayomi"
+          {
+            echo '#!/usr/bin/env sh'
+            echo 'cd /usr/share/VitaSuwayomi || exit 1'
+            echo 'exec /usr/lib/VitaSuwayomi/VitaSuwayomi "$@"'
+          } > "$PKGROOT/usr/bin/VitaSuwayomi"
+          chmod 755 "$PKGROOT/usr/bin/VitaSuwayomi"
+          cp -r build/resources "$PKGROOT/usr/share/VitaSuwayomi/resources"
+          install -m 644 app/platform/icon_desktop.png "$PKGROOT/usr/share/pixmaps/vitasuwayomi.png"
+          {
+            echo '[Desktop Entry]'
+            echo 'Type=Application'
+            echo 'Name=VitaSuwayomi'
+            echo 'Comment=Suwayomi desktop client'
+            echo 'Exec=VitaSuwayomi'
+            echo 'Icon=vitasuwayomi'
+            echo 'Terminal=false'
+            echo 'Categories=Network;Utility;'
+          } > "$PKGROOT/usr/share/applications/vitasuwayomi.desktop"
+          ARCH="$(dpkg --print-architecture)"
+          {
+            echo "Package: vitasuwayomi"
+            echo "Version: 0.1.${{ github.run_number }}"
+            echo "Section: utils"
+            echo "Priority: optional"
+            echo "Architecture: ${ARCH}"
+            echo "Maintainer: VitaSuwayomi CI <ci@vitasuwayomi.local>"
+            echo "Description: VitaSuwayomi desktop build artifact"
+          } > "$PKGROOT/DEBIAN/control"
+          dpkg-deb --build "$PKGROOT" "VitaSuwayomi-${{ github.run_number }}_${ARCH}.deb"
+      - name: Upload deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitaSuwayomi-deb-${{ github.run_number }}
+          path: VitaSuwayomi-${{ github.run_number }}_*.deb
+
+  # ───────────────────────────────────────────────
+  # AUR-like build
+  # ───────────────────────────────────────────────
+  build-aur:
+    if: ${{ inputs.platform == 'aur' || github.event_name != 'workflow_dispatch' }}
+    name: AUR build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build build-essential git pkg-config zstd \
+            libcurl4-openssl-dev libmbedtls-dev libmpv-dev \
+            libavcodec-dev libavformat-dev libavfilter-dev libswresample-dev libswscale-dev libavutil-dev \
+            libmp3lame-dev libass-dev libfreetype-dev libharfbuzz-dev libfribidi-dev \
+            libpng-dev libwebp-dev libdbus-1-dev \
+            wayland-protocols libwayland-bin libwayland-dev libxkbcommon-dev xorg-dev
+      - name: Build
+        run: |
+          cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON
+          cmake --build build
+          tar --zstd -cf VitaSuwayomi-${{ github.run_number }}.pkg.tar.zst -C build VitaSuwayomi resources
+      - name: Upload aur artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitaSuwayomi-aur-${{ github.run_number }}
+          path: VitaSuwayomi-${{ github.run_number }}.pkg.tar.zst
