@@ -1,5 +1,4 @@
-package org.vitasuwayomi.app;
-
+package org.VitaPlex.app;
 import android.content.pm.ActivityInfo;
 import android.database.ContentObserver;
 import android.graphics.PixelFormat;
@@ -13,7 +12,7 @@ import org.libsdl.app.BorealisHandler;
 import org.libsdl.app.PlatformUtils;
 import org.libsdl.app.SDLActivity;
 
-public class VitaSuwayomiActivity extends SDLActivity
+public class VitaPlexiActivity extends SDLActivity
 {
     protected static SurfaceView mpvSurface;
 
@@ -77,7 +76,7 @@ public class VitaSuwayomiActivity extends SDLActivity
         return new String[] {
                 "curl",
                 "SDL2",
-                "VitaSuwayomi"
+                "VitaPlex"
         };
     }
 
