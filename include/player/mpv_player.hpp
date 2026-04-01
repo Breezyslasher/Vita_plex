@@ -10,12 +10,16 @@
 #include <atomic>
 #include <mutex>
 
-#ifdef __vita__
+#if defined(__vita__)
 #include <mpv/client.h>
 #include <mpv/render.h>
 #include <mpv/render_gxm.h>
+#elif !defined(__ANDROID__)
+// Desktop/Switch/PS4 builds use libmpv client API.
+#include <mpv/client.h>
+#include <mpv/render.h>
 #else
-// Stub for non-Vita builds
+// Android build intentionally omits video playback (no libmpv dependency).
 typedef struct mpv_handle mpv_handle;
 typedef struct mpv_event mpv_event;
 typedef struct mpv_event_property mpv_event_property;
