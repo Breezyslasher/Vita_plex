@@ -190,7 +190,7 @@ void LibrarySectionTab::loadContent() {
         else if (sectionType == "show") metadataType = 2;
         else if (sectionType == "artist") metadataType = 8;
 
-        if (client.fetchLibraryContent(key, items, metadataType, PAGE_SIZE, 0, &totalCount)) {
+        if (client.fetchLibraryContent(key, items, metadataType, LIBRARY_PAGE_SIZE, 0, &totalCount)) {
             brls::Logger::info("LibrarySectionTab: Got {} of {} items for section {}", items.size(), totalCount, key);
 
             // Trim heavy fields to reduce per-item memory in large libraries
@@ -329,7 +329,7 @@ void LibrarySectionTab::loadNextPage() {
         else if (sectionType == "show") metadataType = 2;
         else if (sectionType == "artist") metadataType = 8;
 
-        if (client.fetchLibraryContent(key, items, metadataType, PAGE_SIZE, (int)offset)) {
+        if (client.fetchLibraryContent(key, items, metadataType, LIBRARY_PAGE_SIZE, (int)offset)) {
             for (auto& item : items) {
                 item.trimForGrid();
             }
@@ -725,7 +725,7 @@ void LibrarySectionTab::appendTrackListPage() {
         m_trackListLoadMoreBtn = nullptr;
     }
 
-    size_t end = std::min(m_trackListRendered + TRACK_LIST_PAGE_SIZE, m_playlistTracks.size());
+    size_t end = std::min(m_trackListRendered + PLAYLIST_TRACK_PAGE_SIZE, m_playlistTracks.size());
 
     for (size_t i = m_trackListRendered; i < end; i++) {
         const auto& track = m_playlistTracks[i];
