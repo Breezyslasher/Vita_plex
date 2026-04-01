@@ -330,7 +330,7 @@ jobs:
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON -DUSE_GLES2=${{ matrix.gles2 }}
           cmake --build build
-          tar -czf VitaPlex-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz -C build VitaSuwayomi resources
+          tar -czf VitaPlex-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz -C build VitaPlex resources
       - name: Upload Flatpak artifact
         uses: actions/upload-artifact@v4
         with:
@@ -407,7 +407,7 @@ jobs:
       - name: Upload PS4 artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: VitaSuwayomi-ps4-${{ github.run_number }}
+          name: VitaPlex-ps4-${{ github.run_number }}
           if-no-files-found: warn
           path: |
             build/**/*.pkg
@@ -440,7 +440,7 @@ jobs:
           cmake --build build
       - name: Bundle macOS dylibs
         run: |
-          BIN="build/VitaSuwayomi"
+          BIN="build/VitaPlex"
           if [ ! -f "$BIN" ]; then
             echo "Expected binary not found: $BIN"
             exit 1
@@ -516,46 +516,46 @@ jobs:
       - name: Package macOS DMG
         run: |
           APP_ROOT="build/dmg-root"
-          APP_DIR="$APP_ROOT/VitaSuwayomi.app"
+          APP_DIR="$APP_ROOT/VitaPlex.app"
           MACOS_DIR="$APP_DIR/Contents/MacOS"
 
           rm -rf "$APP_ROOT"
           mkdir -p "$MACOS_DIR"
 
-          cp -f build/VitaSuwayomi "$MACOS_DIR/VitaSuwayomi"
+          cp -f build/VitaPlex "$MACOS_DIR/VitaPlex"
           cp -R build/resources "$MACOS_DIR/resources"
           cp -f build/*.dylib "$MACOS_DIR/" 2>/dev/null || true
-          chmod +x "$MACOS_DIR/VitaSuwayomi"
+          chmod +x "$MACOS_DIR/VitaPlex"
 
           cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0">
           <dict>
-            <key>CFBundleName</key><string>VitaSuwayomi</string>
-            <key>CFBundleDisplayName</key><string>VitaSuwayomi</string>
-            <key>CFBundleIdentifier</key><string>com.vitasuwayomi.app</string>
+            <key>CFBundleName</key><string>VitaPlex</string>
+            <key>CFBundleDisplayName</key><string>VitaPlex</string>
+            <key>CFBundleIdentifier</key><string>com.VitaPlex.app</string>
             <key>CFBundleVersion</key><string>1</string>
             <key>CFBundleShortVersionString</key><string>1.0</string>
             <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleExecutable</key><string>VitaSuwayomi</string>
+            <key>CFBundleExecutable</key><string>VitaPlex</string>
           </dict>
           </plist>
           PLIST
 
           hdiutil create \
-            -volname "VitaSuwayomi" \
+            -volname "VitaPlex" \
             -srcfolder "$APP_ROOT" \
             -ov \
             -format UDZO \
-            "build/VitaSuwayomi-${{ matrix.tag }}.dmg"
+            "build/VitaPlex-${{ matrix.tag }}.dmg"
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VitaSuwayomi-macos-${{ matrix.tag }}-${{ github.run_number }}
+          name: VitaPlex-macos-${{ matrix.tag }}-${{ github.run_number }}
           path: |
-            build/VitaSuwayomi
-            build/VitaSuwayomi-*.dmg
+            build/VitaPlex
+            build/VitaPlex-*.dmg
             build/*.dylib
             build/resources/
 
@@ -603,7 +603,7 @@ jobs:
           cmake --build build
       - name: Bundle runtime DLLs
         run: |
-          EXE="build/VitaSuwayomi.exe"
+          EXE="build/VitaPlex.exe"
           DLL_DIR="${MINGW_PREFIX}/bin"
           if [ ! -f "$EXE" ]; then
             echo "Expected binary not found: $EXE"
@@ -644,9 +644,9 @@ jobs:
       - name: Upload mingw artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VitaSuwayomi-mingw-${{ matrix.arch }}-${{ github.run_number }}
+          name: VitaPlex-mingw-${{ matrix.arch }}-${{ github.run_number }}
           path: |
-            build/VitaSuwayomi.exe
+            build/VitaPlex.exe
             build/*.dll
             build/resources/
 
@@ -677,42 +677,42 @@ jobs:
           cmake --build build
           PKGROOT="pkgroot"
           rm -rf "$PKGROOT"
-          mkdir -p "$PKGROOT/DEBIAN" "$PKGROOT/usr/bin" "$PKGROOT/usr/lib/VitaSuwayomi" "$PKGROOT/usr/share/VitaSuwayomi" "$PKGROOT/usr/share/applications" "$PKGROOT/usr/share/pixmaps"
-          install -m 755 build/VitaSuwayomi "$PKGROOT/usr/lib/VitaSuwayomi/VitaSuwayomi"
+          mkdir -p "$PKGROOT/DEBIAN" "$PKGROOT/usr/bin" "$PKGROOT/usr/lib/VitaPlex" "$PKGROOT/usr/share/VitaPlex" "$PKGROOT/usr/share/applications" "$PKGROOT/usr/share/pixmaps"
+          install -m 755 build/VitaPlex "$PKGROOT/usr/lib/VitaPlex/VitaPlex"
           {
             echo '#!/usr/bin/env sh'
-            echo 'cd /usr/share/VitaSuwayomi || exit 1'
-            echo 'exec /usr/lib/VitaSuwayomi/VitaSuwayomi "$@"'
-          } > "$PKGROOT/usr/bin/VitaSuwayomi"
-          chmod 755 "$PKGROOT/usr/bin/VitaSuwayomi"
-          cp -r build/resources "$PKGROOT/usr/share/VitaSuwayomi/resources"
-          install -m 644 app/platform/icon_desktop.png "$PKGROOT/usr/share/pixmaps/vitasuwayomi.png"
+            echo 'cd /usr/share/VitaPlex || exit 1'
+            echo 'exec /usr/lib/VitaPlex/VitaPlex "$@"'
+          } > "$PKGROOT/usr/bin/VitaPlex"
+          chmod 755 "$PKGROOT/usr/bin/VitaPlex"
+          cp -r build/resources "$PKGROOT/usr/share/VitaPlex/resources"
+          install -m 644 app/platform/icon_desktop.png "$PKGROOT/usr/share/pixmaps/VitaPlex.png"
           {
             echo '[Desktop Entry]'
             echo 'Type=Application'
-            echo 'Name=VitaSuwayomi'
+            echo 'Name=VitaPlex'
             echo 'Comment=Suwayomi desktop client'
-            echo 'Exec=VitaSuwayomi'
-            echo 'Icon=vitasuwayomi'
+            echo 'Exec=VitaPlex'
+            echo 'Icon=VitaPlex'
             echo 'Terminal=false'
             echo 'Categories=Network;Utility;'
-          } > "$PKGROOT/usr/share/applications/vitasuwayomi.desktop"
+          } > "$PKGROOT/usr/share/applications/VitaPlex.desktop"
           ARCH="$(dpkg --print-architecture)"
           {
-            echo "Package: vitasuwayomi"
+            echo "Package: VitaPlex"
             echo "Version: 0.1.${{ github.run_number }}"
             echo "Section: utils"
             echo "Priority: optional"
             echo "Architecture: ${ARCH}"
-            echo "Maintainer: VitaSuwayomi CI <ci@vitasuwayomi.local>"
-            echo "Description: VitaSuwayomi desktop build artifact"
+            echo "Maintainer: VitaPlex CI <ci@VitaPlex.local>"
+            echo "Description: VitaPlex desktop build artifact"
           } > "$PKGROOT/DEBIAN/control"
-          dpkg-deb --build "$PKGROOT" "VitaSuwayomi-${{ github.run_number }}_${ARCH}.deb"
+          dpkg-deb --build "$PKGROOT" "VitaPlex-${{ github.run_number }}_${ARCH}.deb"
       - name: Upload deb artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VitaSuwayomi-deb-${{ github.run_number }}
-          path: VitaSuwayomi-${{ github.run_number }}_*.deb
+          name: VitaPlex-deb-${{ github.run_number }}
+          path: VitaPlex-${{ github.run_number }}_*.deb
 
   # ───────────────────────────────────────────────
   # AUR-like build
@@ -739,7 +739,7 @@ jobs:
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON
           cmake --build build
-          tar --zstd -cf VitaSuwayomi-${{ github.run_number }}.pkg.tar.zst -C build VitaSuwayomi resources
+          tar --zstd -cf VitaPlex-${{ github.run_number }}.pkg.tar.zst -C build VitaPlex resources
       - name: Upload aur artifact
         uses: actions/upload-artifact@v4
         with:
