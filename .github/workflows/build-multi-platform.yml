@@ -40,25 +40,25 @@ jobs:
         uses: actions/download-artifact@v4
       - name: Package Windows assets
         run: |
-          for p in VitaSuwayomi-windows-*; do
+          for p in VitaPlex-windows-*; do
             [[ -d $p ]] && 7z a -mx=9 $p.7z ./$p/* && rm -rf $p
           done
       - name: Release and Upload Assets
         uses: softprops/action-gh-release@v2
         with:
-          name: VitaSuwayomi ${{ github.ref_name }}
+          name: VitaPlex ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
           draft: true
           files: |
-            VitaSuwayomi-windows-*.7z
-            VitaSuwayomi-macos-*/*
-            VitaSuwayomi-nx-*/*.nro
-            VitaSuwayomi-ps4-*/*
-            VitaSuwayomi-vita-*/*.vpk
-            VitaSuwayomi-Flatpak-*/*
-            VitaSuwayomi-aur-*/*.pkg.tar.*
-            VitaSuwayomi-android-*/*
+            VitaPlex-windows-*.7z
+            VitaPlex-macos-*/*
+            VitaPlex-nx-*/*.nro
+            VitaPlex-ps4-*/*
+            VitaPlex-vita-*/*.vpk
+            VitaPlex-Flatpak-*/*
+            VitaPlex-aur-*/*.pkg.tar.*
+            VitaPlex-android-*/*
 
   # ───────────────────────────────────────────────
   # PS Vita — VPK
@@ -97,8 +97,8 @@ jobs:
       - name: Upload VPK
         uses: actions/upload-artifact@v4
         with:
-          name: VitaSuwayomi-vita-${{ github.run_number }}
-          path: build/VitaSuwayomi.vpk
+          name: VitaPlex-vita-${{ github.run_number }}
+          path: build/VitaPlex.vpk
 
   # ───────────────────────────────────────────────
   # Android — switchfin-style APK build
@@ -175,7 +175,7 @@ jobs:
     - name: Upload dist
       uses: actions/upload-artifact@v4
       with:
-        name: VitaSuwayomi-android-${{ github.run_number }}
+        name: VitaPlex-android-${{ github.run_number }}
         path: app/platform/android/app/build/outputs/apk/release/*.apk
 
   # ───────────────────────────────────────────────
@@ -226,7 +226,7 @@ jobs:
           cmake --build build
       - name: Bundle runtime DLLs
         run: |
-          EXE="build/VitaSuwayomi.exe"
+          EXE="build/VitaPlex.exe"
           DLL_DIR="${MINGW_PREFIX}/bin"
           if [ ! -f "$EXE" ]; then
             echo "Expected binary not found: $EXE"
@@ -267,9 +267,9 @@ jobs:
       - name: Upload Windows binary
         uses: actions/upload-artifact@v4
         with:
-          name: VitaSuwayomi-windows-${{ matrix.arch }}-${{ github.run_number }}
+          name: VitaPlex-windows-${{ matrix.arch }}-${{ github.run_number }}
           path: |
-            build/VitaSuwayomi.exe
+            build/VitaPlex.exe
             build/*.dll
             build/resources/
 
@@ -330,12 +330,12 @@ jobs:
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON -DUSE_GLES2=${{ matrix.gles2 }}
           cmake --build build
-          tar -czf VitaSuwayomi-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz -C build VitaSuwayomi resources
+          tar -czf VitaPlex-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz -C build VitaSuwayomi resources
       - name: Upload Flatpak artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VitaSuwayomi-Flatpak-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}
-          path: VitaSuwayomi-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz
+          name: VitaPlex-Flatpak-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}
+          path: VitaPlex-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz
 
   # ───────────────────────────────────────────────
   # Nintendo Switch — Matrix (opengl + deko3d)
@@ -375,8 +375,8 @@ jobs:
       - name: Upload NRO
         uses: actions/upload-artifact@v4
         with:
-          name: VitaSuwayomi-nx-${{ matrix.driver }}-${{ github.run_number }}
-          path: build/VitaSuwayomi.nro
+          name: VitaPlex-nx-${{ matrix.driver }}-${{ github.run_number }}
+          path: build/VitaPlex.nro
 
   # ───────────────────────────────────────────────
   # PS4
