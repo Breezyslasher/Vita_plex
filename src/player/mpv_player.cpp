@@ -127,7 +127,12 @@ bool MpvPlayer::init() {
     } else {
         // Video mode: use libmpv for video output - we'll create a render context
         brls::Logger::info("MpvPlayer: Initializing in video mode");
+#ifdef __vita__
         mpv_set_option_string(m_mpv, "vo", "libmpv");
+#else
+        // Desktop/Switch/PS4: use MPV's normal renderer (no custom render context wiring).
+        mpv_set_option_string(m_mpv, "vo", "gpu");
+#endif
 
 #ifdef __vita__
         // Vita-specific settings from switchfin
@@ -266,10 +271,14 @@ bool MpvPlayer::init() {
     // ========================================
 
     if (!m_audioOnly) {
+#ifdef __vita__
         if (!initRenderContext()) {
             brls::Logger::error("MpvPlayer: Failed to create render context, falling back to audio-only");
             // Don't fail - we can still play audio
         }
+#else
+        brls::Logger::debug("MpvPlayer: Non-Vita build uses MPV-managed video output");
+#endif
     } else {
         brls::Logger::info("MpvPlayer: Skipping render context for audio-only mode");
     }

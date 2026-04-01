@@ -140,14 +140,10 @@ set(APP_SOURCES
     src/view/overlay_dialog.cpp
     src/view/horizontal_scroll_row.cpp
 
-    # Player
-    src/player/mpv_player.cpp
-
     # Utils
     src/utils/http_client.cpp
     src/utils/image_loader.cpp
     src/utils/jwt_auth.cpp
-    src/utils/vita_stubs.c
 )
 
 # vita_stubs.c only needed on Vita (no-op stdio locks, SDL_OpenURL stub)
@@ -164,6 +160,13 @@ endif()
 if(PLATFORM_ANDROID)
     list(APPEND APP_SOURCES src/platform/android_assets.cpp)
 endif()
+
+if(PLATFORM_ANDROID)
+    list(APPEND APP_SOURCES src/player/mpv_player_android.cpp)
+else()
+    list(APPEND APP_SOURCES src/player/mpv_player.cpp)
+endif()
+
 
 set(APP_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -300,7 +303,12 @@ if(PLATFORM_ANDROID)
 endif()
 
 if(PLATFORM_PSV)
+    # Required for __wrap_pthread_create in src/utils/vita_stubs.c
+    target_link_options(${PROJECT_NAME} PRIVATE "-Wl,--wrap=pthread_create")
+
     target_link_libraries(${PROJECT_NAME}
+        archive
+        zstd
         vita2d
         SceNet_stub
         SceNetCtl_stub
@@ -319,7 +327,13 @@ if(PLATFORM_PSV)
         SceVshBridge_stub
     )
 elseif(PLATFORM_SWITCH)
-    target_link_libraries(${PROJECT_NAME} nx dav1d)
+    target_link_libraries(${PROJECT_NAME}
+        nx
+        dav1d
+        postproc
+        placebo
+        jpeg
+    )
 elseif(PLATFORM_PS4)
     target_link_libraries(${PROJECT_NAME}
         SceNet
