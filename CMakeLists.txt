@@ -304,6 +304,7 @@ if(PLATFORM_PSV)
 
     target_link_libraries(${PROJECT_NAME}
         archive
+        zstd
         vita2d
         SceNet_stub
         SceNetCtl_stub
