@@ -743,5 +743,5 @@ jobs:
       - name: Upload aur artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VitaSuwayomi-aur-${{ github.run_number }}
-          path: VitaSuwayomi-${{ github.run_number }}.pkg.tar.zst
+          name: VitaPlex-aur-${{ github.run_number }}
+          path: VitaPlex-${{ github.run_number }}.pkg.tar.zst
