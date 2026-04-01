@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "org.vitasuwayomi.app"
+    namespace = "org.VitaPlex.app"
     compileSdkVersion 34
     defaultConfig {
         minSdkVersion 21
@@ -21,7 +21,7 @@ android {
     }
     applicationVariants.all { variant ->
         variant.outputs.each { output ->
-            output.outputFileName = "VitaSuwayomi-${output.getFilter("ABI")}.apk"
+            output.outputFileName = "VitaPlex-${output.getFilter("ABI")}.apk"
         }
     }
     signingConfigs {
