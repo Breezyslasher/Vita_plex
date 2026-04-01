@@ -8,19 +8,19 @@
  * of hard-coding "ux0:" paths anywhere in the codebase.
  *
  * Supported platforms:
- *   PS Vita  – ux0:data/VitaSuwayomi
- *   Switch   – sdmc:/VitaSuwayomi
- *   Android  – <SDL internal storage>/VitaSuwayomi  (resolved at runtime)
- *   Desktop  – ./VitaSuwayomi   (next to the executable)
+ *   PS Vita  – ux0:data/VitaPlex
+ *   Switch   – sdmc:/VitaPlex
+ *   Android  – <SDL internal storage>/VitaPlex  (resolved at runtime)
+ *   Desktop  – ./VitaPlex  (next to the executable)
  */
 
 #include <string>
 #include <cstdlib>
 
 #if defined(__vita__)
-    static constexpr const char* PLATFORM_DATA_DIR = "ux0:data/VitaSuwayomi";
+    static constexpr const char* PLATFORM_DATA_DIR = "ux0:data/VitaPlex";
 #elif defined(__SWITCH__)
-    static constexpr const char* PLATFORM_DATA_DIR = "sdmc:/VitaSuwayomi";
+    static constexpr const char* PLATFORM_DATA_DIR = "sdmc:/VitaPlex";
 #elif defined(__ANDROID__)
     // On Android the writable path is determined at runtime via SDL.
     // PLATFORM_DATA_DIR is left empty here — use getAndroidDataDir() instead
@@ -28,7 +28,7 @@
     // automatically on Android.
     static constexpr const char* PLATFORM_DATA_DIR = "";
 #elif defined(__PS4__)
-    static constexpr const char* PLATFORM_DATA_DIR = "/data/VitaSuwayomi";
+    static constexpr const char* PLATFORM_DATA_DIR = "/data/VitaPlex";
 #else
     // Desktop: resolved at runtime via $HOME
     inline const std::string& getDesktopDataDir() {
@@ -36,9 +36,9 @@
         if (s_dir.empty()) {
             const char* home = std::getenv("HOME");
             if (home && *home) {
-                s_dir = std::string(home) + "/.local/share/VitaSuwayomi";
+                s_dir = std::string(home) + "/.local/share/VitaPlex";
             } else {
-                s_dir = "./VitaSuwayomi";
+                s_dir = "./VitaPlex";
             }
         }
         return s_dir;
@@ -52,17 +52,17 @@
 /**
  * Returns the Android-specific writable data directory (internal storage).
  * Result is cached after first call. Thread-safe after SDL init.
- * Example: /data/user/0/org.vitasuwayomi.app/files/VitaSuwayomi
+ * Example: /data/user/0/org.VitaPlex.app/files/VitaPlex
  */
 inline const std::string& getAndroidDataDir() {
     static std::string s_dataDir;
     if (s_dataDir.empty()) {
         const char* internalPath = SDL_AndroidGetInternalStoragePath();
         if (internalPath && internalPath[0] != '\0') {
-            s_dataDir = std::string(internalPath) + "/VitaSuwayomi";
+            s_dataDir = std::string(internalPath) + "/VitaPlex";
         } else {
             // Absolute fallback — should never happen in practice
-            s_dataDir = "/sdcard/VitaSuwayomi";
+            s_dataDir = "/sdcard/VitaPlex";
         }
     }
     return s_dataDir;
@@ -71,7 +71,7 @@ inline const std::string& getAndroidDataDir() {
 
 /**
  * Build a full path rooted at the platform data directory.
- * Example: platformPath("downloads") -> "ux0:data/VitaSuwayomi/downloads"
+ * Example: platformPath("downloads") -> "ux0:data/VitaPlex/downloads"
  *
  * On Android the base directory is resolved via SDL_AndroidGetInternalStoragePath()
  * so that the path is always writable without requiring external storage permission.
