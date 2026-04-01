@@ -165,9 +165,9 @@ static void registerCustomViews() {
 }
 
 /**
- * Main entry point
+ * Shared application entry point used by platform-specific loaders.
  */
-int main(int argc, char* argv[]) {
+static int VitaPlexMainEntry(int argc, char* argv[]) {
     (void)argc;
     (void)argv;
 
@@ -276,4 +276,17 @@ int main(int argc, char* argv[]) {
 #endif
 
     return 0;
+}
+
+#if defined(__ANDROID__)
+extern "C" int SDL_main(int argc, char* argv[]) {
+    return VitaPlexMainEntry(argc, argv);
+}
+#endif
+
+/**
+ * Main entry point
+ */
+int main(int argc, char* argv[]) {
+    return VitaPlexMainEntry(argc, argv);
 }
