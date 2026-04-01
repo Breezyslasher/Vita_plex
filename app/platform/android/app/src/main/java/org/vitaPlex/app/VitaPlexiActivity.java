@@ -12,7 +12,7 @@ import org.libsdl.app.BorealisHandler;
 import org.libsdl.app.PlatformUtils;
 import org.libsdl.app.SDLActivity;
 
-public class VitaPlexiActivity extends SDLActivity
+public class VitaPlexActivity extends SDLActivity
 {
     protected static SurfaceView mpvSurface;
 
