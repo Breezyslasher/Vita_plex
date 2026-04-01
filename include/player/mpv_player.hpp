@@ -154,17 +154,11 @@ public:
     bool hasRenderContext() const { return m_mpvRenderCtx != nullptr; }
 
     // Get NanoVG image handle for drawing video (returns 0 if not available)
-    int getVideoImage() const {
-#ifdef __vita__
-        return m_nvgImage;
-#else
-        return 0;
-#endif
-    }
+    int getVideoImage() const { return m_nvgImage; }
 
     // Get video dimensions
-    int getVideoWidth() const { return 960; }
-    int getVideoHeight() const { return 544; }
+    int getVideoWidth() const { return m_videoWidth; }
+    int getVideoHeight() const { return m_videoHeight; }
 
 private:
     MpvPlayer() = default;
@@ -191,23 +185,24 @@ private:
     bool m_commandPending = false;  // Async command pending
     bool m_audioOnly = false;       // Audio-only mode (no video decoding)
 
+    // Static callback for render updates (called from MPV thread)
+    static void onRenderUpdate(void* ctx);
+
 #ifdef __vita__
     // GXM render resources
-    int m_nvgImage = 0;                 // NanoVG image handle for display
     void* m_gxmFramebuffer = nullptr;   // GXM framebuffer structure
     mpv_gxm_fbo m_mpvFbo = {};          // MPV GXM FBO parameters
     int m_flipY = 1;                    // Flip Y for correct orientation (matching switchfin)
     mpv_render_param m_mpvParams[3] = {};  // Render params: FLIP_Y + GXM_FBO + INVALID
+#endif
+
+    int m_nvgImage = 0;
     int m_videoWidth = 960;
     int m_videoHeight = 544;
-    std::atomic<bool> m_renderReady{false};     // Flag for when render context is ready (accessed from mpv thread)
-
-    // Mutex to protect GXM render resources from concurrent access
-    // (mpv's render update callback fires from its decoder thread)
+    std::atomic<bool> m_renderReady{false};
     std::mutex m_renderMutex;
-
-    // Static callback for render updates (called from MPV thread)
-    static void onRenderUpdate(void* ctx);
+#ifndef __vita__
+    std::vector<unsigned char> m_videoBuffer;
 #endif
 };
 

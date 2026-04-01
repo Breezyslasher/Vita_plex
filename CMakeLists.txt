@@ -329,6 +329,7 @@ elseif(PLATFORM_SWITCH)
         postproc
         placebo
         jpeg
+        uam
     )
 elseif(PLATFORM_PS4)
     target_link_libraries(${PROJECT_NAME}

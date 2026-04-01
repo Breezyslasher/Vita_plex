@@ -6,7 +6,6 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.provider.Settings;
 import android.view.Surface;
-import android.view.SurfaceView;
 
 import org.libsdl.app.BorealisHandler;
 import org.libsdl.app.PlatformUtils;
@@ -14,15 +13,10 @@ import org.libsdl.app.SDLActivity;
 
 public class VitaPlexActivity extends SDLActivity
 {
-    protected static SurfaceView mpvSurface;
-
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         mSurface.getHolder().setFormat(PixelFormat.RGBA_8888);
-        mSurface.setZOrderOnTop(true);
-        mpvSurface = new SurfaceView(this);
-        mLayout.addView(mpvSurface, 0);
 
         PlatformUtils.borealisHandler = new BorealisHandler();
         _setAppScreenBrightness(_getSystemScreenBrightness());
@@ -48,10 +42,10 @@ public class VitaPlexActivity extends SDLActivity
     };
 
     public static Surface getMpvSurface() {
-        if (mpvSurface == null) {
+        if (mSurface == null) {
             return null;
         }
-        return mpvSurface.getHolder().getSurface();
+        return mSurface.getHolder().getSurface();
     }
 
     @Override
