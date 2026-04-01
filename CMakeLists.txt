@@ -164,6 +164,7 @@ if(PLATFORM_ANDROID)
     list(APPEND APP_SOURCES src/platform/android_assets.cpp)
 endif()
 
+
 set(APP_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${BOREALIS_LIBRARY}/include
@@ -206,10 +207,9 @@ endif()
 # Link libraries
 # ---------------------------------------------------------------------------
 if(PLATFORM_ANDROID)
-    # Android: manga reader only — libwebp handles animated WebP natively,
-    # no video playback needed so skip mpv/ffmpeg entirely.
-    set(APP_FFMPEG_LIBS)
-    set(APP_FFMPEG_LINK_BLOCK)
+    # Android requires libmpv for in-app playback.
+    set(APP_FFMPEG_LIBS mpv)
+    set(APP_FFMPEG_LINK_BLOCK ${APP_FFMPEG_LIBS})
 elseif(WIN32)
     set(APP_FFMPEG_LIBS mpv)
     set(APP_FFMPEG_LINK_BLOCK ${APP_FFMPEG_LIBS})
