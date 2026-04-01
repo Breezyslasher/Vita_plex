@@ -323,7 +323,13 @@ if(PLATFORM_PSV)
         SceVshBridge_stub
     )
 elseif(PLATFORM_SWITCH)
-    target_link_libraries(${PROJECT_NAME} nx dav1d)
+    target_link_libraries(${PROJECT_NAME}
+        nx
+        dav1d
+        postproc
+        placebo
+        jpeg
+    )
 elseif(PLATFORM_PS4)
     target_link_libraries(${PROJECT_NAME}
         SceNet
