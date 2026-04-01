@@ -15,6 +15,9 @@
 #include "view/video_view.hpp"
 #include "app/downloads_manager.hpp"
 #include "utils/http_client.hpp"
+#if defined(__ANDROID__)
+#include "platform/android_assets.hpp"
+#endif
 
 #ifdef __vita__
 #include <psp2/kernel/processmgr.h>
@@ -192,6 +195,12 @@ static int VitaPlexMainEntry(int argc, char* argv[]) {
         // Note: brls::Logger::setLogOutput doesn't work on Vita (uses sceClibPrintf)
         // We'll subscribe to log events after Borealis init
     }
+#endif
+
+    // Android Borealis resources (XML/fonts/images) are bundled in APK assets.
+    // Extract them to internal storage before initializing Borealis.
+#if defined(__ANDROID__)
+    extractAndroidAssets();
 #endif
 
     // Initialize Borealis
