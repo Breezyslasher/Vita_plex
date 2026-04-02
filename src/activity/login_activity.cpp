@@ -8,8 +8,12 @@
 #include "app/downloads_manager.hpp"
 #include "view/progress_dialog.hpp"
 #include "utils/async.hpp"
+#include "utils/http_client.hpp"
 
 #include <memory>
+#include <thread>
+#include <atomic>
+#include <condition_variable>
 
 namespace vitaplex {
 
@@ -158,35 +162,88 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
     asyncRun([this, server, progressDialog, totalConnections, cancelled]() {
         PlexClient& client = PlexClient::getInstance();
 
-        for (size_t i = 0; i < totalConnections && !*cancelled; i++) {
-            const auto& conn = server.connections[i];
-            std::string connType = conn.local ? "local" : (conn.relay ? "relay" : "remote");
-
-            // Use shorter timeouts per connection type to fail fast
-            // Local: 10s (should respond quickly if reachable)
-            // Remote: 15s (direct remote access)
-            // Relay: 30s (relay may be slower but is the fallback)
-            int timeout = conn.local ? 10 : (conn.relay ? 30 : 15);
-
-            brls::sync([progressDialog, i, totalConnections, server, connType]() {
-                progressDialog->setAttempt(i + 1, totalConnections);
-                progressDialog->setStatus("Trying " + connType + " connection...");
-                progressDialog->setProgress(static_cast<float>(i) / totalConnections);
+        if (totalConnections == 0) {
+            brls::sync([this, progressDialog]() {
+                progressDialog->setStatus("No valid server connections");
+                brls::delay(800, [progressDialog]() { progressDialog->dismiss(); });
             });
+            return;
+        }
 
-            brls::Logger::info("Trying connection {}/{}: {} ({}, timeout: {}s)",
-                              i + 1, totalConnections, conn.uri, connType, timeout);
+        std::atomic<bool> found{false};
+        std::atomic<int> completed{0};
+        std::mutex winnerMutex;
+        std::condition_variable winnerCv;
+        std::string winnerUri;
+        std::vector<std::thread> workers;
+        workers.reserve(totalConnections);
 
-            if (client.connectToServer(conn.uri, timeout)) {
-                // Success!
+        brls::sync([progressDialog]() {
+            progressDialog->setStatus("Testing all server URLs in parallel...");
+            progressDialog->setProgress(0.05f);
+        });
+
+        for (size_t i = 0; i < totalConnections; i++) {
+            const auto conn = server.connections[i];
+            workers.emplace_back([&, conn, i]() {
+                if (*cancelled) {
+                    completed.fetch_add(1);
+                    return;
+                }
+
+                int timeout = conn.local ? 8 : (conn.relay ? 16 : 12);
+                HttpClient http;
+                HttpRequest req;
+                req.method = "GET";
+                req.timeout = timeout;
+                req.headers["Accept"] = "application/json";
+                req.url = conn.uri + "/?X-Plex-Token=" + HttpClient::urlEncode(client.getAuthToken());
+
+                brls::Logger::debug("Parallel probe {}/{} {}", i + 1, totalConnections, conn.uri);
+                HttpResponse resp = http.request(req);
+
+                if (resp.statusCode == 200 && !found.exchange(true)) {
+                    {
+                        std::lock_guard<std::mutex> lk(winnerMutex);
+                        winnerUri = conn.uri;
+                    }
+                    winnerCv.notify_one();
+                }
+
+                int doneNow = completed.fetch_add(1) + 1;
+                brls::sync([progressDialog, doneNow, totalConnections]() {
+                    float p = 0.1f + (0.7f * (float)doneNow / (float)totalConnections);
+                    progressDialog->setProgress(std::min(0.85f, p));
+                    progressDialog->setAttempt(doneNow, totalConnections);
+                });
+                winnerCv.notify_one();
+            });
+        }
+
+        {
+            std::unique_lock<std::mutex> lk(winnerMutex);
+            winnerCv.wait(lk, [&]() {
+                return found.load() || completed.load() >= (int)totalConnections || *cancelled;
+            });
+        }
+
+        for (auto& t : workers) {
+            if (t.joinable()) t.join();
+        }
+
+        if (!*cancelled && found.load()) {
+            std::string uri;
+            {
+                std::lock_guard<std::mutex> lk(winnerMutex);
+                uri = winnerUri;
+            }
+            brls::Logger::info("Fastest server URL selected: {}", uri);
+            if (client.connectToServer(uri, 15)) {
                 brls::sync([this, progressDialog, server]() {
                     progressDialog->setStatus("Connected!");
                     progressDialog->setProgress(1.0f);
-
                     Application::getInstance().saveSettings();
                     if (statusLabel) statusLabel->setText("Connected to " + server.name);
-
-                    // Delay to show success, then proceed
                     brls::delay(500, [this, progressDialog]() {
                         progressDialog->dismiss();
                         Application::getInstance().pushMainActivity();
@@ -194,8 +251,6 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
                 });
                 return;
             }
-
-            brls::Logger::info("Connection {} failed, trying next...", i + 1);
         }
 
         // All connections failed
