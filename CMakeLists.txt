@@ -329,6 +329,7 @@ elseif(PLATFORM_SWITCH)
         postproc
         placebo
         jpeg
+        uam
     )
 elseif(PLATFORM_PS4)
     target_link_libraries(${PROJECT_NAME}
@@ -376,6 +377,7 @@ if(PLATFORM_PSV)
 
         FILE resources/xml/activity/main.xml     resources/xml/activity/main.xml
         FILE resources/xml/activity/login.xml    resources/xml/activity/login.xml
+        FILE resources/xml/activity/player.xml   resources/xml/activity/player.xml
         FILE resources/xml/activity/reader.xml   resources/xml/activity/reader.xml
         FILE resources/xml/tabs/library.xml      resources/xml/tabs/library.xml
         FILE resources/xml/tabs/search.xml       resources/xml/tabs/search.xml
@@ -395,6 +397,12 @@ if(PLATFORM_PSV)
         FILE resources/icons/circle.png                   resources/icons/circle.png
         FILE resources/icons/cross.png                    resources/icons/cross.png
         FILE resources/icons/download.png                 resources/icons/download.png
+        FILE resources/icons/fast-forward-10.png          resources/icons/fast-forward-10.png
+        FILE resources/icons/fast-forward-15.png          resources/icons/fast-forward-15.png
+        FILE resources/icons/fast-forward-30.png          resources/icons/fast-forward-30.png
+        FILE resources/icons/fast-forward-45.png          resources/icons/fast-forward-45.png
+        FILE resources/icons/fast-forward-5.png           resources/icons/fast-forward-5.png
+        FILE resources/icons/fast-forward-60.png          resources/icons/fast-forward-60.png
         FILE resources/icons/hide.png                     resources/icons/hide.png
         FILE resources/icons/history.png                  resources/icons/history.png
         FILE resources/icons/hot.png                      resources/icons/hot.png
@@ -403,12 +411,27 @@ if(PLATFORM_PSV)
         FILE resources/icons/menu.png                     resources/icons/menu.png
         FILE resources/icons/mini_star.png                resources/icons/mini_star.png
         FILE resources/icons/options.png                  resources/icons/options.png
+        FILE resources/icons/pause.png                    resources/icons/pause.png
+        FILE resources/icons/play.png                     resources/icons/play.png
         FILE resources/icons/radio.png                    resources/icons/radio.png
         FILE resources/icons/radio_checked.png            resources/icons/radio_checked.png
         FILE resources/icons/refresh.png                  resources/icons/refresh.png
+        FILE resources/icons/repeat-off.png               resources/icons/repeat-off.png
+        FILE resources/icons/repeat-once.png              resources/icons/repeat-once.png
+        FILE resources/icons/repeat.png                   resources/icons/repeat.png
+        FILE resources/icons/rewind-10.png                resources/icons/rewind-10.png
+        FILE resources/icons/rewind-15.png                resources/icons/rewind-15.png
+        FILE resources/icons/rewind-30.png                resources/icons/rewind-30.png
+        FILE resources/icons/rewind-45.png                resources/icons/rewind-45.png
+        FILE resources/icons/rewind-5.png                 resources/icons/rewind-5.png
+        FILE resources/icons/rewind-60.png                resources/icons/rewind-60.png
         FILE resources/icons/right.png                    resources/icons/right.png
         FILE resources/icons/search.png                   resources/icons/search.png
+        FILE resources/icons/shuffle-disabled.png         resources/icons/shuffle-disabled.png
+        FILE resources/icons/shuffle-variant.png          resources/icons/shuffle-variant.png
         FILE resources/icons/show.png                     resources/icons/show.png
+        FILE resources/icons/skip-next.png                resources/icons/skip-next.png
+        FILE resources/icons/skip-previous.png            resources/icons/skip-previous.png
         FILE resources/icons/sort-1-9.png                 resources/icons/sort-1-9.png
         FILE resources/icons/sort-9-1.png                 resources/icons/sort-9-1.png
         FILE resources/icons/sort-clock-ascending.png     resources/icons/sort-clock-ascending.png
@@ -419,7 +442,10 @@ if(PLATFORM_PSV)
         FILE resources/icons/book-multiple.png            resources/icons/book-multiple.png
         FILE resources/icons/book-arrow-down.png          resources/icons/book-arrow-down.png
         FILE resources/icons/star.png                     resources/icons/star.png
+        FILE resources/icons/subtitles.png                resources/icons/subtitles.png
         FILE resources/icons/tag.png                      resources/icons/tag.png
+        FILE resources/icons/translate.png                resources/icons/translate.png
+        FILE resources/icons/video-image.png              resources/icons/video-image.png
         FILE resources/icons/web.png                      resources/icons/web.png
         FILE resources/icons/filter-menu-outline.png      resources/icons/filter-menu-outline.png
         FILE resources/icons/format-list-group.png        resources/icons/format-list-group.png
