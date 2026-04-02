@@ -16,6 +16,11 @@
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
+    <!-- Android TV support -->
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="false" />
+
     <!-- Game controller support -->
     <uses-feature
         android:name="android.hardware.bluetooth"
@@ -66,6 +71,7 @@
     -->
     <application android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
+        android:banner="@mipmap/ic_launcher"
         android:allowBackup="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
         android:hardwareAccelerated="true" >
@@ -87,6 +93,7 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
             <!-- Let Android know that we can handle some USB devices and should receive this event -->
             <intent-filter>
