@@ -691,7 +691,7 @@ jobs:
             echo '[Desktop Entry]'
             echo 'Type=Application'
             echo 'Name=VitaPlex'
-            echo 'Comment=Suwayomi desktop client'
+            echo 'Comment=Plex desktop client'
             echo 'Exec=VitaPlex'
             echo 'Icon=VitaPlex'
             echo 'Terminal=false'
