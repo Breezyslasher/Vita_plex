@@ -685,7 +685,7 @@ void SettingsTab::onManageHiddenLibraries() {
     // Create scrollable dialog content for many libraries
     brls::Box* outerBox = new brls::Box();
     outerBox->setAxis(brls::Axis::COLUMN);
-    outerBox->setWidth(400);
+    outerBox->setWidth(340);
     outerBox->setHeight(350);  // Fixed height for scrolling
 
     auto* title = new brls::Label();
@@ -703,7 +703,7 @@ void SettingsTab::onManageHiddenLibraries() {
     brls::Box* content = new brls::Box();
     content->setAxis(brls::Axis::COLUMN);
     content->setPaddingLeft(20);
-    content->setPaddingRight(20);
+    content->setPaddingRight(8);
 
     std::vector<std::pair<std::string, brls::BooleanCell*>> checkboxes;
 
