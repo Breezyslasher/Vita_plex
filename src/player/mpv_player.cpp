@@ -147,8 +147,12 @@ bool MpvPlayer::init() {
         // GXM-specific settings from switchfin
         mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
         mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
+#elif defined(__ANDROID__)
+        // Android/Android TV: force hardware decoding for smooth playback.
+        // Software decode struggles with high-bitrate H.264/H.265 streams on TV SoCs.
+        mpv_set_option_string(m_mpv, "hwdec", "mediacodec-copy");
 #else
-        mpv_set_option_string(m_mpv, "hwdec", "no");
+        mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
 #endif
     }
 
