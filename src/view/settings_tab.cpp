@@ -685,6 +685,7 @@ void SettingsTab::onManageHiddenLibraries() {
     // Create scrollable dialog content for many libraries
     brls::Box* outerBox = new brls::Box();
     outerBox->setAxis(brls::Axis::COLUMN);
+    outerBox->setAlignItems(brls::AlignItems::STRETCH);
     outerBox->setWidth(340);
     outerBox->setHeight(350);  // Fixed height for scrolling
 
@@ -702,6 +703,7 @@ void SettingsTab::onManageHiddenLibraries() {
 
     brls::Box* content = new brls::Box();
     content->setAxis(brls::Axis::COLUMN);
+    content->setAlignItems(brls::AlignItems::STRETCH);
     content->setPaddingLeft(20);
     content->setPaddingRight(8);
 
@@ -740,6 +742,7 @@ void SettingsTab::onManageHiddenLibraries() {
     outerBox->addView(actionRow);
 
     brls::Dialog* dialog = new brls::Dialog(outerBox);
+    dialog->setWidth(360);
 
     cancelButton->registerClickAction([dialog](brls::View* view) {
         dialog->dismiss();
