@@ -247,7 +247,7 @@ bool Application::loadSettings() {
     // Load UI settings
     m_settings.theme = static_cast<AppTheme>(extractInt("theme"));
     m_settings.debugLogging = extractBool("debugLogging", true);
-    m_settings.showDebugTab = extractBool("showDebugTab", true);
+    m_settings.showDebugTab = extractBool("showDebugTab", false);
 
     // Load layout settings
     m_settings.showLibrariesInSidebar = extractBool("showLibrariesInSidebar", false);
@@ -353,7 +353,7 @@ bool Application::loadSettings() {
 
     m_settings.theme = static_cast<AppTheme>(extractInt("theme"));
     m_settings.debugLogging = extractBool("debugLogging", true);
-    m_settings.showDebugTab = extractBool("showDebugTab", true);
+    m_settings.showDebugTab = extractBool("showDebugTab", false);
     m_settings.showLibrariesInSidebar = extractBool("showLibrariesInSidebar", false);
     m_settings.collapseSidebar = extractBool("collapseSidebar", false);
     m_settings.hiddenLibraries = extractString("hiddenLibraries");
