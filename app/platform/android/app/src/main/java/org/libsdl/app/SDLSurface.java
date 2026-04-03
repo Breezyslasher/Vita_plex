@@ -138,15 +138,27 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
         // Prevent a screen distortion glitch,
         // for instance when the device is in Landscape and a Portrait App is resumed.
         boolean skip = false;
-        int requestedOrientation = SDLActivity.mSingleton.getRequestedOrientation();
 
-        if (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT) {
-            if (mWidth > mHeight) {
-               skip = true;
-            }
-        } else if (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE) {
-            if (mWidth < mHeight) {
-               skip = true;
+        // Apply the orientation-mismatch skip only while the surface is not yet ready.
+        // Once rendering is active, always accept resize events so fold/unfold and
+        // dynamic window-size changes can propagate immediately.
+        if (!mIsSurfaceReady) {
+            int requestedOrientation = SDLActivity.mSingleton.getRequestedOrientation();
+
+            if (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                    || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                    || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT
+                    || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT) {
+                if (mWidth > mHeight) {
+                   skip = true;
+                }
+            } else if (requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                    || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+                    || requestedOrientation == ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE) {
+                if (mWidth < mHeight) {
+                   skip = true;
+                }
             }
         }
 
