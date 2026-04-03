@@ -88,6 +88,16 @@ static std::string buildItemStatusText(const DownloadItem& item) {
     }
 }
 
+static bool isDescendantOf(brls::View* view, brls::View* ancestor) {
+    if (!view || !ancestor) return false;
+    brls::View* current = view;
+    while (current) {
+        if (current == ancestor) return true;
+        current = current->getParent();
+    }
+    return false;
+}
+
 static NVGcolor getStateColor(DownloadState state) {
     switch (state) {
         case DownloadState::TRANSCODING: return nvgRGBA(50, 30, 60, 200);
@@ -385,9 +395,10 @@ void DownloadsTab::rebuildList() {
     m_aliveAtomic->store(false);
     m_aliveAtomic = std::make_shared<std::atomic<bool>>(true);
 
-    // Move focus away from list items before removing them to prevent
-    // focus-related crashes when the currently-focused view is destroyed
-    if (m_clearBtn) {
+    // Move focus away before removing list rows only when focus is currently
+    // inside the downloads list. This avoids stealing focus when the tab first loads.
+    brls::View* focusedView = brls::Application::getCurrentFocus();
+    if (m_clearBtn && isDescendantOf(focusedView, m_listContainer)) {
         brls::Application::giveFocus(m_clearBtn);
     }
 
