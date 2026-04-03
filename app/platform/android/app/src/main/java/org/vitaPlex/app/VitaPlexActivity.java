@@ -5,6 +5,7 @@ import android.graphics.PixelFormat;
 import android.os.Bundle;
 import android.os.Handler;
 import android.provider.Settings;
+import android.util.Log;
 import android.view.Surface;
 
 import org.libsdl.app.BorealisHandler;
@@ -13,6 +14,8 @@ import org.libsdl.app.SDLActivity;
 
 public class VitaPlexActivity extends SDLActivity
 {
+    private static final String TAG = "VitaPlex";
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -72,6 +75,16 @@ public class VitaPlexActivity extends SDLActivity
                 "SDL2",
                 "VitaPlex"
         };
+    }
+
+    @Override
+    public void setOrientationBis(int w, int h, boolean resizable, String hint) {
+        // Keep Android behavior simple and consistent: allow both portrait and landscape.
+        // This matches users' expectation on phones/tablets/TVs and supports natural rotation.
+        int req = ActivityInfo.SCREEN_ORIENTATION_FULL_USER;
+        Log.v(TAG, "setOrientationBis(): forcing FULL_USER (w=" + w + ", h=" + h
+                + ", resizable=" + resizable + ", hint=" + hint + ")");
+        setRequestedOrientation(req);
     }
 
 }
