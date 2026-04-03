@@ -718,11 +718,35 @@ void SettingsTab::onManageHiddenLibraries() {
     scrollFrame->setContentView(content);
     outerBox->addView(scrollFrame);
 
+    auto* actionRow = new brls::Box();
+    actionRow->setAxis(brls::Axis::ROW);
+    actionRow->setMarginTop(10);
+    actionRow->setMarginBottom(20);
+    actionRow->setMarginLeft(20);
+    actionRow->setMarginRight(20);
+    actionRow->setJustifyContent(brls::JustifyContent::FLEX_END);
+
+    auto* cancelButton = new brls::Button();
+    cancelButton->setText("Cancel");
+    cancelButton->setWidth(140);
+    actionRow->addView(cancelButton);
+
+    auto* saveButton = new brls::Button();
+    saveButton->setText("Save");
+    saveButton->setWidth(140);
+    saveButton->setMarginLeft(10);
+    actionRow->addView(saveButton);
+
+    outerBox->addView(actionRow);
+
     brls::Dialog* dialog = new brls::Dialog(outerBox);
 
-    dialog->addButton("Cancel", []() {});
+    cancelButton->registerClickAction([dialog](brls::View* view) {
+        dialog->dismiss();
+        return true;
+    });
 
-    dialog->addButton("Save", [checkboxes, this]() {
+    saveButton->registerClickAction([checkboxes, this, dialog](brls::View* view) {
         Application& app = Application::getInstance();
         AppSettings& settings = app.getSettings();
 
@@ -748,7 +772,17 @@ void SettingsTab::onManageHiddenLibraries() {
         if (m_hiddenLibrariesCell) {
             m_hiddenLibrariesCell->setDetailText(count > 0 ? std::to_string(count) + " hidden" : "None hidden");
         }
+        dialog->dismiss();
+        return true;
     });
+
+    // Controller navigation: pressing DOWN on the last library should land on Cancel.
+    if (!checkboxes.empty()) {
+        brls::View* lastLibrary = checkboxes.back().second;
+        lastLibrary->setCustomNavigationRoute(brls::FocusDirection::DOWN, cancelButton);
+        cancelButton->setCustomNavigationRoute(brls::FocusDirection::UP, lastLibrary);
+        saveButton->setCustomNavigationRoute(brls::FocusDirection::UP, lastLibrary);
+    }
 
     dialog->open();
 }
