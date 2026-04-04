@@ -1022,7 +1022,6 @@ void MpvPlayer::updatePlaybackInfo() {
     }
 }
 
-#ifdef __vita__
 // Callback for mpv render context when a new frame is ready.
 // Matches switchfin: always queue via brls::sync(), never drop the signal.
 // brls::sync() callbacks run AFTER nvgEndFrame() so there's no GXM conflict.
@@ -1042,12 +1041,37 @@ void MpvPlayer::onRenderUpdate(void* ctx) {
 
         uint64_t flags = mpv_render_context_update(player->m_mpvRenderCtx);
         if (flags & MPV_RENDER_UPDATE_FRAME) {
+#ifdef __vita__
             mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
             mpv_render_context_report_swap(player->m_mpvRenderCtx);
+#else
+            std::lock_guard<std::mutex> lock(player->m_renderMutex);
+            if (player->m_videoBuffer.empty() || player->m_videoWidth <= 0 || player->m_videoHeight <= 0) {
+                return;
+            }
+
+            int swSize[2] = {player->m_videoWidth, player->m_videoHeight};
+            int swStride = player->m_videoWidth * 4;
+            char swFormat[] = "rgba";
+            void* swPixels = player->m_videoBuffer.data();
+            mpv_render_param swParams[] = {
+                {MPV_RENDER_PARAM_SW_SIZE, swSize},
+                {MPV_RENDER_PARAM_SW_FORMAT, swFormat},
+                {MPV_RENDER_PARAM_SW_STRIDE, &swStride},
+                {MPV_RENDER_PARAM_SW_POINTER, swPixels},
+                {MPV_RENDER_PARAM_INVALID, nullptr},
+            };
+            mpv_render_context_render(player->m_mpvRenderCtx, swParams);
+            mpv_render_context_report_swap(player->m_mpvRenderCtx);
+
+            NVGcontext* vg = brls::Application::getNVGContext();
+            if (vg && player->m_nvgImage != 0) {
+                nvgUpdateImage(vg, player->m_nvgImage, player->m_videoBuffer.data());
+            }
+#endif
         }
     });
 }
-#endif
 
 bool MpvPlayer::initRenderContext() {
 #ifdef __vita__
@@ -1206,8 +1230,47 @@ bool MpvPlayer::initRenderContext() {
     brls::Logger::info("MpvPlayer: GXM render context created successfully ({}x{})", m_videoWidth, m_videoHeight);
     return true;
 #else
-    // Non-Vita builds don't need render context
-    return false;
+    if (m_mpvRenderCtx) {
+        return true;
+    }
+    if (!m_mpv) {
+        return false;
+    }
+
+    NVGcontext* vg = brls::Application::getNVGContext();
+    if (!vg) {
+        brls::Logger::error("MpvPlayer: Failed to get NanoVG context for non-Vita render");
+        return false;
+    }
+
+    m_videoWidth = 1280;
+    m_videoHeight = 720;
+    m_videoBuffer.assign((size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
+
+    m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, m_videoBuffer.data());
+    if (m_nvgImage == 0) {
+        brls::Logger::error("MpvPlayer: Failed to create non-Vita video image");
+        return false;
+    }
+
+    char apiType[] = MPV_RENDER_API_TYPE_SW;
+    mpv_render_param params[] = {
+        {MPV_RENDER_PARAM_API_TYPE, apiType},
+        {MPV_RENDER_PARAM_INVALID, nullptr},
+    };
+
+    int result = mpv_render_context_create(&m_mpvRenderCtx, m_mpv, params);
+    if (result < 0) {
+        brls::Logger::error("MpvPlayer: Failed to create SW render context: {}", mpv_error_string(result));
+        nvgDeleteImage(vg, m_nvgImage);
+        m_nvgImage = 0;
+        return false;
+    }
+
+    mpv_render_context_set_update_callback(m_mpvRenderCtx, onRenderUpdate, this);
+    m_renderReady.store(true);
+    brls::Logger::info("MpvPlayer: Non-Vita software render context initialized");
+    return true;
 #endif
 }
 
@@ -1249,6 +1312,19 @@ void MpvPlayer::cleanupRenderContext() {
         m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
         m_mpvParams[2] = {MPV_RENDER_PARAM_INVALID, nullptr};
     }
+#else
+    m_renderReady.store(false);
+    std::lock_guard<std::mutex> lock(m_renderMutex);
+    if (m_mpvRenderCtx) {
+        mpv_render_context_free(m_mpvRenderCtx);
+        m_mpvRenderCtx = nullptr;
+    }
+    NVGcontext* vg = brls::Application::getNVGContext();
+    if (m_nvgImage && vg) {
+        nvgDeleteImage(vg, m_nvgImage);
+        m_nvgImage = 0;
+    }
+    m_videoBuffer.clear();
 #endif
 }
 

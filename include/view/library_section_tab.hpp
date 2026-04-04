@@ -81,7 +81,7 @@ private:
     void loadNextPage();
     size_t m_pageOffset = 0;
     int m_totalItemCount = 0;
-    static constexpr size_t PAGE_SIZE = 60;
+    static constexpr size_t LIBRARY_PAGE_SIZE = 60;
 
     // Data
     std::vector<MediaItem> m_items;
@@ -95,7 +95,7 @@ private:
     size_t m_trackListRendered = 0;  // How many track rows rendered so far
     brls::Button* m_trackListLoadMoreBtn = nullptr;
 
-    static constexpr size_t TRACK_LIST_PAGE_SIZE = 50;
+    static constexpr size_t PLAYLIST_TRACK_PAGE_SIZE = 50;
 
     LibraryViewMode m_viewMode = LibraryViewMode::ALL_ITEMS;
     std::string m_filterTitle;  // Title of current filter (collection/genre name)

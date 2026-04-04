@@ -12,6 +12,8 @@
 #include <borealis.hpp>
 #include <fstream>
 #include <cstring>
+#include <filesystem>
+#include "platform/paths.hpp"
 
 #ifdef __vita__
 #include <psp2/io/fcntl.h>
@@ -245,7 +247,7 @@ bool Application::loadSettings() {
     // Load UI settings
     m_settings.theme = static_cast<AppTheme>(extractInt("theme"));
     m_settings.debugLogging = extractBool("debugLogging", true);
-    m_settings.showDebugTab = extractBool("showDebugTab", true);
+    m_settings.showDebugTab = extractBool("showDebugTab", false);
 
     // Load layout settings
     m_settings.showLibrariesInSidebar = extractBool("showLibrariesInSidebar", false);
@@ -296,7 +298,97 @@ bool Application::loadSettings() {
     brls::Logger::info("Settings loaded successfully");
     return !m_authToken.empty();
 #else
-    return false;
+    std::string settingsPath = platformPath("settings.json");
+    brls::Logger::debug("loadSettings: Opening {}", settingsPath);
+
+    std::ifstream ifs(settingsPath);
+    if (!ifs.is_open()) {
+        brls::Logger::debug("No settings file found");
+        return false;
+    }
+
+    std::string content((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    ifs.close();
+    if (content.empty()) {
+        brls::Logger::debug("Settings file is empty");
+        return false;
+    }
+
+    auto extractString = [&content](const std::string& key) -> std::string {
+        std::string search = "\"" + key + "\":";
+        size_t pos = content.find(search);
+        if (pos == std::string::npos) return "";
+        pos += search.length();
+        while (pos < content.length() && (content[pos] == ' ' || content[pos] == '\t')) pos++;
+        if (pos >= content.length() || content[pos] != '"') return "";
+        pos++;
+        size_t end = content.find("\"", pos);
+        if (end == std::string::npos) return "";
+        return content.substr(pos, end - pos);
+    };
+
+    auto extractInt = [&content](const std::string& key) -> int {
+        std::string search = "\"" + key + "\":";
+        size_t pos = content.find(search);
+        if (pos == std::string::npos) return 0;
+        pos += search.length();
+        while (pos < content.length() && (content[pos] == ' ' || content[pos] == '\t')) pos++;
+        size_t end = content.find_first_of(",}\n", pos);
+        if (end == std::string::npos) return 0;
+        return atoi(content.substr(pos, end - pos).c_str());
+    };
+
+    auto extractBool = [&content](const std::string& key, bool defaultVal = false) -> bool {
+        std::string search = "\"" + key + "\":";
+        size_t pos = content.find(search);
+        if (pos == std::string::npos) return defaultVal;
+        pos += search.length();
+        while (pos < content.length() && (content[pos] == ' ' || content[pos] == '\t')) pos++;
+        return (content.substr(pos, 4) == "true");
+    };
+
+    m_authToken = extractString("authToken");
+    m_serverUrl = extractString("serverUrl");
+    m_username = extractString("username");
+
+    m_settings.theme = static_cast<AppTheme>(extractInt("theme"));
+    m_settings.debugLogging = extractBool("debugLogging", true);
+    m_settings.showDebugTab = extractBool("showDebugTab", false);
+    m_settings.showLibrariesInSidebar = extractBool("showLibrariesInSidebar", false);
+    m_settings.collapseSidebar = extractBool("collapseSidebar", false);
+    m_settings.hiddenLibraries = extractString("hiddenLibraries");
+    m_settings.sidebarOrder = extractString("sidebarOrder");
+    m_settings.showCollections = extractBool("showCollections", true);
+    m_settings.showPlaylists = extractBool("showPlaylists", true);
+    m_settings.showGenres = extractBool("showGenres", true);
+    m_settings.hideTitlesInGrid = extractBool("hideTitlesInGrid", false);
+    m_settings.skipSingleSeason = extractBool("skipSingleSeason", false);
+    m_settings.autoPlayNext = extractBool("autoPlayNext", true);
+    m_settings.resumePlayback = extractBool("resumePlayback", true);
+    m_settings.showSubtitles = extractBool("showSubtitles", true);
+    m_settings.subtitleSize = static_cast<SubtitleSize>(extractInt("subtitleSize"));
+    m_settings.seekInterval = extractInt("seekInterval");
+    if (m_settings.seekInterval <= 0) m_settings.seekInterval = 10;
+    m_settings.controlsAutoHideSeconds = extractInt("controlsAutoHideSeconds");
+    if (m_settings.controlsAutoHideSeconds < 0) m_settings.controlsAutoHideSeconds = 5;
+    m_settings.autoSkipIntro = extractBool("autoSkipIntro", false);
+    m_settings.autoSkipCredits = extractBool("autoSkipCredits", false);
+    m_settings.videoQuality = static_cast<VideoQuality>(extractInt("videoQuality"));
+    m_settings.forceTranscode = extractBool("forceTranscode", false);
+    m_settings.maxBitrate = extractInt("maxBitrate");
+    if (m_settings.maxBitrate <= 0) m_settings.maxBitrate = 2000;
+    m_settings.connectionTimeout = extractInt("connectionTimeout");
+    if (m_settings.connectionTimeout <= 0) m_settings.connectionTimeout = 180;
+    m_settings.directPlay = extractBool("directPlay", false);
+    m_settings.deleteAfterWatch = extractBool("deleteAfterWatch", false);
+    int trackAction = extractInt("trackDefaultAction");
+    if (trackAction >= 0 && trackAction <= 4) {
+        m_settings.trackDefaultAction = static_cast<TrackDefaultAction>(trackAction);
+    }
+    m_settings.backgroundMusic = extractBool("backgroundMusic", true);
+
+    brls::Logger::info("Settings loaded successfully from {}", settingsPath);
+    return !m_authToken.empty();
 #endif
 }
 
@@ -379,7 +471,53 @@ bool Application::saveSettings() {
         return false;
     }
 #else
-    return false;
+    std::string settingsPath = platformPath("settings.json");
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(settingsPath).parent_path(), ec);
+
+    std::string json = "{\n";
+    json += "  \"authToken\": \"" + m_authToken + "\",\n";
+    json += "  \"serverUrl\": \"" + m_serverUrl + "\",\n";
+    json += "  \"username\": \"" + m_username + "\",\n";
+    json += "  \"theme\": " + std::to_string(static_cast<int>(m_settings.theme)) + ",\n";
+    json += "  \"debugLogging\": " + std::string(m_settings.debugLogging ? "true" : "false") + ",\n";
+    json += "  \"showDebugTab\": " + std::string(m_settings.showDebugTab ? "true" : "false") + ",\n";
+    json += "  \"showLibrariesInSidebar\": " + std::string(m_settings.showLibrariesInSidebar ? "true" : "false") + ",\n";
+    json += "  \"collapseSidebar\": " + std::string(m_settings.collapseSidebar ? "true" : "false") + ",\n";
+    json += "  \"hiddenLibraries\": \"" + m_settings.hiddenLibraries + "\",\n";
+    json += "  \"sidebarOrder\": \"" + m_settings.sidebarOrder + "\",\n";
+    json += "  \"showCollections\": " + std::string(m_settings.showCollections ? "true" : "false") + ",\n";
+    json += "  \"showPlaylists\": " + std::string(m_settings.showPlaylists ? "true" : "false") + ",\n";
+    json += "  \"showGenres\": " + std::string(m_settings.showGenres ? "true" : "false") + ",\n";
+    json += "  \"hideTitlesInGrid\": " + std::string(m_settings.hideTitlesInGrid ? "true" : "false") + ",\n";
+    json += "  \"skipSingleSeason\": " + std::string(m_settings.skipSingleSeason ? "true" : "false") + ",\n";
+    json += "  \"autoPlayNext\": " + std::string(m_settings.autoPlayNext ? "true" : "false") + ",\n";
+    json += "  \"resumePlayback\": " + std::string(m_settings.resumePlayback ? "true" : "false") + ",\n";
+    json += "  \"showSubtitles\": " + std::string(m_settings.showSubtitles ? "true" : "false") + ",\n";
+    json += "  \"subtitleSize\": " + std::to_string(static_cast<int>(m_settings.subtitleSize)) + ",\n";
+    json += "  \"seekInterval\": " + std::to_string(m_settings.seekInterval) + ",\n";
+    json += "  \"controlsAutoHideSeconds\": " + std::to_string(m_settings.controlsAutoHideSeconds) + ",\n";
+    json += "  \"autoSkipIntro\": " + std::string(m_settings.autoSkipIntro ? "true" : "false") + ",\n";
+    json += "  \"autoSkipCredits\": " + std::string(m_settings.autoSkipCredits ? "true" : "false") + ",\n";
+    json += "  \"videoQuality\": " + std::to_string(static_cast<int>(m_settings.videoQuality)) + ",\n";
+    json += "  \"forceTranscode\": " + std::string(m_settings.forceTranscode ? "true" : "false") + ",\n";
+    json += "  \"maxBitrate\": " + std::to_string(m_settings.maxBitrate) + ",\n";
+    json += "  \"connectionTimeout\": " + std::to_string(m_settings.connectionTimeout) + ",\n";
+    json += "  \"directPlay\": " + std::string(m_settings.directPlay ? "true" : "false") + ",\n";
+    json += "  \"deleteAfterWatch\": " + std::string(m_settings.deleteAfterWatch ? "true" : "false") + ",\n";
+    json += "  \"trackDefaultAction\": " + std::to_string(static_cast<int>(m_settings.trackDefaultAction)) + ",\n";
+    json += "  \"backgroundMusic\": " + std::string(m_settings.backgroundMusic ? "true" : "false") + "\n";
+    json += "}\n";
+
+    std::ofstream ofs(settingsPath, std::ios::trunc);
+    if (!ofs.is_open()) {
+        brls::Logger::error("Failed to open settings for write: {}", settingsPath);
+        return false;
+    }
+    ofs << json;
+    ofs.close();
+    brls::Logger::info("Settings saved to {}", settingsPath);
+    return true;
 #endif
 }
 
