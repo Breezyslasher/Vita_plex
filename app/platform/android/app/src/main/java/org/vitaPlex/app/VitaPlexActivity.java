@@ -121,28 +121,34 @@ public class VitaPlexActivity extends SDLActivity
         // keyboard-path mapping.  This ensures KEYCODE_BACK reaches
         // SDL_SCANCODE_AC_BACK -> BUTTON_B instead of gamepad BUTTON_BACK.
         if (isTvRemoteEvent(event)) {
+            // Translate the keycode: media keys get remapped to keycodes that
+            // borealis already maps to controller buttons.
+            int translatedKey = keyCode;
             switch (keyCode) {
                 case KeyEvent.KEYCODE_BACK:
                 case KeyEvent.KEYCODE_DPAD_CENTER:
                 case KeyEvent.KEYCODE_ENTER:
                 case KeyEvent.KEYCODE_MENU:
+                    // These pass through as-is — SDL maps them to scancodes
+                    // that borealis already handles (AC_BACK, RETURN, MENU)
+                    break;
                 case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
                 case KeyEvent.KEYCODE_MEDIA_PLAY:
                 case KeyEvent.KEYCODE_MEDIA_PAUSE:
-                case KeyEvent.KEYCODE_MEDIA_REWIND:
-                case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
-                case KeyEvent.KEYCODE_MEDIA_NEXT:
-                case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
                 case KeyEvent.KEYCODE_MEDIA_STOP:
-                    // Send directly as keyboard key, skipping joystick dispatch
-                    if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                        SDLActivity.onNativeKeyDown(keyCode);
-                        return true;
-                    } else if (event.getAction() == KeyEvent.ACTION_UP) {
-                        SDLActivity.onNativeKeyUp(keyCode);
-                        return true;
-                    }
+                    // Map to ENTER → SDL_SCANCODE_RETURN → BUTTON_A (play/pause)
+                    translatedKey = KeyEvent.KEYCODE_ENTER;
                     break;
+                default:
+                    // D-pad and other keys go through normal SDL dispatch
+                    return super.dispatchKeyEvent(event);
+            }
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                SDLActivity.onNativeKeyDown(translatedKey);
+                return true;
+            } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                SDLActivity.onNativeKeyUp(translatedKey);
+                return true;
             }
         }
 
