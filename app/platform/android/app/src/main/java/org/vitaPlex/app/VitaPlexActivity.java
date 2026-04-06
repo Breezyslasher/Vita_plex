@@ -124,8 +124,7 @@ public class VitaPlexActivity extends SDLActivity
         // map to BUTTON_A at all. Forcing the keyboard path ensures:
         //   BACK → SDL_SCANCODE_AC_BACK → BUTTON_B (navigation back)
         //   DPAD_CENTER → SDL_SCANCODE_RETURN → BUTTON_A (confirm/select)
-        if (keyCode == KeyEvent.KEYCODE_BACK ||
-            keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
+        if (keyCode == KeyEvent.KEYCODE_BACK ) {
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
                 SDLActivity.onNativeKeyDown(keyCode);
                 return true;
