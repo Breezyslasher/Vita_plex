@@ -295,7 +295,7 @@ endif()
 
 # Android needs the android library for AAssetManager (used by asset extraction)
 if(PLATFORM_ANDROID)
-    target_link_libraries(${PROJECT_NAME} android log EGL GLESv3)
+    target_link_libraries(${PROJECT_NAME} android log)
 endif()
 
 if(PLATFORM_PSV)

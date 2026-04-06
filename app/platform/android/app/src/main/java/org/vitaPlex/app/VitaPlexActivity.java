@@ -117,14 +117,15 @@ public class VitaPlexActivity extends SDLActivity
             return false;
         }
 
-        // KEYCODE_BACK must always go through the keyboard path so SDL maps
-        // it to SDL_SCANCODE_AC_BACK → BUTTON_B (navigation back).
-        // Without this, DPAD-source remotes route it through the joystick
-        // handler where it becomes BUTTON_BACK (gamepad select) — wrong.
-        // This applies regardless of input source (DPAD, keyboard, etc.)
-        // since even SOURCE_KEYBOARD back keys can get caught by SDL's
-        // joystick handler if the device also reports SOURCE_DPAD.
-        if (keyCode == KeyEvent.KEYCODE_BACK) {
+        // KEYCODE_BACK and DPAD_CENTER must always go through the keyboard
+        // path regardless of input source. Without this, DPAD-source remotes
+        // route them through SDL's joystick handler where BACK becomes
+        // BUTTON_BACK (wrong, should be BUTTON_B) and DPAD_CENTER may not
+        // map to BUTTON_A at all. Forcing the keyboard path ensures:
+        //   BACK → SDL_SCANCODE_AC_BACK → BUTTON_B (navigation back)
+        //   DPAD_CENTER → SDL_SCANCODE_RETURN → BUTTON_A (confirm/select)
+        if (keyCode == KeyEvent.KEYCODE_BACK ||
+            keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
             if (event.getAction() == KeyEvent.ACTION_DOWN) {
                 SDLActivity.onNativeKeyDown(keyCode);
                 return true;
@@ -139,7 +140,6 @@ public class VitaPlexActivity extends SDLActivity
         if (isTvRemoteEvent(event)) {
             int translatedKey = keyCode;
             switch (keyCode) {
-                case KeyEvent.KEYCODE_DPAD_CENTER:
                 case KeyEvent.KEYCODE_ENTER:
                 case KeyEvent.KEYCODE_MENU:
                     // Pass through as-is — SDL maps them to scancodes

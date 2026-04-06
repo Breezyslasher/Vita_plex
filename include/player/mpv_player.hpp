@@ -14,11 +14,6 @@
 #include <mpv/client.h>
 #include <mpv/render.h>
 #include <mpv/render_gxm.h>
-#elif defined(__ANDROID__)
-#include <mpv/client.h>
-#include <mpv/render.h>
-#include <mpv/render_gl.h>
-#include <GLES3/gl3.h>
 #else
 #include <mpv/client.h>
 #include <mpv/render.h>
@@ -206,13 +201,7 @@ private:
     int m_videoHeight = 544;
     std::atomic<bool> m_renderReady{false};
     std::mutex m_renderMutex;
-#ifdef __ANDROID__
-    // OpenGL FBO for GPU-accelerated rendering on Android
-    GLuint m_glFbo = 0;
-    GLuint m_glTexture = 0;
-    std::vector<unsigned char> m_videoBuffer;  // SW fallback buffer
-    static void* glGetProcAddress(void* ctx, const char* name);
-#elif !defined(__vita__)
+#ifndef __vita__
     std::vector<unsigned char> m_videoBuffer;
 #endif
 };
