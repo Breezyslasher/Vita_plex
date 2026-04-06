@@ -8,6 +8,7 @@
 #include "app/application.hpp"
 #include <borealis.hpp>
 
+
 #ifdef __vita__
 #include <psp2/kernel/clib.h>
 #include <psp2/kernel/threadmgr.h>
@@ -147,8 +148,22 @@ bool MpvPlayer::init() {
         // GXM-specific settings from switchfin
         mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
         mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
+#elif defined(__ANDROID__)
+        // Android/Android TV: use MediaCodec zero-copy path when possible.
+        // This reduces frame upload overhead and improves frame pacing on TV SoCs.
+        mpv_set_option_string(m_mpv, "hwdec", "mediacodec");
+        mpv_set_option_string(m_mpv, "framedrop", "vo");
+        // Reduce loop-filter complexity to speed up decoding on weaker TV SoCs
+        mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "nonref");
+        // Enable low-latency video timing to reduce frame scheduling jitter
+        mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
+        // Use display-resample to sync video frames to display refresh rate,
+        // reducing judder when video FPS doesn't match the TV's refresh rate
+        mpv_set_option_string(m_mpv, "video-sync", "display-resample");
+        // Use 4 decoder threads for multi-core TV SoCs
+        mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
 #else
-        mpv_set_option_string(m_mpv, "hwdec", "no");
+        mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
 #endif
     }
 
@@ -186,6 +201,13 @@ bool MpvPlayer::init() {
         // Video: disable cache to conserve memory (Vita has 256MB)
         mpv_set_option_string(m_mpv, "cache", "no");
     }
+#elif defined(__ANDROID__)
+    // Android/Android TV: larger buffers to prevent stutter from network jitter
+    mpv_set_option_string(m_mpv, "cache", "yes");
+    mpv_set_option_string(m_mpv, "demuxer-max-bytes", "32MiB");
+    mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "16MiB");
+    mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "10");
+    mpv_set_option_string(m_mpv, "cache-secs", "10");
 #else
     mpv_set_option_string(m_mpv, "cache", "yes");
     mpv_set_option_string(m_mpv, "demuxer-max-bytes", "4MiB");
@@ -1228,6 +1250,54 @@ bool MpvPlayer::initRenderContext() {
     flushGxmPipeline();
 
     brls::Logger::info("MpvPlayer: GXM render context created successfully ({}x{})", m_videoWidth, m_videoHeight);
+    return true;
+#elif defined(__ANDROID__)
+    // Android: use software render context. Sharing an OpenGL context between
+    // MPV and NanoVG causes flickering and state corruption, so we render to a
+    // CPU buffer and upload to a NanoVG texture each frame. The MPV config
+    // optimizations (large buffers, display-resample, MediaCodec hwdec, etc.)
+    // keep playback smooth despite the CPU-side copy.
+    if (m_mpvRenderCtx) {
+        return true;
+    }
+    if (!m_mpv) {
+        return false;
+    }
+
+    NVGcontext* vg = brls::Application::getNVGContext();
+    if (!vg) {
+        brls::Logger::error("MpvPlayer: Failed to get NanoVG context");
+        return false;
+    }
+
+    m_videoWidth = 1280;
+    m_videoHeight = 720;
+    m_videoBuffer.assign((size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
+
+    m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, m_videoBuffer.data());
+    if (m_nvgImage == 0) {
+        brls::Logger::error("MpvPlayer: Failed to create SW video image");
+        return false;
+    }
+
+    char apiType[] = MPV_RENDER_API_TYPE_SW;
+    mpv_render_param swParams[] = {
+        {MPV_RENDER_PARAM_API_TYPE, apiType},
+        {MPV_RENDER_PARAM_INVALID, nullptr},
+    };
+
+    int result = mpv_render_context_create(&m_mpvRenderCtx, m_mpv, swParams);
+    if (result < 0) {
+        brls::Logger::error("MpvPlayer: Failed to create SW render context: {}", mpv_error_string(result));
+        nvgDeleteImage(vg, m_nvgImage);
+        m_nvgImage = 0;
+        return false;
+    }
+
+    mpv_render_context_set_update_callback(m_mpvRenderCtx, onRenderUpdate, this);
+    m_renderReady.store(true);
+    brls::Logger::info("MpvPlayer: Android software render context initialized ({}x{})",
+                      m_videoWidth, m_videoHeight);
     return true;
 #else
     if (m_mpvRenderCtx) {

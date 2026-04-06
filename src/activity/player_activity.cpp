@@ -330,6 +330,29 @@ void PlayerActivity::onContentAvailable() {
             cycleSubtitleTrack();
             return true;
         });
+
+        // D-pad left/right seek when controls are hidden (for TV remotes
+        // without shoulder buttons). When controls are visible, return false
+        // so D-pad navigation between buttons works normally.
+        this->registerAction("Seek Back", brls::ControllerButton::BUTTON_LEFT, [this](brls::View* view) {
+            if (!m_controlsVisible) {
+                resetControlsIdleTimer();
+                int interval = Application::getInstance().getSettings().seekInterval;
+                seek(-interval);
+                return true;
+            }
+            return false;  // Let D-pad navigation handle it
+        });
+
+        this->registerAction("Seek Forward", brls::ControllerButton::BUTTON_RIGHT, [this](brls::View* view) {
+            if (!m_controlsVisible) {
+                resetControlsIdleTimer();
+                int interval = Application::getInstance().getSettings().seekInterval;
+                seek(interval);
+                return true;
+            }
+            return false;  // Let D-pad navigation handle it
+        });
     }
 
     // Wire up touch buttons with tap gesture recognizers
