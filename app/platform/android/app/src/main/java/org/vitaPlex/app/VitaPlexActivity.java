@@ -117,20 +117,33 @@ public class VitaPlexActivity extends SDLActivity
             return false;
         }
 
+        // KEYCODE_BACK must always go through the keyboard path so SDL maps
+        // it to SDL_SCANCODE_AC_BACK → BUTTON_B (navigation back).
+        // Without this, DPAD-source remotes route it through the joystick
+        // handler where it becomes BUTTON_BACK (gamepad select) — wrong.
+        // This applies regardless of input source (DPAD, keyboard, etc.)
+        // since even SOURCE_KEYBOARD back keys can get caught by SDL's
+        // joystick handler if the device also reports SOURCE_DPAD.
+        if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                SDLActivity.onNativeKeyDown(keyCode);
+                return true;
+            } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                SDLActivity.onNativeKeyUp(keyCode);
+                return true;
+            }
+        }
+
         // For TV remote events, bypass the joystick handler for keys that need
-        // keyboard-path mapping.  This ensures KEYCODE_BACK reaches
-        // SDL_SCANCODE_AC_BACK -> BUTTON_B instead of gamepad BUTTON_BACK.
+        // keyboard-path mapping or translation to mapped keycodes.
         if (isTvRemoteEvent(event)) {
-            // Translate the keycode: media keys get remapped to keycodes that
-            // borealis already maps to controller buttons via the keyboard path.
             int translatedKey = keyCode;
             switch (keyCode) {
-                case KeyEvent.KEYCODE_BACK:
                 case KeyEvent.KEYCODE_DPAD_CENTER:
                 case KeyEvent.KEYCODE_ENTER:
                 case KeyEvent.KEYCODE_MENU:
-                    // These pass through as-is — SDL maps them to scancodes
-                    // that borealis already handles (AC_BACK, RETURN, MENU)
+                    // Pass through as-is — SDL maps them to scancodes
+                    // that borealis already handles (RETURN, MENU)
                     break;
                 case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
                 case KeyEvent.KEYCODE_MEDIA_PLAY:
