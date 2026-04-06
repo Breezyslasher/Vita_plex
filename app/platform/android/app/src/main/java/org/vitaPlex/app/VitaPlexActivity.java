@@ -122,7 +122,7 @@ public class VitaPlexActivity extends SDLActivity
         // SDL_SCANCODE_AC_BACK -> BUTTON_B instead of gamepad BUTTON_BACK.
         if (isTvRemoteEvent(event)) {
             // Translate the keycode: media keys get remapped to keycodes that
-            // borealis already maps to controller buttons.
+            // borealis already maps to controller buttons via the keyboard path.
             int translatedKey = keyCode;
             switch (keyCode) {
                 case KeyEvent.KEYCODE_BACK:
@@ -138,6 +138,16 @@ public class VitaPlexActivity extends SDLActivity
                 case KeyEvent.KEYCODE_MEDIA_STOP:
                     // Map to ENTER → SDL_SCANCODE_RETURN → BUTTON_A (play/pause)
                     translatedKey = KeyEvent.KEYCODE_ENTER;
+                    break;
+                case KeyEvent.KEYCODE_MEDIA_REWIND:
+                case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
+                    // Map to DPAD_LEFT → SDL_SCANCODE_LEFT → BUTTON_LEFT (seek back)
+                    translatedKey = KeyEvent.KEYCODE_DPAD_LEFT;
+                    break;
+                case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
+                case KeyEvent.KEYCODE_MEDIA_NEXT:
+                    // Map to DPAD_RIGHT → SDL_SCANCODE_RIGHT → BUTTON_RIGHT (seek fwd)
+                    translatedKey = KeyEvent.KEYCODE_DPAD_RIGHT;
                     break;
                 default:
                     // D-pad and other keys go through normal SDL dispatch
