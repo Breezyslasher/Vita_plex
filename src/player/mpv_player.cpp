@@ -163,9 +163,9 @@ bool MpvPlayer::init() {
         // Use 4 decoder threads for multi-core TV SoCs
         mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
 #elif defined(__PS4__)
-        // PS4: hardware decode with auto detection
-        mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
-        mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
+        // PS4: match switchfin config - 6 decoder threads, no explicit hwdec
+        // (hwdec defaults to "no" which is correct for PS4 SW render path)
+        mpv_set_option_string(m_mpv, "vd-lavc-threads", "6");
 #else
         mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
 #endif
@@ -231,16 +231,16 @@ bool MpvPlayer::init() {
 
     mpv_set_option_string(m_mpv, "network-timeout", "30");
 
-    // Plex uses self-signed TLS certs on local network (*.plex.direct)
-    // Disable TLS verification so MPV can stream from these endpoints
-    mpv_set_option_string(m_mpv, "tls-verify", "no");
-
+#ifndef __PS4__
     // User agent for Plex compatibility
     mpv_set_option_string(m_mpv, "user-agent", PLEX_CLIENT_NAME "/" PLEX_CLIENT_VERSION);
 
     // Per official Plex API (developer.plex.tv/pms), X-Plex-Client-Identifier
     // is a REQUIRED HTTP header (in=header). Set it here so MPV sends it
     // when streaming from Plex transcode endpoints.
+    // Note: On PS4, these are NOT set as MPV HTTP headers because the PS4
+    // ffmpeg build may not support custom headers. Instead, all X-Plex-*
+    // params are passed as URL query parameters (which works on all platforms).
     mpv_set_option_string(m_mpv, "http-header-fields",
         "X-Plex-Client-Identifier: " PLEX_CLIENT_NAME ","
         "X-Plex-Product: " PLEX_CLIENT_NAME ","
@@ -249,6 +249,7 @@ bool MpvPlayer::init() {
         "X-Plex-Device: " PLEX_DEVICE ","
         "X-Plex-Client-Profile-Name: Generic,"
         "X-Plex-Device-Name: " PLEX_DEVICE);
+#endif
 
     // Note: demuxer-lavf-probe-info and force-seekable caused crashes on Vita
     // Keep options minimal for compatibility
@@ -278,7 +279,11 @@ bool MpvPlayer::init() {
     // Request log messages for debugging
     // ========================================
 
-    mpv_request_log_messages(m_mpv, "warn");  // Use warn level to reduce log spam on Vita
+#ifdef __PS4__
+    mpv_request_log_messages(m_mpv, "v");  // Verbose logging on PS4 to debug playback issues
+#else
+    mpv_request_log_messages(m_mpv, "warn");  // Use warn level to reduce log spam
+#endif
 
     // ========================================
     // Initialize MPV
@@ -844,6 +849,10 @@ void MpvPlayer::eventMainLoop() {
                         brls::Logger::error("mpv {}: {}", msg->prefix, msg->text);
                     } else if (msg->log_level <= MPV_LOG_LEVEL_WARN) {
                         brls::Logger::warning("mpv {}: {}", msg->prefix, msg->text);
+#ifdef __PS4__
+                    } else {
+                        brls::Logger::info("mpv {}: {}", msg->prefix, msg->text);
+#endif
                     }
                 }
                 break;
