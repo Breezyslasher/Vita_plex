@@ -4,10 +4,12 @@
  */
 
 #include "utils/jwt_auth.hpp"
+#include "platform/paths.hpp"
 #include <borealis.hpp>
 #include <cstring>
 #include <ctime>
 #include <random>
+#include <filesystem>
 
 #ifdef __vita__
 #include <psp2/io/fcntl.h>
@@ -350,7 +352,8 @@ bool JwtAuth::loadKeyPair() {
     }
 #else
     // Desktop fallback
-    std::ifstream file("vitaplex_ed25519.key", std::ios::binary);
+    const std::string keyPath = platformPath("keys/ed25519.key");
+    std::ifstream file(keyPath, std::ios::binary);
     if (!file) return false;
 
     file.read((char*)m_keyPair.privateKey, ED25519_PRIVATE_KEY_SIZE);
@@ -377,7 +380,11 @@ bool JwtAuth::saveKeyPair() {
     sceIoWrite(fd, m_keyPair.keyId.c_str(), m_keyPair.keyId.length());
     sceIoClose(fd);
 #else
-    std::ofstream file("vitaplex_ed25519.key", std::ios::binary);
+    const std::string keyPath = platformPath("keys/ed25519.key");
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(keyPath).parent_path(), ec);
+
+    std::ofstream file(keyPath, std::ios::binary);
     if (!file) return false;
 
     file.write((char*)m_keyPair.privateKey, ED25519_PRIVATE_KEY_SIZE);

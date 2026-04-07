@@ -37,6 +37,10 @@ bool Application::init() {
     // Create data directory
     int ret = sceIoMkdir("ux0:data/VitaPlex", 0777);
     brls::Logger::debug("sceIoMkdir result: {:#x}", ret);
+#else
+    // Ensure platform data root exists (settings/downloads/keys)
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(platformPath("settings.json")).parent_path(), ec);
 #endif
 
     // Load saved settings
