@@ -19,6 +19,13 @@
 #include "platform/android_assets.hpp"
 #endif
 
+#ifdef __PS4__
+#include <sys/stat.h>
+#include <orbis/Sysmodule.h>
+#include <thread>
+#include <chrono>
+#endif
+
 #ifdef __vita__
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/modulemgr.h>
@@ -203,6 +210,21 @@ static int VitaPlexMainEntry(int argc, char* argv[]) {
     extractAndroidAssets();
 #endif
 
+#ifndef __vita__
+#ifdef __PS4__
+    // PS4: load network module before initializing curl.
+    if (sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_NET) < 0) {
+        brls::Logger::error("Cannot load PS4 net module");
+    }
+    // Give PS4 network stack time to become ready.
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+#endif
+    if (!vitaplex::HttpClient::globalInit()) {
+        brls::Logger::error("Failed to initialize curl");
+        return 1;
+    }
+#endif
+
     // Initialize Borealis
     brls::Logger::setLogLevel(brls::LogLevel::LOG_DEBUG);
 
@@ -212,6 +234,8 @@ static int VitaPlexMainEntry(int argc, char* argv[]) {
         if (logFile) fclose(logFile);
         cleanupVitaNetwork();
         sceKernelExitProcess(1);
+#else
+        vitaplex::HttpClient::globalCleanup();
 #endif
         return 1;
     }
@@ -269,6 +293,8 @@ static int VitaPlexMainEntry(int argc, char* argv[]) {
 #ifdef __vita__
         cleanupVitaNetwork();
         sceKernelExitProcess(1);
+#else
+        vitaplex::HttpClient::globalCleanup();
 #endif
         return 1;
     }
@@ -282,6 +308,8 @@ static int VitaPlexMainEntry(int argc, char* argv[]) {
 #ifdef __vita__
     cleanupVitaNetwork();
     sceKernelExitProcess(0);
+#else
+    vitaplex::HttpClient::globalCleanup();
 #endif
 
     return 0;

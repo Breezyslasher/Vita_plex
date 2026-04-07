@@ -476,7 +476,7 @@ elseif(PLATFORM_PS4)
         add_self(${PROJECT_NAME})
         add_pkg(${PROJECT_NAME}
             ${CMAKE_BINARY_DIR}/ps4
-            "VPLEX0002"
+            "VPLX00002"
             "VitaPlex"
             "01.00"
             # https://psdevwiki.com/ps4/param.sfo#ATTRIBUTE - Support PS4 Pro
