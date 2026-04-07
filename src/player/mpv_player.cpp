@@ -230,17 +230,14 @@ bool MpvPlayer::init() {
     // ========================================
 
     mpv_set_option_string(m_mpv, "network-timeout", "30");
+    mpv_set_option_string(m_mpv, "tls-verify", "no");
 
-#ifndef __PS4__
     // User agent for Plex compatibility
     mpv_set_option_string(m_mpv, "user-agent", PLEX_CLIENT_NAME "/" PLEX_CLIENT_VERSION);
 
     // Per official Plex API (developer.plex.tv/pms), X-Plex-Client-Identifier
     // is a REQUIRED HTTP header (in=header). Set it here so MPV sends it
     // when streaming from Plex transcode endpoints.
-    // Note: On PS4, these are NOT set as MPV HTTP headers because the PS4
-    // ffmpeg build may not support custom headers. Instead, all X-Plex-*
-    // params are passed as URL query parameters (which works on all platforms).
     mpv_set_option_string(m_mpv, "http-header-fields",
         "X-Plex-Client-Identifier: " PLEX_CLIENT_NAME ","
         "X-Plex-Product: " PLEX_CLIENT_NAME ","
@@ -249,7 +246,6 @@ bool MpvPlayer::init() {
         "X-Plex-Device: " PLEX_DEVICE ","
         "X-Plex-Client-Profile-Name: Generic,"
         "X-Plex-Device-Name: " PLEX_DEVICE);
-#endif
 
     // Note: demuxer-lavf-probe-info and force-seekable caused crashes on Vita
     // Keep options minimal for compatibility
