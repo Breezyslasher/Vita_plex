@@ -254,7 +254,7 @@ static int VitaPlexMainEntry(int argc, char* argv[]) {
 #if defined(__vita__) || defined(__PS4__)
     // Subscribe to log events to write to file (since setLogOutput doesn't work on Vita)
     if (logFile) {
-        brls::Logger::getLogEvent()->subscribe([](brls::Logger::TimePoint time, brls::LogLevel level, std::string log) {
+        brls::Logger::getLogEvent()->subscribe([logFile](brls::Logger::TimePoint time, brls::LogLevel level, std::string log) {
             if (!logFile) return;
 
             const char* levelStr = "UNKNOWN";
