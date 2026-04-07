@@ -16,8 +16,50 @@
 #define PLEX_CLIENT_ID "vita-plex-client-001"
 #define PLEX_CLIENT_NAME "VitaPlex"
 #define PLEX_CLIENT_VERSION VITA_PLEX_VERSION
+
+// Platform-specific identification and transcode limits
+#if defined(__vita__)
 #define PLEX_PLATFORM "PlayStation Vita"
 #define PLEX_DEVICE "PS Vita"
+#define PLEX_MAX_VIDEO_WIDTH 960
+#define PLEX_MAX_VIDEO_HEIGHT 544
+#define PLEX_MAX_VIDEO_LEVEL 40
+#define PLEX_DEFAULT_BITRATE 2000
+#define PLEX_DEFAULT_RESOLUTION "960x544"
+#elif defined(__ANDROID__)
+#define PLEX_PLATFORM "Android"
+#define PLEX_DEVICE "Android TV"
+#define PLEX_MAX_VIDEO_WIDTH 1920
+#define PLEX_MAX_VIDEO_HEIGHT 1080
+#define PLEX_MAX_VIDEO_LEVEL 51
+#define PLEX_DEFAULT_BITRATE 8000
+#define PLEX_DEFAULT_RESOLUTION "1920x1080"
+#elif defined(__SWITCH__)
+#define PLEX_PLATFORM "Nintendo Switch"
+#define PLEX_DEVICE "Switch"
+#define PLEX_MAX_VIDEO_WIDTH 1920
+#define PLEX_MAX_VIDEO_HEIGHT 1080
+#define PLEX_MAX_VIDEO_LEVEL 42
+#define PLEX_DEFAULT_BITRATE 4000
+#define PLEX_DEFAULT_RESOLUTION "1280x720"
+#elif defined(__PS4__)
+#define PLEX_PLATFORM "PlayStation 4"
+#define PLEX_DEVICE "PS4"
+#define PLEX_MAX_VIDEO_WIDTH 1920
+#define PLEX_MAX_VIDEO_HEIGHT 1080
+#define PLEX_MAX_VIDEO_LEVEL 51
+#define PLEX_DEFAULT_BITRATE 10000
+#define PLEX_DEFAULT_RESOLUTION "1920x1080"
+#else
+// Desktop (Windows, macOS, Linux)
+#define PLEX_PLATFORM "Desktop"
+#define PLEX_DEVICE "Desktop"
+#define PLEX_MAX_VIDEO_WIDTH 1920
+#define PLEX_MAX_VIDEO_HEIGHT 1080
+#define PLEX_MAX_VIDEO_LEVEL 51
+#define PLEX_DEFAULT_BITRATE 10000
+#define PLEX_DEFAULT_RESOLUTION "1920x1080"
+#endif
 
 namespace vitaplex {
 
@@ -84,10 +126,19 @@ struct AppSettings {
     bool autoSkipIntro = false;       // Automatically skip intro markers
     bool autoSkipCredits = false;     // Automatically skip credits markers
 
-    // Transcode Settings
+    // Transcode Settings (defaults are platform-specific)
+#if defined(__vita__)
     VideoQuality videoQuality = VideoQuality::QUALITY_480P;
-    bool forceTranscode = false;
     int maxBitrate = 2000;      // kbps
+#elif defined(__SWITCH__)
+    VideoQuality videoQuality = VideoQuality::QUALITY_720P;
+    int maxBitrate = 4000;      // kbps
+#else
+    // Android, PS4, Desktop
+    VideoQuality videoQuality = VideoQuality::QUALITY_1080P;
+    int maxBitrate = 8000;      // kbps
+#endif
+    bool forceTranscode = false;
 
     // Network Settings
     int connectionTimeout = 180; // seconds (3 minutes for slow connections)

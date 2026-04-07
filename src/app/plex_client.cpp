@@ -2386,14 +2386,9 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
         // protocol=hls, container=mpegts, codec=h264, level<=4.0, max 720p
         queryParams += "&protocol=hls";
 
-        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : 2000;
+        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : PLEX_DEFAULT_BITRATE;
 
-        const char* resolution = "960x544";  // Vita native
-        if (bitrate >= 8000) {
-            resolution = "1280x720";
-        } else if (bitrate < 2000) {
-            resolution = "640x360";
-        }
+        const char* resolution = PLEX_DEFAULT_RESOLUTION;
 
         snprintf(buf, sizeof(buf), "&videoBitrate=%d", bitrate);
         queryParams += buf;
@@ -2434,23 +2429,22 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
                        "&container=mp3&audioCodec=mp3)";
     } else {
         // Video: HLS with MPEG-TS segments, h264+aac.
-        // Matches switchfin's Vita config (proven to work on Vita's MPV):
-        // - HLS: segmented streaming, no moov atom issues
-        // - TS container: works with HLS protocol
-        // - AAC only: MP3 in MPEG-TS causes "unspecified frame size" probe
-        //   failure with Vita's mp3_vita decoder, leading to A/V desync
-        // - H.264 level 4.0 max, 720p max (Vita hardware limits)
-        profileExtra = "add-transcode-target(type=videoProfile"
-                       "&context=streaming&protocol=hls"
-                       "&container=mpegts&videoCodec=h264"
-                       "&audioCodec=aac"
-                       "&subtitleCodec=srt)"
-                       "+add-limitation(scope=videoCodec&scopeName=h264"
-                       "&type=upperBound&name=video.level&value=40)"
-                       "+add-limitation(scope=videoCodec&scopeName=h264"
-                       "&type=upperBound&name=video.width&value=1280)"
-                       "+add-limitation(scope=videoCodec&scopeName=h264"
-                       "&type=upperBound&name=video.height&value=720)";
+        // Platform-specific limits for resolution and H.264 level.
+        char profileBuf[512];
+        snprintf(profileBuf, sizeof(profileBuf),
+            "add-transcode-target(type=videoProfile"
+            "&context=streaming&protocol=hls"
+            "&container=mpegts&videoCodec=h264"
+            "&audioCodec=aac"
+            "&subtitleCodec=srt)"
+            "+add-limitation(scope=videoCodec&scopeName=h264"
+            "&type=upperBound&name=video.level&value=%d)"
+            "+add-limitation(scope=videoCodec&scopeName=h264"
+            "&type=upperBound&name=video.width&value=%d)"
+            "+add-limitation(scope=videoCodec&scopeName=h264"
+            "&type=upperBound&name=video.height&value=%d)",
+            PLEX_MAX_VIDEO_LEVEL, PLEX_MAX_VIDEO_WIDTH, PLEX_MAX_VIDEO_HEIGHT);
+        profileExtra = profileBuf;
     }
 
     // Determine transcode type path segment
@@ -2467,12 +2461,12 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     decisionReq.method = "GET";
     decisionReq.headers["Accept"] = "application/json";
     // Per official API: X-Plex-Client-Identifier is REQUIRED, in=header
-    decisionReq.headers["X-Plex-Client-Identifier"] = "VitaPlex";
-    decisionReq.headers["X-Plex-Product"] = "VitaPlex";
-    decisionReq.headers["X-Plex-Version"] = "1.0.0";
-    decisionReq.headers["X-Plex-Platform"] = "PlayStation Vita";
-    decisionReq.headers["X-Plex-Device"] = "PS Vita";
-    decisionReq.headers["X-Plex-Device-Name"] = "PS Vita";
+    decisionReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_NAME;
+    decisionReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+    decisionReq.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+    decisionReq.headers["X-Plex-Platform"] = PLEX_PLATFORM;
+    decisionReq.headers["X-Plex-Device"] = PLEX_DEVICE;
+    decisionReq.headers["X-Plex-Device-Name"] = PLEX_DEVICE;
     decisionReq.headers["X-Plex-Client-Profile-Name"] = "Generic";
     decisionReq.headers["X-Plex-Client-Profile-Extra"] = profileExtra;
     HttpResponse decisionResp = decisionClient.request(decisionReq);
@@ -3167,19 +3161,23 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
 
         // programMetadataKey from EPG grid is already URL-encoded (e.g. plex%3A%2F%2Fepisode%2F...)
         // Do NOT re-encode it or we get double-encoding (plex%253A%252F%252F...) causing 400 errors
+        char liveBuf[256];
+        snprintf(liveBuf, sizeof(liveBuf),
+            "&protocol=hls&videoBitrate=%d&videoResolution=%s&videoQuality=100",
+            PLEX_DEFAULT_BITRATE, PLEX_DEFAULT_RESOLUTION);
         std::string params = "path=" + programMetadataKey +
             "&mediaIndex=0&partIndex=0"
             "&directPlay=0&directStream=1&directStreamAudio=1"
             "&hasMDE=1&location=lan"
-            "&audioBoost=100&audioChannelCount=2"
-            "&protocol=hls&videoBitrate=2000&videoResolution=960x544&videoQuality=100"
+            "&audioBoost=100&audioChannelCount=2" +
+            std::string(liveBuf) +
             "&subtitles=none"
             "&X-Plex-Client-Identifier=" + std::string(PLEX_CLIENT_ID) +
             "&X-Plex-Product=" + std::string(PLEX_CLIENT_NAME) +
-            "&X-Plex-Version=1.0.0"
-            "&X-Plex-Platform=PlayStation%20Vita"
-            "&X-Plex-Device=PS%20Vita"
-            "&X-Plex-Device-Name=PS%20Vita";
+            "&X-Plex-Version=" + std::string(PLEX_CLIENT_VERSION) +
+            "&X-Plex-Platform=" + HttpClient::urlEncode(PLEX_PLATFORM) +
+            "&X-Plex-Device=" + HttpClient::urlEncode(PLEX_DEVICE) +
+            "&X-Plex-Device-Name=" + HttpClient::urlEncode(PLEX_DEVICE);
 
         std::string decisionUrl = buildApiUrl("/video/:/transcode/universal/decision?" + params);
 

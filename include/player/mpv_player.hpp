@@ -10,6 +10,8 @@
 #include <atomic>
 #include <mutex>
 
+#include "app/application.hpp"
+
 #if defined(__vita__)
 #include <mpv/client.h>
 #include <mpv/render.h>
@@ -197,8 +199,8 @@ private:
 #endif
 
     int m_nvgImage = 0;
-    int m_videoWidth = 960;
-    int m_videoHeight = 544;
+    int m_videoWidth = PLEX_MAX_VIDEO_WIDTH;
+    int m_videoHeight = PLEX_MAX_VIDEO_HEIGHT;
     std::atomic<bool> m_renderReady{false};
     std::mutex m_renderMutex;
 #ifndef __vita__

@@ -227,13 +227,13 @@ bool MpvPlayer::init() {
     // is a REQUIRED HTTP header (in=header). Set it here so MPV sends it
     // when streaming from Plex transcode endpoints.
     mpv_set_option_string(m_mpv, "http-header-fields",
-        "X-Plex-Client-Identifier: VitaPlex,"
-        "X-Plex-Product: VitaPlex,"
-        "X-Plex-Version: 1.0.0,"
-        "X-Plex-Platform: PlayStation Vita,"
-        "X-Plex-Device: PS Vita,"
+        "X-Plex-Client-Identifier: " PLEX_CLIENT_NAME ","
+        "X-Plex-Product: " PLEX_CLIENT_NAME ","
+        "X-Plex-Version: " PLEX_CLIENT_VERSION ","
+        "X-Plex-Platform: " PLEX_PLATFORM ","
+        "X-Plex-Device: " PLEX_DEVICE ","
         "X-Plex-Client-Profile-Name: Generic,"
-        "X-Plex-Device-Name: PS Vita");
+        "X-Plex-Device-Name: " PLEX_DEVICE);
 
     // Note: demuxer-lavf-probe-info and force-seekable caused crashes on Vita
     // Keep options minimal for compatibility
@@ -1270,8 +1270,8 @@ bool MpvPlayer::initRenderContext() {
         return false;
     }
 
-    m_videoWidth = 1280;
-    m_videoHeight = 720;
+    m_videoWidth = PLEX_MAX_VIDEO_WIDTH;
+    m_videoHeight = PLEX_MAX_VIDEO_HEIGHT;
     m_videoBuffer.assign((size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
 
     m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, m_videoBuffer.data());
@@ -1313,8 +1313,8 @@ bool MpvPlayer::initRenderContext() {
         return false;
     }
 
-    m_videoWidth = 1280;
-    m_videoHeight = 720;
+    m_videoWidth = PLEX_MAX_VIDEO_WIDTH;
+    m_videoHeight = PLEX_MAX_VIDEO_HEIGHT;
     m_videoBuffer.assign((size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
 
     m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, m_videoBuffer.data());
