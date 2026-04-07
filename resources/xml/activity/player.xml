@@ -301,11 +301,14 @@
             axis="row"
             justifyContent="spaceBetween"
             alignItems="center"
+            marginLeft="4"
+            marginRight="4"
             marginBottom="8">
             <brls:Label
                 id="player/time_elapsed"
-                text="0:00"
+                text="0:00:00"
                 fontSize="13"
+                minWidth="70"
                 textColor="#AAAAAA"/>
             <brls:Label
                 id="player/time"
@@ -316,8 +319,10 @@
                 visibility="gone"/>
             <brls:Label
                 id="player/time_remaining"
-                text="-0:00"
+                text="-0:00:00"
                 fontSize="13"
+                minWidth="70"
+                horizontalAlign="right"
                 textColor="#AAAAAA"/>
         </brls:Box>
 

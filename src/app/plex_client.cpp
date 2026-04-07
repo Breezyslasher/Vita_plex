@@ -2482,12 +2482,12 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     // Step 2: Build the /start URL for MPV to stream.
     // Include X-Plex-* as query params AND MPV sends them as headers too.
     std::string startQuery = queryParams;
-    startQuery += "&X-Plex-Client-Identifier=VitaPlex";
-    startQuery += "&X-Plex-Product=VitaPlex";
-    startQuery += "&X-Plex-Version=1.0.0";
-    startQuery += "&X-Plex-Platform=PlayStation%20Vita";
-    startQuery += "&X-Plex-Device=PS%20Vita";
-    startQuery += "&X-Plex-Device-Name=PS%20Vita";
+    startQuery += "&X-Plex-Client-Identifier=" + std::string(PLEX_CLIENT_NAME);
+    startQuery += "&X-Plex-Product=" + std::string(PLEX_CLIENT_NAME);
+    startQuery += "&X-Plex-Version=" + std::string(PLEX_CLIENT_VERSION);
+    startQuery += "&X-Plex-Platform=" + HttpClient::urlEncode(PLEX_PLATFORM);
+    startQuery += "&X-Plex-Device=" + HttpClient::urlEncode(PLEX_DEVICE);
+    startQuery += "&X-Plex-Device-Name=" + HttpClient::urlEncode(PLEX_DEVICE);
     startQuery += "&X-Plex-Client-Profile-Name=Generic";
     startQuery += "&X-Plex-Client-Profile-Extra=" + HttpClient::urlEncode(profileExtra);
 

@@ -162,6 +162,10 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "video-sync", "display-resample");
         // Use 4 decoder threads for multi-core TV SoCs
         mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
+#elif defined(__PS4__)
+        // PS4: hardware decode with auto detection
+        mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
+        mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
 #else
         mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
 #endif
@@ -208,6 +212,13 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "16MiB");
     mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "10");
     mpv_set_option_string(m_mpv, "cache-secs", "10");
+#elif defined(__PS4__)
+    // PS4: larger buffers for smooth streaming
+    mpv_set_option_string(m_mpv, "cache", "yes");
+    mpv_set_option_string(m_mpv, "demuxer-max-bytes", "32MiB");
+    mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "16MiB");
+    mpv_set_option_string(m_mpv, "demuxer-readahead-secs", "10");
+    mpv_set_option_string(m_mpv, "cache-secs", "10");
 #else
     mpv_set_option_string(m_mpv, "cache", "yes");
     mpv_set_option_string(m_mpv, "demuxer-max-bytes", "4MiB");
@@ -219,6 +230,10 @@ bool MpvPlayer::init() {
     // ========================================
 
     mpv_set_option_string(m_mpv, "network-timeout", "30");
+
+    // Plex uses self-signed TLS certs on local network (*.plex.direct)
+    // Disable TLS verification so MPV can stream from these endpoints
+    mpv_set_option_string(m_mpv, "tls-verify", "no");
 
     // User agent for Plex compatibility
     mpv_set_option_string(m_mpv, "user-agent", PLEX_CLIENT_NAME "/" PLEX_CLIENT_VERSION);
@@ -499,10 +514,23 @@ void MpvPlayer::seekRelative(double seconds) {
     // Don't seek if not actively playing/paused
     if (m_state != MpvPlayerState::PLAYING && m_state != MpvPlayerState::PAUSED) return;
 
+    // Clamp backward seeks to avoid seeking before stream start (position 0).
+    // On transcoded HLS streams, seeking before 0 can cause MPV to reset to
+    // the beginning or fail, especially on Android.
+    if (seconds < 0) {
+        double pos = getPosition();
+        if (pos + seconds < 0) {
+            seconds = -pos;  // Clamp to position 0
+            if (seconds >= 0) return;  // Already at or near start
+        }
+    }
+
     char timeStr[32];
     snprintf(timeStr, sizeof(timeStr), "%+.2f", seconds);
 
-    const char* cmd[] = {"seek", timeStr, "relative", NULL};
+    // Use "relative+keyframes" for faster, more reliable seeking on
+    // transcoded streams (avoids exact-seek issues with HLS segments)
+    const char* cmd[] = {"seek", timeStr, "relative+keyframes", NULL};
     mpv_command_async(m_mpv, 0, cmd);
 }
 
@@ -1270,8 +1298,10 @@ bool MpvPlayer::initRenderContext() {
         return false;
     }
 
-    m_videoWidth = PLEX_MAX_VIDEO_WIDTH;
-    m_videoHeight = PLEX_MAX_VIDEO_HEIGHT;
+    // Android SW render buffer: use 720p to keep CPU copy manageable.
+    // The transcode can still request 1080p; MPV scales to buffer size.
+    m_videoWidth = 1280;
+    m_videoHeight = 720;
     m_videoBuffer.assign((size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
 
     m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, m_videoBuffer.data());
