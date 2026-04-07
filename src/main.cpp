@@ -19,6 +19,13 @@
 #include "platform/android_assets.hpp"
 #endif
 
+#ifdef __PS4__
+#include <sys/stat.h>
+#include <orbis/Sysmodule.h>
+#include <thread>
+#include <chrono>
+#endif
+
 #ifdef __vita__
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/modulemgr.h>
@@ -173,6 +180,7 @@ static void registerCustomViews() {
 static int VitaPlexMainEntry(int argc, char* argv[]) {
     (void)argc;
     (void)argv;
+    FILE* logFile = nullptr;
 
 #ifdef __vita__
     // Initialize Vita-specific systems
@@ -188,7 +196,7 @@ static int VitaPlexMainEntry(int argc, char* argv[]) {
 
     // Create log directory and file on Vita
     sceIoMkdir("ux0:data/VitaPlex", 0777);
-    static FILE* logFile = std::fopen("ux0:data/VitaPlex/vitaplex.log", "w");
+    logFile = std::fopen("ux0:data/VitaPlex/vitaplex.log", "w");
     if (logFile) {
         // Use line buffering so logs are written immediately
         setvbuf(logFile, NULL, _IOLBF, 0);
@@ -203,6 +211,30 @@ static int VitaPlexMainEntry(int argc, char* argv[]) {
     extractAndroidAssets();
 #endif
 
+#ifndef __vita__
+#ifdef __PS4__
+    // PS4: load network module before initializing curl.
+    if (sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_NET) < 0) {
+        brls::Logger::error("Cannot load PS4 net module");
+    }
+    // Give PS4 network stack time to become ready.
+    std::this_thread::sleep_for(std::chrono::seconds(2));
+#endif
+    if (!vitaplex::HttpClient::globalInit()) {
+        brls::Logger::error("Failed to initialize curl");
+        return 1;
+    }
+
+#ifdef __PS4__
+    // Create log directory and file on PS4
+    mkdir("/data/VitaPlex", 0777);
+    logFile = std::fopen("/data/VitaPlex/vitaplex.log", "w");
+    if (logFile) {
+        setvbuf(logFile, NULL, _IOLBF, 0);
+    }
+#endif
+#endif
+
     // Initialize Borealis
     brls::Logger::setLogLevel(brls::LogLevel::LOG_DEBUG);
 
@@ -212,11 +244,14 @@ static int VitaPlexMainEntry(int argc, char* argv[]) {
         if (logFile) fclose(logFile);
         cleanupVitaNetwork();
         sceKernelExitProcess(1);
+#else
+        if (logFile) fclose(logFile);
+        vitaplex::HttpClient::globalCleanup();
 #endif
         return 1;
     }
 
-#ifdef __vita__
+#if defined(__vita__) || defined(__PS4__)
     // Subscribe to log events to write to file (since setLogOutput doesn't work on Vita)
     if (logFile) {
         brls::Logger::getLogEvent()->subscribe([](brls::Logger::TimePoint time, brls::LogLevel level, std::string log) {
@@ -240,7 +275,7 @@ static int VitaPlexMainEntry(int argc, char* argv[]) {
                     time_tm.tm_hour, time_tm.tm_min, time_tm.tm_sec,
                     (int)ms, levelStr, log.c_str());
         });
-        brls::Logger::info("Log file initialized: ux0:data/VitaPlex/vitaplex.log");
+        brls::Logger::info("Log file initialized");
     }
 #endif
 
@@ -269,6 +304,9 @@ static int VitaPlexMainEntry(int argc, char* argv[]) {
 #ifdef __vita__
         cleanupVitaNetwork();
         sceKernelExitProcess(1);
+#else
+        if (logFile) fclose(logFile);
+        vitaplex::HttpClient::globalCleanup();
 #endif
         return 1;
     }
@@ -282,6 +320,9 @@ static int VitaPlexMainEntry(int argc, char* argv[]) {
 #ifdef __vita__
     cleanupVitaNetwork();
     sceKernelExitProcess(0);
+#else
+    if (logFile) fclose(logFile);
+    vitaplex::HttpClient::globalCleanup();
 #endif
 
     return 0;
