@@ -148,20 +148,7 @@ bool MpvPlayer::init() {
         // GXM-specific settings from switchfin
         mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
         mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
-#elif defined(__ANDROID__)
-        // Android/Android TV: use MediaCodec zero-copy path when possible.
-        // This reduces frame upload overhead and improves frame pacing on TV SoCs.
-        mpv_set_option_string(m_mpv, "hwdec", "mediacodec");
-        mpv_set_option_string(m_mpv, "framedrop", "vo");
-        // Reduce loop-filter complexity to speed up decoding on weaker TV SoCs
-        mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "nonref");
-        // Enable low-latency video timing to reduce frame scheduling jitter
-        mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
-        // Use display-resample to sync video frames to display refresh rate,
-        // reducing judder when video FPS doesn't match the TV's refresh rate
-        mpv_set_option_string(m_mpv, "video-sync", "display-resample");
-        // Use 4 decoder threads for multi-core TV SoCs
-        mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
+
 #else
         mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
 #endif
