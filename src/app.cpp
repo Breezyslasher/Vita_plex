@@ -2747,9 +2747,9 @@ bool App::startPlayback(bool resume) {
     transcodeUrl += "&X-Plex-Client-Identifier=" PLEX_CLIENT_ID;
     transcodeUrl += "&X-Plex-Product=" PLEX_CLIENT_NAME;
     transcodeUrl += "&X-Plex-Version=" PLEX_CLIENT_VERSION;
-    transcodeUrl += "&X-Plex-Platform=PlayStation%20Vita";  // URL-encoded space
-    transcodeUrl += "&X-Plex-Device=PS%20Vita";  // URL-encoded space
-    
+    transcodeUrl += "&X-Plex-Platform=PlayStation%20Vita";
+    transcodeUrl += "&X-Plex-Device=PS%20Vita";
+
     // Generate a session ID for this transcode request
     char sessionId[32];
     snprintf(sessionId, sizeof(sessionId), "&session=vita%llu", (unsigned long long)sceKernelGetProcessTimeWide());

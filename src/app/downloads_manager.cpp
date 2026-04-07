@@ -703,12 +703,12 @@ static std::string convertToHttpForDownload(const std::string& url) {
 // Helper: Build standard Plex client headers for requests
 static void addPlexHeaders(HttpRequest& req, const std::string& token) {
     req.headers["Accept"] = "application/json";
-    req.headers["X-Plex-Client-Identifier"] = "VitaPlex";
-    req.headers["X-Plex-Product"] = "VitaPlex";
-    req.headers["X-Plex-Version"] = "1.0.0";
-    req.headers["X-Plex-Platform"] = "PlayStation Vita";
-    req.headers["X-Plex-Device"] = "PS Vita";
-    req.headers["X-Plex-Device-Name"] = "PS Vita";
+    req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_NAME;
+    req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+    req.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+    req.headers["X-Plex-Platform"] = PLEX_PLATFORM;
+    req.headers["X-Plex-Device"] = PLEX_DEVICE;
+    req.headers["X-Plex-Device-Name"] = PLEX_DEVICE;
     req.headers["X-Plex-Token"] = token;
 }
 
@@ -726,7 +726,7 @@ static std::string buildDirectDownloadUrl(const std::string& serverUrl, const st
 }
 
 // Try downloading via the Plex Download Queue API (server-side transcode + file download).
-// This transcodes video to Vita-compatible resolution (960x544) before downloading.
+// This transcodes video to platform-compatible resolution before downloading.
 // Polls the queue status until transcoding is complete before returning the media URL.
 // Returns true if the download URL was obtained, with the URL stored in outUrl.
 static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string& token,
@@ -827,22 +827,26 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
                        "&container=mp3&audioCodec=mp3)";
     } else {
         AppSettings& settings = Application::getInstance().getSettings();
-        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : 2000;
+        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : PLEX_DEFAULT_BITRATE;
         char bitrateStr[64];
         snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
         addUrl += bitrateStr;
-        addUrl += "&videoResolution=960x544";
+        addUrl += "&videoResolution=" PLEX_DEFAULT_RESOLUTION;
         addUrl += "&subtitles=burn";
-        profileExtra = "add-transcode-target(type=videoProfile"
-                       "&context=streaming&protocol=http"
-                       "&container=mkv&videoCodec=h264"
-                       "&audioCodec=aac)"
-                       "+add-limitation(scope=videoCodec&scopeName=h264"
-                       "&type=upperBound&name=video.level&value=40)"
-                       "+add-limitation(scope=videoCodec&scopeName=h264"
-                       "&type=upperBound&name=video.width&value=960)"
-                       "+add-limitation(scope=videoCodec&scopeName=h264"
-                       "&type=upperBound&name=video.height&value=544)";
+        char dlProfileBuf[512];
+        snprintf(dlProfileBuf, sizeof(dlProfileBuf),
+            "add-transcode-target(type=videoProfile"
+            "&context=streaming&protocol=http"
+            "&container=mkv&videoCodec=h264"
+            "&audioCodec=aac)"
+            "+add-limitation(scope=videoCodec&scopeName=h264"
+            "&type=upperBound&name=video.level&value=%d)"
+            "+add-limitation(scope=videoCodec&scopeName=h264"
+            "&type=upperBound&name=video.width&value=%d)"
+            "+add-limitation(scope=videoCodec&scopeName=h264"
+            "&type=upperBound&name=video.height&value=%d)",
+            PLEX_MAX_VIDEO_LEVEL, PLEX_MAX_VIDEO_WIDTH, PLEX_MAX_VIDEO_HEIGHT);
+        profileExtra = dlProfileBuf;
     }
 
     addUrl += "&X-Plex-Token=" + token;
@@ -1077,26 +1081,30 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
             queryParams += "&protocol=hls";
 
             AppSettings& settings = Application::getInstance().getSettings();
-            int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : 2000;
+            int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : PLEX_DEFAULT_BITRATE;
 
             char bitrateStr[64];
             snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
             queryParams += bitrateStr;
-            queryParams += "&videoResolution=960x544";
+            queryParams += "&videoResolution=" PLEX_DEFAULT_RESOLUTION;
             queryParams += "&videoQuality=100";
             queryParams += "&subtitles=none";
 
-            // HLS with MPEG-TS segments, h264+aac - matches working player profile
-            profileExtra = "add-transcode-target(type=videoProfile"
-                           "&context=streaming&protocol=hls"
-                           "&container=mpegts&videoCodec=h264"
-                           "&audioCodec=aac)"
-                           "+add-limitation(scope=videoCodec&scopeName=h264"
-                           "&type=upperBound&name=video.level&value=40)"
-                           "+add-limitation(scope=videoCodec&scopeName=h264"
-                           "&type=upperBound&name=video.width&value=960)"
-                           "+add-limitation(scope=videoCodec&scopeName=h264"
-                           "&type=upperBound&name=video.height&value=544)";
+            // HLS with MPEG-TS segments, h264+aac - platform-specific limits
+            char streamProfileBuf[512];
+            snprintf(streamProfileBuf, sizeof(streamProfileBuf),
+                "add-transcode-target(type=videoProfile"
+                "&context=streaming&protocol=hls"
+                "&container=mpegts&videoCodec=h264"
+                "&audioCodec=aac)"
+                "+add-limitation(scope=videoCodec&scopeName=h264"
+                "&type=upperBound&name=video.level&value=%d)"
+                "+add-limitation(scope=videoCodec&scopeName=h264"
+                "&type=upperBound&name=video.width&value=%d)"
+                "+add-limitation(scope=videoCodec&scopeName=h264"
+                "&type=upperBound&name=video.height&value=%d)",
+                PLEX_MAX_VIDEO_LEVEL, PLEX_MAX_VIDEO_WIDTH, PLEX_MAX_VIDEO_HEIGHT);
+            profileExtra = streamProfileBuf;
         }
 
         // Generate a unique session ID for this transcode request
@@ -1166,12 +1174,12 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
 
     // Build Plex identification headers
     std::map<std::string, std::string> dlHeaders;
-    dlHeaders["X-Plex-Client-Identifier"] = "VitaPlex";
-    dlHeaders["X-Plex-Product"] = "VitaPlex";
-    dlHeaders["X-Plex-Version"] = "1.0.0";
-    dlHeaders["X-Plex-Platform"] = "PlayStation Vita";
-    dlHeaders["X-Plex-Device"] = "PS Vita";
-    dlHeaders["X-Plex-Device-Name"] = "PS Vita";
+    dlHeaders["X-Plex-Client-Identifier"] = PLEX_CLIENT_NAME;
+    dlHeaders["X-Plex-Product"] = PLEX_CLIENT_NAME;
+    dlHeaders["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+    dlHeaders["X-Plex-Platform"] = PLEX_PLATFORM;
+    dlHeaders["X-Plex-Device"] = PLEX_DEVICE;
+    dlHeaders["X-Plex-Device-Name"] = PLEX_DEVICE;
     dlHeaders["X-Plex-Token"] = token;
     if (!profileExtra.empty()) {
         dlHeaders["X-Plex-Client-Profile-Name"] = "Generic";

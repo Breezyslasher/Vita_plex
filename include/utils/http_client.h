@@ -13,7 +13,10 @@
 #define PLEX_CLIENT_VERSION "1.0.0"
 #endif
 #ifndef PLEX_PLATFORM
-#define PLEX_PLATFORM "PlayStation Vita"
+#define PLEX_PLATFORM "Desktop"
+#endif
+#ifndef PLEX_DEVICE
+#define PLEX_DEVICE "Desktop"
 #endif
 
 namespace vitaplex {
