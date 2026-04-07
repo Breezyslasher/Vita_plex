@@ -162,10 +162,7 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "video-sync", "display-resample");
         // Use 4 decoder threads for multi-core TV SoCs
         mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
-#elif defined(__PS4__)
-        // PS4: match switchfin config - 6 decoder threads, no explicit hwdec
-        // (hwdec defaults to "no" which is correct for PS4 SW render path)
-        mpv_set_option_string(m_mpv, "vd-lavc-threads", "6");
+
 #else
         mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
 #endif
