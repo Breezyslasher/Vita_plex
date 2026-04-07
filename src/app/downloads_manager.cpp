@@ -14,6 +14,7 @@
 #include "app/application.hpp"
 #include "utils/http_client.hpp"
 #include "utils/async.hpp"
+#include "platform/paths.hpp"
 #include <borealis.hpp>
 #include <fstream>
 #include <sstream>
@@ -22,6 +23,7 @@
 #include <cctype>
 #include <thread>
 #include <chrono>
+#include <filesystem>
 
 #ifdef __vita__
 #include <psp2/io/fcntl.h>
@@ -36,9 +38,6 @@ namespace vitaplex {
 #ifdef __vita__
 static const char* DOWNLOADS_DIR = "ux0:data/VitaPlex/downloads";
 static const char* STATE_FILE = "ux0:data/VitaPlex/downloads/state.json";
-#else
-static const char* DOWNLOADS_DIR = "./downloads";
-static const char* STATE_FILE = "./downloads/state.json";
 #endif
 
 // Helper: extract a JSON string value by key from a simple JSON object string
@@ -115,7 +114,11 @@ DownloadsManager& DownloadsManager::getInstance() {
 bool DownloadsManager::init() {
     if (m_initialized) return true;
 
+#ifdef __vita__
     m_downloadsPath = DOWNLOADS_DIR;
+#else
+    m_downloadsPath = platformPath("downloads");
+#endif
 
 #ifdef __vita__
     // Create downloads directory if it doesn't exist
@@ -123,7 +126,8 @@ bool DownloadsManager::init() {
     sceIoMkdir(DOWNLOADS_DIR, 0777);
 #else
     // Create directory on other platforms
-    std::system("mkdir -p ./downloads");
+    std::error_code ec;
+    std::filesystem::create_directories(std::filesystem::path(m_downloadsPath), ec);
 #endif
 
     // Load saved state
@@ -1823,7 +1827,8 @@ void DownloadsManager::saveStateUnlocked() {
         sceIoClose(fd);
     }
 #else
-    std::ofstream file(STATE_FILE);
+    const std::string statePath = m_downloadsPath + "/state.json";
+    std::ofstream file(statePath);
     if (file.is_open()) {
         file << ss.str();
         file.close();
@@ -1847,7 +1852,8 @@ void DownloadsManager::loadState() {
         sceIoClose(fd);
     }
 #else
-    std::ifstream file(STATE_FILE);
+    const std::string statePath = m_downloadsPath + "/state.json";
+    std::ifstream file(statePath);
     if (file.is_open()) {
         std::stringstream ss;
         ss << file.rdbuf();
