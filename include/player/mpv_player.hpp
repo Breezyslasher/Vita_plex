@@ -16,6 +16,10 @@
 #include <mpv/client.h>
 #include <mpv/render.h>
 #include <mpv/render_gxm.h>
+#elif defined(__ANDROID__)
+#include <jni.h>
+#include <mpv/client.h>
+#include <mpv/render.h>
 #else
 #include <mpv/client.h>
 #include <mpv/render.h>
@@ -205,6 +209,14 @@ private:
     std::mutex m_renderMutex;
 #ifndef __vita__
     std::vector<unsigned char> m_videoBuffer;
+    // Coalesce MPV render callbacks on platforms that use SW rendering.
+    // This prevents main-thread callback queue buildup under heavy decode load.
+    std::atomic<bool> m_renderUpdateQueued{false};
+#endif
+
+#ifdef __ANDROID__
+    // Global JNI ref to the Surface object passed to mpv wid.
+    jobject m_androidMpvSurface = nullptr;
 #endif
 };
 

@@ -26,6 +26,10 @@
 #include <mutex>
 #include <vector>
 
+#ifdef __ANDROID__
+#include <SDL_system.h>
+#endif
+
 #ifdef __vita__
 // Defined in patches/psv_platform.cpp - throttles the borealis main loop
 // to ~30fps during audio-only playback so the ao_vita thread gets more CPU.
@@ -33,6 +37,57 @@ extern "C" void vitaplex_set_audio_playback_active(bool active);
 #endif
 
 namespace vitaplex {
+
+#ifdef __ANDROID__
+static bool bindAndroidMpvSurface(mpv_handle* mpv, jobject& outGlobalSurface) {
+    if (!mpv) return false;
+
+    JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    jobject activity = static_cast<jobject>(SDL_AndroidGetActivity());
+    if (!env || !activity) {
+        brls::Logger::error("MpvPlayer: Android JNI env/activity unavailable for mpv surface binding");
+        return false;
+    }
+
+    jclass cls = env->GetObjectClass(activity);
+    if (!cls) {
+        brls::Logger::error("MpvPlayer: Failed to get Android activity class");
+        return false;
+    }
+
+    jmethodID getSurfaceMethod = env->GetMethodID(cls, "getMpvSurface", "()Landroid/view/Surface;");
+    if (!getSurfaceMethod) {
+        brls::Logger::error("MpvPlayer: getMpvSurface() not found on activity");
+        env->DeleteLocalRef(cls);
+        return false;
+    }
+
+    jobject surfaceLocal = env->CallObjectMethod(activity, getSurfaceMethod);
+    env->DeleteLocalRef(cls);
+    if (!surfaceLocal) {
+        brls::Logger::error("MpvPlayer: Activity returned null mpv surface");
+        return false;
+    }
+
+    outGlobalSurface = env->NewGlobalRef(surfaceLocal);
+    env->DeleteLocalRef(surfaceLocal);
+    if (!outGlobalSurface) {
+        brls::Logger::error("MpvPlayer: Failed to create global ref for mpv surface");
+        return false;
+    }
+
+    int64_t wid = static_cast<int64_t>(reinterpret_cast<intptr_t>(outGlobalSurface));
+    if (mpv_set_option(mpv, "wid", MPV_FORMAT_INT64, &wid) < 0) {
+        brls::Logger::error("MpvPlayer: Failed to set mpv wid");
+        env->DeleteGlobalRef(outGlobalSurface);
+        outGlobalSurface = nullptr;
+        return false;
+    }
+
+    brls::Logger::info("MpvPlayer: Bound Android surface to mpv wid");
+    return true;
+}
+#endif
 
 #ifdef __vita__
 // Flush the GXM GPU pipeline to ensure it's idle before mpv uses the shared
@@ -126,11 +181,12 @@ bool MpvPlayer::init() {
         // Keep subtitle/lyrics support active (don't set video=no which disables sub rendering)
         mpv_set_option_string(m_mpv, "sub-visibility", "yes");
     } else {
-        // Video mode: use libmpv for video output - we'll create a render context
+        // Video mode
         brls::Logger::info("MpvPlayer: Initializing in video mode");
-        mpv_set_option_string(m_mpv, "vo", "libmpv");
 
 #ifdef __vita__
+        // Vita uses libmpv render context + GXM path.
+        mpv_set_option_string(m_mpv, "vo", "libmpv");
         // Vita-specific settings from switchfin
         // Use 2 decoder threads for software decode. More threads require
         // more stack memory (each pthread gets 512KB via our wrapper).
@@ -149,21 +205,29 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
         mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
 #elif defined(__ANDROID__)
-        // Android/Android TV: use MediaCodec zero-copy path when possible.
-        // This reduces frame upload overhead and improves frame pacing on TV SoCs.
+        // Android TV: use direct Android surface + GPU output path.
+        mpv_set_option_string(m_mpv, "vo", "gpu-next");
+        mpv_set_option_string(m_mpv, "gpu-context", "android");
+        mpv_set_option_string(m_mpv, "opengl-es", "yes");
+        mpv_set_option_string(m_mpv, "profile", "fast");
         mpv_set_option_string(m_mpv, "hwdec", "mediacodec");
-        mpv_set_option_string(m_mpv, "framedrop", "vo");
-        // Reduce loop-filter complexity to speed up decoding on weaker TV SoCs
-        mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "nonref");
-        // Enable low-latency video timing to reduce frame scheduling jitter
+        mpv_set_option_string(m_mpv, "hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1");
+        mpv_set_option_string(m_mpv, "framedrop", "decoder+vo");
         mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
-        // Use display-resample to sync video frames to display refresh rate,
-        // reducing judder when video FPS doesn't match the TV's refresh rate
         mpv_set_option_string(m_mpv, "video-sync", "display-resample");
-        // Use 4 decoder threads for multi-core TV SoCs
         mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
 
+        if (!bindAndroidMpvSurface(m_mpv, m_androidMpvSurface)) {
+            brls::Logger::warning("MpvPlayer: Falling back to libmpv SW render path on Android");
+            mpv_set_option_string(m_mpv, "vo", "libmpv");
+            mpv_set_option_string(m_mpv, "hwdec", "mediacodec-copy");
+            mpv_set_option_string(m_mpv, "video-sync", "audio");
+            mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
+            mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "nonkey");
+        }
+
 #else
+        mpv_set_option_string(m_mpv, "vo", "libmpv");
         mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
 #endif
     }
@@ -353,6 +417,16 @@ void MpvPlayer::shutdown() {
 
         mpv_terminate_destroy(m_mpv);
         m_mpv = nullptr;
+
+#ifdef __ANDROID__
+        if (m_androidMpvSurface) {
+            JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+            if (env) {
+                env->DeleteGlobalRef(m_androidMpvSurface);
+            }
+            m_androidMpvSurface = nullptr;
+        }
+#endif
         m_stopping.store(false);
     }
     m_state = MpvPlayerState::IDLE;
@@ -1083,10 +1157,23 @@ void MpvPlayer::onRenderUpdate(void* ctx) {
         return;
     }
 
+#ifndef __vita__
+    // Coalesce render updates on SW-render backends so we don't queue an
+    // unbounded number of main-thread callbacks when decode/render falls
+    // behind. This keeps controls responsive while still displaying fresh
+    // frames.
+    if (player->m_renderUpdateQueued.exchange(true)) {
+        return;
+    }
+#endif
+
     // Always queue render on main thread (matching switchfin exactly).
     // Do NOT check m_renderReady here — dropping signals before FILE_LOADED
     // causes mpv to stop sending update callbacks, resulting in a black screen.
     brls::sync([player]() {
+#ifndef __vita__
+        player->m_renderUpdateQueued.store(false);
+#endif
         if (player->m_stopping.load() || !player->m_mpvRenderCtx) {
             return;
         }
@@ -1282,6 +1369,13 @@ bool MpvPlayer::initRenderContext() {
     brls::Logger::info("MpvPlayer: GXM render context created successfully ({}x{})", m_videoWidth, m_videoHeight);
     return true;
 #elif defined(__ANDROID__)
+    // If wid-based Android surface binding succeeded, mpv renders directly to
+    // the Android surface (vo=gpu-next) and no libmpv render context is needed.
+    if (m_androidMpvSurface) {
+        brls::Logger::info("MpvPlayer: Android direct-surface mode active (no SW render context)");
+        return true;
+    }
+
     // Android: use software render context. Sharing an OpenGL context between
     // MPV and NanoVG causes flickering and state corruption, so we render to a
     // CPU buffer and upload to a NanoVG texture each frame. The MPV config
@@ -1416,6 +1510,7 @@ void MpvPlayer::cleanupRenderContext() {
     }
 #else
     m_renderReady.store(false);
+    m_renderUpdateQueued.store(false);
     std::lock_guard<std::mutex> lock(m_renderMutex);
     if (m_mpvRenderCtx) {
         mpv_render_context_free(m_mpvRenderCtx);
