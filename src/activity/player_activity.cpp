@@ -13,6 +13,7 @@
 #include "view/video_view.hpp"
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <sys/stat.h>
 
@@ -21,6 +22,27 @@
 #endif
 
 namespace vitaplex {
+
+namespace {
+
+std::string formatPlaybackTime(int totalSeconds, bool withSign = false) {
+    int clampedSeconds = std::max(0, totalSeconds);
+    int hours = clampedSeconds / 3600;
+    int minutes = (clampedSeconds % 3600) / 60;
+    int seconds = clampedSeconds % 60;
+
+    char buffer[24];
+    if (hours > 0) {
+        snprintf(buffer, sizeof(buffer), withSign ? "-%d:%02d:%02d" : "%d:%02d:%02d",
+                 hours, minutes, seconds);
+    } else {
+        snprintf(buffer, sizeof(buffer), withSign ? "-%d:%02d" : "%d:%02d",
+                 minutes, seconds);
+    }
+    return std::string(buffer);
+}
+
+} // namespace
 
 // Base temp file path for streaming audio (MPV's HTTP handling crashes on Vita)
 // Extension will be added dynamically based on the actual file type
@@ -1292,27 +1314,20 @@ void PlayerActivity::updateProgress() {
 
         // Update time labels: elapsed on left, remaining on right
         {
-            int posMin = (int)absPosition / 60;
-            int posSec = (int)absPosition % 60;
-            int remaining = std::max(0, (int)(duration - position));
-            int remMin = remaining / 60;
-            int remSec = remaining % 60;
+            int elapsedSeconds = std::max(0, (int)std::lround(absPosition));
+            int remaining = std::max(0, (int)std::lround(absDuration - absPosition));
 
-            char elapsedStr[16];
-            snprintf(elapsedStr, sizeof(elapsedStr), "%d:%02d", posMin, posSec);
-            char remainStr[16];
-            snprintf(remainStr, sizeof(remainStr), "-%d:%02d", remMin, remSec);
+            std::string elapsedStr = formatPlaybackTime(elapsedSeconds);
+            std::string remainStr = formatPlaybackTime(remaining, true);
 
             if (timeElapsedLabel) timeElapsedLabel->setText(elapsedStr);
             if (timeRemainingLabel) timeRemainingLabel->setText(remainStr);
 
             // Keep legacy time label updated for video mode
             if (timeLabel) {
-                int durMin = (int)absDuration / 60;
-                int durSec = (int)absDuration % 60;
-                char timeStr[32];
-                snprintf(timeStr, sizeof(timeStr), "%02d:%02d / %02d:%02d",
-                         posMin, posSec, durMin, durSec);
+                int durationSeconds = std::max(0, (int)std::lround(absDuration));
+                std::string timeStr = formatPlaybackTime(elapsedSeconds) + " / " +
+                                      formatPlaybackTime(durationSeconds);
                 timeLabel->setText(timeStr);
             }
         }
