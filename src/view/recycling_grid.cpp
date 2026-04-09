@@ -7,6 +7,7 @@
 #include "view/recycling_grid.hpp"
 #include "view/media_item_cell.hpp"
 #include "view/media_detail_view.hpp"
+#include "view/long_press_gesture.hpp"
 
 namespace vitaplex {
 
@@ -175,6 +176,29 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
                 return true;
             });
     }
+
+    // Long press on touch = same as START button options
+    MediaItem capturedItem = m_items[index];
+    cell->addGestureRecognizer(new LongPressGestureRecognizer(
+        cell, [this, capturedItem](LongPressGestureStatus status) {
+            if (status.state != brls::GestureState::START) {
+                return;
+            }
+
+            if (capturedItem.mediaType == MediaType::MUSIC_ALBUM && m_onItemStartAction) {
+                m_onItemStartAction(capturedItem);
+            } else if (capturedItem.mediaType == MediaType::MOVIE) {
+                MediaDetailView::showMovieContextMenuStatic(capturedItem);
+            } else if (capturedItem.mediaType == MediaType::SHOW) {
+                MediaDetailView::showShowContextMenuStatic(capturedItem);
+            } else if (capturedItem.mediaType == MediaType::SEASON) {
+                MediaDetailView::showSeasonContextMenuStatic(capturedItem);
+            } else if (capturedItem.mediaType == MediaType::MUSIC_ARTIST) {
+                MediaDetailView::showArtistContextMenuStatic(capturedItem);
+            } else if (capturedItem.type == "playlist" && m_onItemStartAction) {
+                m_onItemStartAction(capturedItem);
+            }
+        }));
 
     currentRow->addView(cell);
 

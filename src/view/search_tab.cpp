@@ -5,6 +5,7 @@
 #include "view/search_tab.hpp"
 #include "view/media_detail_view.hpp"
 #include "view/media_item_cell.hpp"
+#include "view/long_press_gesture.hpp"
 #include "app/application.hpp"
 #include "app/downloads_manager.hpp"
 #include "utils/image_loader.hpp"
@@ -207,6 +208,26 @@ void SearchTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaIte
                     return true;
                 });
         }
+
+        // Long press on touch = same as START button options
+        cell->addGestureRecognizer(new LongPressGestureRecognizer(
+            cell, [this, capturedItem](LongPressGestureStatus status) {
+                if (status.state != brls::GestureState::START) {
+                    return;
+                }
+
+                if (capturedItem.mediaType == MediaType::MOVIE) {
+                    MediaDetailView::showMovieContextMenuStatic(capturedItem);
+                } else if (capturedItem.mediaType == MediaType::SHOW) {
+                    MediaDetailView::showShowContextMenuStatic(capturedItem);
+                } else if (capturedItem.mediaType == MediaType::SEASON) {
+                    MediaDetailView::showSeasonContextMenuStatic(capturedItem);
+                } else if (capturedItem.mediaType == MediaType::MUSIC_ARTIST) {
+                    MediaDetailView::showArtistContextMenuStatic(capturedItem);
+                } else if (capturedItem.mediaType == MediaType::MUSIC_ALBUM) {
+                    MediaDetailView::showAlbumContextMenuStatic(capturedItem);
+                }
+            }));
 
         row->addView(cell);
     }
