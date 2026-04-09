@@ -4,6 +4,7 @@
 
 #include "view/media_detail_view.hpp"
 #include "view/media_item_cell.hpp"
+#include "view/long_press_gesture.hpp"
 #include "view/progress_dialog.hpp"
 #include "activity/player_activity.hpp"
 #include "app/application.hpp"
@@ -557,6 +558,13 @@ void MediaDetailView::loadChildren() {
                         return true;
                     });
             }
+            cell->addGestureRecognizer(new LongPressGestureRecognizer(
+                cell, [capturedChild](LongPressGestureStatus status) {
+                    if (status.state == brls::GestureState::START &&
+                        capturedChild.mediaType == MediaType::SEASON) {
+                        showSeasonContextMenuStatic(capturedChild);
+                    }
+                }));
 
             m_childrenBox->addView(cell);
         }
@@ -718,6 +726,12 @@ void MediaDetailView::loadMusicCategories() {
                             showAlbumContextMenu(capturedItem);
                             return true;
                         });
+                        cell->addGestureRecognizer(new LongPressGestureRecognizer(
+                            cell, [this, capturedItem](LongPressGestureStatus status) {
+                                if (status.state == brls::GestureState::START) {
+                                    showAlbumContextMenu(capturedItem);
+                                }
+                            }));
 
                         content->addView(cell);
                     }
@@ -828,6 +842,12 @@ void MediaDetailView::loadMusicCategories() {
                         showAlbumContextMenu(capturedItem);
                         return true;
                     });
+                    cell->addGestureRecognizer(new LongPressGestureRecognizer(
+                        cell, [this, capturedItem](LongPressGestureStatus status) {
+                            if (status.state == brls::GestureState::START) {
+                                showAlbumContextMenu(capturedItem);
+                            }
+                        }));
 
                     content->addView(cell);
                 }
@@ -1499,6 +1519,12 @@ void MediaDetailView::loadTrackList() {
                     showTrackActionDialog(capturedTrack, i);
                     return true;
                 });
+                row->addGestureRecognizer(new LongPressGestureRecognizer(
+                    row, [this, capturedTrack, i](LongPressGestureStatus status) {
+                        if (status.state == brls::GestureState::START) {
+                            showTrackActionDialog(capturedTrack, i);
+                        }
+                    }));
 
                 // Square button (X on PS Vita) adds to download queue
                 row->registerAction("Download", brls::ControllerButton::BUTTON_X, [this, capturedTrack](brls::View* view) {
