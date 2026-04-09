@@ -9,7 +9,7 @@
 #include <chrono>
 #include <functional>
 
-namespace vitasuwayomi {
+namespace vitaplex {
 
 struct LongPressGestureStatus {
     brls::GestureState state;
