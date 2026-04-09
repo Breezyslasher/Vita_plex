@@ -3,6 +3,7 @@
  */
 
 #include "view/long_press_gesture.hpp"
+#include <cmath>
 
 namespace vitaplex {
 
