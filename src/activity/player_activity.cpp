@@ -1312,10 +1312,10 @@ void PlayerActivity::updateProgress() {
             char remainStr[24];
             if (durHr > 0) {
                 snprintf(elapsedStr, sizeof(elapsedStr), "%d:%02d:%02d", posHr, posMin, posSec);
-                snprintf(remainStr, sizeof(remainStr), "-%d:%02d:%02d  ", remHr, remMin, remSec);
+                snprintf(remainStr, sizeof(remainStr), "-%d:%02d:%02d    ", remHr, remMin, remSec);
             } else {
                 snprintf(elapsedStr, sizeof(elapsedStr), "%d:%02d", posMin, posSec);
-                snprintf(remainStr, sizeof(remainStr), "-%d:%02d  ", remMin, remSec);
+                snprintf(remainStr, sizeof(remainStr), "-%d:%02d    ", remMin, remSec);
             }
 
             if (timeElapsedLabel) timeElapsedLabel->setText(elapsedStr);
