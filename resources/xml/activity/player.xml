@@ -306,7 +306,7 @@
                 id="player/time_elapsed"
                 text="0:00"
                 fontSize="13"
-                minWidth="96"
+                width="50%"
                 textColor="#AAAAAA"/>
             <brls:Label
                 id="player/time"
@@ -319,8 +319,9 @@
                 id="player/time_remaining"
                 text="-0:00"
                 fontSize="13"
-                minWidth="96"
+                width="50%"
                 horizontalAlign="right"
+                marginRight="6"
                 textColor="#AAAAAA"/>
         </brls:Box>
 
