@@ -4,7 +4,7 @@
 
 #include "view/long_press_gesture.hpp"
 
-namespace vitasuwayomi {
+namespace vitaplex {
 
 LongPressGestureRecognizer::LongPressGestureRecognizer(brls::View* view, Callback callback, int holdDurationMs)
     : m_callback(callback)
