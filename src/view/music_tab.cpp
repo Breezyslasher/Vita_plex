@@ -5,6 +5,7 @@
 #include "view/music_tab.hpp"
 #include "view/media_item_cell.hpp"
 #include "view/media_detail_view.hpp"
+#include "view/long_press_gesture.hpp"
 #include "app/application.hpp"
 #include "app/music_queue.hpp"
 #include "app/downloads_manager.hpp"
@@ -368,6 +369,12 @@ brls::Box* MusicTab::createAlbumScrollRow(const std::string& title, const std::v
             showAlbumContextMenu(capturedItem);
             return true;
         });
+        cell->addGestureRecognizer(new LongPressGestureRecognizer(
+            cell, [this, capturedItem](LongPressGestureStatus status) {
+                if (status.state == brls::GestureState::START) {
+                    showAlbumContextMenu(capturedItem);
+                }
+            }));
 
         container->addView(cell);
     }
