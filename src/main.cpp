@@ -213,9 +213,16 @@ static int VitaPlexMainEntry(int argc, char* argv[]) {
 
 #ifndef __vita__
 #ifdef __PS4__
-    // PS4: load network module before initializing curl.
+    // PS4: load network and SSL modules before initializing curl/ffmpeg.
+    // These are required for HTTPS streaming (both curl and MPV/ffmpeg).
     if (sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_NET) < 0) {
         brls::Logger::error("Cannot load PS4 net module");
+    }
+    if (sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_SSL) < 0) {
+        brls::Logger::error("Cannot load PS4 SSL module");
+    }
+    if (sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_HTTP) < 0) {
+        brls::Logger::error("Cannot load PS4 HTTP module");
     }
     // Give PS4 network stack time to become ready.
     std::this_thread::sleep_for(std::chrono::seconds(2));

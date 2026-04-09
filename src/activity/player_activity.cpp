@@ -1291,28 +1291,46 @@ void PlayerActivity::updateProgress() {
         }
 
         // Update time labels: elapsed on left, remaining on right
+        // Format as H:MM:SS when duration >= 1 hour, otherwise M:SS
         {
-            int posMin = (int)absPosition / 60;
-            int posSec = (int)absPosition % 60;
+            int posTotal = (int)absPosition;
+            int posHr  = posTotal / 3600;
+            int posMin = (posTotal % 3600) / 60;
+            int posSec = posTotal % 60;
+
             int remaining = std::max(0, (int)(duration - position));
-            int remMin = remaining / 60;
+            int remHr  = remaining / 3600;
+            int remMin = (remaining % 3600) / 60;
             int remSec = remaining % 60;
 
-            char elapsedStr[16];
-            snprintf(elapsedStr, sizeof(elapsedStr), "%d:%02d", posMin, posSec);
-            char remainStr[16];
-            snprintf(remainStr, sizeof(remainStr), "-%d:%02d", remMin, remSec);
+            int durTotal = (int)absDuration;
+            int durHr  = durTotal / 3600;
+            int durMin = (durTotal % 3600) / 60;
+            int durSec = durTotal % 60;
+
+            char elapsedStr[24];
+            char remainStr[24];
+            if (durHr > 0) {
+                snprintf(elapsedStr, sizeof(elapsedStr), "%d:%02d:%02d", posHr, posMin, posSec);
+                snprintf(remainStr, sizeof(remainStr), "-%d:%02d:%02d    ", remHr, remMin, remSec);
+            } else {
+                snprintf(elapsedStr, sizeof(elapsedStr), "%d:%02d", posMin, posSec);
+                snprintf(remainStr, sizeof(remainStr), "-%d:%02d    ", remMin, remSec);
+            }
 
             if (timeElapsedLabel) timeElapsedLabel->setText(elapsedStr);
             if (timeRemainingLabel) timeRemainingLabel->setText(remainStr);
 
             // Keep legacy time label updated for video mode
             if (timeLabel) {
-                int durMin = (int)absDuration / 60;
-                int durSec = (int)absDuration % 60;
-                char timeStr[32];
-                snprintf(timeStr, sizeof(timeStr), "%02d:%02d / %02d:%02d",
-                         posMin, posSec, durMin, durSec);
+                char timeStr[48];
+                if (durHr > 0) {
+                    snprintf(timeStr, sizeof(timeStr), "%d:%02d:%02d / %d:%02d:%02d",
+                             posHr, posMin, posSec, durHr, durMin, durSec);
+                } else {
+                    snprintf(timeStr, sizeof(timeStr), "%02d:%02d / %02d:%02d",
+                             posMin, posSec, durMin, durSec);
+                }
                 timeLabel->setText(timeStr);
             }
         }
@@ -2533,7 +2551,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     if (isCurrent) {
         titleStr = "> " + track.title;
     } else {
-        char numBuf[8];
+        char numBuf[16];
         snprintf(numBuf, sizeof(numBuf), "%d. ", displayIdx + 1);
         titleStr = numBuf + track.title;
     }
@@ -3294,7 +3312,7 @@ void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB, bool skipTh
             titleLblA->setText("> " + itA->second.title);
             titleLblA->setTextColor(nvgRGB(170, 210, 255));
         } else {
-            char numBuf[8];
+            char numBuf[16];
             snprintf(numBuf, sizeof(numBuf), "%d. ", displayIdxA + m_queueWindowStart + 1);
             titleLblA->setText(numBuf + itA->second.title);
             titleLblA->setTextColor(nvgRGB(240, 240, 240));
@@ -3319,7 +3337,7 @@ void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB, bool skipTh
             titleLblB->setText("> " + itB->second.title);
             titleLblB->setTextColor(nvgRGB(170, 210, 255));
         } else {
-            char numBuf[8];
+            char numBuf[16];
             snprintf(numBuf, sizeof(numBuf), "%d. ", displayIdxB + m_queueWindowStart + 1);
             titleLblB->setText(numBuf + itB->second.title);
             titleLblB->setTextColor(nvgRGB(240, 240, 240));
@@ -3477,7 +3495,7 @@ void PlayerActivity::renumberQueueRows() {
                 if (isCurr) {
                     titleLbl->setText("> " + trackTitle);
                 } else {
-                    char numBuf[8];
+                    char numBuf[16];
                     snprintf(numBuf, sizeof(numBuf), "%d. ", displayNum);
                     titleLbl->setText(numBuf + trackTitle);
                 }
@@ -3556,7 +3574,7 @@ void PlayerActivity::removeQueueRow(int displayIdx) {
                 if (isCurr) {
                     titleLbl->setText("> " + trackTitle);
                 } else {
-                    char numBuf[8];
+                    char numBuf[16];
                     snprintf(numBuf, sizeof(numBuf), "%d. ", displayNum);
                     titleLbl->setText(numBuf + trackTitle);
                 }
