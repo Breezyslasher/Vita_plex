@@ -6,6 +6,9 @@
 
 #include "player/mpv_player.hpp"
 #include "app/application.hpp"
+#ifdef __PS4__
+#include "utils/https_proxy.h"
+#endif
 #include <borealis.hpp>
 
 
@@ -149,18 +152,33 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
         mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
 #elif defined(__ANDROID__)
-        // Android/Android TV: use MediaCodec zero-copy path when possible.
-        // This reduces frame upload overhead and improves frame pacing on TV SoCs.
-        mpv_set_option_string(m_mpv, "hwdec", "mediacodec");
-        mpv_set_option_string(m_mpv, "framedrop", "vo");
-        // Reduce loop-filter complexity to speed up decoding on weaker TV SoCs
+        // Apply mpv's built-in "fast" profile first (simpler scalers, no
+        // debanding, etc.) — same as mpv-android. This is a baseline that
+        // reduces GPU/CPU overhead for the rendering pipeline.
+        mpv_set_option_string(m_mpv, "profile", "fast");
+        // Android/Android TV: use MediaCodec hardware decoder with CPU copy-back.
+        // We use MPV_RENDER_API_TYPE_SW (software render → NanoVG texture upload),
+        // so plain "mediacodec" (zero-copy GPU interop) silently fails and falls
+        // back to slow software decoding. "mediacodec-copy" does HW decode but
+        // copies frames to CPU memory, which is what the SW render path needs.
+        mpv_set_option_string(m_mpv, "hwdec", "mediacodec-copy");
+        // Restrict HW decode to common codecs (matches mpv-android)
+        mpv_set_option_string(m_mpv, "hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1");
+        // Drop frames at decoder level when behind (VO framedrop doesn't help
+        // with our custom NanoVG render path)
+        mpv_set_option_string(m_mpv, "framedrop", "decoder");
+        // Speed up software decode fallback: skip loop filter, fast decode
         mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "nonref");
+        mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
+        // Film grain workaround (mpv issue #14651) — forces CPU-based
+        // film grain application to avoid HW decoder compatibility issues
+        mpv_set_option_string(m_mpv, "vd-lavc-film-grain", "cpu");
         // Enable low-latency video timing to reduce frame scheduling jitter
         mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
-        // Use display-resample to sync video frames to display refresh rate,
-        // reducing judder when video FPS doesn't match the TV's refresh rate
-        mpv_set_option_string(m_mpv, "video-sync", "display-resample");
-        // Use 4 decoder threads for multi-core TV SoCs
+        // Use audio sync mode — display-resample requires display refresh rate
+        // info which the SW render path doesn't provide, causing frame jitter
+        mpv_set_option_string(m_mpv, "video-sync", "audio");
+        // Use 4 decoder threads as fallback when HW decode isn't available
         mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
 #elif defined(__PS4__)
         // PS4: match switchfin config - 6 decoder threads, no explicit hwdec
@@ -231,6 +249,13 @@ bool MpvPlayer::init() {
 
     mpv_set_option_string(m_mpv, "network-timeout", "30");
     mpv_set_option_string(m_mpv, "tls-verify", "no");
+    // Ensure HTTPS/TLS protocols are enabled in ffmpeg's protocol whitelist
+    mpv_set_option_string(m_mpv, "demuxer-lavf-o", "protocol_whitelist=file,http,https,tcp,tls,crypto,data,hls");
+#ifdef __PS4__
+    // PS4: also set ffmpeg-level TLS options in case MPV's tls-verify doesn't
+    // propagate correctly to the stream layer
+    mpv_set_option_string(m_mpv, "stream-lavf-o", "tls_verify=0");
+#endif
 
     // User agent for Plex compatibility
     mpv_set_option_string(m_mpv, "user-agent", PLEX_CLIENT_NAME "/" PLEX_CLIENT_VERSION);
@@ -358,6 +383,12 @@ void MpvPlayer::shutdown() {
         m_mpv = nullptr;
         m_stopping.store(false);
     }
+
+#ifdef __PS4__
+    // Stop the HTTPS proxy when player shuts down
+    HttpsProxy::getInstance().stop();
+#endif
+
     m_state = MpvPlayerState::IDLE;
     m_commandPending = false;
 }
@@ -408,6 +439,27 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
             }
         }
     }
+
+#ifdef __PS4__
+    // PS4: MPV's ffmpeg cannot open HTTPS URLs (error -13) because the PS4
+    // ffmpeg build lacks TLS support. Route HTTPS through our local proxy
+    // which uses libcurl (with working TLS) to fetch the content.
+    // This supports both local and remote Plex servers.
+    if (normalizedUrl.substr(0, 8) == "https://") {
+        auto& proxy = HttpsProxy::getInstance();
+        if (!proxy.isRunning()) {
+            proxy.start();
+        }
+        if (proxy.isRunning()) {
+            normalizedUrl = proxy.rewriteUrl(normalizedUrl);
+            brls::Logger::info("MpvPlayer: PS4 HTTPS via proxy: {}", normalizedUrl.substr(0, 100));
+        } else {
+            // Fallback: simple HTTP downgrade (works for local Plex servers)
+            normalizedUrl = "http://" + normalizedUrl.substr(8);
+            brls::Logger::info("MpvPlayer: PS4 HTTPS->HTTP fallback: {}", normalizedUrl.substr(0, 80));
+        }
+    }
+#endif
 
     brls::Logger::info("MpvPlayer: Loading URL: {}", normalizedUrl);
 
@@ -719,8 +771,21 @@ void MpvPlayer::toggleSubtitles() {
 void MpvPlayer::loadSubtitleUrl(const std::string& url) {
     if (!m_mpv || m_stopping) return;
 
-    brls::Logger::info("MpvPlayer: Loading external subtitle: {}", url);
-    const char* cmd[] = {"sub-add", url.c_str(), "auto", NULL};
+    std::string subUrl = url;
+#ifdef __PS4__
+    // Route HTTPS subtitle URLs through the local proxy (same as loadUrl)
+    if (subUrl.length() > 8 && subUrl.substr(0, 8) == "https://") {
+        auto& proxy = HttpsProxy::getInstance();
+        if (proxy.isRunning()) {
+            subUrl = proxy.rewriteUrl(subUrl);
+        } else {
+            subUrl = "http://" + subUrl.substr(8);
+        }
+    }
+#endif
+
+    brls::Logger::info("MpvPlayer: Loading external subtitle: {}", subUrl);
+    const char* cmd[] = {"sub-add", subUrl.c_str(), "auto", NULL};
     mpv_command_async(m_mpv, 0, cmd);
     m_subtitlesVisible = true;
 }
@@ -903,7 +968,9 @@ void MpvPlayer::eventMainLoop() {
                         } else {
                             m_errorMessage = "Playback failed";
                         }
-                        brls::Logger::error("MpvPlayer: {}", m_errorMessage);
+                        brls::Logger::error("MpvPlayer: {} (reason={}, error={}, url={})",
+                                           m_errorMessage, (int)end->reason, end->error,
+                                           m_currentUrl.substr(0, 120));
                         setState(MpvPlayerState::ERROR);
                     } else {
                         setState(MpvPlayerState::IDLE);
