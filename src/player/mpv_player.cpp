@@ -1185,11 +1185,31 @@ void MpvPlayer::onRenderUpdate(void* ctx) {
             }
             // mpv renders directly into our FBO (which is backed by the
             // NanoVG-managed GL texture). No CPU copy, no nvgUpdateImage.
+            //
+            // Save the current GL state that mpv might clobber and restore it
+            // afterwards. Crucially, explicitly bind our FBO and set a viewport
+            // covering the whole FBO before rendering — mpv's OpenGL backend
+            // inherits the active viewport, and by the time this sync callback
+            // runs NanoVG/borealis has left the viewport set to its last draw
+            // region (typically a small OSD rect). Without this, mpv renders
+            // the entire video into that sub-rect of the 1920x1080 FBO,
+            // producing a tiny video strip surrounded by mpv's clear color.
+            GLint prevFbo = 0;
+            GLint prevViewport[4] = {0, 0, 0, 0};
+            glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevFbo);
+            glGetIntegerv(GL_VIEWPORT, prevViewport);
+
+            glBindFramebuffer(GL_FRAMEBUFFER, player->m_glFbo);
+            glViewport(0, 0, player->m_videoWidth, player->m_videoHeight);
+
             mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
             mpv_render_context_report_swap(player->m_mpvRenderCtx);
-            // Restore the default framebuffer binding so NanoVG draws to the
-            // screen on the next frame.
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+            // Restore the previous GL state so NanoVG's next frame sees what
+            // it expects.
+            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
+            glViewport(prevViewport[0], prevViewport[1],
+                       prevViewport[2], prevViewport[3]);
 #else
             std::lock_guard<std::mutex> lock(player->m_renderMutex);
             if (player->m_videoBuffer.empty() || player->m_videoWidth <= 0 || player->m_videoHeight <= 0) {
