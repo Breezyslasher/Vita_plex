@@ -10,6 +10,7 @@
 #include "player/mpv_player.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/http_client.hpp"
+#include "utils/pip.h"
 #include "view/video_view.hpp"
 #include <algorithm>
 #include <chrono>
@@ -272,6 +273,19 @@ void PlayerActivity::onContentAvailable() {
         toggleControls();
         return true;
     });
+
+    // Picture-in-Picture: toggle on right-stick click. Only shown in video
+    // mode, and only registered on platforms where PiP is implemented
+    // (Android + desktop SDL2).
+    if (!m_isQueueMode && pip::isAvailable()) {
+        this->registerAction("Picture-in-Picture", brls::ControllerButton::BUTTON_RSB, [this](brls::View* view) {
+            auto& player = MpvPlayer::getInstance();
+            int vw = player.getVideoWidth();
+            int vh = player.getVideoHeight();
+            pip::toggle(vw, vh);
+            return true;
+        });
+    }
 
     // Queue controls for music (LB/RB for previous/next, triggers for shuffle/repeat)
     if (m_isQueueMode) {

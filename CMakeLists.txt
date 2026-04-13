@@ -149,6 +149,7 @@ set(APP_SOURCES
     src/utils/https_proxy.cpp
     src/utils/image_loader.cpp
     src/utils/jwt_auth.cpp
+    src/utils/pip.cpp
 )
 
 # vita_stubs.c only needed on Vita (no-op stdio locks, SDL_OpenURL stub)
