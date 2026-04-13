@@ -1403,8 +1403,16 @@ bool MpvPlayer::initRenderContext() {
     // Create an initially-black NanoVG image; we'll pull out the underlying
     // GL texture and bind it to our own FBO as the color attachment. Zero-init
     // prevents showing undefined pixels for the first frame before mpv renders.
+    //
+    // NVG_IMAGE_FLIPY: native GL texture origin is bottom-left, but NanoVG
+    // samples textures with a top-left convention. Without this flag, content
+    // rendered into the texture via an FBO appears upside-down when NanoVG
+    // draws it (this is the same flag nanovg_gl_utils's nvgluCreateFramebuffer
+    // sets on its render-target images). NVG_IMAGE_PREMULTIPLIED matches
+    // what mpv outputs into the FBO.
+    const int nvgFlags = NVG_IMAGE_FLIPY | NVG_IMAGE_PREMULTIPLIED;
     std::vector<unsigned char> blackPixels((size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
-    m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, blackPixels.data());
+    m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, nvgFlags, blackPixels.data());
     if (m_nvgImage == 0) {
         brls::Logger::error("MpvPlayer: Failed to create NanoVG video image");
         return false;
@@ -1456,16 +1464,17 @@ bool MpvPlayer::initRenderContext() {
         return false;
     }
 
-    // Per-frame render params: FBO + flip Y (mpv renders top-down, the NVG
-    // texture is sampled top-down in our shaders so this keeps video upright).
+    // Per-frame render params: FBO only. Orientation is handled by NanoVG
+    // via NVG_IMAGE_FLIPY on the target image, so we let mpv render natively
+    // (bottom-left origin) and NanoVG flips on sample. Passing FLIP_Y here
+    // would double-flip and give an upside-down picture.
     m_mpvOpenGLFbo.fbo = (int)m_glFbo;
     m_mpvOpenGLFbo.w = m_videoWidth;
     m_mpvOpenGLFbo.h = m_videoHeight;
     m_mpvOpenGLFbo.internal_format = GL_RGBA8;
 
     m_mpvParams[0] = {MPV_RENDER_PARAM_OPENGL_FBO, &m_mpvOpenGLFbo};
-    m_mpvParams[1] = {MPV_RENDER_PARAM_FLIP_Y, &m_flipY};
-    m_mpvParams[2] = {MPV_RENDER_PARAM_INVALID, nullptr};
+    m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
 
     mpv_render_context_set_update_callback(m_mpvRenderCtx, onRenderUpdate, this);
     m_renderReady.store(true);

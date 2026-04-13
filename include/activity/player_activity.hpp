@@ -262,6 +262,8 @@ private:
     BRLS_BIND(brls::Box, subBtn, "player/sub_btn");
     BRLS_BIND(brls::Box, videoBtn, "player/video_btn");
     BRLS_BIND(brls::Image, videoIcon, "player/video_icon");
+    BRLS_BIND(brls::Box, pipBtn, "player/pip_btn");
+    BRLS_BIND(brls::Image, pipIcon, "player/pip_icon");
     BRLS_BIND(brls::Box, trackOverlay, "player/track_overlay");
     BRLS_BIND(brls::Label, trackOverlayTitle, "player/track_overlay_title");
     BRLS_BIND(brls::Box, trackList, "player/track_list");

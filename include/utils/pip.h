@@ -38,5 +38,9 @@ bool leave();
 // Convenience: toggle between PiP and normal mode.
 bool toggle(int videoWidth, int videoHeight);
 
+// Publish current video playback state to the platform. On Android this
+// enables "auto PiP on Home" (onUserLeaveHint). No-op elsewhere.
+void setVideoPlaybackState(bool playing, int videoWidth, int videoHeight);
+
 } // namespace pip
 } // namespace vitaplex

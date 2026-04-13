@@ -25,6 +25,41 @@ public class VitaPlexActivity extends SDLActivity
 {
     private static final String TAG = "VitaPlex";
 
+    // Set from native code (via setVideoPlaybackState) while a video is
+    // playing so onUserLeaveHint knows to auto-enter PiP when the user hits
+    // Home. Also captures the current video aspect ratio so the system PiP
+    // window can match it.
+    private static volatile boolean sVideoPlaying = false;
+    private static volatile int sVideoAspectNum = 16;
+    private static volatile int sVideoAspectDen = 9;
+
+    /**
+     * Called from native code to publish the current video playback state.
+     * Enables Home-button auto-PiP and caches the aspect ratio for it.
+     */
+    public static void setVideoPlaybackState(boolean playing, int aspectNum, int aspectDen) {
+        sVideoPlaying = playing;
+        if (aspectNum > 0 && aspectDen > 0) {
+            sVideoAspectNum = aspectNum;
+            sVideoAspectDen = aspectDen;
+        }
+    }
+
+    @Override
+    protected void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        // User is leaving the app (e.g. Home button). If a video is playing,
+        // try to seamlessly enter Picture-in-Picture so playback continues in
+        // a small window instead of stopping.
+        if (sVideoPlaying) {
+            try {
+                enterPiP(sVideoAspectNum, sVideoAspectDen);
+            } catch (Throwable t) {
+                Log.w(TAG, "onUserLeaveHint: enterPiP failed", t);
+            }
+        }
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);

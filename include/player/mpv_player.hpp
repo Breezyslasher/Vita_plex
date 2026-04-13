@@ -206,11 +206,11 @@ private:
     // OpenGL render resources (Android TV: zero-copy GPU rendering).
     // mpv renders into m_glFbo, which has a NanoVG-managed GL texture as its
     // color attachment. NanoVG draws from that texture the next frame — no
-    // CPU copy in the pipeline.
+    // CPU copy in the pipeline. Orientation is handled by NVG_IMAGE_FLIPY on
+    // the NanoVG image; mpv renders natively (no MPV_RENDER_PARAM_FLIP_Y).
     unsigned int m_glFbo = 0;
     mpv_opengl_fbo m_mpvOpenGLFbo = {};
-    int m_flipY = 1;
-    mpv_render_param m_mpvParams[3] = {};
+    mpv_render_param m_mpvParams[2] = {};
 #endif
 
     int m_nvgImage = 0;

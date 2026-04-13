@@ -221,5 +221,39 @@ bool toggle(int videoWidth, int videoHeight) {
     return enter(videoWidth, videoHeight);
 }
 
+void setVideoPlaybackState(bool playing, int videoWidth, int videoHeight) {
+#ifdef __ANDROID__
+    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
+    if (!env) return;
+    jclass cls = env->FindClass("org/VitaPlex/app/VitaPlexActivity");
+    if (!cls) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return;
+    }
+    jmethodID mid = env->GetStaticMethodID(cls, "setVideoPlaybackState", "(ZII)V");
+    if (!mid) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(cls);
+        return;
+    }
+    if (videoWidth <= 0 || videoHeight <= 0) {
+        videoWidth = 16;
+        videoHeight = 9;
+    }
+    env->CallStaticVoidMethod(cls, mid,
+                              (jboolean)(playing ? JNI_TRUE : JNI_FALSE),
+                              (jint)videoWidth, (jint)videoHeight);
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(cls);
+#else
+    (void)playing;
+    (void)videoWidth;
+    (void)videoHeight;
+#endif
+}
+
 } // namespace pip
 } // namespace vitaplex

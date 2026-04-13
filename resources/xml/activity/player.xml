@@ -394,6 +394,26 @@
                     scalingType="fit"/>
             </brls:Box>
 
+            <!-- Picture-in-Picture button (video mode, touch devices) -->
+            <brls:Box
+                id="player/pip_btn"
+                width="64"
+                height="64"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="32"
+                marginLeft="16"
+                focusable="true"
+                visibility="gone">
+                <brls:Image
+                    id="player/pip_icon"
+                    width="34"
+                    height="34"
+                    image="@res/icons/video-image.png"
+                    scalingType="fit"/>
+            </brls:Box>
+
             <!-- Queue list button (music queue mode) -->
             <brls:Box
                 id="player/queue_btn"

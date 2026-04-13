@@ -274,17 +274,28 @@ void PlayerActivity::onContentAvailable() {
         return true;
     });
 
-    // Picture-in-Picture: toggle on right-stick click. Only shown in video
-    // mode, and only registered on platforms where PiP is implemented
-    // (Android + desktop SDL2).
-    if (!m_isQueueMode && pip::isAvailable()) {
-        this->registerAction("Picture-in-Picture", brls::ControllerButton::BUTTON_RSB, [this](brls::View* view) {
+    // Picture-in-Picture: toggle on right-stick click and via a touchable OSD
+    // button (for phones with no gamepad). Only shown in video mode, and only
+    // registered on platforms where PiP is implemented (Android + desktop
+    // SDL2).
+    if (!m_isQueueMode && !m_isPhoto && pip::isAvailable()) {
+        auto pipHandler = [this](brls::View* view) {
             auto& player = MpvPlayer::getInstance();
             int vw = player.getVideoWidth();
             int vh = player.getVideoHeight();
+            if (vw <= 0 || vh <= 0) {
+                vw = 16;
+                vh = 9;
+            }
             pip::toggle(vw, vh);
             return true;
-        });
+        };
+        this->registerAction("Picture-in-Picture", brls::ControllerButton::BUTTON_RSB, pipHandler);
+        if (pipBtn) {
+            pipBtn->setVisibility(brls::Visibility::VISIBLE);
+            pipBtn->registerClickAction(pipHandler);
+            pipBtn->addGestureRecognizer(new brls::TapGestureRecognizer(pipBtn));
+        }
     }
 
     // Queue controls for music (LB/RB for previous/next, triggers for shuffle/repeat)
@@ -601,6 +612,10 @@ void PlayerActivity::onContentAvailable() {
 
 void PlayerActivity::willDisappear(bool resetState) {
     brls::Activity::willDisappear(resetState);
+
+    // Clear "video playing" state so onUserLeaveHint stops auto-triggering PiP
+    // once the user is no longer in the player activity.
+    pip::setVideoPlaybackState(false, 0, 0);
 
     // Re-enable background thumbnail loading now that playback is ending
     ImageLoader::setPaused(false);
@@ -1245,6 +1260,12 @@ void PlayerActivity::updateProgress() {
                     videoView->setVisibility(brls::Visibility::VISIBLE);
                     videoView->setVideoVisible(true);
                     brls::Logger::debug("Video view enabled (deferred)");
+                }
+                // Mark video playback state so Android auto-enters PiP when
+                // the user hits Home. Only for actual video (not music) and
+                // not when running the queue-mode (music) player.
+                if (!isAudio && !m_isQueueMode) {
+                    pip::setVideoPlaybackState(true, 16, 9);
                 }
                 m_isPlaying = true;
                 updatePlayPauseLabel();
