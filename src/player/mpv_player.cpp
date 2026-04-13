@@ -152,34 +152,33 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
         mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
 #elif defined(__ANDROID__)
-        // Apply mpv's built-in "fast" profile first (simpler scalers, no
-        // debanding, etc.) — same as mpv-android. This is a baseline that
-        // reduces GPU/CPU overhead for the rendering pipeline.
+        // Android TV config — adapted from mpv-android's proven settings.
+        // Target hardware: Cortex-A53/A55 TV SoCs with limited memory bandwidth.
+        //
+        // Apply mpv's built-in "fast" profile first: simpler scalers, no
+        // debanding, no interpolation. This is the single biggest perf win
+        // because it reduces GPU/CPU overhead across the whole pipeline.
         mpv_set_option_string(m_mpv, "profile", "fast");
-        // Android/Android TV: use MediaCodec hardware decoder with CPU copy-back.
-        // We use MPV_RENDER_API_TYPE_SW (software render → NanoVG texture upload),
-        // so plain "mediacodec" (zero-copy GPU interop) silently fails and falls
-        // back to slow software decoding. "mediacodec-copy" does HW decode but
-        // copies frames to CPU memory, which is what the SW render path needs.
+        // MediaCodec HW decode with CPU copy-back. Plain "mediacodec" (zero-copy
+        // GPU interop) silently fails with MPV_RENDER_API_TYPE_SW and falls back
+        // to slow software decoding. "mediacodec-copy" does HW decode but copies
+        // frames to CPU memory, which is what the SW render path needs.
         mpv_set_option_string(m_mpv, "hwdec", "mediacodec-copy");
         // Restrict HW decode to common codecs (matches mpv-android)
         mpv_set_option_string(m_mpv, "hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1");
-        // Drop frames at decoder level when behind (VO framedrop doesn't help
-        // with our custom NanoVG render path)
-        mpv_set_option_string(m_mpv, "framedrop", "decoder");
-        // Speed up software decode fallback: skip loop filter, fast decode
-        mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "nonref");
-        mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
-        // Film grain workaround (mpv issue #14651) — forces CPU-based
-        // film grain application to avoid HW decoder compatibility issues
+        // Film grain workaround (mpv issue #14651) — CPU-based film grain
+        // application avoids HW decoder compatibility issues
         mpv_set_option_string(m_mpv, "vd-lavc-film-grain", "cpu");
-        // Enable low-latency video timing to reduce frame scheduling jitter
-        mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
-        // Use audio sync mode — display-resample requires display refresh rate
-        // info which the SW render path doesn't provide, causing frame jitter
-        mpv_set_option_string(m_mpv, "video-sync", "audio");
-        // Use 4 decoder threads as fallback when HW decode isn't available
-        mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
+        // Android TV displays are fixed 60Hz (or 50Hz in PAL regions). Force
+        // MPV's frame scheduler to use this rate since the SW render path
+        // can't query the real display refresh.
+        mpv_set_option_string(m_mpv, "display-fps-override", "60");
+        // Audio output: use Android's native AudioTrack (for HDMI audio),
+        // fall back to OpenSL ES. This matches mpv-android and avoids SDL audio.
+        mpv_set_option_string(m_mpv, "ao", "audiotrack,opensles");
+        // Do NOT set: framedrop, vd-lavc-threads, video-latency-hacks,
+        // video-sync. mpv-android leaves these at defaults and it works
+        // better than explicit overrides — "fast" profile handles them.
 
 #else
         mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
@@ -1367,8 +1366,12 @@ bool MpvPlayer::initRenderContext() {
         return false;
     }
 
-    // Android SW render buffer: use 720p to keep CPU copy manageable.
-    // The transcode can still request 1080p; MPV scales to buffer size.
+    // Android TV SW render buffer: 720p keeps CPU copy manageable for
+    // weak TV SoCs (Cortex-A53/A55). At 720p RGBA that's ~3.5MB/frame;
+    // at 60fps the buffer-write + nvgUpdateImage GL upload totals
+    // ~420 MB/s memory bandwidth, which is the edge of what weak ARM
+    // memory controllers handle without stutter. The transcode can
+    // still request 1080p; MPV scales to buffer size internally.
     m_videoWidth = 1280;
     m_videoHeight = 720;
     m_videoBuffer.assign((size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
