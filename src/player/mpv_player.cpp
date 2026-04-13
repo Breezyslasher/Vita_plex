@@ -1404,15 +1404,14 @@ bool MpvPlayer::initRenderContext() {
     // GL texture and bind it to our own FBO as the color attachment. Zero-init
     // prevents showing undefined pixels for the first frame before mpv renders.
     //
-    // NVG_IMAGE_FLIPY: native GL texture origin is bottom-left, but NanoVG
-    // samples textures with a top-left convention. Without this flag, content
-    // rendered into the texture via an FBO appears upside-down when NanoVG
-    // draws it (this is the same flag nanovg_gl_utils's nvgluCreateFramebuffer
-    // sets on its render-target images). NVG_IMAGE_PREMULTIPLIED matches
-    // what mpv outputs into the FBO.
-    const int nvgFlags = NVG_IMAGE_FLIPY | NVG_IMAGE_PREMULTIPLIED;
+    // Orientation: mpv's OpenGL renderer writes into the FBO using the same
+    // top-left origin NanoVG assumes for uploaded image data (mpv's GLES
+    // backend flips into that convention internally). So we use zero flags
+    // here and leave mpv's FLIP_Y param unset. Applying NVG_IMAGE_FLIPY OR
+    // MPV_RENDER_PARAM_FLIP_Y alone produces an upside-down picture; this
+    // "no flip" combination matches the actual orientation mpv delivers.
     std::vector<unsigned char> blackPixels((size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
-    m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, nvgFlags, blackPixels.data());
+    m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, blackPixels.data());
     if (m_nvgImage == 0) {
         brls::Logger::error("MpvPlayer: Failed to create NanoVG video image");
         return false;
@@ -1464,10 +1463,11 @@ bool MpvPlayer::initRenderContext() {
         return false;
     }
 
-    // Per-frame render params: FBO only. Orientation is handled by NanoVG
-    // via NVG_IMAGE_FLIPY on the target image, so we let mpv render natively
-    // (bottom-left origin) and NanoVG flips on sample. Passing FLIP_Y here
-    // would double-flip and give an upside-down picture.
+    // Per-frame render params: FBO only. mpv's OpenGL-ES backend already
+    // writes in the top-down orientation NanoVG expects for its uploaded
+    // images, so we neither set NVG_IMAGE_FLIPY on the NanoVG image nor
+    // pass MPV_RENDER_PARAM_FLIP_Y here. Adding either gives an upside-down
+    // picture (single flip); having both cancels back to correct.
     m_mpvOpenGLFbo.fbo = (int)m_glFbo;
     m_mpvOpenGLFbo.w = m_videoWidth;
     m_mpvOpenGLFbo.h = m_videoHeight;

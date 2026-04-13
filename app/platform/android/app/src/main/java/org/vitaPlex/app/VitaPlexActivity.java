@@ -1,11 +1,18 @@
 package org.VitaPlex.app;
 import android.app.Activity;
+import android.app.PendingIntent;
 import android.app.PictureInPictureParams;
+import android.app.RemoteAction;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.app.UiModeManager;
 import android.database.ContentObserver;
+import android.graphics.drawable.Icon;
 import android.graphics.PixelFormat;
 import android.os.Build;
 import android.os.Bundle;
@@ -16,6 +23,9 @@ import android.util.Rational;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.Surface;
+
+import java.util.ArrayList;
+import java.util.List;
 
 import org.libsdl.app.BorealisHandler;
 import org.libsdl.app.PlatformUtils;
@@ -32,6 +42,33 @@ public class VitaPlexActivity extends SDLActivity
     private static volatile boolean sVideoPlaying = false;
     private static volatile int sVideoAspectNum = 16;
     private static volatile int sVideoAspectDen = 9;
+
+    // PiP action plumbing. Android's PiP window shows user-supplied action
+    // buttons (up to 3) via PictureInPictureParams.setActions. Each button
+    // fires a PendingIntent broadcast; we route those broadcasts back into
+    // the mpv player via a JNI trampoline.
+    static final String PIP_ACTION = "org.VitaPlex.app.PIP_ACTION";
+    static final String PIP_EXTRA_CODE = "action_code";
+    static final int ACTION_SEEK_BACK = 1;
+    static final int ACTION_PLAY_PAUSE = 2;
+    static final int ACTION_SEEK_FORWARD = 3;
+    private static BroadcastReceiver sPipReceiver;
+
+    /** Native trampoline implemented in src/utils/pip.cpp. */
+    private static native void nativePipAction(int code);
+
+    /**
+     * Called by the PiP BroadcastReceiver when the user taps a control
+     * button in the PiP window. Forwards to native via JNI on whatever
+     * thread it runs on — native bounces onto the main thread internally.
+     */
+    public static void onPipActionReceived(int code) {
+        try {
+            nativePipAction(code);
+        } catch (Throwable t) {
+            Log.w(TAG, "nativePipAction failed", t);
+        }
+    }
 
     /**
      * Called from native code to publish the current video playback state.
@@ -141,7 +178,7 @@ public class VitaPlexActivity extends SDLActivity
     /**
      * API 26+ helper. Isolated in a nested class so the containing class
      * can be loaded on pre-O devices without triggering verifier errors
-     * from references to PictureInPictureParams / Rational.
+     * from references to PictureInPictureParams / Rational / RemoteAction.
      */
     private static final class PiPO {
         static boolean enter(final Activity activity, int aspectNum, int aspectDen) {
@@ -176,9 +213,11 @@ public class VitaPlexActivity extends SDLActivity
                 @Override
                 public void run() {
                     try {
+                        registerPipReceiverIfNeeded(activity);
                         PictureInPictureParams.Builder builder =
                             new PictureInPictureParams.Builder()
-                                .setAspectRatio(new Rational(safeNum, safeDen));
+                                .setAspectRatio(new Rational(safeNum, safeDen))
+                                .setActions(buildActions(activity));
                         activity.enterPictureInPictureMode(builder.build());
                     } catch (Throwable t) {
                         Log.w(TAG, "enterPictureInPictureMode failed", t);
@@ -187,6 +226,57 @@ public class VitaPlexActivity extends SDLActivity
             });
             return true;
         }
+
+        /**
+         * Build the three RemoteActions shown on the PiP window:
+         * seek-back 10s, play/pause, seek-forward 10s.
+         */
+        private static List<RemoteAction> buildActions(Activity activity) {
+            List<RemoteAction> actions = new ArrayList<>(3);
+            actions.add(makeAction(activity, android.R.drawable.ic_media_rew,
+                                   "Rewind", ACTION_SEEK_BACK));
+            actions.add(makeAction(activity, android.R.drawable.ic_media_pause,
+                                   "Play/Pause", ACTION_PLAY_PAUSE));
+            actions.add(makeAction(activity, android.R.drawable.ic_media_ff,
+                                   "Fast Forward", ACTION_SEEK_FORWARD));
+            return actions;
+        }
+
+        private static RemoteAction makeAction(Activity activity, int iconRes,
+                                               String title, int actionCode) {
+            Intent intent = new Intent(PIP_ACTION)
+                .setPackage(activity.getPackageName())
+                .putExtra(PIP_EXTRA_CODE, actionCode);
+            int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                flags |= PendingIntent.FLAG_IMMUTABLE;
+            }
+            PendingIntent pi = PendingIntent.getBroadcast(
+                activity, actionCode, intent, flags);
+            Icon icon = Icon.createWithResource(activity, iconRes);
+            return new RemoteAction(icon, title, title, pi);
+        }
+
+        private static void registerPipReceiverIfNeeded(Activity activity) {
+            if (sPipReceiver != null) return;
+            sPipReceiver = new BroadcastReceiver() {
+                @Override
+                public void onReceive(Context context, Intent intent) {
+                    if (intent == null || !PIP_ACTION.equals(intent.getAction())) return;
+                    int code = intent.getIntExtra(PIP_EXTRA_CODE, 0);
+                    onPipActionReceived(code);
+                }
+            };
+            IntentFilter filter = new IntentFilter(PIP_ACTION);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                // API 33+: explicit exported flag required for non-system
+                // broadcasts. Our intent is package-targeted so NOT_EXPORTED
+                // is correct and prevents other apps from triggering it.
+                activity.registerReceiver(sPipReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+            } else {
+                activity.registerReceiver(sPipReceiver, filter);
+            }
+        }
     }
 
     @Override
@@ -194,6 +284,16 @@ public class VitaPlexActivity extends SDLActivity
         super.onDestroy();
 
         getContentResolver().unregisterContentObserver(brightnessObserver);
+
+        // Unregister the PiP broadcast receiver if it was installed.
+        if (sPipReceiver != null) {
+            try {
+                unregisterReceiver(sPipReceiver);
+            } catch (Throwable ignored) {
+                // Already unregistered or never registered on this activity.
+            }
+            sPipReceiver = null;
+        }
 
         // Android does not recommend using exit(0) directly,
         // but borealis heavily uses static variables,

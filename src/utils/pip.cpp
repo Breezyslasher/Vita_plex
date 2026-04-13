@@ -11,6 +11,7 @@
 #ifdef __ANDROID__
 #include <SDL2/SDL.h>
 #include <jni.h>
+#include "player/mpv_player.hpp"
 #endif
 
 // Desktop PiP requires SDL2 (borealis's GLFW backend does not expose a
@@ -257,3 +258,38 @@ void setVideoPlaybackState(bool playing, int videoWidth, int videoHeight) {
 
 } // namespace pip
 } // namespace vitaplex
+
+#ifdef __ANDROID__
+// Bridge from Java BroadcastReceiver (VitaPlexActivity.onPipActionReceived)
+// to the mpv player. Called on a background binder thread; forward to the
+// main thread via brls::sync so we don't touch mpv concurrently with the
+// render callback.
+//
+// Action codes (kept in sync with VitaPlexActivity.ACTION_*):
+//   1 = seek back 10s
+//   2 = toggle play/pause
+//   3 = seek forward 10s
+extern "C" JNIEXPORT void JNICALL
+Java_org_VitaPlex_app_VitaPlexActivity_nativePipAction(JNIEnv*, jclass, jint code) {
+    brls::sync([code]() {
+        auto& player = vitaplex::MpvPlayer::getInstance();
+        switch (code) {
+            case 1:
+                player.seekRelative(-10.0);
+                break;
+            case 2:
+                if (player.isPaused()) {
+                    player.play();
+                } else {
+                    player.pause();
+                }
+                break;
+            case 3:
+                player.seekRelative(10.0);
+                break;
+            default:
+                break;
+        }
+    });
+}
+#endif
