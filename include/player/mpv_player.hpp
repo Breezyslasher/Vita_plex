@@ -16,6 +16,10 @@
 #include <mpv/client.h>
 #include <mpv/render.h>
 #include <mpv/render_gxm.h>
+#elif defined(__ANDROID__)
+#include <mpv/client.h>
+#include <mpv/render.h>
+#include <mpv/render_gl.h>
 #else
 #include <mpv/client.h>
 #include <mpv/render.h>
@@ -198,12 +202,23 @@ private:
     mpv_render_param m_mpvParams[3] = {};  // Render params: FLIP_Y + GXM_FBO + INVALID
 #endif
 
+#ifdef __ANDROID__
+    // OpenGL render resources (Android TV: zero-copy GPU rendering).
+    // mpv renders into m_glFbo, which has a NanoVG-managed GL texture as its
+    // color attachment. NanoVG draws from that texture the next frame — no
+    // CPU copy in the pipeline.
+    unsigned int m_glFbo = 0;
+    mpv_opengl_fbo m_mpvOpenGLFbo = {};
+    int m_flipY = 1;
+    mpv_render_param m_mpvParams[3] = {};
+#endif
+
     int m_nvgImage = 0;
     int m_videoWidth = PLEX_MAX_VIDEO_WIDTH;
     int m_videoHeight = PLEX_MAX_VIDEO_HEIGHT;
     std::atomic<bool> m_renderReady{false};
     std::mutex m_renderMutex;
-#ifndef __vita__
+#if !defined(__vita__) && !defined(__ANDROID__)
     std::vector<unsigned char> m_videoBuffer;
 #endif
 };

@@ -295,9 +295,12 @@ if(NOT PLATFORM_SWITCH AND NOT PLATFORM_PS4 AND NOT WIN32 AND NOT PLATFORM_ANDRO
     target_link_libraries(${PROJECT_NAME} mp3lame)
 endif()
 
-# Android needs the android library for AAssetManager (used by asset extraction)
+# Android needs the android library for AAssetManager (used by asset extraction).
+# Also explicitly link GLESv3/EGL so mpv_player.cpp's GL FBO setup and mpv's
+# OpenGL render backend resolve at link time even if SDL2 doesn't pull them in
+# as a transitive dependency.
 if(PLATFORM_ANDROID)
-    target_link_libraries(${PROJECT_NAME} android log)
+    target_link_libraries(${PROJECT_NAME} android log GLESv3 EGL)
 endif()
 
 if(PLATFORM_PSV)

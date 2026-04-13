@@ -23,6 +23,22 @@
 #include <borealis/platforms/psv/psv_video.hpp>
 #endif
 
+#ifdef __ANDROID__
+#include <nanovg.h>
+#include <GLES3/gl3.h>
+#include <SDL2/SDL.h>
+// nanovg's GLES3 texture accessor is declared inside nanovg_gl.h only when
+// NANOVG_GLES3 is defined, and that header pulls in the whole GL shader
+// implementation chain. Forward-declare it directly — the symbol is compiled
+// into borealis via lib/platforms/sdl/sdl_video.cpp.
+extern "C" GLuint nvglImageHandleGLES3(NVGcontext* ctx, int image);
+
+static void* mpvGlGetProcAddress(void* ctx, const char* name) {
+    (void)ctx;
+    return SDL_GL_GetProcAddress(name);
+}
+#endif
+
 #include <cstring>
 #include <cstdlib>
 #include <clocale>
@@ -159,11 +175,11 @@ bool MpvPlayer::init() {
         // debanding, no interpolation. This is the single biggest perf win
         // because it reduces GPU/CPU overhead across the whole pipeline.
         mpv_set_option_string(m_mpv, "profile", "fast");
-        // MediaCodec HW decode with CPU copy-back. Plain "mediacodec" (zero-copy
-        // GPU interop) silently fails with MPV_RENDER_API_TYPE_SW and falls back
-        // to slow software decoding. "mediacodec-copy" does HW decode but copies
-        // frames to CPU memory, which is what the SW render path needs.
-        mpv_set_option_string(m_mpv, "hwdec", "mediacodec-copy");
+        // MediaCodec HW decode with true GPU interop. "mediacodec" feeds decoded
+        // frames straight into a GL texture (SurfaceTexture-backed), which mpv
+        // samples in its shaders — no CPU round-trip. Falls back to
+        // "mediacodec-copy" for codecs the GPU path can't handle.
+        mpv_set_option_string(m_mpv, "hwdec", "mediacodec,mediacodec-copy");
         // Restrict HW decode to common codecs (matches mpv-android)
         mpv_set_option_string(m_mpv, "hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1");
         // Film grain workaround (mpv issue #14651) — CPU-based film grain
@@ -1162,6 +1178,18 @@ void MpvPlayer::onRenderUpdate(void* ctx) {
 #ifdef __vita__
             mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
             mpv_render_context_report_swap(player->m_mpvRenderCtx);
+#elif defined(__ANDROID__)
+            std::lock_guard<std::mutex> lock(player->m_renderMutex);
+            if (!player->m_mpvRenderCtx || player->m_glFbo == 0) {
+                return;
+            }
+            // mpv renders directly into our FBO (which is backed by the
+            // NanoVG-managed GL texture). No CPU copy, no nvgUpdateImage.
+            mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
+            mpv_render_context_report_swap(player->m_mpvRenderCtx);
+            // Restore the default framebuffer binding so NanoVG draws to the
+            // screen on the next frame.
+            glBindFramebuffer(GL_FRAMEBUFFER, 0);
 #else
             std::lock_guard<std::mutex> lock(player->m_renderMutex);
             if (player->m_videoBuffer.empty() || player->m_videoWidth <= 0 || player->m_videoHeight <= 0) {
@@ -1348,11 +1376,11 @@ bool MpvPlayer::initRenderContext() {
     brls::Logger::info("MpvPlayer: GXM render context created successfully ({}x{})", m_videoWidth, m_videoHeight);
     return true;
 #elif defined(__ANDROID__)
-    // Android: use software render context. Sharing an OpenGL context between
-    // MPV and NanoVG causes flickering and state corruption, so we render to a
-    // CPU buffer and upload to a NanoVG texture each frame. The MPV config
-    // optimizations (large buffers, display-resample, MediaCodec hwdec, etc.)
-    // keep playback smooth despite the CPU-side copy.
+    // Android/Android TV: zero-copy OpenGL rendering. mpv renders directly
+    // into a NanoVG-managed GL texture via our FBO. Combined with
+    // hwdec=mediacodec (GPU interop), the whole pipeline stays on the GPU —
+    // critical for weak Android TV SoCs that can't sustain CPU framebuffer
+    // copies at 1080p60.
     if (m_mpvRenderCtx) {
         return true;
     }
@@ -1366,40 +1394,83 @@ bool MpvPlayer::initRenderContext() {
         return false;
     }
 
-    // Android TV SW render buffer: 720p keeps CPU copy manageable for
-    // weak TV SoCs (Cortex-A53/A55). At 720p RGBA that's ~3.5MB/frame;
-    // at 60fps the buffer-write + nvgUpdateImage GL upload totals
-    // ~420 MB/s memory bandwidth, which is the edge of what weak ARM
-    // memory controllers handle without stutter. The transcode can
-    // still request 1080p; MPV scales to buffer size internally.
-    m_videoWidth = 1280;
-    m_videoHeight = 720;
-    m_videoBuffer.assign((size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
+    // Render-target resolution. mpv scales/letterboxes internally to fit.
+    // 1080p matches the Android TV display while keeping GL texture memory
+    // modest (~8 MB for RGBA8).
+    m_videoWidth = 1920;
+    m_videoHeight = 1080;
 
-    m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, m_videoBuffer.data());
+    // Create an initially-black NanoVG image; we'll pull out the underlying
+    // GL texture and bind it to our own FBO as the color attachment. Zero-init
+    // prevents showing undefined pixels for the first frame before mpv renders.
+    std::vector<unsigned char> blackPixels((size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
+    m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, blackPixels.data());
     if (m_nvgImage == 0) {
-        brls::Logger::error("MpvPlayer: Failed to create SW video image");
+        brls::Logger::error("MpvPlayer: Failed to create NanoVG video image");
         return false;
     }
 
-    char apiType[] = MPV_RENDER_API_TYPE_SW;
-    mpv_render_param swParams[] = {
-        {MPV_RENDER_PARAM_API_TYPE, apiType},
-        {MPV_RENDER_PARAM_INVALID, nullptr},
-    };
-
-    int result = mpv_render_context_create(&m_mpvRenderCtx, m_mpv, swParams);
-    if (result < 0) {
-        brls::Logger::error("MpvPlayer: Failed to create SW render context: {}", mpv_error_string(result));
+    GLuint glTexture = nvglImageHandleGLES3(vg, m_nvgImage);
+    if (glTexture == 0) {
+        brls::Logger::error("MpvPlayer: Failed to get GL texture handle from NanoVG image");
         nvgDeleteImage(vg, m_nvgImage);
         m_nvgImage = 0;
         return false;
     }
 
+    // Create the GL framebuffer and attach the NanoVG texture.
+    glGenFramebuffers(1, &m_glFbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_glFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, glTexture, 0);
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        brls::Logger::error("MpvPlayer: GL framebuffer incomplete: 0x{:x}", (unsigned)status);
+        glDeleteFramebuffers(1, &m_glFbo);
+        m_glFbo = 0;
+        nvgDeleteImage(vg, m_nvgImage);
+        m_nvgImage = 0;
+        return false;
+    }
+
+    // Hand SDL's GL proc loader to mpv's GL backend.
+    mpv_opengl_init_params glInit = {};
+    glInit.get_proc_address = mpvGlGetProcAddress;
+    glInit.get_proc_address_ctx = nullptr;
+
+    mpv_render_param params[] = {
+        {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_OPENGL)},
+        {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &glInit},
+        {MPV_RENDER_PARAM_INVALID, nullptr},
+    };
+
+    int result = mpv_render_context_create(&m_mpvRenderCtx, m_mpv, params);
+    if (result < 0) {
+        brls::Logger::error("MpvPlayer: Failed to create OpenGL render context: {}",
+                            mpv_error_string(result));
+        glDeleteFramebuffers(1, &m_glFbo);
+        m_glFbo = 0;
+        nvgDeleteImage(vg, m_nvgImage);
+        m_nvgImage = 0;
+        return false;
+    }
+
+    // Per-frame render params: FBO + flip Y (mpv renders top-down, the NVG
+    // texture is sampled top-down in our shaders so this keeps video upright).
+    m_mpvOpenGLFbo.fbo = (int)m_glFbo;
+    m_mpvOpenGLFbo.w = m_videoWidth;
+    m_mpvOpenGLFbo.h = m_videoHeight;
+    m_mpvOpenGLFbo.internal_format = GL_RGBA8;
+
+    m_mpvParams[0] = {MPV_RENDER_PARAM_OPENGL_FBO, &m_mpvOpenGLFbo};
+    m_mpvParams[1] = {MPV_RENDER_PARAM_FLIP_Y, &m_flipY};
+    m_mpvParams[2] = {MPV_RENDER_PARAM_INVALID, nullptr};
+
     mpv_render_context_set_update_callback(m_mpvRenderCtx, onRenderUpdate, this);
     m_renderReady.store(true);
-    brls::Logger::info("MpvPlayer: Android software render context initialized ({}x{})",
-                      m_videoWidth, m_videoHeight);
+    brls::Logger::info("MpvPlayer: Android OpenGL render context initialized ({}x{})",
+                       m_videoWidth, m_videoHeight);
     return true;
 #else
     if (m_mpvRenderCtx) {
@@ -1484,6 +1555,30 @@ void MpvPlayer::cleanupRenderContext() {
         m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
         m_mpvParams[2] = {MPV_RENDER_PARAM_INVALID, nullptr};
     }
+#elif defined(__ANDROID__)
+    m_renderReady.store(false);
+    std::lock_guard<std::mutex> lock(m_renderMutex);
+    if (m_mpvRenderCtx) {
+        // Free the render context before the GL resources so mpv's GL
+        // backend has a chance to tear down its own GL objects.
+        mpv_render_context_free(m_mpvRenderCtx);
+        m_mpvRenderCtx = nullptr;
+    }
+    if (m_glFbo) {
+        glDeleteFramebuffers(1, &m_glFbo);
+        m_glFbo = 0;
+    }
+    {
+        NVGcontext* vg = brls::Application::getNVGContext();
+        if (m_nvgImage && vg) {
+            nvgDeleteImage(vg, m_nvgImage);
+            m_nvgImage = 0;
+        }
+    }
+    m_mpvOpenGLFbo = {};
+    m_mpvParams[0] = {MPV_RENDER_PARAM_INVALID, nullptr};
+    m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
+    m_mpvParams[2] = {MPV_RENDER_PARAM_INVALID, nullptr};
 #else
     m_renderReady.store(false);
     std::lock_guard<std::mutex> lock(m_renderMutex);
