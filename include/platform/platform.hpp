@@ -71,6 +71,13 @@ struct ImageConstraints {
     int homeTitleFontSize;     // big "Home" header
     int homeSectionFontSize;   // "Recently Added …" section headings
     int homeRowHeight;         // carousel row height (clamps tall posters)
+
+    // Detail-view horizontal carousels. Each row must clear its cell's
+    // intrinsic height plus ~30-50px for the label/margins, otherwise the
+    // cover tops/bottoms get clipped on taller platforms. `homeRowHeight`
+    // is reused for portrait poster rows (e.g. seasons on a show page).
+    int landscapeRowHeight;    // episode / extras carousel (landscape stills)
+    int squareRowHeight;       // music album / track carousel (square covers)
 };
 
 /**

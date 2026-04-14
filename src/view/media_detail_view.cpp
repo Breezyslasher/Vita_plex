@@ -12,6 +12,7 @@
 #include "app/music_queue.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
+#include "platform/platform.hpp"
 #include <thread>
 
 #ifdef __vita__
@@ -263,8 +264,15 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             m_mediaContentBox->addView(m_childrenLabel);
 
             m_childrenScroll = new brls::HScrollingFrame();
-            // Episodes use landscape cells (~150x125), seasons use portrait (~120x200)
-            m_childrenScroll->setHeight(m_item.mediaType == MediaType::SEASON ? 135 : 210);
+            // Episodes use landscape cells, seasons use portrait cells — pick
+            // the right platform-tuned row height so covers aren't clipped on
+            // non-Vita targets where cells are taller.
+            {
+                const auto& ic = platform::getImageConstraints();
+                m_childrenScroll->setHeight(m_item.mediaType == MediaType::SEASON
+                                                ? ic.landscapeRowHeight
+                                                : ic.homeRowHeight);
+            }
             m_childrenScroll->setMarginBottom(20);
 
             m_childrenBox = new brls::Box();
@@ -288,7 +296,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             m_mediaContentBox->addView(m_extrasLabel);
 
             m_extrasScroll = new brls::HScrollingFrame();
-            m_extrasScroll->setHeight(150);
+            m_extrasScroll->setHeight(platform::getImageConstraints().landscapeRowHeight);
             m_extrasScroll->setMarginBottom(20);
             m_extrasScroll->setVisibility(brls::Visibility::GONE);
 
@@ -371,7 +379,9 @@ brls::HScrollingFrame* MediaDetailView::createMediaRow(const std::string& title,
     m_musicCategoriesBox->addView(label);
 
     auto* scrollFrame = new brls::HScrollingFrame();
-    scrollFrame->setHeight(150);
+    // Music artist detail page: "Albums", "Related Artists", etc. rows of
+    // square covers. Height scales per platform so album art isn't clipped.
+    scrollFrame->setHeight(platform::getImageConstraints().squareRowHeight);
     scrollFrame->setMarginBottom(10);
 
     auto* content = new brls::Box();
@@ -509,9 +519,12 @@ void MediaDetailView::loadChildren() {
             if (client.fetchChildren(singleSeason.ratingKey, episodes) && !episodes.empty()) {
                 m_children = episodes;
 
-                // Update label and scroll height for episodes
+                // Update label and scroll height for episodes (landscape cells)
                 if (m_childrenLabel) m_childrenLabel->setText("Episodes");
-                if (m_childrenScroll) m_childrenScroll->setHeight(135);
+                if (m_childrenScroll) {
+                    m_childrenScroll->setHeight(
+                        platform::getImageConstraints().landscapeRowHeight);
+                }
 
                 m_childrenBox->clearViews();
                 for (const auto& child : m_children) {

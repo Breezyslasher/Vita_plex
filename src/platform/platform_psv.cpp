@@ -167,6 +167,8 @@ const ImageConstraints& getImageConstraints() {
         /* homeTitleFontSize  */  28,
         /* homeSectionFontSize*/  22,
         /* homeRowHeight      */ 210,  // 165 poster + ~45 for label/margins
+        /* landscapeRowHeight */ 135,  // landscapeHeight(80) + ~55 (was hardcoded in views)
+        /* squareRowHeight    */ 150,  // squareCoverSize(110) + ~40 (was hardcoded in views)
     };
     return c;
 }

@@ -37,6 +37,8 @@ const ImageConstraints& getImageConstraints() {
         /* homeTitleFontSize  */  30,
         /* homeSectionFontSize*/  22,
         /* homeRowHeight      */ 310,  // posterHeight + label + padding
+        /* landscapeRowHeight */ 195,  // landscapeHeight(135) + ~60
+        /* squareRowHeight    */ 225,  // squareCoverSize(170) + ~55
     };
     return c;
 }
