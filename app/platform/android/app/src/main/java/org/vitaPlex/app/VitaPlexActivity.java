@@ -334,6 +334,30 @@ public class VitaPlexActivity extends SDLActivity
         return isDpad && !isGamepad && !isJoystick;
     }
 
+    /**
+     * Map Android media keys to direct mpv actions.
+     *
+     * Returning null means the key is not a media-control command that should
+     * bypass Borealis input handling.
+     */
+    private Integer mapMediaKeyToMpvAction(int keyCode) {
+        switch (keyCode) {
+            case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+            case KeyEvent.KEYCODE_MEDIA_PLAY:
+            case KeyEvent.KEYCODE_MEDIA_PAUSE:
+            case KeyEvent.KEYCODE_MEDIA_STOP:
+                return ACTION_PLAY_PAUSE;
+            case KeyEvent.KEYCODE_MEDIA_REWIND:
+            case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
+                return ACTION_SEEK_BACK;
+            case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
+            case KeyEvent.KEYCODE_MEDIA_NEXT:
+                return ACTION_SEEK_FORWARD;
+            default:
+                return null;
+        }
+    }
+
     @Override
     public boolean dispatchKeyEvent(KeyEvent event) {
         if (SDLActivity.mBrokenLibraries) {
@@ -371,29 +395,22 @@ public class VitaPlexActivity extends SDLActivity
         // For TV remote events, bypass the joystick handler for keys that need
         // keyboard-path mapping or translation to mapped keycodes.
         if (isTvRemoteEvent(event)) {
+            Integer mpvAction = mapMediaKeyToMpvAction(keyCode);
+            if (mpvAction != null) {
+                // Send media controls straight to mpv and skip Borealis key mapping.
+                if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                    onPipActionReceived(mpvAction);
+                }
+                // Consume both DOWN and UP so this key never reaches Borealis.
+                return true;
+            }
+
             int translatedKey = keyCode;
             switch (keyCode) {
                 case KeyEvent.KEYCODE_ENTER:
                 case KeyEvent.KEYCODE_MENU:
                     // Pass through as-is — SDL maps them to scancodes
                     // that borealis already handles (RETURN, MENU)
-                    break;
-                case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
-                case KeyEvent.KEYCODE_MEDIA_PLAY:
-                case KeyEvent.KEYCODE_MEDIA_PAUSE:
-                case KeyEvent.KEYCODE_MEDIA_STOP:
-                    // Map to ENTER → SDL_SCANCODE_RETURN → BUTTON_A (play/pause)
-                    translatedKey = KeyEvent.KEYCODE_ENTER;
-                    break;
-                case KeyEvent.KEYCODE_MEDIA_REWIND:
-                case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
-                    // Map to DPAD_LEFT → SDL_SCANCODE_LEFT → BUTTON_LEFT (seek back)
-                    translatedKey = KeyEvent.KEYCODE_DPAD_LEFT;
-                    break;
-                case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
-                case KeyEvent.KEYCODE_MEDIA_NEXT:
-                    // Map to DPAD_RIGHT → SDL_SCANCODE_RIGHT → BUTTON_RIGHT (seek fwd)
-                    translatedKey = KeyEvent.KEYCODE_DPAD_RIGHT;
                     break;
                 default:
                     // D-pad and other keys go through normal SDL dispatch
