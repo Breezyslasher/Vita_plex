@@ -81,7 +81,9 @@ private:
     void loadNextPage();
     size_t m_pageOffset = 0;
     int m_totalItemCount = 0;
-    static constexpr size_t LIBRARY_PAGE_SIZE = 60;
+    // Page size comes from the platform layer now so desktop builds can
+    // request hundreds per page while Vita stays at ~60.
+    static size_t libraryPageSize();
 
     // Data
     std::vector<MediaItem> m_items;
@@ -95,7 +97,7 @@ private:
     size_t m_trackListRendered = 0;  // How many track rows rendered so far
     brls::Button* m_trackListLoadMoreBtn = nullptr;
 
-    static constexpr size_t PLAYLIST_TRACK_PAGE_SIZE = 50;
+    static size_t playlistTrackPageSize();
 
     LibraryViewMode m_viewMode = LibraryViewMode::ALL_ITEMS;
     std::string m_filterTitle;  // Title of current filter (collection/genre name)

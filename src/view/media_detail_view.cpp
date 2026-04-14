@@ -467,8 +467,9 @@ void MediaDetailView::loadDetails() {
                                 m_item.mediaType == MediaType::MUSIC_ALBUM ||
                                 m_item.mediaType == MediaType::MUSIC_TRACK);
 
-                int width = 400;
-                int height = isMusic ? 400 : 600;
+                const auto& reqIc = platform::getImageConstraints();
+                int width = isMusic ? reqIc.squareRequestSize : reqIc.detailPosterRequestWidth;
+                int height = isMusic ? reqIc.squareRequestSize : reqIc.detailPosterRequestHeight;
 
                 PlexClient& client = PlexClient::getInstance();
                 std::string url = client.getThumbnailUrl(thumb, width, height);

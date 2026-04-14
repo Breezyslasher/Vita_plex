@@ -169,6 +169,37 @@ const ImageConstraints& getImageConstraints() {
         /* homeRowHeight      */ 210,  // 165 poster + ~45 for label/margins
         /* landscapeRowHeight */ 135,  // landscapeHeight(80) + ~55 (was hardcoded in views)
         /* squareRowHeight    */ 150,  // squareCoverSize(110) + ~40 (was hardcoded in views)
+
+        /* listRowHeight            */  56,
+        /* livetvChannelCardWidth   */ 120,
+        /* livetvChannelRowHeight   */ 100,
+        /* livetvGuideHeight        */ 350,
+
+        /* maxCellTitleChars        */  15,
+        /* maxListTitleChars        */  55,
+        /* maxLiveTVProgramChars    */  14,
+        /* maxLiveTVChannelChars    */  12,
+
+        /* sidebarMinWidth          */ 200,
+        /* sidebarMaxWidth          */ 350,
+
+        /* dialogWidth              */ 420,
+
+        /* imageCacheSize           */  20,
+
+        /* libraryPageSize          */  60,
+        /* playlistTrackPageSize    */  50,
+        /* musicCarouselLimit       */  40,
+
+        /* posterRequestWidth       */ 220,  // ~2x poster display, Vita VRAM budget
+        /* posterRequestHeight      */ 330,
+        /* squareRequestSize        */ 220,
+        /* landscapeRequestWidth    */ 280,
+        /* landscapeRequestHeight   */ 160,
+        /* detailPosterRequestWidth */ 400,
+        /* detailPosterRequestHeight*/ 600,
+        /* photoRequestWidth        */ 960,  // native Vita resolution
+        /* photoRequestHeight       */ 544,
     };
     return c;
 }

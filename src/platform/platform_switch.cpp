@@ -39,6 +39,37 @@ const ImageConstraints& getImageConstraints() {
         /* homeRowHeight      */ 290,  // posterHeight(240) + label + padding
         /* landscapeRowHeight */ 185,  // landscapeHeight(125) + ~60
         /* squareRowHeight    */ 215,  // squareCoverSize(160) + ~55
+
+        /* listRowHeight            */  60,
+        /* livetvChannelCardWidth   */ 160,
+        /* livetvChannelRowHeight   */ 130,
+        /* livetvGuideHeight        */ 430,
+
+        /* maxCellTitleChars        */  20,
+        /* maxListTitleChars        */  90,
+        /* maxLiveTVProgramChars    */  22,
+        /* maxLiveTVChannelChars    */  18,
+
+        /* sidebarMinWidth          */ 240,
+        /* sidebarMaxWidth          */ 400,
+
+        /* dialogWidth              */ 520,
+
+        /* imageCacheSize           */  60,
+
+        /* libraryPageSize          */ 200,
+        /* playlistTrackPageSize    */ 100,
+        /* musicCarouselLimit       */  80,
+
+        /* posterRequestWidth       */ 320,  // ~2x 160px display
+        /* posterRequestHeight      */ 480,
+        /* squareRequestSize        */ 320,
+        /* landscapeRequestWidth    */ 440,
+        /* landscapeRequestHeight   */ 250,
+        /* detailPosterRequestWidth */ 500,
+        /* detailPosterRequestHeight*/ 750,
+        /* photoRequestWidth        */ 1280,
+        /* photoRequestHeight       */ 720,
     };
     return c;
 }

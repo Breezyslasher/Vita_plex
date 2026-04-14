@@ -7,16 +7,27 @@
 #include "utils/async.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/http_client.hpp"
+#include "platform/platform.hpp"
 #include <algorithm>
 #include <ctime>
 
 namespace vitaplex {
 
-// Constants for EPG grid layout
-static const int CHANNEL_COLUMN_WIDTH = 100;  // Width of channel name column
-static const int TIME_SLOT_WIDTH = 120;       // Width per 30-minute slot
-static const int ROW_HEIGHT = 60;             // Height of each channel row
+// Constants for EPG grid layout. Time-slot / row / channel-column widths are
+// derived from the platform layer at runtime so larger-screen builds get wider
+// cells than the Vita default.
 static const int TIME_HEADER_HEIGHT = 30;     // Height of time header
+
+static inline int livetvTimeSlotWidth() {
+    return platform::getImageConstraints().livetvChannelCardWidth;
+}
+static inline int livetvRowHeight() {
+    return platform::getImageConstraints().listRowHeight;
+}
+static inline int livetvChannelColWidth() {
+    // Slightly narrower than the quick-access card width.
+    return std::max(90, platform::getImageConstraints().livetvChannelCardWidth - 20);
+}
 
 // Cache durations
 static const int64_t FULL_RELOAD_INTERVAL = 300;   // 5 minutes between full EPG reloads
@@ -53,7 +64,7 @@ LiveTVTab::LiveTVTab() {
     m_scrollContent->addView(m_channelsLabel);
 
     m_channelsRow = new brls::HScrollingFrame();
-    m_channelsRow->setHeight(100);
+    m_channelsRow->setHeight(platform::getImageConstraints().livetvChannelRowHeight);
     m_channelsRow->setMarginBottom(20);
 
     m_channelsContent = new brls::Box();
@@ -75,13 +86,13 @@ LiveTVTab::LiveTVTab() {
     // Guide container - holds time header and channel grid
     m_guideContainer = new brls::Box();
     m_guideContainer->setAxis(brls::Axis::COLUMN);
-    m_guideContainer->setHeight(350);  // Fixed height for guide section
+    m_guideContainer->setHeight(platform::getImageConstraints().livetvGuideHeight);  // Fixed height for guide section
     m_guideContainer->setMarginBottom(20);
 
     // Time header row (horizontal scroll)
     m_timeHeaderScroll = new brls::HScrollingFrame();
     m_timeHeaderScroll->setHeight(TIME_HEADER_HEIGHT);
-    m_timeHeaderScroll->setMarginLeft(CHANNEL_COLUMN_WIDTH);  // Offset for channel column
+    m_timeHeaderScroll->setMarginLeft(livetvChannelColWidth());  // Offset for channel column
 
     m_timeHeaderBox = new brls::Box();
     m_timeHeaderBox->setAxis(brls::Axis::ROW);
@@ -112,7 +123,7 @@ LiveTVTab::LiveTVTab() {
     m_scrollContent->addView(m_dvrLabel);
 
     m_dvrRow = new brls::HScrollingFrame();
-    m_dvrRow->setHeight(100);
+    m_dvrRow->setHeight(platform::getImageConstraints().livetvChannelRowHeight);
     m_dvrRow->setMarginBottom(20);
 
     m_dvrContent = new brls::Box();
@@ -300,7 +311,10 @@ void LiveTVTab::updateQuickAccessPrograms() {
                     }
                 }
             }
-            if (prog.length() > 14) prog = prog.substr(0, 13) + "..";
+            size_t maxProgChars = (size_t)platform::getImageConstraints().maxLiveTVProgramChars;
+            if (maxProgChars > 2 && prog.length() > maxProgChars) {
+                prog = prog.substr(0, maxProgChars - 2) + "..";
+            }
             m_quickAccessProgLabels[i]->setText(prog.empty() ? "" : prog);
         }
     }
@@ -325,11 +339,12 @@ void LiveTVTab::loadChannels() {
                 m_quickAccessProgLabels.clear();
 
                 // Build quick access channel buttons
+                const auto& ic = platform::getImageConstraints();
                 for (const auto& channel : m_channels) {
                     auto* card = new brls::Box();
                     card->setAxis(brls::Axis::COLUMN);
-                    card->setWidth(120);
-                    card->setHeight(80);
+                    card->setWidth(ic.livetvChannelCardWidth);
+                    card->setHeight(std::max(60, ic.livetvChannelRowHeight - 20));
                     card->setMarginRight(10);
                     card->setPadding(8);
                     card->setFocusable(true);
@@ -345,7 +360,10 @@ void LiveTVTab::loadChannels() {
                     // Channel name
                     auto* nameLabel = new brls::Label();
                     std::string name = channel.callSign.empty() ? channel.title : channel.callSign;
-                    if (name.length() > 12) name = name.substr(0, 11) + "..";
+                    size_t maxChanChars = (size_t)ic.maxLiveTVChannelChars;
+                    if (maxChanChars > 2 && name.length() > maxChanChars) {
+                        name = name.substr(0, maxChanChars - 1) + "..";
+                    }
                     nameLabel->setText(name);
                     nameLabel->setFontSize(12);
                     card->addView(nameLabel);
@@ -363,7 +381,10 @@ void LiveTVTab::loadChannels() {
                             }
                         }
                     }
-                    if (prog.length() > 14) prog = prog.substr(0, 13) + "..";
+                    size_t maxProgChars = (size_t)ic.maxLiveTVProgramChars;
+                    if (maxProgChars > 2 && prog.length() > maxProgChars) {
+                        prog = prog.substr(0, maxProgChars - 1) + "..";
+                    }
                     progLabel->setText(prog);
                     progLabel->setFontSize(10);
                     progLabel->setMarginTop(4);
@@ -437,7 +458,7 @@ void LiveTVTab::buildEPGGrid() {
         int64_t slotTime = m_guideStartTime + (i * 1800);
 
         auto* timeSlot = new brls::Box();
-        timeSlot->setWidth(TIME_SLOT_WIDTH);
+        timeSlot->setWidth(livetvTimeSlotWidth());
         timeSlot->setHeight(TIME_HEADER_HEIGHT);
         timeSlot->setJustifyContent(brls::JustifyContent::CENTER);
         timeSlot->setAlignItems(brls::AlignItems::CENTER);
@@ -457,15 +478,15 @@ void LiveTVTab::buildEPGGrid() {
         // Create row container
         auto* rowBox = new brls::Box();
         rowBox->setAxis(brls::Axis::ROW);
-        rowBox->setHeight(ROW_HEIGHT);
+        rowBox->setHeight(livetvRowHeight());
         rowBox->setJustifyContent(brls::JustifyContent::FLEX_START);
         rowBox->setAlignItems(brls::AlignItems::CENTER);
 
         // Channel info column (fixed width)
         auto* channelCol = new brls::Box();
         channelCol->setAxis(brls::Axis::COLUMN);
-        channelCol->setWidth(CHANNEL_COLUMN_WIDTH);
-        channelCol->setHeight(ROW_HEIGHT);
+        channelCol->setWidth(livetvChannelColWidth());
+        channelCol->setHeight(livetvRowHeight());
         channelCol->setPadding(4);
         channelCol->setBackgroundColor(nvgRGBA(35, 35, 45, 255));
         channelCol->setJustifyContent(brls::JustifyContent::CENTER);
@@ -477,7 +498,10 @@ void LiveTVTab::buildEPGGrid() {
 
         auto* chNameLabel = new brls::Label();
         std::string chName = channel.callSign.empty() ? channel.title : channel.callSign;
-        if (chName.length() > 10) chName = chName.substr(0, 9) + "..";
+        size_t gridChanChars = (size_t)platform::getImageConstraints().maxLiveTVChannelChars;
+        if (gridChanChars > 2 && chName.length() > gridChanChars - 2) {
+            chName = chName.substr(0, gridChanChars - 3) + "..";
+        }
         chNameLabel->setText(chName);
         chNameLabel->setFontSize(10);
         channelCol->addView(chNameLabel);
@@ -516,18 +540,18 @@ void LiveTVTab::buildEPGGrid() {
 
                 // Add gap spacer if there's a gap before this program
                 if (visStart > lastEndTime) {
-                    int gapPixels = (int)((visStart - lastEndTime) * TIME_SLOT_WIDTH / 1800);
+                    int gapPixels = (int)((visStart - lastEndTime) * livetvTimeSlotWidth() / 1800);
                     if (gapPixels > 0) {
                         auto* spacer = new brls::Box();
                         spacer->setWidth(gapPixels);
-                        spacer->setHeight(ROW_HEIGHT - 4);
+                        spacer->setHeight(livetvRowHeight() - 4);
                         programsBox->addView(spacer);
                     }
                 }
 
                 // Calculate width based on duration
                 int64_t durationSec = visEnd - visStart;
-                int cellWidth = (int)(durationSec * TIME_SLOT_WIDTH / 1800);
+                int cellWidth = (int)(durationSec * livetvTimeSlotWidth() / 1800);
                 if (cellWidth < 40) cellWidth = 40;  // Minimum width
 
                 // Determine color: currently airing = brighter
@@ -540,7 +564,7 @@ void LiveTVTab::buildEPGGrid() {
                 auto* progCell = new brls::Box();
                 progCell->setAxis(brls::Axis::COLUMN);
                 progCell->setWidth(cellWidth);
-                progCell->setHeight(ROW_HEIGHT - 4);
+                progCell->setHeight(livetvRowHeight() - 4);
                 progCell->setPadding(4);
                 progCell->setMargins(2, 2, 2, 2);
                 progCell->setBackgroundColor(bgColor);
@@ -584,21 +608,21 @@ void LiveTVTab::buildEPGGrid() {
             int64_t guideEndTime = m_guideStartTime + (m_hoursToShow * 3600);
             int64_t progEnd = std::min(channel.programEnd > 0 ? channel.programEnd : progStart + 1800, guideEndTime);
 
-            int startOffset = (int)((progStart - m_guideStartTime) * TIME_SLOT_WIDTH / 1800);
-            int cellWidth = (int)((progEnd - progStart) * TIME_SLOT_WIDTH / 1800);
+            int startOffset = (int)((progStart - m_guideStartTime) * livetvTimeSlotWidth() / 1800);
+            int cellWidth = (int)((progEnd - progStart) * livetvTimeSlotWidth() / 1800);
             if (cellWidth < 40) cellWidth = 40;
 
             if (startOffset > 0) {
                 auto* spacer = new brls::Box();
                 spacer->setWidth(startOffset);
-                spacer->setHeight(ROW_HEIGHT - 4);
+                spacer->setHeight(livetvRowHeight() - 4);
                 programsBox->addView(spacer);
             }
 
             auto* progCell = new brls::Box();
             progCell->setAxis(brls::Axis::COLUMN);
             progCell->setWidth(cellWidth);
-            progCell->setHeight(ROW_HEIGHT - 4);
+            progCell->setHeight(livetvRowHeight() - 4);
             progCell->setPadding(4);
             progCell->setMargins(2, 2, 2, 2);
             progCell->setBackgroundColor(nvgRGBA(60, 80, 100, 255));
@@ -623,8 +647,8 @@ void LiveTVTab::buildEPGGrid() {
         } else {
             // No program data - show "No guide data" across the grid
             auto* emptyCell = new brls::Box();
-            emptyCell->setWidth(TIME_SLOT_WIDTH * 2);  // Span 2 slots
-            emptyCell->setHeight(ROW_HEIGHT - 4);
+            emptyCell->setWidth(livetvTimeSlotWidth() * 2);  // Span 2 slots
+            emptyCell->setHeight(livetvRowHeight() - 4);
             emptyCell->setMargins(2, 2, 2, 2);
             emptyCell->setBackgroundColor(nvgRGBA(40, 40, 50, 255));
             emptyCell->setCornerRadius(4);
@@ -750,11 +774,12 @@ void LiveTVTab::loadRecordings() {
                 return;
             }
 
+            const auto& dvrIc = platform::getImageConstraints();
             for (const auto& rec : m_recordings) {
                 auto* card = new brls::Box();
                 card->setAxis(brls::Axis::COLUMN);
-                card->setWidth(180);
-                card->setHeight(80);
+                card->setWidth(dvrIc.livetvChannelCardWidth + 60);
+                card->setHeight(std::max(60, dvrIc.livetvChannelRowHeight - 20));
                 card->setMarginRight(10);
                 card->setPadding(8);
                 card->setFocusable(true);
@@ -770,7 +795,10 @@ void LiveTVTab::loadRecordings() {
                 // Title
                 auto* titleLabel = new brls::Label();
                 std::string title = rec.title;
-                if (title.length() > 20) title = title.substr(0, 19) + "..";
+                size_t dvrMaxChars = (size_t)(platform::getImageConstraints().maxLiveTVProgramChars + 6);
+                if (dvrMaxChars > 2 && title.length() > dvrMaxChars) {
+                    title = title.substr(0, dvrMaxChars - 1) + "..";
+                }
                 titleLabel->setText(title);
                 titleLabel->setFontSize(13);
                 card->addView(titleLabel);

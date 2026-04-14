@@ -3,10 +3,16 @@
  */
 
 #include "view/progress_dialog.hpp"
+#include "platform/platform.hpp"
 
 namespace vitaplex {
 
 ProgressDialog::ProgressDialog(const std::string& title) {
+    const auto& ic = platform::getImageConstraints();
+    const int dialogWidth = ic.dialogWidth;
+    // Progress bar fills most of the dialog minus padding on both sides.
+    m_progressBarWidth = std::max(200, dialogWidth - 60);
+
     this->setAxis(brls::Axis::COLUMN);
     this->setJustifyContent(brls::JustifyContent::CENTER);
     this->setAlignItems(brls::AlignItems::CENTER);
@@ -21,7 +27,7 @@ ProgressDialog::ProgressDialog(const std::string& title) {
     container->setBackgroundColor(nvgRGBA(40, 40, 40, 255));
     container->setCornerRadius(10);
     container->setPadding(30);
-    container->setWidth(400);
+    container->setWidth(dialogWidth);
 
     // Title
     m_titleLabel = new brls::Label();
@@ -47,12 +53,12 @@ ProgressDialog::ProgressDialog(const std::string& title) {
 
     // Progress bar background
     auto* progressContainer = new brls::Box();
-    progressContainer->setWidth(340);
+    progressContainer->setWidth(m_progressBarWidth);
     progressContainer->setHeight(20);
     progressContainer->setMarginBottom(15);
 
     m_progressBg = new brls::Rectangle();
-    m_progressBg->setWidth(340);
+    m_progressBg->setWidth(m_progressBarWidth);
     m_progressBg->setHeight(20);
     m_progressBg->setColor(nvgRGBA(60, 60, 60, 255));
     m_progressBg->setCornerRadius(5);
@@ -133,7 +139,7 @@ void ProgressDialog::setProgress(float progress) {
     if (progress > 1) progress = 1;
 
     if (m_progressBar) {
-        m_progressBar->setWidth(340 * progress);
+        m_progressBar->setWidth(m_progressBarWidth * progress);
     }
 
     if (m_progressLabel) {

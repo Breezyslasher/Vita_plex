@@ -3,6 +3,7 @@
  */
 
 #include "view/overlay_dialog.hpp"
+#include "platform/platform.hpp"
 
 namespace vitaplex {
 
@@ -23,7 +24,7 @@ OverlayDialog::OverlayDialog(const std::string& title, const std::string& messag
     m_container->setBackgroundColor(nvgRGBA(40, 40, 40, m_contentAlpha));
     m_container->setCornerRadius(12);
     m_container->setPadding(25);
-    m_container->setWidth(420);
+    m_container->setWidth(platform::getImageConstraints().dialogWidth);
 
     // Title
     m_titleLabel = new brls::Label();

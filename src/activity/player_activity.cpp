@@ -12,6 +12,7 @@
 #include "utils/http_client.hpp"
 #include "utils/pip.h"
 #include "view/video_view.hpp"
+#include "platform/platform.hpp"
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -1107,7 +1108,8 @@ void PlayerActivity::loadMedia() {
 
             // Load the full-size photo
             if (!item.thumb.empty()) {
-                std::string photoUrl = client.getThumbnailUrl(item.thumb, 960, 544);
+                const auto& photoIc = platform::getImageConstraints();
+                std::string photoUrl = client.getThumbnailUrl(item.thumb, photoIc.photoRequestWidth, photoIc.photoRequestHeight);
                 brls::Logger::debug("Photo URL: {}", photoUrl);
 
                 // Load photo into the view (photoImage is defined in player.xml)
@@ -1142,7 +1144,8 @@ void PlayerActivity::loadMedia() {
             if (artPath.empty()) artPath = item.grandparentThumb;
 
             if (!artPath.empty()) {
-                std::string thumbUrl = client.getThumbnailUrl(artPath, 300, 300);
+                int artSize = platform::getImageConstraints().squareRequestSize;
+                std::string thumbUrl = client.getThumbnailUrl(artPath, artSize, artSize);
                 ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {
                     // Art loaded
                 }, albumArt, m_alive);

@@ -78,6 +78,67 @@ struct ImageConstraints {
     // is reused for portrait poster rows (e.g. seasons on a show page).
     int landscapeRowHeight;    // episode / extras carousel (landscape stills)
     int squareRowHeight;       // music album / track carousel (square covers)
+
+    // List rows (downloads tab, track list) — pixels per row.
+    int listRowHeight;
+
+    // LiveTV tab layout.
+    int livetvChannelCardWidth;     // horizontal EPG/channel card width
+    int livetvChannelRowHeight;     // channel/DVR carousel height
+    int livetvGuideHeight;          // EPG guide section height
+
+    // Text truncation budgets — how many characters fit before ellipsis.
+    // These are rough values derived from the typical font size and
+    // available cell/label width on each platform; on Vita the 960px
+    // screen can only show ~55 chars on a full row, while desktop 1920p
+    // can comfortably show ~120.
+    int maxCellTitleChars;          // poster/landscape cell title
+    int maxListTitleChars;          // track / download list row title
+    int maxLiveTVProgramChars;      // LiveTV program name under a channel card
+    int maxLiveTVChannelChars;      // LiveTV channel name
+
+    // Sidebar layout. Fraction of viewport width × 1000 so we can stay in
+    // integer-land. minWidth / maxWidth are clamp limits for the dynamic
+    // sidebar growth algorithm in main_activity.cpp.
+    int sidebarMinWidth;
+    int sidebarMaxWidth;
+
+    // Modal / progress dialog width (centered). Fixed-pixel width; on
+    // Vita ~420 is close to half the screen, on desktop we want ~560.
+    int dialogWidth;
+
+    // In-memory thumbnail cache slot count for image_loader. Vita has only
+    // ~115 MB of usable heap so it caches 20; desktop/PS4/Android can afford
+    // 60-100. Each slot holds one decoded cover image (~100-400 KB).
+    int imageCacheSize;
+
+    // Library pagination — how many items to request from Plex per page
+    // when browsing a library section. Vita's tight RAM/VRAM means it has
+    // to paginate aggressively (~60 per page); desktop and PS4 can load
+    // hundreds at a time so the "load more" button is effectively a
+    // fallback rather than the common case.
+    int libraryPageSize;
+    // Playlist track rendering batch size (how many rows are inflated per
+    // incremental render pass). Desktop can inflate many more per tick.
+    int playlistTrackPageSize;
+    // Music carousel item cap — how many albums are shown in the Music
+    // tab's "Recently Added" / "By Artist" carousels before truncation.
+    int musicCarouselLimit;
+
+    // Thumbnail resolutions REQUESTED from the Plex server (photo/:/transcode).
+    // Larger values mean sharper covers but more bandwidth + VRAM per image.
+    // Vita should request small thumbnails (~200x300 portrait) so they don't
+    // blow the image cache; desktop should request ~400x600 so 1080p posters
+    // look sharp.
+    int posterRequestWidth;         // grid-cell poster thumb width
+    int posterRequestHeight;        // grid-cell poster thumb height
+    int squareRequestSize;          // grid-cell square cover (music)
+    int landscapeRequestWidth;      // grid-cell landscape thumb width
+    int landscapeRequestHeight;     // grid-cell landscape thumb height
+    int detailPosterRequestWidth;   // detail-view left poster
+    int detailPosterRequestHeight;  // detail-view left poster (portrait)
+    int photoRequestWidth;          // photo viewer / background art
+    int photoRequestHeight;
 };
 
 /**

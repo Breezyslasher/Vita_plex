@@ -21,6 +21,7 @@
 #include "activity/player_activity.hpp"
 #include "utils/async.hpp"
 #include "utils/image_loader.hpp"
+#include "platform/platform.hpp"
 
 #include <memory>
 #include <thread>
@@ -1036,11 +1037,12 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
     for (size_t i = 0; i < items.size(); i++) {
         const auto& item = items[i];
 
+        const auto& ic = platform::getImageConstraints();
         auto* row = new brls::Box();
         row->setAxis(brls::Axis::ROW);
         row->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
         row->setAlignItems(brls::AlignItems::CENTER);
-        row->setHeight(56);
+        row->setHeight(ic.listRowHeight);
         row->setPadding(10, 16, 10, 16);
         row->setMarginBottom(4);
         row->setCornerRadius(8);
@@ -1079,9 +1081,12 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
         if (!item.albumTitle.empty() && groupType == DownloadGroupType::ARTIST) {
             displayTitle += " (" + item.albumTitle + ")";
         }
-        // Truncate for Vita screen
-        if (displayTitle.length() > 50) {
-            displayTitle = displayTitle.substr(0, 47) + "...";
+        // Truncate to whatever the platform budget allows.
+        {
+            size_t maxChars = (size_t)ic.maxListTitleChars;
+            if (maxChars > 3 && displayTitle.length() > maxChars) {
+                displayTitle = displayTitle.substr(0, maxChars - 3) + "...";
+            }
         }
         titleLabel2->setText(displayTitle);
         leftBox->addView(titleLabel2);

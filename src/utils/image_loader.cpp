@@ -16,6 +16,11 @@ std::mutex ImageLoader::s_cacheMutex;
 std::atomic<uint64_t> ImageLoader::s_generation{0};
 std::atomic<bool> ImageLoader::s_paused{false};
 
+size_t ImageLoader::getMaxCacheSize() {
+    int v = platform::getImageConstraints().imageCacheSize;
+    return v > 0 ? static_cast<size_t>(v) : 20;
+}
+
 void ImageLoader::setPaused(bool paused) {
     s_paused.store(paused);
     if (paused) {
@@ -77,7 +82,7 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
                 std::lock_guard<std::mutex> lock(s_cacheMutex);
 
                 // LRU eviction: remove oldest entries until we're under the limit
-                while (s_cache.size() >= MAX_CACHE_SIZE && !s_lruOrder.empty()) {
+                while (s_cache.size() >= getMaxCacheSize() && !s_lruOrder.empty()) {
                     const std::string& oldest = s_lruOrder.back();
                     s_cache.erase(oldest);
                     s_lruOrder.pop_back();

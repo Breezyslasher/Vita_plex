@@ -133,9 +133,11 @@ void MediaItemCell::setItem(const MediaItem& item) {
     // Set title
     if (m_titleLabel) {
         std::string title = item.title;
-        // Truncate long titles
-        if (title.length() > 15) {
-            title = title.substr(0, 13) + "...";
+        // Truncate long titles — per-platform budget from the platform layer
+        // so desktop cells (which are wider) show more of the title.
+        size_t maxChars = (size_t)platform::getImageConstraints().maxCellTitleChars;
+        if (maxChars > 3 && title.length() > maxChars) {
+            title = title.substr(0, maxChars - 2) + "...";
         }
         m_originalTitle = title;  // Store truncated title for focus restore
         m_titleLabel->setText(title);
