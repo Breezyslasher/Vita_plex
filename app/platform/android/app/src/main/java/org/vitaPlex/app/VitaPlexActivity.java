@@ -52,6 +52,9 @@ public class VitaPlexActivity extends SDLActivity
     static final int ACTION_SEEK_BACK = 1;
     static final int ACTION_PLAY_PAUSE = 2;
     static final int ACTION_SEEK_FORWARD = 3;
+    static final int ACTION_STOP = 4;
+    static final int ACTION_PREVIOUS_ITEM = 5;
+    static final int ACTION_NEXT_ITEM = 6;
     private static BroadcastReceiver sPipReceiver;
 
     /** Native trampoline implemented in src/utils/pip.cpp. */
@@ -345,14 +348,17 @@ public class VitaPlexActivity extends SDLActivity
             case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
             case KeyEvent.KEYCODE_MEDIA_PLAY:
             case KeyEvent.KEYCODE_MEDIA_PAUSE:
-            case KeyEvent.KEYCODE_MEDIA_STOP:
                 return ACTION_PLAY_PAUSE;
+            case KeyEvent.KEYCODE_MEDIA_STOP:
+                return ACTION_STOP;
             case KeyEvent.KEYCODE_MEDIA_REWIND:
-            case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
                 return ACTION_SEEK_BACK;
             case KeyEvent.KEYCODE_MEDIA_FAST_FORWARD:
-            case KeyEvent.KEYCODE_MEDIA_NEXT:
                 return ACTION_SEEK_FORWARD;
+            case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
+                return ACTION_PREVIOUS_ITEM;
+            case KeyEvent.KEYCODE_MEDIA_NEXT:
+                return ACTION_NEXT_ITEM;
             default:
                 return null;
         }
