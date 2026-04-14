@@ -61,6 +61,8 @@ const ImageConstraints& getImageConstraints() {
         /* homeTitleFontSize  */  30,
         /* homeSectionFontSize*/  22,
         /* homeRowHeight      */ 310,
+        /* landscapeRowHeight */ 195,
+        /* squareRowHeight    */ 225,
     };
     return c;
 }

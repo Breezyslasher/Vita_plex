@@ -10,6 +10,7 @@
 #include "app/downloads_manager.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
+#include "platform/platform.hpp"
 
 namespace vitaplex {
 
@@ -63,7 +64,12 @@ SearchTab::SearchTab() {
     m_scrollContent->setJustifyContent(brls::JustifyContent::FLEX_START);
     m_scrollContent->setAlignItems(brls::AlignItems::STRETCH);
 
-    // Movies row
+    // Each results row is a horizontal carousel of cells. The row height is
+    // driven by the platform layer so covers don't get clipped on non-Vita
+    // targets where cells are taller.
+    const auto& ic = platform::getImageConstraints();
+
+    // Movies row (portrait posters)
     m_moviesLabel = new brls::Label();
     m_moviesLabel->setText("Movies");
     m_moviesLabel->setFontSize(20);
@@ -72,12 +78,12 @@ SearchTab::SearchTab() {
     m_scrollContent->addView(m_moviesLabel);
 
     m_moviesRow = new HorizontalScrollRow();
-    m_moviesRow->setHeight(210);
+    m_moviesRow->setHeight(ic.homeRowHeight);
     m_moviesRow->setMarginBottom(15);
     m_moviesRow->setVisibility(brls::Visibility::GONE);
     m_scrollContent->addView(m_moviesRow);
 
-    // TV Shows row
+    // TV Shows row (portrait posters)
     m_showsLabel = new brls::Label();
     m_showsLabel->setText("TV Shows");
     m_showsLabel->setFontSize(20);
@@ -86,12 +92,12 @@ SearchTab::SearchTab() {
     m_scrollContent->addView(m_showsLabel);
 
     m_showsRow = new HorizontalScrollRow();
-    m_showsRow->setHeight(210);
+    m_showsRow->setHeight(ic.homeRowHeight);
     m_showsRow->setMarginBottom(15);
     m_showsRow->setVisibility(brls::Visibility::GONE);
     m_scrollContent->addView(m_showsRow);
 
-    // Episodes row
+    // Episodes row (landscape stills)
     m_episodesLabel = new brls::Label();
     m_episodesLabel->setText("Episodes");
     m_episodesLabel->setFontSize(20);
@@ -100,12 +106,12 @@ SearchTab::SearchTab() {
     m_scrollContent->addView(m_episodesLabel);
 
     m_episodesRow = new HorizontalScrollRow();
-    m_episodesRow->setHeight(145);
+    m_episodesRow->setHeight(ic.landscapeRowHeight);
     m_episodesRow->setMarginBottom(15);
     m_episodesRow->setVisibility(brls::Visibility::GONE);
     m_scrollContent->addView(m_episodesRow);
 
-    // Albums row
+    // Albums row (square covers)
     m_albumsLabel = new brls::Label();
     m_albumsLabel->setText("Albums");
     m_albumsLabel->setFontSize(20);
@@ -114,12 +120,12 @@ SearchTab::SearchTab() {
     m_scrollContent->addView(m_albumsLabel);
 
     m_albumsRow = new HorizontalScrollRow();
-    m_albumsRow->setHeight(160);
+    m_albumsRow->setHeight(ic.squareRowHeight);
     m_albumsRow->setMarginBottom(15);
     m_albumsRow->setVisibility(brls::Visibility::GONE);
     m_scrollContent->addView(m_albumsRow);
 
-    // Tracks row
+    // Tracks row (square covers)
     m_tracksLabel = new brls::Label();
     m_tracksLabel->setText("Tracks");
     m_tracksLabel->setFontSize(20);
@@ -128,7 +134,7 @@ SearchTab::SearchTab() {
     m_scrollContent->addView(m_tracksLabel);
 
     m_tracksRow = new HorizontalScrollRow();
-    m_tracksRow->setHeight(160);
+    m_tracksRow->setHeight(ic.squareRowHeight);
     m_tracksRow->setMarginBottom(15);
     m_tracksRow->setVisibility(brls::Visibility::GONE);
     m_scrollContent->addView(m_tracksRow);

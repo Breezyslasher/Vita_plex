@@ -12,6 +12,7 @@
 #include "activity/player_activity.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
+#include "platform/platform.hpp"
 
 namespace vitaplex {
 
@@ -154,7 +155,9 @@ brls::Box* MusicTab::createHorizontalRow(const std::string& title) {
     rowBox->addView(headerBox);
 
     auto* scrollFrame = new brls::HScrollingFrame();
-    scrollFrame->setHeight(120);
+    // Top-level music carousels (recently added, favorites) show square album
+    // art — row height comes from the platform layer so art isn't clipped.
+    scrollFrame->setHeight(platform::getImageConstraints().squareRowHeight);
 
     auto* container = new brls::Box();
     container->setAxis(brls::Axis::ROW);
@@ -346,7 +349,8 @@ brls::Box* MusicTab::createAlbumScrollRow(const std::string& title, const std::v
     rowBox->addView(titleLabel);
 
     auto* scrollFrame = new brls::HScrollingFrame();
-    scrollFrame->setHeight(150);
+    // Category rows (albums, playlists, genres) — square covers.
+    scrollFrame->setHeight(platform::getImageConstraints().squareRowHeight);
 
     auto* container = new brls::Box();
     container->setAxis(brls::Axis::ROW);
