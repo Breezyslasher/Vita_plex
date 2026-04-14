@@ -396,8 +396,9 @@ public class VitaPlexActivity extends SDLActivity
         // keyboard-path mapping or translation to mapped keycodes.
         if (isTvRemoteEvent(event)) {
             Integer mpvAction = mapMediaKeyToMpvAction(keyCode);
-            if (mpvAction != null) {
-                // Send media controls straight to mpv and skip Borealis key mapping.
+            if (mpvAction != null && sVideoPlaying) {
+                // Send media controls straight to mpv while video playback is active,
+                // regardless of whether we are in PiP or fullscreen playback.
                 if (event.getAction() == KeyEvent.ACTION_DOWN) {
                     onPipActionReceived(mpvAction);
                 }
