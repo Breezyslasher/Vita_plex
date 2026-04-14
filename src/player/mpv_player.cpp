@@ -168,33 +168,20 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
         mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
 #elif defined(__ANDROID__)
-        // Android TV config — adapted from mpv-android's proven settings.
-        // Target hardware: Cortex-A53/A55 TV SoCs with limited memory bandwidth.
-        //
-        // Apply mpv's built-in "fast" profile first: simpler scalers, no
-        // debanding, no interpolation. This is the single biggest perf win
-        // because it reduces GPU/CPU overhead across the whole pipeline.
-        mpv_set_option_string(m_mpv, "profile", "fast");
-        // MediaCodec HW decode with true GPU interop. "mediacodec" feeds decoded
-        // frames straight into a GL texture (SurfaceTexture-backed), which mpv
-        // samples in its shaders — no CPU round-trip. Falls back to
-        // "mediacodec-copy" for codecs the GPU path can't handle.
-        mpv_set_option_string(m_mpv, "hwdec", "mediacodec,mediacodec-copy");
-        // Restrict HW decode to common codecs (matches mpv-android)
-        mpv_set_option_string(m_mpv, "hwdec-codecs", "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1");
-        // Film grain workaround (mpv issue #14651) — CPU-based film grain
-        // application avoids HW decoder compatibility issues
-        mpv_set_option_string(m_mpv, "vd-lavc-film-grain", "cpu");
-        // Android TV displays are fixed 60Hz (or 50Hz in PAL regions). Force
-        // MPV's frame scheduler to use this rate since the SW render path
-        // can't query the real display refresh.
-        mpv_set_option_string(m_mpv, "display-fps-override", "60");
-        // Audio output: use Android's native AudioTrack (for HDMI audio),
-        // fall back to OpenSL ES. This matches mpv-android and avoids SDL audio.
-        mpv_set_option_string(m_mpv, "ao", "audiotrack,opensles");
-        // Do NOT set: framedrop, vd-lavc-threads, video-latency-hacks,
-        // video-sync. mpv-android leaves these at defaults and it works
-        // better than explicit overrides — "fast" profile handles them.
+        // Android/Android TV: use MediaCodec zero-copy path when possible.
+        // This reduces frame upload overhead and improves frame pacing on TV SoCs.
+        mpv_set_option_string(m_mpv, "hwdec", "mediacodec");
+        mpv_set_option_string(m_mpv, "framedrop", "vo");
+        // Reduce loop-filter complexity to speed up decoding on weaker TV SoCs
+        mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "nonref");
+        // Enable low-latency video timing to reduce frame scheduling jitter
+        mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
+        // Use display-resample to sync video frames to display refresh rate,
+        // reducing judder when video FPS doesn't match the TV's refresh rate
+        mpv_set_option_string(m_mpv, "video-sync", "display-resample");
+        // Use 4 decoder threads for multi-core TV SoCs
+        mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
+
 
 #else
         mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
