@@ -79,6 +79,8 @@ public:
     void pause();
     void togglePause();
     void stop();
+    void nextInPlaylist();
+    void previousInPlaylist();
 
     // Audio-only mode (disables video decoding for music playback)
     void setAudioOnly(bool audioOnly);
