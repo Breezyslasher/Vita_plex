@@ -18,6 +18,7 @@
 #include "app/music_queue.hpp"
 #include "activity/player_activity.hpp"
 #include "utils/async.hpp"
+#include "platform/platform.hpp"
 
 #include <algorithm>
 
@@ -26,13 +27,15 @@ namespace vitaplex {
 // Cached library sections for sidebar mode
 static std::vector<LibrarySection> s_cachedSections;
 
-// Helper to calculate text width (approximate based on character count)
-// Average character width at default font size is about 8-10 pixels
+// Helper to calculate text width (approximate based on character count).
+// Average character width scales with the platform's title font size, so
+// desktop builds with larger UI text reserve more pixels per character
+// than the Vita build does.
 static int calculateTextWidth(const std::string& text) {
-    // Base width per character (approximate for sidebar font size 22)
-    const int charWidth = 12;
-    // Add minimal padding for accent bar and margins (sidebar padding is now 20+20=40)
-    const int padding = 50;
+    const auto& ic = platform::getImageConstraints();
+    // Rough glyph width ≈ 0.6 × font size (serviceable for ASCII sidebar labels).
+    int charWidth = std::max(8, (ic.titleFontSize * 3) / 4);
+    int padding   = 50;
     return static_cast<int>(text.length()) * charWidth + padding;
 }
 
@@ -49,9 +52,12 @@ void MainActivity::onContentAvailable() {
 
     if (tabFrame) {
         AppSettings& settings = Application::getInstance().getSettings();
+        const auto& ic = platform::getImageConstraints();
 
-        // Calculate dynamic sidebar width based on content
-        int sidebarWidth = 200;  // Minimum width
+        // Calculate dynamic sidebar width based on content. min/max are
+        // platform-tuned so desktop builds get a wider sidebar (260-450px)
+        // while Vita stays at 200-350px.
+        int sidebarWidth = ic.sidebarMinWidth;
 
         // Standard tab names to consider
         std::vector<std::string> standardTabs = {"Home", "Library", "Music", "Search", "Live TV", "Downloads", "Settings"};
@@ -71,13 +77,15 @@ void MainActivity::onContentAvailable() {
             }
         }
 
-        // Apply sidebar width (with reasonable bounds)
-        sidebarWidth = std::min(sidebarWidth, 350);  // Max width
+        // Apply sidebar width (with platform-tuned bounds)
+        sidebarWidth = std::min(sidebarWidth, ic.sidebarMaxWidth);
         brls::View* sidebar = tabFrame->getView("brls/tab_frame/sidebar");
         if (sidebar) {
             if (settings.collapseSidebar) {
-                sidebar->setWidth(160);
-                brls::Logger::debug("MainActivity: Collapsed sidebar to 160px");
+                // Collapsed sidebar: icons only. Use ~60% of the min width.
+                int collapsedWidth = std::max(120, (ic.sidebarMinWidth * 4) / 5);
+                sidebar->setWidth(collapsedWidth);
+                brls::Logger::debug("MainActivity: Collapsed sidebar to {}px", collapsedWidth);
             } else {
                 sidebar->setWidth(sidebarWidth);
                 brls::Logger::debug("MainActivity: Dynamic sidebar width: {}px", sidebarWidth);

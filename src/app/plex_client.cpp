@@ -632,8 +632,12 @@ bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<
     }
 
     // Server-side pagination: only fetch what we need to reduce response size.
-    // Default to 60 items per page.
-    int fetchLimit = (limit > 0) ? limit : 60;
+    // Default page size is platform-specific (60 on Vita, 500 on desktop/PS4,
+    // 200-300 on Switch/Android) so beefier platforms can load most libraries
+    // in a single page instead of chunking through 60-item calls.
+    int defaultPageSize = platform::getImageConstraints().libraryPageSize;
+    if (defaultPageSize <= 0) defaultPageSize = 60;
+    int fetchLimit = (limit > 0) ? limit : defaultPageSize;
     url += "&X-Plex-Container-Start=" + std::to_string(offset) +
            "&X-Plex-Container-Size=" + std::to_string(fetchLimit);
 

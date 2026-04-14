@@ -59,8 +59,9 @@ private:
     static std::atomic<uint64_t> s_generation;
     static std::atomic<bool> s_paused;
 
-    // Max cached images - reduced from 30 to 20 to save ~2-4 MB on Vita
-    static constexpr size_t MAX_CACHE_SIZE = 20;
+    // Max cached images. Platform-driven: ~20 on Vita (tight RAM),
+    // ~60 on Switch/Android, ~120 on desktop/PS4.
+    static size_t getMaxCacheSize();
 };
 
 } // namespace vitaplex
