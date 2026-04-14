@@ -28,22 +28,44 @@ namespace vitaplex {
 namespace platform {
 
 const ImageConstraints& getImageConstraints() {
-    // Android: phone / tablet screens are usually 1080p+. Slightly smaller
-    // covers than desktop to keep texture upload pressure manageable on
-    // mobile GPUs but still large enough that posters remain sharp.
+    // Android: phone / tablet / TV screens are usually 1080p+. 5 cols
+    // × 160px (+14px spacing) fits inside borealis's 1280-wide virtual
+    // viewport after the sidebar, and keeps GPU texture pressure low on
+    // mobile GPUs. Previous 6-column 200px layout overflowed the viewport
+    // and the last poster of each row was clipped.
     static const ImageConstraints c = {
-        /* posterWidth        */ 200,
-        /* posterHeight       */ 300,
-        /* squareCoverSize    */ 200,
-        /* landscapeWidth     */ 260,
-        /* landscapeHeight    */ 150,
-        /* gridColumns        */   6,
-        /* gridCellSpacing    */  16,
-        /* titleFontSize      */  16,
-        /* subtitleFontSize   */  13,
+        /* posterWidth        */ 160,
+        /* posterHeight       */ 240,
+        /* squareCoverSize    */ 160,
+        /* landscapeWidth     */ 220,
+        /* landscapeHeight    */ 125,
+        /* gridColumns        */   5,
+        /* gridCellSpacing    */  14,
+        /* titleFontSize      */  15,
+        /* subtitleFontSize   */  12,
         /* descriptionFontSize*/  11,
+        /* homeTitleFontSize  */  28,
+        /* homeSectionFontSize*/  20,
+        /* homeRowHeight      */ 290,
     };
     return c;
+}
+
+const VideoConstraints& getVideoConstraints() {
+    // Most Android devices (phones, tablets, TV boxes) decode 1080p H.264
+    // High@L5.1 in hardware via MediaCodec. Bitrate default is kept
+    // conservative for mobile networks.
+    static const VideoConstraints v = {
+        /* plexPlatform     */ "Android",
+        /* plexDevice       */ "Android TV",
+        /* maxVideoWidth    */ 1920,
+        /* maxVideoHeight   */ 1080,
+        /* maxVideoLevel    */ 51,
+        /* defaultBitrate   */ 8000,
+        /* defaultResolution*/ "1920x1080",
+        /* defaultVideoQualityIndex */ 1,  // QUALITY_1080P
+    };
+    return v;
 }
 
 bool init() {

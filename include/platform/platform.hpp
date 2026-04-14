@@ -65,6 +65,12 @@ struct ImageConstraints {
     int titleFontSize;
     int subtitleFontSize;
     int descriptionFontSize;
+
+    // Home tab typography / layout. The row height must be at least
+    // posterHeight + ~45 so portrait covers aren't clipped top/bottom.
+    int homeTitleFontSize;     // big "Home" header
+    int homeSectionFontSize;   // "Recently Added …" section headings
+    int homeRowHeight;         // carousel row height (clamps tall posters)
 };
 
 /**
@@ -72,6 +78,35 @@ struct ImageConstraints {
  * The reference points to a static instance — safe to keep across calls.
  */
 const ImageConstraints& getImageConstraints();
+
+/**
+ * Per-platform Plex transcode / identification constants.
+ *
+ * These replace the old PLEX_PLATFORM / PLEX_DEVICE / PLEX_MAX_VIDEO_*
+ * #define ifdef chain in include/app/application.hpp. Callers that used
+ * to read the macros directly now pull the relevant field from here.
+ *
+ * Strings are pointers to static string literals owned by the
+ * platform_<name>.cpp file — safe to keep long-term.
+ */
+struct VideoConstraints {
+    const char* plexPlatform;     // X-Plex-Platform, e.g. "Desktop"
+    const char* plexDevice;       // X-Plex-Device, e.g. "PS4"
+    int   maxVideoWidth;          // add-limitation upperBound width
+    int   maxVideoHeight;         // add-limitation upperBound height
+    int   maxVideoLevel;          // H.264 level cap (e.g. 40, 42, 51)
+    int   defaultBitrate;         // kbps when settings.maxBitrate == 0
+    const char* defaultResolution;// e.g. "1920x1080"
+    // Default enum value (int-cast to avoid including application.hpp)
+    // matching vitaplex::VideoQuality. 3=480P, 2=720P, 1=1080P.
+    int   defaultVideoQualityIndex;
+};
+
+/**
+ * Returns the Plex transcode / identification constants for the current
+ * platform. Points to a static instance owned by the platform layer.
+ */
+const VideoConstraints& getVideoConstraints();
 
 /**
  * Bootstraps platform-specific subsystems before brls::Application::init().

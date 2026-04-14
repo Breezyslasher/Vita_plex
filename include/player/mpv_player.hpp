@@ -214,8 +214,10 @@ private:
 #endif
 
     int m_nvgImage = 0;
-    int m_videoWidth = PLEX_MAX_VIDEO_WIDTH;
-    int m_videoHeight = PLEX_MAX_VIDEO_HEIGHT;
+    // Initial FBO dimensions are set from platform::getVideoConstraints() in
+    // setupNonVitaRender(); start at 0 so we don't depend on compile-time macros.
+    int m_videoWidth = 0;
+    int m_videoHeight = 0;
     std::atomic<bool> m_renderReady{false};
     std::mutex m_renderMutex;
 #if !defined(__vita__) && !defined(__ANDROID__)

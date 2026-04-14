@@ -4,6 +4,7 @@
 
 #include "utils/http_client.hpp"
 #include "app/application.hpp"
+#include "platform/platform.hpp"
 
 #include <borealis.hpp>
 #include <curl/curl.h>
@@ -39,7 +40,12 @@ HttpClient& HttpClient::shared() {
 
 HttpClient::HttpClient() {
     m_curl = curl_easy_init();
-    m_userAgent = PLEX_CLIENT_NAME "/" PLEX_CLIENT_VERSION " (" PLEX_PLATFORM ")";
+    // User agent string combines the compile-time client id with the
+    // platform-layer's runtime X-Plex-Platform value (e.g. "VitaPlex/2.0.0
+    // (PlayStation Vita)"). Previously the platform part came from a
+    // PLEX_PLATFORM ifdef macro; now it's a runtime lookup.
+    m_userAgent = std::string(PLEX_CLIENT_NAME "/" PLEX_CLIENT_VERSION " (") +
+                  platform::getVideoConstraints().plexPlatform + ")";
 }
 
 HttpClient::~HttpClient() {

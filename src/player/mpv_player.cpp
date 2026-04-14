@@ -6,6 +6,7 @@
 
 #include "player/mpv_player.hpp"
 #include "app/application.hpp"
+#include "platform/platform.hpp"
 #ifdef __PS4__
 #include "utils/https_proxy.h"
 #endif
@@ -261,15 +262,21 @@ bool MpvPlayer::init() {
 
     // Per official Plex API (developer.plex.tv/pms), X-Plex-Client-Identifier
     // is a REQUIRED HTTP header (in=header). Set it here so MPV sends it
-    // when streaming from Plex transcode endpoints.
-    mpv_set_option_string(m_mpv, "http-header-fields",
-        "X-Plex-Client-Identifier: " PLEX_CLIENT_NAME ","
-        "X-Plex-Product: " PLEX_CLIENT_NAME ","
-        "X-Plex-Version: " PLEX_CLIENT_VERSION ","
-        "X-Plex-Platform: " PLEX_PLATFORM ","
-        "X-Plex-Device: " PLEX_DEVICE ","
-        "X-Plex-Client-Profile-Name: Generic,"
-        "X-Plex-Device-Name: " PLEX_DEVICE);
+    // when streaming from Plex transcode endpoints. Platform/Device come
+    // from the runtime platform layer so each target reports the right
+    // identifier to Plex without ifdef chains here.
+    {
+        const auto& vc = platform::getVideoConstraints();
+        std::string headerFields =
+            std::string("X-Plex-Client-Identifier: ") + PLEX_CLIENT_NAME + "," +
+            "X-Plex-Product: " + PLEX_CLIENT_NAME + "," +
+            "X-Plex-Version: " + PLEX_CLIENT_VERSION + "," +
+            "X-Plex-Platform: " + vc.plexPlatform + "," +
+            "X-Plex-Device: " + vc.plexDevice + "," +
+            "X-Plex-Client-Profile-Name: Generic," +
+            "X-Plex-Device-Name: " + vc.plexDevice;
+        mpv_set_option_string(m_mpv, "http-header-fields", headerFields.c_str());
+    }
 
     // Note: demuxer-lavf-probe-info and force-seekable caused crashes on Vita
     // Keep options minimal for compatibility
@@ -1502,8 +1509,11 @@ bool MpvPlayer::initRenderContext() {
         return false;
     }
 
-    m_videoWidth = PLEX_MAX_VIDEO_WIDTH;
-    m_videoHeight = PLEX_MAX_VIDEO_HEIGHT;
+    {
+        const auto& vc = platform::getVideoConstraints();
+        m_videoWidth  = vc.maxVideoWidth;
+        m_videoHeight = vc.maxVideoHeight;
+    }
     m_videoBuffer.assign((size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
 
     m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, m_videoBuffer.data());

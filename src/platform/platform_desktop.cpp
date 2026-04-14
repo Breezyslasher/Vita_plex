@@ -18,21 +18,42 @@ namespace vitaplex {
 namespace platform {
 
 const ImageConstraints& getImageConstraints() {
-    // Desktop: 1080p+ screens. Use the largest cover budget so posters
-    // remain crisp at typical viewing distances.
+    // Desktop: borealis's virtual coordinate system is 1280x720, so
+    // oversized covers (240×360 × 7 cols = 1680px) overflow the viewport
+    // and look like "posters cut off at the edge". Use 170×255 covers at
+    // 5 columns so an 8-item recently-added row fits comfortably in the
+    // content area (sidebar ~230 + 5×180 + padding ≈ 1150 < 1280).
     static const ImageConstraints c = {
-        /* posterWidth        */ 240,
-        /* posterHeight       */ 360,
-        /* squareCoverSize    */ 240,
-        /* landscapeWidth     */ 320,
-        /* landscapeHeight    */ 180,
-        /* gridColumns        */   7,
-        /* gridCellSpacing    */  20,
-        /* titleFontSize      */  18,
-        /* subtitleFontSize   */  14,
-        /* descriptionFontSize*/  12,
+        /* posterWidth        */ 170,
+        /* posterHeight       */ 255,
+        /* squareCoverSize    */ 170,
+        /* landscapeWidth     */ 240,
+        /* landscapeHeight    */ 135,
+        /* gridColumns        */   5,
+        /* gridCellSpacing    */  16,
+        /* titleFontSize      */  16,
+        /* subtitleFontSize   */  13,
+        /* descriptionFontSize*/  11,
+        /* homeTitleFontSize  */  30,
+        /* homeSectionFontSize*/  22,
+        /* homeRowHeight      */ 310,  // posterHeight + label + padding
     };
     return c;
+}
+
+const VideoConstraints& getVideoConstraints() {
+    // Desktop boxes are capable of full 1080p H.264 High@L5.1 transcodes.
+    static const VideoConstraints v = {
+        /* plexPlatform     */ "Desktop",
+        /* plexDevice       */ "Desktop",
+        /* maxVideoWidth    */ 1920,
+        /* maxVideoHeight   */ 1080,
+        /* maxVideoLevel    */ 51,
+        /* defaultBitrate   */ 10000,
+        /* defaultResolution*/ "1920x1080",
+        /* defaultVideoQualityIndex */ 1,  // QUALITY_1080P
+    };
+    return v;
 }
 
 bool init() {

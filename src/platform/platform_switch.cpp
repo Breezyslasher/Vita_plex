@@ -21,20 +21,39 @@ namespace platform {
 const ImageConstraints& getImageConstraints() {
     // Switch: 1280x720 handheld, 1920x1080 docked. Mid-size covers strike
     // a balance between sharpness when docked and texture memory pressure
-    // when handheld.
+    // when handheld. 5 cols × 160 + spacing ~= 840px leaves room for the
+    // sidebar in a 1280-wide virtual viewport.
     static const ImageConstraints c = {
-        /* posterWidth        */ 180,
-        /* posterHeight       */ 270,
-        /* squareCoverSize    */ 180,
-        /* landscapeWidth     */ 230,
-        /* landscapeHeight    */ 130,
-        /* gridColumns        */   6,
-        /* gridCellSpacing    */  16,
-        /* titleFontSize      */  16,
-        /* subtitleFontSize   */  13,
+        /* posterWidth        */ 160,
+        /* posterHeight       */ 240,
+        /* squareCoverSize    */ 160,
+        /* landscapeWidth     */ 220,
+        /* landscapeHeight    */ 125,
+        /* gridColumns        */   5,
+        /* gridCellSpacing    */  14,
+        /* titleFontSize      */  15,
+        /* subtitleFontSize   */  12,
         /* descriptionFontSize*/  11,
+        /* homeTitleFontSize  */  28,
+        /* homeSectionFontSize*/  20,
+        /* homeRowHeight      */ 290,
     };
     return c;
+}
+
+const VideoConstraints& getVideoConstraints() {
+    // Switch NVDEC decodes 1080p H.264 up to level 4.2 reliably.
+    static const VideoConstraints v = {
+        /* plexPlatform     */ "Nintendo Switch",
+        /* plexDevice       */ "Switch",
+        /* maxVideoWidth    */ 1920,
+        /* maxVideoHeight   */ 1080,
+        /* maxVideoLevel    */ 42,
+        /* defaultBitrate   */ 4000,
+        /* defaultResolution*/ "1280x720",
+        /* defaultVideoQualityIndex */ 2,  // QUALITY_720P
+    };
+    return v;
 }
 
 bool init() {

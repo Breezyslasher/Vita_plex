@@ -164,8 +164,28 @@ const ImageConstraints& getImageConstraints() {
         /* titleFontSize      */  12,
         /* subtitleFontSize   */  10,
         /* descriptionFontSize*/   9,
+        /* homeTitleFontSize  */  28,
+        /* homeSectionFontSize*/  22,
+        /* homeRowHeight      */ 210,  // 165 poster + ~45 for label/margins
     };
     return c;
+}
+
+const VideoConstraints& getVideoConstraints() {
+    // Vita's SceAvcodec peaks at 960x544 H.264 High@L4.0 — anything above
+    // that falls back to software decode and is unplayable. Keep the
+    // bitrate modest so Plex transcodes efficiently on older servers.
+    static const VideoConstraints v = {
+        /* plexPlatform     */ "PlayStation Vita",
+        /* plexDevice       */ "PS Vita",
+        /* maxVideoWidth    */ 960,
+        /* maxVideoHeight   */ 544,
+        /* maxVideoLevel    */ 40,
+        /* defaultBitrate   */ 2000,
+        /* defaultResolution*/ "960x544",
+        /* defaultVideoQualityIndex */ 3,  // QUALITY_480P
+    };
+    return v;
 }
 
 bool init() {

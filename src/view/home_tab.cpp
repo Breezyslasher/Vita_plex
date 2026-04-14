@@ -9,10 +9,13 @@
 #include "app/application.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
+#include "platform/platform.hpp"
 
 namespace vitaplex {
 
 HomeTab::HomeTab() {
+    const auto& ic = platform::getImageConstraints();
+
     this->setAxis(brls::Axis::COLUMN);
     this->setJustifyContent(brls::JustifyContent::FLEX_START);
     this->setAlignItems(brls::AlignItems::STRETCH);
@@ -32,14 +35,14 @@ HomeTab::HomeTab() {
     // Title
     m_titleLabel = new brls::Label();
     m_titleLabel->setText("Home");
-    m_titleLabel->setFontSize(28);
+    m_titleLabel->setFontSize(ic.homeTitleFontSize);
     m_titleLabel->setMarginBottom(20);
     m_scrollContent->addView(m_titleLabel);
 
     // Continue Watching section
     auto* continueLabel = new brls::Label();
     continueLabel->setText("Continue Watching");
-    continueLabel->setFontSize(22);
+    continueLabel->setFontSize(ic.homeSectionFontSize);
     continueLabel->setMarginBottom(10);
     m_scrollContent->addView(continueLabel);
 
@@ -49,7 +52,7 @@ HomeTab::HomeTab() {
     // Recently Added Movies section
     auto* moviesLabel = new brls::Label();
     moviesLabel->setText("Recently Added Movies");
-    moviesLabel->setFontSize(22);
+    moviesLabel->setFontSize(ic.homeSectionFontSize);
     moviesLabel->setMarginBottom(10);
     moviesLabel->setMarginTop(15);
     m_scrollContent->addView(moviesLabel);
@@ -60,7 +63,7 @@ HomeTab::HomeTab() {
     // Recently Added TV Shows section
     auto* showsLabel = new brls::Label();
     showsLabel->setText("Recently Added TV Shows");
-    showsLabel->setFontSize(22);
+    showsLabel->setFontSize(ic.homeSectionFontSize);
     showsLabel->setMarginBottom(10);
     showsLabel->setMarginTop(15);
     m_scrollContent->addView(showsLabel);
@@ -71,7 +74,7 @@ HomeTab::HomeTab() {
     // Recently Added Music section
     auto* musicLabel = new brls::Label();
     musicLabel->setText("Recently Added Music");
-    musicLabel->setFontSize(22);
+    musicLabel->setFontSize(ic.homeSectionFontSize);
     musicLabel->setMarginBottom(10);
     musicLabel->setMarginTop(15);
     m_scrollContent->addView(musicLabel);
@@ -88,8 +91,13 @@ HomeTab::HomeTab() {
 }
 
 HorizontalScrollRow* HomeTab::createMediaRow() {
+    // Row height comes from the platform layer so each device picks a
+    // height that comfortably fits its poster dimensions. Previously this
+    // was hard-coded to 210px (Vita's value), which clipped the top and
+    // bottom of taller posters on PS4 / Desktop / Android / Switch.
+    const auto& ic = platform::getImageConstraints();
     auto* row = new HorizontalScrollRow();
-    row->setHeight(210);
+    row->setHeight(ic.homeRowHeight);
     row->setMarginBottom(10);
     return row;
 }

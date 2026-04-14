@@ -5,6 +5,7 @@
 #include "app/plex_client.hpp"
 #include "app/application.hpp"
 #include "utils/http_client.hpp"
+#include "platform/platform.hpp"
 
 #include <borealis.hpp>
 #include <cstring>
@@ -211,11 +212,14 @@ bool PlexClient::login(const std::string& username, const std::string& password)
     req.method = "POST";
     req.headers["Accept"] = "application/json";
     req.headers["Content-Type"] = "application/x-www-form-urlencoded";
-    req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
-    req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
-    req.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
-    req.headers["X-Plex-Platform"] = PLEX_PLATFORM;
-    req.headers["X-Plex-Device"] = PLEX_DEVICE;
+    {
+        const auto& vc = platform::getVideoConstraints();
+        req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+        req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+        req.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+        req.headers["X-Plex-Platform"] = vc.plexPlatform;
+        req.headers["X-Plex-Device"] = vc.plexDevice;
+    }
 
     req.body = "login=" + HttpClient::urlEncode(username) + "&password=" + HttpClient::urlEncode(password);
 
@@ -244,11 +248,14 @@ bool PlexClient::requestPin(PinAuth& pinAuth) {
     req.method = "POST";
     req.headers["Accept"] = "application/json";
     req.headers["Content-Type"] = "application/x-www-form-urlencoded";
-    req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
-    req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
-    req.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
-    req.headers["X-Plex-Platform"] = PLEX_PLATFORM;
-    req.headers["X-Plex-Device"] = PLEX_DEVICE;
+    {
+        const auto& vc = platform::getVideoConstraints();
+        req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+        req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+        req.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+        req.headers["X-Plex-Platform"] = vc.plexPlatform;
+        req.headers["X-Plex-Device"] = vc.plexDevice;
+    }
 
     req.body = "strong=false";
 
@@ -2386,9 +2393,9 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
         // protocol=hls, container=mpegts, codec=h264, level<=4.0, max 720p
         queryParams += "&protocol=hls";
 
-        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : PLEX_DEFAULT_BITRATE;
-
-        const char* resolution = PLEX_DEFAULT_RESOLUTION;
+        const auto& vc = platform::getVideoConstraints();
+        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : vc.defaultBitrate;
+        const char* resolution = vc.defaultResolution;
 
         snprintf(buf, sizeof(buf), "&videoBitrate=%d", bitrate);
         queryParams += buf;
@@ -2429,7 +2436,9 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
                        "&container=mp3&audioCodec=mp3)";
     } else {
         // Video: HLS with MPEG-TS segments, h264+aac.
-        // Platform-specific limits for resolution and H.264 level.
+        // Platform-specific limits for resolution and H.264 level come
+        // from the platform abstraction layer instead of #defines.
+        const auto& vc = platform::getVideoConstraints();
         char profileBuf[512];
         snprintf(profileBuf, sizeof(profileBuf),
             "add-transcode-target(type=videoProfile"
@@ -2443,7 +2452,7 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
             "&type=upperBound&name=video.width&value=%d)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
             "&type=upperBound&name=video.height&value=%d)",
-            PLEX_MAX_VIDEO_LEVEL, PLEX_MAX_VIDEO_WIDTH, PLEX_MAX_VIDEO_HEIGHT);
+            vc.maxVideoLevel, vc.maxVideoWidth, vc.maxVideoHeight);
         profileExtra = profileBuf;
     }
 
@@ -2461,12 +2470,15 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     decisionReq.method = "GET";
     decisionReq.headers["Accept"] = "application/json";
     // Per official API: X-Plex-Client-Identifier is REQUIRED, in=header
-    decisionReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_NAME;
-    decisionReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
-    decisionReq.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
-    decisionReq.headers["X-Plex-Platform"] = PLEX_PLATFORM;
-    decisionReq.headers["X-Plex-Device"] = PLEX_DEVICE;
-    decisionReq.headers["X-Plex-Device-Name"] = PLEX_DEVICE;
+    {
+        const auto& vc = platform::getVideoConstraints();
+        decisionReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_NAME;
+        decisionReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+        decisionReq.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+        decisionReq.headers["X-Plex-Platform"] = vc.plexPlatform;
+        decisionReq.headers["X-Plex-Device"] = vc.plexDevice;
+        decisionReq.headers["X-Plex-Device-Name"] = vc.plexDevice;
+    }
     decisionReq.headers["X-Plex-Client-Profile-Name"] = "Generic";
     decisionReq.headers["X-Plex-Client-Profile-Extra"] = profileExtra;
     HttpResponse decisionResp = decisionClient.request(decisionReq);
@@ -2482,12 +2494,15 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     // Step 2: Build the /start URL for MPV to stream.
     // Include X-Plex-* as query params AND MPV sends them as headers too.
     std::string startQuery = queryParams;
-    startQuery += "&X-Plex-Client-Identifier=" + std::string(PLEX_CLIENT_NAME);
-    startQuery += "&X-Plex-Product=" + std::string(PLEX_CLIENT_NAME);
-    startQuery += "&X-Plex-Version=" + std::string(PLEX_CLIENT_VERSION);
-    startQuery += "&X-Plex-Platform=" + HttpClient::urlEncode(PLEX_PLATFORM);
-    startQuery += "&X-Plex-Device=" + HttpClient::urlEncode(PLEX_DEVICE);
-    startQuery += "&X-Plex-Device-Name=" + HttpClient::urlEncode(PLEX_DEVICE);
+    {
+        const auto& vc = platform::getVideoConstraints();
+        startQuery += "&X-Plex-Client-Identifier=" + std::string(PLEX_CLIENT_NAME);
+        startQuery += "&X-Plex-Product=" + std::string(PLEX_CLIENT_NAME);
+        startQuery += "&X-Plex-Version=" + std::string(PLEX_CLIENT_VERSION);
+        startQuery += "&X-Plex-Platform=" + HttpClient::urlEncode(vc.plexPlatform);
+        startQuery += "&X-Plex-Device=" + HttpClient::urlEncode(vc.plexDevice);
+        startQuery += "&X-Plex-Device-Name=" + HttpClient::urlEncode(vc.plexDevice);
+    }
     startQuery += "&X-Plex-Client-Profile-Name=Generic";
     startQuery += "&X-Plex-Client-Profile-Extra=" + HttpClient::urlEncode(profileExtra);
 
@@ -3161,10 +3176,11 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
 
         // programMetadataKey from EPG grid is already URL-encoded (e.g. plex%3A%2F%2Fepisode%2F...)
         // Do NOT re-encode it or we get double-encoding (plex%253A%252F%252F...) causing 400 errors
+        const auto& vc = platform::getVideoConstraints();
         char liveBuf[256];
         snprintf(liveBuf, sizeof(liveBuf),
             "&protocol=hls&videoBitrate=%d&videoResolution=%s&videoQuality=100",
-            PLEX_DEFAULT_BITRATE, PLEX_DEFAULT_RESOLUTION);
+            vc.defaultBitrate, vc.defaultResolution);
         std::string params = "path=" + programMetadataKey +
             "&mediaIndex=0&partIndex=0"
             "&directPlay=0&directStream=1&directStreamAudio=1"
@@ -3175,9 +3191,9 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
             "&X-Plex-Client-Identifier=" + std::string(PLEX_CLIENT_ID) +
             "&X-Plex-Product=" + std::string(PLEX_CLIENT_NAME) +
             "&X-Plex-Version=" + std::string(PLEX_CLIENT_VERSION) +
-            "&X-Plex-Platform=" + HttpClient::urlEncode(PLEX_PLATFORM) +
-            "&X-Plex-Device=" + HttpClient::urlEncode(PLEX_DEVICE) +
-            "&X-Plex-Device-Name=" + HttpClient::urlEncode(PLEX_DEVICE);
+            "&X-Plex-Platform=" + HttpClient::urlEncode(vc.plexPlatform) +
+            "&X-Plex-Device=" + HttpClient::urlEncode(vc.plexDevice) +
+            "&X-Plex-Device-Name=" + HttpClient::urlEncode(vc.plexDevice);
 
         std::string decisionUrl = buildApiUrl("/video/:/transcode/universal/decision?" + params);
 

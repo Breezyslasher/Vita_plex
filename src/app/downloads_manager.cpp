@@ -15,6 +15,7 @@
 #include "utils/http_client.hpp"
 #include "utils/async.hpp"
 #include "platform/paths.hpp"
+#include "platform/platform.hpp"
 #include <borealis.hpp>
 #include <fstream>
 #include <sstream>
@@ -706,13 +707,14 @@ static std::string convertToHttpForDownload(const std::string& url) {
 
 // Helper: Build standard Plex client headers for requests
 static void addPlexHeaders(HttpRequest& req, const std::string& token) {
+    const auto& vc = platform::getVideoConstraints();
     req.headers["Accept"] = "application/json";
     req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_NAME;
     req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
     req.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
-    req.headers["X-Plex-Platform"] = PLEX_PLATFORM;
-    req.headers["X-Plex-Device"] = PLEX_DEVICE;
-    req.headers["X-Plex-Device-Name"] = PLEX_DEVICE;
+    req.headers["X-Plex-Platform"] = vc.plexPlatform;
+    req.headers["X-Plex-Device"] = vc.plexDevice;
+    req.headers["X-Plex-Device-Name"] = vc.plexDevice;
     req.headers["X-Plex-Token"] = token;
 }
 
@@ -830,12 +832,14 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
                        "&context=streaming&protocol=http"
                        "&container=mp3&audioCodec=mp3)";
     } else {
+        const auto& vc = platform::getVideoConstraints();
         AppSettings& settings = Application::getInstance().getSettings();
-        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : PLEX_DEFAULT_BITRATE;
+        int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : vc.defaultBitrate;
         char bitrateStr[64];
         snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
         addUrl += bitrateStr;
-        addUrl += "&videoResolution=" PLEX_DEFAULT_RESOLUTION;
+        addUrl += "&videoResolution=";
+        addUrl += vc.defaultResolution;
         addUrl += "&subtitles=burn";
         char dlProfileBuf[512];
         snprintf(dlProfileBuf, sizeof(dlProfileBuf),
@@ -849,7 +853,7 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
             "&type=upperBound&name=video.width&value=%d)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
             "&type=upperBound&name=video.height&value=%d)",
-            PLEX_MAX_VIDEO_LEVEL, PLEX_MAX_VIDEO_WIDTH, PLEX_MAX_VIDEO_HEIGHT);
+            vc.maxVideoLevel, vc.maxVideoWidth, vc.maxVideoHeight);
         profileExtra = dlProfileBuf;
     }
 
@@ -1084,13 +1088,15 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
             // Use HLS protocol - matches the working player configuration
             queryParams += "&protocol=hls";
 
+            const auto& vc = platform::getVideoConstraints();
             AppSettings& settings = Application::getInstance().getSettings();
-            int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : PLEX_DEFAULT_BITRATE;
+            int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : vc.defaultBitrate;
 
             char bitrateStr[64];
             snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
             queryParams += bitrateStr;
-            queryParams += "&videoResolution=" PLEX_DEFAULT_RESOLUTION;
+            queryParams += "&videoResolution=";
+            queryParams += vc.defaultResolution;
             queryParams += "&videoQuality=100";
             queryParams += "&subtitles=none";
 
@@ -1107,7 +1113,7 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                 "&type=upperBound&name=video.width&value=%d)"
                 "+add-limitation(scope=videoCodec&scopeName=h264"
                 "&type=upperBound&name=video.height&value=%d)",
-                PLEX_MAX_VIDEO_LEVEL, PLEX_MAX_VIDEO_WIDTH, PLEX_MAX_VIDEO_HEIGHT);
+                vc.maxVideoLevel, vc.maxVideoWidth, vc.maxVideoHeight);
             profileExtra = streamProfileBuf;
         }
 
@@ -1177,13 +1183,14 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     item.state = DownloadState::DOWNLOADING;
 
     // Build Plex identification headers
+    const auto& vc = platform::getVideoConstraints();
     std::map<std::string, std::string> dlHeaders;
     dlHeaders["X-Plex-Client-Identifier"] = PLEX_CLIENT_NAME;
     dlHeaders["X-Plex-Product"] = PLEX_CLIENT_NAME;
     dlHeaders["X-Plex-Version"] = PLEX_CLIENT_VERSION;
-    dlHeaders["X-Plex-Platform"] = PLEX_PLATFORM;
-    dlHeaders["X-Plex-Device"] = PLEX_DEVICE;
-    dlHeaders["X-Plex-Device-Name"] = PLEX_DEVICE;
+    dlHeaders["X-Plex-Platform"] = vc.plexPlatform;
+    dlHeaders["X-Plex-Device"] = vc.plexDevice;
+    dlHeaders["X-Plex-Device-Name"] = vc.plexDevice;
     dlHeaders["X-Plex-Token"] = token;
     if (!profileExtra.empty()) {
         dlHeaders["X-Plex-Client-Profile-Name"] = "Generic";
