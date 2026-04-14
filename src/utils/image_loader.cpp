@@ -5,12 +5,8 @@
 
 #include "utils/image_loader.hpp"
 #include "utils/http_client.hpp"
-#include <fstream>
+#include "platform/platform.hpp"
 #include <vector>
-
-#ifdef __vita__
-#include <psp2/io/fcntl.h>
-#endif
 
 namespace vitaplex {
 
@@ -110,36 +106,10 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
 bool ImageLoader::loadFromFile(const std::string& path, brls::Image* target) {
     if (path.empty() || !target) return false;
 
-#ifdef __vita__
-    SceUID fd = sceIoOpen(path.c_str(), SCE_O_RDONLY, 0);
-    if (fd < 0) return false;
-
-    // Get file size
-    SceOff size = sceIoLseek(fd, 0, SCE_SEEK_END);
-    sceIoLseek(fd, 0, SCE_SEEK_SET);
-
-    if (size <= 0 || size > 4 * 1024 * 1024) {  // Max 4MB for cover art
-        sceIoClose(fd);
-        return false;
-    }
-
-    std::vector<uint8_t> data(size);
-    int read = sceIoRead(fd, data.data(), size);
-    sceIoClose(fd);
-
-    if (read != size) return false;
-#else
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) return false;
-
-    auto size = file.tellg();
-    if (size <= 0 || size > 4 * 1024 * 1024) return false;
-
-    file.seekg(0, std::ios::beg);
-    std::vector<uint8_t> data(size);
-    file.read(reinterpret_cast<char*>(data.data()), size);
-    file.close();
-#endif
+    // Cap cover art at 4 MB. Backed by sceIoOpen on Vita and std::ifstream
+    // elsewhere — the platform layer hides the difference.
+    std::vector<uint8_t> data;
+    if (!platform::readLocalFile(path, data, 4 * 1024 * 1024)) return false;
 
     target->setImageFromMem(data.data(), data.size());
     return true;

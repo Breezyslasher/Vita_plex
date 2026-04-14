@@ -152,6 +152,26 @@ set(APP_SOURCES
     src/utils/pip.cpp
 )
 
+# ---------------------------------------------------------------------------
+# Platform abstraction layer
+#
+# Exactly one src/platform/platform_<name>.cpp implements the entire
+# vitaplex::platform interface declared in include/platform/platform.hpp.
+# This is the same pattern Vita_Suwayomi uses: select one TU at configure
+# time so the rest of the codebase contains zero #ifdef PLATFORM_* blocks.
+# ---------------------------------------------------------------------------
+if(PLATFORM_PSV)
+    list(APPEND APP_SOURCES src/platform/platform_psv.cpp)
+elseif(PLATFORM_PS4)
+    list(APPEND APP_SOURCES src/platform/platform_ps4.cpp)
+elseif(PLATFORM_SWITCH)
+    list(APPEND APP_SOURCES src/platform/platform_switch.cpp)
+elseif(PLATFORM_ANDROID)
+    list(APPEND APP_SOURCES src/platform/platform_android.cpp)
+else()
+    list(APPEND APP_SOURCES src/platform/platform_desktop.cpp)
+endif()
+
 # vita_stubs.c only needed on Vita (no-op stdio locks, SDL_OpenURL stub)
 if(PLATFORM_PSV)
     list(APPEND APP_SOURCES src/utils/vita_stubs.c)
@@ -162,7 +182,7 @@ if(PLATFORM_SWITCH)
     list(APPEND APP_SOURCES ${BOREALIS_LIBRARY}/lib/platforms/switch/switch_wrapper.c)
 endif()
 
-# Android asset extraction helper
+# Android asset extraction helper (used by platform_android.cpp)
 if(PLATFORM_ANDROID)
     list(APPEND APP_SOURCES src/platform/android_assets.cpp)
 endif()
