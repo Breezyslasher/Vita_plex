@@ -77,8 +77,6 @@ void MpvPlayer::flushGpu() {
 static const uint64_t CMD_LOADFILE = 1;
 static const uint64_t CMD_STOP = 2;
 static const uint64_t CMD_SEEK = 3;
-static const uint64_t CMD_PLAYLIST_NEXT = 4;
-static const uint64_t CMD_PLAYLIST_PREV = 5;
 
 MpvPlayer& MpvPlayer::getInstance() {
     static MpvPlayer instance;
@@ -544,20 +542,6 @@ void MpvPlayer::stop() {
     m_currentUrl.clear();
     m_playbackInfo = MpvPlaybackInfo();
     setState(MpvPlayerState::IDLE);
-}
-
-void MpvPlayer::nextInPlaylist() {
-    if (!m_mpv || m_stopping) return;
-
-    const char* cmd[] = {"playlist-next", NULL};
-    mpv_command_async(m_mpv, CMD_PLAYLIST_NEXT, cmd);
-}
-
-void MpvPlayer::previousInPlaylist() {
-    if (!m_mpv || m_stopping) return;
-
-    const char* cmd[] = {"playlist-prev", NULL};
-    mpv_command_async(m_mpv, CMD_PLAYLIST_PREV, cmd);
 }
 
 void MpvPlayer::seekTo(double seconds) {
