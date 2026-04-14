@@ -269,20 +269,13 @@ void setVideoPlaybackState(bool playing, int videoWidth, int videoHeight) {
 //   1 = seek back 10s
 //   2 = toggle play/pause
 //   3 = seek forward 10s
-//   4 = stop playback
-//   5 = previous item (episode/song)
-//   6 = next item (episode/song)
 extern "C" JNIEXPORT void JNICALL
 Java_org_VitaPlex_app_VitaPlexActivity_nativePipAction(JNIEnv*, jclass, jint code) {
     brls::sync([code]() {
         auto& player = vitaplex::MpvPlayer::getInstance();
         switch (code) {
             case 1:
-                if (player.isAudioOnly()) {
-                    player.previousInPlaylist();
-                } else {
-                    player.seekRelative(-10.0);
-                }
+                player.seekRelative(-10.0);
                 break;
             case 2:
                 if (player.isPaused()) {
@@ -292,20 +285,7 @@ Java_org_VitaPlex_app_VitaPlexActivity_nativePipAction(JNIEnv*, jclass, jint cod
                 }
                 break;
             case 3:
-                if (player.isAudioOnly()) {
-                    player.nextInPlaylist();
-                } else {
-                    player.seekRelative(10.0);
-                }
-                break;
-            case 4:
-                player.stop();
-                break;
-            case 5:
-                player.previousInPlaylist();
-                break;
-            case 6:
-                player.nextInPlaylist();
+                player.seekRelative(10.0);
                 break;
             default:
                 break;
