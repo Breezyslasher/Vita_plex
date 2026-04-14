@@ -20,11 +20,58 @@
 #ifdef __vita__
 #include <psp2/power.h>
 #endif
+#if defined(__SDL2__) && !defined(__ANDROID__) && !defined(__vita__)
+#include <SDL2/SDL.h>
+#endif
 
 namespace vitaplex {
 
 // Base temp file path for streaming audio (MPV's HTTP handling crashes on Vita)
 // Extension will be added dynamically based on the actual file type
+
+#if defined(__SDL2__) && !defined(__ANDROID__) && !defined(__vita__)
+namespace {
+int desktopMediaEventWatch(void* userdata, SDL_Event* event) {
+    (void)userdata;
+    if (!event || event->type != SDL_KEYDOWN) return 1;
+
+    // Ignore auto-repeat to avoid repeated transport actions while held.
+    if (event->key.repeat != 0) return 1;
+
+    MpvPlayer& player = MpvPlayer::getInstance();
+
+    switch (event->key.keysym.scancode) {
+        case SDL_SCANCODE_AUDIOPLAY:
+            if (player.isPaused()) player.play();
+            else player.pause();
+            return 0;
+        case SDL_SCANCODE_AUDIOSTOP:
+            player.stop();
+            return 0;
+        case SDL_SCANCODE_AUDIONEXT:
+            player.nextInPlaylist();
+            return 0;
+        case SDL_SCANCODE_AUDIOPREV:
+            player.previousInPlaylist();
+            return 0;
+#ifdef SDL_SCANCODE_AUDIOFASTFORWARD
+        case SDL_SCANCODE_AUDIOFASTFORWARD:
+            if (player.isAudioOnly()) player.nextInPlaylist();
+            else player.seekRelative(10.0);
+            return 0;
+#endif
+#ifdef SDL_SCANCODE_AUDIOREWIND
+        case SDL_SCANCODE_AUDIOREWIND:
+            if (player.isAudioOnly()) player.previousInPlaylist();
+            else player.seekRelative(-10.0);
+            return 0;
+#endif
+        default:
+            return 1;
+    }
+}
+}
+#endif
 
 
 PlayerActivity::PlayerActivity(const std::string& mediaKey)
@@ -136,6 +183,12 @@ brls::View* PlayerActivity::createContentView() {
 
 void PlayerActivity::onContentAvailable() {
     brls::Logger::debug("PlayerActivity content available");
+
+#if defined(__SDL2__) && !defined(__ANDROID__) && !defined(__vita__)
+    // Desktop (Windows/Linux/macOS): map keyboard/USB-remote media transport
+    // keys directly to mpv controls while player activity is active.
+    SDL_AddEventWatch(desktopMediaEventWatch, nullptr);
+#endif
 
 #ifdef __vita__
     // Boost CPU/GPU clocks to max for smooth media playback
@@ -612,6 +665,10 @@ void PlayerActivity::onContentAvailable() {
 
 void PlayerActivity::willDisappear(bool resetState) {
     brls::Activity::willDisappear(resetState);
+
+#if defined(__SDL2__) && !defined(__ANDROID__) && !defined(__vita__)
+    SDL_DelEventWatch(desktopMediaEventWatch, nullptr);
+#endif
 
     // Clear "video playing" state so onUserLeaveHint stops auto-triggering PiP
     // once the user is no longer in the player activity.
