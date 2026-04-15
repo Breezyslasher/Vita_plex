@@ -15,33 +15,51 @@
 #include <cstdio>
 #include <fstream>
 
-#include <SDL2/SDL.h>
+// Per-OS display queries. Desktop borealis uses GLFW internally, not SDL2, so
+// we can't reuse SDL2 here like platform_android.cpp does — linking would
+// fail. Instead use the native windowing APIs that are ALREADY linked into
+// the app for each OS:
+//   - macOS: CoreGraphics is linked via "-framework CoreGraphics" in
+//            CMakeLists.txt for the CoreWLAN/AppKit stack.
+//   - Windows: user32.dll's GetSystemMetrics ships with every MSVC toolchain.
+//   - Linux: no guaranteed display server lib is linked into the binary
+//            (could be X11, Wayland, or headless), so fall back to a fixed
+//            1920×1080 default. This still gives good layouts on the most
+//            common Linux monitor; users with other sizes just land in the
+//            1080p constraint tier.
+#if defined(__APPLE__)
+  #include <CoreGraphics/CoreGraphics.h>
+#elif defined(_WIN32)
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #include <windows.h>
+#endif
 
 namespace vitaplex {
 namespace platform {
 
 ScreenSize getScreenSize() {
-    // Query SDL for the desktop's native resolution. This reflects the
-    // monitor the user is actually on — a 24" 1080p panel reports
-    // 1920×1080, a 34" ultrawide reports 3440×1440, and a 4K monitor
-    // reports 3840×2160. getImageConstraints() scales posters, grid
-    // columns, image cache size, and library pagination from this.
-    //
-    // SDL_GetDesktopDisplayMode is preferred over SDL_GetCurrentDisplayMode
-    // because the latter can briefly report stale values while the window
-    // is in the middle of a resize. If SDL hasn't been initialized yet
-    // (very early startup), we fall back to a conservative 1920×1080.
-    SDL_DisplayMode mode{};
-    if (SDL_WasInit(SDL_INIT_VIDEO) == 0) {
-        // Try to init video just enough to read the display mode.
-        if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
-            return { 1920, 1080 };
-        }
-    }
-    if (SDL_GetDesktopDisplayMode(0, &mode) != 0 || mode.w <= 0 || mode.h <= 0) {
-        return { 1920, 1080 };
-    }
-    return { mode.w, mode.h };
+    // Returns the main-monitor resolution so getImageConstraints() can size
+    // posters, grid columns, cache budget, and thumbnail requests to match
+    // the user's actual display — a 24" 1080p panel, a 34" 1440p ultrawide,
+    // and a 4K monitor all get appropriately different layouts.
+#if defined(__APPLE__)
+    CGDirectDisplayID display = CGMainDisplayID();
+    size_t w = CGDisplayPixelsWide(display);
+    size_t h = CGDisplayPixelsHigh(display);
+    if (w == 0 || h == 0) return { 1920, 1080 };
+    return { static_cast<int>(w), static_cast<int>(h) };
+#elif defined(_WIN32)
+    int w = GetSystemMetrics(SM_CXSCREEN);
+    int h = GetSystemMetrics(SM_CYSCREEN);
+    if (w <= 0 || h <= 0) return { 1920, 1080 };
+    return { w, h };
+#else
+    // Linux: no standardized display query without pulling in X11 / Wayland
+    // libs that aren't guaranteed to be linked. Fall back to the 1080p tier.
+    return { 1920, 1080 };
+#endif
 }
 
 const ImageConstraints& getImageConstraints() {
