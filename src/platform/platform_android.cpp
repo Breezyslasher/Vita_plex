@@ -7,7 +7,6 @@
  */
 
 #include "platform/platform.hpp"
-#include "platform/platform_dynamic.hpp"
 #include "platform/android_assets.hpp"
 
 #include <borealis.hpp>
@@ -15,8 +14,6 @@
 
 #include <cstdio>
 #include <fstream>
-
-#include <SDL2/SDL.h>
 
 // Forward declaration — defined in src/main.cpp. SDL2's Android backend
 // dispatches into SDL_main() instead of main(), so we have to provide the
@@ -30,35 +27,61 @@ extern "C" int SDL_main(int argc, char* argv[]) {
 namespace vitaplex {
 namespace platform {
 
-ScreenSize getScreenSize() {
-    // Query SDL for the current display dimensions. On Android this
-    // returns the logical pixel size of the active display — which
-    // adapts automatically when a foldable unfolds (the OS swaps the
-    // active display from the cover screen to the main screen and SDL
-    // reports the new dimensions), or when the user rotates between
-    // portrait and landscape. A Galaxy Z Fold outer cover (6.2",
-    // ~2316×904) and its main screen (7.6", ~2176×1812) produce
-    // different column counts and poster sizes via the dynamic formula.
-    SDL_DisplayMode mode{};
-    if (SDL_WasInit(SDL_INIT_VIDEO) == 0) {
-        if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
-            return { 1920, 1080 };  // conservative tablet fallback
-        }
-    }
-    if (SDL_GetCurrentDisplayMode(0, &mode) != 0 || mode.w <= 0 || mode.h <= 0) {
-        return { 1920, 1080 };
-    }
-    return { mode.w, mode.h };
-}
-
 const ImageConstraints& getImageConstraints() {
-    // Dynamic: Android devices range from 720p budget phones to 4K TV
-    // boxes and foldables whose logical resolution changes when the
-    // cover/main display swaps. The shared dynamic formula derives all
-    // layout metrics from the live screen size so unfolding a phone
-    // automatically widens the grid and enlarges posters on the next
-    // layout pass. See include/platform/platform_dynamic.hpp.
-    return getDynamicImageConstraintsCached();
+    // Android: phone / tablet / TV screens are usually 1080p+. 5 cols
+    // × 160px (+14px spacing) fits inside borealis's 1280-wide virtual
+    // viewport after the sidebar, and keeps GPU texture pressure low on
+    // mobile GPUs. Previous 6-column 200px layout overflowed the viewport
+    // and the last poster of each row was clipped.
+    static const ImageConstraints c = {
+        /* posterWidth        */ 160,
+        /* posterHeight       */ 240,
+        /* squareCoverSize    */ 160,
+        /* landscapeWidth     */ 220,
+        /* landscapeHeight    */ 125,
+        /* gridColumns        */   5,
+        /* gridCellSpacing    */  14,
+        /* titleFontSize      */  15,
+        /* subtitleFontSize   */  12,
+        /* descriptionFontSize*/  11,
+        /* homeTitleFontSize  */  28,
+        /* homeSectionFontSize*/  20,
+        /* homeRowHeight      */ 290,  // posterHeight(240) + label + padding
+        /* landscapeRowHeight */ 185,  // landscapeHeight(125) + ~60
+        /* squareRowHeight    */ 215,  // squareCoverSize(160) + ~55
+
+        /* listRowHeight            */  60,
+        /* livetvChannelCardWidth   */ 160,
+        /* livetvChannelRowHeight   */ 130,
+        /* livetvGuideHeight        */ 430,
+
+        /* maxCellTitleChars        */  20,
+        /* maxListTitleChars        */  90,
+        /* maxLiveTVProgramChars    */  22,
+        /* maxLiveTVChannelChars    */  18,
+
+        /* sidebarMinWidth          */ 240,
+        /* sidebarMaxWidth          */ 400,
+
+        /* dialogWidth              */ 520,
+
+        /* imageCacheSize           */  60,
+
+        /* libraryPageSize          */ 300,
+        /* playlistTrackPageSize    */ 150,
+        /* musicCarouselLimit       */ 100,
+
+        /* posterRequestWidth       */ 320,
+        /* posterRequestHeight      */ 480,
+        /* squareRequestSize        */ 320,
+        /* landscapeRequestWidth    */ 440,
+        /* landscapeRequestHeight   */ 250,
+        /* detailPosterRequestWidth */ 500,
+        /* detailPosterRequestHeight*/ 750,
+        /* photoRequestWidth        */ 1920,
+        /* photoRequestHeight       */ 1080,
+    };
+    return c;
 }
 
 const VideoConstraints& getVideoConstraints() {

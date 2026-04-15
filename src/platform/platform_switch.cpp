@@ -74,15 +74,6 @@ const ImageConstraints& getImageConstraints() {
     return c;
 }
 
-ScreenSize getScreenSize() {
-    // Switch: 1280×720 handheld, 1920×1080 docked. The borealis frame-
-    // buffer is created once at startup and doesn't currently swap on
-    // dock/undock, so we report the handheld resolution as the conservative
-    // default and let the dock mode share the same preset (the 1080p tier
-    // already fits on the Switch's memory budget without issue).
-    return { 1280, 720 };
-}
-
 const VideoConstraints& getVideoConstraints() {
     // Switch NVDEC decodes 1080p H.264 up to level 4.2 reliably.
     static const VideoConstraints v = {
