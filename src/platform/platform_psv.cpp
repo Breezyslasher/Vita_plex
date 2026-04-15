@@ -204,6 +204,11 @@ const ImageConstraints& getImageConstraints() {
     return c;
 }
 
+ScreenSize getScreenSize() {
+    // Vita's OLED/LCD is permanently 960×544 — no TV out, no external displays.
+    return { 960, 544 };
+}
+
 const VideoConstraints& getVideoConstraints() {
     // Vita's SceAvcodec peaks at 960x544 H.264 High@L4.0 — anything above
     // that falls back to software decode and is unplayable. Keep the

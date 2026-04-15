@@ -148,6 +148,29 @@ struct ImageConstraints {
 const ImageConstraints& getImageConstraints();
 
 /**
+ * Physical (or effective) screen dimensions in pixels for the platform's
+ * main display. This is the real output resolution, not the borealis
+ * virtual 1280×720 coordinate system.
+ *
+ * On fixed-resolution consoles (PSV, PS4, Switch) this returns a hard-
+ * coded value. On Desktop and Android it queries the host window / display
+ * at runtime via SDL, so unplugging a 4K monitor and plugging in a 1080p
+ * panel will report the new dimensions on the next call. Cached after the
+ * first successful query and refreshed when the size changes, so the call
+ * is cheap to invoke from layout code.
+ *
+ * getImageConstraints() uses this to derive poster sizes, grid columns,
+ * sidebar widths, cache sizes, etc. on Desktop / Android so a 24" 1080p
+ * monitor, a 34" 1440p ultrawide, and a foldable phone's inner vs outer
+ * display all get appropriately-sized UI elements.
+ */
+struct ScreenSize {
+    int widthPx;
+    int heightPx;
+};
+ScreenSize getScreenSize();
+
+/**
  * Per-platform Plex transcode / identification constants.
  *
  * These replace the old PLEX_PLATFORM / PLEX_DEVICE / PLEX_MAX_VIDEO_*
