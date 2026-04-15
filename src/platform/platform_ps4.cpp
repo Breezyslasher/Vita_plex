@@ -98,14 +98,6 @@ const ImageConstraints& getImageConstraints() {
     return c;
 }
 
-ScreenSize getScreenSize() {
-    // PS4 HDMI output is fixed at 1920×1080 for the stock console. (PS4 Pro
-    // can output 4K, but Orbis transcoding of the UI at 4K doesn't gain
-    // anything for Plex covers — the framebuffer borealis renders into is
-    // still 1080p.)
-    return { 1920, 1080 };
-}
-
 const VideoConstraints& getVideoConstraints() {
     // PS4 has a hardware H.264 decoder up to level 5.1 and enough
     // bandwidth to request full-quality transcodes from Plex.

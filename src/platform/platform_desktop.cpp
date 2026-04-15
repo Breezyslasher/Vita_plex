@@ -7,7 +7,6 @@
  */
 
 #include "platform/platform.hpp"
-#include "platform/platform_dynamic.hpp"
 
 #include <borealis.hpp>
 #include "utils/http_client.hpp"
@@ -15,60 +14,64 @@
 #include <cstdio>
 #include <fstream>
 
-// Per-OS display queries. Desktop borealis uses GLFW internally, not SDL2, so
-// we can't reuse SDL2 here like platform_android.cpp does — linking would
-// fail. Instead use the native windowing APIs that are ALREADY linked into
-// the app for each OS:
-//   - macOS: CoreGraphics is linked via "-framework CoreGraphics" in
-//            CMakeLists.txt for the CoreWLAN/AppKit stack.
-//   - Windows: user32.dll's GetSystemMetrics ships with every MSVC toolchain.
-//   - Linux: no guaranteed display server lib is linked into the binary
-//            (could be X11, Wayland, or headless), so fall back to a fixed
-//            1920×1080 default. This still gives good layouts on the most
-//            common Linux monitor; users with other sizes just land in the
-//            1080p constraint tier.
-#if defined(__APPLE__)
-  #include <CoreGraphics/CoreGraphics.h>
-#elif defined(_WIN32)
-  #ifndef WIN32_LEAN_AND_MEAN
-    #define WIN32_LEAN_AND_MEAN
-  #endif
-  #include <windows.h>
-#endif
-
 namespace vitaplex {
 namespace platform {
 
-ScreenSize getScreenSize() {
-    // Returns the main-monitor resolution so getImageConstraints() can size
-    // posters, grid columns, cache budget, and thumbnail requests to match
-    // the user's actual display — a 24" 1080p panel, a 34" 1440p ultrawide,
-    // and a 4K monitor all get appropriately different layouts.
-#if defined(__APPLE__)
-    CGDirectDisplayID display = CGMainDisplayID();
-    size_t w = CGDisplayPixelsWide(display);
-    size_t h = CGDisplayPixelsHigh(display);
-    if (w == 0 || h == 0) return { 1920, 1080 };
-    return { static_cast<int>(w), static_cast<int>(h) };
-#elif defined(_WIN32)
-    int w = GetSystemMetrics(SM_CXSCREEN);
-    int h = GetSystemMetrics(SM_CYSCREEN);
-    if (w <= 0 || h <= 0) return { 1920, 1080 };
-    return { w, h };
-#else
-    // Linux: no standardized display query without pulling in X11 / Wayland
-    // libs that aren't guaranteed to be linked. Fall back to the 1080p tier.
-    return { 1920, 1080 };
-#endif
-}
-
 const ImageConstraints& getImageConstraints() {
-    // Dynamic: borealis layouts are sized from the *actual* monitor
-    // resolution so a 24" 1080p and a 34" 1440p ultrawide get different
-    // poster sizes, different grid column counts, and different image
-    // cache budgets. See include/platform/platform_dynamic.hpp for the
-    // full scaling formula.
-    return getDynamicImageConstraintsCached();
+    // Desktop: borealis's virtual coordinate system is 1280x720, so
+    // oversized covers (240×360 × 7 cols = 1680px) overflow the viewport
+    // and look like "posters cut off at the edge". Use 170×255 covers at
+    // 5 columns so an 8-item recently-added row fits comfortably in the
+    // content area (sidebar ~230 + 5×180 + padding ≈ 1150 < 1280).
+    static const ImageConstraints c = {
+        /* posterWidth        */ 170,
+        /* posterHeight       */ 255,
+        /* squareCoverSize    */ 170,
+        /* landscapeWidth     */ 240,
+        /* landscapeHeight    */ 135,
+        /* gridColumns        */   5,
+        /* gridCellSpacing    */  16,
+        /* titleFontSize      */  16,
+        /* subtitleFontSize   */  13,
+        /* descriptionFontSize*/  11,
+        /* homeTitleFontSize  */  30,
+        /* homeSectionFontSize*/  22,
+        /* homeRowHeight      */ 310,  // posterHeight + label + padding
+        /* landscapeRowHeight */ 195,  // landscapeHeight(135) + ~60
+        /* squareRowHeight    */ 225,  // squareCoverSize(170) + ~55
+
+        /* listRowHeight            */  64,
+        /* livetvChannelCardWidth   */ 180,
+        /* livetvChannelRowHeight   */ 140,
+        /* livetvGuideHeight        */ 480,
+
+        /* maxCellTitleChars        */  24,
+        /* maxListTitleChars        */ 110,
+        /* maxLiveTVProgramChars    */  26,
+        /* maxLiveTVChannelChars    */  22,
+
+        /* sidebarMinWidth          */ 260,
+        /* sidebarMaxWidth          */ 450,
+
+        /* dialogWidth              */ 560,
+
+        /* imageCacheSize           */ 120,
+
+        /* libraryPageSize          */ 500,
+        /* playlistTrackPageSize    */ 200,
+        /* musicCarouselLimit       */ 150,
+
+        /* posterRequestWidth       */ 340,  // ~2x 170px display
+        /* posterRequestHeight      */ 510,
+        /* squareRequestSize        */ 340,
+        /* landscapeRequestWidth    */ 480,
+        /* landscapeRequestHeight   */ 270,
+        /* detailPosterRequestWidth */ 600,
+        /* detailPosterRequestHeight*/ 900,
+        /* photoRequestWidth        */ 1920,
+        /* photoRequestHeight       */ 1080,
+    };
+    return c;
 }
 
 const VideoConstraints& getVideoConstraints() {
