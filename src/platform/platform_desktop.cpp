@@ -7,6 +7,7 @@
  */
 
 #include "platform/platform.hpp"
+#include "platform/platform_dynamic.hpp"
 
 #include <borealis.hpp>
 #include "utils/http_client.hpp"
@@ -14,64 +15,42 @@
 #include <cstdio>
 #include <fstream>
 
+#include <SDL2/SDL.h>
+
 namespace vitaplex {
 namespace platform {
 
+ScreenSize getScreenSize() {
+    // Query SDL for the desktop's native resolution. This reflects the
+    // monitor the user is actually on — a 24" 1080p panel reports
+    // 1920×1080, a 34" ultrawide reports 3440×1440, and a 4K monitor
+    // reports 3840×2160. getImageConstraints() scales posters, grid
+    // columns, image cache size, and library pagination from this.
+    //
+    // SDL_GetDesktopDisplayMode is preferred over SDL_GetCurrentDisplayMode
+    // because the latter can briefly report stale values while the window
+    // is in the middle of a resize. If SDL hasn't been initialized yet
+    // (very early startup), we fall back to a conservative 1920×1080.
+    SDL_DisplayMode mode{};
+    if (SDL_WasInit(SDL_INIT_VIDEO) == 0) {
+        // Try to init video just enough to read the display mode.
+        if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+            return { 1920, 1080 };
+        }
+    }
+    if (SDL_GetDesktopDisplayMode(0, &mode) != 0 || mode.w <= 0 || mode.h <= 0) {
+        return { 1920, 1080 };
+    }
+    return { mode.w, mode.h };
+}
+
 const ImageConstraints& getImageConstraints() {
-    // Desktop: borealis's virtual coordinate system is 1280x720, so
-    // oversized covers (240×360 × 7 cols = 1680px) overflow the viewport
-    // and look like "posters cut off at the edge". Use 170×255 covers at
-    // 5 columns so an 8-item recently-added row fits comfortably in the
-    // content area (sidebar ~230 + 5×180 + padding ≈ 1150 < 1280).
-    static const ImageConstraints c = {
-        /* posterWidth        */ 170,
-        /* posterHeight       */ 255,
-        /* squareCoverSize    */ 170,
-        /* landscapeWidth     */ 240,
-        /* landscapeHeight    */ 135,
-        /* gridColumns        */   5,
-        /* gridCellSpacing    */  16,
-        /* titleFontSize      */  16,
-        /* subtitleFontSize   */  13,
-        /* descriptionFontSize*/  11,
-        /* homeTitleFontSize  */  30,
-        /* homeSectionFontSize*/  22,
-        /* homeRowHeight      */ 310,  // posterHeight + label + padding
-        /* landscapeRowHeight */ 195,  // landscapeHeight(135) + ~60
-        /* squareRowHeight    */ 225,  // squareCoverSize(170) + ~55
-
-        /* listRowHeight            */  64,
-        /* livetvChannelCardWidth   */ 180,
-        /* livetvChannelRowHeight   */ 140,
-        /* livetvGuideHeight        */ 480,
-
-        /* maxCellTitleChars        */  24,
-        /* maxListTitleChars        */ 110,
-        /* maxLiveTVProgramChars    */  26,
-        /* maxLiveTVChannelChars    */  22,
-
-        /* sidebarMinWidth          */ 260,
-        /* sidebarMaxWidth          */ 450,
-
-        /* dialogWidth              */ 560,
-
-        /* imageCacheSize           */ 120,
-
-        /* libraryPageSize          */ 500,
-        /* playlistTrackPageSize    */ 200,
-        /* musicCarouselLimit       */ 150,
-
-        /* posterRequestWidth       */ 340,  // ~2x 170px display
-        /* posterRequestHeight      */ 510,
-        /* squareRequestSize        */ 340,
-        /* landscapeRequestWidth    */ 480,
-        /* landscapeRequestHeight   */ 270,
-        /* detailPosterRequestWidth */ 600,
-        /* detailPosterRequestHeight*/ 900,
-        /* photoRequestWidth        */ 1920,
-        /* photoRequestHeight       */ 1080,
-    };
-    return c;
+    // Dynamic: borealis layouts are sized from the *actual* monitor
+    // resolution so a 24" 1080p and a 34" 1440p ultrawide get different
+    // poster sizes, different grid column counts, and different image
+    // cache budgets. See include/platform/platform_dynamic.hpp for the
+    // full scaling formula.
+    return getDynamicImageConstraintsCached();
 }
 
 const VideoConstraints& getVideoConstraints() {
