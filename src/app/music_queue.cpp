@@ -3,18 +3,20 @@
  */
 
 #include "app/music_queue.hpp"
+#include "platform/paths.hpp"
 #include <borealis.hpp>
 #include <algorithm>
 #include <chrono>
 #include <fstream>
 
-#ifdef __vita__
-#include <psp2/io/fcntl.h>
-#endif
-
 namespace vitaplex {
 
-static const std::string QUEUE_STATE_FILE = "ux0:data/vitaplex/queue_state.txt";
+// Queue save-state path is resolved through the platform paths helper so
+// every target (Vita, PS4, Switch, Android, desktop) writes into its own
+// app-local data directory instead of the old hard-coded Vita "ux0:" path.
+static std::string queueStateFile() {
+    return platformPath("queue_state.txt");
+}
 
 MusicQueue::MusicQueue() {
     // Seed random number generator
@@ -446,7 +448,7 @@ void MusicQueue::notifyQueueChanged() {
 }
 
 void MusicQueue::saveState() {
-    std::ofstream file(QUEUE_STATE_FILE);
+    std::ofstream file(queueStateFile());
     if (!file.is_open()) {
         brls::Logger::warning("MusicQueue: Could not save queue state");
         return;
@@ -468,7 +470,7 @@ void MusicQueue::saveState() {
 }
 
 void MusicQueue::loadState() {
-    std::ifstream file(QUEUE_STATE_FILE);
+    std::ifstream file(queueStateFile());
     if (!file.is_open()) {
         return;
     }

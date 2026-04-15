@@ -16,6 +16,10 @@
 #include <mpv/client.h>
 #include <mpv/render.h>
 #include <mpv/render_gxm.h>
+#elif defined(__ANDROID__)
+#include <mpv/client.h>
+#include <mpv/render.h>
+#include <mpv/render_gl.h>
 #else
 #include <mpv/client.h>
 #include <mpv/render.h>
@@ -198,12 +202,25 @@ private:
     mpv_render_param m_mpvParams[3] = {};  // Render params: FLIP_Y + GXM_FBO + INVALID
 #endif
 
+#ifdef __ANDROID__
+    // OpenGL render resources (Android TV: zero-copy GPU rendering).
+    // mpv renders into m_glFbo, which has a NanoVG-managed GL texture as its
+    // color attachment. NanoVG draws from that texture the next frame — no
+    // CPU copy in the pipeline. Orientation is handled by NVG_IMAGE_FLIPY on
+    // the NanoVG image; mpv renders natively (no MPV_RENDER_PARAM_FLIP_Y).
+    unsigned int m_glFbo = 0;
+    mpv_opengl_fbo m_mpvOpenGLFbo = {};
+    mpv_render_param m_mpvParams[2] = {};
+#endif
+
     int m_nvgImage = 0;
-    int m_videoWidth = PLEX_MAX_VIDEO_WIDTH;
-    int m_videoHeight = PLEX_MAX_VIDEO_HEIGHT;
+    // Initial FBO dimensions are set from platform::getVideoConstraints() in
+    // setupNonVitaRender(); start at 0 so we don't depend on compile-time macros.
+    int m_videoWidth = 0;
+    int m_videoHeight = 0;
     std::atomic<bool> m_renderReady{false};
     std::mutex m_renderMutex;
-#ifndef __vita__
+#if !defined(__vita__) && !defined(__ANDROID__)
     std::vector<unsigned char> m_videoBuffer;
 #endif
 };

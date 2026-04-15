@@ -8,6 +8,7 @@
 #include "view/media_item_cell.hpp"
 #include "view/media_detail_view.hpp"
 #include "view/long_press_gesture.hpp"
+#include "platform/platform.hpp"
 
 namespace vitaplex {
 
@@ -20,8 +21,10 @@ RecyclingGrid::RecyclingGrid() {
     m_contentBox->setPadding(10);
     this->setContentView(m_contentBox);
 
-    // PS Vita screen: 960x544, so 6 columns of ~120px items
-    m_columns = 6;
+    // Grid layout — column count comes from the platform layer so PSV's
+    // 960x544 screen gets 6 columns while a 1080p TV gets 7.
+    const auto& ic = platform::getImageConstraints();
+    m_columns = ic.gridColumns;
     m_visibleRows = 3;
 }
 
@@ -94,17 +97,18 @@ brls::View* RecyclingGrid::getNextFocus(brls::FocusDirection direction, brls::Vi
 }
 
 void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size_t index) {
+    const int spacing = platform::getImageConstraints().gridCellSpacing;
     if (itemsInRow == 0) {
         currentRow = new brls::Box();
         currentRow->setAxis(brls::Axis::ROW);
         currentRow->setJustifyContent(brls::JustifyContent::FLEX_START);
-        currentRow->setMarginBottom(10);
+        currentRow->setMarginBottom(spacing);
         m_contentBox->addView(currentRow);
     }
 
     auto* cell = new MediaItemCell();
     cell->setItem(m_items[index]);
-    cell->setMarginRight(10);
+    cell->setMarginRight(spacing);
 
     int idx = (int)index;
     cell->registerClickAction([this, idx](brls::View* view) {

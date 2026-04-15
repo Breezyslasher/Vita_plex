@@ -1,6 +1,14 @@
 /**
- * VitaPlex - Plex Client for PlayStation Vita
- * Main entry point with Borealis UI framework
+ * VitaPlex - Plex Client (multi-platform)
+ *
+ * Main entry point with Borealis UI framework.
+ *
+ * All platform-specific bootstrap (Vita sysmodules / network init, PS4
+ * Orbis modules, Android APK asset extraction, log file routing, …) lives
+ * in src/platform/platform_<name>.cpp. CMake selects exactly one of those
+ * implementation files at configure time, so this file is platform-agnostic
+ * apart from the Android SDL_main entry point that the SDL2 framework
+ * mandates.
  *
  * Based on switchfin architecture (https://github.com/dragonflylee/switchfin)
  * UI powered by Borealis (https://github.com/dragonflylee/borealis)
@@ -15,276 +23,43 @@
 #include "view/video_view.hpp"
 #include "app/downloads_manager.hpp"
 #include "utils/http_client.hpp"
-#if defined(__ANDROID__)
-#include "platform/android_assets.hpp"
-#endif
+#include "platform/platform.hpp"
 
-#ifdef __PS4__
-#include <sys/stat.h>
-#include <orbis/Sysmodule.h>
-#include <thread>
-#include <chrono>
-#endif
-
-#ifdef __vita__
-#include <psp2/kernel/processmgr.h>
-#include <psp2/kernel/modulemgr.h>
-#include <psp2/kernel/sysmem.h>
-#include <psp2/power.h>
-#include <psp2/apputil.h>
-#include <psp2/sysmodule.h>
-#include <psp2/net/net.h>
-#include <psp2/net/netctl.h>
-#include <psp2/net/http.h>
-#include <psp2/libssl.h>
-#include <psp2/common_dialog.h>
-#include <psp2/io/stat.h>
-#include <cstring>
-
-// Memory configuration
-// Reduced from 192 MB to 172 MB - leaves more room for GPU VRAM and system.
-// With optimized view recycling and image caching, the app uses significantly
-// less heap, so this headroom is no longer needed.
-int _newlib_heap_size_user = 172 * 1024 * 1024;  // 172 MB heap
-unsigned int sceUserMainThreadStackSize = 2 * 1024 * 1024;  // 2 MB stack
-
-// Reduced network buffer from 4 MB to 2 MB - sufficient for API calls + thumbnails
-#define NET_MEMORY_SIZE (2 * 1024 * 1024)
-#define SSL_MEMORY_SIZE (512 * 1024)
-#define HTTP_MEMORY_SIZE (1 * 1024 * 1024)
-
-static char __attribute__((aligned(64))) netMemory[NET_MEMORY_SIZE];
-
-/**
- * Load shader compiler module
- */
-static bool loadShaderCompiler() {
-    SceUID mod;
-
-    mod = sceKernelLoadStartModule("ur0:data/libshacccg.suprx", 0, NULL, 0, NULL, NULL);
-    if (mod >= 0) return true;
-
-    mod = sceKernelLoadStartModule("vs0:sys/external/libshacccg.suprx", 0, NULL, 0, NULL, NULL);
-    if (mod >= 0) return true;
-
-    brls::Logger::warning("Could not load libshacccg.suprx - using fallback shaders");
-    return true;
-}
-
-/**
- * Initialize Vita system modules
- */
-static bool initVitaSystem() {
-    brls::Logger::info("Initializing PS Vita system modules...");
-
-    // App utilities
-    SceAppUtilInitParam initParam;
-    SceAppUtilBootParam bootParam;
-    memset(&initParam, 0, sizeof(initParam));
-    memset(&bootParam, 0, sizeof(bootParam));
-    sceAppUtilInit(&initParam, &bootParam);
-
-    // Start with reduced clock speeds for browsing (saves battery).
-    // PlayerActivity raises clocks to max when playback starts,
-    // and lowers them again when playback ends.
-    scePowerSetArmClockFrequency(333);
-    scePowerSetBusClockFrequency(166);
-    scePowerSetGpuClockFrequency(166);
-    scePowerSetGpuXbarClockFrequency(111);
-
-    // Load shader compiler
-    loadShaderCompiler();
-
-    // Load system modules
-    sceSysmoduleLoadModule(SCE_SYSMODULE_NET);
-    sceSysmoduleLoadModule(SCE_SYSMODULE_SSL);
-    sceSysmoduleLoadModule(SCE_SYSMODULE_HTTP);
-    sceSysmoduleLoadModule(SCE_SYSMODULE_HTTPS);
-    // SceAvPlayer intentionally NOT loaded - we use MPV/libmpv for playback.
-    // Loading SceAvPlayer pulls in SceMp4 as a dependency, and "Mp4Demux Critical"
-    // appears in crash dumps during HLS playback, suggesting a conflict with
-    // MPV's FFmpeg-based demuxer using the same SceAvcodec/SceVideodec resources.
-    sceSysmoduleLoadModule(SCE_SYSMODULE_IME);
-    sceSysmoduleLoadModule(SCE_SYSMODULE_PGF);
-
-    brls::Logger::info("System modules loaded");
-    return true;
-}
-
-/**
- * Initialize networking
- */
-static bool initVitaNetwork() {
-    brls::Logger::info("Initializing networking...");
-
-    SceNetInitParam netInitParam;
-    netInitParam.memory = netMemory;
-    netInitParam.size = NET_MEMORY_SIZE;
-    netInitParam.flags = 0;
-
-    int ret = sceNetInit(&netInitParam);
-    if (ret < 0 && ret != (int)0x80410201) {
-        brls::Logger::error("sceNetInit failed: {:#x}", ret);
-        return false;
-    }
-
-    ret = sceNetCtlInit();
-    if (ret < 0 && ret != (int)0x80412102) {
-        brls::Logger::error("sceNetCtlInit failed: {:#x}", ret);
-        return false;
-    }
-
-    ret = sceSslInit(SSL_MEMORY_SIZE);
-    if (ret < 0 && ret != (int)0x80435001) {
-        brls::Logger::error("sceSslInit failed: {:#x}", ret);
-        return false;
-    }
-
-    ret = sceHttpInit(HTTP_MEMORY_SIZE);
-    if (ret < 0 && ret != (int)0x80431002) {
-        brls::Logger::error("sceHttpInit failed: {:#x}", ret);
-        return false;
-    }
-
-    // Initialize curl
-    vitaplex::HttpClient::globalInit();
-
-    brls::Logger::info("Networking initialized");
-    return true;
-}
-
-/**
- * Cleanup networking
- */
-static void cleanupVitaNetwork() {
-    vitaplex::HttpClient::globalCleanup();
-    sceHttpTerm();
-    sceSslTerm();
-    sceNetCtlTerm();
-    sceNetTerm();
-}
-#endif // __vita__
-
-/**
- * Register custom views
- */
 static void registerCustomViews() {
     brls::Application::registerXMLView("MediaItemCell", vitaplex::MediaItemCell::create);
     brls::Application::registerXMLView("RecyclingGrid", vitaplex::RecyclingGrid::create);
     brls::Application::registerXMLView("vitaplex:VideoView", vitaplex::VideoView::create);
 }
 
-/**
- * Shared application entry point used by platform-specific loaders.
- */
-static int VitaPlexMainEntry(int argc, char* argv[]) {
+// Shared entry point used by main() on every platform and by SDL_main() on
+// Android (which lives in src/platform/platform_android.cpp).
+extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
     (void)argc;
     (void)argv;
-    FILE* logFile = nullptr;
 
-#ifdef __vita__
-    // Initialize Vita-specific systems
-    if (!initVitaSystem()) {
-        sceKernelExitProcess(1);
-        return 1;
-    }
-
-    if (!initVitaNetwork()) {
-        sceKernelExitProcess(1);
-        return 1;
-    }
-
-    // Create log directory and file on Vita
-    sceIoMkdir("ux0:data/VitaPlex", 0777);
-    logFile = std::fopen("ux0:data/VitaPlex/vitaplex.log", "w");
-    if (logFile) {
-        // Use line buffering so logs are written immediately
-        setvbuf(logFile, NULL, _IOLBF, 0);
-        // Note: brls::Logger::setLogOutput doesn't work on Vita (uses sceClibPrintf)
-        // We'll subscribe to log events after Borealis init
-    }
-#endif
-
-    // Android Borealis resources (XML/fonts/images) are bundled in APK assets.
-    // Extract them to internal storage before initializing Borealis.
-#if defined(__ANDROID__)
-    extractAndroidAssets();
-#endif
-
-#ifndef __vita__
-#ifdef __PS4__
-    // PS4: load network and SSL modules before initializing curl/ffmpeg.
-    // These are required for HTTPS streaming (both curl and MPV/ffmpeg).
-    if (sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_NET) < 0) {
-        brls::Logger::error("Cannot load PS4 net module");
-    }
-    if (sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_SSL) < 0) {
-        brls::Logger::error("Cannot load PS4 SSL module");
-    }
-    if (sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_HTTP) < 0) {
-        brls::Logger::error("Cannot load PS4 HTTP module");
-    }
-    // Give PS4 network stack time to become ready.
-    std::this_thread::sleep_for(std::chrono::seconds(2));
-#endif
-    if (!vitaplex::HttpClient::globalInit()) {
-        brls::Logger::error("Failed to initialize curl");
-        return 1;
-    }
-
-#ifdef __PS4__
-    // Create log directory and file on PS4
-    mkdir("/data/VitaPlex", 0777);
-    logFile = std::fopen("/data/VitaPlex/vitaplex.log", "w");
-    if (logFile) {
-        setvbuf(logFile, NULL, _IOLBF, 0);
-    }
-#endif
-#endif
-
-    // Initialize Borealis
     brls::Logger::setLogLevel(brls::LogLevel::LOG_DEBUG);
 
-    if (!brls::Application::init()) {
-        brls::Logger::error("Failed to initialize Borealis");
-#ifdef __vita__
-        if (logFile) fclose(logFile);
-        cleanupVitaNetwork();
-        sceKernelExitProcess(1);
-#else
-        if (logFile) fclose(logFile);
-        vitaplex::HttpClient::globalCleanup();
-#endif
+    // Bootstrap the current platform: load native modules, init networking,
+    // open the platform-specific log file (if any). Implementation lives in
+    // src/platform/platform_<name>.cpp — selected by CMake.
+    if (!vitaplex::platform::init()) {
+        brls::Logger::error("Platform init failed");
+        vitaplex::platform::shutdown();
+        if (vitaplex::platform::needsHardExit()) {
+            vitaplex::platform::hardExit(1);
+        }
         return 1;
     }
 
-#if defined(__vita__) || defined(__PS4__)
-    // Subscribe to log events to write to file (since setLogOutput doesn't work on Vita)
-    if (logFile) {
-        brls::Logger::getLogEvent()->subscribe([logFile](brls::Logger::TimePoint time, brls::LogLevel level, std::string log) {
-            if (!logFile) return;
-
-            const char* levelStr = "UNKNOWN";
-            switch (level) {
-                case brls::LogLevel::LOG_ERROR: levelStr = "ERROR"; break;
-                case brls::LogLevel::LOG_WARNING: levelStr = "WARNING"; break;
-                case brls::LogLevel::LOG_INFO: levelStr = "INFO"; break;
-                case brls::LogLevel::LOG_DEBUG: levelStr = "DEBUG"; break;
-                case brls::LogLevel::LOG_VERBOSE: levelStr = "VERBOSE"; break;
-            }
-
-            std::time_t tt = std::chrono::system_clock::to_time_t(time);
-            std::tm time_tm = *std::localtime(&tt);
-            uint64_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                time.time_since_epoch()).count() % 1000;
-
-            fprintf(logFile, "%02d:%02d:%02d.%03d [%s] %s\n",
-                    time_tm.tm_hour, time_tm.tm_min, time_tm.tm_sec,
-                    (int)ms, levelStr, log.c_str());
-        });
-        brls::Logger::info("Log file initialized");
+    // Initialize Borealis
+    if (!brls::Application::init()) {
+        brls::Logger::error("Failed to initialize Borealis");
+        vitaplex::platform::shutdown();
+        if (vitaplex::platform::needsHardExit()) {
+            vitaplex::platform::hardExit(1);
+        }
+        return 1;
     }
-#endif
 
     // Override sidebar padding for better text visibility on Vita's small screen
     brls::Style style = brls::getStyle();
@@ -297,7 +72,6 @@ static int VitaPlexMainEntry(int argc, char* argv[]) {
     // Set theme colors (Plex-like)
     brls::Application::getPlatform()->getThemeVariant();
 
-    // Register custom views
     registerCustomViews();
 
     // Initialize downloads manager
@@ -305,16 +79,12 @@ static int VitaPlexMainEntry(int argc, char* argv[]) {
 
     // Initialize application
     vitaplex::Application& app = vitaplex::Application::getInstance();
-
     if (!app.init()) {
         brls::Logger::error("Failed to initialize VitaPlex");
-#ifdef __vita__
-        cleanupVitaNetwork();
-        sceKernelExitProcess(1);
-#else
-        if (logFile) fclose(logFile);
-        vitaplex::HttpClient::globalCleanup();
-#endif
+        vitaplex::platform::shutdown();
+        if (vitaplex::platform::needsHardExit()) {
+            vitaplex::platform::hardExit(1);
+        }
         return 1;
     }
 
@@ -323,27 +93,14 @@ static int VitaPlexMainEntry(int argc, char* argv[]) {
 
     // Shutdown
     app.shutdown();
+    vitaplex::platform::shutdown();
 
-#ifdef __vita__
-    cleanupVitaNetwork();
-    sceKernelExitProcess(0);
-#else
-    if (logFile) fclose(logFile);
-    vitaplex::HttpClient::globalCleanup();
-#endif
-
+    if (vitaplex::platform::needsHardExit()) {
+        vitaplex::platform::hardExit(0);
+    }
     return 0;
 }
 
-#if defined(__ANDROID__)
-extern "C" int SDL_main(int argc, char* argv[]) {
-    return VitaPlexMainEntry(argc, argv);
-}
-#endif
-
-/**
- * Main entry point
- */
 int main(int argc, char* argv[]) {
     return VitaPlexMainEntry(argc, argv);
 }

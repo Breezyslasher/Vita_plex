@@ -11,8 +11,19 @@
 #include "utils/async.hpp"
 #include "app/music_queue.hpp"
 #include "app/downloads_manager.hpp"
+#include "platform/platform.hpp"
 
 namespace vitaplex {
+
+size_t LibrarySectionTab::libraryPageSize() {
+    int v = platform::getImageConstraints().libraryPageSize;
+    return v > 0 ? static_cast<size_t>(v) : 60;
+}
+
+size_t LibrarySectionTab::playlistTrackPageSize() {
+    int v = platform::getImageConstraints().playlistTrackPageSize;
+    return v > 0 ? static_cast<size_t>(v) : 50;
+}
 
 LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::string& title, const std::string& sectionType)
     : m_sectionKey(sectionKey), m_title(title), m_sectionType(sectionType) {
@@ -190,7 +201,7 @@ void LibrarySectionTab::loadContent() {
         else if (sectionType == "show") metadataType = 2;
         else if (sectionType == "artist") metadataType = 8;
 
-        if (client.fetchLibraryContent(key, items, metadataType, LIBRARY_PAGE_SIZE, 0, &totalCount)) {
+        if (client.fetchLibraryContent(key, items, metadataType, libraryPageSize(), 0, &totalCount)) {
             brls::Logger::info("LibrarySectionTab: Got {} of {} items for section {}", items.size(), totalCount, key);
 
             // Trim heavy fields to reduce per-item memory in large libraries
@@ -329,7 +340,7 @@ void LibrarySectionTab::loadNextPage() {
         else if (sectionType == "show") metadataType = 2;
         else if (sectionType == "artist") metadataType = 8;
 
-        if (client.fetchLibraryContent(key, items, metadataType, LIBRARY_PAGE_SIZE, (int)offset)) {
+        if (client.fetchLibraryContent(key, items, metadataType, libraryPageSize(), (int)offset)) {
             for (auto& item : items) {
                 item.trimForGrid();
             }
@@ -725,16 +736,19 @@ void LibrarySectionTab::appendTrackListPage() {
         m_trackListLoadMoreBtn = nullptr;
     }
 
-    size_t end = std::min(m_trackListRendered + PLAYLIST_TRACK_PAGE_SIZE, m_playlistTracks.size());
+    size_t end = std::min(m_trackListRendered + playlistTrackPageSize(), m_playlistTracks.size());
 
     for (size_t i = m_trackListRendered; i < end; i++) {
         const auto& track = m_playlistTracks[i];
 
+        const auto& ic = platform::getImageConstraints();
         auto* row = new brls::Box();
         row->setAxis(brls::Axis::ROW);
         row->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
         row->setAlignItems(brls::AlignItems::CENTER);
-        row->setHeight(48);
+        // Tracks are a dense list — scale slightly below the standard list
+        // row height so more titles fit on screen.
+        row->setHeight(std::max(40, ic.listRowHeight - 8));
         row->setPadding(8, 12, 8, 12);
         row->setMarginBottom(3);
         row->setCornerRadius(6);
@@ -760,9 +774,12 @@ void LibrarySectionTab::appendTrackListPage() {
         if (!track.grandparentTitle.empty()) {
             displayTitle = track.grandparentTitle + " - " + displayTitle;
         }
-        // Truncate for Vita screen
-        if (displayTitle.length() > 55) {
-            displayTitle = displayTitle.substr(0, 52) + "...";
+        // Truncate to whatever the platform budget allows (55 on Vita, ~110 on desktop).
+        {
+            size_t maxChars = (size_t)ic.maxListTitleChars;
+            if (maxChars > 3 && displayTitle.length() > maxChars) {
+                displayTitle = displayTitle.substr(0, maxChars - 3) + "...";
+            }
         }
         titleLabel->setText(displayTitle);
         leftBox->addView(titleLabel);

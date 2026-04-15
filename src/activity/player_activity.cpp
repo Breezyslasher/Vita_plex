@@ -10,7 +10,9 @@
 #include "player/mpv_player.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/http_client.hpp"
+#include "utils/pip.h"
 #include "view/video_view.hpp"
+#include "platform/platform.hpp"
 #include <algorithm>
 #include <chrono>
 #include <fstream>
@@ -272,6 +274,30 @@ void PlayerActivity::onContentAvailable() {
         toggleControls();
         return true;
     });
+
+    // Picture-in-Picture: toggle on right-stick click and via a touchable OSD
+    // button (for phones with no gamepad). Only shown in video mode, and only
+    // registered on platforms where PiP is implemented (Android + desktop
+    // SDL2).
+    if (!m_isQueueMode && !m_isPhoto && pip::isAvailable()) {
+        auto pipHandler = [this](brls::View* view) {
+            auto& player = MpvPlayer::getInstance();
+            int vw = player.getVideoWidth();
+            int vh = player.getVideoHeight();
+            if (vw <= 0 || vh <= 0) {
+                vw = 16;
+                vh = 9;
+            }
+            pip::toggle(vw, vh);
+            return true;
+        };
+        this->registerAction("Picture-in-Picture", brls::ControllerButton::BUTTON_RSB, pipHandler);
+        if (pipBtn) {
+            pipBtn->setVisibility(brls::Visibility::VISIBLE);
+            pipBtn->registerClickAction(pipHandler);
+            pipBtn->addGestureRecognizer(new brls::TapGestureRecognizer(pipBtn));
+        }
+    }
 
     // Queue controls for music (LB/RB for previous/next, triggers for shuffle/repeat)
     if (m_isQueueMode) {
@@ -587,6 +613,10 @@ void PlayerActivity::onContentAvailable() {
 
 void PlayerActivity::willDisappear(bool resetState) {
     brls::Activity::willDisappear(resetState);
+
+    // Clear "video playing" state so onUserLeaveHint stops auto-triggering PiP
+    // once the user is no longer in the player activity.
+    pip::setVideoPlaybackState(false, 0, 0);
 
     // Re-enable background thumbnail loading now that playback is ending
     ImageLoader::setPaused(false);
@@ -1078,7 +1108,8 @@ void PlayerActivity::loadMedia() {
 
             // Load the full-size photo
             if (!item.thumb.empty()) {
-                std::string photoUrl = client.getThumbnailUrl(item.thumb, 960, 544);
+                const auto& photoIc = platform::getImageConstraints();
+                std::string photoUrl = client.getThumbnailUrl(item.thumb, photoIc.photoRequestWidth, photoIc.photoRequestHeight);
                 brls::Logger::debug("Photo URL: {}", photoUrl);
 
                 // Load photo into the view (photoImage is defined in player.xml)
@@ -1113,7 +1144,8 @@ void PlayerActivity::loadMedia() {
             if (artPath.empty()) artPath = item.grandparentThumb;
 
             if (!artPath.empty()) {
-                std::string thumbUrl = client.getThumbnailUrl(artPath, 300, 300);
+                int artSize = platform::getImageConstraints().squareRequestSize;
+                std::string thumbUrl = client.getThumbnailUrl(artPath, artSize, artSize);
                 ImageLoader::loadAsync(thumbUrl, [](brls::Image* image) {
                     // Art loaded
                 }, albumArt, m_alive);
@@ -1231,6 +1263,12 @@ void PlayerActivity::updateProgress() {
                     videoView->setVisibility(brls::Visibility::VISIBLE);
                     videoView->setVideoVisible(true);
                     brls::Logger::debug("Video view enabled (deferred)");
+                }
+                // Mark video playback state so Android auto-enters PiP when
+                // the user hits Home. Only for actual video (not music) and
+                // not when running the queue-mode (music) player.
+                if (!isAudio && !m_isQueueMode) {
+                    pip::setVideoPlaybackState(true, 16, 9);
                 }
                 m_isPlaying = true;
                 updatePlayPauseLabel();

@@ -56,6 +56,7 @@ private:
     brls::Button* m_cancelButton = nullptr;
     std::function<void()> m_cancelCallback;
     bool m_dismissed = false;
+    int m_progressBarWidth = 340;
 
     // For speed calculation
     int64_t m_lastDownloaded = 0;

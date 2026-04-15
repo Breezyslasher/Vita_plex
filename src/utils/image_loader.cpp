@@ -5,12 +5,8 @@
 
 #include "utils/image_loader.hpp"
 #include "utils/http_client.hpp"
-#include <fstream>
+#include "platform/platform.hpp"
 #include <vector>
-
-#ifdef __vita__
-#include <psp2/io/fcntl.h>
-#endif
 
 namespace vitaplex {
 
@@ -19,6 +15,11 @@ std::list<std::string> ImageLoader::s_lruOrder;
 std::mutex ImageLoader::s_cacheMutex;
 std::atomic<uint64_t> ImageLoader::s_generation{0};
 std::atomic<bool> ImageLoader::s_paused{false};
+
+size_t ImageLoader::getMaxCacheSize() {
+    int v = platform::getImageConstraints().imageCacheSize;
+    return v > 0 ? static_cast<size_t>(v) : 20;
+}
 
 void ImageLoader::setPaused(bool paused) {
     s_paused.store(paused);
@@ -81,7 +82,7 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
                 std::lock_guard<std::mutex> lock(s_cacheMutex);
 
                 // LRU eviction: remove oldest entries until we're under the limit
-                while (s_cache.size() >= MAX_CACHE_SIZE && !s_lruOrder.empty()) {
+                while (s_cache.size() >= getMaxCacheSize() && !s_lruOrder.empty()) {
                     const std::string& oldest = s_lruOrder.back();
                     s_cache.erase(oldest);
                     s_lruOrder.pop_back();
@@ -110,36 +111,10 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
 bool ImageLoader::loadFromFile(const std::string& path, brls::Image* target) {
     if (path.empty() || !target) return false;
 
-#ifdef __vita__
-    SceUID fd = sceIoOpen(path.c_str(), SCE_O_RDONLY, 0);
-    if (fd < 0) return false;
-
-    // Get file size
-    SceOff size = sceIoLseek(fd, 0, SCE_SEEK_END);
-    sceIoLseek(fd, 0, SCE_SEEK_SET);
-
-    if (size <= 0 || size > 4 * 1024 * 1024) {  // Max 4MB for cover art
-        sceIoClose(fd);
-        return false;
-    }
-
-    std::vector<uint8_t> data(size);
-    int read = sceIoRead(fd, data.data(), size);
-    sceIoClose(fd);
-
-    if (read != size) return false;
-#else
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) return false;
-
-    auto size = file.tellg();
-    if (size <= 0 || size > 4 * 1024 * 1024) return false;
-
-    file.seekg(0, std::ios::beg);
-    std::vector<uint8_t> data(size);
-    file.read(reinterpret_cast<char*>(data.data()), size);
-    file.close();
-#endif
+    // Cap cover art at 4 MB. Backed by sceIoOpen on Vita and std::ifstream
+    // elsewhere — the platform layer hides the difference.
+    std::vector<uint8_t> data;
+    if (!platform::readLocalFile(path, data, 4 * 1024 * 1024)) return false;
 
     target->setImageFromMem(data.data(), data.size());
     return true;

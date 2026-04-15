@@ -6,6 +6,10 @@
 
 #include "player/mpv_player.hpp"
 #include "app/application.hpp"
+#include "platform/platform.hpp"
+#ifdef __PS4__
+#include "utils/https_proxy.h"
+#endif
 #include <borealis.hpp>
 
 
@@ -18,6 +22,22 @@
 #include <nanovg_gxm.h>
 #include <nanovg_gxm_utils.h>
 #include <borealis/platforms/psv/psv_video.hpp>
+#endif
+
+#ifdef __ANDROID__
+#include <nanovg.h>
+#include <GLES3/gl3.h>
+#include <SDL2/SDL.h>
+// nanovg's GLES3 texture accessor is declared inside nanovg_gl.h only when
+// NANOVG_GLES3 is defined, and that header pulls in the whole GL shader
+// implementation chain. Forward-declare it directly — the symbol is compiled
+// into borealis via lib/platforms/sdl/sdl_video.cpp.
+extern "C" GLuint nvglImageHandleGLES3(NVGcontext* ctx, int image);
+
+static void* mpvGlGetProcAddress(void* ctx, const char* name) {
+    (void)ctx;
+    return SDL_GL_GetProcAddress(name);
+}
 #endif
 
 #include <cstring>
@@ -163,6 +183,7 @@ bool MpvPlayer::init() {
         // Use 4 decoder threads for multi-core TV SoCs
         mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
 
+
 #else
         mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
 #endif
@@ -228,21 +249,34 @@ bool MpvPlayer::init() {
 
     mpv_set_option_string(m_mpv, "network-timeout", "30");
     mpv_set_option_string(m_mpv, "tls-verify", "no");
+    // Ensure HTTPS/TLS protocols are enabled in ffmpeg's protocol whitelist
+    mpv_set_option_string(m_mpv, "demuxer-lavf-o", "protocol_whitelist=file,http,https,tcp,tls,crypto,data,hls");
+#ifdef __PS4__
+    // PS4: also set ffmpeg-level TLS options in case MPV's tls-verify doesn't
+    // propagate correctly to the stream layer
+    mpv_set_option_string(m_mpv, "stream-lavf-o", "tls_verify=0");
+#endif
 
     // User agent for Plex compatibility
     mpv_set_option_string(m_mpv, "user-agent", PLEX_CLIENT_NAME "/" PLEX_CLIENT_VERSION);
 
     // Per official Plex API (developer.plex.tv/pms), X-Plex-Client-Identifier
     // is a REQUIRED HTTP header (in=header). Set it here so MPV sends it
-    // when streaming from Plex transcode endpoints.
-    mpv_set_option_string(m_mpv, "http-header-fields",
-        "X-Plex-Client-Identifier: " PLEX_CLIENT_NAME ","
-        "X-Plex-Product: " PLEX_CLIENT_NAME ","
-        "X-Plex-Version: " PLEX_CLIENT_VERSION ","
-        "X-Plex-Platform: " PLEX_PLATFORM ","
-        "X-Plex-Device: " PLEX_DEVICE ","
-        "X-Plex-Client-Profile-Name: Generic,"
-        "X-Plex-Device-Name: " PLEX_DEVICE);
+    // when streaming from Plex transcode endpoints. Platform/Device come
+    // from the runtime platform layer so each target reports the right
+    // identifier to Plex without ifdef chains here.
+    {
+        const auto& vc = platform::getVideoConstraints();
+        std::string headerFields =
+            std::string("X-Plex-Client-Identifier: ") + PLEX_CLIENT_NAME + "," +
+            "X-Plex-Product: " + PLEX_CLIENT_NAME + "," +
+            "X-Plex-Version: " + PLEX_CLIENT_VERSION + "," +
+            "X-Plex-Platform: " + vc.plexPlatform + "," +
+            "X-Plex-Device: " + vc.plexDevice + "," +
+            "X-Plex-Client-Profile-Name: Generic," +
+            "X-Plex-Device-Name: " + vc.plexDevice;
+        mpv_set_option_string(m_mpv, "http-header-fields", headerFields.c_str());
+    }
 
     // Note: demuxer-lavf-probe-info and force-seekable caused crashes on Vita
     // Keep options minimal for compatibility
@@ -355,6 +389,12 @@ void MpvPlayer::shutdown() {
         m_mpv = nullptr;
         m_stopping.store(false);
     }
+
+#ifdef __PS4__
+    // Stop the HTTPS proxy when player shuts down
+    HttpsProxy::getInstance().stop();
+#endif
+
     m_state = MpvPlayerState::IDLE;
     m_commandPending = false;
 }
@@ -405,6 +445,27 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
             }
         }
     }
+
+#ifdef __PS4__
+    // PS4: MPV's ffmpeg cannot open HTTPS URLs (error -13) because the PS4
+    // ffmpeg build lacks TLS support. Route HTTPS through our local proxy
+    // which uses libcurl (with working TLS) to fetch the content.
+    // This supports both local and remote Plex servers.
+    if (normalizedUrl.substr(0, 8) == "https://") {
+        auto& proxy = HttpsProxy::getInstance();
+        if (!proxy.isRunning()) {
+            proxy.start();
+        }
+        if (proxy.isRunning()) {
+            normalizedUrl = proxy.rewriteUrl(normalizedUrl);
+            brls::Logger::info("MpvPlayer: PS4 HTTPS via proxy: {}", normalizedUrl.substr(0, 100));
+        } else {
+            // Fallback: simple HTTP downgrade (works for local Plex servers)
+            normalizedUrl = "http://" + normalizedUrl.substr(8);
+            brls::Logger::info("MpvPlayer: PS4 HTTPS->HTTP fallback: {}", normalizedUrl.substr(0, 80));
+        }
+    }
+#endif
 
     brls::Logger::info("MpvPlayer: Loading URL: {}", normalizedUrl);
 
@@ -716,8 +777,21 @@ void MpvPlayer::toggleSubtitles() {
 void MpvPlayer::loadSubtitleUrl(const std::string& url) {
     if (!m_mpv || m_stopping) return;
 
-    brls::Logger::info("MpvPlayer: Loading external subtitle: {}", url);
-    const char* cmd[] = {"sub-add", url.c_str(), "auto", NULL};
+    std::string subUrl = url;
+#ifdef __PS4__
+    // Route HTTPS subtitle URLs through the local proxy (same as loadUrl)
+    if (subUrl.length() > 8 && subUrl.substr(0, 8) == "https://") {
+        auto& proxy = HttpsProxy::getInstance();
+        if (proxy.isRunning()) {
+            subUrl = proxy.rewriteUrl(subUrl);
+        } else {
+            subUrl = "http://" + subUrl.substr(8);
+        }
+    }
+#endif
+
+    brls::Logger::info("MpvPlayer: Loading external subtitle: {}", subUrl);
+    const char* cmd[] = {"sub-add", subUrl.c_str(), "auto", NULL};
     mpv_command_async(m_mpv, 0, cmd);
     m_subtitlesVisible = true;
 }
@@ -900,7 +974,9 @@ void MpvPlayer::eventMainLoop() {
                         } else {
                             m_errorMessage = "Playback failed";
                         }
-                        brls::Logger::error("MpvPlayer: {}", m_errorMessage);
+                        brls::Logger::error("MpvPlayer: {} (reason={}, error={}, url={})",
+                                           m_errorMessage, (int)end->reason, end->error,
+                                           m_currentUrl.substr(0, 120));
                         setState(MpvPlayerState::ERROR);
                     } else {
                         setState(MpvPlayerState::IDLE);
@@ -1096,6 +1172,38 @@ void MpvPlayer::onRenderUpdate(void* ctx) {
 #ifdef __vita__
             mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
             mpv_render_context_report_swap(player->m_mpvRenderCtx);
+#elif defined(__ANDROID__)
+            std::lock_guard<std::mutex> lock(player->m_renderMutex);
+            if (!player->m_mpvRenderCtx || player->m_glFbo == 0) {
+                return;
+            }
+            // mpv renders directly into our FBO (which is backed by the
+            // NanoVG-managed GL texture). No CPU copy, no nvgUpdateImage.
+            //
+            // Save the current GL state that mpv might clobber and restore it
+            // afterwards. Crucially, explicitly bind our FBO and set a viewport
+            // covering the whole FBO before rendering — mpv's OpenGL backend
+            // inherits the active viewport, and by the time this sync callback
+            // runs NanoVG/borealis has left the viewport set to its last draw
+            // region (typically a small OSD rect). Without this, mpv renders
+            // the entire video into that sub-rect of the 1920x1080 FBO,
+            // producing a tiny video strip surrounded by mpv's clear color.
+            GLint prevFbo = 0;
+            GLint prevViewport[4] = {0, 0, 0, 0};
+            glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevFbo);
+            glGetIntegerv(GL_VIEWPORT, prevViewport);
+
+            glBindFramebuffer(GL_FRAMEBUFFER, player->m_glFbo);
+            glViewport(0, 0, player->m_videoWidth, player->m_videoHeight);
+
+            mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
+            mpv_render_context_report_swap(player->m_mpvRenderCtx);
+
+            // Restore the previous GL state so NanoVG's next frame sees what
+            // it expects.
+            glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
+            glViewport(prevViewport[0], prevViewport[1],
+                       prevViewport[2], prevViewport[3]);
 #else
             std::lock_guard<std::mutex> lock(player->m_renderMutex);
             if (player->m_videoBuffer.empty() || player->m_videoWidth <= 0 || player->m_videoHeight <= 0) {
@@ -1282,11 +1390,11 @@ bool MpvPlayer::initRenderContext() {
     brls::Logger::info("MpvPlayer: GXM render context created successfully ({}x{})", m_videoWidth, m_videoHeight);
     return true;
 #elif defined(__ANDROID__)
-    // Android: use software render context. Sharing an OpenGL context between
-    // MPV and NanoVG causes flickering and state corruption, so we render to a
-    // CPU buffer and upload to a NanoVG texture each frame. The MPV config
-    // optimizations (large buffers, display-resample, MediaCodec hwdec, etc.)
-    // keep playback smooth despite the CPU-side copy.
+    // Android/Android TV: zero-copy OpenGL rendering. mpv renders directly
+    // into a NanoVG-managed GL texture via our FBO. Combined with
+    // hwdec=mediacodec (GPU interop), the whole pipeline stays on the GPU —
+    // critical for weak Android TV SoCs that can't sustain CPU framebuffer
+    // copies at 1080p60.
     if (m_mpvRenderCtx) {
         return true;
     }
@@ -1300,36 +1408,92 @@ bool MpvPlayer::initRenderContext() {
         return false;
     }
 
-    // Android SW render buffer: use 720p to keep CPU copy manageable.
-    // The transcode can still request 1080p; MPV scales to buffer size.
-    m_videoWidth = 1280;
-    m_videoHeight = 720;
-    m_videoBuffer.assign((size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
+    // Render-target resolution. mpv scales/letterboxes internally to fit.
+    // 1080p matches the Android TV display while keeping GL texture memory
+    // modest (~8 MB for RGBA8).
+    m_videoWidth = 1920;
+    m_videoHeight = 1080;
 
-    m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, m_videoBuffer.data());
+    // Create an initially-black NanoVG image; we'll pull out the underlying
+    // GL texture and bind it to our own FBO as the color attachment. Zero-init
+    // prevents showing undefined pixels for the first frame before mpv renders.
+    //
+    // Orientation: mpv's OpenGL renderer writes into the FBO using the same
+    // top-left origin NanoVG assumes for uploaded image data (mpv's GLES
+    // backend flips into that convention internally). So we use zero flags
+    // here and leave mpv's FLIP_Y param unset. Applying NVG_IMAGE_FLIPY OR
+    // MPV_RENDER_PARAM_FLIP_Y alone produces an upside-down picture; this
+    // "no flip" combination matches the actual orientation mpv delivers.
+    std::vector<unsigned char> blackPixels((size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
+    m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, blackPixels.data());
     if (m_nvgImage == 0) {
-        brls::Logger::error("MpvPlayer: Failed to create SW video image");
+        brls::Logger::error("MpvPlayer: Failed to create NanoVG video image");
         return false;
     }
 
-    char apiType[] = MPV_RENDER_API_TYPE_SW;
-    mpv_render_param swParams[] = {
-        {MPV_RENDER_PARAM_API_TYPE, apiType},
-        {MPV_RENDER_PARAM_INVALID, nullptr},
-    };
-
-    int result = mpv_render_context_create(&m_mpvRenderCtx, m_mpv, swParams);
-    if (result < 0) {
-        brls::Logger::error("MpvPlayer: Failed to create SW render context: {}", mpv_error_string(result));
+    GLuint glTexture = nvglImageHandleGLES3(vg, m_nvgImage);
+    if (glTexture == 0) {
+        brls::Logger::error("MpvPlayer: Failed to get GL texture handle from NanoVG image");
         nvgDeleteImage(vg, m_nvgImage);
         m_nvgImage = 0;
         return false;
     }
 
+    // Create the GL framebuffer and attach the NanoVG texture.
+    glGenFramebuffers(1, &m_glFbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, m_glFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                           GL_TEXTURE_2D, glTexture, 0);
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        brls::Logger::error("MpvPlayer: GL framebuffer incomplete: 0x{:x}", (unsigned)status);
+        glDeleteFramebuffers(1, &m_glFbo);
+        m_glFbo = 0;
+        nvgDeleteImage(vg, m_nvgImage);
+        m_nvgImage = 0;
+        return false;
+    }
+
+    // Hand SDL's GL proc loader to mpv's GL backend.
+    mpv_opengl_init_params glInit = {};
+    glInit.get_proc_address = mpvGlGetProcAddress;
+    glInit.get_proc_address_ctx = nullptr;
+
+    mpv_render_param params[] = {
+        {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_OPENGL)},
+        {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &glInit},
+        {MPV_RENDER_PARAM_INVALID, nullptr},
+    };
+
+    int result = mpv_render_context_create(&m_mpvRenderCtx, m_mpv, params);
+    if (result < 0) {
+        brls::Logger::error("MpvPlayer: Failed to create OpenGL render context: {}",
+                            mpv_error_string(result));
+        glDeleteFramebuffers(1, &m_glFbo);
+        m_glFbo = 0;
+        nvgDeleteImage(vg, m_nvgImage);
+        m_nvgImage = 0;
+        return false;
+    }
+
+    // Per-frame render params: FBO only. mpv's OpenGL-ES backend already
+    // writes in the top-down orientation NanoVG expects for its uploaded
+    // images, so we neither set NVG_IMAGE_FLIPY on the NanoVG image nor
+    // pass MPV_RENDER_PARAM_FLIP_Y here. Adding either gives an upside-down
+    // picture (single flip); having both cancels back to correct.
+    m_mpvOpenGLFbo.fbo = (int)m_glFbo;
+    m_mpvOpenGLFbo.w = m_videoWidth;
+    m_mpvOpenGLFbo.h = m_videoHeight;
+    m_mpvOpenGLFbo.internal_format = GL_RGBA8;
+
+    m_mpvParams[0] = {MPV_RENDER_PARAM_OPENGL_FBO, &m_mpvOpenGLFbo};
+    m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
+
     mpv_render_context_set_update_callback(m_mpvRenderCtx, onRenderUpdate, this);
     m_renderReady.store(true);
-    brls::Logger::info("MpvPlayer: Android software render context initialized ({}x{})",
-                      m_videoWidth, m_videoHeight);
+    brls::Logger::info("MpvPlayer: Android OpenGL render context initialized ({}x{})",
+                       m_videoWidth, m_videoHeight);
     return true;
 #else
     if (m_mpvRenderCtx) {
@@ -1345,8 +1509,11 @@ bool MpvPlayer::initRenderContext() {
         return false;
     }
 
-    m_videoWidth = PLEX_MAX_VIDEO_WIDTH;
-    m_videoHeight = PLEX_MAX_VIDEO_HEIGHT;
+    {
+        const auto& vc = platform::getVideoConstraints();
+        m_videoWidth  = vc.maxVideoWidth;
+        m_videoHeight = vc.maxVideoHeight;
+    }
     m_videoBuffer.assign((size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
 
     m_nvgImage = nvgCreateImageRGBA(vg, m_videoWidth, m_videoHeight, 0, m_videoBuffer.data());
@@ -1414,6 +1581,30 @@ void MpvPlayer::cleanupRenderContext() {
         m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
         m_mpvParams[2] = {MPV_RENDER_PARAM_INVALID, nullptr};
     }
+#elif defined(__ANDROID__)
+    m_renderReady.store(false);
+    std::lock_guard<std::mutex> lock(m_renderMutex);
+    if (m_mpvRenderCtx) {
+        // Free the render context before the GL resources so mpv's GL
+        // backend has a chance to tear down its own GL objects.
+        mpv_render_context_free(m_mpvRenderCtx);
+        m_mpvRenderCtx = nullptr;
+    }
+    if (m_glFbo) {
+        glDeleteFramebuffers(1, &m_glFbo);
+        m_glFbo = 0;
+    }
+    {
+        NVGcontext* vg = brls::Application::getNVGContext();
+        if (m_nvgImage && vg) {
+            nvgDeleteImage(vg, m_nvgImage);
+            m_nvgImage = 0;
+        }
+    }
+    m_mpvOpenGLFbo = {};
+    m_mpvParams[0] = {MPV_RENDER_PARAM_INVALID, nullptr};
+    m_mpvParams[1] = {MPV_RENDER_PARAM_INVALID, nullptr};
+    m_mpvParams[2] = {MPV_RENDER_PARAM_INVALID, nullptr};
 #else
     m_renderReady.store(false);
     std::lock_guard<std::mutex> lock(m_renderMutex);

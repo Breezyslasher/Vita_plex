@@ -6,11 +6,14 @@
 #include "app/plex_client.hpp"
 #include "app/application.hpp"
 #include "utils/image_loader.hpp"
+#include "platform/platform.hpp"
 
 namespace vitaplex {
 
 MediaItemCell::MediaItemCell()
     : m_alive(std::make_shared<std::atomic<bool>>(true)) {
+    const auto& ic = platform::getImageConstraints();
+
     this->setAxis(brls::Axis::COLUMN);
     this->setJustifyContent(brls::JustifyContent::FLEX_START);
     this->setAlignItems(brls::AlignItems::CENTER);
@@ -21,8 +24,8 @@ MediaItemCell::MediaItemCell()
 
     // Thumbnail image - hidden until texture loads to prevent null texture crash on Vita
     m_thumbnailImage = new brls::Image();
-    m_thumbnailImage->setWidth(110);
-    m_thumbnailImage->setHeight(165);
+    m_thumbnailImage->setWidth(ic.posterWidth);
+    m_thumbnailImage->setHeight(ic.posterHeight);
     m_thumbnailImage->setScalingType(brls::ImageScalingType::FIT);
     m_thumbnailImage->setCornerRadius(4);
     m_thumbnailImage->setVisibility(brls::Visibility::INVISIBLE);
@@ -30,21 +33,21 @@ MediaItemCell::MediaItemCell()
 
     // Title label
     m_titleLabel = new brls::Label();
-    m_titleLabel->setFontSize(12);
+    m_titleLabel->setFontSize(ic.titleFontSize);
     m_titleLabel->setMarginTop(5);
     m_titleLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
     this->addView(m_titleLabel);
 
     // Subtitle label (for episodes: S01E01)
     m_subtitleLabel = new brls::Label();
-    m_subtitleLabel->setFontSize(10);
+    m_subtitleLabel->setFontSize(ic.subtitleFontSize);
     m_subtitleLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
     m_subtitleLabel->setVisibility(brls::Visibility::GONE);
     this->addView(m_subtitleLabel);
 
     // Description label (shows on focus for episodes)
     m_descriptionLabel = new brls::Label();
-    m_descriptionLabel->setFontSize(9);
+    m_descriptionLabel->setFontSize(ic.descriptionFontSize);
     m_descriptionLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
     m_descriptionLabel->setVisibility(brls::Visibility::GONE);
     this->addView(m_descriptionLabel);
@@ -105,35 +108,36 @@ void MediaItemCell::setItem(const MediaItem& item) {
     bool isEpisode = (item.mediaType == MediaType::EPISODE);
     bool isClip = (item.mediaType == MediaType::CLIP);
 
+    const auto& ic = platform::getImageConstraints();
     if (isMusic) {
         // Square album art
-        m_thumbnailImage->setWidth(110);
-        m_thumbnailImage->setHeight(110);
-        // Adjust box to fit square art + text
-        this->setWidth(120);
-        this->setHeight(150);
+        m_thumbnailImage->setWidth(ic.squareCoverSize);
+        m_thumbnailImage->setHeight(ic.squareCoverSize);
+        // Box: cover + small padding for the title row beneath it
+        this->setWidth(ic.squareCoverSize + 10);
+        this->setHeight(ic.squareCoverSize + 40);
     } else if (isEpisode || isClip) {
         // Landscape episode still / extras clip
-        m_thumbnailImage->setWidth(140);
-        m_thumbnailImage->setHeight(80);
-        // Adjust box to fit landscape image + text
-        this->setWidth(150);
-        this->setHeight(125);
+        m_thumbnailImage->setWidth(ic.landscapeWidth);
+        m_thumbnailImage->setHeight(ic.landscapeHeight);
+        this->setWidth(ic.landscapeWidth + 10);
+        this->setHeight(ic.landscapeHeight + 45);
     } else {
         // Portrait poster
-        m_thumbnailImage->setWidth(110);
-        m_thumbnailImage->setHeight(165);
-        // Adjust box to fit portrait poster + text
-        this->setWidth(120);
-        this->setHeight(200);
+        m_thumbnailImage->setWidth(ic.posterWidth);
+        m_thumbnailImage->setHeight(ic.posterHeight);
+        this->setWidth(ic.posterWidth + 10);
+        this->setHeight(ic.posterHeight + 35);
     }
 
     // Set title
     if (m_titleLabel) {
         std::string title = item.title;
-        // Truncate long titles
-        if (title.length() > 15) {
-            title = title.substr(0, 13) + "...";
+        // Truncate long titles — per-platform budget from the platform layer
+        // so desktop cells (which are wider) show more of the title.
+        size_t maxChars = (size_t)platform::getImageConstraints().maxCellTitleChars;
+        if (maxChars > 3 && title.length() > maxChars) {
+            title = title.substr(0, maxChars - 2) + "...";
         }
         m_originalTitle = title;  // Store truncated title for focus restore
         m_titleLabel->setText(title);
@@ -145,7 +149,7 @@ void MediaItemCell::setItem(const MediaItem& item) {
 
         // Shrink box height when title is hidden to remove blank space
         if (hideTitle && !isMusic && !isEpisode) {
-            this->setHeight(178);
+            this->setHeight(ic.posterHeight + 13);
         }
     }
 
@@ -178,7 +182,8 @@ void MediaItemCell::setItem(const MediaItem& item) {
             float progress = (float)item.viewOffset / (float)item.duration;
             // Only show if between 1% and 95% (fully watched items shouldn't show bar)
             if (progress > 0.01f && progress < 0.95f) {
-                float barWidth = isEpisode ? 140.0f : 110.0f;
+                float barWidth = isEpisode ? (float)ic.landscapeWidth
+                                           : (float)ic.posterWidth;
                 m_progressBar->setWidth(std::min(barWidth * progress, barWidth));
                 m_progressBar->setVisibility(brls::Visibility::VISIBLE);
             } else {
@@ -206,13 +211,21 @@ void MediaItemCell::loadThumbnail() {
     bool isEpisode = (m_item.mediaType == MediaType::EPISODE);
     bool isClip = (m_item.mediaType == MediaType::CLIP);
 
+    // Request thumbnails sized for the current platform. PSV pulls down
+    // tiny 110x165 covers; PS4/desktop pull down 220x330+ posters from the
+    // Plex server. The constraints come from the platform layer so we never
+    // hard-code per-device sizes here.
+    const auto& ic = platform::getImageConstraints();
     int width, height;
     if (isMusic) {
-        width = 110; height = 110;
+        width = ic.squareCoverSize;
+        height = ic.squareCoverSize;
     } else if (isEpisode || isClip) {
-        width = 140; height = 80;   // Match display size (save ~75% memory vs 2x)
+        width = ic.landscapeWidth;
+        height = ic.landscapeHeight;
     } else {
-        width = 110; height = 165;
+        width = ic.posterWidth;
+        height = ic.posterHeight;
     }
 
     // For episodes, use episode's own thumb (episode still) - landscape format
