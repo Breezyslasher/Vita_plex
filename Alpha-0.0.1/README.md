@@ -181,7 +181,7 @@
 
 <table>
   <tr>
-    <th colspan="2" align="center">Music Queue</th>
+    <th colspan="2" align="center">Downloads Tab</th>
   </tr>
   <tr>
     <td align="center"><b>Alpha 0.0.1 does not exist</b></td>
