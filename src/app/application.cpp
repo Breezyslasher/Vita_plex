@@ -319,17 +319,48 @@ bool Application::saveSettings() {
 
     auto b = [](bool v) { return std::string(v ? "true" : "false"); };
 
+    // JSON-escape every user-controlled string before splicing it into the
+    // settings blob. Without this, a server URL or username containing a "
+    // corrupts the file on save (so the next load silently wipes all
+    // settings), and a hostile Plex server could arrange for its username
+    // to contain \",\"authToken\":\"<attacker>\" and rewrite our stored
+    // token on the next save.
+    auto esc = [](const std::string& s) {
+        std::string out;
+        out.reserve(s.size() + 2);
+        for (unsigned char c : s) {
+            switch (c) {
+                case '"':  out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\b': out += "\\b"; break;
+                case '\f': out += "\\f"; break;
+                case '\n': out += "\\n"; break;
+                case '\r': out += "\\r"; break;
+                case '\t': out += "\\t"; break;
+                default:
+                    if (c < 0x20) {
+                        char buf[8];
+                        snprintf(buf, sizeof(buf), "\\u%04x", c);
+                        out += buf;
+                    } else {
+                        out += (char)c;
+                    }
+            }
+        }
+        return out;
+    };
+
     std::string json = "{\n";
-    json += "  \"authToken\": \"" + m_authToken + "\",\n";
-    json += "  \"serverUrl\": \"" + m_serverUrl + "\",\n";
-    json += "  \"username\": \"" + m_username + "\",\n";
+    json += "  \"authToken\": \"" + esc(m_authToken) + "\",\n";
+    json += "  \"serverUrl\": \"" + esc(m_serverUrl) + "\",\n";
+    json += "  \"username\": \"" + esc(m_username) + "\",\n";
     json += "  \"theme\": " + std::to_string(static_cast<int>(m_settings.theme)) + ",\n";
     json += "  \"debugLogging\": " + b(m_settings.debugLogging) + ",\n";
     json += "  \"showDebugTab\": " + b(m_settings.showDebugTab) + ",\n";
     json += "  \"showLibrariesInSidebar\": " + b(m_settings.showLibrariesInSidebar) + ",\n";
     json += "  \"collapseSidebar\": " + b(m_settings.collapseSidebar) + ",\n";
-    json += "  \"hiddenLibraries\": \"" + m_settings.hiddenLibraries + "\",\n";
-    json += "  \"sidebarOrder\": \"" + m_settings.sidebarOrder + "\",\n";
+    json += "  \"hiddenLibraries\": \"" + esc(m_settings.hiddenLibraries) + "\",\n";
+    json += "  \"sidebarOrder\": \"" + esc(m_settings.sidebarOrder) + "\",\n";
     json += "  \"showCollections\": " + b(m_settings.showCollections) + ",\n";
     json += "  \"showPlaylists\": " + b(m_settings.showPlaylists) + ",\n";
     json += "  \"showGenres\": " + b(m_settings.showGenres) + ",\n";

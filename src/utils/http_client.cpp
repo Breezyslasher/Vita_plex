@@ -14,6 +14,68 @@
 
 namespace vitaplex {
 
+// Redact sensitive query parameters (auth tokens) before logging a URL.
+// Plex tokens are carried as "X-Plex-Token=..." in query strings, and many
+// call sites log req.url at debug level. Without redaction, a user's long-
+// lived auth token ends up in on-device logs and crash reports.
+static std::string redactTokensInUrl(const std::string& url) {
+    static const char* const kSensitiveKeys[] = {
+        "X-Plex-Token=", "x-plex-token=", "token=",
+    };
+    std::string out = url;
+    for (const char* key : kSensitiveKeys) {
+        size_t pos = 0;
+        while ((pos = out.find(key, pos)) != std::string::npos) {
+            size_t valStart = pos + strlen(key);
+            size_t valEnd = out.find_first_of("&#", valStart);
+            if (valEnd == std::string::npos) valEnd = out.size();
+            out.replace(valStart, valEnd - valStart, "[redacted]");
+            pos = valStart + sizeof("[redacted]") - 1;
+        }
+    }
+    return out;
+}
+
+// Apply baseline security-sensitive curl options shared by every request.
+// Keeping this centralized makes it harder to accidentally ship a handle
+// with verification off or with file:// / gopher:// left enabled.
+static void applyCurlSecurityDefaults(CURL* curl) {
+    // Restrict the protocols libcurl will dial to HTTP(S) only. Without this,
+    // a malicious redirect (or a user-supplied URL) could coerce curl into
+    // file://, dict://, gopher://, smb://, etc. — useful primitives for
+    // SSRF / local-file disclosure. Redirects are restricted the same way.
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS,
+                     (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS,
+                     (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+
+    // Floor the TLS version at 1.2. Plex.tv has required TLS 1.2+ for years,
+    // so this only blocks a downgrade attack, never a legitimate server.
+    curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+
+#if defined(__vita__) || defined(__PS4__) || defined(__SWITCH__)
+    // Console SSL backends (sceSsl on Vita/PS4, mbedtls on Switch) ship
+    // without a usable CA bundle for libcurl, so peer verification cannot
+    // succeed. Plex traffic on these devices is still confined to the LAN
+    // or a user-chosen relay. If you later bundle a cacert.pem, swap these
+    // to 1L/2L and point CURLOPT_CAINFO at the bundled file.
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+#else
+    // Desktop (Linux/macOS/Windows) and Android have a system CA store
+    // that libcurl can use. Verify both the cert chain and the hostname —
+    // otherwise all traffic to plex.tv (login, PIN exchange, token
+    // refresh) is MITM-able by anyone on the network path.
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+#endif
+
+    // Never deliver SIGALRM-based timeouts. curl's default timeout path
+    // uses signals which are unsafe in a multi-threaded process (the app
+    // performs requests from background threads).
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+}
+
 // Curl write callback data
 struct WriteCallbackData {
     std::string* buffer;
@@ -152,11 +214,11 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
 
     // Follow redirects
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, req.followRedirects ? 1L : 0L);
+    // Cap redirect chains so a misbehaving server can't loop us forever.
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 10L);
 
-    // SSL options (Vita specific)
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-    curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+    // TLS verification, protocol allowlist, and signal safety.
+    applyCurlSecurityDefaults(curl);
 
     // User agent
     curl_easy_setopt(curl, CURLOPT_USERAGENT, m_userAgent.c_str());
@@ -211,8 +273,9 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
         curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
     }
 
-    // Perform request
-    brls::Logger::debug("HTTP {} {}", req.method, req.url);
+    // Perform request. Redact tokens from the logged URL — req.url commonly
+    // contains ?X-Plex-Token=<long-lived-secret>.
+    brls::Logger::debug("HTTP {} {}", req.method, redactTokensInUrl(req.url));
     CURLcode res = curl_easy_perform(curl);
 
     // Cleanup headers
@@ -425,18 +488,13 @@ bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallbac
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 0L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
 
-    // Critical: disable signals for thread-safe operation.
-    // Without this, curl uses SIGALRM for timeouts which can cause CURLE_RECV_ERROR
-    // in multi-threaded apps (downloads run on a background thread).
-    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-
     // Follow redirects
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 10L);
 
-    // SSL options (Vita specific)
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-    curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+    // TLS verification, protocol allowlist, and NOSIGNAL (critical for
+    // thread-safe operation — downloads run on a background thread).
+    applyCurlSecurityDefaults(curl);
 
     // User agent
     curl_easy_setopt(curl, CURLOPT_USERAGENT, m_userAgent.c_str());
@@ -481,7 +539,7 @@ bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallbac
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headerList);
     }
 
-    brls::Logger::info("HttpClient: Starting download from {}", url);
+    brls::Logger::info("HttpClient: Starting download from {}", redactTokensInUrl(url));
 
     // Perform download
     CURLcode res = curl_easy_perform(curl);

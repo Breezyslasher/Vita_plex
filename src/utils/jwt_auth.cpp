@@ -19,6 +19,11 @@
 #include <fstream>
 #endif
 
+#if !defined(_WIN32)
+#include <fcntl.h>
+#include <unistd.h>
+#endif
+
 // ED25519 implementation (simplified from ref10/TweetNaCl)
 // This is a minimal implementation for JWT signing
 
@@ -281,15 +286,43 @@ bool JwtAuth::initialize() {
     return false;
 }
 
-bool JwtAuth::generateKeyPair() {
-    // Generate random seed
+// Fill `buf` with cryptographically strong random bytes. Prior art used
+// std::mt19937_64 — a deterministic PRNG whose full 19937-bit state can be
+// recovered from ~624 observed outputs, which is catastrophic for a long-
+// lived signing key. We prefer /dev/urandom and fall back to std::random_device.
+static bool fillSecureRandom(uint8_t* buf, size_t len) {
+#if !defined(_WIN32)
+    int fd = ::open("/dev/urandom", O_RDONLY);
+    if (fd >= 0) {
+        size_t got = 0;
+        while (got < len) {
+            ssize_t n = ::read(fd, buf + got, len - got);
+            if (n <= 0) break;
+            got += (size_t)n;
+        }
+        ::close(fd);
+        if (got == len) return true;
+    }
+#endif
+    // Fallback. std::random_device on modern toolchains is kernel-backed
+    // (CryptGenRandom on Windows, getentropy/urandom on POSIX). Draw each
+    // byte directly — never use the output to seed a PRNG, since that would
+    // make the key recoverable from subsequent observed signatures.
     std::random_device rd;
-    std::mt19937_64 gen(rd());
-    std::uniform_int_distribution<uint8_t> dist(0, 255);
+    for (size_t i = 0; i < len; ) {
+        unsigned int v = rd();
+        size_t take = std::min(sizeof(v), len - i);
+        memcpy(buf + i, &v, take);
+        i += take;
+    }
+    return true;
+}
 
+bool JwtAuth::generateKeyPair() {
     uint8_t seed[ED25519_SEED_SIZE];
-    for (size_t i = 0; i < ED25519_SEED_SIZE; i++) {
-        seed[i] = dist(gen);
+    if (!fillSecureRandom(seed, ED25519_SEED_SIZE)) {
+        brls::Logger::error("Failed to gather secure randomness for key generation");
+        return false;
     }
 
     // Hash seed to get private key

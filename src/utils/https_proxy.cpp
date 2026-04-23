@@ -16,11 +16,56 @@
 #include <unistd.h>
 #include <cstring>
 #include <cstdlib>
+#include <cstdint>
+#include <fcntl.h>
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <random>
 
 namespace vitaplex {
+
+// Generate an opaque per-process token used to gate requests to the loopback
+// proxy. On PS4 we read from /dev/urandom where possible; otherwise we fall
+// back to std::random_device (libc++ on the PS4 toolchain maps this to a
+// kernel-backed source). The token is hex-encoded so it's safe in a URL path.
+static std::string generateProxyAuthToken() {
+    uint8_t buf[16];
+    bool filled = false;
+    int fd = open("/dev/urandom", O_RDONLY);
+    if (fd >= 0) {
+        ssize_t n = read(fd, buf, sizeof(buf));
+        close(fd);
+        filled = (n == (ssize_t)sizeof(buf));
+    }
+    if (!filled) {
+        std::random_device rd;
+        for (size_t i = 0; i < sizeof(buf); i += sizeof(unsigned int)) {
+            unsigned int v = rd();
+            size_t copy = std::min(sizeof(unsigned int), sizeof(buf) - i);
+            memcpy(buf + i, &v, copy);
+        }
+    }
+    static const char hex[] = "0123456789abcdef";
+    std::string out;
+    out.reserve(sizeof(buf) * 2);
+    for (uint8_t b : buf) {
+        out.push_back(hex[b >> 4]);
+        out.push_back(hex[b & 0x0F]);
+    }
+    return out;
+}
+
+// Constant-time equality check so a hostile local process cannot learn the
+// auth token character-by-character via timing.
+static bool constantTimeEquals(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    unsigned char diff = 0;
+    for (size_t i = 0; i < a.size(); i++) {
+        diff |= (unsigned char)a[i] ^ (unsigned char)b[i];
+    }
+    return diff == 0;
+}
 
 // ─── Curl write callback: streams data to the client socket ──────────────
 
@@ -99,12 +144,14 @@ static size_t curlHeaderCb(void* data, size_t size, size_t nmemb, void* userp) {
 
 // ─── Rewrite HTTPS URLs in m3u8 playlist content ─────────────────────────
 
-static std::string rewriteM3u8(const std::string& body, int proxyPort) {
+static std::string rewriteM3u8(const std::string& body, int proxyPort,
+                               const std::string& authToken) {
     std::string result;
     result.reserve(body.size() * 2);
 
-    char proxyPrefix[64];
-    snprintf(proxyPrefix, sizeof(proxyPrefix), "http://127.0.0.1:%d/", proxyPort);
+    char proxyPrefix[128];
+    snprintf(proxyPrefix, sizeof(proxyPrefix), "http://127.0.0.1:%d/%s/",
+             proxyPort, authToken.c_str());
 
     size_t pos = 0;
     while (pos < body.size()) {
@@ -218,6 +265,10 @@ HttpsProxy::~HttpsProxy() {
 bool HttpsProxy::start() {
     if (m_running.load()) return true;
 
+    // Fresh auth token on every start — minting per-process means even if
+    // the previous token leaked (e.g. via a log), it's dead on relaunch.
+    m_authToken = generateProxyAuthToken();
+
     m_serverFd = socket(AF_INET, SOCK_STREAM, 0);
     if (m_serverFd < 0) {
         brls::Logger::error("HttpsProxy: socket() failed: {}", strerror(errno));
@@ -303,10 +354,55 @@ void HttpsProxy::handleClient(int clientFd) {
     std::string headers = readHttpHeaders(clientFd);
     if (headers.empty()) return;
 
-    // Extract the target URL from the request path
-    std::string targetUrl = extractRequestPath(headers);
-    if (targetUrl.empty() || targetUrl.find("://") == std::string::npos) {
-        sendError(clientFd, 400, "Bad Request: no target URL in path");
+    // Reject anything that isn't a direct loopback peer. On a stock PS4 this
+    // is already enforced by binding to INADDR_LOOPBACK, but checking at the
+    // application layer too keeps us safe if the bind ever widens.
+    {
+        struct sockaddr_in peer;
+        socklen_t peerLen = sizeof(peer);
+        if (getpeername(clientFd, (struct sockaddr*)&peer, &peerLen) != 0 ||
+            peer.sin_family != AF_INET ||
+            ntohl(peer.sin_addr.s_addr) != INADDR_LOOPBACK) {
+            sendError(clientFd, 403, "Forbidden: non-loopback peer");
+            return;
+        }
+    }
+
+    // Extract the request path. Expected shape is
+    //   /<authToken>/<scheme>://host/path
+    // The leading auth token stops a malicious local process from using us
+    // as a general SSRF primitive: it would need to read our memory to
+    // discover the (per-process) token first.
+    std::string fullPath = extractRequestPath(headers);
+    if (fullPath.empty()) {
+        sendError(clientFd, 400, "Bad Request");
+        return;
+    }
+    size_t slash = fullPath.find('/');
+    if (slash == std::string::npos) {
+        sendError(clientFd, 403, "Forbidden");
+        return;
+    }
+    std::string presentedToken = fullPath.substr(0, slash);
+    std::string targetUrl = fullPath.substr(slash + 1);
+    if (!constantTimeEquals(presentedToken, m_authToken)) {
+        sendError(clientFd, 403, "Forbidden");
+        return;
+    }
+
+    // Only allow http:// and https:// targets. Without this, curl would
+    // happily dial file://, dict://, gopher://, smb://, etc. — any of which
+    // turn the proxy into a local-file-read or lateral-movement gadget.
+    auto hasPrefix = [](const std::string& s, const char* p) {
+        size_t n = strlen(p);
+        if (s.size() < n) return false;
+        for (size_t i = 0; i < n; i++) {
+            if (tolower((unsigned char)s[i]) != p[i]) return false;
+        }
+        return true;
+    };
+    if (!hasPrefix(targetUrl, "http://") && !hasPrefix(targetUrl, "https://")) {
+        sendError(clientFd, 400, "Bad Request: unsupported scheme");
         return;
     }
 
@@ -350,6 +446,19 @@ void HttpsProxy::handleClient(int clientFd) {
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 5L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 60L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
+    // Restrict both initial requests and redirect targets to HTTP(S). A .m3u8
+    // body we rewrite might otherwise point curl at file:// or smb:// after
+    // a 302 from a malicious CDN.
+    curl_easy_setopt(curl, CURLOPT_PROTOCOLS,
+                     (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS,
+                     (long)(CURLPROTO_HTTP | CURLPROTO_HTTPS));
+    curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+    // PS4 libcurl uses the system SSL module which has no CA bundle reachable
+    // from user apps, so we cannot verify peers here. The consequence of
+    // this weakness is confined to the single Plex server the user already
+    // chose to trust; we document it rather than silently pretending to
+    // verify.
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "VitaPlex/1.0.0");
@@ -375,7 +484,7 @@ void HttpsProxy::handleClient(int clientFd) {
         }
     } else if (ctx.isM3u8 && !ctx.bodyBuffer.empty()) {
         // Rewrite m3u8 content and send
-        std::string rewritten = rewriteM3u8(ctx.bodyBuffer, m_port);
+        std::string rewritten = rewriteM3u8(ctx.bodyBuffer, m_port, m_authToken);
 
         char hdr[512];
         snprintf(hdr, sizeof(hdr),
@@ -409,8 +518,8 @@ std::string HttpsProxy::rewriteUrl(const std::string& url) const {
     for (auto& c : prefix) c = tolower(c);
     if (prefix.find("https://") != 0) return url;
 
-    char buf[64];
-    snprintf(buf, sizeof(buf), "http://127.0.0.1:%d/", m_port);
+    char buf[128];
+    snprintf(buf, sizeof(buf), "http://127.0.0.1:%d/%s/", m_port, m_authToken.c_str());
     return std::string(buf) + url;
 }
 
