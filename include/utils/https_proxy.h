@@ -41,7 +41,7 @@ public:
     bool isRunning() const { return m_running.load(); }
 
     // Rewrite an HTTPS URL to go through the local proxy.
-    // "https://host/path" → "http://127.0.0.1:PORT/https://host/path"
+    // "https://host/path" → "http://127.0.0.1:PORT/<authToken>/https://host/path"
     // Returns the original URL unchanged if it's not HTTPS.
     std::string rewriteUrl(const std::string& url) const;
 
@@ -58,6 +58,10 @@ private:
     int m_serverFd = -1;
     std::atomic<bool> m_running{false};
     std::thread m_thread;
+    // Per-process random token required as the first path segment of every
+    // proxy request. Without it, any local process that can reach the
+    // loopback socket could use us as an SSRF/redirect primitive.
+    std::string m_authToken;
 };
 
 } // namespace vitaplex
