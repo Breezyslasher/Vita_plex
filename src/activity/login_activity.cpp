@@ -307,7 +307,30 @@ void LoginActivity::onLoginPressed() {
     // Perform login
     PlexClient& client = PlexClient::getInstance();
 
-    if (client.login(m_username, m_password)) {
+    // Move the password into a local and immediately best-effort-wipe the
+    // member so it doesn't linger on the heap for the rest of the activity's
+    // lifetime. `std::string` doesn't give us a guarantee against leftover
+    // copies in the SSO/allocator, but scrubbing what we control means a
+    // core dump shortly after login no longer trivially recovers the creds.
+    std::string password = std::move(m_password);
+    {
+        // Overwrite the moved-from buffer (if any) before its destructor
+        // runs. volatile prevents the compiler from optimizing the writes
+        // away once we stop reading the string.
+        volatile char* p = const_cast<volatile char*>(m_password.data());
+        for (size_t i = 0; i < m_password.size(); i++) p[i] = 0;
+        m_password.clear();
+    }
+
+    bool loginOk = client.login(m_username, password);
+    // Scrub the local copy as well — we no longer need it after login.
+    {
+        volatile char* p = const_cast<volatile char*>(password.data());
+        for (size_t i = 0; i < password.size(); i++) p[i] = 0;
+        password.clear();
+    }
+
+    if (loginOk) {
         Application::getInstance().setUsername(m_username);
 
         // If server URL provided, use it; otherwise auto-detect

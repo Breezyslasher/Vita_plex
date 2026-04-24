@@ -14,6 +14,37 @@
 
 namespace vitaplex {
 
+// Redact JSON/XML "authToken": "<value>" pairs before dumping a response
+// body to the log. Login and PIN-verify responses embed the long-lived
+// account token in the body; any debug log that prints the body verbatim
+// would otherwise persist that token in on-device logs / crash reports.
+static std::string redactBodyForLog(const std::string& body) {
+    static const char* const keys[] = {
+        "\"authToken\"", "\"AuthToken\"", "authenticationToken=",
+    };
+    std::string out = body;
+    for (const char* k : keys) {
+        size_t pos = 0;
+        while ((pos = out.find(k, pos)) != std::string::npos) {
+            // Find the start of the value (first quote or '=' after the key).
+            size_t cursor = pos + strlen(k);
+            // Skip ':' / whitespace / '='
+            while (cursor < out.size() &&
+                   (out[cursor] == ':' || out[cursor] == ' ' || out[cursor] == '=' ||
+                    out[cursor] == '"' || out[cursor] == '\t')) {
+                cursor++;
+            }
+            size_t valEnd = out.find_first_of("\",&}<\n\r", cursor);
+            if (valEnd == std::string::npos) valEnd = out.size();
+            if (valEnd > cursor) {
+                out.replace(cursor, valEnd - cursor, "[redacted]");
+            }
+            pos = cursor + sizeof("[redacted]") - 1;
+        }
+    }
+    return out;
+}
+
 PlexClient& PlexClient::getInstance() {
     static PlexClient instance;
     return instance;
@@ -560,13 +591,13 @@ bool PlexClient::fetchLibrarySections(std::vector<LibrarySection>& sections) {
             handleUnauthorized();
         }
         if (!resp.body.empty()) {
-            brls::Logger::debug("Body: {}", resp.body.substr(0, 500));
+            brls::Logger::debug("Body: {}", redactBodyForLog(resp.body.substr(0, 500)));
         }
         return false;
     }
 
     // Log first part of response for debugging
-    brls::Logger::debug("Response body: {}", resp.body.substr(0, std::min((size_t)500, resp.body.length())));
+    brls::Logger::debug("Response body: {}", redactBodyForLog(resp.body.substr(0, std::min((size_t)500, resp.body.length()))));
 
     sections.clear();
 
@@ -2488,7 +2519,7 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     HttpResponse decisionResp = decisionClient.request(decisionReq);
 
     brls::Logger::info("getTranscodeUrl: Decision response: {} body: {}",
-                      decisionResp.statusCode, decisionResp.body.substr(0, 500));
+                      decisionResp.statusCode, redactBodyForLog(decisionResp.body.substr(0, 500)));
 
     if (decisionResp.statusCode != 200) {
         brls::Logger::warning("getTranscodeUrl: Decision returned {}, trying start anyway",
@@ -3170,7 +3201,7 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     } else {
         brls::Logger::error("tuneLiveTVChannel: Tune returned {} for channel {}, body: {}",
                             tuneResp.statusCode, channelKey,
-                            tuneResp.body.empty() ? "(empty)" : tuneResp.body.substr(0, 200));
+                            tuneResp.body.empty() ? "(empty)" : redactBodyForLog(tuneResp.body.substr(0, 200)));
     }
 
     // Fallback: try transcode/universal with program metadata key
@@ -3218,7 +3249,7 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
 
         brls::Logger::error("tuneLiveTVChannel: Transcode decision failed: {} body: {}",
                             decResp.statusCode,
-                            decResp.body.empty() ? "(empty)" : decResp.body.substr(0, 300));
+                            decResp.body.empty() ? "(empty)" : redactBodyForLog(decResp.body.substr(0, 300)));
     }
 
     brls::Logger::error("tuneLiveTVChannel: All tuning strategies failed for channel {}", channelKey);
