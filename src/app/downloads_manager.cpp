@@ -181,24 +181,59 @@ bool DownloadsManager::queueDownload(const std::string& ratingKey, const std::st
     item.groupThumb = groupThumb;
     item.albumTitle = albumTitle;
 
-    // Generate local path - extract extension from the original file's part path
-    // (e.g., /library/parts/19779/1760220985/file.mp4 -> .mp4)
-    std::string extension;
-    if (!partPath.empty()) {
-        size_t dotPos = partPath.rfind('.');
-        if (dotPos != std::string::npos) {
-            extension = partPath.substr(dotPos);
+    // ratingKey and partPath come from the Plex server's JSON response. A
+    // malicious or compromised server can return arbitrary strings, so we
+    // must never splice them into filesystem paths unsanitised: e.g. a
+    // ratingKey of "../../config/settings" would let the server overwrite
+    // other files on the device (CWE-22 path traversal). Restrict each
+    // component to a conservative allowlist before concatenation.
+    auto sanitizeForFilename = [](const std::string& in, size_t maxLen) {
+        std::string out;
+        out.reserve(std::min(in.size(), maxLen));
+        for (char c : in) {
+            if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                (c >= '0' && c <= '9') || c == '-' || c == '_') {
+                out.push_back(c);
+                if (out.size() >= maxLen) break;
+            }
         }
+        return out;
+    };
+    // Extensions are taken from server-supplied part paths. Only accept
+    // 1–5 alphanumerics after the final dot (covers mp3/mp4/mkv/webm/flac/
+    // m4a/...). Anything else falls back to the media-type default.
+    auto sanitizeExtension = [](const std::string& part, const std::string& mt) {
+        std::string ext;
+        if (!part.empty()) {
+            size_t dotPos = part.rfind('.');
+            if (dotPos != std::string::npos) {
+                std::string raw = part.substr(dotPos + 1);
+                if (!raw.empty() && raw.size() <= 5) {
+                    bool allAlnum = true;
+                    for (char c : raw) {
+                        if (!((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                              (c >= '0' && c <= '9'))) { allAlnum = false; break; }
+                    }
+                    if (allAlnum) ext = "." + raw;
+                }
+            }
+        }
+        if (ext.empty()) ext = (mt == "track") ? ".mp3" : ".mp4";
+        return ext;
+    };
+
+    std::string safeKey = sanitizeForFilename(ratingKey, 64);
+    if (safeKey.empty()) {
+        brls::Logger::error("DownloadsManager: rejecting download with unsafe ratingKey");
+        return false;
     }
-    if (extension.empty()) {
-        extension = (mediaType == "track") ? ".mp3" : ".mp4";
-    }
-    std::string filename = ratingKey + extension;
+    std::string extension = sanitizeExtension(partPath, mediaType);
+    std::string filename = safeKey + extension;
     item.localPath = m_downloadsPath + "/" + filename;
 
     // Generate cover art path for all media types with thumbnails
     if (!thumbUrl.empty()) {
-        item.thumbPath = m_downloadsPath + "/" + ratingKey + "_cover.jpg";
+        item.thumbPath = m_downloadsPath + "/" + safeKey + "_cover.jpg";
     }
 
     m_downloads.push_back(item);
