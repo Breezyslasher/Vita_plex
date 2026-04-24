@@ -1,51 +1,204 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  VitaPlex — Settings tab (improved)
+  Changes vs. original:
+    - Scrolling container so long settings lists work at Vita resolution
+    - Settings are grouped in cards with section headers above, not inline
+    - Each row: label on left, value on right (keeps the nice cyan-value pattern
+      from the current rendering — just with intentional spacing + dividers)
+    - Account header reuses the avatar/user-info pattern rather than raw labels
+    - Logout rendered as a destructive-style row, not a tiny 200px button
+-->
 <brls:Box
     width="100%"
     height="100%"
     axis="column"
-    padding="20">
-    <!-- Title -->
-    <brls:Label
-        id="settings/title"
-        text="Settings"
-        fontSize="28"
-        marginBottom="30"/>
-    <!-- Account section -->
-    <brls:Label
-        text="Account"
-        fontSize="22"
-        marginBottom="10"/>
-    <brls:Label
-        id="settings/user"
-        text="User: Not logged in"
-        fontSize="18"
-        marginBottom="10"/>
-    <brls:Label
-        id="settings/server"
-        text="Server: Not connected"
-        fontSize="18"
-        marginBottom="30"/>
-    <!-- About section -->
-    <brls:Label
-        text="About"
-        fontSize="22"
-        marginBottom="10"/>
-    <brls:Label
-        id="settings/version"
-        text="VitaPlex v2.0.0"
-        fontSize="18"
-        marginBottom="10"/>
-    <brls:Label
-        text="Plex Client for PlayStation Vita"
-        fontSize="16"
-        marginBottom="10"/>
-    <brls:Label
-        text="UI powered by Borealis"
-        fontSize="16"
-        marginBottom="30"/>
-    <!-- Logout button -->
-    <brls:Button
-        id="settings/logout"
-        text="Logout"
-        width="200"/>
+    backgroundColor="#0F1114">
+
+    <brls:ScrollingFrame width="100%" grow="1">
+        <brls:Box
+            width="100%"
+            axis="column"
+            paddingTop="24"
+            paddingBottom="40"
+            paddingLeft="28"
+            paddingRight="28">
+
+            <!-- Header -->
+            <brls:Label
+                id="settings/title"
+                text="Settings"
+                fontSize="28"
+                textColor="#F2F4F7"
+                marginBottom="24"/>
+
+            <!-- === ACCOUNT CARD === -->
+            <brls:Label
+                text="ACCOUNT"
+                fontSize="11"
+                textColor="#7A848F"
+                marginBottom="8"/>
+
+            <brls:Box
+                width="100%"
+                axis="column"
+                cornerRadius="10"
+                backgroundColor="#161A1F"
+                paddingTop="4"
+                paddingBottom="4"
+                marginBottom="24">
+
+                <!-- User row -->
+                <brls:Box
+                    height="56"
+                    axis="row"
+                    alignItems="center"
+                    paddingLeft="16"
+                    paddingRight="16"
+                    focusable="true">
+                    <brls:Box
+                        width="32"
+                        height="32"
+                        cornerRadius="16"
+                        backgroundColor="#2A323B"
+                        marginRight="12"/>
+                    <brls:Box axis="column" grow="1">
+                        <brls:Label
+                            id="settings/user"
+                            text="Not logged in"
+                            fontSize="14"
+                            textColor="#F2F4F7"/>
+                        <brls:Label
+                            id="settings/server"
+                            text="No server connected"
+                            fontSize="11"
+                            textColor="#7A848F"
+                            marginTop="2"/>
+                    </brls:Box>
+                    <brls:Label
+                        text="Switch"
+                        fontSize="12"
+                        textColor="#4ED6C5"/>
+                </brls:Box>
+
+                <!-- divider -->
+                <brls:Rectangle
+                    width="100%"
+                    height="1"
+                    color="#1E242B"/>
+
+                <!-- Logout row -->
+                <brls:Box
+                    id="settings/logout"
+                    height="48"
+                    axis="row"
+                    alignItems="center"
+                    paddingLeft="16"
+                    paddingRight="16"
+                    focusable="true">
+                    <brls:Label
+                        text="Sign out"
+                        fontSize="14"
+                        textColor="#E06B74"
+                        grow="1"/>
+                </brls:Box>
+            </brls:Box>
+
+            <!-- === INTERFACE CARD === -->
+            <brls:Label
+                text="INTERFACE"
+                fontSize="11"
+                textColor="#7A848F"
+                marginBottom="8"/>
+
+            <brls:Box
+                width="100%"
+                axis="column"
+                cornerRadius="10"
+                backgroundColor="#161A1F"
+                marginBottom="24">
+
+                <brls:Box height="48" axis="row" alignItems="center" paddingLeft="16" paddingRight="16" focusable="true">
+                    <brls:Label text="Theme" fontSize="14" textColor="#F2F4F7" grow="1"/>
+                    <brls:Label id="settings/theme_value" text="Dark" fontSize="13" textColor="#4ED6C5"/>
+                </brls:Box>
+                <brls:Rectangle width="100%" height="1" color="#1E242B"/>
+
+                <brls:Box height="48" axis="row" alignItems="center" paddingLeft="16" paddingRight="16" focusable="true">
+                    <brls:Label text="Accent color" fontSize="14" textColor="#F2F4F7" grow="1"/>
+                    <brls:Box width="16" height="16" cornerRadius="8" backgroundColor="#4ED6C5" marginRight="8"/>
+                    <brls:Label id="settings/accent_value" text="Teal" fontSize="13" textColor="#4ED6C5"/>
+                </brls:Box>
+                <brls:Rectangle width="100%" height="1" color="#1E242B"/>
+
+                <brls:Box height="48" axis="row" alignItems="center" paddingLeft="16" paddingRight="16" focusable="true">
+                    <brls:Label text="Libraries in sidebar" fontSize="14" textColor="#F2F4F7" grow="1"/>
+                    <brls:Label id="settings/libs_value" text="On" fontSize="13" textColor="#4ED6C5"/>
+                </brls:Box>
+                <brls:Rectangle width="100%" height="1" color="#1E242B"/>
+
+                <brls:Box height="48" axis="row" alignItems="center" paddingLeft="16" paddingRight="16" focusable="true">
+                    <brls:Label text="Collapse sidebar" fontSize="14" textColor="#F2F4F7" grow="1"/>
+                    <brls:Label id="settings/collapse_value" text="Off" fontSize="13" textColor="#7A848F"/>
+                </brls:Box>
+            </brls:Box>
+
+            <!-- === PLAYBACK CARD === -->
+            <brls:Label
+                text="PLAYBACK"
+                fontSize="11"
+                textColor="#7A848F"
+                marginBottom="8"/>
+
+            <brls:Box
+                width="100%"
+                axis="column"
+                cornerRadius="10"
+                backgroundColor="#161A1F"
+                marginBottom="24">
+
+                <brls:Box height="48" axis="row" alignItems="center" paddingLeft="16" paddingRight="16" focusable="true">
+                    <brls:Label text="Quality (Wi-Fi)" fontSize="14" textColor="#F2F4F7" grow="1"/>
+                    <brls:Label id="settings/quality_wifi" text="Original" fontSize="13" textColor="#4ED6C5"/>
+                </brls:Box>
+                <brls:Rectangle width="100%" height="1" color="#1E242B"/>
+
+                <brls:Box height="48" axis="row" alignItems="center" paddingLeft="16" paddingRight="16" focusable="true">
+                    <brls:Label text="Subtitles" fontSize="14" textColor="#F2F4F7" grow="1"/>
+                    <brls:Label id="settings/subs_value" text="English" fontSize="13" textColor="#4ED6C5"/>
+                </brls:Box>
+                <brls:Rectangle width="100%" height="1" color="#1E242B"/>
+
+                <brls:Box height="48" axis="row" alignItems="center" paddingLeft="16" paddingRight="16" focusable="true">
+                    <brls:Label text="Hardware decoding" fontSize="14" textColor="#F2F4F7" grow="1"/>
+                    <brls:Label id="settings/hw_value" text="Auto" fontSize="13" textColor="#4ED6C5"/>
+                </brls:Box>
+            </brls:Box>
+
+            <!-- === ABOUT CARD === -->
+            <brls:Label
+                text="ABOUT"
+                fontSize="11"
+                textColor="#7A848F"
+                marginBottom="8"/>
+
+            <brls:Box
+                width="100%"
+                axis="column"
+                cornerRadius="10"
+                backgroundColor="#161A1F">
+
+                <brls:Box height="48" axis="row" alignItems="center" paddingLeft="16" paddingRight="16">
+                    <brls:Label text="Version" fontSize="14" textColor="#F2F4F7" grow="1"/>
+                    <brls:Label id="settings/version" text="Alpha 0.0.1" fontSize="13" textColor="#7A848F"/>
+                </brls:Box>
+                <brls:Rectangle width="100%" height="1" color="#1E242B"/>
+                <brls:Box height="48" axis="row" alignItems="center" paddingLeft="16" paddingRight="16" focusable="true">
+                    <brls:Label text="Debug logging" fontSize="14" textColor="#F2F4F7" grow="1"/>
+                    <brls:Label id="settings/debug_value" text="Off" fontSize="13" textColor="#7A848F"/>
+                </brls:Box>
+            </brls:Box>
+
+        </brls:Box>
+    </brls:ScrollingFrame>
 </brls:Box>

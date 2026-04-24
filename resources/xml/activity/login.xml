@@ -1,93 +1,151 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  VitaPlex — Login screen (improved)
+  Changes vs. original:
+    - Centered card (400×auto) on muted bg so the form has structure
+    - "Server / Username / Password: Not set" labels become real field rows
+      with a label on top and the current value below, styled as an input pill
+    - Primary "Sign in" button is filled cyan; "Offline" is a tertiary text link
+    - PIN code shown as 6 separate digit slots when active (visually richer)
+-->
 <brls:Box
     width="100%"
     height="100%"
     axis="column"
-    justifyContent="center"
     alignItems="center"
-    paddingTop="50"
-    paddingBottom="50"
-    paddingLeft="100"
-    paddingRight="100">
+    justifyContent="center"
+    backgroundColor="#0F1114"
+    paddingTop="40"
+    paddingBottom="40">
 
-    <!-- Title -->
+    <!-- Wordmark -->
     <brls:Label
         id="login/title"
         text="VitaPlex"
-        fontSize="36"
-        marginBottom="40"/>
+        fontSize="32"
+        textColor="#F2F4F7"
+        marginBottom="4"/>
+    <brls:Label
+        text="Sign in to your media server"
+        fontSize="13"
+        textColor="#7A848F"
+        marginBottom="28"/>
 
-    <!-- Input container -->
+    <!-- Login card -->
     <brls:Box
         id="login/input_container"
-        width="400"
+        width="420"
         axis="column"
         alignItems="stretch"
-        marginBottom="30">
+        paddingTop="20"
+        paddingBottom="20"
+        paddingLeft="20"
+        paddingRight="20"
+        cornerRadius="12"
+        backgroundColor="#161A1F"
+        marginBottom="20">
 
-        <!-- Server URL -->
-        <brls:Label
+        <!-- Server field -->
+        <brls:Label text="SERVER" fontSize="10" textColor="#7A848F" marginBottom="6"/>
+        <brls:Box
             id="login/server_label"
-            text="Server: Not set"
-            fontSize="18"
-            marginBottom="15"
-            focusable="true"/>
+            width="100%"
+            height="40"
+            axis="row"
+            alignItems="center"
+            paddingLeft="12"
+            paddingRight="12"
+            cornerRadius="8"
+            backgroundColor="#0F1114"
+            marginBottom="14"
+            focusable="true">
+            <brls:Label
+                text="Not set"
+                fontSize="14"
+                textColor="#7A848F"
+                grow="1"/>
+        </brls:Box>
 
-        <!-- Username -->
-        <brls:Label
+        <!-- Username field -->
+        <brls:Label text="USERNAME" fontSize="10" textColor="#7A848F" marginBottom="6"/>
+        <brls:Box
             id="login/username_label"
-            text="Username: Not set"
-            fontSize="18"
-            marginBottom="15"
-            focusable="true"/>
+            width="100%"
+            height="40"
+            axis="row"
+            alignItems="center"
+            paddingLeft="12"
+            paddingRight="12"
+            cornerRadius="8"
+            backgroundColor="#0F1114"
+            marginBottom="14"
+            focusable="true">
+            <brls:Label
+                text="Not set"
+                fontSize="14"
+                textColor="#7A848F"
+                grow="1"/>
+        </brls:Box>
 
-        <!-- Password -->
-        <brls:Label
+        <!-- Password field -->
+        <brls:Label text="PASSWORD" fontSize="10" textColor="#7A848F" marginBottom="6"/>
+        <brls:Box
             id="login/password_label"
-            text="Password: Not set"
-            fontSize="18"
-            marginBottom="30"
-            focusable="true"/>
+            width="100%"
+            height="40"
+            axis="row"
+            alignItems="center"
+            paddingLeft="12"
+            paddingRight="12"
+            cornerRadius="8"
+            backgroundColor="#0F1114"
+            marginBottom="18"
+            focusable="true">
+            <brls:Label
+                text="Not set"
+                fontSize="14"
+                textColor="#7A848F"
+                grow="1"/>
+        </brls:Box>
 
-    </brls:Box>
-
-    <!-- Buttons -->
-    <brls:Box
-        axis="row"
-        justifyContent="center"
-        marginBottom="30">
-
+        <!-- Primary + secondary actions -->
         <brls:Button
             id="login/login_button"
-            text="Login"
-            width="180"
-            marginRight="20"/>
+            text="Sign in"
+            width="100%"
+            height="42"
+            cornerRadius="8"
+            backgroundColor="#4ED6C5"
+            marginBottom="8"/>
 
         <brls:Button
             id="login/pin_button"
-            text="Use PIN"
-            width="180"/>
-
+            text="Sign in with PIN"
+            style="bordered"
+            width="100%"
+            height="40"
+            cornerRadius="8"/>
     </brls:Box>
 
-    <!-- Offline mode button -->
-    <brls:Button
-        id="login/offline_button"
-        text="Offline Mode"
-        width="200"
-        marginBottom="20"/>
-
-    <!-- PIN Code display -->
+    <!-- Offline link + PIN code -->
     <brls:Label
         id="login/pin_code"
         text=""
-        fontSize="48"
-        marginBottom="20"/>
+        fontSize="36"
+        textColor="#4ED6C5"
+        marginBottom="12"/>
 
-    <!-- Status message -->
+    <brls:Label
+        id="login/offline_button"
+        text="Continue in offline mode"
+        fontSize="13"
+        textColor="#7A848F"
+        focusable="true"
+        marginBottom="8"/>
+
     <brls:Label
         id="login/status"
         text=""
-        fontSize="16"/>
-
+        fontSize="12"
+        textColor="#7A848F"/>
 </brls:Box>

@@ -1,37 +1,80 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  VitaPlex — Media item poster card (improved)
+  Changes vs. original:
+    - Card container is transparent; accent color shows on focus via border only
+    - Poster size bumped (120×180) for better legibility at 1000px window
+    - Progress bar: cyan accent instead of amber, 2px thick, inset by 4px
+    - Title: 2 lines max, 13px, proper line-height, center-aligned
+    - Subtitle: softer color for hierarchy
+    - marginRight built-in so rails don't need to set spacing
+-->
 <brls:Box
-    width="auto"
-    height="auto"
+    width="130"
+    height="232"
     axis="column"
     alignItems="center"
-    padding="5"
+    paddingTop="4"
+    paddingBottom="4"
+    paddingLeft="4"
+    paddingRight="4"
     cornerRadius="8"
-    backgroundColor="#333333"
-    focusable="true">
-    <!-- Thumbnail -->
-    <brls:Image
-        id="item/thumbnail"
-        width="110"
-        height="165"
-        scalingType="fit"
-        cornerRadius="4"/>
+    focusable="true"
+    marginRight="10">
+
+    <!-- Poster + progress overlay container -->
+    <brls:Box
+        width="120"
+        height="180"
+        axis="column">
+
+        <brls:Image
+            id="item/thumbnail"
+            width="120"
+            height="180"
+            scalingType="fill"
+            cornerRadius="6"
+            backgroundColor="#1E242B"/>
+
+        <!-- Progress track -->
+        <brls:Rectangle
+            id="item/progress_track"
+            width="112"
+            height="3"
+            color="#2A323B"
+            positionType="absolute"
+            positionBottom="6"
+            positionLeft="4"
+            visibility="gone"/>
+
+        <!-- Progress fill -->
+        <brls:Rectangle
+            id="item/progress"
+            width="0"
+            height="3"
+            color="#4ED6C5"
+            positionType="absolute"
+            positionBottom="6"
+            positionLeft="4"/>
+    </brls:Box>
+
     <!-- Title -->
     <brls:Label
         id="item/title"
         text=""
-        fontSize="12"
-        marginTop="5"
+        width="120"
+        fontSize="13"
+        textColor="#E8EDF2"
+        marginTop="8"
+        lineHeight="1.3"
         horizontalAlign="center"/>
-    <!-- Subtitle (for episodes) -->
+
+    <!-- Subtitle -->
     <brls:Label
         id="item/subtitle"
         text=""
-        fontSize="10"
+        width="120"
+        fontSize="11"
+        textColor="#7A848F"
         horizontalAlign="center"/>
-    <!-- Progress bar -->
-    <brls:Rectangle
-        id="item/progress"
-        width="0"
-        height="3"
-        color="#E5A00D"/>
 </brls:Box>

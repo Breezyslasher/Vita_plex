@@ -1,61 +1,169 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  VitaPlex — Media detail view (improved)
+  Changes vs. original:
+    - Poster enlarged to 220×330 (was 200×300) with a subtle border + radius
+    - Metadata row uses bullets and chips for rating/year/duration
+    - "Play" is a primary filled button (cyan), "Download" is bordered secondary,
+      placed horizontally in the action row instead of stacked gray buttons
+    - Synopsis field added (detail/summary) with line-height for readability
+    - Tag chips for genres
+    - Cast/Extras stays as a horizontal rail with a SECTION label
+-->
 <brls:Box
     width="100%"
     height="100%"
-    axis="row"
-    padding="30">
-    <!-- Left side - Poster -->
-    <brls:Box
-        axis="column"
-        width="200"
-        marginRight="30">
-        <brls:Image
-            id="detail/poster"
-            width="200"
-            height="300"
-            scalingType="fit"/>
-    </brls:Box>
-    <!-- Right side - Details -->
-    <brls:Box
-        axis="column"
-        grow="1">
-        <brls:Label
-            id="detail/title"
-            text="Title"
-            fontSize="26"
-            marginBottom="10"/>
+    axis="column"
+    backgroundColor="#0F1114">
+
+    <brls:ScrollingFrame width="100%" grow="1">
         <brls:Box
+            width="100%"
             axis="row"
-            marginBottom="15">
-            <brls:Label
-                id="detail/year"
-                text=""
-                fontSize="16"
-                marginRight="15"/>
-            <brls:Label
-                id="detail/rating"
-                text=""
-                fontSize="16"
-                marginRight="15"/>
-            <brls:Label
-                id="detail/duration"
-                text=""
-                fontSize="16"/>
+            paddingTop="28"
+            paddingBottom="28"
+            paddingLeft="28"
+            paddingRight="28">
+
+            <!-- LEFT: Poster + action buttons -->
+            <brls:Box
+                axis="column"
+                width="220"
+                marginRight="28">
+
+                <brls:Image
+                    id="detail/poster"
+                    width="220"
+                    height="330"
+                    scalingType="fit"
+                    cornerRadius="8"
+                    backgroundColor="#1E242B"
+                    marginBottom="16"/>
+
+                <!-- Primary CTA: Play -->
+                <brls:Button
+                    id="detail/play"
+                    text="Play"
+                    width="220"
+                    height="42"
+                    marginBottom="8"
+                    cornerRadius="6"
+                    backgroundColor="#4ED6C5"/>
+
+                <!-- Secondary CTAs -->
+                <brls:Box axis="row" marginBottom="8">
+                    <brls:Button
+                        id="detail/download"
+                        style="bordered"
+                        text="Download"
+                        width="106"
+                        height="38"
+                        marginRight="8"
+                        cornerRadius="6"/>
+                    <brls:Button
+                        id="detail/more"
+                        style="bordered"
+                        text="···"
+                        width="106"
+                        height="38"
+                        cornerRadius="6"/>
+                </brls:Box>
+
+            </brls:Box>
+
+            <!-- RIGHT: Meta + synopsis + extras -->
+            <brls:Box
+                axis="column"
+                grow="1">
+
+                <!-- Title + year -->
+                <brls:Label
+                    id="detail/title"
+                    text="Title"
+                    fontSize="26"
+                    textColor="#F2F4F7"
+                    marginBottom="4"/>
+
+                <brls:Label
+                    id="detail/tagline"
+                    text=""
+                    fontSize="13"
+                    textColor="#7A848F"
+                    marginBottom="14"/>
+
+                <!-- Metadata chip row -->
+                <brls:Box
+                    axis="row"
+                    alignItems="center"
+                    marginBottom="16">
+                    <brls:Label
+                        id="detail/year"
+                        text=""
+                        fontSize="12"
+                        textColor="#B8C2CC"
+                        marginRight="10"/>
+                    <brls:Label
+                        text="·"
+                        fontSize="12"
+                        textColor="#4A535D"
+                        marginRight="10"/>
+                    <brls:Label
+                        id="detail/rating"
+                        text=""
+                        fontSize="12"
+                        textColor="#B8C2CC"
+                        paddingLeft="8"
+                        paddingRight="8"
+                        paddingTop="2"
+                        paddingBottom="2"
+                        cornerRadius="3"
+                        backgroundColor="#1E242B"
+                        marginRight="10"/>
+                    <brls:Label
+                        text="·"
+                        fontSize="12"
+                        textColor="#4A535D"
+                        marginRight="10"/>
+                    <brls:Label
+                        id="detail/duration"
+                        text=""
+                        fontSize="12"
+                        textColor="#B8C2CC"/>
+                </brls:Box>
+
+                <!-- Genres row -->
+                <brls:Box
+                    id="detail/genres"
+                    axis="row"
+                    height="24"
+                    marginBottom="18"/>
+
+                <!-- Synopsis -->
+                <brls:Label
+                    text="SYNOPSIS"
+                    fontSize="11"
+                    textColor="#7A848F"
+                    marginBottom="6"/>
+                <brls:Label
+                    id="detail/summary"
+                    text=""
+                    fontSize="14"
+                    textColor="#D5DBE2"
+                    lineHeight="1.5"
+                    marginBottom="22"/>
+
+                <!-- Extras / Children rail -->
+                <brls:Label
+                    id="detail/children_label"
+                    text=""
+                    fontSize="13"
+                    textColor="#F2F4F7"
+                    marginBottom="10"/>
+                <brls:Box
+                    id="detail/children"
+                    axis="row"
+                    height="180"/>
+            </brls:Box>
         </brls:Box>
-        <brls:Label
-            id="detail/summary"
-            text=""
-            fontSize="16"
-            marginBottom="20"/>
-        <!-- Children container -->
-        <brls:Label
-            id="detail/children_label"
-            text=""
-            fontSize="20"
-            marginBottom="10"/>
-        <brls:Box
-            id="detail/children"
-            axis="row"
-            height="180"/>
-    </brls:Box>
+    </brls:ScrollingFrame>
 </brls:Box>

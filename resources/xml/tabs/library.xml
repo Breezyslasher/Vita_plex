@@ -1,21 +1,67 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  VitaPlex — Library tab (improved)
+  Changes vs. original:
+    - Title row with count + view toggle on the right (better density signal)
+    - Filter bar wraps horizontally scrolling chip buttons
+    - Padding matches home (28px) so sections align across tabs
+-->
 <brls:Box
     width="100%"
     height="100%"
     axis="column"
-    padding="20">
-    <!-- Title -->
-    <brls:Label
-        id="library/title"
-        text="Library"
-        fontSize="28"
-        marginBottom="20"/>
-    <!-- Section buttons -->
+    backgroundColor="#0F1114"
+    paddingTop="24"
+    paddingBottom="0"
+    paddingLeft="28"
+    paddingRight="28">
+
+    <!-- Header row: title + item count + sort -->
+    <brls:Box
+        axis="row"
+        justifyContent="spaceBetween"
+        alignItems="flexEnd"
+        marginBottom="16">
+        <brls:Box axis="column">
+            <brls:Label
+                id="library/title"
+                text="Movies"
+                fontSize="28"
+                textColor="#F2F4F7"/>
+            <brls:Label
+                id="library/count"
+                text="0 items"
+                fontSize="12"
+                textColor="#7A848F"
+                marginTop="2"/>
+        </brls:Box>
+
+        <brls:Box
+            axis="row"
+            alignItems="center">
+            <brls:Label
+                id="library/sort"
+                text="Sort · Recently Added"
+                fontSize="12"
+                textColor="#4ED6C5"
+                focusable="true"
+                marginRight="16"/>
+            <brls:Label
+                id="library/view_toggle"
+                text="Grid"
+                fontSize="12"
+                textColor="#4ED6C5"
+                focusable="true"/>
+        </brls:Box>
+    </brls:Box>
+
+    <!-- Filter chip bar -->
     <brls:Box
         id="library/sections"
         axis="row"
-        height="50"
+        height="36"
         marginBottom="20"/>
+
     <!-- Content grid -->
     <brls:ScrollingFrame
         id="library/content"

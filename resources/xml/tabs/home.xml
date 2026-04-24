@@ -1,32 +1,132 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  VitaPlex — Home tab (improved)
+  Changes vs. original:
+    - Title gets a weight/hierarchy treatment via subtitle line
+    - Hero "Continue Watching" slot (260px tall, widescreen) instead of tiny 180px poster
+    - Tighter section header spacing; use uppercase small-caps labels
+    - Dedicated rows for: Recently Added Movies, Recently Added Shows, On Deck
+    - ScrollingFrame wraps everything so content below the fold is reachable
+-->
 <brls:Box
     width="100%"
     height="100%"
     axis="column"
-    padding="20">
-    <!-- Title -->
-    <brls:Label
-        id="home/title"
-        text="Home"
-        fontSize="28"
-        marginBottom="20"/>
-    <!-- Continue Watching section -->
-    <brls:Label
-        text="Continue Watching"
-        fontSize="20"
-        marginBottom="10"/>
-    <brls:Box
-        id="home/continue_watching"
-        axis="row"
-        height="180"
-        marginBottom="20"/>
-    <!-- Recently Added section -->
-    <brls:Label
-        text="Recently Added"
-        fontSize="20"
-        marginBottom="10"/>
-    <brls:Box
-        id="home/recently_added"
-        axis="row"
-        height="180"/>
+    backgroundColor="#0F1114">
+
+    <brls:ScrollingFrame
+        width="100%"
+        grow="1">
+
+        <brls:Box
+            width="100%"
+            axis="column"
+            paddingTop="24"
+            paddingBottom="24"
+            paddingLeft="28"
+            paddingRight="28">
+
+            <!-- Page header -->
+            <brls:Box
+                axis="column"
+                marginBottom="20">
+                <brls:Label
+                    id="home/title"
+                    text="Home"
+                    fontSize="28"
+                    textColor="#F2F4F7"/>
+                <brls:Label
+                    id="home/subtitle"
+                    text="Welcome back"
+                    fontSize="13"
+                    textColor="#7A848F"
+                    marginTop="2"/>
+            </brls:Box>
+
+            <!-- HERO: Continue Watching (widescreen card) -->
+            <brls:Label
+                text="CONTINUE WATCHING"
+                fontSize="11"
+                textColor="#7A848F"
+                marginBottom="10"/>
+
+            <brls:Box
+                id="home/continue_watching"
+                width="100%"
+                height="260"
+                axis="row"
+                marginBottom="28"
+                cornerRadius="10"
+                backgroundColor="#161A1F"/>
+
+            <!-- Recently Added Movies -->
+            <brls:Box
+                axis="row"
+                justifyContent="spaceBetween"
+                alignItems="center"
+                marginBottom="10">
+                <brls:Label
+                    text="Recently Added Movies"
+                    fontSize="16"
+                    textColor="#F2F4F7"/>
+                <brls:Label
+                    id="home/movies_more"
+                    text="See all"
+                    fontSize="12"
+                    textColor="#4ED6C5"
+                    focusable="true"/>
+            </brls:Box>
+            <brls:Box
+                id="home/recently_added"
+                axis="row"
+                height="210"
+                marginBottom="24"/>
+
+            <!-- Recently Added Shows -->
+            <brls:Box
+                axis="row"
+                justifyContent="spaceBetween"
+                alignItems="center"
+                marginBottom="10">
+                <brls:Label
+                    text="Recently Added Shows"
+                    fontSize="16"
+                    textColor="#F2F4F7"/>
+                <brls:Label
+                    id="home/shows_more"
+                    text="See all"
+                    fontSize="12"
+                    textColor="#4ED6C5"
+                    focusable="true"/>
+            </brls:Box>
+            <brls:Box
+                id="home/recently_added_shows"
+                axis="row"
+                height="210"
+                marginBottom="24"/>
+
+            <!-- On Deck / Up Next -->
+            <brls:Box
+                axis="row"
+                justifyContent="spaceBetween"
+                alignItems="center"
+                marginBottom="10">
+                <brls:Label
+                    text="On Deck"
+                    fontSize="16"
+                    textColor="#F2F4F7"/>
+                <brls:Label
+                    id="home/deck_more"
+                    text="See all"
+                    fontSize="12"
+                    textColor="#4ED6C5"
+                    focusable="true"/>
+            </brls:Box>
+            <brls:Box
+                id="home/on_deck"
+                axis="row"
+                height="210"/>
+
+        </brls:Box>
+    </brls:ScrollingFrame>
 </brls:Box>

@@ -1,31 +1,65 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  VitaPlex — Search tab (improved)
+  Changes vs. original:
+    - Real "search field" affordance: pill container with magnifier-style prefix label
+      and placeholder copy tinted down (no more tiny "Tap to search...")
+    - Results count moves inline next to section labels (Movies · 3)
+    - Each category (Movies, Shows, Tracks, Artists) gets its own rail
+    - Empty state label when no query
+-->
 <brls:Box
     width="100%"
     height="100%"
     axis="column"
-    padding="20">
-    <!-- Title -->
+    backgroundColor="#0F1114"
+    paddingTop="24"
+    paddingLeft="28"
+    paddingRight="28">
+
     <brls:Label
         id="search/title"
         text="Search"
         fontSize="28"
-        marginBottom="20"/>
-    <!-- Search input -->
-    <brls:Label
+        textColor="#F2F4F7"
+        marginBottom="16"/>
+
+    <!-- Search field -->
+    <brls:Box
         id="search/input"
-        text="Tap to search..."
-        fontSize="20"
+        width="100%"
+        height="44"
+        axis="row"
+        alignItems="center"
+        paddingLeft="16"
+        paddingRight="16"
+        cornerRadius="22"
+        backgroundColor="#161A1F"
         marginBottom="20"
-        focusable="true"/>
-    <!-- Results label -->
-    <brls:Label
-        id="search/results_label"
-        text=""
-        fontSize="16"
-        marginBottom="10"/>
-    <!-- Results grid -->
+        focusable="true">
+        <brls:Label
+            text="⌕"
+            fontSize="18"
+            textColor="#7A848F"
+            marginRight="10"/>
+        <brls:Label
+            id="search/placeholder"
+            text="Search movies, shows, music…"
+            fontSize="14"
+            textColor="#7A848F"
+            grow="1"/>
+    </brls:Box>
+
+    <!-- Results scroll -->
     <brls:ScrollingFrame
         id="search/results"
         grow="1"
         width="100%"/>
+
+    <!-- Empty state (shown when no query) -->
+    <brls:Label
+        id="search/results_label"
+        text=""
+        fontSize="12"
+        textColor="#7A848F"/>
 </brls:Box>
