@@ -9,6 +9,8 @@
 #include "view/media_detail_view.hpp"
 #include "view/long_press_gesture.hpp"
 #include "platform/platform.hpp"
+#include <algorithm>
+#include <cmath>
 
 namespace vitaplex {
 
@@ -28,6 +30,16 @@ RecyclingGrid::RecyclingGrid() {
     m_visibleRows = 3;
 }
 
+RecyclingGrid::~RecyclingGrid() {
+    // Release the lazily-allocated GPU texture for the start-button hint.
+    // Without this every grid teardown would leak one image handle.
+    if (m_startHintNvg != 0) {
+        NVGcontext* vg = brls::Application::getNVGContext();
+        if (vg) nvgDeleteImage(vg, m_startHintNvg);
+        m_startHintNvg = 0;
+    }
+}
+
 void RecyclingGrid::setDataSource(const std::vector<MediaItem>& items) {
     m_items = items;
     m_loading = false;
@@ -39,6 +51,12 @@ void RecyclingGrid::appendItems(const std::vector<MediaItem>& newItems) {
         m_loading = false;
         return;
     }
+
+    // Invalidate the visibility cull cache so newly-appended rows get
+    // hidden if they land off-screen instead of paying the per-frame
+    // draw cost while waiting for the user to scroll down to them.
+    m_cachedFirstVisible = -1;
+    m_cachedLastVisible  = -1;
 
     size_t oldSize = m_items.size();
     m_items.insert(m_items.end(), newItems.begin(), newItems.end());
@@ -104,11 +122,13 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
         currentRow->setJustifyContent(brls::JustifyContent::FLEX_START);
         currentRow->setMarginBottom(spacing);
         m_contentBox->addView(currentRow);
+        m_rows.push_back(currentRow);
     }
 
     auto* cell = new MediaItemCell();
     cell->setItem(m_items[index]);
     cell->setMarginRight(spacing);
+    m_cells.push_back(cell);
 
     int idx = (int)index;
     cell->registerClickAction([this, idx](brls::View* view) {
@@ -214,6 +234,13 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
 
 void RecyclingGrid::rebuildGrid() {
     m_contentBox->clearViews();
+    m_rows.clear();
+    m_cells.clear();
+    // Force visibility-cull and row-pitch to recompute against the new
+    // layout. Stale values would leave half the new rows hidden.
+    m_cachedFirstVisible = -1;
+    m_cachedLastVisible  = -1;
+    m_cachedRowPitch     = 0.0f;
     m_renderedCount = 0;
 
     if (m_items.empty()) return;
@@ -231,6 +258,115 @@ void RecyclingGrid::rebuildGrid() {
 void RecyclingGrid::onItemClicked(int index) {
     if (index >= 0 && index < (int)m_items.size() && m_onItemSelected) {
         m_onItemSelected(m_items[index]);
+    }
+}
+
+void RecyclingGrid::draw(NVGcontext* vg, float x, float y, float width, float height,
+                          brls::Style style, brls::FrameContext* ctx) {
+    // ── Step 1: visibility-cull off-screen rows ─────────────────────────
+    // ScrollingFrame::draw() walks every row in m_contentBox and issues a
+    // full View::frame() pass on each — even ones nowhere near the
+    // viewport. Flipping off-screen rows to INVISIBLE preserves their
+    // layout space (so the scroll height stays right) but lets borealis
+    // skip the per-cell draw entirely. On Vita this is the difference
+    // between "smooth scroll" and "5 FPS".
+    if (!m_rows.empty()) {
+        // Sample the actual laid-out row pitch once we have one. Rows
+        // have height 0 before the first layout pass, so we keep
+        // retrying until a real value appears.
+        if (m_cachedRowPitch <= 0.0f && m_rows[0]) {
+            float h = m_rows[0]->getHeight();
+            if (h > 0.0f) m_cachedRowPitch = h;
+        }
+        if (m_cachedRowPitch > 0.0f) {
+            float scrollY = this->getContentOffsetY();
+            float viewH   = this->getHeight();
+            int rowCount  = (int)m_rows.size();
+
+            int firstVisible = std::max(0, (int)(scrollY / m_cachedRowPitch) - 1);
+            int lastVisible  = std::min(rowCount,
+                                        (int)((scrollY + viewH) / m_cachedRowPitch) + 2);
+
+            if (firstVisible != m_cachedFirstVisible ||
+                lastVisible  != m_cachedLastVisible) {
+                if (m_cachedFirstVisible < 0) {
+                    // First pass: set every row in one sweep.
+                    for (int i = 0; i < rowCount; i++) {
+                        brls::Visibility desired = (i >= firstVisible && i < lastVisible)
+                            ? brls::Visibility::VISIBLE
+                            : brls::Visibility::INVISIBLE;
+                        m_rows[i]->setVisibility(desired);
+                    }
+                } else {
+                    // Subsequent passes: only touch the boundary rows
+                    // that actually changed state.
+                    for (int i = m_cachedFirstVisible;
+                         i < firstVisible && i < rowCount; i++) {
+                        if (i >= 0) m_rows[i]->setVisibility(brls::Visibility::INVISIBLE);
+                    }
+                    for (int i = std::max(0, lastVisible);
+                         i < m_cachedLastVisible && i < rowCount; i++) {
+                        m_rows[i]->setVisibility(brls::Visibility::INVISIBLE);
+                    }
+                    for (int i = firstVisible; i < lastVisible; i++) {
+                        if (i >= 0) m_rows[i]->setVisibility(brls::Visibility::VISIBLE);
+                    }
+                }
+                m_cachedFirstVisible = firstVisible;
+                m_cachedLastVisible  = lastVisible;
+            }
+        }
+    }
+
+    // ── Step 2: let borealis paint everything as normal ─────────────────
+    brls::ScrollingFrame::draw(vg, x, y, width, height, style, ctx);
+
+    // ── Step 3: paint the start-button hint on the focused cell ─────────
+    // Previously every cell carried its own brls::Box + brls::Image +
+    // brls::Label trio for this hint, all walked every frame even when
+    // hidden. Now a single batched NVG draw on the focused cell only,
+    // with the hint image lazily uploaded once and reused.
+    if (m_cachedFirstVisible >= 0 && !m_cells.empty()) {
+        MediaItemCell* focusedCell = nullptr;
+        int startIdx = m_cachedFirstVisible * m_columns;
+        int endIdx   = std::min(m_cachedLastVisible * m_columns,
+                                (int)m_cells.size());
+        for (int i = startIdx; i < endIdx; i++) {
+            MediaItemCell* c = m_cells[i];
+            if (c && c->isFocused() && c->wantsStartHint()) {
+                focusedCell = c;
+                break;
+            }
+        }
+        if (focusedCell) {
+            if (m_startHintNvg == 0) {
+                m_startHintNvg = nvgCreateImage(
+                    vg, RESOURCE_PREFIX "images/start_button.png", 0);
+                if (m_startHintNvg != 0) {
+                    nvgImageSize(vg, m_startHintNvg, &m_startHintW, &m_startHintH);
+                }
+            }
+            if (m_startHintNvg != 0 && m_startHintW > 0 && m_startHintH > 0) {
+                float tx, ty, tw, th;
+                focusedCell->getThumbnailBounds(tx, ty, tw, th);
+                if (tw > 0.0f && th > 0.0f) {
+                    float hintW = (float)m_startHintW;
+                    float hintH = (float)m_startHintH;
+                    // Top-right corner of the cover, with a small inset
+                    // matching the prior brls::Box overlay position.
+                    float hx = tx + tw - hintW - 7.0f;
+                    float hy = ty + 7.0f;
+                    nvgSave(vg);
+                    NVGpaint paint = nvgImagePattern(
+                        vg, hx, hy, hintW, hintH, 0, m_startHintNvg, 1.0f);
+                    nvgBeginPath(vg);
+                    nvgRect(vg, hx, hy, hintW, hintH);
+                    nvgFillPaint(vg, paint);
+                    nvgFill(vg);
+                    nvgRestore(vg);
+                }
+            }
+        }
     }
 }
 

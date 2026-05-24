@@ -20,7 +20,15 @@ MediaItemCell::MediaItemCell()
     this->setPadding(5);
     this->setFocusable(true);
     this->setCornerRadius(8);
-    this->setBackgroundColor(nvgRGBA(50, 50, 50, 255));
+    // Intentionally NOT calling setBackgroundColor(). Borealis's View::frame()
+    // calls drawBackground() for every cell every frame as long as a background
+    // colour is set — that's 4 NVG calls (beginPath, roundedRect, fillColor,
+    // fill) per visible cell. With 24+ visible cells at 60 fps that becomes a
+    // measurable cost on Vita, and the cover image paints right over the gray
+    // anyway. Instead the cell's draw() override paints a placeholder rect
+    // only for cells whose thumbnail hasn't loaded yet (see draw() below).
+    // The focus highlight is still applied via setBackgroundColor() in
+    // onFocusGained() — that only affects the single focused cell.
 
     // Thumbnail image - hidden until texture loads to prevent null texture crash on Vita
     m_thumbnailImage = new brls::Image();
@@ -60,31 +68,11 @@ MediaItemCell::MediaItemCell()
     m_progressBar->setVisibility(brls::Visibility::GONE);
     this->addView(m_progressBar);
 
-    // Button hint box (shown on focus for album items)
-    // Small pill badge in top-right corner of album art
-    m_buttonHintBox = new brls::Box();
-    m_buttonHintBox->setAxis(brls::Axis::ROW);
-    m_buttonHintBox->setJustifyContent(brls::JustifyContent::CENTER);
-    m_buttonHintBox->setAlignItems(brls::AlignItems::CENTER);
-    m_buttonHintBox->setPositionType(brls::PositionType::ABSOLUTE);
-    m_buttonHintBox->setPositionTop(7);    // Small offset from top edge
-    m_buttonHintBox->setPositionRight(7);  // Anchor to top-right corner
-    m_buttonHintBox->setWidth(40);
-    m_buttonHintBox->setHeight(16);
-    m_buttonHintBox->setVisibility(brls::Visibility::GONE);
-
-    m_buttonHintIcon = new brls::Image();
-    m_buttonHintIcon->setWidth(40);
-    m_buttonHintIcon->setHeight(16);
-    m_buttonHintIcon->setScalingType(brls::ImageScalingType::FIT);
-    m_buttonHintBox->addView(m_buttonHintIcon);
-
-    m_buttonHintLabel = new brls::Label();
-    m_buttonHintLabel->setFontSize(8);
-    m_buttonHintLabel->setTextColor(nvgRGBA(255, 255, 255, 220));
-    m_buttonHintBox->addView(m_buttonHintLabel);
-
-    this->addView(m_buttonHintBox);
+    // The start-button hint overlay used to be three child views per cell
+    // (brls::Box + brls::Image + brls::Label) that borealis walked every
+    // frame even when GONE. It now lives in RecyclingGrid::draw() as a
+    // single NVG image painted on whichever cell currently has focus —
+    // see wantsStartHint() / getThumbnailBounds() below.
 }
 
 MediaItemCell::~MediaItemCell() {
@@ -251,6 +239,25 @@ brls::View* MediaItemCell::create() {
 
 void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float height,
                           brls::Style style, brls::FrameContext* ctx) {
+    // Placeholder background — only painted while the cover is still loading.
+    // Once ImageLoader flips the brls::Image to VISIBLE, the cover overlays
+    // this region and we skip the draw entirely. This is what replaces the
+    // ctor-level setBackgroundColor() that used to fire 4 NVG calls per cell
+    // per frame.
+    if (m_thumbnailImage &&
+        m_thumbnailImage->getVisibility() != brls::Visibility::VISIBLE) {
+        float tw = m_thumbnailImage->getWidth();
+        float th = m_thumbnailImage->getHeight();
+        if (tw > 0 && th > 0) {
+            float tx = m_thumbnailImage->getX();
+            float ty = m_thumbnailImage->getY();
+            nvgBeginPath(vg);
+            nvgRoundedRect(vg, tx, ty, tw, th, 4.0f);
+            nvgFillColor(vg, nvgRGB(40, 40, 48));
+            nvgFill(vg);
+        }
+    }
+
     brls::Box::draw(vg, x, y, width, height, style, ctx);
 
     // Touch press feedback overlay (like Suwayomi MangaItemCell)
@@ -274,8 +281,12 @@ void MediaItemCell::onFocusGained() {
 
 void MediaItemCell::onFocusLost() {
     brls::Box::onFocusLost();
-    // Restore default background
-    this->setBackgroundColor(nvgRGBA(50, 50, 50, 255));
+    // Reset to transparent rather than the prior solid gray. The cell-wide
+    // gray was redrawn every frame by borealis as long as alpha > 0; clearing
+    // it here is what makes the perf win from the ctor stick once the user
+    // moves focus away. Loaded covers still occlude the cell area; the
+    // placeholder in draw() handles cells that haven't loaded yet.
+    this->setBackgroundColor(nvgRGBA(0, 0, 0, 0));
     this->setBorderColor(nvgRGBA(0, 0, 0, 0));
     this->setBorderThickness(0.0f);
     m_pressed = false;
@@ -329,18 +340,9 @@ void MediaItemCell::updateFocusInfo(bool focused) {
             }
             // Show full title
             m_titleLabel->setText(m_item.title);
-            // Show start button hint overlay
-            if (m_buttonHintBox) {
-                if (m_buttonHintIcon) {
-                    m_buttonHintIcon->setImageFromRes("images/start_button.png");
-                }
-                if (m_buttonHintLabel) m_buttonHintLabel->setVisibility(brls::Visibility::GONE);
-                m_buttonHintBox->setVisibility(brls::Visibility::VISIBLE);
-            }
         } else {
             m_titleLabel->setText(m_originalTitle);
             m_descriptionLabel->setVisibility(brls::Visibility::GONE);
-            if (m_buttonHintBox) m_buttonHintBox->setVisibility(brls::Visibility::GONE);
         }
     } else if (m_item.mediaType == MediaType::SHOW) {
         // Show year for shows on focus
@@ -358,18 +360,9 @@ void MediaItemCell::updateFocusInfo(bool focused) {
                 m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
             }
             m_titleLabel->setText(m_item.title);
-            // Show start button hint overlay
-            if (m_buttonHintBox) {
-                if (m_buttonHintIcon) {
-                    m_buttonHintIcon->setImageFromRes("images/start_button.png");
-                }
-                if (m_buttonHintLabel) m_buttonHintLabel->setVisibility(brls::Visibility::GONE);
-                m_buttonHintBox->setVisibility(brls::Visibility::VISIBLE);
-            }
         } else {
             m_titleLabel->setText(m_originalTitle);
             m_descriptionLabel->setVisibility(brls::Visibility::GONE);
-            if (m_buttonHintBox) m_buttonHintBox->setVisibility(brls::Visibility::GONE);
         }
     } else if (m_item.mediaType == MediaType::SEASON) {
         // Show season info on focus
@@ -383,18 +376,9 @@ void MediaItemCell::updateFocusInfo(bool focused) {
                 m_descriptionLabel->setText(info);
                 m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
             }
-            // Show start button hint overlay
-            if (m_buttonHintBox) {
-                if (m_buttonHintIcon) {
-                    m_buttonHintIcon->setImageFromRes("images/start_button.png");
-                }
-                if (m_buttonHintLabel) m_buttonHintLabel->setVisibility(brls::Visibility::GONE);
-                m_buttonHintBox->setVisibility(brls::Visibility::VISIBLE);
-            }
         } else {
             m_titleLabel->setText(m_originalTitle);
             m_descriptionLabel->setVisibility(brls::Visibility::GONE);
-            if (m_buttonHintBox) m_buttonHintBox->setVisibility(brls::Visibility::GONE);
         }
     } else if (m_item.mediaType == MediaType::MUSIC_ALBUM ||
                m_item.mediaType == MediaType::MUSIC_ARTIST) {
@@ -409,34 +393,16 @@ void MediaItemCell::updateFocusInfo(bool focused) {
                 m_descriptionLabel->setText(info);
                 m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
             }
-            // Show button hint overlay for albums and artists (icon only, no text)
-            if (m_buttonHintBox && (m_item.mediaType == MediaType::MUSIC_ALBUM ||
-                                    m_item.mediaType == MediaType::MUSIC_ARTIST)) {
-                if (m_buttonHintIcon) {
-                    m_buttonHintIcon->setImageFromRes("images/start_button.png");
-                }
-                if (m_buttonHintLabel) m_buttonHintLabel->setVisibility(brls::Visibility::GONE);
-                m_buttonHintBox->setVisibility(brls::Visibility::VISIBLE);
-            }
         } else {
             m_titleLabel->setText(m_originalTitle);
             m_descriptionLabel->setVisibility(brls::Visibility::GONE);
-            if (m_buttonHintBox) m_buttonHintBox->setVisibility(brls::Visibility::GONE);
         }
     } else if (m_item.type == "playlist") {
-        // Show full title and START button hint for playlists on focus
+        // Show full title for playlists on focus
         if (focused) {
             m_titleLabel->setText(m_item.title);
-            if (m_buttonHintBox) {
-                if (m_buttonHintIcon) {
-                    m_buttonHintIcon->setImageFromRes("images/start_button.png");
-                }
-                if (m_buttonHintLabel) m_buttonHintLabel->setVisibility(brls::Visibility::GONE);
-                m_buttonHintBox->setVisibility(brls::Visibility::VISIBLE);
-            }
         } else {
             m_titleLabel->setText(m_originalTitle);
-            if (m_buttonHintBox) m_buttonHintBox->setVisibility(brls::Visibility::GONE);
         }
     } else if (m_item.mediaType == MediaType::CLIP) {
         // Show full title and duration for extras on focus
@@ -458,6 +424,35 @@ void MediaItemCell::updateFocusInfo(bool focused) {
             m_titleLabel->setText(m_originalTitle);
             m_descriptionLabel->setVisibility(brls::Visibility::GONE);
         }
+    }
+}
+
+bool MediaItemCell::wantsStartHint() const {
+    // Match the prior per-cell logic in updateFocusInfo(): movies, shows,
+    // seasons, albums, artists, and playlists all surfaced the start
+    // button hint when focused. Episodes/tracks/clips intentionally did
+    // not — keep that behaviour identical here.
+    if (m_item.type == "playlist") return true;
+    switch (m_item.mediaType) {
+        case MediaType::MOVIE:
+        case MediaType::SHOW:
+        case MediaType::SEASON:
+        case MediaType::MUSIC_ALBUM:
+        case MediaType::MUSIC_ARTIST:
+            return true;
+        default:
+            return false;
+    }
+}
+
+void MediaItemCell::getThumbnailBounds(float& tx, float& ty, float& tw, float& th) const {
+    if (m_thumbnailImage) {
+        tx = m_thumbnailImage->getX();
+        ty = m_thumbnailImage->getY();
+        tw = m_thumbnailImage->getWidth();
+        th = m_thumbnailImage->getHeight();
+    } else {
+        tx = ty = tw = th = 0.0f;
     }
 }
 
