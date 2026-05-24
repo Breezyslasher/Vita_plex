@@ -20,6 +20,17 @@ public:
     void setItem(const MediaItem& item);
     const MediaItem& getItem() const { return m_item; }
 
+    // True if this cell's media type would have shown the start-button
+    // hint overlay when focused. RecyclingGrid::draw() reads this so it
+    // can paint a single NVG image for the focused cell instead of every
+    // cell maintaining its own brls::Image overlay.
+    bool wantsStartHint() const;
+
+    // Absolute screen coordinates of the cover area inside the cell. Used
+    // by the grid pass to anchor the start-button hint without having to
+    // know the per-media-type cover dimensions itself.
+    void getThumbnailBounds(float& tx, float& ty, float& tw, float& th) const;
+
     void onFocusGained() override;
     void onFocusLost() override;
     void draw(NVGcontext* vg, float x, float y, float width, float height,
@@ -45,9 +56,6 @@ private:
     brls::Label* m_subtitleLabel = nullptr;
     brls::Label* m_descriptionLabel = nullptr;  // Shows on focus for episodes
     brls::Rectangle* m_progressBar = nullptr;
-    brls::Box* m_buttonHintBox = nullptr;       // Shows button image + text hints on focus
-    brls::Image* m_buttonHintIcon = nullptr;
-    brls::Label* m_buttonHintLabel = nullptr;
 };
 
 } // namespace vitaplex
