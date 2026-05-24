@@ -20,7 +20,15 @@ MediaItemCell::MediaItemCell()
     this->setPadding(5);
     this->setFocusable(true);
     this->setCornerRadius(8);
-    this->setBackgroundColor(nvgRGBA(50, 50, 50, 255));
+    // Intentionally NOT calling setBackgroundColor(). Borealis's View::frame()
+    // calls drawBackground() for every cell every frame as long as a background
+    // colour is set — that's 4 NVG calls (beginPath, roundedRect, fillColor,
+    // fill) per visible cell. With 24+ visible cells at 60 fps that becomes a
+    // measurable cost on Vita, and the cover image paints right over the gray
+    // anyway. Instead the cell's draw() override paints a placeholder rect
+    // only for cells whose thumbnail hasn't loaded yet (see draw() below).
+    // The focus highlight is still applied via setBackgroundColor() in
+    // onFocusGained() — that only affects the single focused cell.
 
     // Thumbnail image - hidden until texture loads to prevent null texture crash on Vita
     m_thumbnailImage = new brls::Image();
@@ -251,6 +259,25 @@ brls::View* MediaItemCell::create() {
 
 void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float height,
                           brls::Style style, brls::FrameContext* ctx) {
+    // Placeholder background — only painted while the cover is still loading.
+    // Once ImageLoader flips the brls::Image to VISIBLE, the cover overlays
+    // this region and we skip the draw entirely. This is what replaces the
+    // ctor-level setBackgroundColor() that used to fire 4 NVG calls per cell
+    // per frame.
+    if (m_thumbnailImage &&
+        m_thumbnailImage->getVisibility() != brls::Visibility::VISIBLE) {
+        float tw = m_thumbnailImage->getWidth();
+        float th = m_thumbnailImage->getHeight();
+        if (tw > 0 && th > 0) {
+            float tx = m_thumbnailImage->getX();
+            float ty = m_thumbnailImage->getY();
+            nvgBeginPath(vg);
+            nvgRoundedRect(vg, tx, ty, tw, th, 4.0f);
+            nvgFillColor(vg, nvgRGB(40, 40, 48));
+            nvgFill(vg);
+        }
+    }
+
     brls::Box::draw(vg, x, y, width, height, style, ctx);
 
     // Touch press feedback overlay (like Suwayomi MangaItemCell)
@@ -274,8 +301,12 @@ void MediaItemCell::onFocusGained() {
 
 void MediaItemCell::onFocusLost() {
     brls::Box::onFocusLost();
-    // Restore default background
-    this->setBackgroundColor(nvgRGBA(50, 50, 50, 255));
+    // Reset to transparent rather than the prior solid gray. The cell-wide
+    // gray was redrawn every frame by borealis as long as alpha > 0; clearing
+    // it here is what makes the perf win from the ctor stick once the user
+    // moves focus away. Loaded covers still occlude the cell area; the
+    // placeholder in draw() handles cells that haven't loaded yet.
+    this->setBackgroundColor(nvgRGBA(0, 0, 0, 0));
     this->setBorderColor(nvgRGBA(0, 0, 0, 0));
     this->setBorderThickness(0.0f);
     m_pressed = false;
