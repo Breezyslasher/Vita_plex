@@ -20,11 +20,26 @@ class ImageLoader {
 public:
     using LoadCallback = std::function<void(brls::Image*)>;
 
+    // Callback for raw-NVG cover loads. Receives ownership of the NVG
+    // image handle — the consumer is responsible for nvgDeleteImage on
+    // destruction. If the alive flag has flipped false by the time the
+    // callback fires, the loader deletes the handle for you.
+    using CoverCallback = std::function<void(int nvgImg, int w, int h)>;
+
     // Load image asynchronously from URL, using an alive flag to prevent use-after-free.
     // The caller must hold a shared_ptr<std::atomic<bool>> that is set to false when
     // the target brls::Image* is destroyed (e.g. in the cell's destructor).
     static void loadAsync(const std::string& url, LoadCallback callback,
                           brls::Image* target, std::shared_ptr<std::atomic<bool>> alive);
+
+    // Same lifecycle and cache as loadAsync, but returns a raw NVG image
+    // handle instead of populating a brls::Image. Used by RecyclingGrid's
+    // batched cover-draw pass — skipping brls::Image avoids one View per
+    // cell in the borealis tree, the per-cell frame()/drawBackground()
+    // calls, and the indirection through the view layout system. Caller
+    // owns the returned handle and must nvgDeleteImage in its destructor.
+    static void loadCoverAsync(const std::string& url, CoverCallback callback,
+                               std::shared_ptr<std::atomic<bool>> alive);
 
     // Load image synchronously from a local file path into a brls::Image.
     // Returns true on success.

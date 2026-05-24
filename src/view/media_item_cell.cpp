@@ -30,14 +30,16 @@ MediaItemCell::MediaItemCell()
     // The focus highlight is still applied via setBackgroundColor() in
     // onFocusGained() — that only affects the single focused cell.
 
-    // Thumbnail image - hidden until texture loads to prevent null texture crash on Vita
-    m_thumbnailImage = new brls::Image();
-    m_thumbnailImage->setWidth(ic.posterWidth);
-    m_thumbnailImage->setHeight(ic.posterHeight);
-    m_thumbnailImage->setScalingType(brls::ImageScalingType::FIT);
-    m_thumbnailImage->setCornerRadius(4);
-    m_thumbnailImage->setVisibility(brls::Visibility::INVISIBLE);
-    this->addView(m_thumbnailImage);
+    // Transparent layout slot for the cover. The actual cover is painted
+    // by RecyclingGrid::draw() in a single batched nvgImagePattern pass,
+    // which removes one brls::Image per cell from the borealis view tree
+    // (one fewer frame()/drawBackground()/transform stack per cell every
+    // frame). The slot still participates in flex layout so titles and
+    // progress bars stay positioned correctly underneath.
+    m_coverSlot = new brls::Box();
+    m_coverSlot->setWidth(ic.posterWidth);
+    m_coverSlot->setHeight(ic.posterHeight);
+    this->addView(m_coverSlot);
 
     // Title label
     m_titleLabel = new brls::Label();
@@ -72,7 +74,7 @@ MediaItemCell::MediaItemCell()
     // (brls::Box + brls::Image + brls::Label) that borealis walked every
     // frame even when GONE. It now lives in RecyclingGrid::draw() as a
     // single NVG image painted on whichever cell currently has focus —
-    // see wantsStartHint() / getThumbnailBounds() below.
+    // see wantsStartHint() / getCoverBounds() below.
 }
 
 MediaItemCell::~MediaItemCell() {
@@ -80,12 +82,33 @@ MediaItemCell::~MediaItemCell() {
     if (m_alive) {
         m_alive->store(false);
     }
+    // Release the GPU texture for the cover. ImageLoader's alive-flag
+    // check handles the case where the callback hasn't fired yet — if it
+    // does, the loader notices !alive and deletes the handle for us.
+    if (m_nvgCover != 0) {
+        NVGcontext* vg = brls::Application::getNVGContext();
+        if (vg) nvgDeleteImage(vg, m_nvgCover);
+        m_nvgCover = 0;
+    }
 }
 
 void MediaItemCell::setItem(const MediaItem& item) {
     m_item = item;
 
-    // Adjust thumbnail size based on media type
+    // Item-change resets any previously-loaded cover. The grid pass will
+    // paint a placeholder rect for this cell until loadThumbnail() fires
+    // its callback. We delete the old NVG handle eagerly rather than
+    // overwriting m_nvgCover; otherwise the old texture leaks on every
+    // cell-recycle.
+    if (m_nvgCover != 0) {
+        NVGcontext* vg = brls::Application::getNVGContext();
+        if (vg) nvgDeleteImage(vg, m_nvgCover);
+        m_nvgCover = 0;
+        m_coverW = 0;
+        m_coverH = 0;
+    }
+
+    // Adjust cover slot size based on media type
     // Music (albums, artists, tracks) use square covers
     // Episodes use landscape stills (episode thumbnail)
     // Movies, TV shows use portrait posters
@@ -99,21 +122,21 @@ void MediaItemCell::setItem(const MediaItem& item) {
     const auto& ic = platform::getImageConstraints();
     if (isMusic) {
         // Square album art
-        m_thumbnailImage->setWidth(ic.squareCoverSize);
-        m_thumbnailImage->setHeight(ic.squareCoverSize);
+        m_coverSlot->setWidth(ic.squareCoverSize);
+        m_coverSlot->setHeight(ic.squareCoverSize);
         // Box: cover + small padding for the title row beneath it
         this->setWidth(ic.squareCoverSize + 10);
         this->setHeight(ic.squareCoverSize + 40);
     } else if (isEpisode || isClip) {
         // Landscape episode still / extras clip
-        m_thumbnailImage->setWidth(ic.landscapeWidth);
-        m_thumbnailImage->setHeight(ic.landscapeHeight);
+        m_coverSlot->setWidth(ic.landscapeWidth);
+        m_coverSlot->setHeight(ic.landscapeHeight);
         this->setWidth(ic.landscapeWidth + 10);
         this->setHeight(ic.landscapeHeight + 45);
     } else {
         // Portrait poster
-        m_thumbnailImage->setWidth(ic.posterWidth);
-        m_thumbnailImage->setHeight(ic.posterHeight);
+        m_coverSlot->setWidth(ic.posterWidth);
+        m_coverSlot->setHeight(ic.posterHeight);
         this->setWidth(ic.posterWidth + 10);
         this->setHeight(ic.posterHeight + 35);
     }
@@ -187,8 +210,6 @@ void MediaItemCell::setItem(const MediaItem& item) {
 }
 
 void MediaItemCell::loadThumbnail() {
-    if (!m_thumbnailImage) return;
-
     PlexClient& client = PlexClient::getInstance();
 
     // Use square dimensions for music/playlists, landscape for episodes, portrait for movies/TV
@@ -227,10 +248,25 @@ void MediaItemCell::loadThumbnail() {
 
     std::string url = client.getThumbnailUrl(thumbPath, width, height);
 
-    ImageLoader::loadAsync(url, [](brls::Image* image) {
-        // Show thumbnail once texture is loaded successfully
-        image->setVisibility(brls::Visibility::VISIBLE);
-    }, m_thumbnailImage, m_alive);
+    // The lambda captures `this` so the callback can write into the cell.
+    // ImageLoader passes the alive flag through; if the cell has been
+    // destroyed by the time the load completes, ImageLoader cleans up
+    // the NVG handle on our behalf rather than calling the callback.
+    MediaItemCell* self = this;
+    ImageLoader::loadCoverAsync(url,
+        [self](int nvgImg, int w, int h) {
+            // If a newer setItem() ran while we were loading, it already
+            // deleted whatever m_nvgCover used to point at. Replace with
+            // the freshly-decoded handle.
+            if (self->m_nvgCover != 0 && self->m_nvgCover != nvgImg) {
+                NVGcontext* vg = brls::Application::getNVGContext();
+                if (vg) nvgDeleteImage(vg, self->m_nvgCover);
+            }
+            self->m_nvgCover = nvgImg;
+            self->m_coverW   = w;
+            self->m_coverH   = h;
+        },
+        m_alive);
 }
 
 brls::View* MediaItemCell::create() {
@@ -239,28 +275,12 @@ brls::View* MediaItemCell::create() {
 
 void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float height,
                           brls::Style style, brls::FrameContext* ctx) {
-    // Placeholder background — only painted while the cover is still loading.
-    // Once ImageLoader flips the brls::Image to VISIBLE, the cover overlays
-    // this region and we skip the draw entirely. This is what replaces the
-    // ctor-level setBackgroundColor() that used to fire 4 NVG calls per cell
-    // per frame.
-    if (m_thumbnailImage &&
-        m_thumbnailImage->getVisibility() != brls::Visibility::VISIBLE) {
-        float tw = m_thumbnailImage->getWidth();
-        float th = m_thumbnailImage->getHeight();
-        if (tw > 0 && th > 0) {
-            float tx = m_thumbnailImage->getX();
-            float ty = m_thumbnailImage->getY();
-            nvgBeginPath(vg);
-            nvgRoundedRect(vg, tx, ty, tw, th, 4.0f);
-            nvgFillColor(vg, nvgRGB(40, 40, 48));
-            nvgFill(vg);
-        }
-    }
-
+    // The cover (and its placeholder, when not yet loaded) is now painted
+    // by RecyclingGrid::draw() in a batched pass, so this override just
+    // forwards to Box and handles the touch-press overlay. Putting the
+    // press overlay AFTER Box::draw means it tints the labels too, which
+    // matches the prior visual behaviour.
     brls::Box::draw(vg, x, y, width, height, style, ctx);
-
-    // Touch press feedback overlay (like Suwayomi MangaItemCell)
     if (m_pressed) {
         nvgBeginPath(vg);
         nvgRoundedRect(vg, x, y, width, height, 8);
@@ -445,14 +465,14 @@ bool MediaItemCell::wantsStartHint() const {
     }
 }
 
-void MediaItemCell::getThumbnailBounds(float& tx, float& ty, float& tw, float& th) const {
-    if (m_thumbnailImage) {
-        tx = m_thumbnailImage->getX();
-        ty = m_thumbnailImage->getY();
-        tw = m_thumbnailImage->getWidth();
-        th = m_thumbnailImage->getHeight();
+void MediaItemCell::getCoverBounds(float& cx, float& cy, float& cw, float& ch) const {
+    if (m_coverSlot) {
+        cx = m_coverSlot->getX();
+        cy = m_coverSlot->getY();
+        cw = m_coverSlot->getWidth();
+        ch = m_coverSlot->getHeight();
     } else {
-        tx = ty = tw = th = 0.0f;
+        cx = cy = cw = ch = 0.0f;
     }
 }
 

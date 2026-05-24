@@ -108,6 +108,100 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
     });
 }
 
+// Decode cached bytes into a fresh NVG image and hand it off through the
+// caller's CoverCallback. Runs on the UI thread because nvgCreateImageMem
+// touches the shared NVG context. If `alive` has flipped false by now the
+// caller is gone — discard the would-be handle so we don't leak it.
+static void dispatchCoverFromBytes(const std::vector<uint8_t>& bytes,
+                                   ImageLoader::CoverCallback callback,
+                                   std::shared_ptr<std::atomic<bool>> alive,
+                                   uint64_t gen,
+                                   std::atomic<uint64_t>& generationRef) {
+    if (!alive->load() || gen != generationRef.load()) return;
+
+    NVGcontext* vg = brls::Application::getNVGContext();
+    if (!vg) return;
+
+    // nanovg's stb_image decoder mutates the input buffer in place, so we
+    // can't hand it the cached `data.data()` directly without risking
+    // corrupting the shared cache entry. Copy into a scratch buffer.
+    std::vector<unsigned char> scratch(bytes.begin(), bytes.end());
+    int nvgImg = nvgCreateImageMem(vg, 0,
+                                   scratch.data(),
+                                   static_cast<int>(scratch.size()));
+    if (nvgImg == 0) return;
+
+    int w = 0, h = 0;
+    nvgImageSize(vg, nvgImg, &w, &h);
+
+    if (!alive->load() || gen != generationRef.load()) {
+        // Cell died between decode and dispatch — clean up the handle.
+        nvgDeleteImage(vg, nvgImg);
+        return;
+    }
+    if (callback) callback(nvgImg, w, h);
+}
+
+void ImageLoader::loadCoverAsync(const std::string& url, CoverCallback callback,
+                                  std::shared_ptr<std::atomic<bool>> alive) {
+    if (url.empty() || !alive) return;
+    if (s_paused.load()) return;
+
+    uint64_t gen = s_generation.load();
+
+    // Cache hit: decode synchronously on the calling thread (we're already
+    // on the UI thread when cells call this from setItem()). This matches
+    // the timing of the loadAsync cache path which calls setImageFromMem
+    // inline rather than scheduling another sync. We copy out the cached
+    // bytes under the lock, drop the lock, and only then call the
+    // user-supplied callback — that way a re-entrant load from inside the
+    // callback can still hit the cache without deadlocking.
+    std::vector<uint8_t> cachedBytes;
+    bool hit = false;
+    {
+        std::lock_guard<std::mutex> lock(s_cacheMutex);
+        auto it = s_cache.find(url);
+        if (it != s_cache.end()) {
+            s_lruOrder.erase(it->second.lruIt);
+            s_lruOrder.push_front(url);
+            it->second.lruIt = s_lruOrder.begin();
+            cachedBytes = it->second.data;
+            hit = true;
+        }
+    }
+    if (hit) {
+        dispatchCoverFromBytes(cachedBytes, callback, alive, gen, s_generation);
+        return;
+    }
+
+    brls::async([url, callback, alive, gen]() {
+        if (!alive->load() || gen != s_generation.load()) return;
+
+        HttpClient client;
+        HttpResponse resp = client.get(url);
+        if (!resp.success || resp.body.empty()) return;
+
+        std::vector<uint8_t> imageData(resp.body.begin(), resp.body.end());
+        {
+            std::lock_guard<std::mutex> lock(s_cacheMutex);
+            while (s_cache.size() >= getMaxCacheSize() && !s_lruOrder.empty()) {
+                const std::string& oldest = s_lruOrder.back();
+                s_cache.erase(oldest);
+                s_lruOrder.pop_back();
+            }
+            s_lruOrder.push_front(url);
+            CacheEntry entry;
+            entry.data = imageData;
+            entry.lruIt = s_lruOrder.begin();
+            s_cache[url] = std::move(entry);
+        }
+
+        brls::sync([imageData, callback, alive, gen]() {
+            dispatchCoverFromBytes(imageData, callback, alive, gen, s_generation);
+        });
+    });
+}
+
 bool ImageLoader::loadFromFile(const std::string& path, brls::Image* target) {
     if (path.empty() || !target) return false;
 
