@@ -82,6 +82,11 @@ public:
     // depending on m_item.watched, which itself is updated locally after
     // a successful PUT to /:/scrobble or /:/unscrobble.
     brls::Button* m_markWatchedButton = nullptr;
+    // Icon overlays positioned absolutely on top of the secondary
+    // action buttons. Pointers are kept around so onToggleWatched()
+    // can flip the watched glyph (filled / outline) on click.
+    brls::Image* m_downloadIcon = nullptr;
+    brls::Image* m_markWatchedIcon = nullptr;
     // AUDIO / SUBTITLES pickers, only created for playable items
     // (movies / episodes / extras). Hidden until loadStreams() resolves.
     brls::Button* m_audioRow = nullptr;
