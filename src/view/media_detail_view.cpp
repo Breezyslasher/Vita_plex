@@ -3450,6 +3450,26 @@ void MediaDetailView::showSubtitlePicker() {
     searchBtn->setPaddingLeft(14);
     content->addView(searchBtn);
 
+    // Tracks the language currently driving the results view. Lives on
+    // the heap so the IME callback (where it's assigned) and the
+    // re-labelling helpers (where it's read) share the same value
+    // through their shared_ptr captures.
+    auto currentLang = std::make_shared<std::string>(
+        Application::getInstance().getSettings().defaultSubtitleLanguage);
+    if (currentLang->empty()) *currentLang = "en";
+
+    // Re-label the search button to fit the current view: the
+    // installed-list mode just invites a fresh search, while the
+    // results mode shows the language in play and reads as "change
+    // language" so the user knows tapping it re-prompts.
+    auto setSearchBtnFor = [searchBtn, currentLang](bool resultsMode) {
+        if (resultsMode) {
+            searchBtn->setText("Change language: " + *currentLang);
+        } else {
+            searchBtn->setText("Search online for subtitles…");
+        }
+    };
+
     // ── Scrollable list ─────────────────────────────────────────────
     auto* scroll = new brls::ScrollingFrame();
     scroll->setHeight(360);
@@ -3463,8 +3483,11 @@ void MediaDetailView::showSubtitlePicker() {
     // refresh (after installing a fresh subtitle) hit the same body.
     auto alive    = m_alive;
     auto buildInstalledList = std::make_shared<std::function<void()>>();
-    *buildInstalledList = [this, alive, dlgAlive, dialog, listBox, searchBtn]() {
+    *buildInstalledList = [this, alive, dlgAlive, dialog, listBox, searchBtn, setSearchBtnFor]() {
         if (!alive->load() || !*dlgAlive) return;
+        // Reset the top button to "search" wording since we're no
+        // longer looking at a language-scoped results list.
+        setSearchBtnFor(/*resultsMode=*/false);
         // Borealis keeps a raw pointer to whatever view currently has
         // focus. clearViews() below deletes every row in listBox —
         // including the focused "Back to installed" button that
@@ -3533,9 +3556,11 @@ void MediaDetailView::showSubtitlePicker() {
     // and attaches it server-side), then we refetch the stream list
     // so the newly-installed subtitle shows up as an "installed" row.
     auto showResults = std::make_shared<std::function<void(const std::vector<PlexClient::SubtitleResult>&)>>();
-    *showResults = [this, alive, dlgAlive, dialog, listBox, searchBtn, buildInstalledList](
+    *showResults = [this, alive, dlgAlive, dialog, listBox, searchBtn, setSearchBtnFor, buildInstalledList](
             const std::vector<PlexClient::SubtitleResult>& results) {
         if (!alive->load() || !*dlgAlive) return;
+        // Results mode: top button advertises a language change.
+        setSearchBtnFor(/*resultsMode=*/true);
         // Park focus on searchBtn before tearing down listBox's rows
         // (the "Searching…" label this replaces is focusable on Vita
         // because the IME callback giveFocus'd it).
@@ -3610,14 +3635,20 @@ void MediaDetailView::showSubtitlePicker() {
     // can fire the same flow without duplicating the IME / asyncRun
     // glue.
     auto triggerOnlineSearch = std::make_shared<std::function<void()>>();
-    *triggerOnlineSearch = [this, alive, dlgAlive, listBox, searchBtn, showResults]() {
+    *triggerOnlineSearch = [this, alive, dlgAlive, listBox, searchBtn, currentLang, showResults]() {
         if (!alive->load() || !*dlgAlive) return;
         auto* ime = brls::Application::getImeManager();
         if (!ime) return;
-        ime->openForText([this, alive, dlgAlive, listBox, searchBtn, showResults](std::string lang) {
+        // Pre-fill the IME with the language already in play (default
+        // setting on first open, last typed value on subsequent opens)
+        // so the user only has to retype when they're actually switching.
+        std::string seed = *currentLang;
+        if (seed.empty()) seed = "en";
+        ime->openForText([this, alive, dlgAlive, listBox, searchBtn, currentLang, showResults](std::string lang) {
             // Dialog already gone? Drop the IME result on the floor.
             if (!alive->load() || !*dlgAlive) return;
             if (lang.empty()) lang = "en";
+            *currentLang = lang;
 
             // Same focus-park as the other rebuilders — the user might
             // have been focused on a row when they triggered search.
@@ -3639,7 +3670,7 @@ void MediaDetailView::showSubtitlePicker() {
                     (*showResults)(results);
                 });
             });
-        }, "Subtitle language (e.g. en, es, fr)", "en", 8, "en");
+        }, "Subtitle language (e.g. en, es, fr)", seed, 8, seed);
     };
 
     searchBtn->registerClickAction([triggerOnlineSearch](brls::View*) {

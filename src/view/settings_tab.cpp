@@ -292,6 +292,37 @@ void SettingsTab::createPlaybackSection() {
         });
     m_contentBox->addView(m_subtitleSizeSelector);
 
+    // Default subtitle language — used as the prefill when the user
+    // opens the "Search online for subtitles…" dialog on a movie detail
+    // page. ISO 639-1 / -2 code (e.g. en, es, fr, ja, pt-br). DetailCell
+    // shows the current value next to the label and opens an IME on
+    // tap so the user can edit it without leaving the settings screen.
+    auto* defaultSubLangCell = new brls::DetailCell();
+    defaultSubLangCell->setText("Default Subtitle Language");
+    defaultSubLangCell->setDetailText(
+        settings.defaultSubtitleLanguage.empty()
+            ? std::string("en")
+            : settings.defaultSubtitleLanguage);
+    defaultSubLangCell->registerClickAction([defaultSubLangCell](brls::View*) {
+        auto* ime = brls::Application::getImeManager();
+        if (!ime) return true;
+        AppSettings& s = Application::getInstance().getSettings();
+        std::string current = s.defaultSubtitleLanguage.empty()
+            ? std::string("en")
+            : s.defaultSubtitleLanguage;
+        ime->openForText([defaultSubLangCell](std::string text) {
+            AppSettings& s = Application::getInstance().getSettings();
+            if (text.empty()) text = "en";
+            s.defaultSubtitleLanguage = text;
+            Application::getInstance().saveSettings();
+            defaultSubLangCell->setDetailText(text);
+        }, "Default subtitle language (e.g. en, es, fr)",
+           current, 8, current);
+        return true;
+    });
+    defaultSubLangCell->addGestureRecognizer(new brls::TapGestureRecognizer(defaultSubLangCell));
+    m_contentBox->addView(defaultSubLangCell);
+
     // Seek interval selector
     m_seekIntervalSelector = new brls::SelectorCell();
     m_seekIntervalSelector->init("Seek Interval",
