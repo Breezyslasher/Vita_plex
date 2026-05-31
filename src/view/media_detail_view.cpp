@@ -3463,8 +3463,15 @@ void MediaDetailView::showSubtitlePicker() {
     // refresh (after installing a fresh subtitle) hit the same body.
     auto alive    = m_alive;
     auto buildInstalledList = std::make_shared<std::function<void()>>();
-    *buildInstalledList = [this, alive, dlgAlive, dialog, listBox]() {
+    *buildInstalledList = [this, alive, dlgAlive, dialog, listBox, searchBtn]() {
         if (!alive->load() || !*dlgAlive) return;
+        // Borealis keeps a raw pointer to whatever view currently has
+        // focus. clearViews() below deletes every row in listBox —
+        // including the focused "Back to installed" button that
+        // triggered this rebuild. Park focus on searchBtn (which sits
+        // outside listBox and survives the rebuild) so the focus
+        // pointer can't dangle.
+        brls::Application::giveFocus(searchBtn);
         listBox->clearViews();
 
         // Re-read selection state, since installing a new subtitle
@@ -3526,9 +3533,13 @@ void MediaDetailView::showSubtitlePicker() {
     // and attaches it server-side), then we refetch the stream list
     // so the newly-installed subtitle shows up as an "installed" row.
     auto showResults = std::make_shared<std::function<void(const std::vector<PlexClient::SubtitleResult>&)>>();
-    *showResults = [this, alive, dlgAlive, dialog, listBox, buildInstalledList](
+    *showResults = [this, alive, dlgAlive, dialog, listBox, searchBtn, buildInstalledList](
             const std::vector<PlexClient::SubtitleResult>& results) {
         if (!alive->load() || !*dlgAlive) return;
+        // Park focus on searchBtn before tearing down listBox's rows
+        // (the "Searching…" label this replaces is focusable on Vita
+        // because the IME callback giveFocus'd it).
+        brls::Application::giveFocus(searchBtn);
         listBox->clearViews();
 
         auto* back = new brls::Button();
@@ -3599,15 +3610,18 @@ void MediaDetailView::showSubtitlePicker() {
     // can fire the same flow without duplicating the IME / asyncRun
     // glue.
     auto triggerOnlineSearch = std::make_shared<std::function<void()>>();
-    *triggerOnlineSearch = [this, alive, dlgAlive, listBox, showResults]() {
+    *triggerOnlineSearch = [this, alive, dlgAlive, listBox, searchBtn, showResults]() {
         if (!alive->load() || !*dlgAlive) return;
         auto* ime = brls::Application::getImeManager();
         if (!ime) return;
-        ime->openForText([this, alive, dlgAlive, listBox, showResults](std::string lang) {
+        ime->openForText([this, alive, dlgAlive, listBox, searchBtn, showResults](std::string lang) {
             // Dialog already gone? Drop the IME result on the floor.
             if (!alive->load() || !*dlgAlive) return;
             if (lang.empty()) lang = "en";
 
+            // Same focus-park as the other rebuilders — the user might
+            // have been focused on a row when they triggered search.
+            brls::Application::giveFocus(searchBtn);
             // Loading state
             listBox->clearViews();
             auto* loading = new brls::Label();
