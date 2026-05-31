@@ -319,18 +319,74 @@ void RecyclingGrid::draw(NVGcontext* vg, float x, float y, float width, float he
     }
 
     // ── Step 2: let borealis paint everything as normal ─────────────────
+    // After this call the cell backgrounds, focus highlights, titles,
+    // subtitles, and progress bars have all painted. The cover slots
+    // intentionally render nothing — they exist only to reserve layout
+    // space for the batched cover pass below.
     brls::ScrollingFrame::draw(vg, x, y, width, height, style, ctx);
 
-    // ── Step 3: paint the start-button hint on the focused cell ─────────
-    // Previously every cell carried its own brls::Box + brls::Image +
-    // brls::Label trio for this hint, all walked every frame even when
-    // hidden. Now a single batched NVG draw on the focused cell only,
-    // with the hint image lazily uploaded once and reused.
+    // ── Step 3: batched cover paint ─────────────────────────────────────
+    // One nvgSave + nvgIntersectScissor wraps the entire loop, then each
+    // visible cell contributes either an nvgImagePattern fill (cover
+    // loaded) or a flat-color rounded rect (placeholder). Previously
+    // every cell carried a brls::Image child, so borealis walked View::
+    // frame() / drawBackground() / drawShadow() for each one even though
+    // only the cover itself was visible. With ~24 visible cells at 60fps
+    // that was ~5,800 per-view paths/sec; the loop below is one path
+    // per cell with no per-view overhead.
     if (m_cachedFirstVisible >= 0 && !m_cells.empty()) {
-        MediaItemCell* focusedCell = nullptr;
+        nvgSave(vg);
+        nvgIntersectScissor(vg, x, y, width, height);
+
         int startIdx = m_cachedFirstVisible * m_columns;
         int endIdx   = std::min(m_cachedLastVisible * m_columns,
                                 (int)m_cells.size());
+
+        for (int i = startIdx; i < endIdx; i++) {
+            MediaItemCell* cell = m_cells[i];
+            if (!cell) continue;
+
+            float cx, cy, cw, ch;
+            cell->getCoverBounds(cx, cy, cw, ch);
+            if (cw <= 0.0f || ch <= 0.0f) continue;
+
+            int nvgImg = cell->getCoverImage();
+            if (nvgImg != 0) {
+                // Letterbox: scale the source image to FIT inside the
+                // slot without cropping (matches the prior brls::Image
+                // setScalingType(FIT) behaviour exactly).
+                float imgW = (float)cell->getCoverWidth();
+                float imgH = (float)cell->getCoverHeight();
+                if (imgW > 0.0f && imgH > 0.0f) {
+                    float scale = std::min(cw / imgW, ch / imgH);
+                    float sw = imgW * scale;
+                    float sh = imgH * scale;
+                    float ox = cx + (cw - sw) * 0.5f;
+                    float oy = cy + (ch - sh) * 0.5f;
+                    NVGpaint paint = nvgImagePattern(
+                        vg, ox, oy, sw, sh, 0, nvgImg, 1.0f);
+                    nvgBeginPath(vg);
+                    nvgRoundedRect(vg, ox, oy, sw, sh, 4.0f);
+                    nvgFillPaint(vg, paint);
+                    nvgFill(vg);
+                }
+            } else {
+                // Cover hasn't loaded yet — fill the slot with the same
+                // gray the prior cell-level placeholder used.
+                nvgBeginPath(vg);
+                nvgRoundedRect(vg, cx, cy, cw, ch, 4.0f);
+                nvgFillColor(vg, nvgRGB(40, 40, 48));
+                nvgFill(vg);
+            }
+        }
+
+        nvgRestore(vg);
+
+        // ── Step 4: start-button hint on the focused cell ────────────
+        // Painted after the cover loop so the hint always sits on top
+        // of the cover, never the other way around. The hint image is
+        // lazily uploaded once and reused for the lifetime of the grid.
+        MediaItemCell* focusedCell = nullptr;
         for (int i = startIdx; i < endIdx; i++) {
             MediaItemCell* c = m_cells[i];
             if (c && c->isFocused() && c->wantsStartHint()) {
@@ -347,15 +403,15 @@ void RecyclingGrid::draw(NVGcontext* vg, float x, float y, float width, float he
                 }
             }
             if (m_startHintNvg != 0 && m_startHintW > 0 && m_startHintH > 0) {
-                float tx, ty, tw, th;
-                focusedCell->getThumbnailBounds(tx, ty, tw, th);
-                if (tw > 0.0f && th > 0.0f) {
+                float fcx, fcy, fcw, fch;
+                focusedCell->getCoverBounds(fcx, fcy, fcw, fch);
+                if (fcw > 0.0f && fch > 0.0f) {
                     float hintW = (float)m_startHintW;
                     float hintH = (float)m_startHintH;
                     // Top-right corner of the cover, with a small inset
                     // matching the prior brls::Box overlay position.
-                    float hx = tx + tw - hintW - 7.0f;
-                    float hy = ty + 7.0f;
+                    float hx = fcx + fcw - hintW - 7.0f;
+                    float hy = fcy + 7.0f;
                     nvgSave(vg);
                     NVGpaint paint = nvgImagePattern(
                         vg, hx, hy, hintW, hintH, 0, m_startHintNvg, 1.0f);

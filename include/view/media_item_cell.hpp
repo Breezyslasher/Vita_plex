@@ -26,10 +26,19 @@ public:
     // cell maintaining its own brls::Image overlay.
     bool wantsStartHint() const;
 
-    // Absolute screen coordinates of the cover area inside the cell. Used
-    // by the grid pass to anchor the start-button hint without having to
-    // know the per-media-type cover dimensions itself.
-    void getThumbnailBounds(float& tx, float& ty, float& tw, float& th) const;
+    // Absolute screen coordinates of the cover area inside the cell —
+    // i.e. the placeholder box that used to hold the brls::Image
+    // thumbnail. The grid's batched draw uses this both for painting
+    // covers and for anchoring the start-button hint.
+    void getCoverBounds(float& cx, float& cy, float& cw, float& ch) const;
+
+    // Raw NVG handle + source dimensions for the cover. Returned to the
+    // grid's draw() pass which paints all visible covers in a single
+    // batched nvgImagePattern loop. 0 means "no cover loaded yet" — the
+    // grid paints the placeholder color in that case.
+    int getCoverImage()  const { return m_nvgCover; }
+    int getCoverWidth()  const { return m_coverW; }
+    int getCoverHeight() const { return m_coverH; }
 
     void onFocusGained() override;
     void onFocusLost() override;
@@ -51,7 +60,16 @@ private:
     // in async image loader callbacks
     std::shared_ptr<std::atomic<bool>> m_alive;
 
-    brls::Image* m_thumbnailImage = nullptr;
+    // Transparent placeholder Box that reserves layout space for the
+    // cover. Borealis lays this out the same way it did the prior
+    // brls::Image, so titles/progress bar stay positioned correctly,
+    // but the box itself draws nothing — RecyclingGrid paints the
+    // actual cover at its bounds in a batched pass.
+    brls::Box*  m_coverSlot = nullptr;
+    int         m_nvgCover  = 0;   // NVG image handle, 0 = not loaded
+    int         m_coverW    = 0;   // Source image dimensions, used to
+    int         m_coverH    = 0;   // letterbox via nvgImagePattern.
+
     brls::Label* m_titleLabel = nullptr;
     brls::Label* m_subtitleLabel = nullptr;
     brls::Label* m_descriptionLabel = nullptr;  // Shows on focus for episodes

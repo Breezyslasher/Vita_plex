@@ -161,12 +161,84 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_downloadButton->setWidth(200);
         m_downloadButton->setHeight(44);
         m_downloadButton->setMarginTop(10);
+        // Padding pushes the centred label rightward so it clears the
+        // absolutely-positioned icon overlay below. brls::Button doesn't
+        // expose its internal label's alignment, so we lean on the
+        // centring + asymmetric padding to get the icon-on-left look.
+        m_downloadButton->setPaddingLeft(40);
         m_downloadButton->registerClickAction([this](brls::View* view) {
             onDownload();
             return true;
         });
         m_downloadButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_downloadButton));
         leftBox->addView(m_downloadButton);
+
+        // MDI download icon overlayed on the left of the button.
+        // (resources/icons/download.png already shipped with the repo.)
+        m_downloadIcon = new brls::Image();
+        m_downloadIcon->setImageFromRes("icons/download.png");
+        m_downloadIcon->setWidth(20);
+        m_downloadIcon->setHeight(20);
+        m_downloadIcon->setScalingType(brls::ImageScalingType::FIT);
+        m_downloadIcon->setPositionType(brls::PositionType::ABSOLUTE);
+        m_downloadIcon->setPositionLeft(12);
+        m_downloadIcon->setPositionTop(12);
+        m_downloadButton->addView(m_downloadIcon);
+
+        // Watched-state toggle. Label is the action the press will
+        // perform — i.e. "Mark Watched" when the item is currently
+        // unwatched, and vice versa. The button is wired straight to
+        // PlexClient::markAsWatched/markAsUnwatched in onToggleWatched.
+        m_markWatchedButton = new brls::Button();
+        m_markWatchedButton->setText(m_item.watched ? "Mark Unwatched" : "Mark Watched");
+        m_markWatchedButton->setWidth(200);
+        m_markWatchedButton->setHeight(44);
+        m_markWatchedButton->setMarginTop(10);
+        m_markWatchedButton->setPaddingLeft(40);
+        m_markWatchedButton->registerClickAction([this](brls::View*) {
+            onToggleWatched();
+            return true;
+        });
+        m_markWatchedButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_markWatchedButton));
+        leftBox->addView(m_markWatchedButton);
+
+        // MDI check-circle icon: filled when item is already watched,
+        // outline when unwatched. onToggleWatched() swaps the resource
+        // each press to mirror the new state.
+        m_markWatchedIcon = new brls::Image();
+        m_markWatchedIcon->setImageFromRes(m_item.watched
+            ? "icons/check-circle.png"
+            : "icons/check-circle-outline.png");
+        m_markWatchedIcon->setWidth(20);
+        m_markWatchedIcon->setHeight(20);
+        m_markWatchedIcon->setScalingType(brls::ImageScalingType::FIT);
+        m_markWatchedIcon->setPositionType(brls::PositionType::ABSOLUTE);
+        m_markWatchedIcon->setPositionLeft(12);
+        m_markWatchedIcon->setPositionTop(12);
+        m_markWatchedButton->addView(m_markWatchedIcon);
+
+        // Explicit DOWN / UP routes between the leftBox buttons. Borealis's
+        // default spatial focus search jumps over Resume / Download /
+        // Mark Watched from Play and lands on whatever sits in rightBox /
+        // below, presumably because the leftBox is shorter than the right
+        // column and the scan picks the first focusable outside the row.
+        // Wiring the chain manually fixes Play→Resume→Download→Watched.
+        brls::View* nextDown = m_markWatchedButton;
+        m_downloadButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, nextDown);
+        m_markWatchedButton->setCustomNavigationRoute(brls::FocusDirection::UP, m_downloadButton);
+
+        nextDown = m_downloadButton;
+        if (m_resumeButton) {
+            m_resumeButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, nextDown);
+            m_downloadButton->setCustomNavigationRoute(brls::FocusDirection::UP, m_resumeButton);
+            nextDown = m_resumeButton;
+        } else {
+            m_downloadButton->setCustomNavigationRoute(brls::FocusDirection::UP, m_playButton);
+        }
+        m_playButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, nextDown);
+        if (m_resumeButton) {
+            m_resumeButton->setCustomNavigationRoute(brls::FocusDirection::UP, m_playButton);
+        }
     }
 
     topRow->addView(leftBox);
@@ -229,6 +301,37 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
 
         m_summaryScroll->setContentView(m_summaryLabel);
         rightBox->addView(m_summaryScroll);
+    }
+
+    // AUDIO / SUBTITLES picker rows. Movies are the only type with a
+    // single Part (and therefore a stable selection) at this layer;
+    // episodes have their own Part per cell so the picker belongs on
+    // the episode row, not this header. The rows start hidden — they
+    // appear once loadStreams() populates the list asynchronously.
+    if (m_item.mediaType == MediaType::MOVIE) {
+        m_audioRow = new brls::Button();
+        m_audioRow->setText("AUDIO: Loading…");
+        m_audioRow->setHeight(36);
+        m_audioRow->setMarginBottom(8);
+        m_audioRow->setVisibility(brls::Visibility::GONE);
+        m_audioRow->registerClickAction([this](brls::View*) {
+            showAudioPicker();
+            return true;
+        });
+        m_audioRow->addGestureRecognizer(new brls::TapGestureRecognizer(m_audioRow));
+        rightBox->addView(m_audioRow);
+
+        m_subtitleRow = new brls::Button();
+        m_subtitleRow->setText("SUBTITLES: Loading…");
+        m_subtitleRow->setHeight(36);
+        m_subtitleRow->setMarginBottom(8);
+        m_subtitleRow->setVisibility(brls::Visibility::GONE);
+        m_subtitleRow->registerClickAction([this](brls::View*) {
+            showSubtitlePicker();
+            return true;
+        });
+        m_subtitleRow->addGestureRecognizer(new brls::TapGestureRecognizer(m_subtitleRow));
+        rightBox->addView(m_subtitleRow);
     }
 
     topRow->addView(rightBox);
@@ -496,6 +599,13 @@ void MediaDetailView::loadDetails() {
                     m_item.mediaType == MediaType::SHOW) {
                     loadExtras();
                 }
+            }
+
+            // Movies: pull the audio + subtitle stream list so the
+            // AUDIO / SUBTITLES rows can populate themselves and so
+            // Play uses whichever tracks the user picks here.
+            if (m_item.mediaType == MediaType::MOVIE) {
+                loadStreams();
             }
         });
     });
@@ -3023,12 +3133,27 @@ void MediaDetailView::setupChildrenFocusTransfer() {
 
     // Determine the UP navigation target for children (seasons/episodes):
     // - If description exists, navigate UP to description label
-    // - If description is empty, navigate UP to play button (if exists)
+    // - If description is empty, navigate UP to the BOTTOM-most leftBox
+    //   button so the user lands on Mark Watched / Download / Resume /
+    //   Play rather than jumping to the top of the column.
     brls::View* upTarget = nullptr;
     if (m_summaryLabel && !m_fullDescription.empty()) {
         upTarget = m_summaryLabel;
-    } else if (m_playButton) {
-        upTarget = m_playButton;
+    } else {
+        upTarget = m_markWatchedButton
+            ? (brls::View*)m_markWatchedButton
+            : (m_downloadButton
+                ? (brls::View*)m_downloadButton
+                : (m_resumeButton ? (brls::View*)m_resumeButton
+                                  : (brls::View*)m_playButton));
+    }
+
+    // Description exists → also bridge the last leftBox button down into
+    // the description so the leftBox chain ends in the same place the
+    // user would naturally read next.
+    if (m_summaryLabel && !m_fullDescription.empty() && m_markWatchedButton) {
+        m_markWatchedButton->setCustomNavigationRoute(
+            brls::FocusDirection::DOWN, m_summaryLabel);
     }
 
     if (hasChildren && upTarget) {
@@ -3083,16 +3208,462 @@ void MediaDetailView::setupChildrenFocusTransfer() {
     if (m_fullDescription.empty() && firstFocusable) {
         brls::Application::giveFocus(firstFocusable);
 
-        // Set DOWN from play/resume buttons to first focusable item
-        if (m_playButton) {
-            m_playButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstFocusable);
+        // Bridge the last leftBox button down to the children/extras row.
+        // Only the bottom button gets this route — the rest of the chain
+        // (Play→Resume→Download→Watched) was wired explicitly in the
+        // constructor and we don't want to short-circuit it here.
+        brls::View* lastLeftButton = m_markWatchedButton
+            ? m_markWatchedButton
+            : (m_downloadButton
+                ? m_downloadButton
+                : (m_resumeButton ? m_resumeButton : m_playButton));
+        if (lastLeftButton) {
+            lastLeftButton->setCustomNavigationRoute(
+                brls::FocusDirection::DOWN, firstFocusable);
         }
-        if (m_resumeButton) {
-            m_resumeButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstFocusable);
+    }
+}
+
+// ─── Mark Watched / Unwatched ──────────────────────────────────────────
+
+void MediaDetailView::onToggleWatched() {
+    if (!m_markWatchedButton) return;
+
+    // Optimistic UI update so the press feels instant. If the server
+    // call fails we flip the label, icon, and the cached watched bit
+    // back to their prior state so the next refresh reflects truth.
+    bool wasWatched = m_item.watched;
+    m_item.watched = !wasWatched;
+    m_markWatchedButton->setText(m_item.watched ? "Mark Unwatched" : "Mark Watched");
+    if (m_markWatchedIcon) {
+        m_markWatchedIcon->setImageFromRes(m_item.watched
+            ? "icons/check-circle.png"
+            : "icons/check-circle-outline.png");
+    }
+
+    std::string ratingKey = m_item.ratingKey;
+    bool target = m_item.watched;  // what we want it to be on the server
+    auto alive = m_alive;
+    asyncRun([this, alive, ratingKey, target, wasWatched]() {
+        PlexClient& client = PlexClient::getInstance();
+        bool ok = target ? client.markAsWatched(ratingKey)
+                         : client.markAsUnwatched(ratingKey);
+        if (!ok) {
+            brls::sync([this, alive, wasWatched]() {
+                if (!alive->load()) return;
+                // Roll the optimistic update back.
+                m_item.watched = wasWatched;
+                if (m_markWatchedButton) {
+                    m_markWatchedButton->setText(m_item.watched ? "Mark Unwatched" : "Mark Watched");
+                }
+                if (m_markWatchedIcon) {
+                    m_markWatchedIcon->setImageFromRes(m_item.watched
+                        ? "icons/check-circle.png"
+                        : "icons/check-circle-outline.png");
+                }
+                brls::Application::notify("Couldn't update watched state");
+            });
         }
-        if (m_downloadButton) {
-            m_downloadButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstFocusable);
+    });
+}
+
+// ─── Audio / Subtitle stream pickers ───────────────────────────────────
+
+void MediaDetailView::loadStreams() {
+    if (!m_audioRow && !m_subtitleRow) return;  // movie-only, see ctor
+
+    std::string ratingKey = m_item.ratingKey;
+    auto alive = m_alive;
+    asyncRun([this, alive, ratingKey]() {
+        std::vector<PlexStream> streams;
+        int partId = 0;
+        PlexClient& client = PlexClient::getInstance();
+        if (!client.fetchStreams(ratingKey, streams, partId)) return;
+
+        brls::sync([this, alive, streams, partId]() {
+            if (!alive->load()) return;
+            m_streams = streams;
+            m_partId  = partId;
+            updateStreamRowLabels();
+        });
+    });
+}
+
+void MediaDetailView::updateStreamRowLabels() {
+    // Find the currently-selected audio + subtitle streams. Plex marks
+    // exactly one of each as selected on the server side, so we just
+    // read the bool the API gave us — no second round-trip needed.
+    std::string audioLabel = "(default)";
+    std::string subtitleLabel = "None";
+    bool hasAudio = false;
+    bool hasSubs  = false;
+    for (const auto& s : m_streams) {
+        if (s.streamType == 2) {
+            hasAudio = true;
+            if (s.selected) {
+                audioLabel = s.displayTitle.empty() ? s.language : s.displayTitle;
+            }
+        } else if (s.streamType == 3 || s.streamType == 4) {
+            hasSubs = true;
+            if (s.selected) {
+                subtitleLabel = s.displayTitle.empty() ? s.language : s.displayTitle;
+            }
         }
+    }
+
+    if (m_audioRow) {
+        if (hasAudio) {
+            m_audioRow->setText("AUDIO: " + audioLabel);
+            m_audioRow->setVisibility(brls::Visibility::VISIBLE);
+        } else {
+            m_audioRow->setVisibility(brls::Visibility::GONE);
+        }
+    }
+    if (m_subtitleRow) {
+        // Always keep the subtitle row visible — even when nothing is
+        // installed, the user needs the tap target to open the dialog
+        // and run the online subtitle search. Label reads "None" when
+        // nothing is on; "Add subtitles" hint when the list is empty
+        // entirely.
+        if (hasSubs) {
+            m_subtitleRow->setText("SUBTITLES: " + subtitleLabel);
+        } else {
+            m_subtitleRow->setText("SUBTITLES: None  ·  Tap to search online");
+        }
+        m_subtitleRow->setVisibility(brls::Visibility::VISIBLE);
+    }
+}
+
+// Shared helper: build a row-style button used inside the audio /
+// subtitle pickers. The check-mark prefix mirrors the screenshot's
+// "currently selected" affordance, the row height keeps the column
+// scannable, and left-alignment with padding lets long track names
+// hang off naturally instead of getting clipped at the centre.
+static brls::Button* makePickerRow(const std::string& text,
+                                   bool isSelected,
+                                   std::function<bool(brls::View*)> onClick) {
+    auto* btn = new brls::Button();
+    btn->setText(isSelected ? ("✓ " + text) : ("   " + text));
+    btn->setHeight(40);
+    btn->setMarginBottom(6);
+    btn->setPaddingLeft(14);
+    btn->registerClickAction(onClick);
+    btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+    return btn;
+}
+
+void MediaDetailView::showAudioPicker() {
+    if (m_partId <= 0 || m_streams.empty()) return;
+
+    auto* dialog = new brls::Dialog("Select audio track");
+    auto* content = new brls::Box();
+    content->setAxis(brls::Axis::COLUMN);
+    content->setPadding(20);
+    content->setWidth(460);
+
+    // Audio lists are typically short (a few tracks per release) so we
+    // intentionally skip the search box and just give the dialog a tall
+    // scroll area for the rare polyglot release.
+    auto* scroll = new brls::ScrollingFrame();
+    scroll->setHeight(360);
+    scroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
+    auto* listBox = new brls::Box();
+    listBox->setAxis(brls::Axis::COLUMN);
+    scroll->setContentView(listBox);
+
+    bool any = false;
+    for (const auto& s : m_streams) {
+        if (s.streamType != 2) continue;
+        any = true;
+        int streamId = s.id;
+        std::string display = s.displayTitle.empty() ? s.language : s.displayTitle;
+        auto alive = m_alive;
+        listBox->addView(makePickerRow(display, s.selected,
+            [this, alive, dialog, streamId, display](brls::View*) {
+                dialog->dismiss();
+                int partId = m_partId;
+                asyncRun([this, alive, partId, streamId, display]() {
+                    PlexClient::getInstance().setStreamSelection(partId, streamId, -1);
+                    brls::sync([this, alive, streamId, display]() {
+                        if (!alive->load()) return;
+                        for (auto& s : m_streams) {
+                            if (s.streamType == 2) s.selected = (s.id == streamId);
+                        }
+                        updateStreamRowLabels();
+                    });
+                });
+                return true;
+            }));
+    }
+    if (!any) {
+        delete scroll;
+        delete content;
+        delete dialog;
+        return;
+    }
+    content->addView(scroll);
+    dialog->addView(content);
+    dialog->open();
+}
+
+void MediaDetailView::showSubtitlePicker() {
+    if (m_partId <= 0) return;
+
+    // brls::Dialog dies when the user presses B / taps outside, but the
+    // closures we hand to the IME / brls::sync / asyncRun still hold raw
+    // pointers to listBox and the dialog. Subclass with a destructor
+    // that flips a shared_ptr<bool>; every closure captures the flag and
+    // bails if the dialog is already gone. Same pattern as m_alive but
+    // scoped to this dialog rather than the whole detail view.
+    struct SubtitleDialog : public brls::Dialog {
+        using brls::Dialog::Dialog;
+        std::shared_ptr<bool> dlgAlive = std::make_shared<bool>(true);
+        ~SubtitleDialog() override { if (dlgAlive) *dlgAlive = false; }
+    };
+
+    auto* dialog = new SubtitleDialog("Subtitles");
+    auto dlgAlive = dialog->dlgAlive;
+    auto* content = new brls::Box();
+    content->setAxis(brls::Axis::COLUMN);
+    content->setPadding(20);
+    content->setWidth(460);
+
+    // Track whether ANY subtitle is currently selected so we can render
+    // the leading "None" row with the correct check-mark state.
+    bool anySelected = false;
+    for (const auto& s : m_streams) {
+        if ((s.streamType == 3 || s.streamType == 4) && s.selected) {
+            anySelected = true; break;
+        }
+    }
+
+    // ── Search online row ───────────────────────────────────────────
+    // Mirrors the in-player flow: tap → IME prompts for a language
+    // code (defaults to "en") → PlexClient::searchSubtitles hits the
+    // server's subtitle providers (OpenSubtitles etc.) → results
+    // replace the list. Picking a result installs it via
+    // selectSearchedSubtitle and refreshes the installed list.
+    auto* searchBtn = new brls::Button();
+    searchBtn->setText("Search online for subtitles…");
+    searchBtn->setHeight(40);
+    searchBtn->setMarginBottom(12);
+    searchBtn->setPaddingLeft(14);
+    content->addView(searchBtn);
+
+    // ── Scrollable list ─────────────────────────────────────────────
+    auto* scroll = new brls::ScrollingFrame();
+    scroll->setHeight(360);
+    scroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
+    auto* listBox = new brls::Box();
+    listBox->setAxis(brls::Axis::COLUMN);
+    scroll->setContentView(listBox);
+    content->addView(scroll);
+
+    // Captured by closures so both the initial render and any later
+    // refresh (after installing a fresh subtitle) hit the same body.
+    auto alive    = m_alive;
+    auto buildInstalledList = std::make_shared<std::function<void()>>();
+    *buildInstalledList = [this, alive, dlgAlive, dialog, listBox, searchBtn]() {
+        if (!alive->load() || !*dlgAlive) return;
+        // Borealis keeps a raw pointer to whatever view currently has
+        // focus. clearViews() below deletes every row in listBox —
+        // including the focused "Back to installed" button that
+        // triggered this rebuild. Park focus on searchBtn (which sits
+        // outside listBox and survives the rebuild) so the focus
+        // pointer can't dangle.
+        brls::Application::giveFocus(searchBtn);
+        listBox->clearViews();
+
+        // Re-read selection state, since installing a new subtitle
+        // updates m_streams (we refetch after every install).
+        bool anyOn = false;
+        for (const auto& s : m_streams) {
+            if ((s.streamType == 3 || s.streamType == 4) && s.selected) {
+                anyOn = true; break;
+            }
+        }
+
+        // "None" first — Plex uses subtitleStreamID=0 to mean off.
+        listBox->addView(makePickerRow("None", !anyOn,
+            [this, alive, dialog](brls::View*) {
+                dialog->dismiss();
+                int partId = m_partId;
+                asyncRun([this, alive, partId]() {
+                    PlexClient::getInstance().setStreamSelection(partId, -1, 0);
+                    brls::sync([this, alive]() {
+                        if (!alive->load()) return;
+                        for (auto& s : m_streams) {
+                            if (s.streamType == 3 || s.streamType == 4) s.selected = false;
+                        }
+                        updateStreamRowLabels();
+                    });
+                });
+                return true;
+            }));
+
+        for (const auto& s : m_streams) {
+            if (s.streamType != 3 && s.streamType != 4) continue;
+            std::string display = s.displayTitle.empty() ? s.language : s.displayTitle;
+            int streamId  = s.id;
+            bool selected = s.selected;
+            listBox->addView(makePickerRow(display, selected,
+                [this, alive, dialog, streamId, display](brls::View*) {
+                    dialog->dismiss();
+                    int partId = m_partId;
+                    asyncRun([this, alive, partId, streamId, display]() {
+                        PlexClient::getInstance().setStreamSelection(partId, -1, streamId);
+                        brls::sync([this, alive, streamId, display]() {
+                            if (!alive->load()) return;
+                            for (auto& s : m_streams) {
+                                if (s.streamType == 3 || s.streamType == 4) {
+                                    s.selected = (s.id == streamId);
+                                }
+                            }
+                            updateStreamRowLabels();
+                        });
+                    });
+                    return true;
+                }));
+        }
+    };
+    (*buildInstalledList)();
+
+    // Build the search-results view inside the same scroll area.
+    // Picking a result calls selectSearchedSubtitle (Plex downloads
+    // and attaches it server-side), then we refetch the stream list
+    // so the newly-installed subtitle shows up as an "installed" row.
+    auto showResults = std::make_shared<std::function<void(const std::vector<PlexClient::SubtitleResult>&)>>();
+    *showResults = [this, alive, dlgAlive, dialog, listBox, searchBtn, buildInstalledList](
+            const std::vector<PlexClient::SubtitleResult>& results) {
+        if (!alive->load() || !*dlgAlive) return;
+        // Park focus on searchBtn before tearing down listBox's rows
+        // (the "Searching…" label this replaces is focusable on Vita
+        // because the IME callback giveFocus'd it).
+        brls::Application::giveFocus(searchBtn);
+        listBox->clearViews();
+
+        auto* back = new brls::Button();
+        back->setText("‹ Back to installed");
+        back->setHeight(36);
+        back->setMarginBottom(10);
+        back->setPaddingLeft(14);
+        // buildInstalledList calls listBox->clearViews(), which would
+        // delete this back button while we're still inside its click
+        // handler — a classic use-after-free that crashed the app. Defer
+        // the rebuild to the next main-loop iteration via brls::sync so
+        // the click handler returns first and the view tree is safe to
+        // tear down. dlgAlive guards against the dialog dying first.
+        back->registerClickAction([dlgAlive, buildInstalledList](brls::View*) {
+            brls::sync([dlgAlive, buildInstalledList]() {
+                if (!*dlgAlive) return;
+                (*buildInstalledList)();
+            });
+            return true;
+        });
+        back->addGestureRecognizer(new brls::TapGestureRecognizer(back));
+        listBox->addView(back);
+
+        if (results.empty()) {
+            auto* none = new brls::Label();
+            none->setText("No subtitles found");
+            none->setFontSize(14);
+            none->setMarginTop(8);
+            listBox->addView(none);
+            return;
+        }
+
+        for (const auto& r : results) {
+            std::string display = r.displayTitle.empty() ? r.language : r.displayTitle;
+            if (!r.provider.empty()) display += "  (" + r.provider + ")";
+            std::string key       = r.key;
+            std::string ratingKey = m_item.ratingKey;
+            listBox->addView(makePickerRow(display, false,
+                [this, alive, dialog, key, ratingKey, display](brls::View*) {
+                    dialog->dismiss();
+                    int partId = m_partId;
+                    asyncRun([this, alive, ratingKey, partId, key, display]() {
+                        bool ok = PlexClient::getInstance()
+                            .selectSearchedSubtitle(ratingKey, partId, key);
+                        // Refresh the stream list so the newly-attached
+                        // subtitle shows up next time the picker opens.
+                        std::vector<PlexStream> fresh;
+                        int freshPart = partId;
+                        PlexClient::getInstance().fetchStreams(ratingKey, fresh, freshPart);
+                        brls::sync([this, alive, ok, display, fresh, freshPart]() {
+                            if (!alive->load()) return;
+                            if (ok) {
+                                m_streams = fresh;
+                                m_partId  = freshPart;
+                                updateStreamRowLabels();
+                                brls::Application::notify("Subtitle added: " + display);
+                            } else {
+                                brls::Application::notify("Couldn't add subtitle");
+                            }
+                        });
+                    });
+                    return true;
+                }));
+        }
+    };
+
+    // Extracted so both the search button and the auto-trigger below
+    // can fire the same flow without duplicating the IME / asyncRun
+    // glue.
+    auto triggerOnlineSearch = std::make_shared<std::function<void()>>();
+    *triggerOnlineSearch = [this, alive, dlgAlive, listBox, searchBtn, showResults]() {
+        if (!alive->load() || !*dlgAlive) return;
+        auto* ime = brls::Application::getImeManager();
+        if (!ime) return;
+        ime->openForText([this, alive, dlgAlive, listBox, searchBtn, showResults](std::string lang) {
+            // Dialog already gone? Drop the IME result on the floor.
+            if (!alive->load() || !*dlgAlive) return;
+            if (lang.empty()) lang = "en";
+
+            // Same focus-park as the other rebuilders — the user might
+            // have been focused on a row when they triggered search.
+            brls::Application::giveFocus(searchBtn);
+            // Loading state
+            listBox->clearViews();
+            auto* loading = new brls::Label();
+            loading->setText("Searching " + lang + "…");
+            loading->setFontSize(14);
+            loading->setMarginTop(8);
+            listBox->addView(loading);
+
+            std::string ratingKey = m_item.ratingKey;
+            asyncRun([this, alive, dlgAlive, ratingKey, lang, showResults]() {
+                std::vector<PlexClient::SubtitleResult> results;
+                PlexClient::getInstance().searchSubtitles(ratingKey, lang, results);
+                brls::sync([alive, dlgAlive, showResults, results]() {
+                    if (!alive->load() || !*dlgAlive) return;
+                    (*showResults)(results);
+                });
+            });
+        }, "Subtitle language (e.g. en, es, fr)", "en", 8, "en");
+    };
+
+    searchBtn->registerClickAction([triggerOnlineSearch](brls::View*) {
+        (*triggerOnlineSearch)();
+        return true;
+    });
+    searchBtn->addGestureRecognizer(new brls::TapGestureRecognizer(searchBtn));
+
+    dialog->addView(content);
+    dialog->open();
+
+    // If nothing is installed, jump straight to the online search —
+    // the user clearly wanted subtitles or they wouldn't have tapped
+    // a row that read "None · Tap to search online". Defer one frame
+    // so the dialog has finished opening before the IME overlays it.
+    bool anyInstalled = false;
+    for (const auto& s : m_streams) {
+        if (s.streamType == 3 || s.streamType == 4) { anyInstalled = true; break; }
+    }
+    if (!anyInstalled) {
+        brls::sync([dlgAlive, triggerOnlineSearch]() {
+            if (!*dlgAlive) return;
+            (*triggerOnlineSearch)();
+        });
     }
 }
 
