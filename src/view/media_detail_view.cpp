@@ -3631,50 +3631,68 @@ void MediaDetailView::showSubtitlePicker() {
         }
     };
 
-    // Extracted so both the search button and the auto-trigger below
-    // can fire the same flow without duplicating the IME / asyncRun
-    // glue.
-    auto triggerOnlineSearch = std::make_shared<std::function<void()>>();
-    *triggerOnlineSearch = [this, alive, dlgAlive, listBox, searchBtn, currentLang, showResults]() {
+    // Extracted so the search button, the "change language" path, the
+    // auto-trigger on empty installed list, and the post-IME callback
+    // can all share the loading-state + asyncRun + result handoff glue.
+    auto runSearch = std::make_shared<std::function<void(std::string)>>();
+    *runSearch = [this, alive, dlgAlive, listBox, searchBtn, currentLang, showResults](std::string lang) {
+        if (!alive->load() || !*dlgAlive) return;
+        if (lang.empty()) lang = "en";
+        *currentLang = lang;
+
+        // Park focus on searchBtn before tearing down listBox.
+        brls::Application::giveFocus(searchBtn);
+        listBox->clearViews();
+        auto* loading = new brls::Label();
+        loading->setText("Searching " + lang + "…");
+        loading->setFontSize(14);
+        loading->setMarginTop(8);
+        listBox->addView(loading);
+
+        std::string ratingKey = m_item.ratingKey;
+        asyncRun([this, alive, dlgAlive, ratingKey, lang, showResults]() {
+            std::vector<PlexClient::SubtitleResult> results;
+            PlexClient::getInstance().searchSubtitles(ratingKey, lang, results);
+            brls::sync([alive, dlgAlive, showResults, results]() {
+                if (!alive->load() || !*dlgAlive) return;
+                (*showResults)(results);
+            });
+        });
+    };
+
+    // "Change language" path — IME-prompts for the language, then
+    // hands off to runSearch. Only used from the results-mode button
+    // press; the initial / auto search skips this and goes straight
+    // to runSearch with the saved default.
+    auto promptLanguageThenSearch = std::make_shared<std::function<void()>>();
+    *promptLanguageThenSearch = [alive, dlgAlive, currentLang, runSearch]() {
         if (!alive->load() || !*dlgAlive) return;
         auto* ime = brls::Application::getImeManager();
         if (!ime) return;
-        // Pre-fill the IME with the language already in play (default
-        // setting on first open, last typed value on subsequent opens)
-        // so the user only has to retype when they're actually switching.
         std::string seed = *currentLang;
         if (seed.empty()) seed = "en";
-        ime->openForText([this, alive, dlgAlive, listBox, searchBtn, currentLang, showResults](std::string lang) {
-            // Dialog already gone? Drop the IME result on the floor.
+        ime->openForText([alive, dlgAlive, runSearch](std::string lang) {
             if (!alive->load() || !*dlgAlive) return;
-            if (lang.empty()) lang = "en";
-            *currentLang = lang;
-
-            // Same focus-park as the other rebuilders — the user might
-            // have been focused on a row when they triggered search.
-            brls::Application::giveFocus(searchBtn);
-            // Loading state
-            listBox->clearViews();
-            auto* loading = new brls::Label();
-            loading->setText("Searching " + lang + "…");
-            loading->setFontSize(14);
-            loading->setMarginTop(8);
-            listBox->addView(loading);
-
-            std::string ratingKey = m_item.ratingKey;
-            asyncRun([this, alive, dlgAlive, ratingKey, lang, showResults]() {
-                std::vector<PlexClient::SubtitleResult> results;
-                PlexClient::getInstance().searchSubtitles(ratingKey, lang, results);
-                brls::sync([alive, dlgAlive, showResults, results]() {
-                    if (!alive->load() || !*dlgAlive) return;
-                    (*showResults)(results);
-                });
-            });
+            (*runSearch)(lang);
         }, "Subtitle language (e.g. en, es, fr)", seed, 8, seed);
     };
 
-    searchBtn->registerClickAction([triggerOnlineSearch](brls::View*) {
-        (*triggerOnlineSearch)();
+    searchBtn->registerClickAction([currentLang, runSearch, promptLanguageThenSearch, searchBtn](brls::View*) {
+        // Read the live button label so we don't need a separate flag
+        // for "which mode am I in" — setSearchBtnFor() is the only
+        // thing that updates the text, and there are exactly two
+        // possible captions.
+        std::string label = searchBtn->getText();
+        if (label.rfind("Change language", 0) == 0) {
+            (*promptLanguageThenSearch)();
+        } else {
+            // First search — use the saved default; the user can
+            // still switch via the relabelled button once results
+            // show up.
+            std::string lang = *currentLang;
+            if (lang.empty()) lang = "en";
+            (*runSearch)(lang);
+        }
         return true;
     });
     searchBtn->addGestureRecognizer(new brls::TapGestureRecognizer(searchBtn));
@@ -3682,18 +3700,19 @@ void MediaDetailView::showSubtitlePicker() {
     dialog->addView(content);
     dialog->open();
 
-    // If nothing is installed, jump straight to the online search —
-    // the user clearly wanted subtitles or they wouldn't have tapped
-    // a row that read "None · Tap to search online". Defer one frame
-    // so the dialog has finished opening before the IME overlays it.
+    // If nothing is installed, jump straight to the online search using
+    // the saved default language. User can still change it from the
+    // "Change language" affordance once the results list is showing.
     bool anyInstalled = false;
     for (const auto& s : m_streams) {
         if (s.streamType == 3 || s.streamType == 4) { anyInstalled = true; break; }
     }
     if (!anyInstalled) {
-        brls::sync([dlgAlive, triggerOnlineSearch]() {
+        brls::sync([dlgAlive, currentLang, runSearch]() {
             if (!*dlgAlive) return;
-            (*triggerOnlineSearch)();
+            std::string lang = *currentLang;
+            if (lang.empty()) lang = "en";
+            (*runSearch)(lang);
         });
     }
 }
