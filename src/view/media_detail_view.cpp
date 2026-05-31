@@ -3521,8 +3521,16 @@ void MediaDetailView::showSubtitlePicker() {
         back->setHeight(36);
         back->setMarginBottom(10);
         back->setPaddingLeft(14);
+        // buildInstalledList calls listBox->clearViews(), which would
+        // delete this back button while we're still inside its click
+        // handler — a classic use-after-free that crashed the app. Defer
+        // the rebuild to the next main-loop iteration via brls::sync so
+        // the click handler returns first and the view tree is safe to
+        // tear down.
         back->registerClickAction([buildInstalledList](brls::View*) {
-            (*buildInstalledList)();
+            brls::sync([buildInstalledList]() {
+                (*buildInstalledList)();
+            });
             return true;
         });
         back->addGestureRecognizer(new brls::TapGestureRecognizer(back));
@@ -3571,9 +3579,13 @@ void MediaDetailView::showSubtitlePicker() {
         }
     };
 
-    searchBtn->registerClickAction([this, alive, listBox, showResults](brls::View*) {
+    // Extracted so both the search button and the auto-trigger below
+    // can fire the same flow without duplicating the IME / asyncRun
+    // glue.
+    auto triggerOnlineSearch = std::make_shared<std::function<void()>>();
+    *triggerOnlineSearch = [this, alive, listBox, showResults]() {
         auto* ime = brls::Application::getImeManager();
-        if (!ime) return true;
+        if (!ime) return;
         ime->openForText([this, alive, listBox, showResults](std::string lang) {
             if (lang.empty()) lang = "en";
 
@@ -3595,12 +3607,30 @@ void MediaDetailView::showSubtitlePicker() {
                 });
             });
         }, "Subtitle language (e.g. en, es, fr)", "en", 8, "en");
+    };
+
+    searchBtn->registerClickAction([triggerOnlineSearch](brls::View*) {
+        (*triggerOnlineSearch)();
         return true;
     });
     searchBtn->addGestureRecognizer(new brls::TapGestureRecognizer(searchBtn));
 
     dialog->addView(content);
     dialog->open();
+
+    // If nothing is installed, jump straight to the online search —
+    // the user clearly wanted subtitles or they wouldn't have tapped
+    // a row that read "None · Tap to search online". Defer one frame
+    // so the dialog has finished opening before the IME overlays it.
+    bool anyInstalled = false;
+    for (const auto& s : m_streams) {
+        if (s.streamType == 3 || s.streamType == 4) { anyInstalled = true; break; }
+    }
+    if (!anyInstalled) {
+        brls::sync([triggerOnlineSearch]() {
+            (*triggerOnlineSearch)();
+        });
+    }
 }
 
 } // namespace vitaplex
