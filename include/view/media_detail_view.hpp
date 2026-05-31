@@ -35,6 +35,20 @@ private:
     void showMovieContextMenu(const MediaItem& movie);  // Context menu for movies
     void showShowContextMenu(const MediaItem& show);    // Context menu for TV shows
 
+    // Toggle the server-side watched / unwatched flag for this item.
+    // Uses Plex's /:/scrobble and /:/unscrobble endpoints; the button
+    // label flips immediately on success, no full reload required.
+    void onToggleWatched();
+
+    // Fetch the audio + subtitle streams Plex knows about for this part
+    // and populate the AUDIO / SUBTITLES picker rows. Plex persists the
+    // user's selection server-side per Part, so changes here carry over
+    // automatically when the user finally hits Play.
+    void loadStreams();
+    void updateStreamRowLabels();
+    void showAudioPicker();
+    void showSubtitlePicker();
+
 public:
     // Static context menus callable from any view (home, search, library grid, etc.)
     static void showMovieContextMenuStatic(const MediaItem& movie);
@@ -64,6 +78,16 @@ public:
     brls::Button* m_playButton = nullptr;
     brls::Button* m_resumeButton = nullptr;
     brls::Button* m_downloadButton = nullptr;
+    // Toggleable mark-watched / mark-unwatched action. Label switches
+    // depending on m_item.watched, which itself is updated locally after
+    // a successful PUT to /:/scrobble or /:/unscrobble.
+    brls::Button* m_markWatchedButton = nullptr;
+    // AUDIO / SUBTITLES pickers, only created for playable items
+    // (movies / episodes / extras). Hidden until loadStreams() resolves.
+    brls::Button* m_audioRow = nullptr;
+    brls::Button* m_subtitleRow = nullptr;
+    int m_partId = 0;                       // Set by loadStreams()
+    std::vector<PlexStream> m_streams;      // Populated by loadStreams()
     brls::Box* m_childrenBox = nullptr;
     brls::Label* m_childrenLabel = nullptr;
     brls::HScrollingFrame* m_childrenScroll = nullptr;

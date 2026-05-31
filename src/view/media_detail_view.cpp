@@ -167,6 +167,22 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         });
         m_downloadButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_downloadButton));
         leftBox->addView(m_downloadButton);
+
+        // Watched-state toggle. Label is the action the press will
+        // perform — i.e. "Mark Watched" when the item is currently
+        // unwatched, and vice versa. The button is wired straight to
+        // PlexClient::markAsWatched/markAsUnwatched in onToggleWatched.
+        m_markWatchedButton = new brls::Button();
+        m_markWatchedButton->setText(m_item.watched ? "Mark Unwatched" : "Mark Watched");
+        m_markWatchedButton->setWidth(200);
+        m_markWatchedButton->setHeight(44);
+        m_markWatchedButton->setMarginTop(10);
+        m_markWatchedButton->registerClickAction([this](brls::View*) {
+            onToggleWatched();
+            return true;
+        });
+        m_markWatchedButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_markWatchedButton));
+        leftBox->addView(m_markWatchedButton);
     }
 
     topRow->addView(leftBox);
@@ -229,6 +245,37 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
 
         m_summaryScroll->setContentView(m_summaryLabel);
         rightBox->addView(m_summaryScroll);
+    }
+
+    // AUDIO / SUBTITLES picker rows. Movies are the only type with a
+    // single Part (and therefore a stable selection) at this layer;
+    // episodes have their own Part per cell so the picker belongs on
+    // the episode row, not this header. The rows start hidden — they
+    // appear once loadStreams() populates the list asynchronously.
+    if (m_item.mediaType == MediaType::MOVIE) {
+        m_audioRow = new brls::Button();
+        m_audioRow->setText("AUDIO: Loading…");
+        m_audioRow->setHeight(36);
+        m_audioRow->setMarginBottom(8);
+        m_audioRow->setVisibility(brls::Visibility::GONE);
+        m_audioRow->registerClickAction([this](brls::View*) {
+            showAudioPicker();
+            return true;
+        });
+        m_audioRow->addGestureRecognizer(new brls::TapGestureRecognizer(m_audioRow));
+        rightBox->addView(m_audioRow);
+
+        m_subtitleRow = new brls::Button();
+        m_subtitleRow->setText("SUBTITLES: Loading…");
+        m_subtitleRow->setHeight(36);
+        m_subtitleRow->setMarginBottom(8);
+        m_subtitleRow->setVisibility(brls::Visibility::GONE);
+        m_subtitleRow->registerClickAction([this](brls::View*) {
+            showSubtitlePicker();
+            return true;
+        });
+        m_subtitleRow->addGestureRecognizer(new brls::TapGestureRecognizer(m_subtitleRow));
+        rightBox->addView(m_subtitleRow);
     }
 
     topRow->addView(rightBox);
@@ -496,6 +543,13 @@ void MediaDetailView::loadDetails() {
                     m_item.mediaType == MediaType::SHOW) {
                     loadExtras();
                 }
+            }
+
+            // Movies: pull the audio + subtitle stream list so the
+            // AUDIO / SUBTITLES rows can populate themselves and so
+            // Play uses whichever tracks the user picks here.
+            if (m_item.mediaType == MediaType::MOVIE) {
+                loadStreams();
             }
         });
     });
@@ -3094,6 +3148,226 @@ void MediaDetailView::setupChildrenFocusTransfer() {
             m_downloadButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstFocusable);
         }
     }
+}
+
+// ─── Mark Watched / Unwatched ──────────────────────────────────────────
+
+void MediaDetailView::onToggleWatched() {
+    if (!m_markWatchedButton) return;
+
+    // Optimistic UI update so the press feels instant. If the server
+    // call fails we flip the label and the cached watched bit back to
+    // their prior state so the next refresh reflects truth.
+    bool wasWatched = m_item.watched;
+    m_item.watched = !wasWatched;
+    m_markWatchedButton->setText(m_item.watched ? "Mark Unwatched" : "Mark Watched");
+
+    std::string ratingKey = m_item.ratingKey;
+    bool target = m_item.watched;  // what we want it to be on the server
+    auto alive = m_alive;
+    asyncRun([this, alive, ratingKey, target, wasWatched]() {
+        PlexClient& client = PlexClient::getInstance();
+        bool ok = target ? client.markAsWatched(ratingKey)
+                         : client.markAsUnwatched(ratingKey);
+        if (!ok) {
+            brls::sync([this, alive, wasWatched]() {
+                if (!alive->load()) return;
+                // Roll the optimistic update back.
+                m_item.watched = wasWatched;
+                if (m_markWatchedButton) {
+                    m_markWatchedButton->setText(m_item.watched ? "Mark Unwatched" : "Mark Watched");
+                }
+                brls::Application::notify("Couldn't update watched state");
+            });
+        }
+    });
+}
+
+// ─── Audio / Subtitle stream pickers ───────────────────────────────────
+
+void MediaDetailView::loadStreams() {
+    if (!m_audioRow && !m_subtitleRow) return;  // movie-only, see ctor
+
+    std::string ratingKey = m_item.ratingKey;
+    auto alive = m_alive;
+    asyncRun([this, alive, ratingKey]() {
+        std::vector<PlexStream> streams;
+        int partId = 0;
+        PlexClient& client = PlexClient::getInstance();
+        if (!client.fetchStreams(ratingKey, streams, partId)) return;
+
+        brls::sync([this, alive, streams, partId]() {
+            if (!alive->load()) return;
+            m_streams = streams;
+            m_partId  = partId;
+            updateStreamRowLabels();
+        });
+    });
+}
+
+void MediaDetailView::updateStreamRowLabels() {
+    // Find the currently-selected audio + subtitle streams. Plex marks
+    // exactly one of each as selected on the server side, so we just
+    // read the bool the API gave us — no second round-trip needed.
+    std::string audioLabel = "(default)";
+    std::string subtitleLabel = "None";
+    bool hasAudio = false;
+    bool hasSubs  = false;
+    for (const auto& s : m_streams) {
+        if (s.streamType == 2) {
+            hasAudio = true;
+            if (s.selected) {
+                audioLabel = s.displayTitle.empty() ? s.language : s.displayTitle;
+            }
+        } else if (s.streamType == 3 || s.streamType == 4) {
+            hasSubs = true;
+            if (s.selected) {
+                subtitleLabel = s.displayTitle.empty() ? s.language : s.displayTitle;
+            }
+        }
+    }
+
+    if (m_audioRow) {
+        if (hasAudio) {
+            m_audioRow->setText("AUDIO: " + audioLabel);
+            m_audioRow->setVisibility(brls::Visibility::VISIBLE);
+        } else {
+            m_audioRow->setVisibility(brls::Visibility::GONE);
+        }
+    }
+    if (m_subtitleRow) {
+        // Show the subtitle row even when the server reports no embedded
+        // subs, so the user has a clear "None" affordance. Tapping it
+        // when the list is empty just dismisses without changes.
+        m_subtitleRow->setText("SUBTITLES: " + subtitleLabel);
+        m_subtitleRow->setVisibility(hasSubs ? brls::Visibility::VISIBLE
+                                             : brls::Visibility::GONE);
+    }
+}
+
+void MediaDetailView::showAudioPicker() {
+    if (m_partId <= 0 || m_streams.empty()) return;
+
+    auto* dialog = new brls::Dialog("Select audio track");
+    auto* listBox = new brls::Box();
+    listBox->setAxis(brls::Axis::COLUMN);
+    listBox->setPadding(20);
+
+    bool any = false;
+    for (const auto& s : m_streams) {
+        if (s.streamType != 2) continue;
+        any = true;
+        auto* btn = new brls::Button();
+        std::string label = s.displayTitle.empty() ? s.language : s.displayTitle;
+        if (s.selected) label = "✓ " + label;
+        btn->setText(label);
+        btn->setHeight(44);
+        btn->setMarginBottom(10);
+        int streamId = s.id;
+        std::string display = s.displayTitle.empty() ? s.language : s.displayTitle;
+        auto alive = m_alive;
+        btn->registerClickAction([this, alive, dialog, streamId, display](brls::View*) {
+            dialog->dismiss();
+            int partId = m_partId;
+            asyncRun([this, alive, partId, streamId, display]() {
+                PlexClient::getInstance().setStreamSelection(partId, streamId, -1);
+                brls::sync([this, alive, streamId, display]() {
+                    if (!alive->load()) return;
+                    for (auto& s : m_streams) {
+                        if (s.streamType == 2) s.selected = (s.id == streamId);
+                    }
+                    updateStreamRowLabels();
+                });
+            });
+            return true;
+        });
+        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+        listBox->addView(btn);
+    }
+    if (!any) {
+        delete listBox;
+        delete dialog;
+        return;
+    }
+    dialog->addView(listBox);
+    dialog->open();
+}
+
+void MediaDetailView::showSubtitlePicker() {
+    if (m_partId <= 0) return;
+
+    auto* dialog = new brls::Dialog("Select subtitle track");
+    auto* listBox = new brls::Box();
+    listBox->setAxis(brls::Axis::COLUMN);
+    listBox->setPadding(20);
+
+    bool anySelected = false;
+    for (const auto& s : m_streams) {
+        if (s.streamType == 3 || s.streamType == 4) {
+            if (s.selected) { anySelected = true; break; }
+        }
+    }
+
+    // "None" comes first; Plex uses subtitleStreamID=0 to mean "off".
+    {
+        auto* btn = new brls::Button();
+        btn->setText(anySelected ? "None" : "✓ None");
+        btn->setHeight(44);
+        btn->setMarginBottom(10);
+        auto alive = m_alive;
+        btn->registerClickAction([this, alive, dialog](brls::View*) {
+            dialog->dismiss();
+            int partId = m_partId;
+            asyncRun([this, alive, partId]() {
+                PlexClient::getInstance().setStreamSelection(partId, -1, 0);
+                brls::sync([this, alive]() {
+                    if (!alive->load()) return;
+                    for (auto& s : m_streams) {
+                        if (s.streamType == 3 || s.streamType == 4) s.selected = false;
+                    }
+                    updateStreamRowLabels();
+                });
+            });
+            return true;
+        });
+        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+        listBox->addView(btn);
+    }
+
+    for (const auto& s : m_streams) {
+        if (s.streamType != 3 && s.streamType != 4) continue;
+        auto* btn = new brls::Button();
+        std::string label = s.displayTitle.empty() ? s.language : s.displayTitle;
+        if (s.selected) label = "✓ " + label;
+        btn->setText(label);
+        btn->setHeight(44);
+        btn->setMarginBottom(10);
+        int streamId = s.id;
+        std::string display = s.displayTitle.empty() ? s.language : s.displayTitle;
+        auto alive = m_alive;
+        btn->registerClickAction([this, alive, dialog, streamId, display](brls::View*) {
+            dialog->dismiss();
+            int partId = m_partId;
+            asyncRun([this, alive, partId, streamId, display]() {
+                PlexClient::getInstance().setStreamSelection(partId, -1, streamId);
+                brls::sync([this, alive, streamId, display]() {
+                    if (!alive->load()) return;
+                    for (auto& s : m_streams) {
+                        if (s.streamType == 3 || s.streamType == 4) {
+                            s.selected = (s.id == streamId);
+                        }
+                    }
+                    updateStreamRowLabels();
+                });
+            });
+            return true;
+        });
+        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+        listBox->addView(btn);
+    }
+
+    dialog->addView(listBox);
+    dialog->open();
 }
 
 } // namespace vitaplex
