@@ -216,6 +216,29 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_markWatchedIcon->setPositionLeft(12);
         m_markWatchedIcon->setPositionTop(12);
         m_markWatchedButton->addView(m_markWatchedIcon);
+
+        // Explicit DOWN / UP routes between the leftBox buttons. Borealis's
+        // default spatial focus search jumps over Resume / Download /
+        // Mark Watched from Play and lands on whatever sits in rightBox /
+        // below, presumably because the leftBox is shorter than the right
+        // column and the scan picks the first focusable outside the row.
+        // Wiring the chain manually fixes Play→Resume→Download→Watched.
+        brls::View* nextDown = m_markWatchedButton;
+        m_downloadButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, nextDown);
+        m_markWatchedButton->setCustomNavigationRoute(brls::FocusDirection::UP, m_downloadButton);
+
+        nextDown = m_downloadButton;
+        if (m_resumeButton) {
+            m_resumeButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, nextDown);
+            m_downloadButton->setCustomNavigationRoute(brls::FocusDirection::UP, m_resumeButton);
+            nextDown = m_resumeButton;
+        } else {
+            m_downloadButton->setCustomNavigationRoute(brls::FocusDirection::UP, m_playButton);
+        }
+        m_playButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, nextDown);
+        if (m_resumeButton) {
+            m_resumeButton->setCustomNavigationRoute(brls::FocusDirection::UP, m_playButton);
+        }
     }
 
     topRow->addView(leftBox);
@@ -3110,12 +3133,27 @@ void MediaDetailView::setupChildrenFocusTransfer() {
 
     // Determine the UP navigation target for children (seasons/episodes):
     // - If description exists, navigate UP to description label
-    // - If description is empty, navigate UP to play button (if exists)
+    // - If description is empty, navigate UP to the BOTTOM-most leftBox
+    //   button so the user lands on Mark Watched / Download / Resume /
+    //   Play rather than jumping to the top of the column.
     brls::View* upTarget = nullptr;
     if (m_summaryLabel && !m_fullDescription.empty()) {
         upTarget = m_summaryLabel;
-    } else if (m_playButton) {
-        upTarget = m_playButton;
+    } else {
+        upTarget = m_markWatchedButton
+            ? (brls::View*)m_markWatchedButton
+            : (m_downloadButton
+                ? (brls::View*)m_downloadButton
+                : (m_resumeButton ? (brls::View*)m_resumeButton
+                                  : (brls::View*)m_playButton));
+    }
+
+    // Description exists → also bridge the last leftBox button down into
+    // the description so the leftBox chain ends in the same place the
+    // user would naturally read next.
+    if (m_summaryLabel && !m_fullDescription.empty() && m_markWatchedButton) {
+        m_markWatchedButton->setCustomNavigationRoute(
+            brls::FocusDirection::DOWN, m_summaryLabel);
     }
 
     if (hasChildren && upTarget) {
@@ -3170,15 +3208,18 @@ void MediaDetailView::setupChildrenFocusTransfer() {
     if (m_fullDescription.empty() && firstFocusable) {
         brls::Application::giveFocus(firstFocusable);
 
-        // Set DOWN from play/resume buttons to first focusable item
-        if (m_playButton) {
-            m_playButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstFocusable);
-        }
-        if (m_resumeButton) {
-            m_resumeButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstFocusable);
-        }
-        if (m_downloadButton) {
-            m_downloadButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstFocusable);
+        // Bridge the last leftBox button down to the children/extras row.
+        // Only the bottom button gets this route — the rest of the chain
+        // (Play→Resume→Download→Watched) was wired explicitly in the
+        // constructor and we don't want to short-circuit it here.
+        brls::View* lastLeftButton = m_markWatchedButton
+            ? m_markWatchedButton
+            : (m_downloadButton
+                ? m_downloadButton
+                : (m_resumeButton ? m_resumeButton : m_playButton));
+        if (lastLeftButton) {
+            lastLeftButton->setCustomNavigationRoute(
+                brls::FocusDirection::DOWN, firstFocusable);
         }
     }
 }
@@ -3279,12 +3320,17 @@ void MediaDetailView::updateStreamRowLabels() {
         }
     }
     if (m_subtitleRow) {
-        // Show the subtitle row even when the server reports no embedded
-        // subs, so the user has a clear "None" affordance. Tapping it
-        // when the list is empty just dismisses without changes.
-        m_subtitleRow->setText("SUBTITLES: " + subtitleLabel);
-        m_subtitleRow->setVisibility(hasSubs ? brls::Visibility::VISIBLE
-                                             : brls::Visibility::GONE);
+        // Always keep the subtitle row visible — even when nothing is
+        // installed, the user needs the tap target to open the dialog
+        // and run the online subtitle search. Label reads "None" when
+        // nothing is on; "Add subtitles" hint when the list is empty
+        // entirely.
+        if (hasSubs) {
+            m_subtitleRow->setText("SUBTITLES: " + subtitleLabel);
+        } else {
+            m_subtitleRow->setText("SUBTITLES: None  ·  Tap to search online");
+        }
+        m_subtitleRow->setVisibility(brls::Visibility::VISIBLE);
     }
 }
 
