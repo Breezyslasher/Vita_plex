@@ -3409,7 +3409,20 @@ void MediaDetailView::showAudioPicker() {
 void MediaDetailView::showSubtitlePicker() {
     if (m_partId <= 0) return;
 
-    auto* dialog = new brls::Dialog("Subtitles");
+    // brls::Dialog dies when the user presses B / taps outside, but the
+    // closures we hand to the IME / brls::sync / asyncRun still hold raw
+    // pointers to listBox and the dialog. Subclass with a destructor
+    // that flips a shared_ptr<bool>; every closure captures the flag and
+    // bails if the dialog is already gone. Same pattern as m_alive but
+    // scoped to this dialog rather than the whole detail view.
+    struct SubtitleDialog : public brls::Dialog {
+        using brls::Dialog::Dialog;
+        std::shared_ptr<bool> dlgAlive = std::make_shared<bool>(true);
+        ~SubtitleDialog() override { if (dlgAlive) *dlgAlive = false; }
+    };
+
+    auto* dialog = new SubtitleDialog("Subtitles");
+    auto dlgAlive = dialog->dlgAlive;
     auto* content = new brls::Box();
     content->setAxis(brls::Axis::COLUMN);
     content->setPadding(20);
@@ -3450,7 +3463,8 @@ void MediaDetailView::showSubtitlePicker() {
     // refresh (after installing a fresh subtitle) hit the same body.
     auto alive    = m_alive;
     auto buildInstalledList = std::make_shared<std::function<void()>>();
-    *buildInstalledList = [this, alive, dialog, listBox]() {
+    *buildInstalledList = [this, alive, dlgAlive, dialog, listBox]() {
+        if (!alive->load() || !*dlgAlive) return;
         listBox->clearViews();
 
         // Re-read selection state, since installing a new subtitle
@@ -3512,8 +3526,9 @@ void MediaDetailView::showSubtitlePicker() {
     // and attaches it server-side), then we refetch the stream list
     // so the newly-installed subtitle shows up as an "installed" row.
     auto showResults = std::make_shared<std::function<void(const std::vector<PlexClient::SubtitleResult>&)>>();
-    *showResults = [this, alive, dialog, listBox, buildInstalledList](
+    *showResults = [this, alive, dlgAlive, dialog, listBox, buildInstalledList](
             const std::vector<PlexClient::SubtitleResult>& results) {
+        if (!alive->load() || !*dlgAlive) return;
         listBox->clearViews();
 
         auto* back = new brls::Button();
@@ -3526,9 +3541,10 @@ void MediaDetailView::showSubtitlePicker() {
         // handler — a classic use-after-free that crashed the app. Defer
         // the rebuild to the next main-loop iteration via brls::sync so
         // the click handler returns first and the view tree is safe to
-        // tear down.
-        back->registerClickAction([buildInstalledList](brls::View*) {
-            brls::sync([buildInstalledList]() {
+        // tear down. dlgAlive guards against the dialog dying first.
+        back->registerClickAction([dlgAlive, buildInstalledList](brls::View*) {
+            brls::sync([dlgAlive, buildInstalledList]() {
+                if (!*dlgAlive) return;
                 (*buildInstalledList)();
             });
             return true;
@@ -3583,10 +3599,13 @@ void MediaDetailView::showSubtitlePicker() {
     // can fire the same flow without duplicating the IME / asyncRun
     // glue.
     auto triggerOnlineSearch = std::make_shared<std::function<void()>>();
-    *triggerOnlineSearch = [this, alive, listBox, showResults]() {
+    *triggerOnlineSearch = [this, alive, dlgAlive, listBox, showResults]() {
+        if (!alive->load() || !*dlgAlive) return;
         auto* ime = brls::Application::getImeManager();
         if (!ime) return;
-        ime->openForText([this, alive, listBox, showResults](std::string lang) {
+        ime->openForText([this, alive, dlgAlive, listBox, showResults](std::string lang) {
+            // Dialog already gone? Drop the IME result on the floor.
+            if (!alive->load() || !*dlgAlive) return;
             if (lang.empty()) lang = "en";
 
             // Loading state
@@ -3598,11 +3617,11 @@ void MediaDetailView::showSubtitlePicker() {
             listBox->addView(loading);
 
             std::string ratingKey = m_item.ratingKey;
-            asyncRun([this, alive, ratingKey, lang, showResults]() {
+            asyncRun([this, alive, dlgAlive, ratingKey, lang, showResults]() {
                 std::vector<PlexClient::SubtitleResult> results;
                 PlexClient::getInstance().searchSubtitles(ratingKey, lang, results);
-                brls::sync([alive, showResults, results]() {
-                    if (!alive->load()) return;
+                brls::sync([alive, dlgAlive, showResults, results]() {
+                    if (!alive->load() || !*dlgAlive) return;
                     (*showResults)(results);
                 });
             });
@@ -3627,7 +3646,8 @@ void MediaDetailView::showSubtitlePicker() {
         if (s.streamType == 3 || s.streamType == 4) { anyInstalled = true; break; }
     }
     if (!anyInstalled) {
-        brls::sync([triggerOnlineSearch]() {
+        brls::sync([dlgAlive, triggerOnlineSearch]() {
+            if (!*dlgAlive) return;
             (*triggerOnlineSearch)();
         });
     }
