@@ -200,6 +200,14 @@ private:
     int m_timelineCounter = 0;           // Seconds since last timeline report
     std::string m_lastTimelineState;     // Last reported state to detect changes
 
+    // Diagnostic overlay panel — created lazily on first
+    // updateMpvStatsOverlay() call when AppSettings::showMpvStats is on.
+    // Lives at the top-left of playerContainer, refreshed once per
+    // second from inside m_updateTimer's callback.
+    brls::Box*   m_mpvStatsBox   = nullptr;
+    brls::Label* m_mpvStatsLabel = nullptr;
+    void updateMpvStatsOverlay();
+
     // Deferred MPV init: URL and title are stored here during onContentAvailable()
     // and loaded in the first updateProgress() call. This prevents GXM context
     // conflicts between MPV's render context creation / decoder threads and
