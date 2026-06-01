@@ -89,6 +89,11 @@ struct AppSettings {
     int controlsAutoHideSeconds = 5;  // Auto-hide player controls after inactivity (0 = never)
     bool autoSkipIntro = false;       // Automatically skip intro markers
     bool autoSkipCredits = false;     // Automatically skip credits markers
+    // ISO 639-1 / -2 code prefilled into the subtitle search dialog and
+    // used as the default when the user opens "Search online for
+    // subtitles…". Empty falls back to "en". User-editable from the
+    // Settings tab.
+    std::string defaultSubtitleLanguage = "en";
 
     // Transcode Settings — defaults are set by Application::init() from
     // platform::getVideoConstraints(). 0 means "use the platform default",

@@ -266,6 +266,10 @@ bool Application::loadSettings() {
     if (m_settings.controlsAutoHideSeconds < 0) m_settings.controlsAutoHideSeconds = 5;
     m_settings.autoSkipIntro   = extractBool("autoSkipIntro", false);
     m_settings.autoSkipCredits = extractBool("autoSkipCredits", false);
+    {
+        std::string lang = extractString("defaultSubtitleLanguage");
+        if (!lang.empty()) m_settings.defaultSubtitleLanguage = lang;
+    }
 
     // Transcode settings. If the setting isn't present in the JSON, keep
     // the platform defaults Application::init() seeded earlier.
@@ -374,6 +378,7 @@ bool Application::saveSettings() {
     json += "  \"controlsAutoHideSeconds\": " + std::to_string(m_settings.controlsAutoHideSeconds) + ",\n";
     json += "  \"autoSkipIntro\": " + b(m_settings.autoSkipIntro) + ",\n";
     json += "  \"autoSkipCredits\": " + b(m_settings.autoSkipCredits) + ",\n";
+    json += "  \"defaultSubtitleLanguage\": \"" + esc(m_settings.defaultSubtitleLanguage) + "\",\n";
     json += "  \"videoQuality\": " + std::to_string(static_cast<int>(m_settings.videoQuality)) + ",\n";
     json += "  \"forceTranscode\": " + b(m_settings.forceTranscode) + ",\n";
     json += "  \"maxBitrate\": " + std::to_string(m_settings.maxBitrate) + ",\n";
