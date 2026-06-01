@@ -1,0 +1,87 @@
+name: Update bundled CA list
+
+on:
+  workflow_dispatch:
+  schedule:
+    # First of every month at 06:00 UTC. Mozilla refreshes its bundle
+    # roughly every quarter; monthly polling means we pick up additions
+    # / revocations within ~30 days without spamming runs.
+    - cron: '0 6 1 * *'
+
+jobs:
+  refresh-bundle:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Snapshot current cert content
+        id: before
+        run: |
+          # Strip the # header (which carries a regen timestamp Mozilla
+          # bumps on every release) so we only detect actual cert changes.
+          if [ -f resources/cacert.pem ]; then
+            grep -v '^#' resources/cacert.pem | sha256sum | cut -d' ' -f1 > /tmp/before.sha
+          else
+            echo "missing" > /tmp/before.sha
+          fi
+          echo "sha=$(cat /tmp/before.sha)" >> $GITHUB_OUTPUT
+          echo "old_count=$(grep -c 'BEGIN CERTIFICATE' resources/cacert.pem 2>/dev/null || echo 0)" >> $GITHUB_OUTPUT
+
+      - name: Fetch latest Mozilla bundle
+        run: |
+          curl -fsSL -o resources/cacert.pem \
+            https://raw.githubusercontent.com/bagder/ca-bundle/master/ca-bundle.crt
+          # Smoke-test: must look like a PEM bundle with non-trivial roots.
+          if ! grep -q 'BEGIN CERTIFICATE' resources/cacert.pem; then
+            echo "Downloaded file is not a PEM bundle" >&2
+            exit 1
+          fi
+
+      - name: Compare snapshot
+        id: check
+        run: |
+          new_sha=$(grep -v '^#' resources/cacert.pem | sha256sum | cut -d' ' -f1)
+          new_count=$(grep -c 'BEGIN CERTIFICATE' resources/cacert.pem)
+          bundle_date=$(grep '^## Certificate data from Mozilla' resources/cacert.pem \
+            | head -1 | sed 's/## Certificate data from Mozilla as of: //')
+          echo "new_sha=$new_sha" >> $GITHUB_OUTPUT
+          echo "new_count=$new_count" >> $GITHUB_OUTPUT
+          echo "bundle_date=$bundle_date" >> $GITHUB_OUTPUT
+          if [ "${{ steps.before.outputs.sha }}" = "$new_sha" ]; then
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "Bundle certs unchanged (sha matches)"
+          else
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "Bundle changed: ${{ steps.before.outputs.old_count }} -> $new_count certs"
+          fi
+
+      - name: Create pull request
+        if: steps.check.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "Refresh bundled Mozilla CA list (${{ steps.check.outputs.new_count }} roots)"
+          title: "Refresh bundled Mozilla CA list (${{ steps.check.outputs.bundle_date }})"
+          body: |
+            Automated refresh of `resources/cacert.pem` from
+            [`bagder/ca-bundle`](https://github.com/bagder/ca-bundle), which
+            mirrors Mozilla's NSS root store.
+
+            Bundle date: `${{ steps.check.outputs.bundle_date }}`
+            Cert count: ${{ steps.before.outputs.old_count }} → ${{ steps.check.outputs.new_count }}
+
+            libcurl reads this bundle via `CURLOPT_CAINFO` for desktop and
+            Android builds. Console targets (Vita / PS4 / Switch) ignore it.
+
+            Review notes:
+            - Confirm the cert count delta looks reasonable (single-digit
+              additions / revocations are normal).
+            - No code change is needed — the file is loaded by path at
+              runtime.
+          branch: auto/update-cacert
+          delete-branch: true
