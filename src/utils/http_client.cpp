@@ -62,12 +62,21 @@ static void applyCurlSecurityDefaults(CURL* curl) {
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
 #else
-    // Desktop (Linux/macOS/Windows) and Android have a system CA store
-    // that libcurl can use. Verify both the cert chain and the hostname —
-    // otherwise all traffic to plex.tv (login, PIN exchange, token
-    // refresh) is MITM-able by anyone on the network path.
+    // Desktop (Linux/macOS/Windows) and Android: verify both the cert
+    // chain and the hostname — otherwise all traffic to plex.tv (login,
+    // PIN exchange, token refresh) is MITM-able by anyone on the network
+    // path.
+    //
+    // Android in particular ships libcurl built against the NDK with no
+    // configured CA store, so an unqualified VERIFYPEER=1 fails every
+    // HTTPS handshake (which is why "failed to request pin" was the
+    // first symptom on Android). We ship Mozilla's bundle as
+    // resources/cacert.pem and point CAINFO at it. The path resolves
+    // via the platform's RESOURCE_PREFIX, which the Android asset
+    // extractor places under the writable cwd so fopen() can read it.
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+    curl_easy_setopt(curl, CURLOPT_CAINFO, RESOURCE_PREFIX "cacert.pem");
 #endif
 
     // Never deliver SIGALRM-based timeouts. curl's default timeout path
