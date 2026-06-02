@@ -36,9 +36,10 @@ public:
     // Override to detect when user tries to scroll past the bottom
     brls::View* getNextFocus(brls::FocusDirection direction, brls::View* currentView) override;
 
-    // Visibility-cull off-screen rows and paint the focused cell's
-    // start-button hint as a single batched NVG draw rather than as a
-    // per-cell brls::Box overlay.
+    // Override to visibility-cull off-screen rows. Cover painting itself
+    // lives in MediaItemCell::draw() so non-grid containers (the home
+    // tab's HorizontalScrollRow, the detail view's HScrollingFrame) get
+    // covers too.
     void draw(NVGcontext* vg, float x, float y, float width, float height,
               brls::Style style, brls::FrameContext* ctx) override;
 
@@ -79,13 +80,6 @@ private:
     // from the actual layout so the math works across poster / square /
     // landscape cells without per-media-type code.
     float m_cachedRowPitch = 0.0f;
-
-    // Lazily-created NVG handle for the start-button overlay icon. One
-    // handle for the whole grid replaces N brls::Image children, and
-    // nvgDeleteImage in the dtor releases the GPU texture.
-    int m_startHintNvg = 0;
-    int m_startHintW   = 0;
-    int m_startHintH   = 0;
 };
 
 } // namespace vitaplex
