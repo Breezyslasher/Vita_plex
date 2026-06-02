@@ -286,22 +286,28 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
 
     rightBox->addView(metaBox);
 
-    // Summary - always shown in a scrolling frame
+    // Summary — always created, populated when fetchMediaDetails returns
+    // (grid responses skip the summary field to keep payloads small, so
+    // m_item.summary is almost always empty at this point — only the
+    // async loadDetails fetch fills it). Starts hidden so layout doesn't
+    // reserve 200 px of empty space when the server has no summary at
+    // all, and the async update below flips it visible.
     m_fullDescription = m_item.summary;
 
-    if (!m_fullDescription.empty()) {
-        m_summaryScroll = new brls::ScrollingFrame();
-        m_summaryScroll->setHeight(200);
-        m_summaryScroll->setMarginBottom(20);
+    m_summaryScroll = new brls::ScrollingFrame();
+    m_summaryScroll->setHeight(200);
+    m_summaryScroll->setMarginBottom(20);
 
-        m_summaryLabel = new brls::Label();
-        m_summaryLabel->setFontSize(16);
-        m_summaryLabel->setText(m_fullDescription);
-        m_summaryLabel->setFocusable(true);
+    m_summaryLabel = new brls::Label();
+    m_summaryLabel->setFontSize(16);
+    m_summaryLabel->setText(m_fullDescription);
+    m_summaryLabel->setFocusable(true);
 
-        m_summaryScroll->setContentView(m_summaryLabel);
-        rightBox->addView(m_summaryScroll);
+    m_summaryScroll->setContentView(m_summaryLabel);
+    if (m_fullDescription.empty()) {
+        m_summaryScroll->setVisibility(brls::Visibility::GONE);
     }
+    rightBox->addView(m_summaryScroll);
 
     // AUDIO / SUBTITLES picker rows. Movies are the only type with a
     // single Part (and therefore a stable selection) at this layer;
@@ -529,7 +535,11 @@ void MediaDetailView::loadDetails() {
                 }
 
                 if (m_summaryLabel && !m_item.summary.empty()) {
-                    m_summaryLabel->setText(m_item.summary);
+                    m_fullDescription = m_item.summary;
+                    m_summaryLabel->setText(m_fullDescription);
+                    if (m_summaryScroll) {
+                        m_summaryScroll->setVisibility(brls::Visibility::VISIBLE);
+                    }
                 }
 
                 // Update download button state now that we have the part path
@@ -585,6 +595,9 @@ void MediaDetailView::loadDetails() {
             if (!m_item.summary.empty() && m_summaryLabel) {
                 m_fullDescription = m_item.summary;
                 m_summaryLabel->setText(m_fullDescription);
+                if (m_summaryScroll) {
+                    m_summaryScroll->setVisibility(brls::Visibility::VISIBLE);
+                }
             }
 
             // Load children if applicable
