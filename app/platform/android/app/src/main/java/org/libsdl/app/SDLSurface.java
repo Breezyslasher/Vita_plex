@@ -3,6 +3,7 @@ package org.libsdl.app;
 
 import android.content.Context;
 import android.content.pm.ActivityInfo;
+import android.graphics.PixelFormat;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -43,6 +44,18 @@ public class SDLSurface extends SurfaceView implements SurfaceHolder.Callback,
     // Startup
     public SDLSurface(Context context) {
         super(context);
+        // VitaPlex direct-surface integration (Stage 3a):
+        // Request a TRANSLUCENT (RGBA_8888 with alpha) surface format so
+        // SurfaceFlinger composites SDL's output with proper alpha. Stage
+        // 3b will add the MpvSurface underneath this one and flip
+        // borealis's clearColor to (0,0,0,0) so the video shows through
+        // unpainted UI regions. On its own, this change is invisible at
+        // runtime because the activity's window background sits behind
+        // SDL and is opaque — proves we can run SDL in translucent mode
+        // without breaking borealis rendering. Must be called before the
+        // surface is created (i.e. before getHolder().addCallback(this)
+        // fires).
+        getHolder().setFormat(PixelFormat.TRANSLUCENT);
         getHolder().addCallback(this);
 
         setFocusable(true);

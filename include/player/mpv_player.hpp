@@ -166,6 +166,23 @@ public:
     int getVideoWidth() const { return m_videoWidth; }
     int getVideoHeight() const { return m_videoHeight; }
 
+#ifdef __ANDROID__
+    // Direct-surface playback (see docs/android-direct-surface-playback.md).
+    // mpv renders straight to a dedicated Android SurfaceView via vo=gpu
+    // instead of the FBO/NanoVG composite path. The JNI layer
+    // (src/platform/android_mpv_surface.cpp) owns the jobject global ref
+    // and passes its address here as the mpv "wid".
+    //
+    // wid is reinterpret_cast<intptr_t> of a JNI global ref to the Java
+    // Surface. Passing 0 detaches. Stage 1 only wires these — nothing
+    // calls them until the SurfaceView lands (Stage 2) and the VO path
+    // flips (Stage 4).
+    void attachAndroidSurface(int64_t wid);
+    void detachAndroidSurface();
+    // Forwarded from the SurfaceView's surfaceChanged callback.
+    void setAndroidSurfaceSize(int width, int height);
+#endif
+
 private:
     MpvPlayer() = default;
     ~MpvPlayer();

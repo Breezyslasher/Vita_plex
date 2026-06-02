@@ -61,6 +61,23 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
         return 1;
     }
 
+#ifdef __ANDROID__
+    // Direct-surface playback (Stage 4): override the global frame-
+    // clear colour to fully transparent so SurfaceFlinger composites
+    // the MpvSurface underneath through any pixel the borealis UI
+    // doesn't paint. Borealis screens paint their own backgrounds via
+    // view-level colours (Box / Rectangle / etc.), so menus and
+    // dialogs still look opaque — the only place this matters is the
+    // player activity's video region, where VideoView::draw is now a
+    // no-op on Android so the transparent clear stays transparent and
+    // the dedicated MpvSurface shows through.
+    //
+    // Both themes get the override; sticking to one theme everywhere
+    // would silently break if the user toggles it.
+    brls::Theme::getDarkTheme().addColor("brls/clear",  nvgRGBA(0, 0, 0, 0));
+    brls::Theme::getLightTheme().addColor("brls/clear", nvgRGBA(0, 0, 0, 0));
+#endif
+
     // Override sidebar padding for better text visibility on Vita's small screen
     brls::Style style = brls::getStyle();
     style.addMetric("brls/sidebar/padding_left", 20.0f);
