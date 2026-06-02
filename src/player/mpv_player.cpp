@@ -318,6 +318,15 @@ bool MpvPlayer::init() {
 
 #ifdef __PS4__
     mpv_request_log_messages(m_mpv, "v");  // Verbose logging on PS4 to debug playback issues
+#elif defined(__ANDROID__)
+    // Stage 4 direct-surface bring-up: we want mpv's own log output
+    // (vo init, gl context creation, mediacodec engagement, hwdec
+    // dispatch) routed through borealis so failures on the Bravia /
+    // CCwGTV that present as "audio plays but screen is black" actually
+    // tell us *why*. Matches mpv-android's approach (their main.cpp
+    // also requests verbose). Tighten to "warn" later once the path is
+    // stable.
+    mpv_request_log_messages(m_mpv, "v");
 #else
     mpv_request_log_messages(m_mpv, "warn");  // Use warn level to reduce log spam
 #endif
@@ -985,8 +994,13 @@ void MpvPlayer::eventMainLoop() {
                         brls::Logger::error("mpv {}: {}", msg->prefix, msg->text);
                     } else if (msg->log_level <= MPV_LOG_LEVEL_WARN) {
                         brls::Logger::warning("mpv {}: {}", msg->prefix, msg->text);
-#ifdef __PS4__
+#if defined(__PS4__) || defined(__ANDROID__)
                     } else {
+                        // Pipe info/verbose through borealis::Logger::info on
+                        // PS4 and Android so the diagnostic level we asked
+                        // mpv for actually surfaces in adb logcat. Removable
+                        // once the Android direct-surface path is verified
+                        // stable.
                         brls::Logger::info("mpv {}: {}", msg->prefix, msg->text);
 #endif
                     }
