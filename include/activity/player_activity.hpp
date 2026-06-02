@@ -53,6 +53,13 @@ public:
     void willDisappear(bool resetState) override;
 
 private:
+    // Android direct-surface: flip the borealis frame-clear colour so the
+    // SurfaceFlinger composites MpvSurface through the unpainted video
+    // region during video playback, then restore the opaque dark
+    // background when leaving the player or switching to audio-only.
+    // No-op on every other platform.
+    static void setBackgroundTransparent(bool transparent);
+
     void loadMedia();
     void loadFromQueue();           // Load current track from queue
     void updateProgress();

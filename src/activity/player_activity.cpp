@@ -611,8 +611,35 @@ void PlayerActivity::onContentAvailable() {
     }
 }
 
+void PlayerActivity::setBackgroundTransparent(bool transparent) {
+#ifdef __ANDROID__
+    // Toggled by the audio/video branches in loadMedia / loadFromQueue
+    // and reset on willDisappear. The dark-theme opaque value matches
+    // theme.cpp's default (45,45,45); the light-theme one matches its
+    // (235,235,235) so a theme switch can't leave a stale clear behind.
+    // Both themes are updated for symmetry, but the only one that
+    // matters is whichever Application::getTheme() returns at render
+    // time.
+    if (transparent) {
+        brls::Theme::getDarkTheme().addColor("brls/clear", nvgRGBA(0, 0, 0, 0));
+        brls::Theme::getLightTheme().addColor("brls/clear", nvgRGBA(0, 0, 0, 0));
+    } else {
+        brls::Theme::getDarkTheme().addColor("brls/clear", nvgRGB(45, 45, 45));
+        brls::Theme::getLightTheme().addColor("brls/clear", nvgRGB(235, 235, 235));
+    }
+#else
+    (void)transparent;
+#endif
+}
+
 void PlayerActivity::willDisappear(bool resetState) {
     brls::Activity::willDisappear(resetState);
+
+    // Always restore the opaque clear when leaving the player so the
+    // rest of the app (library, settings, etc.) renders with its normal
+    // dark background instead of showing through to whatever sits
+    // behind the SDL surface.
+    setBackgroundTransparent(false);
 
     // Clear "video playing" state so onUserLeaveHint stops auto-triggering PiP
     // once the user is no longer in the player activity.
@@ -869,6 +896,7 @@ void PlayerActivity::loadFromQueue() {
 
     // Set audio-only mode BEFORE initializing
     player.setAudioOnly(true);
+    setBackgroundTransparent(false);  // audio-only: keep opaque
 
     // Only clear image cache on first MPV init to free memory for the player.
     // On subsequent track changes MPV is already allocated, and clearing the
@@ -948,6 +976,7 @@ void PlayerActivity::loadMedia() {
 
         // Set audio-only mode BEFORE initializing (to skip render context)
         player.setAudioOnly(isAudioFile);
+        setBackgroundTransparent(!isAudioFile);
 
         if (!player.isInitialized()) {
             // Defer MPV init + load to after activity transition completes.
@@ -1037,6 +1066,7 @@ void PlayerActivity::loadMedia() {
 
         // Set audio-only mode for music tracks (skip render context)
         player.setAudioOnly(isAudioTrack);
+        setBackgroundTransparent(!isAudioTrack);
 
         // Resume from saved viewOffset if resumePlayback is enabled
         // If near the end (>= 95% watched), start from beginning instead
@@ -1177,6 +1207,7 @@ void PlayerActivity::loadMedia() {
 
             // Set audio-only mode BEFORE initializing
             player.setAudioOnly(isAudioContent);
+            setBackgroundTransparent(!isAudioContent);
 
             // Stream directly via MPV (transcode API returns mp4/mp3 stream)
             if (!player.isInitialized()) {
@@ -1238,6 +1269,7 @@ void PlayerActivity::updateProgress() {
 
         MpvPlayer& player = MpvPlayer::getInstance();
         player.setAudioOnly(isAudio);
+        setBackgroundTransparent(!isAudio);
 
         if (!player.isInitialized()) {
             if (!player.init()) {
