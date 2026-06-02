@@ -210,6 +210,13 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
     // Main components
     protected static SDLActivity mSingleton;
     protected static SDLSurface mSurface;
+    // VitaPlex direct-surface (Stage 3b): the dedicated mpv SurfaceView
+    // sits at the bottom of the layout. mpv renders here via vo=gpu once
+    // Stage 4 flips the VO path. Inert until then — the view is added
+    // and laid out, but nothing instantiates MpvPlayer with the wid yet,
+    // so the surface stays blank and the SDL surface on top still paints
+    // every pixel.
+    public static org.VitaPlex.app.MpvSurface mMpvSurface;
     protected static DummyEdit mTextEdit;
     protected static boolean mScreenKeyboardShown;
     protected static ViewGroup mLayout;
@@ -395,8 +402,26 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
         // Set up the surface
         mSurface = createSDLSurface(this);
 
+        // VitaPlex direct-surface (Stage 3b): instantiate the dedicated
+        // mpv SurfaceView and lay it underneath SDL's surface. Order
+        // matters — MpvSurface is added first (lowest in the view tree
+        // and at the default SurfaceView Z), then SDL is added on top
+        // with setZOrderMediaOverlay(true) so SurfaceFlinger composites
+        // SDL above any other SurfaceView while still below the host
+        // window. Stage 3a already flipped SDL to PixelFormat.TRANSLUCENT
+        // so the GL output composites with alpha. The MpvSurface stays
+        // blank (no wid set) until Stage 4 flips the VO path, so the
+        // visible result for now is identical to before — the SDL UI on
+        // top of a black (default Surface) buffer that the SDL frame
+        // covers anyway.
+        mMpvSurface = new org.VitaPlex.app.MpvSurface(this);
+
         mLayout = new RelativeLayout(this);
+        mLayout.addView(mMpvSurface, new RelativeLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
         mLayout.addView(mSurface);
+        mSurface.setZOrderMediaOverlay(true);
 
         // Get our current screen orientation and pass it down.
         mCurrentOrientation = SDLActivity.getCurrentOrientation();
