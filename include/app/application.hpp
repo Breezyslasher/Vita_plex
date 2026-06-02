@@ -112,6 +112,12 @@ struct AppSettings {
     // Music Settings
     TrackDefaultAction trackDefaultAction = TrackDefaultAction::ASK_EACH_TIME;  // Default action for tracks
     bool backgroundMusic = true;       // Allow leaving player without stopping music
+
+    // When true, PlayerActivity overlays a small mpv-stats panel at
+    // the top-left of the video so the user can see codec, hwdec,
+    // FPS, frame drops, and cache state in real time. Driven from the
+    // Playback Tuning dialog; off by default.
+    bool showMpvStats = false;
 };
 
 /**

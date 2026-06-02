@@ -1252,6 +1252,12 @@ void PlayerActivity::updateProgress() {
     // Don't update if destroying or showing photo
     if (m_destroying || m_isPhoto) return;
 
+    // Tick the diagnostic overlay every second alongside progress.
+    // No-op when the toggle is off; lazy-creates the views the first
+    // time it sees the toggle on so the panel doesn't sit in the view
+    // tree consuming layout passes when the user isn't using it.
+    updateMpvStatsOverlay();
+
     // Deferred MPV initialization (Phase 1 of 2):
     // Create MPV and its GXM render context, but do NOT call loadUrl yet.
     // loadUrl spawns decoder threads that use the shared GXM context via
@@ -3848,6 +3854,100 @@ void PlayerActivity::hideControls() {
         centerControls->setAlpha(0.0f);
         centerControls->setVisibility(brls::Visibility::GONE);
     }
+}
+
+// ─── MPV stats overlay ─────────────────────────────────────────────────
+//
+// Fires once per second from updateProgress(). The whole point is to
+// surface enough information that you can tell why playback is choppy
+// without an adb cable:
+//
+//   - decoder-frame-drop-count   high → decode can't keep up (try
+//                                 hwdec change, profile=fast,
+//                                 vd-lavc-fast).
+//   - frame-drop-count           high → vo/display dropping frames
+//                                 (try video-sync change or vo=gpu).
+//   - estimated-vf-fps vs        big gap → render path is the
+//     container-fps               bottleneck.
+//   - paused-for-cache true /    network can't sustain bitrate; lower
+//     low cache-speed             quality or use the local network.
+//
+// The label is built lazily so toggling the setting off doesn't leave
+// any view tree overhead behind.
+void PlayerActivity::updateMpvStatsOverlay() {
+    bool wanted = Application::getInstance().getSettings().showMpvStats;
+
+    // Tear down when the toggle is off so we don't pay layout / paint
+    // cost while the user isn't looking at stats.
+    if (!wanted) {
+        if (m_mpvStatsBox && playerContainer) {
+            playerContainer->removeView(m_mpvStatsBox);
+            m_mpvStatsBox   = nullptr;
+            m_mpvStatsLabel = nullptr;
+        }
+        return;
+    }
+
+    if (!m_mpvStatsBox && playerContainer) {
+        m_mpvStatsBox = new brls::Box();
+        m_mpvStatsBox->setPositionType(brls::PositionType::ABSOLUTE);
+        m_mpvStatsBox->setPositionLeft(16);
+        m_mpvStatsBox->setPositionTop(16);
+        m_mpvStatsBox->setPadding(10);
+        m_mpvStatsBox->setCornerRadius(6);
+        m_mpvStatsBox->setBackgroundColor(nvgRGBA(0, 0, 0, 180));
+        m_mpvStatsLabel = new brls::Label();
+        m_mpvStatsLabel->setFontSize(13);
+        m_mpvStatsLabel->setTextColor(nvgRGB(220, 220, 220));
+        m_mpvStatsBox->addView(m_mpvStatsLabel);
+        playerContainer->addView(m_mpvStatsBox);
+    }
+    if (!m_mpvStatsLabel) return;
+
+    MpvPlayer& p = MpvPlayer::getInstance();
+    if (!p.isInitialized()) {
+        m_mpvStatsLabel->setText("MPV not initialized");
+        return;
+    }
+
+    // Trim helper — mpv returns "" for missing properties, "yes"/"no"
+    // for flags, and a number/string otherwise. We just feed them
+    // straight into the label.
+    auto get = [&p](const char* name) -> std::string {
+        std::string v = p.getProperty(name);
+        return v.empty() ? std::string("?") : v;
+    };
+
+    // Format cache-speed (bytes/sec) the same way switchfin does in
+    // mpv_core.cpp so the units match what the user sees in logs.
+    // snprintf instead of fmt::format because the rest of the project
+    // only pulls fmt in via borealis::Logger and that symbol isn't
+    // guaranteed to be linked here.
+    auto fmtSpeed = [&]() -> std::string {
+        std::string raw = p.getProperty("cache-speed");
+        if (raw.empty()) return "?";
+        long long bps = 0;
+        try { bps = std::stoll(raw); } catch (...) { return raw; }
+        char buf[32];
+        if (bps >> 20 > 0) snprintf(buf, sizeof(buf), "%.1f MB/s", bps / 1048576.0);
+        else if (bps >> 10 > 0) snprintf(buf, sizeof(buf), "%.1f KB/s", bps / 1024.0);
+        else snprintf(buf, sizeof(buf), "%lld B/s", bps);
+        return std::string(buf);
+    };
+
+    std::string body;
+    body.reserve(256);
+    body += "Codec: " + get("video-codec")  + " | HW: " + get("hwdec-current") + "\n";
+    body += "Source: " + get("width") + "x" + get("height")
+          + " @ " + get("container-fps") + " fps"
+          + " | Bitrate: " + get("video-bitrate") + "\n";
+    body += "Render: " + get("estimated-vf-fps") + " fps"
+          + " | Display: " + get("estimated-display-fps") + " fps\n";
+    body += "Drops: " + get("decoder-frame-drop-count") + " decoder, "
+                     + get("frame-drop-count") + " vo\n";
+    body += "Cache: " + get("demuxer-cache-time") + " s / " + fmtSpeed()
+          + " | Paused: " + get("paused-for-cache");
+    m_mpvStatsLabel->setText(body);
 }
 
 } // namespace vitaplex

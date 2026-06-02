@@ -534,6 +534,19 @@ void SettingsTab::createDebugSection() {
     });
     m_contentBox->addView(testLocalCell);
 
+    // MPV stats overlay toggle — surfaces codec, hwdec, FPS, frame
+    // drops, and cache state on top of the video so you can see why
+    // playback is choppy without an adb cable. See
+    // PlayerActivity::updateMpvStatsOverlay().
+    AppSettings& settings = Application::getInstance().getSettings();
+    auto* mpvStatsToggle = new brls::BooleanCell();
+    mpvStatsToggle->init("MPV Stats Overlay", settings.showMpvStats,
+                         [&settings](bool value) {
+        settings.showMpvStats = value;
+        Application::getInstance().saveSettings();
+    });
+    m_contentBox->addView(mpvStatsToggle);
+
     // Info label
     auto* infoLabel = new brls::Label();
     infoLabel->setText("Place test.mp3 or test.mp4 in ux0:data/VitaPlex/");

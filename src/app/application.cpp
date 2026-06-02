@@ -271,6 +271,8 @@ bool Application::loadSettings() {
         if (!lang.empty()) m_settings.defaultSubtitleLanguage = lang;
     }
 
+    m_settings.showMpvStats = extractBool("showMpvStats", false);
+
     // Transcode settings. If the setting isn't present in the JSON, keep
     // the platform defaults Application::init() seeded earlier.
     {
@@ -379,6 +381,7 @@ bool Application::saveSettings() {
     json += "  \"autoSkipIntro\": " + b(m_settings.autoSkipIntro) + ",\n";
     json += "  \"autoSkipCredits\": " + b(m_settings.autoSkipCredits) + ",\n";
     json += "  \"defaultSubtitleLanguage\": \"" + esc(m_settings.defaultSubtitleLanguage) + "\",\n";
+    json += "  \"showMpvStats\": " + b(m_settings.showMpvStats) + ",\n";
     json += "  \"videoQuality\": " + std::to_string(static_cast<int>(m_settings.videoQuality)) + ",\n";
     json += "  \"forceTranscode\": " + b(m_settings.forceTranscode) + ",\n";
     json += "  \"maxBitrate\": " + std::to_string(m_settings.maxBitrate) + ",\n";
