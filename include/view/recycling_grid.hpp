@@ -70,16 +70,6 @@ private:
 
     bool m_hasMore = false;
     bool m_loading = false;  // Prevents duplicate fetch requests
-
-    // Cached visible row range. -1 means "not yet computed". When the
-    // range stays put between frames we skip the per-row visibility
-    // updates entirely.
-    int m_cachedFirstVisible = -1;
-    int m_cachedLastVisible  = -1;
-    // First-laid-out row pitch (height + bottom margin). Sampled lazily
-    // from the actual layout so the math works across poster / square /
-    // landscape cells without per-media-type code.
-    float m_cachedRowPitch = 0.0f;
 };
 
 } // namespace vitaplex
