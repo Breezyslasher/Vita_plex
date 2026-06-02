@@ -9,8 +9,6 @@
 #include "view/media_detail_view.hpp"
 #include "view/long_press_gesture.hpp"
 #include "platform/platform.hpp"
-#include <algorithm>
-#include <cmath>
 
 namespace vitaplex {
 
@@ -43,12 +41,6 @@ void RecyclingGrid::appendItems(const std::vector<MediaItem>& newItems) {
         m_loading = false;
         return;
     }
-
-    // Invalidate the visibility cull cache so newly-appended rows get
-    // hidden if they land off-screen instead of paying the per-frame
-    // draw cost while waiting for the user to scroll down to them.
-    m_cachedFirstVisible = -1;
-    m_cachedLastVisible  = -1;
 
     size_t oldSize = m_items.size();
     m_items.insert(m_items.end(), newItems.begin(), newItems.end());
@@ -228,11 +220,6 @@ void RecyclingGrid::rebuildGrid() {
     m_contentBox->clearViews();
     m_rows.clear();
     m_cells.clear();
-    // Force visibility-cull and row-pitch to recompute against the new
-    // layout. Stale values would leave half the new rows hidden.
-    m_cachedFirstVisible = -1;
-    m_cachedLastVisible  = -1;
-    m_cachedRowPitch     = 0.0f;
     m_renderedCount = 0;
 
     if (m_items.empty()) return;
@@ -262,55 +249,38 @@ void RecyclingGrid::draw(NVGcontext* vg, float x, float y, float width, float he
     // right) but lets borealis skip the per-cell draw entirely. On Vita
     // this is the difference between "smooth scroll" and "5 FPS".
     //
-    // Cover paint itself moved into MediaItemCell::draw() so the home
-    // tab's HorizontalScrollRow and the media-detail view's HScrollingFrame
-    // also get covers — the prior batched pass was grid-only, which is
-    // why posters / season covers / extras / episodes / albums all showed
-    // up blank everywhere except the library grid.
+    // The prior implementation used a single sampled row pitch
+    // (m_rows[0]->getHeight()) which ignored row marginBottom, so as the
+    // user scrolled the pitch-based math drifted and culled rows that
+    // were actually still inside the viewport — the symptom was blank
+    // strips at the top of the grid where posters used to be. Asking
+    // each row for its real screen position is O(rowCount) per frame
+    // but rowCount is small (<100 typically) and every getY() walk is
+    // just float arithmetic, so the cost is negligible compared to the
+    // per-cell draw we save by culling correctly.
+    //
+    // BUFFER_PX preloads a strip just outside the viewport so a row
+    // starting to scroll in doesn't pop — same idea as the prior -1/+2
+    // index buffer, just measured in pixels.
     if (!m_rows.empty()) {
-        // Sample the actual laid-out row pitch once we have one. Rows
-        // have height 0 before the first layout pass, so we keep
-        // retrying until a real value appears.
-        if (m_cachedRowPitch <= 0.0f && m_rows[0]) {
-            float h = m_rows[0]->getHeight();
-            if (h > 0.0f) m_cachedRowPitch = h;
-        }
-        if (m_cachedRowPitch > 0.0f) {
-            float scrollY = this->getContentOffsetY();
-            float viewH   = this->getHeight();
-            int rowCount  = (int)m_rows.size();
-
-            int firstVisible = std::max(0, (int)(scrollY / m_cachedRowPitch) - 1);
-            int lastVisible  = std::min(rowCount,
-                                        (int)((scrollY + viewH) / m_cachedRowPitch) + 2);
-
-            if (firstVisible != m_cachedFirstVisible ||
-                lastVisible  != m_cachedLastVisible) {
-                if (m_cachedFirstVisible < 0) {
-                    // First pass: set every row in one sweep.
-                    for (int i = 0; i < rowCount; i++) {
-                        brls::Visibility desired = (i >= firstVisible && i < lastVisible)
-                            ? brls::Visibility::VISIBLE
-                            : brls::Visibility::INVISIBLE;
-                        m_rows[i]->setVisibility(desired);
-                    }
-                } else {
-                    // Subsequent passes: only touch the boundary rows
-                    // that actually changed state.
-                    for (int i = m_cachedFirstVisible;
-                         i < firstVisible && i < rowCount; i++) {
-                        if (i >= 0) m_rows[i]->setVisibility(brls::Visibility::INVISIBLE);
-                    }
-                    for (int i = std::max(0, lastVisible);
-                         i < m_cachedLastVisible && i < rowCount; i++) {
-                        m_rows[i]->setVisibility(brls::Visibility::INVISIBLE);
-                    }
-                    for (int i = firstVisible; i < lastVisible; i++) {
-                        if (i >= 0) m_rows[i]->setVisibility(brls::Visibility::VISIBLE);
-                    }
-                }
-                m_cachedFirstVisible = firstVisible;
-                m_cachedLastVisible  = lastVisible;
+        constexpr float BUFFER_PX = 64.0f;
+        float vpTop    = this->getY() - BUFFER_PX;
+        float vpBottom = this->getY() + this->getHeight() + BUFFER_PX;
+        for (brls::Box* row : m_rows) {
+            if (!row) continue;
+            float ry = row->getY();
+            float rh = row->getHeight();
+            // Rows have height 0 before the first layout pass; assume
+            // visible in that case so the user doesn't see a flash of
+            // blank cells on the first frame.
+            bool visible = (rh <= 0.0f)
+                ? true
+                : (ry + rh > vpTop && ry < vpBottom);
+            brls::Visibility desired = visible
+                ? brls::Visibility::VISIBLE
+                : brls::Visibility::INVISIBLE;
+            if (row->getVisibility() != desired) {
+                row->setVisibility(desired);
             }
         }
     }
