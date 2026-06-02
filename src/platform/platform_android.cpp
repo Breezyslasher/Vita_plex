@@ -67,7 +67,7 @@ const ImageConstraints& getImageConstraints() {
 
         /* imageCacheSize           */  60,
 
-        /* libraryPageSize          */ 300,
+        /* libraryPageSize          */ 1000,
         /* playlistTrackPageSize    */ 150,
         /* musicCarouselLimit       */ 100,
 
