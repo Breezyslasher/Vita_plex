@@ -860,6 +860,42 @@ std::string MpvPlayer::getProperty(const std::string& name) const {
     return result;
 }
 
+#ifdef __ANDROID__
+void MpvPlayer::attachAndroidSurface(int64_t wid) {
+    if (!m_mpv) {
+        brls::Logger::warning("MpvPlayer: attachAndroidSurface with no mpv handle");
+        return;
+    }
+    // mpv's gpu-context=android reads "wid" as the address of a JNI global
+    // ref to the Java Surface and calls ANativeWindow_fromSurface() on it.
+    // The JNI layer owns that global ref's lifetime; we just hand mpv the
+    // address. Setting wid brings the VO up on the surface.
+    int rc = mpv_set_option(m_mpv, "wid", MPV_FORMAT_INT64, &wid);
+    if (rc < 0) {
+        brls::Logger::error("MpvPlayer: set wid failed: {}", mpv_error_string(rc));
+    } else {
+        brls::Logger::info("MpvPlayer: attached Android surface (wid set)");
+    }
+}
+
+void MpvPlayer::detachAndroidSurface() {
+    if (!m_mpv) return;
+    // Tear the VO down before the JNI layer releases the Surface global
+    // ref (mirrors mpv-android's BaseMPVView.surfaceDestroyed order).
+    int64_t wid = 0;
+    mpv_set_option_string(m_mpv, "vo", "null");
+    mpv_set_option(m_mpv, "wid", MPV_FORMAT_INT64, &wid);
+    brls::Logger::info("MpvPlayer: detached Android surface (vo=null, wid=0)");
+}
+
+void MpvPlayer::setAndroidSurfaceSize(int width, int height) {
+    if (!m_mpv || width <= 0 || height <= 0) return;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%dx%d", width, height);
+    mpv_set_property_string(m_mpv, "android-surface-size", buf);
+}
+#endif
+
 void MpvPlayer::setState(MpvPlayerState newState) {
     brls::Logger::debug("MpvPlayer::setState entered with newState={}", (int)newState);
     if (m_state != newState) {

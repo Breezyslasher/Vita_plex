@@ -185,6 +185,10 @@ endif()
 # Android asset extraction helper (used by platform_android.cpp)
 if(PLATFORM_ANDROID)
     list(APPEND APP_SOURCES src/platform/android_assets.cpp)
+    # Direct-surface JNI bridge (mpv vo=gpu → dedicated SurfaceView).
+    # Inert until the Java MpvSurface view + VO-path flip land; see
+    # docs/android-direct-surface-playback.md.
+    list(APPEND APP_SOURCES src/platform/android_mpv_surface.cpp)
 endif()
 
 
