@@ -17,6 +17,16 @@ void VideoView::draw(NVGcontext* vg, float x, float y, float width, float height
     // Draw parent first
     brls::Box::draw(vg, x, y, width, height, style, ctx);
 
+#ifdef __ANDROID__
+    // Direct-surface playback (Stage 4): mpv renders straight to
+    // MpvSurface beneath the SDL surface. VideoView is now a layout
+    // placeholder — drawing anything here would paint over the
+    // transparent clear and hide the video. The Android compositor
+    // shows the video through this rect because borealis clears with
+    // alpha=0 (see brls/clear override in main.cpp) and we add no
+    // pixels to the SDL surface for this region.
+    return;
+#else
     if (!m_videoVisible) {
         return;
     }
@@ -58,6 +68,7 @@ void VideoView::draw(NVGcontext* vg, float x, float y, float width, float height
     nvgRect(vg, drawX, drawY, drawWidth, drawHeight);
     nvgFillPaint(vg, imgPaint);
     nvgFill(vg);
+#endif // !__ANDROID__
 }
 
 brls::View* VideoView::create() {

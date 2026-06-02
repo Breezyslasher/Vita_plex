@@ -7,6 +7,9 @@
 #include "player/mpv_player.hpp"
 #include "app/application.hpp"
 #include "platform/platform.hpp"
+#ifdef __ANDROID__
+#include "platform/android_mpv_surface.hpp"
+#endif
 #ifdef __PS4__
 #include "utils/https_proxy.h"
 #endif
@@ -146,8 +149,30 @@ bool MpvPlayer::init() {
         // Keep subtitle/lyrics support active (don't set video=no which disables sub rendering)
         mpv_set_option_string(m_mpv, "sub-visibility", "yes");
     } else {
-        // Video mode: use libmpv for video output - we'll create a render context
+        // Video mode
         brls::Logger::info("MpvPlayer: Initializing in video mode");
+
+#ifdef __ANDROID__
+        // Stage 4 direct-surface playback (see
+        // docs/android-direct-surface-playback.md). mpv renders straight
+        // to MpvSurface via vo=gpu — no libmpv/FBO/NanoVG composite,
+        // which is the whole point of the rework. Mirrors mpv-android's
+        // BaseMPVView startup sequence.
+        mpv_set_option_string(m_mpv, "vo", "gpu");
+        mpv_set_option_string(m_mpv, "gpu-context", "android");
+        mpv_set_option_string(m_mpv, "opengl-es", "yes");
+        mpv_set_option_string(m_mpv, "hwdec", "mediacodec-copy");
+        // force-window stays no until the surface is attached so mpv
+        // doesn't try to create a window before we hand it one. idle=once
+        // lets mpv settle into idle state instead of exiting when no
+        // file is playing.
+        mpv_set_option_string(m_mpv, "force-window", "no");
+        mpv_set_option_string(m_mpv, "idle", "once");
+#else
+        // libmpv VO + FBO/NanoVG composite — Vita / PS4 / Switch /
+        // desktop. The Android FBO path is intentionally retired:
+        // libmpv composite was the bottleneck that drove this whole
+        // rework on TV SoCs (Bravia A1, CCwGTV).
         mpv_set_option_string(m_mpv, "vo", "libmpv");
 
 #ifdef __vita__
@@ -168,25 +193,10 @@ bool MpvPlayer::init() {
         // GXM-specific settings from switchfin
         mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
         mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
-#elif defined(__ANDROID__)
-        // Android/Android TV: use MediaCodec zero-copy path when possible.
-        // This reduces frame upload overhead and improves frame pacing on TV SoCs.
-        mpv_set_option_string(m_mpv, "hwdec", "mediacodec");
-        mpv_set_option_string(m_mpv, "framedrop", "vo");
-        // Reduce loop-filter complexity to speed up decoding on weaker TV SoCs
-        mpv_set_option_string(m_mpv, "vd-lavc-skiploopfilter", "nonref");
-        // Enable low-latency video timing to reduce frame scheduling jitter
-        mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
-        // Use display-resample to sync video frames to display refresh rate,
-        // reducing judder when video FPS doesn't match the TV's refresh rate
-        mpv_set_option_string(m_mpv, "video-sync", "display-resample");
-        // Use 4 decoder threads for multi-core TV SoCs
-        mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
-
-
 #else
         mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
 #endif
+#endif // !__ANDROID__
     }
 
     // ========================================
@@ -335,10 +345,19 @@ bool MpvPlayer::init() {
     // ========================================
 
     if (!m_audioOnly) {
+#ifdef __ANDROID__
+        // Direct-surface playback: mpv owns the MpvSurface via vo=gpu,
+        // no libmpv render context, no FBO, no NanoVG composite. The
+        // surface is already in the view tree (Stage 3b); the JNI
+        // layer's rebindIfReady drops the saved wid into mpv now that
+        // we have a handle, and force-window=yes brings the VO up on it.
+        vitaplex::android_mpv_surface::rebindIfReady();
+#else
         if (!initRenderContext()) {
             brls::Logger::error("MpvPlayer: Failed to create render context, falling back to audio-only");
             // Don't fail - we can still play audio
         }
+#endif
     } else {
         brls::Logger::info("MpvPlayer: Skipping render context for audio-only mode");
     }
@@ -863,29 +882,43 @@ std::string MpvPlayer::getProperty(const std::string& name) const {
 #ifdef __ANDROID__
 void MpvPlayer::attachAndroidSurface(int64_t wid) {
     if (!m_mpv) {
-        brls::Logger::warning("MpvPlayer: attachAndroidSurface with no mpv handle");
+        // Surface created before MpvPlayer existed (happens every
+        // launch — the activity layout runs first). The Surface global
+        // ref is stashed in the JNI layer; init() will call
+        // android_mpv_surface::rebindIfReady() to re-enter this path
+        // with a live handle.
+        brls::Logger::warning("MpvPlayer: attachAndroidSurface with no mpv handle (will rebind after init)");
         return;
     }
-    // mpv's gpu-context=android reads "wid" as the address of a JNI global
-    // ref to the Java Surface and calls ANativeWindow_fromSurface() on it.
-    // The JNI layer owns that global ref's lifetime; we just hand mpv the
-    // address. Setting wid brings the VO up on the surface.
+    // wid is the address of a JNI global ref to the Java Surface; mpv's
+    // gpu-context=android calls ANativeWindow_fromSurface() on it. The
+    // option is one of the few that's settable post-init — mpv applies
+    // it on the next VO bring-up.
     int rc = mpv_set_option(m_mpv, "wid", MPV_FORMAT_INT64, &wid);
     if (rc < 0) {
         brls::Logger::error("MpvPlayer: set wid failed: {}", mpv_error_string(rc));
-    } else {
-        brls::Logger::info("MpvPlayer: attached Android surface (wid set)");
+        return;
     }
+    // After init these are properties, not options. Mirrors mpv-android
+    // BaseMPVView.surfaceCreated: force-window=yes triggers the VO to
+    // come up on the new wid; setting vo=gpu via property re-enables
+    // the VO if a prior detach had set it to null.
+    mpv_set_property_string(m_mpv, "force-window", "yes");
+    mpv_set_property_string(m_mpv, "vo", "gpu");
+    brls::Logger::info("MpvPlayer: attached Android surface (vo=gpu, force-window=yes)");
 }
 
 void MpvPlayer::detachAndroidSurface() {
     if (!m_mpv) return;
     // Tear the VO down before the JNI layer releases the Surface global
-    // ref (mirrors mpv-android's BaseMPVView.surfaceDestroyed order).
+    // ref so mpv doesn't render into a freed window. Mirrors
+    // mpv-android's BaseMPVView.surfaceDestroyed teardown order (vo=null
+    // → force-window=no → drop wid).
+    mpv_set_property_string(m_mpv, "vo", "null");
+    mpv_set_property_string(m_mpv, "force-window", "no");
     int64_t wid = 0;
-    mpv_set_option_string(m_mpv, "vo", "null");
     mpv_set_option(m_mpv, "wid", MPV_FORMAT_INT64, &wid);
-    brls::Logger::info("MpvPlayer: detached Android surface (vo=null, wid=0)");
+    brls::Logger::info("MpvPlayer: detached Android surface");
 }
 
 void MpvPlayer::setAndroidSurfaceSize(int width, int height) {

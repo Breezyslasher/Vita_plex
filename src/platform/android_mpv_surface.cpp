@@ -21,6 +21,7 @@
 
 #include <borealis.hpp>
 #include "player/mpv_player.hpp"
+#include "platform/android_mpv_surface.hpp"
 
 // ffmpeg's MediaCodec decoder and mpv's ANativeWindow_fromSurface both
 // need the JavaVM registered. SDL owns JNI_OnLoad in this .so, so we
@@ -87,5 +88,28 @@ Java_org_VitaPlex_app_MpvSurface_nativeSetSurfaceSize(JNIEnv*, jclass, jint w, j
 }
 
 } // extern "C"
+
+namespace vitaplex {
+namespace android_mpv_surface {
+
+void rebindIfReady() {
+    // Activity layout creates MpvSurface before MpvPlayer ever exists,
+    // so by the time playback starts the Java side has already fired
+    // surfaceCreated → nativeAttachSurface → tried to attach against a
+    // null m_mpv (warning logged, no-op). The Surface global ref is
+    // still stashed in g_surfaceRef. MpvPlayer::init calls this once
+    // mpv is alive so we can complete the attach now: same wid that
+    // was logged earlier, this time the mpv set_option lands.
+    if (!g_surfaceRef) {
+        brls::Logger::debug("android_mpv_surface: rebindIfReady — no surface stashed");
+        return;
+    }
+    int64_t wid = reinterpret_cast<intptr_t>(g_surfaceRef);
+    brls::Logger::info("android_mpv_surface: rebindIfReady — re-attaching stashed surface");
+    MpvPlayer::getInstance().attachAndroidSurface(wid);
+}
+
+} // namespace android_mpv_surface
+} // namespace vitaplex
 
 #endif // __ANDROID__
