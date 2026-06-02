@@ -227,7 +227,7 @@ void SettingsTab::createContentDisplaySection() {
 
     // Hide titles toggle
     m_hideTitlesToggle = new brls::BooleanCell();
-    m_hideTitlesToggle->init("Hide Movie/Show Titles", settings.hideTitlesInGrid, [&settings](bool value) {
+    m_hideTitlesToggle->init("Hide Titles Under Posters", settings.hideTitlesInGrid, [&settings](bool value) {
         settings.hideTitlesInGrid = value;
         Application::getInstance().saveSettings();
     });

@@ -7,8 +7,18 @@
 #include "app/application.hpp"
 #include "utils/image_loader.hpp"
 #include "platform/platform.hpp"
+#include <algorithm>
 
 namespace vitaplex {
+
+// Shared start-button hint texture. Loaded lazily on the first focused
+// cell that wants it (see draw()) and never released — it's one tiny
+// PNG that every grid cell shares for the life of the process. Static
+// avoids per-cell upload and the per-grid handle the old batched path
+// in RecyclingGrid had to manage.
+static int s_startHintNvg = 0;
+static int s_startHintW   = 0;
+static int s_startHintH   = 0;
 
 MediaItemCell::MediaItemCell()
     : m_alive(std::make_shared<std::atomic<bool>>(true)) {
@@ -153,14 +163,23 @@ void MediaItemCell::setItem(const MediaItem& item) {
         m_originalTitle = title;  // Store truncated title for focus restore
         m_titleLabel->setText(title);
 
-        // Hide titles for movies and shows if setting is enabled
-        bool hideTitle = Application::getInstance().getSettings().hideTitlesInGrid &&
-            (item.mediaType == MediaType::MOVIE || item.mediaType == MediaType::SHOW);
+        // Hide titles for all media types when the toggle is on. Previously
+        // restricted to movies/shows; the user wanted it global so seasons,
+        // episodes, albums, etc. also drop their titles.
+        bool hideTitle = Application::getInstance().getSettings().hideTitlesInGrid;
         m_titleLabel->setVisibility(hideTitle ? brls::Visibility::GONE : brls::Visibility::VISIBLE);
 
-        // Shrink box height when title is hidden to remove blank space
-        if (hideTitle && !isMusic && !isEpisode) {
-            this->setHeight(ic.posterHeight + 13);
+        // Shrink box height when title is hidden to remove blank space.
+        // Per-shape so square / landscape cells don't leak the portrait
+        // padding offset when the title row disappears.
+        if (hideTitle) {
+            if (isMusic) {
+                this->setHeight(ic.squareCoverSize + 10);
+            } else if (isEpisode || isClip) {
+                this->setHeight(ic.landscapeHeight + 13);
+            } else {
+                this->setHeight(ic.posterHeight + 13);
+            }
         }
     }
 
@@ -275,17 +294,86 @@ brls::View* MediaItemCell::create() {
 
 void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float height,
                           brls::Style style, brls::FrameContext* ctx) {
-    // The cover (and its placeholder, when not yet loaded) is now painted
-    // by RecyclingGrid::draw() in a batched pass, so this override just
-    // forwards to Box and handles the touch-press overlay. Putting the
-    // press overlay AFTER Box::draw means it tints the labels too, which
-    // matches the prior visual behaviour.
+    // Cell background, labels, progress bar, etc. paint first.
     brls::Box::draw(vg, x, y, width, height, style, ctx);
+
+    // Cover paint lives here (not in the parent) so every place that
+    // hosts a MediaItemCell gets the picture, not just RecyclingGrid:
+    // the home tab's HorizontalScrollRow and the media-detail view's
+    // brls::HScrollingFrame containers (seasons / episodes / extras /
+    // album tracks) used to render nothing because the prior batched
+    // pass was grid-only. Parent containers already set clipsToBounds
+    // or a ScrollingFrame scissor, so off-screen cells' paints are
+    // clipped without us adding our own scissor here.
+    if (m_coverSlot) {
+        float cx = m_coverSlot->getX();
+        float cy = m_coverSlot->getY();
+        float cw = m_coverSlot->getWidth();
+        float ch = m_coverSlot->getHeight();
+        if (cw > 0.0f && ch > 0.0f) {
+            if (m_nvgCover != 0 && m_coverW > 0 && m_coverH > 0) {
+                // Letterbox-fit, same as the prior batched pass.
+                float scale = std::min(cw / (float)m_coverW,
+                                       ch / (float)m_coverH);
+                float sw = (float)m_coverW * scale;
+                float sh = (float)m_coverH * scale;
+                float ox = cx + (cw - sw) * 0.5f;
+                float oy = cy + (ch - sh) * 0.5f;
+                NVGpaint paint = nvgImagePattern(
+                    vg, ox, oy, sw, sh, 0, m_nvgCover, 1.0f);
+                nvgBeginPath(vg);
+                nvgRoundedRect(vg, ox, oy, sw, sh, 4.0f);
+                nvgFillPaint(vg, paint);
+                nvgFill(vg);
+            } else {
+                // Placeholder until the async loader fires its callback.
+                nvgBeginPath(vg);
+                nvgRoundedRect(vg, cx, cy, cw, ch, 4.0f);
+                nvgFillColor(vg, nvgRGB(40, 40, 48));
+                nvgFill(vg);
+            }
+        }
+    }
+
+    // Touch-press tint paints AFTER the cover so it dims the picture
+    // too (same visual as before — used to be after Box::draw which
+    // only had the cell background underneath).
     if (m_pressed) {
         nvgBeginPath(vg);
         nvgRoundedRect(vg, x, y, width, height, 8);
         nvgFillColor(vg, nvgRGBA(0, 0, 0, 80));
         nvgFill(vg);
+    }
+
+    // Start-button hint on the focused cell, painted last so it always
+    // sits on top of the cover. Shared static texture: loaded once on
+    // first paint, never released (one small PNG for the app lifetime).
+    if (this->isFocused() && wantsStartHint() && m_coverSlot) {
+        if (s_startHintNvg == 0) {
+            s_startHintNvg = nvgCreateImage(
+                vg, RESOURCE_PREFIX "images/start_button.png", 0);
+            if (s_startHintNvg != 0) {
+                nvgImageSize(vg, s_startHintNvg,
+                             &s_startHintW, &s_startHintH);
+            }
+        }
+        if (s_startHintNvg != 0 && s_startHintW > 0 && s_startHintH > 0) {
+            float fcx = m_coverSlot->getX();
+            float fcy = m_coverSlot->getY();
+            float fcw = m_coverSlot->getWidth();
+            float hintW = (float)s_startHintW;
+            float hintH = (float)s_startHintH;
+            // Top-right corner of the cover with a small inset, matching
+            // the position the prior brls::Box overlay used.
+            float hx = fcx + fcw - hintW - 7.0f;
+            float hy = fcy + 7.0f;
+            NVGpaint hp = nvgImagePattern(
+                vg, hx, hy, hintW, hintH, 0, s_startHintNvg, 1.0f);
+            nvgBeginPath(vg);
+            nvgRect(vg, hx, hy, hintW, hintH);
+            nvgFillPaint(vg, hp);
+            nvgFill(vg);
+        }
     }
 }
 
