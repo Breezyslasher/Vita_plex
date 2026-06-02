@@ -158,10 +158,33 @@ bool MpvPlayer::init() {
         // to MpvSurface via vo=gpu — no libmpv/FBO/NanoVG composite,
         // which is the whole point of the rework. Mirrors mpv-android's
         // BaseMPVView startup sequence.
+        //
+        // profile=fast: in mpv >= 0.36 this preset flips a bundle of
+        // low-end-friendly internals in one go (skip loop filter, fast
+        // decode, lower buffer thresholds, …). Mpv-android uses it as
+        // a baseline for every device and it's the single biggest win
+        // for weak TV SoCs like the Bravia A1's MediaTek MT5891. Set
+        // first so the explicit options below can still override.
+        mpv_set_option_string(m_mpv, "profile", "fast");
         mpv_set_option_string(m_mpv, "vo", "gpu");
         mpv_set_option_string(m_mpv, "gpu-context", "android");
         mpv_set_option_string(m_mpv, "opengl-es", "yes");
-        mpv_set_option_string(m_mpv, "hwdec", "mediacodec-copy");
+        // hwdec as a list lets mpv fall back from zero-copy to copy
+        // when the vendor color format trips up the zero-copy path
+        // (Sony's OMX.MTK.VIDEO.DECODER.AVC reports format 0x7f000103
+        // which mediacodec-only refused). With the list, mpv tries
+        // mediacodec first, then mediacodec-copy.
+        mpv_set_option_string(m_mpv, "hwdec", "mediacodec,mediacodec-copy");
+        // Whitelist mediacodec to codecs we know work on Android so
+        // mpv doesn't try hardware paths for exotic streams and silently
+        // fall back to software. Matches mpv-android exactly.
+        mpv_set_option_string(m_mpv, "hwdec-codecs",
+                              "h264,hevc,mpeg4,mpeg2video,vp8,vp9,av1");
+        // Explicit AO list — defaulting let mpv pick OpenSL ES on
+        // some firmwares, which caused the audio underruns visible in
+        // the TV log. Prefer AudioTrack (modern, low-latency) with
+        // OpenSL ES as fallback.
+        mpv_set_option_string(m_mpv, "ao", "audiotrack,opensles");
         // force-window stays no until the surface is attached so mpv
         // doesn't try to create a window before we hand it one. idle=once
         // lets mpv settle into idle state instead of exiting when no
