@@ -996,94 +996,120 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     // below does all the "is it ready yet" work via 200 / 503 +
     // Retry-After per the spec.
 
-    // Step 4: Poll the /media endpoint directly per the API spec.
-    // Per openapi.json: GET /downloadQueue/{queueId}/item/{itemId}/media
-    //   - 200: Returns the raw media file (transcoding complete)
-    //   - 503: Still transcoding, with Retry-After header (seconds to wait, or -1 if unknown)
+    // Step 4: Wait for the queue item to finish transcoding.
+    //
+    // Switched from polling /media (HEAD) to polling /items/{itemId}
+    // (GET) — same liveness signal, but /items returns JSON with the
+    // queue item's status enum (deciding/waiting/processing/available
+    // /error/expired) AND a TranscodeSession.progress (0-100) percent,
+    // so we get a real number for the UI and don't repeatedly ask the
+    // server to spin up a media stream just to check whether it's done.
+    //
+    // Polling cadence stretches over time so a long transcode doesn't
+    // turn into thousands of log lines: 5s base, capped at 30s after a
+    // few minutes. Plex's Retry-After is almost always -1 (unknown),
+    // so a fixed schedule is more predictable than honoring it. Status
+    // changes log at INFO; the per-poll details are DEBUG.
     item.state = DownloadState::TRANSCODING;
     item.transcodeElapsedSeconds = 0;
     item.transcodePollAttempt = 0;
-    std::string mediaUrl = baseUrl + "/downloadQueue/" + queueId + "/item/" + itemId
-        + "/media?X-Plex-Token=" + token;
+    item.transcodeProgressPercent = 0;
+    std::string itemUrl = baseUrl + "/downloadQueue/" + queueId
+        + "/items/" + itemId + "?X-Plex-Token=" + token;
+    std::string mediaUrl = baseUrl + "/downloadQueue/" + queueId
+        + "/item/" + itemId + "/media?X-Plex-Token=" + token;
 
-    const int maxPollAttempts = 200;  // generous limit for long transcodes
-    const int defaultRetrySeconds = 5;  // default if Retry-After header missing or -1
-    const int maxWaitSeconds = 30;  // cap individual waits
+    auto pollInterval = [](int elapsedSec) {
+        if (elapsedSec < 30)  return 5;   // First 30s: 5s
+        if (elapsedSec < 120) return 10;  // 30s–2m: 10s
+        if (elapsedSec < 300) return 20;  // 2–5m: 20s
+        return 30;                        // 5m+: 30s
+    };
+
+    const int maxElapsedSeconds = 60 * 60;  // 1 hour absolute cap
     bool mediaReady = false;
+    std::string lastStatus;
+    int consecutiveErrors = 0;
     auto transcodeStart = std::chrono::steady_clock::now();
 
-    for (int attempt = 0; attempt < maxPollAttempts && downloading.load(); attempt++) {
-        // Update elapsed time for UI display
+    for (int attempt = 0; downloading.load(); attempt++) {
         auto now = std::chrono::steady_clock::now();
-        item.transcodeElapsedSeconds = (int)std::chrono::duration_cast<std::chrono::seconds>(
+        int elapsedSec = (int)std::chrono::duration_cast<std::chrono::seconds>(
             now - transcodeStart).count();
+        item.transcodeElapsedSeconds = elapsedSec;
         item.transcodePollAttempt = attempt;
-        HttpClient mediaHttp;
-        HttpRequest mediaReq;
-        mediaReq.url = mediaUrl;
-        mediaReq.method = "HEAD";  // HEAD to check status without downloading the file
-        addPlexHeaders(mediaReq, token);
-        mediaReq.timeout = 15;
-        HttpResponse mediaResp = mediaHttp.request(mediaReq);
 
-        brls::Logger::debug("DownloadsManager: Media poll attempt {}/{}: HTTP {}",
-                           attempt + 1, maxPollAttempts, mediaResp.statusCode);
-
-        if (mediaResp.statusCode == 200) {
-            // Media is ready for download
-            mediaReady = true;
-            brls::Logger::info("DownloadsManager: Media ready after {} polls", attempt + 1);
+        if (elapsedSec > maxElapsedSeconds) {
+            brls::Logger::error(
+                "DownloadsManager: Transcode timeout after {}s, giving up",
+                elapsedSec);
             break;
         }
 
-        if (mediaResp.statusCode == 503) {
-            // Still transcoding - check Retry-After header
-            int waitSeconds = defaultRetrySeconds;
-            auto retryIt = mediaResp.headers.find("Retry-After");
-            if (retryIt == mediaResp.headers.end())
-                retryIt = mediaResp.headers.find("retry-after");
-            if (retryIt != mediaResp.headers.end()) {
-                int retryVal = std::atoi(retryIt->second.c_str());
-                if (retryVal > 0 && retryVal <= maxWaitSeconds) {
-                    waitSeconds = retryVal;
-                } else if (retryVal == -1) {
-                    // -1 means unknown, use default
-                    waitSeconds = defaultRetrySeconds;
-                }
+        HttpClient itemHttp;
+        HttpRequest itemReq;
+        itemReq.url = itemUrl;
+        itemReq.method = "GET";
+        addPlexHeaders(itemReq, token);
+        itemReq.timeout = 15;
+        HttpResponse itemResp = itemHttp.request(itemReq);
+
+        if (itemResp.statusCode != 200) {
+            brls::Logger::warning(
+                "DownloadsManager: /items poll HTTP {} (attempt {}, elapsed {}s)",
+                itemResp.statusCode, attempt + 1, elapsedSec);
+            if (++consecutiveErrors >= 5) {
+                brls::Logger::error(
+                    "DownloadsManager: 5 consecutive /items errors, giving up");
+                break;
             }
-
-            brls::Logger::debug("DownloadsManager: Transcoding in progress, waiting {}s (Retry-After)", waitSeconds);
-
-            int waitMs = waitSeconds * 1000;
+            int wait = pollInterval(elapsedSec);
 #ifdef __vita__
-            sceKernelDelayThread(waitMs * 1000);
+            sceKernelDelayThread(wait * 1000 * 1000);
 #else
-            std::this_thread::sleep_for(std::chrono::milliseconds(waitMs));
+            std::this_thread::sleep_for(std::chrono::seconds(wait));
 #endif
             continue;
         }
+        consecutiveErrors = 0;
 
-        // Any other status code (4xx, 5xx other than 503) means failure
-        brls::Logger::warning("DownloadsManager: Media endpoint returned unexpected HTTP {}", mediaResp.statusCode);
-
-        // On first attempt, if we get an immediate error, the API may not be supported
-        if (attempt == 0) {
-            brls::Logger::warning("DownloadsManager: Immediate error on media poll, Download Queue API not working");
-            break;
+        std::string status = extractJsonString(itemResp.body, "status");
+        int progress = (int)extractJsonInt(itemResp.body, "progress");
+        if (progress >= 0 && progress <= 100) {
+            item.transcodeProgressPercent = progress;
         }
 
-        // For subsequent errors, try a few more times with backoff
-        if (attempt >= 5) {
-            brls::Logger::error("DownloadsManager: Too many media poll errors, giving up");
-            break;
+        if (status != lastStatus) {
+            brls::Logger::info(
+                "DownloadsManager: Queue item {} status={} progress={}% elapsed={}s",
+                itemId, status, item.transcodeProgressPercent, elapsedSec);
+            lastStatus = status;
+        } else {
+            brls::Logger::debug(
+                "DownloadsManager: status={} progress={}% elapsed={}s",
+                status, item.transcodeProgressPercent, elapsedSec);
         }
 
-        int backoffMs = defaultRetrySeconds * 1000 * (1 << attempt);
-        if (backoffMs > maxWaitSeconds * 1000) backoffMs = maxWaitSeconds * 1000;
+        if (status == "available") {
+            mediaReady = true;
+            brls::Logger::info(
+                "DownloadsManager: Media ready after {}s ({} polls)",
+                elapsedSec, attempt + 1);
+            break;
+        }
+        if (status == "error" || status == "expired") {
+            brls::Logger::error(
+                "DownloadsManager: Queue item ended in status='{}', giving up",
+                status);
+            break;
+        }
+        // deciding / waiting / processing — keep polling.
+
+        int wait = pollInterval(elapsedSec);
 #ifdef __vita__
-        sceKernelDelayThread(backoffMs * 1000);
+        sceKernelDelayThread(wait * 1000 * 1000);
 #else
-        std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
+        std::this_thread::sleep_for(std::chrono::seconds(wait));
 #endif
     }
 
