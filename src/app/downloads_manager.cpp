@@ -1080,17 +1080,28 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     std::string profileExtra;
     bool urlReady = false;
 
-    if (isAudio) {
-        // Audio: download the original file directly (small files, Vita-compatible formats)
+    // First try the conventional "download the original file" path that
+    // every Plex client uses for offline media: hit the part URL with
+    // ?download=1. The server returns the source file in its native
+    // container — no transcoding, no polling, no Download Queue session.
+    // Works for both audio and video as long as the partPath came back
+    // from the server (it usually does — fetchMediaDetails populates it).
+    //
+    // The HLS streaming-transcode fallback below only runs when the
+    // direct path isn't available; it produces an HLS-segment-shaped
+    // file that's awkward to play back outside the app's own player
+    // and isn't what users typically expect from a "download".
+    if (!item.partPath.empty()) {
         url = buildDirectDownloadUrl(serverUrl, token, item.partPath);
         if (!url.empty()) {
             urlReady = true;
-            brls::Logger::info("DownloadsManager: Using direct file download for audio: {}", item.title);
+            brls::Logger::info("DownloadsManager: Direct file download for {} {}",
+                               isAudio ? "audio" : "video", item.title);
         }
     } else {
-        // Video: skip Download Queue API (too slow - polls for transcoding completion
-        // which can take 15+ minutes). Go straight to HLS streaming transcode instead.
-        brls::Logger::info("DownloadsManager: Using HLS streaming transcode for video: {}", item.title);
+        brls::Logger::warning(
+            "DownloadsManager: No partPath for {} — falling back to transcode",
+            item.title);
     }
 
     // Fall back to streaming transcode if no URL ready yet
