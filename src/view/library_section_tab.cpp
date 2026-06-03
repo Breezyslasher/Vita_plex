@@ -874,13 +874,15 @@ void LibrarySectionTab::appendTrackListPage() {
         row->setBackgroundColor(nvgRGBA(50, 50, 60, 200));
         row->setFocusable(true);
 
-        // Custom UP navigation so DPAD-UP from any track row reaches the
-        // on-screen "< Back" button. Without this, ScrollingFrame's UP
-        // either consumed the input (when not at top of scroll) or fell
-        // through to Box::getNextFocus which doesn't reliably find a
-        // sibling above m_trackListScroll, depending on whether the
-        // (currently GONE) m_contentGrid is laid out between them.
-        if (m_backBtn) {
+        // Only the topmost track row escapes UP to the on-screen
+        // "< Back" button. Every other row keeps default UP navigation
+        // so DPAD-UP moves to the previous track. Without the explicit
+        // route on the first row, UP gets stuck because
+        // ScrollingFrame::getNextFocus(UP) consumes the input while the
+        // scroll has any offset, and Box::getNextFocus past the top
+        // doesn't reliably reach m_viewModeBox with a GONE m_contentGrid
+        // sitting between them.
+        if (i == 0 && m_backBtn) {
             row->setCustomNavigationRoute(brls::FocusDirection::UP, m_backBtn);
         }
 
