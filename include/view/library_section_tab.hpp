@@ -40,6 +40,12 @@ private:
     void showCollections();
     void showCategories();
     void showPlaylists();
+
+    // Back navigation shared by the on-screen "< Back" button and the
+    // controller B / remote back / keyboard Esc handler. Returns true
+    // if it handled the input, false to let the default back action
+    // pop the activity (only relevant when already at ALL_ITEMS).
+    bool navigateBack();
     void onItemSelected(const MediaItem& item);
     void onCollectionSelected(const MediaItem& collection);
     void onGenreSelected(const GenreItem& genre);
@@ -100,6 +106,11 @@ private:
     static size_t playlistTrackPageSize();
 
     LibraryViewMode m_viewMode = LibraryViewMode::ALL_ITEMS;
+    // Mode we were in just before transitioning into FILTERED — lets
+    // the B-button back action drop the user back where they came from
+    // (CATEGORIES if they clicked a genre, COLLECTIONS if they clicked
+    // a collection, etc.) instead of always jumping to ALL_ITEMS.
+    LibraryViewMode m_modeBeforeFilter = LibraryViewMode::ALL_ITEMS;
     std::string m_filterTitle;  // Title of current filter (collection/genre name)
     bool m_loaded = false;
     bool m_collectionsLoaded = false;

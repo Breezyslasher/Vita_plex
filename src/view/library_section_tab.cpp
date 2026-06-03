@@ -110,7 +110,22 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     styleButton(m_backBtn, false);
     m_backBtn->setBackgroundColor(nvgRGBA(80, 60, 50, 200));
     m_backBtn->registerClickAction([this](brls::View* view) {
-        showAllItems();
+        // Move focus off the back button BEFORE running navigateBack(),
+        // so the cascade of setDataSource() → rebuildGrid() →
+        // removeView(old rows) → updateViewModeButtons() → hide
+        // m_backBtn doesn't have to juggle focus on a soon-to-be-hidden
+        // button. Without this, the click action returned with focus
+        // still anchored on a now-hidden m_backBtn and the next input
+        // crashed walking into stale focus state.
+        brls::View* target = nullptr;
+        if (m_trackListScroll &&
+            m_trackListScroll->getVisibility() == brls::Visibility::VISIBLE) {
+            target = m_trackListScroll;
+        } else if (m_contentGrid) {
+            target = m_contentGrid;
+        }
+        if (target) brls::Application::giveFocus(target);
+        navigateBack();
         return true;
     });
     m_viewModeBox->addView(m_backBtn);
@@ -149,6 +164,22 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     m_trackListBox->setPadding(5);
     m_trackListScroll->setContentView(m_trackListBox);
     this->addView(m_trackListScroll);
+
+    // Controller B / remote back / keyboard Esc all route through
+    // navigateBack(). Registered on m_contentGrid AND m_trackListScroll
+    // — between the two, the focused view (a grid cell OR a playlist
+    // track row) always has the handler in its focus walk-up chain.
+    // Can't put the handler on `this` (LibrarySectionTab) because
+    // TabFrame::onContentChanged registers its own BUTTON_B on the
+    // active tab's content view every time the tab is selected, and
+    // View::registerAction REPLACES any existing handler for the same
+    // button (view.cpp:770-774) — so any handler on `this` would be
+    // silently wiped and B would fall through to TabFrame's default
+    // (give focus to the sidebar). Child views are out of TabFrame's
+    // reach.
+    auto backHandler = [this](brls::View*) { return navigateBack(); };
+    m_contentGrid->registerAction("Back", brls::ControllerButton::BUTTON_B, backHandler);
+    m_trackListScroll->registerAction("Back", brls::ControllerButton::BUTTON_B, backHandler);
 
     // Load content immediately
     brls::Logger::debug("LibrarySectionTab: Created for section {} ({}) type={}", m_sectionKey, m_title, m_sectionType);
@@ -365,6 +396,30 @@ void LibrarySectionTab::loadNextPage() {
     });
 }
 
+bool LibrarySectionTab::navigateBack() {
+    // FILTERED came from CATEGORIES / COLLECTIONS / PLAYLISTS / ALL_ITEMS
+    // depending on what the user clicked. Drop them back there using the
+    // mode we stashed at the FILTERED transition instead of always going
+    // to ALL_ITEMS (which was the old behaviour and felt wrong — clicking
+    // a category, then Back, used to lose the category list).
+    if (m_viewMode == LibraryViewMode::FILTERED) {
+        switch (m_modeBeforeFilter) {
+            case LibraryViewMode::CATEGORIES:  showCategories();  return true;
+            case LibraryViewMode::COLLECTIONS: showCollections(); return true;
+            case LibraryViewMode::PLAYLISTS:   showPlaylists();   return true;
+            default:                           showAllItems();    return true;
+        }
+    }
+    // Sub-modes (CATEGORIES / COLLECTIONS / PLAYLISTS) all fall back to
+    // ALL_ITEMS on Back. From ALL_ITEMS we return false so borealis's
+    // default Back handler pops the activity / closes the sidebar.
+    if (m_viewMode != LibraryViewMode::ALL_ITEMS) {
+        showAllItems();
+        return true;
+    }
+    return false;
+}
+
 void LibrarySectionTab::showAllItems() {
     m_viewMode = LibraryViewMode::ALL_ITEMS;
     m_titleLabel->setText(m_title);
@@ -449,12 +504,43 @@ void LibrarySectionTab::styleButton(brls::Button* btn, bool active) {
 }
 
 void LibrarySectionTab::updateViewModeButtons() {
-    // Show/hide back button
+    // If a button we're about to hide currently owns the focus, transfer
+    // focus to the grid first — otherwise borealis ends up with a focused
+    // Visibility::GONE view and the next input lands somewhere weird
+    // (the "Back button transfers hover to an invisible button" report:
+    // user clicks m_backBtn, navigateBack runs, this method hides
+    // m_backBtn while it's still focused, focus stays stuck on the
+    // hidden button).
+    brls::View* focused = brls::Application::getCurrentFocus();
     bool inFilteredView = (m_viewMode == LibraryViewMode::FILTERED);
+    bool showModeButtons = !inFilteredView;
+    auto wouldHide = [&](brls::Button* btn, bool willBeVisible) {
+        return btn && focused == btn && !willBeVisible;
+    };
+    bool focusedAboutToHide =
+        wouldHide(m_backBtn, inFilteredView) ||
+        wouldHide(m_allBtn, showModeButtons) ||
+        wouldHide(m_collectionsBtn, showModeButtons && !m_collections.empty()) ||
+        wouldHide(m_categoriesBtn, showModeButtons && !m_genres.empty()) ||
+        wouldHide(m_playlistsBtn, showModeButtons && !m_playlists.empty());
+    if (focusedAboutToHide) {
+        // Transfer focus to whichever content area is going to be the
+        // visible one after the show* method that called us. The grid
+        // takes precedence in every mode except playlist-track view,
+        // where m_trackListScroll holds the rows.
+        brls::View* target = nullptr;
+        if (m_trackListScroll &&
+            m_trackListScroll->getVisibility() == brls::Visibility::VISIBLE) {
+            target = m_trackListScroll;
+        } else if (m_contentGrid &&
+                   m_contentGrid->getVisibility() == brls::Visibility::VISIBLE) {
+            target = m_contentGrid;
+        }
+        if (target) brls::Application::giveFocus(target);
+    }
+
     m_backBtn->setVisibility(inFilteredView ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
 
-    // Show/hide mode buttons
-    bool showModeButtons = (m_viewMode != LibraryViewMode::FILTERED);
     m_allBtn->setVisibility(showModeButtons ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
     if (m_collectionsBtn) {
         m_collectionsBtn->setVisibility(showModeButtons && !m_collections.empty() ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
@@ -517,6 +603,7 @@ void LibrarySectionTab::onItemSelected(const MediaItem& item) {
 void LibrarySectionTab::onCollectionSelected(const MediaItem& collection) {
     brls::Logger::debug("LibrarySectionTab: Selected collection: {}", collection.title);
 
+    m_modeBeforeFilter = m_viewMode;
     m_filterTitle = collection.title;
     std::string collectionKey = collection.ratingKey;
     std::string filterTitle = m_filterTitle;
@@ -554,6 +641,7 @@ void LibrarySectionTab::onCollectionSelected(const MediaItem& collection) {
 void LibrarySectionTab::onGenreSelected(const GenreItem& genre) {
     brls::Logger::debug("LibrarySectionTab: Selected genre: {} (key: {})", genre.title, genre.key);
 
+    m_modeBeforeFilter = m_viewMode;
     m_filterTitle = genre.title;
     std::string key = m_sectionKey;
     std::string genreKey = genre.key;
@@ -710,9 +798,9 @@ void LibrarySectionTab::onPlaylistSelected(const Playlist& playlist) {
 void LibrarySectionTab::showPlaylistTrackList(std::vector<MediaItem>&& tracks,
                                                 const std::string& playlistTitle,
                                                 const std::string& playlistId) {
+    m_modeBeforeFilter = m_viewMode;
     m_viewMode = LibraryViewMode::FILTERED;
     m_titleLabel->setText(m_title + " - " + playlistTitle + " (" + std::to_string(tracks.size()) + " tracks)");
-    updateViewModeButtons();
 
     // Store tracks as member to avoid per-row copies (was causing OOM with large playlists)
     m_playlistTracks = std::move(tracks);
@@ -720,13 +808,28 @@ void LibrarySectionTab::showPlaylistTrackList(std::vector<MediaItem>&& tracks,
     m_trackListRendered = 0;
     m_trackListLoadMoreBtn = nullptr;
 
-    // Hide grid, show track list
+    // Flip visibility BEFORE updateViewModeButtons() so its focus-
+    // transfer logic sees the right target (m_trackListScroll, not
+    // m_contentGrid). The clicked playlist cell still owns the focus
+    // at this point — the grid is about to hide, so we can't park it
+    // on a grid cell.
     m_contentGrid->setVisibility(brls::Visibility::GONE);
     m_trackListScroll->setVisibility(brls::Visibility::VISIBLE);
     m_trackListBox->clearViews();
 
-    // Render first page of tracks
+    // Render first page of tracks (must come before updateViewModeButtons
+    // so the focus transfer in there has a focusable row to land on).
     appendTrackListPage();
+
+    // Transfer focus into the new track list explicitly — the clicked
+    // playlist cell is now inside a Visibility::GONE grid, and without
+    // this nudge borealis leaves focus on the hidden cell and the user
+    // can't interact with the playlist they just opened.
+    if (m_trackListBox && !m_trackListBox->getChildren().empty()) {
+        brls::Application::giveFocus(m_trackListScroll);
+    }
+
+    updateViewModeButtons();
 }
 
 void LibrarySectionTab::appendTrackListPage() {

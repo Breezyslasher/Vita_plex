@@ -217,21 +217,74 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
 }
 
 void RecyclingGrid::rebuildGrid() {
-    m_contentBox->clearViews();
+    // Crash fix for "open category": setDataSource() runs while one of
+    // our cells (the category cell the user just clicked) still owns
+    // the focus. The old implementation called m_contentBox->clearViews()
+    // first, which deleted the focused cell mid-event-dispatch — the
+    // next input then walked into freed memory. Calling
+    // Application::giveFocus(this) before clearing wasn't enough either:
+    // ScrollingFrame::getDefaultFocus() resolves back into our own
+    // content view, so focus just moved to a *different* doomed cell.
+    //
+    // Strategy: keep the old cells around until the new ones exist,
+    // hand focus to a new cell, *then* delete the old ones. The view
+    // tree gets briefly larger than the on-screen item set (old + new
+    // rows live in m_contentBox simultaneously for the duration of
+    // this function), but borealis won't draw the old rows in that
+    // window because we never run a layout pass between the add and
+    // the remove.
+
+    // Step 1: snapshot the old cells/rows. m_rows and m_cells are then
+    // emptied so addCellForItem() can append the new entries without
+    // having to walk past stale pointers.
+    std::vector<brls::Box*> oldRows = m_rows;
+    std::vector<MediaItemCell*> oldCells = m_cells;
     m_rows.clear();
     m_cells.clear();
     m_renderedCount = 0;
 
-    if (m_items.empty()) return;
+    // Step 2: figure out whether the current focus lives inside any of
+    // the cells we're about to retire. If it does, we need to relocate
+    // focus before the delete in Step 5.
+    brls::View* focused = brls::Application::getCurrentFocus();
+    bool focusInOld = false;
+    if (focused) {
+        for (auto* oldCell : oldCells) {
+            for (brls::View* p = focused; p != nullptr; p = p->getParent()) {
+                if (p == oldCell) { focusInOld = true; break; }
+            }
+            if (focusInOld) break;
+        }
+    }
 
+    // Step 3: build the new rows/cells. addCellForItem() addView()s into
+    // m_contentBox, so the old rows are still in the tree above them.
     brls::Box* currentRow = nullptr;
     int itemsInRow = 0;
-
     for (size_t i = 0; i < m_items.size(); i++) {
         addCellForItem(currentRow, itemsInRow, i);
     }
-
     m_renderedCount = m_items.size();
+
+    // Step 4: move focus onto a freshly-created cell so deleting the
+    // old ones in Step 5 can't pull the focused view out from under the
+    // event dispatcher. If we have no new cells (empty data source) and
+    // focus was in the old set, fall back to giving focus to the grid's
+    // parent — borealis will resolve to a sibling (a view-mode button
+    // etc.) rather than back into our about-to-be-empty content box.
+    if (focusInOld) {
+        if (!m_cells.empty()) {
+            brls::Application::giveFocus(m_cells[0]);
+        } else if (brls::View* parent = this->getParent()) {
+            brls::Application::giveFocus(parent);
+        }
+    }
+
+    // Step 5: now safe — the only refs to the old cells are in oldRows
+    // and the focus stack no longer points at any of them.
+    for (auto* row : oldRows) {
+        if (row) m_contentBox->removeView(row, true);
+    }
 }
 
 void RecyclingGrid::onItemClicked(int index) {
