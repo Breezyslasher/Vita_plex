@@ -875,9 +875,25 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     std::string profileExtra;
     if (isAudio) {
         addUrl += "&musicBitrate=320";
-        profileExtra = "add-transcode-target(type=musicProfile"
-                       "&context=streaming&protocol=http"
-                       "&container=mp3&audioCodec=mp3)";
+        // Direct play profiles cover the common audio containers — server
+        // ships the file untouched when it matches one of these. Transcode
+        // target stays as the fallback for everything else.
+        profileExtra =
+            "add-direct-play-profile(type=musicProfile"
+                "&container=mp3&audioCodec=mp3)"
+            "+add-direct-play-profile(type=musicProfile"
+                "&container=mp4&audioCodec=aac)"
+            "+add-direct-play-profile(type=musicProfile"
+                "&container=mp4&audioCodec=alac)"
+            "+add-direct-play-profile(type=musicProfile"
+                "&container=flac&audioCodec=flac)"
+            "+add-direct-play-profile(type=musicProfile"
+                "&container=ogg&audioCodec=vorbis)"
+            "+add-direct-play-profile(type=musicProfile"
+                "&container=ogg&audioCodec=opus)"
+            "+add-transcode-target(type=musicProfile"
+                "&context=streaming&protocol=http"
+                "&container=mp3&audioCodec=mp3)";
     } else {
         const auto& vc = platform::getVideoConstraints();
         AppSettings& settings = Application::getInstance().getSettings();
@@ -887,19 +903,46 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         addUrl += bitrateStr;
         addUrl += "&videoResolution=";
         addUrl += vc.defaultResolution;
-        addUrl += "&subtitles=burn";
-        char dlProfileBuf[512];
+        // subtitles=none (not =burn) — burning subs ALWAYS requires a
+        // re-encode pass, which defeats directPlay even when the source
+        // is otherwise compatible. Downloads ship the file without
+        // burned subs; subtitles get applied at playback via mpv's sub
+        // track selection.
+        addUrl += "&subtitles=none";
+        char dlProfileBuf[1536];
         snprintf(dlProfileBuf, sizeof(dlProfileBuf),
-            "add-transcode-target(type=videoProfile"
-            "&context=streaming&protocol=http"
-            "&container=mkv&videoCodec=h264"
-            "&audioCodec=aac)"
+            // Direct-play profiles tell the server "you can ship this
+            // file untouched". Without these, the server defaults to
+            // transcoding even with directPlay=1 because it doesn't
+            // know what containers/codecs the client supports natively.
+            "add-direct-play-profile(type=videoProfile"
+                "&container=mp4&videoCodec=h264&audioCodec=aac)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mp4&videoCodec=h264&audioCodec=ac3)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mp4&videoCodec=h264&audioCodec=mp3)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mkv&videoCodec=h264&audioCodec=aac)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mkv&videoCodec=h264&audioCodec=ac3)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mkv&videoCodec=h264&audioCodec=eac3)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mkv&videoCodec=hevc&audioCodec=aac)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mkv&videoCodec=hevc&audioCodec=ac3)"
+            // Transcode target as the fallback path when the source
+            // doesn't match any direct-play profile.
+            "+add-transcode-target(type=videoProfile"
+                "&context=streaming&protocol=http"
+                "&container=mkv&videoCodec=h264"
+                "&audioCodec=aac)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
-            "&type=upperBound&name=video.level&value=%d)"
+                "&type=upperBound&name=video.level&value=%d)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
-            "&type=upperBound&name=video.width&value=%d)"
+                "&type=upperBound&name=video.width&value=%d)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
-            "&type=upperBound&name=video.height&value=%d)",
+                "&type=upperBound&name=video.height&value=%d)",
             vc.maxVideoLevel, vc.maxVideoWidth, vc.maxVideoHeight);
         profileExtra = dlProfileBuf;
     }
