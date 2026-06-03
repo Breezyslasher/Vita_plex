@@ -1080,27 +1080,36 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     std::string profileExtra;
     bool urlReady = false;
 
-    // First try the conventional "download the original file" path that
-    // every Plex client uses for offline media: hit the part URL with
-    // ?download=1. The server returns the source file in its native
-    // container — no transcoding, no polling, no Download Queue session.
-    // Works for both audio and video as long as the partPath came back
-    // from the server (it usually does — fetchMediaDetails populates it).
+    // Layered URL strategy — try each option from "most Plex-native" to
+    // "last resort", taking the first that works for this item + server:
     //
-    // The HLS streaming-transcode fallback below only runs when the
-    // direct path isn't available; it produces an HLS-segment-shaped
-    // file that's awkward to play back outside the app's own player
-    // and isn't what users typically expect from a "download".
-    if (!item.partPath.empty()) {
+    // 1. Plex Download Queue API (/downloadQueue/...). The canonical way
+    //    Plex clients request offline media. Server enqueues the item,
+    //    transcodes server-side to a client-compatible container, and
+    //    serves a single file via /downloadQueue/{q}/item/{i}/media with
+    //    503 + Retry-After while it works. Sets item.state to TRANSCODING
+    //    during the poll so the UI shows progress.
+    //
+    // 2. ?download=1 on the part URL. Plain HTTP GET that returns the
+    //    source file untouched — fastest path, but only useful when the
+    //    file's native container is already client-compatible.
+    //
+    // 3. HLS streaming transcode (/video/:/transcode/universal/...).
+    //    Last resort, captures a streaming session to disk in HLS
+    //    segments. Awkward to play back outside the app but exists for
+    //    servers that don't expose the Download Queue API.
+    if (tryDownloadQueueApi(serverUrl, token, item.ratingKey, url, downloading, item)) {
+        urlReady = true;
+        brls::Logger::info("DownloadsManager: Download Queue API ready for {}", item.title);
+    } else if (!item.partPath.empty()) {
         url = buildDirectDownloadUrl(serverUrl, token, item.partPath);
         if (!url.empty()) {
             urlReady = true;
-            brls::Logger::info("DownloadsManager: Direct file download for {} {}",
-                               isAudio ? "audio" : "video", item.title);
+            brls::Logger::info("DownloadsManager: Direct file fallback for {}", item.title);
         }
     } else {
         brls::Logger::warning(
-            "DownloadsManager: No partPath for {} — falling back to transcode",
+            "DownloadsManager: No Download Queue + no partPath for {} — HLS transcode",
             item.title);
     }
 
