@@ -984,20 +984,17 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
 
     brls::Logger::info("DownloadsManager: Download queue item ID: {}", itemId);
 
-    // Step 3: Get the decision for this download queue item (triggers transcoding)
-    HttpClient decHttp;
-    HttpRequest decReq;
-    decReq.url = baseUrl + "/downloadQueue/" + queueId + "/item/" + itemId
-        + "/decision?X-Plex-Token=" + token;
-    decReq.method = "GET";
-    addPlexHeaders(decReq, token);
-    decReq.headers["X-Plex-Client-Profile-Name"] = "Generic";
-    decReq.headers["X-Plex-Client-Profile-Extra"] = profileExtra;
-    decReq.timeout = 60;
-    HttpResponse decResp = decHttp.request(decReq);
-
-    brls::Logger::info("DownloadsManager: Queue decision response: {} ({})",
-                      decResp.statusCode, decResp.body.substr(0, 500));
+    // /decision intentionally not called. The openapi spec defines
+    // GET /downloadQueue/{q}/item/{i}/decision as a read-only "grab
+    // the decision" query — transcoding is already triggered by /add
+    // above (Plex's server log shows the "Downloading document
+    // /library/metadata/N" trace fire as part of the /add request).
+    // When we did call it the server returned 400 Bad Request because
+    // the spec only allows path params there but we were attaching
+    // the X-Plex-Client-Profile-Extra header; the 400 didn't break
+    // the download but the failure log was noise. The /media poll
+    // below does all the "is it ready yet" work via 200 / 503 +
+    // Retry-After per the spec.
 
     // Step 4: Poll the /media endpoint directly per the API spec.
     // Per openapi.json: GET /downloadQueue/{queueId}/item/{itemId}/media
