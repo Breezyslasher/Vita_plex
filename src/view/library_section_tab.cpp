@@ -110,13 +110,13 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     styleButton(m_backBtn, false);
     m_backBtn->setBackgroundColor(nvgRGBA(80, 60, 50, 200));
     m_backBtn->registerClickAction([this](brls::View* view) {
-        // Move focus off the back button BEFORE running navigateBack(),
-        // so the cascade of setDataSource() → rebuildGrid() →
-        // removeView(old rows) → updateViewModeButtons() → hide
-        // m_backBtn doesn't have to juggle focus on a soon-to-be-hidden
-        // button. Without this, the click action returned with focus
-        // still anchored on a now-hidden m_backBtn and the next input
-        // crashed walking into stale focus state.
+        // Move focus off the back button and defer navigateBack() to the
+        // next frame so the click event (action loop walk-up + click
+        // animation) fully completes before we start destroying cells
+        // and hiding views. Without the defer + focus pre-transfer,
+        // mid-dispatch the click loop on m_backBtn could walk into a
+        // hidden subtree as showPlaylists()/showCategories()/etc.
+        // flipped visibility and rebuildGrid freed the old cells.
         brls::View* target = nullptr;
         if (m_trackListScroll &&
             m_trackListScroll->getVisibility() == brls::Visibility::VISIBLE) {
@@ -125,7 +125,7 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
             target = m_contentGrid;
         }
         if (target) brls::Application::giveFocus(target);
-        navigateBack();
+        brls::sync([this]() { navigateBack(); });
         return true;
     });
     m_viewModeBox->addView(m_backBtn);
@@ -177,7 +177,18 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     // silently wiped and B would fall through to TabFrame's default
     // (give focus to the sidebar). Child views are out of TabFrame's
     // reach.
-    auto backHandler = [this](brls::View*) { return navigateBack(); };
+    //
+    // navigateBack() is deferred via brls::sync so the B-button event
+    // dispatch fully completes (action loop walk-up, animation, etc.)
+    // before we start destroying cells and flipping visibility.
+    // Without the defer, leaving a playlist mid-dispatch crashed
+    // because the action loop was still walking from m_trackListScroll
+    // while showPlaylists() was hiding it and rebuildGrid was freeing
+    // the very cells the loop might reach next.
+    auto backHandler = [this](brls::View*) {
+        brls::sync([this]() { navigateBack(); });
+        return true;
+    };
     m_contentGrid->registerAction("Back", brls::ControllerButton::BUTTON_B, backHandler);
     m_trackListScroll->registerAction("Back", brls::ControllerButton::BUTTON_B, backHandler);
 
@@ -574,6 +585,26 @@ void LibrarySectionTab::updateViewModeButtons() {
         if (m_collectionsBtn) styleButton(m_collectionsBtn, m_viewMode == LibraryViewMode::COLLECTIONS);
         if (m_categoriesBtn) styleButton(m_categoriesBtn, m_viewMode == LibraryViewMode::CATEGORIES);
         if (m_playlistsBtn) styleButton(m_playlistsBtn, m_viewMode == LibraryViewMode::PLAYLISTS);
+    }
+
+    // DPAD-DOWN from the "< Back" button should land on whichever
+    // content area is currently visible (filtered grid items or track
+    // list rows). Borealis's default navigation walked sideways into
+    // m_viewModeBox's other children — all GONE in FILTERED view —
+    // which made DOWN visibly hop to a hidden Playlists/Collections
+    // button.
+    if (m_backBtn) {
+        brls::View* downTarget = nullptr;
+        if (m_trackListScroll &&
+            m_trackListScroll->getVisibility() == brls::Visibility::VISIBLE) {
+            downTarget = m_trackListScroll;
+        } else if (m_contentGrid &&
+                   m_contentGrid->getVisibility() == brls::Visibility::VISIBLE) {
+            downTarget = m_contentGrid;
+        }
+        if (downTarget) {
+            m_backBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, downTarget);
+        }
     }
 }
 
