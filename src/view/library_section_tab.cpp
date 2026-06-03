@@ -178,14 +178,24 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     // (give focus to the sidebar). Child views are out of TabFrame's
     // reach.
     //
-    // navigateBack() is deferred via brls::sync so the B-button event
-    // dispatch fully completes (action loop walk-up, animation, etc.)
-    // before we start destroying cells and flipping visibility.
-    // Without the defer, leaving a playlist mid-dispatch crashed
-    // because the action loop was still walking from m_trackListScroll
-    // while showPlaylists() was hiding it and rebuildGrid was freeing
-    // the very cells the loop might reach next.
+    // Two-step back: first park focus on a view that won't get hidden
+    // by the navigation about to run, THEN defer navigateBack one frame
+    // so the action-dispatch loop fully completes before we destroy
+    // cells / flip visibility.
+    //
+    // Without the focus park, leaving a playlist still crashed even
+    // with the defer: focus stayed on a track row, showPlaylists() hid
+    // m_trackListScroll, and the next input event walked into a focused
+    // view buried in a Visibility::GONE subtree. m_backBtn is the right
+    // park target — it's always visible in FILTERED view (the only mode
+    // that's reachable here) and we hide it inside updateViewModeButtons
+    // where the existing "focused button about to hide" path catches
+    // it and transfers focus onto the freshly-populated content area.
     auto backHandler = [this](brls::View*) {
+        if (m_backBtn &&
+            m_backBtn->getVisibility() == brls::Visibility::VISIBLE) {
+            brls::Application::giveFocus(m_backBtn);
+        }
         brls::sync([this]() { navigateBack(); });
         return true;
     };
