@@ -282,6 +282,18 @@ void RecyclingGrid::rebuildGrid() {
 
     // Step 5: now safe — the only refs to the old cells are in oldRows
     // and the focus stack no longer points at any of them.
+    //
+    // Reset m_contentBox's lastFocusedView cache before deleting any
+    // row that it might point at. Box::onChildFocusGained sets this
+    // pointer to whichever row last contained the focused view; it's
+    // only cleared by Box::clearViews(), NOT by removeView(). Without
+    // this reset, Box::getDefaultFocus() — which the next
+    // giveFocus(m_contentGrid) walk lands in — dereferences the
+    // dangling row pointer and either returns nullptr (so focus stays
+    // wherever it was, the "stays on Back" symptom when leaving a
+    // playlist) or returns a stale pointer that crashes on the next
+    // input.
+    m_contentBox->setLastFocusedView(nullptr);
     for (auto* row : oldRows) {
         if (row) m_contentBox->removeView(row, true);
     }
