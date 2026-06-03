@@ -853,9 +853,21 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         + "?keys=/library/metadata/" + ratingKey;
 
     // protocol=http tells the server to produce a single downloadable file
-    // (as opposed to hls/dash streaming segments)
+    // (as opposed to hls/dash streaming segments).
+    //
+    // directPlay=1 and directStream=1: tell the server the client can
+    // play / direct-stream the source if it fits the profile-extra
+    // constraints below. The server uses these as *capabilities*, not
+    // demands — it'll still transcode when the source exceeds our
+    // limits (e.g. 1080p source for the Vita's 544p ceiling), but it
+    // will skip transcoding entirely when the source already matches
+    // (Switch/Android/desktop with an h264 source within their codec
+    // limits). The previous directPlay=0&directStream=0 forced a
+    // server-side transcode on every video download, which is why a
+    // 3.6 GB movie sat in /media 503-loop for minutes even when the
+    // source was already client-compatible.
     addUrl += "&protocol=http";
-    addUrl += "&directPlay=0&directStream=0&directStreamAudio=1";
+    addUrl += "&directPlay=1&directStream=1&directStreamAudio=1";
     addUrl += "&location=lan";
     addUrl += "&audioBoost=100&audioChannelCount=2";
     addUrl += "&mediaIndex=0&partIndex=0";
