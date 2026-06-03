@@ -110,7 +110,7 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     styleButton(m_backBtn, false);
     m_backBtn->setBackgroundColor(nvgRGBA(80, 60, 50, 200));
     m_backBtn->registerClickAction([this](brls::View* view) {
-        showAllItems();
+        navigateBack();
         return true;
     });
     m_viewModeBox->addView(m_backBtn);
@@ -149,6 +149,18 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     m_trackListBox->setPadding(5);
     m_trackListScroll->setContentView(m_trackListBox);
     this->addView(m_trackListScroll);
+
+    // Controller B / remote back / keyboard Esc all route through
+    // navigateBack() so they walk the same view-mode state machine the
+    // on-screen "< Back" button uses. Without this, borealis's default
+    // back action either popped the entire activity (the "back doesn't
+    // go back when inside a category" symptom) or shuffled focus
+    // sideways and landed on a hidden sibling button (the "transfers
+    // hover to hidden collections button" symptom).
+    this->registerAction("Back", brls::ControllerButton::BUTTON_B,
+        [this](brls::View*) {
+            return navigateBack();
+        });
 
     // Load content immediately
     brls::Logger::debug("LibrarySectionTab: Created for section {} ({}) type={}", m_sectionKey, m_title, m_sectionType);
@@ -365,6 +377,30 @@ void LibrarySectionTab::loadNextPage() {
     });
 }
 
+bool LibrarySectionTab::navigateBack() {
+    // FILTERED came from CATEGORIES / COLLECTIONS / PLAYLISTS / ALL_ITEMS
+    // depending on what the user clicked. Drop them back there using the
+    // mode we stashed at the FILTERED transition instead of always going
+    // to ALL_ITEMS (which was the old behaviour and felt wrong — clicking
+    // a category, then Back, used to lose the category list).
+    if (m_viewMode == LibraryViewMode::FILTERED) {
+        switch (m_modeBeforeFilter) {
+            case LibraryViewMode::CATEGORIES:  showCategories();  return true;
+            case LibraryViewMode::COLLECTIONS: showCollections(); return true;
+            case LibraryViewMode::PLAYLISTS:   showPlaylists();   return true;
+            default:                           showAllItems();    return true;
+        }
+    }
+    // Sub-modes (CATEGORIES / COLLECTIONS / PLAYLISTS) all fall back to
+    // ALL_ITEMS on Back. From ALL_ITEMS we return false so borealis's
+    // default Back handler pops the activity / closes the sidebar.
+    if (m_viewMode != LibraryViewMode::ALL_ITEMS) {
+        showAllItems();
+        return true;
+    }
+    return false;
+}
+
 void LibrarySectionTab::showAllItems() {
     m_viewMode = LibraryViewMode::ALL_ITEMS;
     m_titleLabel->setText(m_title);
@@ -517,6 +553,7 @@ void LibrarySectionTab::onItemSelected(const MediaItem& item) {
 void LibrarySectionTab::onCollectionSelected(const MediaItem& collection) {
     brls::Logger::debug("LibrarySectionTab: Selected collection: {}", collection.title);
 
+    m_modeBeforeFilter = m_viewMode;
     m_filterTitle = collection.title;
     std::string collectionKey = collection.ratingKey;
     std::string filterTitle = m_filterTitle;
@@ -554,6 +591,7 @@ void LibrarySectionTab::onCollectionSelected(const MediaItem& collection) {
 void LibrarySectionTab::onGenreSelected(const GenreItem& genre) {
     brls::Logger::debug("LibrarySectionTab: Selected genre: {} (key: {})", genre.title, genre.key);
 
+    m_modeBeforeFilter = m_viewMode;
     m_filterTitle = genre.title;
     std::string key = m_sectionKey;
     std::string genreKey = genre.key;
@@ -710,6 +748,7 @@ void LibrarySectionTab::onPlaylistSelected(const Playlist& playlist) {
 void LibrarySectionTab::showPlaylistTrackList(std::vector<MediaItem>&& tracks,
                                                 const std::string& playlistTitle,
                                                 const std::string& playlistId) {
+    m_modeBeforeFilter = m_viewMode;
     m_viewMode = LibraryViewMode::FILTERED;
     m_titleLabel->setText(m_title + " - " + playlistTitle + " (" + std::to_string(tracks.size()) + " tracks)");
     updateViewModeButtons();
