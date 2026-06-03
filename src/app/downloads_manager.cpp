@@ -1098,7 +1098,7 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     //    Last resort, captures a streaming session to disk in HLS
     //    segments. Awkward to play back outside the app but exists for
     //    servers that don't expose the Download Queue API.
-    if (tryDownloadQueueApi(serverUrl, token, item.ratingKey, url, downloading, item)) {
+    if (tryDownloadQueueApi(serverUrl, token, item.ratingKey, url, m_downloading, item)) {
         urlReady = true;
         brls::Logger::info("DownloadsManager: Download Queue API ready for {}", item.title);
     } else if (!item.partPath.empty()) {
