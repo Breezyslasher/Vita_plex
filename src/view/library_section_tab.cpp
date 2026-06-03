@@ -504,13 +504,17 @@ void LibrarySectionTab::styleButton(brls::Button* btn, bool active) {
 }
 
 void LibrarySectionTab::updateViewModeButtons() {
-    // If a button we're about to hide currently owns the focus, transfer
-    // focus to the grid first — otherwise borealis ends up with a focused
-    // Visibility::GONE view and the next input lands somewhere weird
-    // (the "Back button transfers hover to an invisible button" report:
-    // user clicks m_backBtn, navigateBack runs, this method hides
-    // m_backBtn while it's still focused, focus stays stuck on the
-    // hidden button).
+    // Move focus off any view that's about to disappear from this pass —
+    // either a mode button being hidden, or anything inside the content
+    // area whose ancestor was just flipped to Visibility::GONE by the
+    // show* method that called us. Without this, borealis ends up with a
+    // focused-but-hidden view and the next input lands on something
+    // unrelated (or crashes when the input dispatcher walks into a
+    // hidden subtree). Two distinct failure modes both fall out of this:
+    //   - "< Back" button click hides itself while focused → stuck on
+    //     a hidden button.
+    //   - Leaving a playlist hides the track list while a track row is
+    //     focused → focus stays on the hidden row.
     brls::View* focused = brls::Application::getCurrentFocus();
     bool inFilteredView = (m_viewMode == LibraryViewMode::FILTERED);
     bool showModeButtons = !inFilteredView;
@@ -523,6 +527,18 @@ void LibrarySectionTab::updateViewModeButtons() {
         wouldHide(m_collectionsBtn, showModeButtons && !m_collections.empty()) ||
         wouldHide(m_categoriesBtn, showModeButtons && !m_genres.empty()) ||
         wouldHide(m_playlistsBtn, showModeButtons && !m_playlists.empty());
+
+    // Walk up from the focused view; if any ancestor is currently
+    // Visibility::GONE the focus is sitting in a hidden subtree.
+    if (!focusedAboutToHide && focused) {
+        for (brls::View* p = focused; p != nullptr; p = p->getParent()) {
+            if (p->getVisibility() != brls::Visibility::VISIBLE) {
+                focusedAboutToHide = true;
+                break;
+            }
+        }
+    }
+
     if (focusedAboutToHide) {
         // Transfer focus to whichever content area is going to be the
         // visible one after the show* method that called us. The grid
@@ -857,6 +873,16 @@ void LibrarySectionTab::appendTrackListPage() {
         row->setCornerRadius(6);
         row->setBackgroundColor(nvgRGBA(50, 50, 60, 200));
         row->setFocusable(true);
+
+        // Custom UP navigation so DPAD-UP from any track row reaches the
+        // on-screen "< Back" button. Without this, ScrollingFrame's UP
+        // either consumed the input (when not at top of scroll) or fell
+        // through to Box::getNextFocus which doesn't reliably find a
+        // sibling above m_trackListScroll, depending on whether the
+        // (currently GONE) m_contentGrid is laid out between them.
+        if (m_backBtn) {
+            row->setCustomNavigationRoute(brls::FocusDirection::UP, m_backBtn);
+        }
 
         // Left side: track number + artist + title
         auto* leftBox = new brls::Box();
