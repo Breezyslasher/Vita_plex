@@ -853,9 +853,21 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         + "?keys=/library/metadata/" + ratingKey;
 
     // protocol=http tells the server to produce a single downloadable file
-    // (as opposed to hls/dash streaming segments)
+    // (as opposed to hls/dash streaming segments).
+    //
+    // directPlay=1 and directStream=1: tell the server the client can
+    // play / direct-stream the source if it fits the profile-extra
+    // constraints below. The server uses these as *capabilities*, not
+    // demands — it'll still transcode when the source exceeds our
+    // limits (e.g. 1080p source for the Vita's 544p ceiling), but it
+    // will skip transcoding entirely when the source already matches
+    // (Switch/Android/desktop with an h264 source within their codec
+    // limits). The previous directPlay=0&directStream=0 forced a
+    // server-side transcode on every video download, which is why a
+    // 3.6 GB movie sat in /media 503-loop for minutes even when the
+    // source was already client-compatible.
     addUrl += "&protocol=http";
-    addUrl += "&directPlay=0&directStream=0&directStreamAudio=1";
+    addUrl += "&directPlay=1&directStream=1&directStreamAudio=1";
     addUrl += "&location=lan";
     addUrl += "&audioBoost=100&audioChannelCount=2";
     addUrl += "&mediaIndex=0&partIndex=0";
@@ -863,9 +875,25 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     std::string profileExtra;
     if (isAudio) {
         addUrl += "&musicBitrate=320";
-        profileExtra = "add-transcode-target(type=musicProfile"
-                       "&context=streaming&protocol=http"
-                       "&container=mp3&audioCodec=mp3)";
+        // Direct play profiles cover the common audio containers — server
+        // ships the file untouched when it matches one of these. Transcode
+        // target stays as the fallback for everything else.
+        profileExtra =
+            "add-direct-play-profile(type=musicProfile"
+                "&container=mp3&audioCodec=mp3)"
+            "+add-direct-play-profile(type=musicProfile"
+                "&container=mp4&audioCodec=aac)"
+            "+add-direct-play-profile(type=musicProfile"
+                "&container=mp4&audioCodec=alac)"
+            "+add-direct-play-profile(type=musicProfile"
+                "&container=flac&audioCodec=flac)"
+            "+add-direct-play-profile(type=musicProfile"
+                "&container=ogg&audioCodec=vorbis)"
+            "+add-direct-play-profile(type=musicProfile"
+                "&container=ogg&audioCodec=opus)"
+            "+add-transcode-target(type=musicProfile"
+                "&context=streaming&protocol=http"
+                "&container=mp3&audioCodec=mp3)";
     } else {
         const auto& vc = platform::getVideoConstraints();
         AppSettings& settings = Application::getInstance().getSettings();
@@ -875,19 +903,46 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         addUrl += bitrateStr;
         addUrl += "&videoResolution=";
         addUrl += vc.defaultResolution;
-        addUrl += "&subtitles=burn";
-        char dlProfileBuf[512];
+        // subtitles=none (not =burn) — burning subs ALWAYS requires a
+        // re-encode pass, which defeats directPlay even when the source
+        // is otherwise compatible. Downloads ship the file without
+        // burned subs; subtitles get applied at playback via mpv's sub
+        // track selection.
+        addUrl += "&subtitles=none";
+        char dlProfileBuf[1536];
         snprintf(dlProfileBuf, sizeof(dlProfileBuf),
-            "add-transcode-target(type=videoProfile"
-            "&context=streaming&protocol=http"
-            "&container=mkv&videoCodec=h264"
-            "&audioCodec=aac)"
+            // Direct-play profiles tell the server "you can ship this
+            // file untouched". Without these, the server defaults to
+            // transcoding even with directPlay=1 because it doesn't
+            // know what containers/codecs the client supports natively.
+            "add-direct-play-profile(type=videoProfile"
+                "&container=mp4&videoCodec=h264&audioCodec=aac)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mp4&videoCodec=h264&audioCodec=ac3)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mp4&videoCodec=h264&audioCodec=mp3)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mkv&videoCodec=h264&audioCodec=aac)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mkv&videoCodec=h264&audioCodec=ac3)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mkv&videoCodec=h264&audioCodec=eac3)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mkv&videoCodec=hevc&audioCodec=aac)"
+            "+add-direct-play-profile(type=videoProfile"
+                "&container=mkv&videoCodec=hevc&audioCodec=ac3)"
+            // Transcode target as the fallback path when the source
+            // doesn't match any direct-play profile.
+            "+add-transcode-target(type=videoProfile"
+                "&context=streaming&protocol=http"
+                "&container=mkv&videoCodec=h264"
+                "&audioCodec=aac)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
-            "&type=upperBound&name=video.level&value=%d)"
+                "&type=upperBound&name=video.level&value=%d)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
-            "&type=upperBound&name=video.width&value=%d)"
+                "&type=upperBound&name=video.width&value=%d)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
-            "&type=upperBound&name=video.height&value=%d)",
+                "&type=upperBound&name=video.height&value=%d)",
             vc.maxVideoLevel, vc.maxVideoWidth, vc.maxVideoHeight);
         profileExtra = dlProfileBuf;
     }
@@ -929,109 +984,132 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
 
     brls::Logger::info("DownloadsManager: Download queue item ID: {}", itemId);
 
-    // Step 3: Get the decision for this download queue item (triggers transcoding)
-    HttpClient decHttp;
-    HttpRequest decReq;
-    decReq.url = baseUrl + "/downloadQueue/" + queueId + "/item/" + itemId
-        + "/decision?X-Plex-Token=" + token;
-    decReq.method = "GET";
-    addPlexHeaders(decReq, token);
-    decReq.headers["X-Plex-Client-Profile-Name"] = "Generic";
-    decReq.headers["X-Plex-Client-Profile-Extra"] = profileExtra;
-    decReq.timeout = 60;
-    HttpResponse decResp = decHttp.request(decReq);
+    // /decision intentionally not called. The openapi spec defines
+    // GET /downloadQueue/{q}/item/{i}/decision as a read-only "grab
+    // the decision" query — transcoding is already triggered by /add
+    // above (Plex's server log shows the "Downloading document
+    // /library/metadata/N" trace fire as part of the /add request).
+    // When we did call it the server returned 400 Bad Request because
+    // the spec only allows path params there but we were attaching
+    // the X-Plex-Client-Profile-Extra header; the 400 didn't break
+    // the download but the failure log was noise. The /media poll
+    // below does all the "is it ready yet" work via 200 / 503 +
+    // Retry-After per the spec.
 
-    brls::Logger::info("DownloadsManager: Queue decision response: {} ({})",
-                      decResp.statusCode, decResp.body.substr(0, 500));
-
-    // Step 4: Poll the /media endpoint directly per the API spec.
-    // Per openapi.json: GET /downloadQueue/{queueId}/item/{itemId}/media
-    //   - 200: Returns the raw media file (transcoding complete)
-    //   - 503: Still transcoding, with Retry-After header (seconds to wait, or -1 if unknown)
+    // Step 4: Wait for the queue item to finish transcoding.
+    //
+    // Switched from polling /media (HEAD) to polling /items/{itemId}
+    // (GET) — same liveness signal, but /items returns JSON with the
+    // queue item's status enum (deciding/waiting/processing/available
+    // /error/expired) AND a TranscodeSession.progress (0-100) percent,
+    // so we get a real number for the UI and don't repeatedly ask the
+    // server to spin up a media stream just to check whether it's done.
+    //
+    // Polling cadence stretches over time so a long transcode doesn't
+    // turn into thousands of log lines: 5s base, capped at 30s after a
+    // few minutes. Plex's Retry-After is almost always -1 (unknown),
+    // so a fixed schedule is more predictable than honoring it. Status
+    // changes log at INFO; the per-poll details are DEBUG.
     item.state = DownloadState::TRANSCODING;
     item.transcodeElapsedSeconds = 0;
     item.transcodePollAttempt = 0;
-    std::string mediaUrl = baseUrl + "/downloadQueue/" + queueId + "/item/" + itemId
-        + "/media?X-Plex-Token=" + token;
+    item.transcodeProgressPercent = 0;
+    std::string itemUrl = baseUrl + "/downloadQueue/" + queueId
+        + "/items/" + itemId + "?X-Plex-Token=" + token;
+    std::string mediaUrl = baseUrl + "/downloadQueue/" + queueId
+        + "/item/" + itemId + "/media?X-Plex-Token=" + token;
 
-    const int maxPollAttempts = 200;  // generous limit for long transcodes
-    const int defaultRetrySeconds = 5;  // default if Retry-After header missing or -1
-    const int maxWaitSeconds = 30;  // cap individual waits
+    auto pollInterval = [](int elapsedSec) {
+        if (elapsedSec < 30)  return 5;   // First 30s: 5s
+        if (elapsedSec < 120) return 10;  // 30s–2m: 10s
+        if (elapsedSec < 300) return 20;  // 2–5m: 20s
+        return 30;                        // 5m+: 30s
+    };
+
+    const int maxElapsedSeconds = 60 * 60;  // 1 hour absolute cap
     bool mediaReady = false;
+    std::string lastStatus;
+    int consecutiveErrors = 0;
     auto transcodeStart = std::chrono::steady_clock::now();
 
-    for (int attempt = 0; attempt < maxPollAttempts && downloading.load(); attempt++) {
-        // Update elapsed time for UI display
+    for (int attempt = 0; downloading.load(); attempt++) {
         auto now = std::chrono::steady_clock::now();
-        item.transcodeElapsedSeconds = (int)std::chrono::duration_cast<std::chrono::seconds>(
+        int elapsedSec = (int)std::chrono::duration_cast<std::chrono::seconds>(
             now - transcodeStart).count();
+        item.transcodeElapsedSeconds = elapsedSec;
         item.transcodePollAttempt = attempt;
-        HttpClient mediaHttp;
-        HttpRequest mediaReq;
-        mediaReq.url = mediaUrl;
-        mediaReq.method = "HEAD";  // HEAD to check status without downloading the file
-        addPlexHeaders(mediaReq, token);
-        mediaReq.timeout = 15;
-        HttpResponse mediaResp = mediaHttp.request(mediaReq);
 
-        brls::Logger::debug("DownloadsManager: Media poll attempt {}/{}: HTTP {}",
-                           attempt + 1, maxPollAttempts, mediaResp.statusCode);
-
-        if (mediaResp.statusCode == 200) {
-            // Media is ready for download
-            mediaReady = true;
-            brls::Logger::info("DownloadsManager: Media ready after {} polls", attempt + 1);
+        if (elapsedSec > maxElapsedSeconds) {
+            brls::Logger::error(
+                "DownloadsManager: Transcode timeout after {}s, giving up",
+                elapsedSec);
             break;
         }
 
-        if (mediaResp.statusCode == 503) {
-            // Still transcoding - check Retry-After header
-            int waitSeconds = defaultRetrySeconds;
-            auto retryIt = mediaResp.headers.find("Retry-After");
-            if (retryIt == mediaResp.headers.end())
-                retryIt = mediaResp.headers.find("retry-after");
-            if (retryIt != mediaResp.headers.end()) {
-                int retryVal = std::atoi(retryIt->second.c_str());
-                if (retryVal > 0 && retryVal <= maxWaitSeconds) {
-                    waitSeconds = retryVal;
-                } else if (retryVal == -1) {
-                    // -1 means unknown, use default
-                    waitSeconds = defaultRetrySeconds;
-                }
+        HttpClient itemHttp;
+        HttpRequest itemReq;
+        itemReq.url = itemUrl;
+        itemReq.method = "GET";
+        addPlexHeaders(itemReq, token);
+        itemReq.timeout = 15;
+        HttpResponse itemResp = itemHttp.request(itemReq);
+
+        if (itemResp.statusCode != 200) {
+            brls::Logger::warning(
+                "DownloadsManager: /items poll HTTP {} (attempt {}, elapsed {}s)",
+                itemResp.statusCode, attempt + 1, elapsedSec);
+            if (++consecutiveErrors >= 5) {
+                brls::Logger::error(
+                    "DownloadsManager: 5 consecutive /items errors, giving up");
+                break;
             }
-
-            brls::Logger::debug("DownloadsManager: Transcoding in progress, waiting {}s (Retry-After)", waitSeconds);
-
-            int waitMs = waitSeconds * 1000;
+            int wait = pollInterval(elapsedSec);
 #ifdef __vita__
-            sceKernelDelayThread(waitMs * 1000);
+            sceKernelDelayThread(wait * 1000 * 1000);
 #else
-            std::this_thread::sleep_for(std::chrono::milliseconds(waitMs));
+            std::this_thread::sleep_for(std::chrono::seconds(wait));
 #endif
             continue;
         }
+        consecutiveErrors = 0;
 
-        // Any other status code (4xx, 5xx other than 503) means failure
-        brls::Logger::warning("DownloadsManager: Media endpoint returned unexpected HTTP {}", mediaResp.statusCode);
-
-        // On first attempt, if we get an immediate error, the API may not be supported
-        if (attempt == 0) {
-            brls::Logger::warning("DownloadsManager: Immediate error on media poll, Download Queue API not working");
-            break;
+        std::string status = extractJsonString(itemResp.body, "status");
+        int progress = (int)extractJsonInt(itemResp.body, "progress");
+        if (progress >= 0 && progress <= 100) {
+            item.transcodeProgressPercent = progress;
         }
 
-        // For subsequent errors, try a few more times with backoff
-        if (attempt >= 5) {
-            brls::Logger::error("DownloadsManager: Too many media poll errors, giving up");
-            break;
+        if (status != lastStatus) {
+            brls::Logger::info(
+                "DownloadsManager: Queue item {} status={} progress={}% elapsed={}s",
+                itemId, status, item.transcodeProgressPercent, elapsedSec);
+            lastStatus = status;
+        } else {
+            brls::Logger::debug(
+                "DownloadsManager: status={} progress={}% elapsed={}s",
+                status, item.transcodeProgressPercent, elapsedSec);
         }
 
-        int backoffMs = defaultRetrySeconds * 1000 * (1 << attempt);
-        if (backoffMs > maxWaitSeconds * 1000) backoffMs = maxWaitSeconds * 1000;
+        if (status == "available") {
+            mediaReady = true;
+            brls::Logger::info(
+                "DownloadsManager: Media ready after {}s ({} polls)",
+                elapsedSec, attempt + 1);
+            break;
+        }
+        if (status == "error" || status == "expired") {
+            brls::Logger::error(
+                "DownloadsManager: Queue item ended in status='{}', giving up",
+                status);
+            break;
+        }
+        // deciding / waiting / processing — keep polling.
+
+        int wait = pollInterval(elapsedSec);
 #ifdef __vita__
-        sceKernelDelayThread(backoffMs * 1000);
+        sceKernelDelayThread(wait * 1000 * 1000);
 #else
-        std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
+        std::this_thread::sleep_for(std::chrono::seconds(wait));
 #endif
     }
 
@@ -1080,17 +1158,37 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     std::string profileExtra;
     bool urlReady = false;
 
-    if (isAudio) {
-        // Audio: download the original file directly (small files, Vita-compatible formats)
+    // Layered URL strategy — try each option from "most Plex-native" to
+    // "last resort", taking the first that works for this item + server:
+    //
+    // 1. Plex Download Queue API (/downloadQueue/...). The canonical way
+    //    Plex clients request offline media. Server enqueues the item,
+    //    transcodes server-side to a client-compatible container, and
+    //    serves a single file via /downloadQueue/{q}/item/{i}/media with
+    //    503 + Retry-After while it works. Sets item.state to TRANSCODING
+    //    during the poll so the UI shows progress.
+    //
+    // 2. ?download=1 on the part URL. Plain HTTP GET that returns the
+    //    source file untouched — fastest path, but only useful when the
+    //    file's native container is already client-compatible.
+    //
+    // 3. HLS streaming transcode (/video/:/transcode/universal/...).
+    //    Last resort, captures a streaming session to disk in HLS
+    //    segments. Awkward to play back outside the app but exists for
+    //    servers that don't expose the Download Queue API.
+    if (tryDownloadQueueApi(serverUrl, token, item.ratingKey, url, m_downloading, item)) {
+        urlReady = true;
+        brls::Logger::info("DownloadsManager: Download Queue API ready for {}", item.title);
+    } else if (!item.partPath.empty()) {
         url = buildDirectDownloadUrl(serverUrl, token, item.partPath);
         if (!url.empty()) {
             urlReady = true;
-            brls::Logger::info("DownloadsManager: Using direct file download for audio: {}", item.title);
+            brls::Logger::info("DownloadsManager: Direct file fallback for {}", item.title);
         }
     } else {
-        // Video: skip Download Queue API (too slow - polls for transcoding completion
-        // which can take 15+ minutes). Go straight to HLS streaming transcode instead.
-        brls::Logger::info("DownloadsManager: Using HLS streaming transcode for video: {}", item.title);
+        brls::Logger::warning(
+            "DownloadsManager: No Download Queue + no partPath for {} — HLS transcode",
+            item.title);
     }
 
     // Fall back to streaming transcode if no URL ready yet

@@ -110,13 +110,13 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     styleButton(m_backBtn, false);
     m_backBtn->setBackgroundColor(nvgRGBA(80, 60, 50, 200));
     m_backBtn->registerClickAction([this](brls::View* view) {
-        // Move focus off the back button BEFORE running navigateBack(),
-        // so the cascade of setDataSource() → rebuildGrid() →
-        // removeView(old rows) → updateViewModeButtons() → hide
-        // m_backBtn doesn't have to juggle focus on a soon-to-be-hidden
-        // button. Without this, the click action returned with focus
-        // still anchored on a now-hidden m_backBtn and the next input
-        // crashed walking into stale focus state.
+        // Move focus off the back button and defer navigateBack() to the
+        // next frame so the click event (action loop walk-up + click
+        // animation) fully completes before we start destroying cells
+        // and hiding views. Without the defer + focus pre-transfer,
+        // mid-dispatch the click loop on m_backBtn could walk into a
+        // hidden subtree as showPlaylists()/showCategories()/etc.
+        // flipped visibility and rebuildGrid freed the old cells.
         brls::View* target = nullptr;
         if (m_trackListScroll &&
             m_trackListScroll->getVisibility() == brls::Visibility::VISIBLE) {
@@ -125,7 +125,7 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
             target = m_contentGrid;
         }
         if (target) brls::Application::giveFocus(target);
-        navigateBack();
+        brls::sync([this]() { navigateBack(); });
         return true;
     });
     m_viewModeBox->addView(m_backBtn);
@@ -177,7 +177,28 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     // silently wiped and B would fall through to TabFrame's default
     // (give focus to the sidebar). Child views are out of TabFrame's
     // reach.
-    auto backHandler = [this](brls::View*) { return navigateBack(); };
+    //
+    // Two-step back: first park focus on a view that won't get hidden
+    // by the navigation about to run, THEN defer navigateBack one frame
+    // so the action-dispatch loop fully completes before we destroy
+    // cells / flip visibility.
+    //
+    // Without the focus park, leaving a playlist still crashed even
+    // with the defer: focus stayed on a track row, showPlaylists() hid
+    // m_trackListScroll, and the next input event walked into a focused
+    // view buried in a Visibility::GONE subtree. m_backBtn is the right
+    // park target — it's always visible in FILTERED view (the only mode
+    // that's reachable here) and we hide it inside updateViewModeButtons
+    // where the existing "focused button about to hide" path catches
+    // it and transfers focus onto the freshly-populated content area.
+    auto backHandler = [this](brls::View*) {
+        if (m_backBtn &&
+            m_backBtn->getVisibility() == brls::Visibility::VISIBLE) {
+            brls::Application::giveFocus(m_backBtn);
+        }
+        brls::sync([this]() { navigateBack(); });
+        return true;
+    };
     m_contentGrid->registerAction("Back", brls::ControllerButton::BUTTON_B, backHandler);
     m_trackListScroll->registerAction("Back", brls::ControllerButton::BUTTON_B, backHandler);
 
@@ -504,13 +525,17 @@ void LibrarySectionTab::styleButton(brls::Button* btn, bool active) {
 }
 
 void LibrarySectionTab::updateViewModeButtons() {
-    // If a button we're about to hide currently owns the focus, transfer
-    // focus to the grid first — otherwise borealis ends up with a focused
-    // Visibility::GONE view and the next input lands somewhere weird
-    // (the "Back button transfers hover to an invisible button" report:
-    // user clicks m_backBtn, navigateBack runs, this method hides
-    // m_backBtn while it's still focused, focus stays stuck on the
-    // hidden button).
+    // Move focus off any view that's about to disappear from this pass —
+    // either a mode button being hidden, or anything inside the content
+    // area whose ancestor was just flipped to Visibility::GONE by the
+    // show* method that called us. Without this, borealis ends up with a
+    // focused-but-hidden view and the next input lands on something
+    // unrelated (or crashes when the input dispatcher walks into a
+    // hidden subtree). Two distinct failure modes both fall out of this:
+    //   - "< Back" button click hides itself while focused → stuck on
+    //     a hidden button.
+    //   - Leaving a playlist hides the track list while a track row is
+    //     focused → focus stays on the hidden row.
     brls::View* focused = brls::Application::getCurrentFocus();
     bool inFilteredView = (m_viewMode == LibraryViewMode::FILTERED);
     bool showModeButtons = !inFilteredView;
@@ -523,6 +548,18 @@ void LibrarySectionTab::updateViewModeButtons() {
         wouldHide(m_collectionsBtn, showModeButtons && !m_collections.empty()) ||
         wouldHide(m_categoriesBtn, showModeButtons && !m_genres.empty()) ||
         wouldHide(m_playlistsBtn, showModeButtons && !m_playlists.empty());
+
+    // Walk up from the focused view; if any ancestor is currently
+    // Visibility::GONE the focus is sitting in a hidden subtree.
+    if (!focusedAboutToHide && focused) {
+        for (brls::View* p = focused; p != nullptr; p = p->getParent()) {
+            if (p->getVisibility() != brls::Visibility::VISIBLE) {
+                focusedAboutToHide = true;
+                break;
+            }
+        }
+    }
+
     if (focusedAboutToHide) {
         // Transfer focus to whichever content area is going to be the
         // visible one after the show* method that called us. The grid
@@ -558,6 +595,26 @@ void LibrarySectionTab::updateViewModeButtons() {
         if (m_collectionsBtn) styleButton(m_collectionsBtn, m_viewMode == LibraryViewMode::COLLECTIONS);
         if (m_categoriesBtn) styleButton(m_categoriesBtn, m_viewMode == LibraryViewMode::CATEGORIES);
         if (m_playlistsBtn) styleButton(m_playlistsBtn, m_viewMode == LibraryViewMode::PLAYLISTS);
+    }
+
+    // DPAD-DOWN from the "< Back" button should land on whichever
+    // content area is currently visible (filtered grid items or track
+    // list rows). Borealis's default navigation walked sideways into
+    // m_viewModeBox's other children — all GONE in FILTERED view —
+    // which made DOWN visibly hop to a hidden Playlists/Collections
+    // button.
+    if (m_backBtn) {
+        brls::View* downTarget = nullptr;
+        if (m_trackListScroll &&
+            m_trackListScroll->getVisibility() == brls::Visibility::VISIBLE) {
+            downTarget = m_trackListScroll;
+        } else if (m_contentGrid &&
+                   m_contentGrid->getVisibility() == brls::Visibility::VISIBLE) {
+            downTarget = m_contentGrid;
+        }
+        if (downTarget) {
+            m_backBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, downTarget);
+        }
     }
 }
 
@@ -857,6 +914,18 @@ void LibrarySectionTab::appendTrackListPage() {
         row->setCornerRadius(6);
         row->setBackgroundColor(nvgRGBA(50, 50, 60, 200));
         row->setFocusable(true);
+
+        // Only the topmost track row escapes UP to the on-screen
+        // "< Back" button. Every other row keeps default UP navigation
+        // so DPAD-UP moves to the previous track. Without the explicit
+        // route on the first row, UP gets stuck because
+        // ScrollingFrame::getNextFocus(UP) consumes the input while the
+        // scroll has any offset, and Box::getNextFocus past the top
+        // doesn't reliably reach m_viewModeBox with a GONE m_contentGrid
+        // sitting between them.
+        if (i == 0 && m_backBtn) {
+            row->setCustomNavigationRoute(brls::FocusDirection::UP, m_backBtn);
+        }
 
         // Left side: track number + artist + title
         auto* leftBox = new brls::Box();

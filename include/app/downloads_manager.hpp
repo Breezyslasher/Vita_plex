@@ -67,6 +67,7 @@ struct DownloadItem {
     // Transcoding progress tracking
     int transcodeElapsedSeconds = 0;  // How long transcoding has been running
     int transcodePollAttempt = 0;     // Current poll attempt number
+    int transcodeProgressPercent = 0; // Server-reported transcode progress (0-100)
 
     // Grouping fields for organized display in downloads tab
     DownloadGroupType groupType = DownloadGroupType::NONE;
