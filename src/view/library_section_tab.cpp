@@ -151,13 +151,17 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     this->addView(m_trackListScroll);
 
     // Controller B / remote back / keyboard Esc all route through
-    // navigateBack() so they walk the same view-mode state machine the
-    // on-screen "< Back" button uses. Without this, borealis's default
-    // back action either popped the entire activity (the "back doesn't
-    // go back when inside a category" symptom) or shuffled focus
-    // sideways and landed on a hidden sibling button (the "transfers
-    // hover to hidden collections button" symptom).
-    this->registerAction("Back", brls::ControllerButton::BUTTON_B,
+    // navigateBack(). Registered on m_contentGrid rather than `this`
+    // because TabFrame::onContentChanged registers its own BUTTON_B
+    // action on the active tab's content view (== this) every time the
+    // tab is selected, and View::registerAction REPLACES any existing
+    // handler for the same button — so a handler on `this` would be
+    // silently wiped out and B would fall through to TabFrame's default
+    // (give focus to the sidebar). A child view is out of TabFrame's
+    // reach, and borealis's action walk-up still finds it before
+    // reaching TabFrame because the focused cell is a descendant of
+    // the grid.
+    m_contentGrid->registerAction("Back", brls::ControllerButton::BUTTON_B,
         [this](brls::View*) {
             return navigateBack();
         });
@@ -485,12 +489,32 @@ void LibrarySectionTab::styleButton(brls::Button* btn, bool active) {
 }
 
 void LibrarySectionTab::updateViewModeButtons() {
-    // Show/hide back button
+    // If a button we're about to hide currently owns the focus, transfer
+    // focus to the grid first — otherwise borealis ends up with a focused
+    // Visibility::GONE view and the next input lands somewhere weird
+    // (the "Back button transfers hover to an invisible button" report:
+    // user clicks m_backBtn, navigateBack runs, this method hides
+    // m_backBtn while it's still focused, focus stays stuck on the
+    // hidden button).
+    brls::View* focused = brls::Application::getCurrentFocus();
     bool inFilteredView = (m_viewMode == LibraryViewMode::FILTERED);
+    bool showModeButtons = !inFilteredView;
+    auto wouldHide = [&](brls::Button* btn, bool willBeVisible) {
+        return btn && focused == btn && !willBeVisible;
+    };
+    bool focusedAboutToHide =
+        wouldHide(m_backBtn, inFilteredView) ||
+        wouldHide(m_allBtn, showModeButtons) ||
+        wouldHide(m_collectionsBtn, showModeButtons && !m_collections.empty()) ||
+        wouldHide(m_categoriesBtn, showModeButtons && !m_genres.empty()) ||
+        wouldHide(m_playlistsBtn, showModeButtons && !m_playlists.empty());
+    if (focusedAboutToHide && m_contentGrid &&
+        m_contentGrid->getVisibility() == brls::Visibility::VISIBLE) {
+        brls::Application::giveFocus(m_contentGrid);
+    }
+
     m_backBtn->setVisibility(inFilteredView ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
 
-    // Show/hide mode buttons
-    bool showModeButtons = (m_viewMode != LibraryViewMode::FILTERED);
     m_allBtn->setVisibility(showModeButtons ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
     if (m_collectionsBtn) {
         m_collectionsBtn->setVisibility(showModeButtons && !m_collections.empty() ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
