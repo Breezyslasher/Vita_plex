@@ -217,6 +217,26 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
 }
 
 void RecyclingGrid::rebuildGrid() {
+    // If anything inside this grid currently has focus, clearViews() is
+    // about to delete it out from under the focus stack — the very next
+    // input event would then walk freed memory and crash. This is the
+    // "hover transfer" crash when opening a category: the category cell
+    // the user just clicked is still focused at the moment
+    // setDataSource() repopulates the grid with the filtered items.
+    // Walk up from current focus; if we find ourselves in the chain,
+    // re-anchor focus on the grid itself (we're a ScrollingFrame, so
+    // we're focusable). Once the new cells exist and lay out, borealis
+    // will move focus into one of them naturally on the next input.
+    brls::View* focused = brls::Application::getCurrentFocus();
+    if (focused) {
+        for (brls::View* p = focused; p != nullptr; p = p->getParent()) {
+            if (p == this) {
+                brls::Application::giveFocus(this);
+                break;
+            }
+        }
+    }
+
     m_contentBox->clearViews();
     m_rows.clear();
     m_cells.clear();
