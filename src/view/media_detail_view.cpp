@@ -665,7 +665,7 @@ void MediaDetailView::loadChildren() {
                     MediaItem capturedChild = child;
                     if (child.mediaType == MediaType::EPISODE) {
                         cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-                            [capturedChild](brls::View* view) {
+                            
                             [capturedChild](brls::View* view) {
                                 brls::Application::notify("START pressed");
                                 showEpisodeContextMenu(capturedChild);
