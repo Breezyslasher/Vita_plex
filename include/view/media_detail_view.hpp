@@ -34,6 +34,7 @@ private:
     void showAlbumContextMenu(const MediaItem& album);  // Context menu for albums
     void showMovieContextMenu(const MediaItem& movie);  // Context menu for movies
     void showShowContextMenu(const MediaItem& show);    // Context menu for TV shows
+    void showEpisodeContextMenu(const MediaItem& episode);
 
     // Toggle the server-side watched / unwatched flag for this item.
     // Uses Plex's /:/scrobble and /:/unscrobble endpoints; the button
