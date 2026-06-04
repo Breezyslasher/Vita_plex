@@ -2215,13 +2215,13 @@ void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
         }
         addDialogButton(resumeStr, [capturedEpisode, dialog](brls::View*) {
             dialog->dismiss();
-            Application::getInstance().pushPlayerActivity(capturedMovie.ratingKey);
+            Application::getInstance().pushPlayerActivity(capturedEpisode.ratingKey);
             return true;
         });
     }
 
     // Download
-    addDialogButton("Download", [capturedMovie, dialog](brls::View*) {
+    addDialogButton("Download", [capturedEpisode, dialog](brls::View*) {
         dialog->dismiss();
         if (DownloadsManager::getInstance().isDownloaded(capturedEpisode.ratingKey)) {
             brls::Application::notify("Already downloaded");
@@ -2234,7 +2234,7 @@ void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
             if (client.fetchMediaDetails(capturedEpisode.ratingKey, fullItem) && !fullItem.partPath.empty()) {
                 bool queued = DownloadsManager::getInstance().queueDownload(
                     fullItem.ratingKey, fullItem.title, fullItem.partPath,
-                    fullItem.duration, "movie", "", 0, 0,
+                    fullItem.duration, "episode", "", 0, 0,
                     fullItem.thumb);
                 brls::sync([queued, fullItem]() {
                     if (queued) {
