@@ -930,6 +930,22 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
     // Alive flag for async image loads - invalidated when activity is destroyed
     auto viewAlive = std::make_shared<std::atomic<bool>>(true);
 
+    // Per-row handles for the 1 Hz live update below. Each track / episode
+    // row keeps a pointer to its container Box (for recolouring) and to
+    // its status Label (for "Downloading 12% / Transcoding..." text). The
+    // status label is always created — for COMPLETED items it's just
+    // hidden — so we don't have to attach a new view on a state
+    // transition, which would require focus juggling. The header
+    // typeLabel ("Album - 3/10 ready (1 downloading)") gets the same
+    // treatment by capture below.
+    struct DetailRowHandles {
+        brls::Box*   row         = nullptr;
+        brls::Label* statusLabel = nullptr;
+        DownloadState lastState  = DownloadState::QUEUED;
+        bool         hasLastState = false;
+    };
+    auto rowHandles = std::make_shared<std::map<std::string, DetailRowHandles>>();
+
     // Build a full-screen view mirroring the online MediaDetailView layout
     auto* mainBox = new brls::Box();
     mainBox->setAxis(brls::Axis::COLUMN);
@@ -1178,14 +1194,28 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
         rightSide->setAxis(brls::Axis::ROW);
         rightSide->setAlignItems(brls::AlignItems::CENTER);
 
-        if (item.state != DownloadState::COMPLETED) {
-            auto* statusLabel = new brls::Label();
-            statusLabel->setFontSize(11);
-            statusLabel->setTextColor(nvgRGBA(200, 180, 100, 255));
+        // Always create the status label, even for completed items, so
+        // the 1 Hz refresh loop below can flip it visible the moment a
+        // download starts progressing — instead of needing a full
+        // rebuild. GONE costs zero rendering when not in use.
+        auto* statusLabel = new brls::Label();
+        statusLabel->setFontSize(11);
+        statusLabel->setTextColor(nvgRGBA(200, 180, 100, 255));
+        statusLabel->setMarginRight(10);
+        if (item.state == DownloadState::COMPLETED) {
+            statusLabel->setVisibility(brls::Visibility::GONE);
+        } else {
             statusLabel->setText(buildItemStatusText(item));
-            statusLabel->setMarginRight(10);
-            rightSide->addView(statusLabel);
         }
+        rightSide->addView(statusLabel);
+
+        // Register row + label for the live update loop.
+        DetailRowHandles handles;
+        handles.row          = row;
+        handles.statusLabel  = statusLabel;
+        handles.lastState    = item.state;
+        handles.hasLastState = true;
+        (*rowHandles)[item.ratingKey] = handles;
 
         if (item.duration > 0) {
             auto* durLabel = new brls::Label();
@@ -1368,6 +1398,80 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
 
     trackScroll->setContentView(trackListBox);
     mainBox->addView(trackScroll);
+
+    // Live 1 Hz refresh of the per-row status text and background colour,
+    // plus the "Album - 3/10 ready" header. Without this the detail view
+    // is a snapshot: the user only sees the new state after popping back
+    // out and re-entering. We deliberately do NOT swap action buttons /
+    // click handlers when an item transitions to COMPLETED — that would
+    // require focus juggling here just like rebuildList does, and the
+    // payoff is small (the user can press Back and re-enter to play a
+    // newly-completed track). All other visual state stays in sync.
+    DownloadGroupType captGroupType = groupType;
+    std::string       captGroupKey  = groupKey;
+    std::string       captTypeStr   = typeStr;
+    bool              captIsMusic   = isMusic;
+    brls::Label*      captTypeLabel = typeLabel;
+    asyncRun([viewAlive, rowHandles, captGroupType, captGroupKey,
+              captTypeStr, captIsMusic, captTypeLabel]() {
+        while (viewAlive->load()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+            if (!viewAlive->load()) break;
+            brls::sync([viewAlive, rowHandles, captGroupType, captGroupKey,
+                        captTypeStr, captIsMusic, captTypeLabel]() {
+                // viewAlive is set to false by the BUTTON_B handler
+                // before popActivity() runs, so any sync tick enqueued
+                // before that point sees false here and exits before
+                // touching the (about-to-be-destroyed) Label / Box
+                // pointers captured above.
+                if (!viewAlive->load()) return;
+
+                auto items = DownloadsManager::getInstance()
+                                 .getDownloadsByGroup(captGroupType, captGroupKey);
+
+                int completed = 0;
+                int contentTotal = 0;
+                for (const auto& item : items) {
+                    if (item.state == DownloadState::COMPLETED) completed++;
+                    if (item.groupTotalItems > contentTotal) contentTotal = item.groupTotalItems;
+
+                    auto it = rowHandles->find(item.ratingKey);
+                    if (it == rowHandles->end()) continue;
+                    auto& h = it->second;
+
+                    // Always refresh the progress text — buildItemStatus
+                    // text changes byte-by-byte during DOWNLOADING, and
+                    // the elapsed seconds during TRANSCODING.
+                    if (item.state != DownloadState::COMPLETED) {
+                        h.statusLabel->setText(buildItemStatusText(item));
+                    }
+
+                    if (!h.hasLastState || h.lastState != item.state) {
+                        h.lastState     = item.state;
+                        h.hasLastState  = true;
+                        // Recolour to match new state, mirroring the
+                        // palette the initial build used (COMPLETED gets
+                        // a slightly lifted neutral; everything else
+                        // uses getStateColor).
+                        if (item.state == DownloadState::COMPLETED) {
+                            h.row->setBackgroundColor(nvgRGBA(50, 50, 60, 200));
+                            h.statusLabel->setVisibility(brls::Visibility::GONE);
+                        } else {
+                            h.row->setBackgroundColor(getStateColor(item.state));
+                            h.statusLabel->setVisibility(brls::Visibility::VISIBLE);
+                        }
+                    }
+                }
+
+                int total       = (int)items.size();
+                int stableTotal = (contentTotal > 0) ? contentTotal : total;
+                std::string itemWord = captIsMusic ? "tracks" : "items";
+                captTypeLabel->setText(captTypeStr + " - " +
+                                       std::to_string(completed) + "/" +
+                                       std::to_string(stableTotal) + " " + itemWord + " ready");
+            });
+        }
+    });
 
     brls::Application::pushActivity(new brls::Activity(mainBox));
 }
