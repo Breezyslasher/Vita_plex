@@ -1,7 +1,7 @@
 {
     "app": {
         "name": "VitaPlex",
-        "version": ("VitaSuwayomi/" VITA_SUWAYOMI_VERSION)
+        "version": "2.0.0"
     },
     "login": {
         "title": "VitaPlex",
