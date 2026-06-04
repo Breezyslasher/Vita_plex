@@ -268,7 +268,6 @@ jobs:
         with:
           name: VitaPlex-vita-${{ github.run_number }}
           path: build/VitaPlex.vpk
-    	
       - name: Upload ELF
         uses: actions/upload-artifact@v4
         with:
