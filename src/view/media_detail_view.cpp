@@ -661,7 +661,23 @@ void MediaDetailView::loadChildren() {
                         return true;
                     });
                     cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
-
+                                // Register START button context menu for child items
+                    MediaItem capturedChild = child;
+                    if (child.mediaType == MediaType::EPISODE) {
+                        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                            [capturedChild](brls::View* view) {
+                                showEpisodeContextMenu(capturedChild);
+                                return true;
+                            });
+                    }
+                    cell->addGestureRecognizer(new LongPressGestureRecognizer(
+                        cell, [capturedChild](LongPressGestureStatus status) {
+                            if (status.state == brls::GestureState::START &&
+                                capturedChild.mediaType == MediaType::EPISODE) {
+                                showEpisodeContextMenu(capturedChild);
+                            }
+                            
+                        }));
                     m_childrenBox->addView(cell);
                 }
 
@@ -701,6 +717,7 @@ void MediaDetailView::loadChildren() {
                         capturedChild.mediaType == MediaType::SEASON) {
                         showSeasonContextMenuStatic(capturedChild);
                     }
+                    
                 }));
 
             m_childrenBox->addView(cell);
