@@ -696,30 +696,42 @@ void MediaDetailView::loadChildren() {
             cell->setItem(child);
             cell->setMarginRight(10);
 
-            cell->registerClickAction([this, child](brls::View* view) {
-                // Navigate to child detail
-                auto* detailView = new MediaDetailView(child);
-                brls::Application::pushActivity(new brls::Activity(detailView));
-                return true;
-            });
-            cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
-
-            // Register START button context menu for child items
             MediaItem capturedChild = child;
-            if (child.mediaType == MediaType::SEASON) {
+
+            if (child.mediaType == MediaType::EPISODE) {
+                cell->registerClickAction([child](brls::View* view) {
+                    Application::getInstance().pushPlayerActivity(child.ratingKey);
+                    return true;
+                });
                 cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
                     [capturedChild](brls::View* view) {
-                        showSeasonContextMenuStatic(capturedChild);
+                        showEpisodeContextMenu(capturedChild);
                         return true;
                     });
+            } else {
+                cell->registerClickAction([this, child](brls::View* view) {
+                    auto* detailView = new MediaDetailView(child);
+                    brls::Application::pushActivity(new brls::Activity(detailView));
+                    return true;
+                });
+                if (child.mediaType == MediaType::SEASON) {
+                    cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                        [capturedChild](brls::View* view) {
+                            showSeasonContextMenuStatic(capturedChild);
+                            return true;
+                        });
+                }
             }
+            cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+
             cell->addGestureRecognizer(new LongPressGestureRecognizer(
                 cell, [capturedChild](LongPressGestureStatus status) {
-                    if (status.state == brls::GestureState::START &&
-                        capturedChild.mediaType == MediaType::SEASON) {
+                    if (status.state != brls::GestureState::START) return;
+                    if (capturedChild.mediaType == MediaType::EPISODE) {
+                        showEpisodeContextMenu(capturedChild);
+                    } else if (capturedChild.mediaType == MediaType::SEASON) {
                         showSeasonContextMenuStatic(capturedChild);
                     }
-                    
                 }));
 
             m_childrenBox->addView(cell);
