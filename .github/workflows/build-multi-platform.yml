@@ -306,7 +306,7 @@ jobs:
       with:
         gradlePath: app/platform/android/app/build.gradle
         versionCode: ${{ github.run_number }}
-        versionName: ${{ github.ref_name }}
+        versionName: ${{ needs.resolve-version.outputs.version }}
     - name: Prepare Android sources and native dependencies
       run: |
         rm -rf app/platform/android/app/libs
@@ -444,6 +444,7 @@ jobs:
   # Flatpak — Linux Matrix (x86_64 + aarch64, OpenGL)
   # ───────────────────────────────────────────────
   build-flatpak:
+    needs: [resolve-version]
     if: ${{ inputs.platform == 'flatpak' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: Flatpak (${{ matrix.arch }}-${{ matrix.driver }})
     strategy:
