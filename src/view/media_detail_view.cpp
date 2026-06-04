@@ -2172,9 +2172,7 @@ void MediaDetailView::showMovieContextMenu(const MediaItem& movie) {
 void MediaDetailView::showShowContextMenu(const MediaItem& show) {
     showShowContextMenuStatic(show);
 }
-void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
-    showShowContextMenuStatic(episode);
-}
+
 
 void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
     auto* dialog = new brls::Dialog(episode.title);
