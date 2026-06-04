@@ -11,6 +11,7 @@ on:
         description: which platform to build
         type: choice
         options:
+        - all
         - mingw64
         - macos
         - nx
@@ -116,25 +117,25 @@ jobs:
         uses: actions/download-artifact@v4
       - name: Package Windows assets
         run: |
-          for p in VitaSuwayomi-windows-*; do
+          for p in VitaPlex-windows-*; do
             [[ -d $p ]] && 7z a -mx=9 $p.7z ./$p/* && rm -rf $p
           done
       - name: Release and Upload Assets
         uses: softprops/action-gh-release@v2
         with:
-          name: VitaSuwayomi ${{ github.ref_name }}
+          name: VitaPlex ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           generate_release_notes: true
           draft: true
           files: |
-            VitaSuwayomi-windows-*.7z
-            VitaSuwayomi-macos-*/*
-            VitaSuwayomi-nx-*/*.nro
-            VitaSuwayomi-ps4-*/*
-            VitaSuwayomi-vita-*/*.vpk
-            VitaSuwayomi-Flatpak-*/*
-            VitaSuwayomi-aur-*/*.pkg.tar.*
-            VitaSuwayomi-android-*/*
+            VitaPlex-windows-*.7z
+            VitaPlex-macos-*/*
+            VitaPlex-nx-*/*.nro
+            VitaPlex-ps4-*/*
+            VitaPlex-vita-*/*.vpk
+            VitaPlex-Flatpak-*/*
+            VitaPlex-aur-*/*.pkg.tar.*
+            VitaPlex-android-*/*
 
   # ───────────────────────────────────────────────
   # Pre-release — manually triggered
@@ -156,59 +157,59 @@ jobs:
 
           # Vita VPK
           for f in $(find . -name "*.vpk"); do
-            cp "$f" "release/VitaSuwayomi.${FVER}.vpk"
+            cp "$f" "release/VitaPlex.${FVER}.vpk"
           done
 
-          # Android APKs (Gradle names them VitaSuwayomi-{abi}.apk)
+          # Android APKs (Gradle names them VitaPlex-{abi}.apk)
           for apk in $(find . -name "*.apk"); do
-            abi=$(basename "$apk" .apk | sed 's/VitaSuwayomi-//')
-            [ -n "$abi" ] && cp "$apk" "release/VitaSuwayomi.${FVER}-${abi}.apk"
+            abi=$(basename "$apk" .apk | sed 's/VitaPlex-//')
+            [ -n "$abi" ] && cp "$apk" "release/VitaPlex.${FVER}-${abi}.apk"
           done
 
           # Windows — zip each arch (exe + dlls + resources)
-          for dir in VitaSuwayomi-mingw-*; do
+          for dir in VitaPlex-mingw-*; do
             [ -d "$dir" ] || continue
-            arch=$(echo "$dir" | sed -E 's/VitaSuwayomi-mingw-([^-]+)-.*/\1/')
-            (cd "$dir" && zip -r "../release/VitaSuwayomi.${FVER}-windows-${arch}.zip" .)
+            arch=$(echo "$dir" | sed -E 's/VitaPlex-mingw-([^-]+)-.*/\1/')
+            (cd "$dir" && zip -r "../release/VitaPlex.${FVER}-windows-${arch}.zip" .)
           done
 
           # Flatpak tarballs
-          for tgz in $(find . -name "VitaSuwayomi-Linux-*.tar.gz"); do
+          for tgz in $(find . -name "VitaPlex-Linux-*.tar.gz"); do
             base=$(basename "$tgz")
-            info=$(echo "$base" | sed -E 's/VitaSuwayomi-Linux-(.+)-[0-9]+\.tar\.gz/\1/')
-            cp "$tgz" "release/VitaSuwayomi.${FVER}-Flatpak-${info}.tar.gz"
+            info=$(echo "$base" | sed -E 's/VitaPlex-Linux-(.+)-[0-9]+\.tar\.gz/\1/')
+            cp "$tgz" "release/VitaPlex.${FVER}-Flatpak-${info}.tar.gz"
           done
 
           # Switch NRO
-          for dir in VitaSuwayomi-nx-*; do
+          for dir in VitaPlex-nx-*; do
             [ -d "$dir" ] || continue
-            driver=$(echo "$dir" | sed -E 's/VitaSuwayomi-nx-([^-]+)-.*/\1/')
+            driver=$(echo "$dir" | sed -E 's/VitaPlex-nx-([^-]+)-.*/\1/')
             nro=$(find "$dir" -name "*.nro" | head -1)
-            [ -n "$nro" ] && cp "$nro" "release/VitaSuwayomi.${FVER}-nx-${driver}.nro"
+            [ -n "$nro" ] && cp "$nro" "release/VitaPlex.${FVER}-nx-${driver}.nro"
           done
 
           # PS4 pkg
           for f in $(find . -path "*ps4*" -name "*.pkg"); do
-            cp "$f" "release/VitaSuwayomi.${FVER}-ps4.pkg"
+            cp "$f" "release/VitaPlex.${FVER}-ps4.pkg"
           done
 
           # macOS DMG
-          for dir in VitaSuwayomi-macos-*; do
+          for dir in VitaPlex-macos-*; do
             [ -d "$dir" ] || continue
-            tag=$(echo "$dir" | sed -E 's/VitaSuwayomi-macos-([^-]+)-.*/\1/')
+            tag=$(echo "$dir" | sed -E 's/VitaPlex-macos-([^-]+)-.*/\1/')
             dmg=$(find "$dir" -name "*.dmg" | head -1)
-            [ -n "$dmg" ] && cp "$dmg" "release/VitaSuwayomi.${FVER}-macOS-${tag}.dmg"
+            [ -n "$dmg" ] && cp "$dmg" "release/VitaPlex.${FVER}-macOS-${tag}.dmg"
           done
 
           # Deb
           for f in $(find . -name "*.deb"); do
             arch=$(dpkg-deb -f "$f" Architecture 2>/dev/null || echo "amd64")
-            cp "$f" "release/VitaSuwayomi.${FVER}-Linux_${arch}.deb"
+            cp "$f" "release/VitaPlex.${FVER}-Linux_${arch}.deb"
           done
 
           # AUR
           for f in $(find . -name "*.pkg.tar.zst"); do
-            cp "$f" "release/VitaSuwayomi.${FVER}-Linux.pkg.tar.zst"
+            cp "$f" "release/VitaPlex.${FVER}-Linux.pkg.tar.zst"
           done
 
           echo "Release files:"
@@ -216,7 +217,7 @@ jobs:
       - name: Create pre-release
         uses: softprops/action-gh-release@v2
         with:
-          name: VitaSuwayomi ${{ needs.resolve-version.outputs.version }}
+          name: VitaPlex ${{ needs.resolve-version.outputs.version }}
           tag_name: ${{ needs.resolve-version.outputs.version_tag }}
           prerelease: true
           generate_release_notes: true
@@ -226,7 +227,7 @@ jobs:
   # PS Vita — VPK
   # ───────────────────────────────────────────────
   build-vita:
-    if: ${{ inputs.platform == 'psvita' || github.event_name != 'workflow_dispatch' }}
+    if: ${{ inputs.platform == 'psvita' || inputs.platform == 'all' ||  github.event_name != 'workflow_dispatch' }}
     name: PS Vita
     runs-on: ubuntu-latest
     container:
@@ -266,7 +267,7 @@ jobs:
   # Android — switchfin-style APK build
   # ───────────────────────────────────────────────
   build-android:
-    if: ${{ inputs.platform == 'android' || github.event_name != 'workflow_dispatch' }}
+    if: ${{ inputs.platform == 'android' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: Android
     runs-on: ubuntu-latest
     steps:
@@ -439,7 +440,7 @@ jobs:
   # Flatpak — Linux Matrix (x86_64 + aarch64, OpenGL)
   # ───────────────────────────────────────────────
   build-flatpak:
-    if: ${{ inputs.platform == 'flatpak' || github.event_name != 'workflow_dispatch' }}
+    if: ${{ inputs.platform == 'flatpak' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: Flatpak (${{ matrix.arch }}-${{ matrix.driver }})
     strategy:
       fail-fast: false
@@ -503,7 +504,7 @@ jobs:
   # Nintendo Switch — Matrix (opengl + deko3d)
   # ───────────────────────────────────────────────
   build-nx:
-    if: ${{ inputs.platform == 'nx' || github.event_name != 'workflow_dispatch' }}
+    if: ${{ inputs.platform == 'nx' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: NX (${{ matrix.driver }})
     runs-on: ubuntu-latest
     strategy:
@@ -544,7 +545,7 @@ jobs:
   # PS4
   # ───────────────────────────────────────────────
   build-ps4:
-    if: ${{ inputs.platform == 'ps4' || github.event_name != 'workflow_dispatch' }}
+    if: ${{ inputs.platform == 'ps4' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: PS4
     runs-on: ubuntu-latest
     container:
@@ -579,7 +580,7 @@ jobs:
   # macOS matrix (explicit job name parity)
   # ───────────────────────────────────────────────
   build-macos:
-    if: ${{ inputs.platform == 'macos' || github.event_name != 'workflow_dispatch' }}
+    if: ${{ inputs.platform == 'macos' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: macOS (${{ matrix.tag }})
     strategy:
       fail-fast: false
@@ -725,7 +726,7 @@ jobs:
   # MinGW matrix (x64/x86/arm64)
   # ───────────────────────────────────────────────
   build-mingw:
-    if: ${{ inputs.platform == 'mingw64' || github.event_name != 'workflow_dispatch' }}
+    if: ${{ inputs.platform == 'mingw64' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: MinGW (${{ matrix.arch }})
     strategy:
       fail-fast: false
@@ -816,7 +817,7 @@ jobs:
   # Debian package-like build
   # ───────────────────────────────────────────────
   build-deb:
-    if: ${{ inputs.platform == 'deb' || github.event_name != 'workflow_dispatch' }}
+    if: ${{ inputs.platform == 'deb' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: Deb build
     runs-on: ubuntu-24.04
     steps:
@@ -880,7 +881,7 @@ jobs:
   # AUR-like build
   # ───────────────────────────────────────────────
   build-aur:
-    if: ${{ inputs.platform == 'aur' || github.event_name != 'workflow_dispatch' }}
+    if: ${{ inputs.platform == 'aur' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: AUR build
     runs-on: ubuntu-24.04
     steps:
