@@ -231,6 +231,30 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# Application version
+#
+# The CI passes the resolved version via -DAPP_VERSION=... (sourced from the
+# VERSION file, or a manual override). When it isn't supplied — e.g. a local
+# dev build — fall back to the VERSION file directly so the value still
+# matches what ships. The result is injected as the VITA_PLEX_VERSION
+# compile definition, which include/app/application.hpp now honours instead
+# of hard-coding a literal. This keeps the Settings → Version cell AND the
+# X-Plex-Version header / User-Agent on every API call in sync with the
+# actual build, rather than a stale "2.0.0" baked into the header.
+# ---------------------------------------------------------------------------
+if(NOT DEFINED APP_VERSION OR APP_VERSION STREQUAL "")
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION")
+        file(READ "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" APP_VERSION)
+        string(STRIP "${APP_VERSION}" APP_VERSION)
+    else()
+        set(APP_VERSION "0.0.0")
+    endif()
+endif()
+message(STATUS "App version: ${APP_VERSION}")
+target_compile_definitions(${PROJECT_NAME} PRIVATE VITA_PLEX_VERSION=\"${APP_VERSION}\")
+
+
+# ---------------------------------------------------------------------------
 # Link libraries
 # ---------------------------------------------------------------------------
 if(PLATFORM_ANDROID)

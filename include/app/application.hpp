@@ -8,8 +8,16 @@
 #include <string>
 #include <functional>
 
-// Application version
+// Application version.
+//
+// The build system injects the real version via -DVITA_PLEX_VERSION=...
+// (resolved from the VERSION file by CMake — see CMakeLists.txt). The
+// fallback below only applies to ad-hoc builds that bypass CMake, so the
+// Settings → Version cell and the X-Plex-Version header / User-Agent stay
+// in sync with what actually shipped instead of a stale literal.
+#ifndef VITA_PLEX_VERSION
 #define VITA_PLEX_VERSION "2.0.0"
+#endif
 #define VITA_PLEX_VERSION_NUM 200
 
 // Plex client identification
