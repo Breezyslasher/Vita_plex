@@ -84,8 +84,9 @@ private:
 
     // In-place update: maps for updating text without full rebuild
     std::map<std::string, brls::Label*> m_itemStatusLabels;   // ratingKey -> status label
-    std::map<std::string, brls::Box*> m_itemRows;             // ratingKey -> row box
+    std::map<std::string, brls::Box*> m_itemRows;             // ratingKey -> row box (for color updates)
     std::map<std::string, brls::Label*> m_groupStatusLabels;  // compositeKey -> status label
+    std::map<std::string, brls::Box*> m_groupRows;            // compositeKey -> row box (for color updates)
 
     // Auto-refresh
     std::atomic<bool> m_autoRefreshEnabled{false};

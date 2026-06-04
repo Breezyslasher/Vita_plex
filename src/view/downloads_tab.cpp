@@ -110,6 +110,36 @@ static NVGcolor getStateColor(DownloadState state) {
     }
 }
 
+// Group state transitions by the action-button set the row exposes. When
+// the category changes we need a structural rebuild of that row to swap
+// "Cancel" for "Play + Delete" etc.; when only the category-internal
+// state changes (e.g. TRANSCODING -> DOWNLOADING) we can recolor +
+// retext in place and skip the rebuild entirely. Reduces refresh churn
+// from "every progress tick" to "only on real boundary crossings".
+static int buttonCategory(DownloadState s) {
+    switch (s) {
+        case DownloadState::QUEUED:
+        case DownloadState::TRANSCODING:
+        case DownloadState::DOWNLOADING:
+            return 0; // shows "Cancel"
+        case DownloadState::PAUSED:
+        case DownloadState::FAILED:
+            return 1; // shows "Remove"
+        case DownloadState::COMPLETED:
+            return 2; // shows "Play" + "Delete"
+        default:
+            return 3;
+    }
+}
+
+// Background colour for a group row (set by rebuildList). Mirrors the
+// inline logic so updateProgressInPlace can repaint without rebuilding.
+static NVGcolor groupRowColor(int completed, int displayTotal, int downloading) {
+    if (displayTotal > 0 && completed == displayTotal) return nvgRGBA(20, 40, 60, 200);  // blue (done)
+    if (downloading > 0)                               return nvgRGBA(20, 60, 20, 200);  // green (active)
+    return nvgRGBA(40, 40, 40, 200);                                                     // gray (queued)
+}
+
 DownloadsTab::DownloadsTab()
     : m_alive(std::make_shared<bool>(true))
     , m_aliveAtomic(std::make_shared<std::atomic<bool>>(true))
@@ -281,6 +311,15 @@ void DownloadsTab::startAutoRefresh() {
             brls::sync([this, aliveWeak]() {
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
+                // Tab may have hidden (willDisappear -> stopAutoRefresh)
+                // between when this sync was enqueued and when the main
+                // thread picked it up. If so the rebuild that refresh()
+                // might trigger would be wasted work — and worse, it
+                // would tear down rows whose cached lastFocusedView is
+                // still pointed at the row from the previous focus,
+                // producing a dangling pointer that the next willAppear
+                // dereferences when restoring focus. Skip cleanly.
+                if (!m_autoRefreshEnabled.load()) return;
                 refresh();
             });
         }
@@ -358,13 +397,28 @@ void DownloadsTab::refresh() {
 
     if (!anyChange) return;
 
-    // Check if only progress changed (same items, same states, just bytes/transcode time differ)
-    // If so, update labels in-place without rebuilding the whole UI
+    // Decide whether the list LAYOUT has to be rebuilt. Item identity
+    // (added/removed/reordered) always requires a rebuild. A pure state
+    // transition only requires a rebuild when the action-button category
+    // changes (e.g. DOWNLOADING -> COMPLETED swaps "Cancel" for "Play +
+    // Delete"); transitions inside the same category (e.g. QUEUED ->
+    // TRANSCODING -> DOWNLOADING) are pure visual updates and stay in
+    // place. This is what keeps the tab from rebuilding once per second
+    // for the duration of a download.
     bool structureChanged = (currentState.size() != m_lastState.size());
     if (!structureChanged) {
         for (size_t i = 0; i < currentState.size(); i++) {
-            if (currentState[i].ratingKey != m_lastState[i].ratingKey ||
-                currentState[i].state != m_lastState[i].state) {
+            if (currentState[i].ratingKey != m_lastState[i].ratingKey) {
+                structureChanged = true;
+                break;
+            }
+        }
+    }
+    if (!structureChanged) {
+        for (size_t i = 0; i < currentState.size(); i++) {
+            DownloadState oldS = static_cast<DownloadState>(m_lastState[i].state);
+            DownloadState newS = static_cast<DownloadState>(currentState[i].state);
+            if (buttonCategory(oldS) != buttonCategory(newS)) {
                 structureChanged = true;
                 break;
             }
@@ -389,6 +443,7 @@ void DownloadsTab::rebuildList() {
     m_itemStatusLabels.clear();
     m_itemRows.clear();
     m_groupStatusLabels.clear();
+    m_groupRows.clear();
 
     // Invalidate all in-flight async image loads from previous rebuild cycle.
     // This prevents use-after-free when old brls::Image* targets are destroyed
@@ -402,6 +457,16 @@ void DownloadsTab::rebuildList() {
     if (m_clearBtn && isDescendantOf(focusedView, m_listContainer)) {
         brls::Application::giveFocus(m_clearBtn);
     }
+
+    // brls::Box::removeView does NOT clear the parent's lastFocusedView
+    // cache — only clearViews does. If a row in m_listContainer had been
+    // focused before (e.g. the user clicked a row to push the group
+    // detail activity), m_listContainer->lastFocusedView still points at
+    // that row. The removeView loop below frees it, leaving a dangling
+    // pointer that any future getDefaultFocus() call on m_listContainer
+    // (such as the focus-restoration that runs after willAppear) will
+    // dereference -> segfault. Clear it explicitly first.
+    m_listContainer->setLastFocusedView(nullptr);
 
     // Clear existing items (except empty label which is always last)
     while (m_listContainer->getChildren().size() > 1) {
@@ -505,11 +570,19 @@ void DownloadsTab::rebuildList() {
 }
 
 void DownloadsTab::updateProgressInPlace(const std::vector<DownloadItem>& downloads) {
-    // Update individual item status labels
+    // Update individual item status labels and recolor the row to match
+    // the new state. The row's action buttons stay as-is — refresh()
+    // already guarantees no button-category change reaches this path, so
+    // a row that started life as "Cancel"-bearing is still showing the
+    // right button.
     for (const auto& item : downloads) {
         auto it = m_itemStatusLabels.find(item.ratingKey);
         if (it != m_itemStatusLabels.end()) {
             it->second->setText(buildItemStatusText(item));
+        }
+        auto rowIt = m_itemRows.find(item.ratingKey);
+        if (rowIt != m_itemRows.end()) {
+            rowIt->second->setBackgroundColor(getStateColor(item.state));
         }
     }
 
@@ -544,16 +617,22 @@ void DownloadsTab::updateProgressInPlace(const std::vector<DownloadItem>& downlo
     }
 
     for (const auto& pair : groupStats) {
+        const auto& gp = pair.second;
+        int displayTotal = (gp.contentTotal > 0) ? gp.contentTotal : gp.total;
+
         auto it = m_groupStatusLabels.find(pair.first);
         if (it != m_groupStatusLabels.end()) {
-            const auto& gp = pair.second;
-            int displayTotal = (gp.contentTotal > 0) ? gp.contentTotal : gp.total;
             std::string statusText = gp.typePrefix + " - " + std::to_string(gp.completed) + "/" +
                                      std::to_string(displayTotal) + " ready";
             if (gp.downloading > 0) {
                 statusText += " (" + std::to_string(gp.downloading) + " downloading)";
             }
             it->second->setText(statusText);
+        }
+        auto rowIt = m_groupRows.find(pair.first);
+        if (rowIt != m_groupRows.end()) {
+            rowIt->second->setBackgroundColor(
+                groupRowColor(gp.completed, displayTotal, gp.downloading));
         }
     }
 }
@@ -655,6 +734,7 @@ brls::Box* DownloadsTab::buildGroupRow(DownloadGroupType groupType, const std::s
     // Track for in-place progress updates
     std::string compositeKey = std::to_string(static_cast<int>(groupType)) + ":" + groupKey;
     m_groupStatusLabels[compositeKey] = statusLabel;
+    m_groupRows[compositeKey] = row;
 
     row->addView(infoBox);
 
