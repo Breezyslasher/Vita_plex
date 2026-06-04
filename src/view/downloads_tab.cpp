@@ -320,6 +320,18 @@ void DownloadsTab::startAutoRefresh() {
                 // producing a dangling pointer that the next willAppear
                 // dereferences when restoring focus. Skip cleanly.
                 if (!m_autoRefreshEnabled.load()) return;
+                // Skip while a sub-activity (group-detail view, player)
+                // is on top of us. brls's pushActivity stashes the
+                // currently-focused View* into focusStack so it can
+                // restore focus on the matching pop; if we rebuilt the
+                // list now, the row that's saved in focusStack would
+                // be freed and the pop would crash dereferencing it.
+                // The classic trigger is "delete after watching" wiping
+                // the only download in a group while the user is still
+                // inside its detail view. The detail view runs its own
+                // 1Hz refresh that auto-pops once the group is empty,
+                // so this throttle isn't blocking that cleanup.
+                if (brls::Application::getActivitiesStack().size() > 1) return;
                 refresh();
             });
         }
@@ -1481,13 +1493,20 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
     std::string       captTypeStr   = typeStr;
     bool              captIsMusic   = isMusic;
     brls::Label*      captTypeLabel = typeLabel;
+
+    // Hoist the brls::Activity allocation so the refresh lambda can
+    // capture it and tell whether *we* are still the top of the stack
+    // before popping. Without this check, an auto-pop fired while a
+    // PlayerActivity is on top of us would pop the player by mistake.
+    auto* detailActivity = new brls::Activity(mainBox);
+
     asyncRun([viewAlive, rowHandles, captGroupType, captGroupKey,
-              captTypeStr, captIsMusic, captTypeLabel]() {
+              captTypeStr, captIsMusic, captTypeLabel, detailActivity]() {
         while (viewAlive->load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1000));
             if (!viewAlive->load()) break;
             brls::sync([viewAlive, rowHandles, captGroupType, captGroupKey,
-                        captTypeStr, captIsMusic, captTypeLabel]() {
+                        captTypeStr, captIsMusic, captTypeLabel, detailActivity]() {
                 // viewAlive is set to false by the BUTTON_B handler
                 // before popActivity() runs, so any sync tick enqueued
                 // before that point sees false here and exits before
@@ -1497,6 +1516,29 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
 
                 auto items = DownloadsManager::getInstance()
                                  .getDownloadsByGroup(captGroupType, captGroupKey);
+
+                // Auto-pop when the group has nothing left. Classic
+                // trigger: "delete after watching" wiped the only
+                // remaining episode while the user is staring at the
+                // detail list. The stale rows can never be played
+                // (their downloads are gone), and the outer downloads
+                // tab refresh is throttled while we're on top so it
+                // won't have cleared the group row yet. Pop ourselves,
+                // and brls' focus restoration drops the user back on
+                // the group row they originally clicked; once we're
+                // gone the outer tab's next refresh tick rebuilds the
+                // list (group missing -> focus falls back to Clear).
+                if (items.empty()) {
+                    auto stack = brls::Application::getActivitiesStack();
+                    if (!stack.empty() && stack.back() == detailActivity) {
+                        viewAlive->store(false);
+                        brls::Application::popActivity();
+                    }
+                    // Either we just popped, or a sub-activity (player)
+                    // is on top of us — defer the pop until that pop
+                    // brings us back to the top.
+                    return;
+                }
 
                 int completed = 0;
                 int contentTotal = 0;
@@ -1542,7 +1584,7 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
         }
     });
 
-    brls::Application::pushActivity(new brls::Activity(mainBox));
+    brls::Application::pushActivity(detailActivity);
 }
 
 void DownloadsTab::showGroupContextMenu(DownloadGroupType groupType, const std::string& groupKey,
