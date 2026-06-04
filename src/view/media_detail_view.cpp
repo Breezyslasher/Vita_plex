@@ -661,7 +661,25 @@ void MediaDetailView::loadChildren() {
                         return true;
                     });
                     cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
-
+                                // Register START button context menu for child items
+                    MediaItem capturedChild = child;
+                    if (child.mediaType == MediaType::EPISODE) {
+                        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                            
+                            [capturedChild](brls::View* view) {
+                                brls::Application::notify("START pressed");
+                                showEpisodeContextMenu(capturedChild);
+                                return true;
+                            });
+                    }
+                    cell->addGestureRecognizer(new LongPressGestureRecognizer(
+                        cell, [capturedChild](LongPressGestureStatus status) {
+                            if (status.state == brls::GestureState::START &&
+                                capturedChild.mediaType == MediaType::EPISODE) {
+                                showEpisodeContextMenu(capturedChild);
+                            }
+                            
+                        }));
                     m_childrenBox->addView(cell);
                 }
 
@@ -678,27 +696,40 @@ void MediaDetailView::loadChildren() {
             cell->setItem(child);
             cell->setMarginRight(10);
 
-            cell->registerClickAction([this, child](brls::View* view) {
-                // Navigate to child detail
-                auto* detailView = new MediaDetailView(child);
-                brls::Application::pushActivity(new brls::Activity(detailView));
-                return true;
-            });
-            cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
-
-            // Register START button context menu for child items
             MediaItem capturedChild = child;
-            if (child.mediaType == MediaType::SEASON) {
+
+            if (child.mediaType == MediaType::EPISODE) {
+                cell->registerClickAction([child](brls::View* view) {
+                    Application::getInstance().pushPlayerActivity(child.ratingKey);
+                    return true;
+                });
                 cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
                     [capturedChild](brls::View* view) {
-                        showSeasonContextMenuStatic(capturedChild);
+                        showEpisodeContextMenu(capturedChild);
                         return true;
                     });
+            } else {
+                cell->registerClickAction([this, child](brls::View* view) {
+                    auto* detailView = new MediaDetailView(child);
+                    brls::Application::pushActivity(new brls::Activity(detailView));
+                    return true;
+                });
+                if (child.mediaType == MediaType::SEASON) {
+                    cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                        [capturedChild](brls::View* view) {
+                            showSeasonContextMenuStatic(capturedChild);
+                            return true;
+                        });
+                }
             }
+            cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+
             cell->addGestureRecognizer(new LongPressGestureRecognizer(
                 cell, [capturedChild](LongPressGestureStatus status) {
-                    if (status.state == brls::GestureState::START &&
-                        capturedChild.mediaType == MediaType::SEASON) {
+                    if (status.state != brls::GestureState::START) return;
+                    if (capturedChild.mediaType == MediaType::EPISODE) {
+                        showEpisodeContextMenu(capturedChild);
+                    } else if (capturedChild.mediaType == MediaType::SEASON) {
                         showSeasonContextMenuStatic(capturedChild);
                     }
                 }));
@@ -2156,6 +2187,123 @@ void MediaDetailView::showShowContextMenu(const MediaItem& show) {
     showShowContextMenuStatic(show);
 }
 
+
+void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
+    brls::Logger::info("showEpisodeContextMenu called for {}", episode.title);
+    auto* dialog = new brls::Dialog(episode.title);
+
+    auto* optionsBox = new brls::Box();
+    optionsBox->setAxis(brls::Axis::COLUMN);
+    optionsBox->setPadding(20);
+
+    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
+        auto* btn = new brls::Button();
+        btn->setText(text);
+        btn->setHeight(44);
+        btn->setMarginBottom(10);
+        btn->registerClickAction(action);
+        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+        optionsBox->addView(btn);
+    };
+
+    MediaItem capturedEpisode = episode;
+
+    // Restart button
+    addDialogButton("Restart", [capturedEpisode, dialog](brls::View*) {
+        dialog->dismiss();
+        // Mark as unwatched first to reset progress, then play
+        PlexClient::getInstance().markAsUnwatched(capturedEpisode.ratingKey);
+        Application::getInstance().pushPlayerActivity(capturedEpisode.ratingKey);
+        return true;
+    });
+
+    // Resume button (only if there's a view offset)
+    if (episode.viewOffset > 0) {
+        int totalSec = episode.viewOffset / 1000;
+        int hours = totalSec / 3600;
+        int minutes = (totalSec % 3600) / 60;
+        char resumeStr[64];
+        if (hours > 0) {
+            snprintf(resumeStr, sizeof(resumeStr), "Resume from %dh %dm", hours, minutes);
+        } else {
+            snprintf(resumeStr, sizeof(resumeStr), "Resume from %dm", minutes);
+        }
+        addDialogButton(resumeStr, [capturedEpisode, dialog](brls::View*) {
+            dialog->dismiss();
+            Application::getInstance().pushPlayerActivity(capturedEpisode.ratingKey);
+            return true;
+        });
+    }
+
+    // Download
+    addDialogButton("Download", [capturedEpisode, dialog](brls::View*) {
+        dialog->dismiss();
+        if (DownloadsManager::getInstance().isDownloaded(capturedEpisode.ratingKey)) {
+            brls::Application::notify("Already downloaded");
+            return true;
+        }
+        // Fetch full details and queue download
+        asyncRun([capturedEpisode]() {
+            PlexClient& client = PlexClient::getInstance();
+            MediaItem fullItem;
+            if (client.fetchMediaDetails(capturedEpisode.ratingKey, fullItem) && !fullItem.partPath.empty()) {
+                bool queued = DownloadsManager::getInstance().queueDownload(
+                    fullItem.ratingKey, fullItem.title, fullItem.partPath,
+                    fullItem.duration, "episode", "", 0, 0,
+                    fullItem.thumb);
+                brls::sync([queued, fullItem]() {
+                    if (queued) {
+                        DownloadsManager::getInstance().startDownloads();
+                        brls::Application::notify("Downloading: " + fullItem.title);
+                    } else {
+                        brls::Application::notify("Failed to queue download");
+                    }
+                });
+            } else {
+                brls::sync([]() {
+                    brls::Application::notify("Could not get download info");
+                });
+            }
+        });
+        return true;
+    });
+
+    // Mark as watched/unwatched
+    if (episode.watched) {
+        addDialogButton("Mark as Unwatched", [capturedEpisode, dialog](brls::View*) {
+            dialog->dismiss();
+            asyncRun([capturedEpisode]() {
+                PlexClient::getInstance().markAsUnwatched(capturedEpisode.ratingKey);
+                brls::sync([]() {
+                    brls::Application::notify("Marked as unwatched");
+                });
+            });
+            return true;
+        });
+    } else {
+        addDialogButton("Mark as Watched", [capturedEpisode, dialog](brls::View*) {
+            dialog->dismiss();
+            asyncRun([capturedEpisode]() {
+                PlexClient::getInstance().markAsWatched(capturedEpisode.ratingKey);
+                brls::sync([]() {
+                    brls::Application::notify("Marked as watched");
+                });
+            });
+            return true;
+        });
+    }
+
+    addDialogButton("Cancel", [dialog](brls::View*) {
+        dialog->dismiss(); return true;
+    });
+
+    dialog->addView(optionsBox);
+    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
+        dialog->dismiss();
+        return true;
+    });
+    brls::Application::pushActivity(new brls::Activity(dialog));
+}
 void MediaDetailView::showMovieContextMenuStatic(const MediaItem& movie) {
     auto* dialog = new brls::Dialog(movie.title);
 

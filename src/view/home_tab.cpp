@@ -143,6 +143,12 @@ void HomeTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>
                     MediaDetailView::showSeasonContextMenuStatic(capturedItem);
                     return true;
                 });
+        } else if (capturedItem.mediaType == MediaType::EPISODE) {
+            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                [capturedItem](brls::View* view) {
+                    MediaDetailView::showEpisodeContextMenu(capturedItem);
+                    return true;
+                });
         } else if (capturedItem.mediaType == MediaType::MUSIC_ARTIST) {
             cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
                 [capturedItem](brls::View* view) {
@@ -170,6 +176,8 @@ void HomeTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>
                     MediaDetailView::showShowContextMenuStatic(capturedItem);
                 } else if (capturedItem.mediaType == MediaType::SEASON) {
                     MediaDetailView::showSeasonContextMenuStatic(capturedItem);
+                } else if (capturedItem.mediaType == MediaType::EPISODE) {
+                    MediaDetailView::showEpisodeContextMenu(capturedItem);
                 } else if (capturedItem.mediaType == MediaType::MUSIC_ARTIST) {
                     MediaDetailView::showArtistContextMenuStatic(capturedItem);
                 } else if (capturedItem.mediaType == MediaType::MUSIC_ALBUM) {

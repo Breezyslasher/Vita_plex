@@ -34,6 +34,7 @@ private:
     void showAlbumContextMenu(const MediaItem& album);  // Context menu for albums
     void showMovieContextMenu(const MediaItem& movie);  // Context menu for movies
     void showShowContextMenu(const MediaItem& show);    // Context menu for TV shows
+    
 
     // Toggle the server-side watched / unwatched flag for this item.
     // Uses Plex's /:/scrobble and /:/unscrobble endpoints; the button
@@ -53,6 +54,7 @@ public:
     // Static context menus callable from any view (home, search, library grid, etc.)
     static void showMovieContextMenuStatic(const MediaItem& movie);
     static void showShowContextMenuStatic(const MediaItem& show);
+    static void showEpisodeContextMenu(const MediaItem& episode);
     static void showSeasonContextMenuStatic(const MediaItem& season);
     static void showArtistContextMenuStatic(const MediaItem& artist);
     static void showAlbumContextMenuStatic(const MediaItem& album);
