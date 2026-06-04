@@ -53,7 +53,7 @@ public:
     // Static context menus callable from any view (home, search, library grid, etc.)
     static void showMovieContextMenuStatic(const MediaItem& movie);
     static void showShowContextMenuStatic(const MediaItem& show);
-     void showEpisodeContextMenu(const MediaItem& episode);
+    static void showEpisodeContextMenu(const MediaItem& episode);
     static void showSeasonContextMenuStatic(const MediaItem& season);
     static void showArtistContextMenuStatic(const MediaItem& artist);
     static void showAlbumContextMenuStatic(const MediaItem& album);
