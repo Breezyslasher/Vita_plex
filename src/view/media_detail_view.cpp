@@ -2203,7 +2203,7 @@ void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
     });
 
     // Resume button (only if there's a view offset)
-    if (movie.viewOffset > 0) {
+    if (episode.viewOffset > 0) {
         int totalSec = episode.viewOffset / 1000;
         int hours = totalSec / 3600;
         int minutes = (totalSec % 3600) / 60;
