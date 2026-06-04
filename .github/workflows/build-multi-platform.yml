@@ -279,6 +279,7 @@ jobs:
   # Android — switchfin-style APK build
   # ───────────────────────────────────────────────
   build-android:
+    needs: [resolve-version]
     if: ${{ inputs.platform == 'android' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: Android
     runs-on: ubuntu-latest
@@ -352,101 +353,6 @@ jobs:
       with:
         name: VitaPlex-android-${{ github.run_number }}
         path: app/platform/android/app/build/outputs/apk/release/*.apk
-
-  # ───────────────────────────────────────────────
-  # Desktop — Windows Matrix via MSYS2 (x64/x86/arm64)
-  # ───────────────────────────────────────────────
-  build-desktop-windows-matrix:
-    name: Desktop (Windows ${{ matrix.arch }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-        - { arch: x64, sys: mingw64, env: x86_64, runner: windows-latest }
-        - { arch: x86, sys: mingw32, env: i686, runner: windows-latest }
-        - { arch: arm64, sys: clangarm64, env: clang-aarch64, runner: windows-11-arm }
-    runs-on: ${{ matrix.runner }}
-    defaults:
-      run:
-        shell: msys2 {0}
-    steps:
-      - uses: msys2/setup-msys2@v2
-        with:
-          msystem: ${{ matrix.sys }}
-          path-type: inherit
-          cache: false
-          release: ${{ contains(matrix.sys, 'arm64') }}
-          install: >-
-            mingw-w64-${{ matrix.env }}-ninja
-            mingw-w64-${{ matrix.env }}-cc
-            mingw-w64-${{ matrix.env }}-cmake
-            mingw-w64-${{ matrix.env }}-glfw
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-      - name: Install dependency
-        run: |
-          for pkg in glfw-3.5.0-1 curl-8.16.0-1 mpv-0.41.0-1 libwebp-1.6.0-1; do
-            curl -sLO https://github.com/dragonflylee/switchfin/releases/download/mingw-packages/${MINGW_PACKAGE_PREFIX}-${pkg}-any.pkg.tar.zst
-          done
-          pacman -U --noconfirm *.pkg.tar.zst
-      - name: Build
-        run: |
-          cmake -B build -G Ninja \
-            -DPLATFORM_DESKTOP=ON \
-            -DWIN32_TERMINAL=OFF \
-            -DZLIB_USE_STATIC_LIBS=ON \
-            -DUSE_SYSTEM_GLFW=ON \
-            -DUSE_D3D11=ON
-          cmake --build build
-      - name: Bundle runtime DLLs
-        run: |
-          EXE="build/VitaPlex.exe"
-          DLL_DIR="${MINGW_PREFIX}/bin"
-          if [ ! -f "$EXE" ]; then
-            echo "Expected binary not found: $EXE"
-            exit 1
-          fi
-          if [ ! -d "$DLL_DIR" ]; then
-            echo "Expected DLL directory not found: $DLL_DIR"
-            exit 1
-          fi
-
-          queue=("$EXE")
-          declare -A scanned
-          declare -A bundled
-          while [ ${#queue[@]} -gt 0 ]; do
-            current="${queue[0]}"
-            queue=("${queue[@]:1}")
-            scanned["$current"]=1
-
-            mapfile -t dlls < <(objdump -p "$current" | awk '/DLL Name:/{print $3}' | sort -u)
-            for dll in "${dlls[@]}"; do
-              candidate="$DLL_DIR/$dll"
-              target="build/$dll"
-              if [ -f "$candidate" ]; then
-                if [ -z "${bundled[$dll]+x}" ]; then
-                  cp -f "$candidate" "$target"
-                  bundled["$dll"]=1
-                  echo "Bundled $dll (from $(basename "$current"))"
-                fi
-                if [ -z "${scanned[$target]+x}" ]; then
-                  queue+=("$target")
-                fi
-              fi
-            done
-          done
-
-          echo "DLLs bundled into build/:"
-          ls -1 build/*.dll
-      - name: Upload Windows binary
-        uses: actions/upload-artifact@v4
-        with:
-          name: VitaPlex-windows-${{ matrix.arch }}-${{ github.run_number }}
-          path: |
-            build/VitaPlex.exe
-            build/*.dll
-            build/resources/
 
   # ───────────────────────────────────────────────
   # Flatpak — Linux Matrix (x86_64 + aarch64, OpenGL)
