@@ -163,6 +163,16 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
             });
     }
 
+    // Register START button action for episodes
+    if (m_items[index].mediaType == MediaType::EPISODE) {
+        MediaItem capturedItem = m_items[index];
+        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+            [capturedItem](brls::View* view) {
+                MediaDetailView::showEpisodeContextMenu(capturedItem);
+                return true;
+            });
+    }
+
     // Register START button action for artists
     if (m_items[index].mediaType == MediaType::MUSIC_ARTIST) {
         MediaItem capturedItem = m_items[index];
@@ -201,6 +211,8 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
                 MediaDetailView::showShowContextMenuStatic(capturedItem);
             } else if (capturedItem.mediaType == MediaType::SEASON) {
                 MediaDetailView::showSeasonContextMenuStatic(capturedItem);
+            } else if (capturedItem.mediaType == MediaType::EPISODE) {
+                MediaDetailView::showEpisodeContextMenu(capturedItem);
             } else if (capturedItem.mediaType == MediaType::MUSIC_ARTIST) {
                 MediaDetailView::showArtistContextMenuStatic(capturedItem);
             } else if (capturedItem.type == "playlist" && m_onItemStartAction) {
