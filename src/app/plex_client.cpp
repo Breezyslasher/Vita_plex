@@ -2715,109 +2715,189 @@ void PlexClient::checkLiveTVAvailability() {
 bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
     HttpClient client;
 
-    // Ensure DVR info is loaded
-    if (m_dvrId.empty()) {
+    // Ensure DVR info is loaded before calling the EPG endpoints. The official
+    // EPG channel endpoints require the DVR lineup URI, and tuning needs the
+    // DVR ChannelMapping deviceIdentifier values (for example "2.1").
+    if (m_dvrId.empty() || m_lineupUri.empty() || m_channelMappings.empty()) {
         checkLiveTVAvailability();
     }
 
     channels.clear();
 
-    HttpRequest req;
-    req.method = "GET";
-    req.headers["Accept"] = "application/json";
-    req.timeout = 15;
+    auto addPlexHeaders = [](HttpRequest& req) {
+        const auto& vc = platform::getVideoConstraints();
+        req.headers["Accept"] = "application/json";
+        req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+        req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+        req.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+        req.headers["X-Plex-Platform"] = vc.plexPlatform;
+        req.headers["X-Plex-Device"] = vc.plexDevice;
+        req.headers["X-Plex-Device-Name"] = vc.plexDevice;
+    };
 
-    // Official API: GET /livetv/epg/channels?lineup={lineupUri}
-    // Returns Channel array with: callSign, identifier, channelVcn, hd, thumb, title, key
+    auto parseChannelNumber = [](const std::string& vcn) -> int {
+        if (vcn.empty()) return 0;
+        size_t dotPos = vcn.find('.');
+        if (dotPos != std::string::npos) {
+            int major = atoi(vcn.substr(0, dotPos).c_str());
+            int minor = atoi(vcn.substr(dotPos + 1).c_str());
+            return major * 10 + minor;
+        }
+        return atoi(vcn.c_str()) * 10;
+    };
+
+    auto upsertChannel = [&](LiveTVChannel channel) {
+        if (channel.title.empty()) channel.title = channel.callSign;
+        if (channel.title.empty() && !channel.channelIdentifier.empty()) channel.title = "Ch " + channel.channelIdentifier;
+        if (channel.callSign.empty()) channel.callSign = channel.title;
+
+        std::string lineupIdentifier = channel.ratingKey;
+
+        // Cross-reference the official DVR ChannelMapping. The tune endpoint's
+        // {channel} path parameter is the mapping's deviceIdentifier (OpenAPI
+        // example: "2.1"), while the EPG endpoints commonly return an EPG
+        // channel key and/or lineup identifier.
+        for (const auto& mapping : m_channelMappings) {
+            if (!channel.key.empty() && channel.key == mapping.channelKey) {
+                channel.channelIdentifier = mapping.deviceIdentifier;
+                if (channel.channelNumber == 0) channel.channelNumber = parseChannelNumber(mapping.deviceIdentifier);
+                break;
+            }
+            if (!lineupIdentifier.empty() && lineupIdentifier == mapping.lineupIdentifier) {
+                channel.channelIdentifier = mapping.deviceIdentifier;
+                if (channel.key.empty()) channel.key = mapping.channelKey;
+                if (channel.channelNumber == 0) channel.channelNumber = parseChannelNumber(mapping.deviceIdentifier);
+                break;
+            }
+        }
+
+        if (channel.channelNumber == 0 && !channel.channelIdentifier.empty()) {
+            channel.channelNumber = parseChannelNumber(channel.channelIdentifier);
+        }
+
+        if (channel.key.empty() && channel.channelIdentifier.empty() && channel.title.empty()) return;
+
+        for (auto& existing : channels) {
+            bool same = false;
+            if (!channel.key.empty() && !existing.key.empty() && channel.key == existing.key) same = true;
+            if (!same && !channel.channelIdentifier.empty() && !existing.channelIdentifier.empty() &&
+                channel.channelIdentifier == existing.channelIdentifier) same = true;
+            if (!same) continue;
+
+            if (existing.key.empty()) existing.key = channel.key;
+            if (existing.title.empty()) existing.title = channel.title;
+            if (existing.callSign.empty()) existing.callSign = channel.callSign;
+            if (existing.thumb.empty()) existing.thumb = channel.thumb;
+            if (existing.channelIdentifier.empty()) existing.channelIdentifier = channel.channelIdentifier;
+            if (existing.channelNumber == 0) existing.channelNumber = channel.channelNumber;
+            return;
+        }
+
+        channels.push_back(channel);
+    };
+
+    auto parseChannelsFromBody = [&](const std::string& body) {
+        size_t pos = 0;
+        while ((pos = body.find("\"Channel\"", pos)) != std::string::npos) {
+            size_t arrayStart = body.find('[', pos);
+            if (arrayStart == std::string::npos) { pos++; continue; }
+            size_t cursor = arrayStart + 1;
+            while (cursor < body.length()) {
+                while (cursor < body.length() && (body[cursor] == ' ' || body[cursor] == ',' ||
+                       body[cursor] == '\n' || body[cursor] == '\r' || body[cursor] == '\t')) {
+                    cursor++;
+                }
+                if (cursor >= body.length() || body[cursor] == ']') break;
+                if (body[cursor] != '{') { cursor++; continue; }
+
+                size_t objStart = cursor;
+                int braceCount = 1;
+                cursor++;
+                while (braceCount > 0 && cursor < body.length()) {
+                    if (body[cursor] == '{') braceCount++;
+                    else if (body[cursor] == '}') braceCount--;
+                    cursor++;
+                }
+                std::string obj = body.substr(objStart, cursor - objStart);
+
+                LiveTVChannel channel;
+                channel.callSign = extractJsonValue(obj, "callSign");
+                channel.key = extractJsonValue(obj, "key");
+                channel.title = extractJsonValue(obj, "title");
+                channel.thumb = extractJsonValue(obj, "thumb");
+                channel.ratingKey = extractJsonValue(obj, "identifier"); // lineupIdentifier for ChannelMapping matching
+
+                std::string vcn = extractJsonValue(obj, "channelVcn");
+                if (!vcn.empty()) {
+                    channel.channelIdentifier = vcn;
+                    channel.channelNumber = parseChannelNumber(vcn);
+                }
+
+                upsertChannel(channel);
+            }
+            pos = arrayStart + 1;
+        }
+    };
+
+    // Official API: GET /livetv/epg/lineupchannels?lineup={lineupUri}
+    // This is preferred over /livetv/epg/channels because the OpenAPI example
+    // includes the EPG channel key, channelVcn, title, and callSign needed by
+    // the guide and by DVR ChannelMapping lookups.
     if (!m_lineupUri.empty()) {
-        std::string url = buildApiUrl("/livetv/epg/channels");
-        url += "&lineup=" + HttpClient::urlEncode(m_lineupUri);
-        req.url = url;
+        HttpRequest req;
+        req.method = "GET";
+        req.timeout = 15;
+        addPlexHeaders(req);
+        req.url = buildApiUrl("/livetv/epg/lineupchannels") +
+                  "&lineup=" + HttpClient::urlEncode(m_lineupUri);
+        brls::Logger::debug("fetchLiveTVChannels: GET /livetv/epg/lineupchannels?lineup={}", m_lineupUri);
+
+        HttpResponse resp = client.request(req);
+        if (resp.statusCode == 200 && !resp.body.empty()) {
+            brls::Logger::debug("fetchLiveTVChannels: lineupchannels response ({} bytes, first 500): {}",
+                                resp.body.length(), resp.body.substr(0, 500));
+            parseChannelsFromBody(resp.body);
+            if (!channels.empty()) {
+                brls::Logger::info("fetchLiveTVChannels: Found {} channels from EPG lineupchannels", channels.size());
+            }
+        } else {
+            brls::Logger::warning("fetchLiveTVChannels: lineupchannels returned {}", resp.statusCode);
+        }
+    }
+
+    // Official fallback: GET /livetv/epg/channels?lineup={lineupUri}. Some
+    // servers return a smaller schema here (often just callSign/identifier), so
+    // it is a fallback instead of the primary source.
+    if (channels.empty() && !m_lineupUri.empty()) {
+        HttpRequest req;
+        req.method = "GET";
+        req.timeout = 15;
+        addPlexHeaders(req);
+        req.url = buildApiUrl("/livetv/epg/channels") +
+                  "&lineup=" + HttpClient::urlEncode(m_lineupUri);
         brls::Logger::debug("fetchLiveTVChannels: GET /livetv/epg/channels?lineup={}", m_lineupUri);
 
         HttpResponse resp = client.request(req);
         if (resp.statusCode == 200 && !resp.body.empty()) {
             brls::Logger::debug("fetchLiveTVChannels: EPG channels response ({} bytes, first 500): {}",
                                 resp.body.length(), resp.body.substr(0, 500));
-
-            // Parse Channel array from response
-            // Per openapi.json schema: Channel objects have callSign, identifier, channelVcn, thumb, title, key
-            size_t pos = 0;
-            while ((pos = resp.body.find("\"callSign\"", pos)) != std::string::npos) {
-                size_t objStart = resp.body.rfind('{', pos);
-                if (objStart == std::string::npos) { pos++; continue; }
-
-                int braceCount = 1;
-                size_t objEnd = objStart + 1;
-                while (braceCount > 0 && objEnd < resp.body.length()) {
-                    if (resp.body[objEnd] == '{') braceCount++;
-                    else if (resp.body[objEnd] == '}') braceCount--;
-                    objEnd++;
-                }
-
-                std::string obj = resp.body.substr(objStart, objEnd - objStart);
-
-                LiveTVChannel channel;
-                channel.callSign = extractJsonValue(obj, "callSign");
-                channel.key = extractJsonValue(obj, "key");
-                channel.title = extractJsonValue(obj, "title");
-                if (channel.title.empty()) {
-                    channel.title = channel.callSign;
-                }
-                channel.thumb = extractJsonValue(obj, "thumb");
-
-                // channelVcn is the virtual channel number like "2.1"
-                std::string vcn = extractJsonValue(obj, "channelVcn");
-                if (!vcn.empty()) {
-                    channel.channelIdentifier = vcn;
-                    size_t dotPos = vcn.find('.');
-                    if (dotPos != std::string::npos) {
-                        int major = atoi(vcn.substr(0, dotPos).c_str());
-                        int minor = atoi(vcn.substr(dotPos + 1).c_str());
-                        channel.channelNumber = major * 10 + minor;
-                    } else {
-                        channel.channelNumber = atoi(vcn.c_str()) * 10;
-                    }
-                }
-
-                // identifier field from EPG
-                std::string identifier = extractJsonValue(obj, "identifier");
-                if (!identifier.empty() && channel.channelIdentifier.empty()) {
-                    channel.channelIdentifier = identifier;
-                }
-
-                // Cross-reference with ChannelMapping to get deviceIdentifier for tuning
-                for (const auto& mapping : m_channelMappings) {
-                    if (!channel.key.empty() && channel.key == mapping.channelKey) {
-                        channel.channelIdentifier = mapping.deviceIdentifier;
-                        break;
-                    }
-                    if (!identifier.empty() && identifier == mapping.lineupIdentifier) {
-                        channel.channelIdentifier = mapping.deviceIdentifier;
-                        if (channel.key.empty()) {
-                            channel.key = mapping.channelKey;
-                        }
-                        break;
-                    }
-                }
-
-                if (!channel.callSign.empty() || !channel.title.empty()) {
-                    channels.push_back(channel);
-                }
-
-                pos = objEnd;
-            }
-
+            parseChannelsFromBody(resp.body);
             if (!channels.empty()) {
-                brls::Logger::info("fetchLiveTVChannels: Found {} channels from EPG lineup", channels.size());
+                brls::Logger::info("fetchLiveTVChannels: Found {} channels from EPG channels", channels.size());
             }
+        } else {
+            brls::Logger::warning("fetchLiveTVChannels: channels returned {}", resp.statusCode);
         }
     }
 
-    // Fallback: GET /livetv/dvrs/{dvrId} to get ChannelMapping and build channel list
+    // Fallback: use the official DVR ChannelMapping payload to at least expose
+    // tuneable channel numbers when EPG channel listing is unavailable.
     if (channels.empty() && !m_dvrId.empty()) {
-        std::string url = buildApiUrl("/livetv/dvrs/" + m_dvrId);
-        req.url = url;
+        HttpRequest req;
+        req.method = "GET";
+        req.timeout = 15;
+        addPlexHeaders(req);
+        req.url = buildApiUrl("/livetv/dvrs/" + m_dvrId);
         brls::Logger::debug("fetchLiveTVChannels: GET /livetv/dvrs/{}", m_dvrId);
 
         HttpResponse resp = client.request(req);
@@ -2825,7 +2905,6 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
             brls::Logger::debug("fetchLiveTVChannels: DVR response ({} bytes, first 500): {}",
                                 resp.body.length(), resp.body.substr(0, 500));
 
-            // Build channels from ChannelMapping entries
             size_t pos = 0;
             while ((pos = resp.body.find("\"deviceIdentifier\"", pos)) != std::string::npos) {
                 size_t objStart = resp.body.rfind('{', pos);
@@ -2840,29 +2919,18 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
                 }
 
                 std::string obj = resp.body.substr(objStart, objEnd - objStart);
-
                 std::string deviceId = extractJsonValue(obj, "deviceIdentifier");
                 std::string channelKey = extractJsonValue(obj, "channelKey");
                 std::string enabled = extractJsonValue(obj, "enabled");
 
-                if (!deviceId.empty() && enabled != "0") {
+                if (!deviceId.empty() && enabled != "0" && enabled != "false") {
                     LiveTVChannel channel;
                     channel.channelIdentifier = deviceId;
                     channel.key = channelKey;
                     channel.title = "Ch " + deviceId;
                     channel.callSign = deviceId;
-
-                    // Parse deviceIdentifier as channel number (e.g. "48.1")
-                    size_t dotPos = deviceId.find('.');
-                    if (dotPos != std::string::npos) {
-                        int major = atoi(deviceId.substr(0, dotPos).c_str());
-                        int minor = atoi(deviceId.substr(dotPos + 1).c_str());
-                        channel.channelNumber = major * 10 + minor;
-                    } else {
-                        channel.channelNumber = atoi(deviceId.c_str()) * 10;
-                    }
-
-                    channels.push_back(channel);
+                    channel.channelNumber = parseChannelNumber(deviceId);
+                    upsertChannel(channel);
                 }
 
                 pos = objEnd;
@@ -2871,17 +2939,19 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
             if (!channels.empty()) {
                 brls::Logger::info("fetchLiveTVChannels: Found {} channels from DVR ChannelMapping", channels.size());
             }
+        } else {
+            brls::Logger::warning("fetchLiveTVChannels: DVR detail returned {}", resp.statusCode);
         }
     }
 
-    // Sort by channel number
     std::sort(channels.begin(), channels.end(),
               [](const LiveTVChannel& a, const LiveTVChannel& b) {
-                  return a.channelNumber < b.channelNumber;
+                  if (a.channelNumber != b.channelNumber) return a.channelNumber < b.channelNumber;
+                  return a.title < b.title;
               });
 
     brls::Logger::info("fetchLiveTVChannels: Found {} channels total", channels.size());
-    return true;
+    return !channels.empty();
 }
 
 bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, int hoursAhead) {
@@ -3138,7 +3208,8 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     // Official API: POST /livetv/dvrs/{dvrId}/channels/{channel}/tune
     // Per openapi.json: channel param is a string like "2.1" (the deviceIdentifier)
     // Returns Media with uuid (session ID) which can be used for HLS streaming
-    std::string tuneUrl = buildApiUrl("/livetv/dvrs/" + m_dvrId + "/channels/" + channelKey + "/tune");
+    std::string tuneUrl = buildApiUrl("/livetv/dvrs/" + HttpClient::urlEncode(m_dvrId) +
+                                      "/channels/" + HttpClient::urlEncode(channelKey) + "/tune");
 
     HttpRequest tuneReq;
     tuneReq.url = tuneUrl;
@@ -3146,6 +3217,13 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     tuneReq.headers["Accept"] = "application/json";
     tuneReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
     tuneReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+    tuneReq.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+    {
+        const auto& vc = platform::getVideoConstraints();
+        tuneReq.headers["X-Plex-Platform"] = vc.plexPlatform;
+        tuneReq.headers["X-Plex-Device"] = vc.plexDevice;
+        tuneReq.headers["X-Plex-Device-Name"] = vc.plexDevice;
+    }
     // Use longer timeout - tune can take time, especially with EPG channel keys
     // that may create MediaSubscription responses with chunked data
     tuneReq.timeout = 30;
@@ -3173,8 +3251,8 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
                 // Build HLS stream URL using session endpoint
                 // Official API: GET /livetv/sessions/{sessionId}/{consumerId}/index.m3u8
                 // Use client identifier as consumerId
-                streamUrl = buildApiUrl("/livetv/sessions/" + sessionUuid + "/" +
-                                        std::string(PLEX_CLIENT_ID) + "/index.m3u8");
+                streamUrl = buildApiUrl("/livetv/sessions/" + HttpClient::urlEncode(sessionUuid) + "/" +
+                                        HttpClient::urlEncode(PLEX_CLIENT_ID) + "/index.m3u8");
                 brls::Logger::info("tuneLiveTVChannel: Stream URL (session HLS) = {}", streamUrl);
                 return true;
             }
@@ -3190,8 +3268,8 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
         if (!tuneResp.body.empty()) {
             std::string sessionUuid = extractJsonValue(tuneResp.body, "uuid");
             if (!sessionUuid.empty()) {
-                streamUrl = buildApiUrl("/livetv/sessions/" + sessionUuid + "/" +
-                                        std::string(PLEX_CLIENT_ID) + "/index.m3u8");
+                streamUrl = buildApiUrl("/livetv/sessions/" + HttpClient::urlEncode(sessionUuid) + "/" +
+                                        HttpClient::urlEncode(PLEX_CLIENT_ID) + "/index.m3u8");
                 brls::Logger::info("tuneLiveTVChannel: Stream URL from partial response = {}", streamUrl);
                 return true;
             }
