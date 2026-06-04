@@ -496,7 +496,8 @@ jobs:
           fi
       - name: Build desktop target in flatpak container
         run: |
-          cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON -DUSE_GLES2=${{ matrix.gles2 }}
+          cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON -DUSE_GLES2=${{ matrix.gles2 }} \
+             -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
           cmake --build build
           tar -czf VitaPlex-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz -C build VitaPlex resources
       - name: Upload Flatpak artifact
@@ -509,6 +510,7 @@ jobs:
   # Nintendo Switch — Matrix (opengl + deko3d)
   # ───────────────────────────────────────────────
   build-nx:
+    needs: [resolve-version]
     if: ${{ inputs.platform == 'nx' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: NX (${{ matrix.driver }})
     runs-on: ubuntu-latest
@@ -538,6 +540,7 @@ jobs:
         run: |
           cmake -B build -G Ninja \
             -DPLATFORM_SWITCH=ON \
+            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
             ${{ matrix.cmake_extra }}
           cmake --build build
       - name: Upload NRO
@@ -550,6 +553,7 @@ jobs:
   # PS4
   # ───────────────────────────────────────────────
   build-ps4:
+    needs: [resolve-version]
     if: ${{ inputs.platform == 'ps4' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: PS4
     runs-on: ubuntu-latest
@@ -570,7 +574,8 @@ jobs:
         env:
           OPENORBIS: /opt/pacbrew/ps4/openorbis
         run: |
-          cmake -B build -DPLATFORM_PS4=ON
+          cmake -B build -DPLATFORM_PS4=ON \
+            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
           cmake --build build
       - name: Upload PS4 artifacts
         uses: actions/upload-artifact@v4
@@ -585,6 +590,7 @@ jobs:
   # macOS matrix (explicit job name parity)
   # ───────────────────────────────────────────────
   build-macos:
+    needs: [resolve-version]
     if: ${{ inputs.platform == 'macos' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: macOS (${{ matrix.tag }})
     strategy:
@@ -604,7 +610,8 @@ jobs:
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON \
             -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
-            -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ matrix.target }}
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ matrix.target }} \
+            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
           cmake --build build
       - name: Bundle macOS dylibs
         run: |
@@ -703,8 +710,8 @@ jobs:
             <key>CFBundleName</key><string>VitaPlex</string>
             <key>CFBundleDisplayName</key><string>VitaPlex</string>
             <key>CFBundleIdentifier</key><string>com.VitaPlex.app</string>
-            <key>CFBundleVersion</key><string>1</string>
-            <key>CFBundleShortVersionString</key><string>1.0</string>
+            <key>CFBundleVersion</key><string>${{ needs.resolve-version.outputs.version_number }}</string>
+            <key>CFBundleShortVersionString</key><string>${{ needs.resolve-version.outputs.version }}</string>
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleExecutable</key><string>VitaPlex</string>
           </dict>
@@ -731,6 +738,7 @@ jobs:
   # MinGW matrix (x64/x86/arm64)
   # ───────────────────────────────────────────────
   build-mingw:
+    needs: [resolve-version]
     if: ${{ inputs.platform == 'mingw64' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: MinGW (${{ matrix.arch }})
     strategy:
@@ -767,7 +775,8 @@ jobs:
           pacman -U --noconfirm *.pkg.tar.zst
       - name: Build
         run: |
-          cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON -DUSE_SYSTEM_GLFW=ON -DUSE_D3D11=ON
+          cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON -DUSE_SYSTEM_GLFW=ON -DUSE_D3D11=ON \
+          -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
           cmake --build build
       - name: Bundle runtime DLLs
         run: |
@@ -822,6 +831,7 @@ jobs:
   # Debian package-like build
   # ───────────────────────────────────────────────
   build-deb:
+    needs: [resolve-version]
     if: ${{ inputs.platform == 'deb' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: Deb build
     runs-on: ubuntu-24.04
@@ -841,7 +851,8 @@ jobs:
             wayland-protocols libwayland-bin libwayland-dev libxkbcommon-dev xorg-dev
       - name: Build
         run: |
-          cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON
+          cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON \
+            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
           cmake --build build
           PKGROOT="pkgroot"
           rm -rf "$PKGROOT"
@@ -868,7 +879,7 @@ jobs:
           ARCH="$(dpkg --print-architecture)"
           {
             echo "Package: VitaPlex"
-            echo "Version: 0.1.${{ github.run_number }}"
+            echo "Version: ${{ needs.resolve-version.outputs.version_number }}"
             echo "Section: utils"
             echo "Priority: optional"
             echo "Architecture: ${ARCH}"
@@ -886,6 +897,7 @@ jobs:
   # AUR-like build
   # ───────────────────────────────────────────────
   build-aur:
+    needs: [resolve-version]
     if: ${{ inputs.platform == 'aur' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
     name: AUR build
     runs-on: ubuntu-24.04
@@ -905,7 +917,8 @@ jobs:
             wayland-protocols libwayland-bin libwayland-dev libxkbcommon-dev xorg-dev
       - name: Build
         run: |
-          cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON
+          cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON \
+            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
           cmake --build build
           tar --zstd -cf VitaPlex-${{ github.run_number }}.pkg.tar.zst -C build VitaPlex resources
       - name: Upload aur artifact
