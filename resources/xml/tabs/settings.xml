@@ -32,7 +32,7 @@
         marginBottom="10"/>
     <brls:Label
         id="settings/version"
-        text=("VitaSuwayomi/" VITA_SUWAYOMI_VERSION)
+        text="VitaPlex v2.0.0"
         fontSize="18"
         marginBottom="10"/>
     <brls:Label
