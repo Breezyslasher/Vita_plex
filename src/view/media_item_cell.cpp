@@ -545,6 +545,7 @@ bool MediaItemCell::wantsStartHint() const {
         case MediaType::MOVIE:
         case MediaType::SHOW:
         case MediaType::SEASON:
+        case MediaType::EPISODE:
         case MediaType::MUSIC_ALBUM:
         case MediaType::MUSIC_ARTIST:
             return true;
