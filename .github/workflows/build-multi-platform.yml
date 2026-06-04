@@ -7,6 +7,10 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      version:
+        description: 'Version override (leave empty to use APP_VERSION)'
+        type: string
+        default: ''
       platform:
         description: which platform to build
         type: choice
