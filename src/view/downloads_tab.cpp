@@ -439,6 +439,29 @@ void DownloadsTab::refresh() {
 void DownloadsTab::rebuildList() {
     auto downloads = DownloadsManager::getInstance().getDownloads();
 
+    // Remember which row currently has focus, by stable identifier (item
+    // ratingKey or group compositeKey). The previous behaviour just
+    // yanked focus onto the Clear button on every rebuild — so the
+    // moment any download crossed a button-category boundary
+    // (DOWNLOADING -> COMPLETED) and triggered refresh() to rebuild,
+    // the user's selection jumped to the toolbar. Capturing the key
+    // first lets us restore focus to the same item (now in a freshly
+    // built row) once the list is rebuilt.
+    std::string rememberedItemKey;
+    std::string rememberedGroupKey;
+    brls::View* focusedView = brls::Application::getCurrentFocus();
+    bool focusInList = m_clearBtn && isDescendantOf(focusedView, m_listContainer);
+    if (focusInList) {
+        for (const auto& kv : m_itemRows) {
+            if (isDescendantOf(focusedView, kv.second)) { rememberedItemKey = kv.first; break; }
+        }
+        if (rememberedItemKey.empty()) {
+            for (const auto& kv : m_groupRows) {
+                if (isDescendantOf(focusedView, kv.second)) { rememberedGroupKey = kv.first; break; }
+            }
+        }
+    }
+
     // Clear in-place update maps (old pointers are about to be destroyed)
     m_itemStatusLabels.clear();
     m_itemRows.clear();
@@ -451,10 +474,13 @@ void DownloadsTab::rebuildList() {
     m_aliveAtomic->store(false);
     m_aliveAtomic = std::make_shared<std::atomic<bool>>(true);
 
-    // Move focus away before removing list rows only when focus is currently
-    // inside the downloads list. This avoids stealing focus when the tab first loads.
-    brls::View* focusedView = brls::Application::getCurrentFocus();
-    if (m_clearBtn && isDescendantOf(focusedView, m_listContainer)) {
+    // Park focus on the Clear button only while the old rows are being
+    // freed — if we left focus on a row that's about to be deleted, the
+    // input system would dereference a dangling View*. We move it back
+    // to the matching new row at the end of this function (see
+    // rememberedItemKey / rememberedGroupKey above), so the user
+    // doesn't experience the toolbar jump.
+    if (focusInList) {
         brls::Application::giveFocus(m_clearBtn);
     }
 
@@ -565,6 +591,25 @@ void DownloadsTab::rebuildList() {
             if (child != m_emptyLabel && child->isFocusable()) {
                 child->setCustomNavigationRoute(brls::FocusDirection::UP, m_startStopBtn);
             }
+        }
+    }
+
+    // Restore focus to whichever item was selected before the rebuild,
+    // matched by stable identifier (ratingKey / compositeKey). If the
+    // item no longer exists in the new layout (e.g. user clicked Clear
+    // and it was wiped) focus simply remains on the Clear button.
+    if (focusInList) {
+        brls::View* restoreTarget = nullptr;
+        if (!rememberedItemKey.empty()) {
+            auto it = m_itemRows.find(rememberedItemKey);
+            if (it != m_itemRows.end()) restoreTarget = it->second;
+        }
+        if (!restoreTarget && !rememberedGroupKey.empty()) {
+            auto it = m_groupRows.find(rememberedGroupKey);
+            if (it != m_groupRows.end()) restoreTarget = it->second;
+        }
+        if (restoreTarget) {
+            brls::Application::giveFocus(restoreTarget);
         }
     }
 }
@@ -1040,8 +1085,12 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
     typeLabel->setMarginBottom(15);
     infoBox->addView(typeLabel);
 
-    // Action buttons
-    auto addActionBtn = [&infoBox](const std::string& text, std::function<bool(brls::View*)> action) {
+    // Action buttons. firstActionBtn is captured into the navigation
+    // wiring after the track list is built so that UP from the first
+    // row lands on Play (Issue #2) instead of bouncing back to the row
+    // itself.
+    brls::Button* firstActionBtn = nullptr;
+    auto addActionBtn = [&infoBox, &firstActionBtn](const std::string& text, std::function<bool(brls::View*)> action) -> brls::Button* {
         auto* btn = new brls::Button();
         btn->setText(text);
         btn->setWidth(180);
@@ -1050,6 +1099,8 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
         btn->registerClickAction(action);
         btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
         infoBox->addView(btn);
+        if (!firstActionBtn) firstActionBtn = btn;
+        return btn;
     };
 
     // Build completed MediaItem list for queue operations
@@ -1232,166 +1283,170 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
 
         row->addView(rightSide);
 
-        // Click action - play from this track/episode
-        if (item.state == DownloadState::COMPLETED) {
-            DownloadItem capturedItem = item;
-            bool capturedIsMusic = isMusic;
-            auto capturedCompleted = completedItems;
-            size_t capturedIdx = i;
+        // Click handler. Always registered (Issue #3) — the lambda
+        // queries DownloadsManager at click time for current state and
+        // builds the completed-queue snapshot fresh. This way a row
+        // that wasn't ready when the view opened becomes playable the
+        // instant the download finishes, with no need to leave and
+        // re-enter the detail view. For not-yet-ready rows the click
+        // is a polite notify instead of a no-op so the user gets
+        // feedback that the tap registered.
+        DownloadItem capturedItem = item;
+        DownloadGroupType capturedGroupType = groupType;
+        std::string capturedGroupKey = groupKey;
+        bool capturedIsMusic = isMusic;
 
-            row->registerClickAction([capturedItem, capturedIsMusic, capturedCompleted, capturedIdx](brls::View*) {
-                if (capturedIsMusic) {
-                    // Use track default action setting
-                    TrackDefaultAction action = Application::getInstance().getSettings().trackDefaultAction;
-                    MusicQueue& queue = MusicQueue::getInstance();
+        auto buildCurrentCompletedQueue = [capturedGroupType, capturedGroupKey](size_t* outIdx, const std::string& targetKey) {
+            std::vector<MediaItem> q;
+            auto all = DownloadsManager::getInstance().getDownloadsByGroup(capturedGroupType, capturedGroupKey);
+            size_t idx = 0;
+            for (const auto& it : all) {
+                if (it.state != DownloadState::COMPLETED) continue;
+                MediaItem mi;
+                mi.ratingKey        = it.ratingKey;
+                mi.title            = it.title;
+                mi.grandparentTitle = it.parentTitle;
+                mi.parentTitle      = it.parentTitle;
+                mi.duration         = it.duration;
+                mi.thumb            = it.thumbUrl;
+                if (it.ratingKey == targetKey) idx = q.size();
+                q.push_back(std::move(mi));
+            }
+            if (outIdx) *outIdx = idx;
+            return q;
+        };
 
-                    // Find index in completed list
-                    size_t completedIdx = 0;
-                    for (size_t j = 0; j < capturedCompleted->size(); j++) {
-                        if ((*capturedCompleted)[j].ratingKey == capturedItem.ratingKey) {
-                            completedIdx = j;
-                            break;
-                        }
-                    }
-
-                    switch (action) {
-                        case TrackDefaultAction::PLAY_NOW_CLEAR:
-                        default:
-                            brls::Application::pushActivity(
-                                PlayerActivity::createWithQueue(*capturedCompleted, completedIdx));
-                            break;
-                        case TrackDefaultAction::PLAY_NEXT:
-                            if (queue.isEmpty()) {
-                                brls::Application::pushActivity(
-                                    PlayerActivity::createWithQueue(*capturedCompleted, completedIdx));
-                            } else {
-                                MediaItem mi;
-                                mi.ratingKey = capturedItem.ratingKey;
-                                mi.title = capturedItem.title;
-                                mi.grandparentTitle = capturedItem.parentTitle;
-                                mi.parentTitle = capturedItem.parentTitle;
-                                mi.duration = capturedItem.duration;
-                                mi.thumb = capturedItem.thumbUrl;
-                                queue.insertTrackAfterCurrent(mi);
-                                brls::Application::notify("Playing next: " + mi.title);
-                            }
-                            break;
-                        case TrackDefaultAction::ADD_TO_BOTTOM:
-                            if (queue.isEmpty()) {
-                                brls::Application::pushActivity(
-                                    PlayerActivity::createWithQueue(*capturedCompleted, completedIdx));
-                            } else {
-                                MediaItem mi;
-                                mi.ratingKey = capturedItem.ratingKey;
-                                mi.title = capturedItem.title;
-                                mi.grandparentTitle = capturedItem.parentTitle;
-                                mi.parentTitle = capturedItem.parentTitle;
-                                mi.duration = capturedItem.duration;
-                                mi.thumb = capturedItem.thumbUrl;
-                                queue.addTrack(mi);
-                                brls::Application::notify("Added to queue: " + mi.title);
-                            }
-                            break;
-                        case TrackDefaultAction::PLAY_NOW_REPLACE:
-                            if (queue.isEmpty()) {
-                                brls::Application::pushActivity(
-                                    PlayerActivity::createWithQueue(*capturedCompleted, completedIdx));
-                            } else {
-                                MediaItem mi;
-                                mi.ratingKey = capturedItem.ratingKey;
-                                mi.title = capturedItem.title;
-                                mi.grandparentTitle = capturedItem.parentTitle;
-                                mi.parentTitle = capturedItem.parentTitle;
-                                mi.duration = capturedItem.duration;
-                                mi.thumb = capturedItem.thumbUrl;
-                                queue.insertTrackAfterCurrent(mi);
-                                if (queue.playNext()) {
-                                    brls::Application::notify("Now playing: " + mi.title);
-                                }
-                            }
-                            break;
-                        case TrackDefaultAction::ASK_EACH_TIME: {
-                            // Show action dialog
-                            auto* dlg = new brls::Dialog("Choose Action");
-                            auto* opts = new brls::Box();
-                            opts->setAxis(brls::Axis::COLUMN);
-                            opts->setPadding(20);
-
-                            auto addBtn = [&opts](const std::string& text, std::function<bool(brls::View*)> act) {
-                                auto* btn = new brls::Button();
-                                btn->setText(text);
-                                btn->setHeight(44);
-                                btn->setMarginBottom(10);
-                                btn->registerClickAction(act);
-                                btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-                                opts->addView(btn);
-                            };
-
-                            addBtn("Play from Here", [dlg, capturedCompleted, completedIdx](brls::View*) {
-                                dlg->dismiss();
-                                brls::Application::pushActivity(
-                                    PlayerActivity::createWithQueue(*capturedCompleted, completedIdx));
-                                return true;
-                            });
-                            addBtn("Play Next", [dlg, capturedItem](brls::View*) {
-                                dlg->dismiss();
-                                MusicQueue& q = MusicQueue::getInstance();
-                                MediaItem mi;
-                                mi.ratingKey = capturedItem.ratingKey;
-                                mi.title = capturedItem.title;
-                                mi.grandparentTitle = capturedItem.parentTitle;
-                                mi.parentTitle = capturedItem.parentTitle;
-                                mi.duration = capturedItem.duration;
-                                mi.thumb = capturedItem.thumbUrl;
-                                if (q.isEmpty()) {
-                                    std::vector<MediaItem> single = {mi};
-                                    brls::Application::pushActivity(
-                                        PlayerActivity::createWithQueue(single, 0));
-                                } else {
-                                    q.insertTrackAfterCurrent(mi);
-                                    brls::Application::notify("Playing next: " + mi.title);
-                                }
-                                return true;
-                            });
-                            addBtn("Add to Queue", [dlg, capturedItem](brls::View*) {
-                                dlg->dismiss();
-                                MusicQueue& q = MusicQueue::getInstance();
-                                MediaItem mi;
-                                mi.ratingKey = capturedItem.ratingKey;
-                                mi.title = capturedItem.title;
-                                mi.grandparentTitle = capturedItem.parentTitle;
-                                mi.parentTitle = capturedItem.parentTitle;
-                                mi.duration = capturedItem.duration;
-                                mi.thumb = capturedItem.thumbUrl;
-                                if (q.isEmpty()) {
-                                    std::vector<MediaItem> single = {mi};
-                                    brls::Application::pushActivity(
-                                        PlayerActivity::createWithQueue(single, 0));
-                                } else {
-                                    q.addTrack(mi);
-                                    brls::Application::notify("Added to queue: " + mi.title);
-                                }
-                                return true;
-                            });
-                            addBtn("Cancel", [dlg](brls::View*) {
-                                dlg->dismiss();
-                                return true;
-                            });
-
-                            dlg->addView(opts);
-                            dlg->open();
-                            break;
-                        }
-                    }
-                } else {
-                    // Video content - play locally
-                    brls::Application::pushActivity(
-                        new PlayerActivity(capturedItem.ratingKey, true));
-                }
+        row->registerClickAction([capturedItem, capturedIsMusic, buildCurrentCompletedQueue](brls::View*) {
+            // Snapshot current state from the manager — guaranteed to
+            // reflect any completions that happened after the detail
+            // view was constructed.
+            DownloadItem cur;
+            bool found = DownloadsManager::getInstance().getDownloadCopy(capturedItem.ratingKey, cur);
+            if (!found || cur.state != DownloadState::COMPLETED) {
+                brls::Application::notify("Not ready yet");
                 return true;
-            });
-            row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
-        }
+            }
+
+            if (!capturedIsMusic) {
+                brls::Application::pushActivity(new PlayerActivity(capturedItem.ratingKey, true));
+                return true;
+            }
+
+            // Music — honour the user's track-default action.
+            TrackDefaultAction action = Application::getInstance().getSettings().trackDefaultAction;
+            MusicQueue& queue = MusicQueue::getInstance();
+            size_t completedIdx = 0;
+            std::vector<MediaItem> completedQueue =
+                buildCurrentCompletedQueue(&completedIdx, capturedItem.ratingKey);
+            if (completedQueue.empty()) {
+                brls::Application::notify("Nothing ready in this group");
+                return true;
+            }
+
+            MediaItem mi;
+            mi.ratingKey        = capturedItem.ratingKey;
+            mi.title            = capturedItem.title;
+            mi.grandparentTitle = capturedItem.parentTitle;
+            mi.parentTitle      = capturedItem.parentTitle;
+            mi.duration         = capturedItem.duration;
+            mi.thumb            = capturedItem.thumbUrl;
+
+            switch (action) {
+                case TrackDefaultAction::PLAY_NOW_CLEAR:
+                default:
+                    brls::Application::pushActivity(
+                        PlayerActivity::createWithQueue(completedQueue, completedIdx));
+                    break;
+                case TrackDefaultAction::PLAY_NEXT:
+                    if (queue.isEmpty()) {
+                        brls::Application::pushActivity(
+                            PlayerActivity::createWithQueue(completedQueue, completedIdx));
+                    } else {
+                        queue.insertTrackAfterCurrent(mi);
+                        brls::Application::notify("Playing next: " + mi.title);
+                    }
+                    break;
+                case TrackDefaultAction::ADD_TO_BOTTOM:
+                    if (queue.isEmpty()) {
+                        brls::Application::pushActivity(
+                            PlayerActivity::createWithQueue(completedQueue, completedIdx));
+                    } else {
+                        queue.addTrack(mi);
+                        brls::Application::notify("Added to queue: " + mi.title);
+                    }
+                    break;
+                case TrackDefaultAction::PLAY_NOW_REPLACE:
+                    if (queue.isEmpty()) {
+                        brls::Application::pushActivity(
+                            PlayerActivity::createWithQueue(completedQueue, completedIdx));
+                    } else {
+                        queue.insertTrackAfterCurrent(mi);
+                        if (queue.playNext()) {
+                            brls::Application::notify("Now playing: " + mi.title);
+                        }
+                    }
+                    break;
+                case TrackDefaultAction::ASK_EACH_TIME: {
+                    auto* dlg = new brls::Dialog("Choose Action");
+                    auto* opts = new brls::Box();
+                    opts->setAxis(brls::Axis::COLUMN);
+                    opts->setPadding(20);
+
+                    auto addBtn = [&opts](const std::string& text, std::function<bool(brls::View*)> act) {
+                        auto* btn = new brls::Button();
+                        btn->setText(text);
+                        btn->setHeight(44);
+                        btn->setMarginBottom(10);
+                        btn->registerClickAction(act);
+                        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
+                        opts->addView(btn);
+                    };
+
+                    addBtn("Play from Here", [dlg, completedQueue, completedIdx](brls::View*) {
+                        dlg->dismiss();
+                        brls::Application::pushActivity(
+                            PlayerActivity::createWithQueue(completedQueue, completedIdx));
+                        return true;
+                    });
+                    addBtn("Play Next", [dlg, mi](brls::View*) {
+                        dlg->dismiss();
+                        MusicQueue& q = MusicQueue::getInstance();
+                        if (q.isEmpty()) {
+                            std::vector<MediaItem> single = {mi};
+                            brls::Application::pushActivity(
+                                PlayerActivity::createWithQueue(single, 0));
+                        } else {
+                            q.insertTrackAfterCurrent(mi);
+                            brls::Application::notify("Playing next: " + mi.title);
+                        }
+                        return true;
+                    });
+                    addBtn("Add to Queue", [dlg, mi](brls::View*) {
+                        dlg->dismiss();
+                        MusicQueue& q = MusicQueue::getInstance();
+                        if (q.isEmpty()) {
+                            std::vector<MediaItem> single = {mi};
+                            brls::Application::pushActivity(
+                                PlayerActivity::createWithQueue(single, 0));
+                        } else {
+                            q.addTrack(mi);
+                            brls::Application::notify("Added to queue: " + mi.title);
+                        }
+                        return true;
+                    });
+                    addBtn("Cancel", [dlg](brls::View*) {
+                        dlg->dismiss();
+                        return true;
+                    });
+
+                    dlg->addView(opts);
+                    dlg->open();
+                    break;
+                }
+            }
+            return true;
+        });
+        row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
 
         trackListBox->addView(row);
     }
@@ -1399,14 +1454,28 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
     trackScroll->setContentView(trackListBox);
     mainBox->addView(trackScroll);
 
+    // Issue #2: link the first track row and the first action button
+    // (Play / Play All) so vertical navigation between the two sections
+    // works without sliding off through whatever happens to be in
+    // between. Otherwise UP from the first row falls into the static
+    // header label which is not focusable and the input gets eaten.
+    brls::View* firstTrackRow = nullptr;
+    for (auto* child : trackListBox->getChildren()) {
+        if (child->isFocusable()) { firstTrackRow = child; break; }
+    }
+    if (firstTrackRow && firstActionBtn) {
+        firstTrackRow->setCustomNavigationRoute(brls::FocusDirection::UP,   firstActionBtn);
+        firstActionBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstTrackRow);
+    }
+
     // Live 1 Hz refresh of the per-row status text and background colour,
     // plus the "Album - 3/10 ready" header. Without this the detail view
     // is a snapshot: the user only sees the new state after popping back
-    // out and re-entering. We deliberately do NOT swap action buttons /
-    // click handlers when an item transitions to COMPLETED — that would
-    // require focus juggling here just like rebuildList does, and the
-    // payoff is small (the user can press Back and re-enter to play a
-    // newly-completed track). All other visual state stays in sync.
+    // out and re-entering. Row click handlers are registered for every
+    // row up front (Issue #3) — they consult the manager at click time
+    // for current state, so a row that wasn't ready when the view
+    // opened becomes playable the moment its download finishes
+    // without any view-tree mutation here.
     DownloadGroupType captGroupType = groupType;
     std::string       captGroupKey  = groupKey;
     std::string       captTypeStr   = typeStr;
