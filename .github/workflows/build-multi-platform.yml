@@ -231,6 +231,7 @@ jobs:
   # PS Vita — VPK
   # ───────────────────────────────────────────────
   build-vita:
+    needs: [resolve-version]
     if: ${{ inputs.platform == 'psvita' || inputs.platform == 'all' ||  github.event_name != 'workflow_dispatch' }}
     name: PS Vita
     runs-on: ubuntu-latest
@@ -258,7 +259,8 @@ jobs:
 
       - name: Build
         run: |
-          cmake -B build -G Ninja -DPLATFORM_PSV=ON
+          cmake -B build -G Ninja -DPLATFORM_PSV=ON \
+          -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
           cmake --build build
 
       - name: Upload VPK
