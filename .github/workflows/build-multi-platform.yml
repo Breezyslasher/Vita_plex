@@ -20,10 +20,84 @@ on:
         - android
         - aur
         - deb
+      pre_release:
+        description: 'Upload artifacts to a GitHub pre-release'
+        type: boolean
+        default: false
       disable_builtin_nsp:
         description: disable builtin NSP
         type: boolean
+solve-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      version_number: ${{ steps.resolve.outputs.version_number }}
+      version_tag: ${{ steps.resolve.outputs.version_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Resolve build version
+        id: resolve
+        run: |
+          # Read base version from VERSION file
+          APP_VERSION="$(cat VERSION | tr -d '\n')"
+          BASE="${APP_VERSION#v}"
+          BASE_NUM=$(echo "$BASE" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+          if [[ -z "$BASE_NUM" ]]; then
+            BASE_NUM="0.0.0"
+          fi
 
+          if [[ -n "${{ inputs.version }}" ]]; then
+            V="${{ inputs.version }}"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            V="${APP_VERSION}"
+          else
+            # Non-release: use base version + build number (e.g. 2.1.0.456)
+            V="${BASE}.${{ github.run_number }}"
+          fi
+          V="${V#v}"
+          # Extract numeric version for CMake / Vita / PS4 / deb (no labels)
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            # Release: X.Y.Z only
+            NUM="${BASE_NUM}"
+          else
+            # Non-release: X.Y.Z.build
+            NUM="${BASE_NUM}.${{ github.run_number }}"
+          fi
+          # Filename/tag-safe version (spaces → hyphens)
+          TAG="${V// /-}"
+          echo "version=${V}" >> "$GITHUB_OUTPUT"
+          echo "version_number=${NUM}" >> "$GITHUB_OUTPUT"
+          echo "version_tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Display version: ${V}"
+          echo "Numeric version: ${NUM}"
+          echo "Tag/filename version: ${TAG}"
+
+  # ───────────────────────────────────────────────
+  # Save version override to VERSION file
+  # ───────────────────────────────────────────────
+  save-version:
+    needs: [resolve-version]
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.version != '' }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+      - name: Update VERSION file
+        run: |
+          echo "${{ inputs.version }}" > VERSION
+          echo "Updated VERSION to: ${{ inputs.version }}"
+          cat VERSION
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "Update APP_VERSION to ${{ inputs.version }}"
+          git push
 # ─────────────────────────────────────────────────────────────────────────────
 # Build matrix
 # ─────────────────────────────────────────────────────────────────────────────
