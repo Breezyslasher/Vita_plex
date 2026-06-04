@@ -2175,6 +2175,7 @@ void MediaDetailView::showShowContextMenu(const MediaItem& show) {
 
 
 void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
+    brls::Logger::info("showEpisodeContextMenu called for {}", episode.title);
     auto* dialog = new brls::Dialog(episode.title);
 
     auto* optionsBox = new brls::Box();
