@@ -536,7 +536,23 @@ jobs:
               apk add --no-cache patchelf
             fi
           fi
+          # Patch the binary's RPATH to look in $ORIGIN/lib first.
+          # Then patch every BUNDLED lib too — modern ELF uses DT_RUNPATH
+          # which only resolves a library's DIRECT deps; the loader will
+          # NOT cascade the binary's RUNPATH through libavformat when
+          # libavformat asks for librtmp. So even though librtmp.so.1
+          # is sitting in $ORIGIN/lib, the system-built libavformat (no
+          # RUNPATH) couldn't see it and Steam Deck failed with
+          # "error while loading shared libraries: librtmp.so.1".
+          # Giving each bundled lib RPATH=$ORIGIN makes the bundle
+          # self-resolving.
           patchelf --set-rpath '$ORIGIN/lib' build/VitaPlex
+          for so in "$BUNDLE_DIR"/*.so*; do
+            [ -f "$so" ] || continue
+            # `|| true` because some libs (e.g. stripped vendor blobs)
+            # may refuse to be patched; non-fatal for the overall bundle.
+            patchelf --set-rpath '$ORIGIN' "$so" 2>/dev/null || true
+          done
 
           tar -czf VitaPlex-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz -C build VitaPlex resources lib
       - name: Upload Flatpak artifact
