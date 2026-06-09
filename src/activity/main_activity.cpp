@@ -208,18 +208,27 @@ void MainActivity::onContentAvailable() {
             // group rows, etc. — 30+ sites), so without this the menu
             // is literally unreachable on those remotes.
             //
-            // Re-dispatch GUIDE as a synthetic START at the root level:
-            // Application::handleAction walks from currentFocus up the
-            // parent chain, so calling it again with BUTTON_START
-            // hits every existing handler unchanged. Registering only
-            // on rootBox means a child view that ever wires its OWN
-            // BUTTON_GUIDE action would shadow this (returning true
-            // consumes the button before the walk reaches us) — which
-            // is the right precedence.
+            // Re-dispatch GUIDE as a synthetic START at the root level
+            // by walking the focused view's parent chain and firing the
+            // first BUTTON_START gamepad action we find. Mirrors what
+            // brls::Application::handleAction does internally (we can't
+            // call that — it's private), but only acts on START and
+            // only fires the first hit, which is the matching context
+            // menu's handler. Registering only on rootBox means a child
+            // view that ever wires its OWN BUTTON_GUIDE action would
+            // shadow this — the right precedence.
             rootBox->registerAction("", brls::ControllerButton::BUTTON_GUIDE, [](brls::View*) {
-                brls::Application::handleAction(brls::ActionType::ACTION_GAMEPAD,
-                                                brls::ControllerButton::BUTTON_START,
-                                                false);
+                brls::View* v = brls::Application::getCurrentFocus();
+                while (v) {
+                    for (auto& a : v->getActions()) {
+                        if (a->getType() == brls::ActionType::ACTION_GAMEPAD &&
+                            a->getButton() == brls::ControllerButton::BUTTON_START &&
+                            a->isAvailable()) {
+                            if (a->getActionListener()(v)) return true;
+                        }
+                    }
+                    v = v->getParent();
+                }
                 return true;
             });
         }

@@ -282,9 +282,17 @@ void PlayerActivity::onContentAvailable() {
     // isn't on top — but the activity stack means parent-walk doesn't
     // cross activities, so PlayerActivity needs its own.
     this->registerAction("", brls::ControllerButton::BUTTON_GUIDE, [](brls::View*) {
-        brls::Application::handleAction(brls::ActionType::ACTION_GAMEPAD,
-                                        brls::ControllerButton::BUTTON_START,
-                                        false);
+        brls::View* v = brls::Application::getCurrentFocus();
+        while (v) {
+            for (auto& a : v->getActions()) {
+                if (a->getType() == brls::ActionType::ACTION_GAMEPAD &&
+                    a->getButton() == brls::ControllerButton::BUTTON_START &&
+                    a->isAvailable()) {
+                    if (a->getActionListener()(v)) return true;
+                }
+            }
+            v = v->getParent();
+        }
         return true;
     });
 
