@@ -41,32 +41,61 @@ struct GridSizing {
     int cellWidth;   // px to hint into MediaItemCell::setCoverWidthHint
 };
 
-GridSizing computeGridSizing() {
+// `availableWidth` is the REAL laid-out width of the grid's content area
+// (m_contentBox interior). Measuring it directly — rather than guessing
+// viewportWidth minus a sidebar reserve — is what stops the rightmost
+// column from being clipped off-screen: borealis scales everything into
+// a virtual coordinate system whose width does NOT stay 1280 when the
+// window is a non-16:9 shape, so the old `viewport - sidebar` estimate
+// over-counted available space and packed in one column too many.
+GridSizing computeGridSizing(int availableWidth) {
     const auto& ic = vitaplex::platform::getImageConstraints();
-    float vw = vitaplex::platform::viewportWidth();
-    int reserve = ic.sidebarMinWidth + 20;        // sidebar usually sits
-                                                  // closer to min than max
-    int available = (int)vw - reserve;
     int spacing = ic.gridCellSpacing;
     int designW = ic.posterWidth;
-    if (available <= 0 || designW <= 0) {
+    if (availableWidth <= 0 || designW <= 0) {
         return { std::max(2, ic.gridColumns), designW };
     }
 
     int minCellW = std::max(80, (designW * 7) / 10);   // 70% floor
     int maxCellW = (designW * 13) / 10;                // 130% ceiling
+
+    // Per-cell footprint beyond the cover width itself:
+    //   +10  MediaItemCell sets its own width to coverWidth + 10 (the
+    //        cell's internal horizontal padding), and
+    //   +spacing  RecyclingGrid gives every cell a marginRight.
+    // So a row of c cells consumes c*(coverWidth + 10 + spacing). Solve
+    // for coverWidth and shave 1px of safety so integer rounding never
+    // nudges the last cell past the right edge (the clipping bug).
+    const int perCellOverhead = 10 + spacing;
     int bestCols  = 1;
-    int bestCellW = available;
+    int bestCellW = availableWidth - perCellOverhead;
     for (int c = 1; c <= 12; ++c) {
-        int cellW = (available - (c - 1) * spacing) / c - 10; // -10 for cell margin
+        int cellW = (availableWidth / c) - perCellOverhead - 1;
         if (cellW < minCellW) break;   // any larger c shrinks further
         bestCols  = c;
         bestCellW = cellW;
     }
     if (bestCellW > maxCellW) bestCellW = maxCellW;
+    if (bestCellW < 80)       bestCellW = 80;
     return { bestCols, bestCellW };
 }
 }  // namespace
+
+int RecyclingGrid::availableContentWidth() {
+    // Prefer the grid's own laid-out width (minus the content box's
+    // 10px-per-side padding) — that's the ground truth for how much
+    // room the cells actually have, regardless of how borealis scaled
+    // the window into virtual coords. Before the first layout pass the
+    // width is 0; fall back to the viewport-minus-sidebar estimate so
+    // the very first build still gets a sane column count, then the
+    // post-layout recompute (see draw()) corrects it.
+    float w = this->getWidth();
+    if (w > 1.0f) {
+        return (int)w - 20;
+    }
+    const auto& ic = platform::getImageConstraints();
+    return (int)platform::viewportWidth() - ic.sidebarMinWidth - 20;
+}
 
 RecyclingGrid::RecyclingGrid() {
     this->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
@@ -78,9 +107,9 @@ RecyclingGrid::RecyclingGrid() {
     this->setContentView(m_contentBox);
 
     // Grid layout — column count AND per-cell width are computed from
-    // the current viewport so a small window shows fewer, larger covers
-    // and a wide one shows many design-sized covers. See computeGridSizing.
-    auto sizing  = computeGridSizing();
+    // the grid's available content width so a small window shows fewer,
+    // larger covers and a wide one shows many design-sized covers.
+    auto sizing  = computeGridSizing(availableContentWidth());
     m_columns    = sizing.columns;
     m_cellWidth  = sizing.cellWidth;
     m_visibleRows = 3;
@@ -88,15 +117,15 @@ RecyclingGrid::RecyclingGrid() {
     // React to every window-size change, not just orientation flips —
     // a user dragging a desktop window narrower keeps the same
     // orientation but needs the grid to drop columns and grow each
-    // cell. computeGridSizing() short-circuits when nothing actually
-    // changed so we don't pay for rebuilds on every resize tick.
+    // cell. Short-circuit when nothing actually changed so we don't pay
+    // for rebuilds on every resize tick.
     std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
     auto* resizeEvt = brls::Application::getWindowSizeChangedEvent();
     if (resizeEvt) {
         resizeEvt->subscribe([this, aliveWeak]() {
             auto alive = aliveWeak.lock();
             if (!alive || !alive->load()) return;
-            auto s = computeGridSizing();
+            auto s = computeGridSizing(availableContentWidth());
             if (s.columns == m_columns && s.cellWidth == m_cellWidth) return;
             m_columns   = s.columns;
             m_cellWidth = s.cellWidth;
@@ -309,6 +338,11 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
 }
 
 void RecyclingGrid::rebuildGrid() {
+    // Record the width this layout is built against so draw()'s
+    // post-layout correction and the resize listener don't trigger a
+    // redundant second rebuild for the width we just used.
+    m_builtForWidth = availableContentWidth();
+
     // Crash fix for "open category": setDataSource() runs while one of
     // our cells (the category cell the user just clicked) still owns
     // the focus. The old implementation called m_contentBox->clearViews()
@@ -399,6 +433,27 @@ void RecyclingGrid::onItemClicked(int index) {
 
 void RecyclingGrid::draw(NVGcontext* vg, float x, float y, float width, float height,
                           brls::Style style, brls::FrameContext* ctx) {
+    // First real layout pass correction. The grid is often built before
+    // it has a laid-out width (data arrives async from Plex after the
+    // view is attached but possibly before the first layout), so the
+    // construction-time sizing used the viewport ESTIMATE. Once the
+    // actual content width is known and differs enough from what we
+    // built against, recompute columns/cell-width and rebuild ONCE. The
+    // >8px guard avoids ping-ponging on sub-pixel layout jitter; the
+    // window-resize listener handles deliberate resizes separately.
+    if (!m_items.empty()) {
+        int availW = availableContentWidth();
+        if (std::abs(availW - m_builtForWidth) > 8) {
+            auto s = computeGridSizing(availW);
+            if (s.columns != m_columns || s.cellWidth != m_cellWidth) {
+                m_columns   = s.columns;
+                m_cellWidth = s.cellWidth;
+                rebuildGrid();
+            }
+            m_builtForWidth = availW;
+        }
+    }
+
     // Visibility-cull off-screen rows. ScrollingFrame::draw() walks every
     // row in m_contentBox and issues a full View::frame() pass on each —
     // even ones nowhere near the viewport. Flipping off-screen rows to

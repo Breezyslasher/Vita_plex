@@ -51,6 +51,10 @@ private:
     void rebuildGrid();
     void onItemClicked(int index);
     void addCellForItem(brls::Box*& currentRow, int& itemsInRow, size_t index);
+    // Real laid-out content width (interior of m_contentBox). Falls back
+    // to a viewport estimate before the first layout pass. Non-const
+    // because borealis View::getWidth() isn't const.
+    int availableContentWidth();
 
     std::vector<MediaItem> m_items;
     std::function<void(const MediaItem&)> m_onItemSelected;
@@ -70,6 +74,10 @@ private:
     // Per-cell cover width hint forwarded to MediaItemCell. 0 = use the
     // platform constant. Set alongside m_columns by computeGridSizing.
     int m_cellWidth = 0;
+    // Content width the current layout was built against. draw() compares
+    // the live width to this and rebuilds once when the first real layout
+    // pass supersedes the construction-time viewport estimate.
+    int m_builtForWidth = 0;
     int m_visibleRows = 3;
     size_t m_renderedCount = 0;
 
