@@ -20,6 +20,16 @@ public:
     void setItem(const MediaItem& item);
     const MediaItem& getItem() const { return m_item; }
 
+    // Override the cover width (in virtual px). When >0 the cell sizes
+    // its cover to this width instead of the platform-constant
+    // posterWidth/squareCoverSize/landscapeWidth, with height computed
+    // from each media type's natural aspect ratio. Used by RecyclingGrid
+    // to stretch cells across the row on small viewports — without it,
+    // dragging the window narrow would just keep rendering tiny posters
+    // because the platform constant is sized for a regular desktop.
+    // Must be called BEFORE setItem() to take effect for this binding.
+    void setCoverWidthHint(int width) { m_coverWidthHint = width; }
+
     // True if this cell's media type shows the start-button hint overlay
     // when focused (movies, shows, seasons, albums, artists, playlists).
     // Episodes / tracks / clips intentionally don't get the hint.
@@ -63,6 +73,12 @@ private:
     brls::Label* m_subtitleLabel = nullptr;
     brls::Label* m_descriptionLabel = nullptr;  // Shows on focus for episodes
     brls::Rectangle* m_progressBar = nullptr;
+
+    // RecyclingGrid-supplied cover width override; 0 means "use the
+    // platform constant". Aspect ratio for movies / episodes is
+    // preserved by deriving height from the relevant ImageConstraints
+    // pair at the override time.
+    int m_coverWidthHint = 0;
 };
 
 } // namespace vitaplex

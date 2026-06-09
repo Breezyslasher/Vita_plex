@@ -13,34 +13,58 @@
 namespace vitaplex {
 
 namespace {
-// Decide how many cells fit per row given the current viewport.
+// Pick a (columns, cell-width) pair for the current viewport.
 //
-// The platform's ImageConstraints::gridColumns is treated as a minimum
-// (so a single-form-factor target like PSV always shows at least its
-// designed count) but on devices whose viewport is large enough to fit
-// more, we add them — that's how a foldable phone open in portrait
-// (~1080 virtual px) shows 5 columns while a regular phone in portrait
-// (~720) shows 3 with no per-device config required.
+// Old behaviour clamped columns up to ImageConstraints::gridColumns as
+// a floor, which meant a small viewport — a dragged-narrow desktop
+// window, a laptop's outer cover screen, a folded phone — was forced
+// to fit the platform's design column count into too little space, and
+// each cover shrank to a thumbnail. New behaviour:
 //
-// Available width = viewport - sidebar reserve. We deliberately use
-// `sidebarMaxWidth` rather than the live sidebar width so this can
-// run before MainActivity has populated the sidebar, and so a
-// later collapse / expand doesn't strand us with the wrong count.
-int computeColumns() {
+//   1. Sweep column counts c = 1..12, computing the resulting cell
+//      width = (available - (c-1)*spacing) / c.
+//   2. Pick the largest c whose cell width >= 70% of the platform's
+//      designed posterWidth — i.e. covers can shrink a bit before we
+//      give up a column entirely, but never enough to look like
+//      thumbnails.
+//   3. Cap the resulting cell width at 130% of the designed posterWidth
+//      so a 4K desktop with one column of room doesn't render a
+//      single huge cover; it'd rather show two design-sized covers.
+//
+// Result: a 1024-wide desktop window shows 3-4 grid columns with
+// design-sized covers; the user dragging it down to 600 wide drops to
+// 2 columns of slightly larger covers; 400 wide drops to 1 column of
+// a single big cover instead of five thumbnails. Mirror behaviour for
+// phones in portrait vs unfolded portrait vs landscape.
+struct GridSizing {
+    int columns;
+    int cellWidth;   // px to hint into MediaItemCell::setCoverWidthHint
+};
+
+GridSizing computeGridSizing() {
     const auto& ic = vitaplex::platform::getImageConstraints();
     float vw = vitaplex::platform::viewportWidth();
-    int reserve = ic.sidebarMaxWidth + 20;        // sidebar + small padding
+    int reserve = ic.sidebarMinWidth + 20;        // sidebar usually sits
+                                                  // closer to min than max
     int available = (int)vw - reserve;
-    int cellW = ic.posterWidth + ic.gridCellSpacing;
-    if (cellW <= 0 || available <= 0) return ic.gridColumns;
-    int fit = available / cellW;
-    if (fit < ic.gridColumns) fit = ic.gridColumns;  // never less than the
-                                                    // platform-designed
-                                                    // minimum
-    if (fit > 12) fit = 12;                          // sanity cap — even
-                                                    // an 8K display shouldn't
-                                                    // shove 20 covers in a row
-    return fit;
+    int spacing = ic.gridCellSpacing;
+    int designW = ic.posterWidth;
+    if (available <= 0 || designW <= 0) {
+        return { std::max(2, ic.gridColumns), designW };
+    }
+
+    int minCellW = std::max(80, (designW * 7) / 10);   // 70% floor
+    int maxCellW = (designW * 13) / 10;                // 130% ceiling
+    int bestCols  = 1;
+    int bestCellW = available;
+    for (int c = 1; c <= 12; ++c) {
+        int cellW = (available - (c - 1) * spacing) / c - 10; // -10 for cell margin
+        if (cellW < minCellW) break;   // any larger c shrinks further
+        bestCols  = c;
+        bestCellW = cellW;
+    }
+    if (bestCellW > maxCellW) bestCellW = maxCellW;
+    return { bestCols, bestCellW };
 }
 }  // namespace
 
@@ -53,22 +77,32 @@ RecyclingGrid::RecyclingGrid() {
     m_contentBox->setPadding(10);
     this->setContentView(m_contentBox);
 
-    // Grid layout — column count is computed from the current viewport
-    // width so a foldable phone (~1080) gets ~5 columns and a regular
-    // phone (~720) gets 3 without any per-device config. The platform's
-    // ImageConstraints::gridColumns is treated as a MINIMUM here.
-    m_columns = computeColumns();
+    // Grid layout — column count AND per-cell width are computed from
+    // the current viewport so a small window shows fewer, larger covers
+    // and a wide one shows many design-sized covers. See computeGridSizing.
+    auto sizing  = computeGridSizing();
+    m_columns    = sizing.columns;
+    m_cellWidth  = sizing.cellWidth;
     m_visibleRows = 3;
 
+    // React to every window-size change, not just orientation flips —
+    // a user dragging a desktop window narrower keeps the same
+    // orientation but needs the grid to drop columns and grow each
+    // cell. computeGridSizing() short-circuits when nothing actually
+    // changed so we don't pay for rebuilds on every resize tick.
     std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
-    platform::onOrientationChanged([this, aliveWeak]() {
-        auto alive = aliveWeak.lock();
-        if (!alive || !alive->load()) return;
-        int newCols = computeColumns();
-        if (newCols == m_columns) return;
-        m_columns = newCols;
-        if (!m_items.empty()) rebuildGrid();
-    });
+    auto* resizeEvt = brls::Application::getWindowSizeChangedEvent();
+    if (resizeEvt) {
+        resizeEvt->subscribe([this, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !alive->load()) return;
+            auto s = computeGridSizing();
+            if (s.columns == m_columns && s.cellWidth == m_cellWidth) return;
+            m_columns   = s.columns;
+            m_cellWidth = s.cellWidth;
+            if (!m_items.empty()) rebuildGrid();
+        });
+    }
 }
 
 RecyclingGrid::~RecyclingGrid() {
@@ -155,6 +189,7 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
     }
 
     auto* cell = new MediaItemCell();
+    if (m_cellWidth > 0) cell->setCoverWidthHint(m_cellWidth);
     cell->setItem(m_items[index]);
     cell->setMarginRight(spacing);
     m_cells.push_back(cell);

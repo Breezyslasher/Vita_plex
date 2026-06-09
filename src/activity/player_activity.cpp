@@ -448,16 +448,25 @@ void PlayerActivity::onContentAvailable() {
         // Rescale the album cover to fit the current viewport (e.g.
         // make it large on a portrait phone where the XML default of
         // 220x220 would float lost in the middle), and keep it sized
-        // correctly across rotations. The captured weak ref guards
-        // against the orientation callback firing after the activity
-        // has been popped.
+        // correctly through any window resize — orientation flip, drag
+        // to a cover-display, foldable open/close.
+        //
+        // Subscribed directly to brls's window-size event rather than
+        // platform::onOrientationChanged so we also react to a window
+        // shrinking WITHIN the same orientation (which is the common
+        // case: a user dragging a desktop window narrower, or a phone
+        // moving to a small outer display). The weak alive guard skips
+        // the callback after the activity has been popped.
         applyMusicLayoutForViewport();
         std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
-        platform::onOrientationChanged([this, aliveWeak]() {
-            auto alive = aliveWeak.lock();
-            if (!alive || !alive->load()) return;
-            applyMusicLayoutForViewport();
-        });
+        auto* resizeEvt = brls::Application::getWindowSizeChangedEvent();
+        if (resizeEvt) {
+            resizeEvt->subscribe([this, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !alive->load()) return;
+                applyMusicLayoutForViewport();
+            });
+        }
 
         // Wire music transport buttons
         if (musicPlayBtn) {
@@ -2355,28 +2364,29 @@ void PlayerActivity::updateShuffleIcon() {
 void PlayerActivity::applyMusicLayoutForViewport() {
     if (!albumArt) return;
 
-    // Compute a target cover size that fills the available width
-    // without crowding the controls. The XML defaults to 220×220 which
-    // is right for Vita / Switch landscape; on a portrait phone we want
-    // something closer to ~55% of the viewport width so the cover
-    // actually fills the space instead of floating tiny in the middle.
-    // Cap the height to ~45% of the viewport so the music_info and
-    // music_transport rows below it still have somewhere to land.
+    // Cover-screen / dragged-narrow / phone-portrait windows want the
+    // album art to dominate the available space — XML's 220x220 default
+    // floats lost in a 400-wide window. Bucket the target fraction by
+    // viewport width so a tiny window gets a near-full-width cover, a
+    // medium window gets a substantial one, and a wide TV gets a
+    // moderate one (the controls below it need room too).
+    //
+    // Vertical clamp at 50% prevents the cover from pushing the title
+    // / transport controls off-screen on a short window. Absolute
+    // floor / ceiling avoid pathological cases (zero-sized viewport
+    // during early init, 8K monitors).
     float vw = platform::viewportWidth();
     float vh = platform::viewportHeight();
     if (vw <= 0 || vh <= 0) return;
 
-    float byWidth  = vw * 0.55f;
-    float byHeight = vh * 0.45f;
-    float target   = std::min(byWidth, byHeight);
+    float target;
+    if (vw < 500.f)        target = vw * 0.85f;  // tiny window — cover dominates
+    else if (vw < 900.f)   target = vw * 0.65f;  // medium window
+    else                   target = vw * 0.45f;  // wide window
 
-    // Don't shrink below the original 220px design size — every
-    // platform has at least enough room for that on landscape.
-    if (target < 220.f) target = 220.f;
-    // And don't blow up beyond 480 in either direction; pushed any
-    // bigger the cover starts dominating the layout on big tablets
-    // and the controls feel orphaned at the bottom.
-    if (target > 480.f) target = 480.f;
+    if (target > vh * 0.5f) target = vh * 0.5f;
+    if (target < 180.f)     target = 180.f;
+    if (target > 600.f)     target = 600.f;
 
     albumArt->setWidth(target);
     albumArt->setHeight(target);

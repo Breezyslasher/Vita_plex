@@ -67,6 +67,9 @@ private:
     std::vector<MediaItemCell*> m_cells;
 
     int m_columns = 6;
+    // Per-cell cover width hint forwarded to MediaItemCell. 0 = use the
+    // platform constant. Set alongside m_columns by computeGridSizing.
+    int m_cellWidth = 0;
     int m_visibleRows = 3;
     size_t m_renderedCount = 0;
 

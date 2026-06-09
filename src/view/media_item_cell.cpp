@@ -141,24 +141,36 @@ void MediaItemCell::setItem(const MediaItem& item) {
     const int  posterLabel  = portrait ? 24 : 35;
     const int  landscLabel  = portrait ? 32 : 45;
 
+    // If the grid passed us a width hint (RecyclingGrid uses this to
+    // stretch cells across small viewports), use it; otherwise fall
+    // back to the platform's designed cover size. Aspect ratio is
+    // taken from the matching ImageConstraints pair so the override
+    // doesn't squash the poster.
     if (isMusic) {
-        // Square album art
-        m_coverSlot->setWidth(ic.squareCoverSize);
-        m_coverSlot->setHeight(ic.squareCoverSize);
-        this->setWidth(ic.squareCoverSize + 10);
-        this->setHeight(ic.squareCoverSize + musicLabel);
+        int w = (m_coverWidthHint > 0) ? m_coverWidthHint : ic.squareCoverSize;
+        int h = w; // square
+        m_coverSlot->setWidth(w);
+        m_coverSlot->setHeight(h);
+        this->setWidth(w + 10);
+        this->setHeight(h + musicLabel);
     } else if (isEpisode || isClip) {
-        // Landscape episode still / extras clip
-        m_coverSlot->setWidth(ic.landscapeWidth);
-        m_coverSlot->setHeight(ic.landscapeHeight);
-        this->setWidth(ic.landscapeWidth + 10);
-        this->setHeight(ic.landscapeHeight + landscLabel);
+        int w = (m_coverWidthHint > 0) ? m_coverWidthHint : ic.landscapeWidth;
+        int h = (m_coverWidthHint > 0 && ic.landscapeWidth > 0)
+                ? (w * ic.landscapeHeight) / ic.landscapeWidth
+                : ic.landscapeHeight;
+        m_coverSlot->setWidth(w);
+        m_coverSlot->setHeight(h);
+        this->setWidth(w + 10);
+        this->setHeight(h + landscLabel);
     } else {
-        // Portrait poster
-        m_coverSlot->setWidth(ic.posterWidth);
-        m_coverSlot->setHeight(ic.posterHeight);
-        this->setWidth(ic.posterWidth + 10);
-        this->setHeight(ic.posterHeight + posterLabel);
+        int w = (m_coverWidthHint > 0) ? m_coverWidthHint : ic.posterWidth;
+        int h = (m_coverWidthHint > 0 && ic.posterWidth > 0)
+                ? (w * ic.posterHeight) / ic.posterWidth
+                : ic.posterHeight;
+        m_coverSlot->setWidth(w);
+        m_coverSlot->setHeight(h);
+        this->setWidth(w + 10);
+        this->setHeight(h + posterLabel);
     }
 
     // Set title
@@ -256,14 +268,18 @@ void MediaItemCell::loadThumbnail() {
     const auto& ic = platform::getImageConstraints();
     int width, height;
     if (isMusic) {
-        width = ic.squareCoverSize;
-        height = ic.squareCoverSize;
+        width = (m_coverWidthHint > 0) ? m_coverWidthHint : ic.squareCoverSize;
+        height = width;
     } else if (isEpisode || isClip) {
-        width = ic.landscapeWidth;
-        height = ic.landscapeHeight;
+        width  = (m_coverWidthHint > 0) ? m_coverWidthHint : ic.landscapeWidth;
+        height = (m_coverWidthHint > 0 && ic.landscapeWidth > 0)
+                 ? (width * ic.landscapeHeight) / ic.landscapeWidth
+                 : ic.landscapeHeight;
     } else {
-        width = ic.posterWidth;
-        height = ic.posterHeight;
+        width  = (m_coverWidthHint > 0) ? m_coverWidthHint : ic.posterWidth;
+        height = (m_coverWidthHint > 0 && ic.posterWidth > 0)
+                 ? (width * ic.posterHeight) / ic.posterWidth
+                 : ic.posterHeight;
     }
 
     // For episodes, use episode's own thumb (episode still) - landscape format
