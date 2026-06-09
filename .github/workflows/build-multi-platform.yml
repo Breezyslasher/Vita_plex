@@ -443,7 +443,61 @@ jobs:
              -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
              -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
-          tar -czf VitaPlex-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz -C build VitaPlex resources
+
+          # Make the tarball self-contained: bundle libmpv and any other
+          # non-system shared deps next to the binary, set RPATH so the
+          # loader finds them. Without this SteamOS / Bazzite / any
+          # distro that doesn't ship libmpv.so.2 fails at launch with
+          # "error while loading shared libraries: libmpv.so.2:
+          # cannot open shared object file".
+          #
+          # Skip libs that ARE part of the base system on every modern
+          # Linux: glibc, libstdc++, libgcc_s, OpenGL/EGL/Vulkan,
+          # Wayland/X11/xkb/dbus, plus the dynamic loader itself. Those
+          # belong to the distro and should NOT be shipped (an old
+          # bundled glibc next to a newer host glibc is the classic way
+          # to crash on startup).
+          BUNDLE_DIR=build/lib
+          mkdir -p "$BUNDLE_DIR"
+          # `[-.]` after the prefix means we match both
+          # libwayland-client.so.0 (hyphen) and libwayland.so.0 (dot)
+          # without accidentally catching e.g. libcurl when we meant libc.
+          # Dash must be first inside the bracket to be literal in POSIX ERE.
+          EXCLUDE='^(/lib(64)?/ld-|.*/(libc|libm|libpthread|libdl|librt|libresolv|libutil|libnsl|libstdc\+\+|libgcc_s|libGL|libGLX|libEGL|libGLdispatch|libGLESv|libOpenGL|libvulkan|libX11|libxcb|libXext|libXrandr|libXi|libXinerama|libXcursor|libXrender|libXfixes|libwayland|libxkbcommon|libdbus|libsystemd|libudev|libdrm|libgbm)[-.]|linux-vdso\.so)'
+          while read -r lib; do
+            [[ -z "$lib" || ! -f "$lib" ]] && continue
+            [[ "$lib" =~ $EXCLUDE ]] && continue
+            cp -L "$lib" "$BUNDLE_DIR/"
+          done < <(ldd build/VitaPlex | awk '/=>/ {print $3}')
+          # mpv recursively pulls in ffmpeg / libass / etc.; walk those too.
+          for shipped in "$BUNDLE_DIR"/*.so*; do
+            [ -f "$shipped" ] || continue
+            while read -r dep; do
+              [[ -z "$dep" || ! -f "$dep" ]] && continue
+              [[ "$dep" =~ $EXCLUDE ]] && continue
+              name=$(basename "$dep")
+              [ -f "$BUNDLE_DIR/$name" ] && continue
+              cp -L "$dep" "$BUNDLE_DIR/"
+            done < <(ldd "$shipped" | awk '/=>/ {print $3}')
+          done
+          echo "Bundled libraries:"; ls -la "$BUNDLE_DIR" || true
+
+          # Point the binary at $ORIGIN/lib so it finds the bundled
+          # copies before consulting the host's lib path. Falls back to
+          # the system installation if a particular .so isn't bundled
+          # (e.g. the OpenGL stack, which we deliberately skipped).
+          if ! command -v patchelf >/dev/null 2>&1; then
+            if command -v apt-get >/dev/null 2>&1; then
+              sudo apt-get install -y patchelf || apt-get install -y patchelf
+            elif command -v dnf >/dev/null 2>&1; then
+              dnf install -y patchelf
+            elif command -v apk >/dev/null 2>&1; then
+              apk add --no-cache patchelf
+            fi
+          fi
+          patchelf --set-rpath '$ORIGIN/lib' build/VitaPlex
+
+          tar -czf VitaPlex-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz -C build VitaPlex resources lib
       - name: Upload Flatpak artifact
         uses: actions/upload-artifact@v4
         with:
