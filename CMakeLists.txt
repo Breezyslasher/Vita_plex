@@ -255,8 +255,22 @@ if(NOT DEFINED APP_VERSION OR APP_VERSION STREQUAL "")
         set(APP_VERSION "0.0.0")
     endif()
 endif()
-message(STATUS "App version: ${APP_VERSION}")
-target_compile_definitions(${PROJECT_NAME} PRIVATE VITA_PLEX_VERSION=\"${APP_VERSION}\")
+
+# CI can also pass a human-readable display version separately. APP_VERSION
+# is the numeric flavour ("1.0.2" / "1.0.2.455") that goes into Vita SFOs,
+# PS4 pkgs, deb changelogs and the X-Plex-Version API header (which Plex
+# expects to look numeric). APP_DISPLAY_VERSION is what the Settings >
+# Version cell shows the user ("Beta 1.0.2"). When CI doesn't supply it
+# we fall back to APP_VERSION so local dev builds still get something
+# sensible.
+if(NOT DEFINED APP_DISPLAY_VERSION OR APP_DISPLAY_VERSION STREQUAL "")
+    set(APP_DISPLAY_VERSION "${APP_VERSION}")
+endif()
+message(STATUS "App version (numeric): ${APP_VERSION}")
+message(STATUS "App version (display): ${APP_DISPLAY_VERSION}")
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    VITA_PLEX_VERSION=\"${APP_VERSION}\"
+    VITA_PLEX_DISPLAY_VERSION=\"${APP_DISPLAY_VERSION}\")
 
 
 # ---------------------------------------------------------------------------

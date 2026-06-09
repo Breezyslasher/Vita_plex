@@ -8,15 +8,25 @@
 #include <string>
 #include <functional>
 
-// Application version.
+// Application version. Two flavours, both injected by the build system
+// (CMakeLists.txt forwards them from -DAPP_VERSION / -DAPP_DISPLAY_VERSION):
 //
-// The build system injects the real version via -DVITA_PLEX_VERSION=...
-// (resolved from the VERSION file by CMake — see CMakeLists.txt). The
-// fallback below only applies to ad-hoc builds that bypass CMake, so the
-// Settings → Version cell and the X-Plex-Version header / User-Agent stay
-// in sync with what actually shipped instead of a stale literal.
+//   VITA_PLEX_VERSION         numeric ("1.0.2" or "1.0.2.455") — embedded
+//                             in Vita SFOs / PS4 pkgs / deb changelogs and
+//                             sent as the X-Plex-Version header to Plex
+//                             servers. Must look like a version number.
+//
+//   VITA_PLEX_DISPLAY_VERSION human-readable ("Beta 1.0.2") — shown in
+//                             the Settings > Version cell. Can include
+//                             labels and spaces.
+//
+// Fallbacks below apply only to ad-hoc builds that bypass CMake so the
+// header still compiles standalone.
 #ifndef VITA_PLEX_VERSION
 #define VITA_PLEX_VERSION "2.0.0"
+#endif
+#ifndef VITA_PLEX_DISPLAY_VERSION
+#define VITA_PLEX_DISPLAY_VERSION VITA_PLEX_VERSION
 #endif
 #define VITA_PLEX_VERSION_NUM 200
 

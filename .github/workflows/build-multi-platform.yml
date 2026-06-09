@@ -288,7 +288,8 @@ jobs:
       - name: Build
         run: |
           cmake -B build -G Ninja -DPLATFORM_PSV=ON \
-          -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
+          -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+          -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
 
       - name: Upload VPK
@@ -439,7 +440,8 @@ jobs:
       - name: Build desktop target in flatpak container
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON -DUSE_GLES2=${{ matrix.gles2 }} \
-             -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
+             -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+             -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
           tar -czf VitaPlex-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz -C build VitaPlex resources
       - name: Upload Flatpak artifact
@@ -483,6 +485,7 @@ jobs:
           cmake -B build -G Ninja \
             -DPLATFORM_SWITCH=ON \
             -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+            -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}" \
             ${{ matrix.cmake_extra }}
           cmake --build build
       - name: Upload NRO
@@ -517,7 +520,8 @@ jobs:
           OPENORBIS: /opt/pacbrew/ps4/openorbis
         run: |
           cmake -B build -DPLATFORM_PS4=ON \
-            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
+            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+            -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
       - name: Upload PS4 artifacts
         uses: actions/upload-artifact@v4
@@ -553,7 +557,8 @@ jobs:
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON \
             -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ matrix.target }} \
-            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
+            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+            -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
       - name: Bundle macOS dylibs
         run: |
@@ -718,7 +723,8 @@ jobs:
       - name: Build
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON -DUSE_SYSTEM_GLFW=ON -DUSE_D3D11=ON \
-          -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
+          -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+          -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
       - name: Bundle runtime DLLs
         run: |
@@ -794,7 +800,8 @@ jobs:
       - name: Build
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON \
-            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
+            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+            -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
           PKGROOT="pkgroot"
           rm -rf "$PKGROOT"
@@ -860,7 +867,8 @@ jobs:
       - name: Build
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON \
-            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
+            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+            -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
           tar --zstd -cf VitaPlex-${{ github.run_number }}.pkg.tar.zst -C build VitaPlex resources
       - name: Upload aur artifact
