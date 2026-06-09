@@ -199,6 +199,38 @@ void MainActivity::onContentAvailable() {
                 // Always return true to prevent the exit confirmation dialog
                 return true;
             });
+
+            // Android TV remotes (and most TV-style remotes) don't have a
+            // BUTTON_START. They DO have a Menu / Guide key, which SDL2
+            // surfaces as SDL_CONTROLLER_BUTTON_GUIDE -> borealis
+            // BUTTON_GUIDE. Every "Options" context menu in the app is
+            // wired to BUTTON_START (cells, grid items, downloads
+            // group rows, etc. — 30+ sites), so without this the menu
+            // is literally unreachable on those remotes.
+            //
+            // Re-dispatch GUIDE as a synthetic START at the root level
+            // by walking the focused view's parent chain and firing the
+            // first BUTTON_START gamepad action we find. Mirrors what
+            // brls::Application::handleAction does internally (we can't
+            // call that — it's private), but only acts on START and
+            // only fires the first hit, which is the matching context
+            // menu's handler. Registering only on rootBox means a child
+            // view that ever wires its OWN BUTTON_GUIDE action would
+            // shadow this — the right precedence.
+            rootBox->registerAction("", brls::ControllerButton::BUTTON_GUIDE, [](brls::View*) {
+                brls::View* v = brls::Application::getCurrentFocus();
+                while (v) {
+                    for (auto& a : v->getActions()) {
+                        if (a->getType() == brls::ActionType::ACTION_GAMEPAD &&
+                            a->getButton() == brls::ControllerButton::BUTTON_START &&
+                            a->isAvailable()) {
+                            if (a->getActionListener()(v)) return true;
+                        }
+                    }
+                    v = v->getParent();
+                }
+                return true;
+            });
         }
     }
 }

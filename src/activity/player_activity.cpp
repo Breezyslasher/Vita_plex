@@ -275,6 +275,27 @@ void PlayerActivity::onContentAvailable() {
         return true;
     });
 
+    // Android TV remote alias: GUIDE re-dispatches as START so the
+    // Menu key (which surfaces as BUTTON_GUIDE) opens the OSD too,
+    // not just the gamepad-only Start button. MainActivity has the
+    // mirror handler at the tab-frame level for when this activity
+    // isn't on top — but the activity stack means parent-walk doesn't
+    // cross activities, so PlayerActivity needs its own.
+    this->registerAction("", brls::ControllerButton::BUTTON_GUIDE, [](brls::View*) {
+        brls::View* v = brls::Application::getCurrentFocus();
+        while (v) {
+            for (auto& a : v->getActions()) {
+                if (a->getType() == brls::ActionType::ACTION_GAMEPAD &&
+                    a->getButton() == brls::ControllerButton::BUTTON_START &&
+                    a->isAvailable()) {
+                    if (a->getActionListener()(v)) return true;
+                }
+            }
+            v = v->getParent();
+        }
+        return true;
+    });
+
     // Picture-in-Picture: toggle on right-stick click and via a touchable OSD
     // button (for phones with no gamepad). Only shown in video mode, and only
     // registered on platforms where PiP is implemented (Android + desktop
@@ -359,7 +380,10 @@ void PlayerActivity::onContentAvailable() {
 
         // D-pad left/right seek when controls are hidden (for TV remotes
         // without shoulder buttons). When controls are visible, return false
-        // so D-pad navigation between buttons works normally.
+        // so D-pad navigation between buttons works normally — but reset
+        // the idle timer first so the OSD doesn't fade out from under
+        // the user while they're navigating between controls (the
+        // Android TV bug: "OSD closes while I'm still moving").
         this->registerAction("Seek Back", brls::ControllerButton::BUTTON_LEFT, [this](brls::View* view) {
             if (!m_controlsVisible) {
                 resetControlsIdleTimer();
@@ -367,6 +391,7 @@ void PlayerActivity::onContentAvailable() {
                 seek(-interval);
                 return true;
             }
+            resetControlsIdleTimer();
             return false;  // Let D-pad navigation handle it
         });
 
@@ -377,9 +402,36 @@ void PlayerActivity::onContentAvailable() {
                 seek(interval);
                 return true;
             }
+            resetControlsIdleTimer();
             return false;  // Let D-pad navigation handle it
         });
+
     }
+
+    // D-pad up/down: when controls are HIDDEN, summon them — this is
+    // how Android TV remotes (which have no BUTTON_START) reopen the
+    // OSD after it auto-hides. When controls are VISIBLE, reset the
+    // idle timer and return false so up/down focus navigation between
+    // transport rows / buttons keeps working without the OSD timing
+    // out mid-press ("odd colors / closes while user is still
+    // moving"). Registered for BOTH music and video modes.
+    this->registerAction("Show Controls", brls::ControllerButton::BUTTON_UP, [this](brls::View* view) {
+        if (!m_controlsVisible) {
+            showControls();
+            return true;
+        }
+        resetControlsIdleTimer();
+        return false;
+    });
+
+    this->registerAction("Show Controls", brls::ControllerButton::BUTTON_DOWN, [this](brls::View* view) {
+        if (!m_controlsVisible) {
+            showControls();
+            return true;
+        }
+        resetControlsIdleTimer();
+        return false;
+    });
 
     // Wire up touch buttons with tap gesture recognizers
     if (playBtn) {

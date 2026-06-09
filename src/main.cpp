@@ -22,6 +22,7 @@
 #include "view/media_detail_view.hpp"
 #include "view/video_view.hpp"
 #include "app/downloads_manager.hpp"
+#include "app/hint_icons.hpp"
 #include "utils/http_client.hpp"
 #include "platform/platform.hpp"
 
@@ -73,6 +74,12 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
     brls::Application::getPlatform()->getThemeVariant();
 
     registerCustomViews();
+
+    // Wire up runtime input-source tracking so hint icons can switch
+    // between controller / kbd+mouse / touch on desktop and android.
+    // Must run AFTER brls::Application::init() so the platform input
+    // manager exists.
+    vitaplex::HintIcons::init();
 
     // Initialize downloads manager
     vitaplex::DownloadsManager::getInstance().init();
