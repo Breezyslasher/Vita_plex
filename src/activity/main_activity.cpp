@@ -199,6 +199,29 @@ void MainActivity::onContentAvailable() {
                 // Always return true to prevent the exit confirmation dialog
                 return true;
             });
+
+            // Android TV remotes (and most TV-style remotes) don't have a
+            // BUTTON_START. They DO have a Menu / Guide key, which SDL2
+            // surfaces as SDL_CONTROLLER_BUTTON_GUIDE -> borealis
+            // BUTTON_GUIDE. Every "Options" context menu in the app is
+            // wired to BUTTON_START (cells, grid items, downloads
+            // group rows, etc. — 30+ sites), so without this the menu
+            // is literally unreachable on those remotes.
+            //
+            // Re-dispatch GUIDE as a synthetic START at the root level:
+            // Application::handleAction walks from currentFocus up the
+            // parent chain, so calling it again with BUTTON_START
+            // hits every existing handler unchanged. Registering only
+            // on rootBox means a child view that ever wires its OWN
+            // BUTTON_GUIDE action would shadow this (returning true
+            // consumes the button before the walk reaches us) — which
+            // is the right precedence.
+            rootBox->registerAction("", brls::ControllerButton::BUTTON_GUIDE, [](brls::View*) {
+                brls::Application::handleAction(brls::ActionType::ACTION_GAMEPAD,
+                                                brls::ControllerButton::BUTTON_START,
+                                                false);
+                return true;
+            });
         }
     }
 }

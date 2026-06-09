@@ -275,6 +275,19 @@ void PlayerActivity::onContentAvailable() {
         return true;
     });
 
+    // Android TV remote alias: GUIDE re-dispatches as START so the
+    // Menu key (which surfaces as BUTTON_GUIDE) opens the OSD too,
+    // not just the gamepad-only Start button. MainActivity has the
+    // mirror handler at the tab-frame level for when this activity
+    // isn't on top — but the activity stack means parent-walk doesn't
+    // cross activities, so PlayerActivity needs its own.
+    this->registerAction("", brls::ControllerButton::BUTTON_GUIDE, [](brls::View*) {
+        brls::Application::handleAction(brls::ActionType::ACTION_GAMEPAD,
+                                        brls::ControllerButton::BUTTON_START,
+                                        false);
+        return true;
+    });
+
     // Picture-in-Picture: toggle on right-stick click and via a touchable OSD
     // button (for phones with no gamepad). Only shown in video mode, and only
     // registered on platforms where PiP is implemented (Android + desktop
