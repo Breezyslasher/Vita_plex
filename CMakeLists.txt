@@ -159,7 +159,12 @@ set(APP_SOURCES
 # vitaplex::platform interface declared in include/platform/platform.hpp.
 # This is the same pattern Vita_Suwayomi uses: select one TU at configure
 # time so the rest of the codebase contains zero #ifdef PLATFORM_* blocks.
+#
+# platform_common.cpp is always compiled — it holds the orientation /
+# viewport helpers that defer to brls::Application and are identical
+# across every target.
 # ---------------------------------------------------------------------------
+list(APPEND APP_SOURCES src/platform/platform_common.cpp)
 if(PLATFORM_PSV)
     list(APPEND APP_SOURCES src/platform/platform_psv.cpp)
 elseif(PLATFORM_PS4)

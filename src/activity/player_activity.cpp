@@ -445,6 +445,20 @@ void PlayerActivity::onContentAvailable() {
         if (musicInfo) musicInfo->setVisibility(brls::Visibility::VISIBLE);
         if (musicTransport) musicTransport->setVisibility(brls::Visibility::VISIBLE);
 
+        // Rescale the album cover to fit the current viewport (e.g.
+        // make it large on a portrait phone where the XML default of
+        // 220x220 would float lost in the middle), and keep it sized
+        // correctly across rotations. The captured weak ref guards
+        // against the orientation callback firing after the activity
+        // has been popped.
+        applyMusicLayoutForViewport();
+        std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+        platform::onOrientationChanged([this, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !alive->load()) return;
+            applyMusicLayoutForViewport();
+        });
+
         // Wire music transport buttons
         if (musicPlayBtn) {
             musicPlayBtn->registerClickAction([this](brls::View* view) {
@@ -2336,6 +2350,36 @@ void PlayerActivity::updateShuffleIcon() {
     } else {
         shuffleIcon->setImageFromRes("icons/shuffle-disabled.png");
     }
+}
+
+void PlayerActivity::applyMusicLayoutForViewport() {
+    if (!albumArt) return;
+
+    // Compute a target cover size that fills the available width
+    // without crowding the controls. The XML defaults to 220×220 which
+    // is right for Vita / Switch landscape; on a portrait phone we want
+    // something closer to ~55% of the viewport width so the cover
+    // actually fills the space instead of floating tiny in the middle.
+    // Cap the height to ~45% of the viewport so the music_info and
+    // music_transport rows below it still have somewhere to land.
+    float vw = platform::viewportWidth();
+    float vh = platform::viewportHeight();
+    if (vw <= 0 || vh <= 0) return;
+
+    float byWidth  = vw * 0.55f;
+    float byHeight = vh * 0.45f;
+    float target   = std::min(byWidth, byHeight);
+
+    // Don't shrink below the original 220px design size — every
+    // platform has at least enough room for that on landscape.
+    if (target < 220.f) target = 220.f;
+    // And don't blow up beyond 480 in either direction; pushed any
+    // bigger the cover starts dominating the layout on big tablets
+    // and the controls feel orphaned at the bottom.
+    if (target > 480.f) target = 480.f;
+
+    albumArt->setWidth(target);
+    albumArt->setHeight(target);
 }
 
 void PlayerActivity::updateRepeatIcon() {

@@ -22,13 +22,29 @@ RecyclingGrid::RecyclingGrid() {
     this->setContentView(m_contentBox);
 
     // Grid layout — column count comes from the platform layer so PSV's
-    // 960x544 screen gets 6 columns while a 1080p TV gets 7.
+    // 960x544 screen gets 6 columns while a 1080p TV gets 7. On
+    // platforms whose user can rotate the device (Android portrait /
+    // a vertical desktop monitor), getImageConstraints() returns a
+    // different table with fewer columns; we re-query and rebuild the
+    // grid when the orientation flips so existing pages reflow.
     const auto& ic = platform::getImageConstraints();
     m_columns = ic.gridColumns;
     m_visibleRows = 3;
+
+    std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+    platform::onOrientationChanged([this, aliveWeak]() {
+        auto alive = aliveWeak.lock();
+        if (!alive || !alive->load()) return;
+        int newCols = platform::getImageConstraints().gridColumns;
+        if (newCols == m_columns) return;
+        m_columns = newCols;
+        if (!m_items.empty()) rebuildGrid();
+    });
 }
 
-RecyclingGrid::~RecyclingGrid() = default;
+RecyclingGrid::~RecyclingGrid() {
+    if (m_alive) m_alive->store(false);
+}
 
 void RecyclingGrid::setDataSource(const std::vector<MediaItem>& items) {
     m_items = items;

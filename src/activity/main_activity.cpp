@@ -47,50 +47,67 @@ brls::View* MainActivity::createContentView() {
     return brls::View::createFromXMLResource("activity/main.xml");
 }
 
+void MainActivity::applySidebarSizingForViewport() {
+    if (!tabFrame) return;
+    AppSettings& settings = Application::getInstance().getSettings();
+    const auto& ic = platform::getImageConstraints();
+
+    // Calculate dynamic sidebar width based on content. min/max are
+    // platform-tuned so desktop builds get a wider sidebar (260-450px)
+    // while Vita stays at 200-350px — AND in portrait the same
+    // platform tightens these to leave room for the grid.
+    int sidebarWidth = ic.sidebarMinWidth;
+
+    std::vector<std::string> standardTabs =
+        {"Home", "Library", "Music", "Search", "Live TV", "Downloads", "Settings"};
+    for (const auto& tab : standardTabs) {
+        sidebarWidth = std::max(sidebarWidth, calculateTextWidth(tab));
+    }
+
+    if (settings.showLibrariesInSidebar && !Application::getInstance().isOfflineMode()) {
+        // Reuse the section cache populated on the first pass — no point
+        // refetching from Plex just because the user rotated.
+        for (const auto& section : s_cachedSections) {
+            sidebarWidth = std::max(sidebarWidth, calculateTextWidth(section.title));
+        }
+    }
+
+    sidebarWidth = std::min(sidebarWidth, ic.sidebarMaxWidth);
+    brls::View* sidebar = tabFrame->getView("brls/tab_frame/sidebar");
+    if (sidebar) {
+        if (settings.collapseSidebar) {
+            int collapsedWidth = std::max(120, (ic.sidebarMinWidth * 4) / 5);
+            sidebar->setWidth(collapsedWidth);
+            brls::Logger::debug("MainActivity: Collapsed sidebar to {}px", collapsedWidth);
+        } else {
+            sidebar->setWidth(sidebarWidth);
+            brls::Logger::debug("MainActivity: Dynamic sidebar width: {}px", sidebarWidth);
+        }
+    }
+}
+
 void MainActivity::onContentAvailable() {
     brls::Logger::debug("MainActivity content available");
 
     if (tabFrame) {
         AppSettings& settings = Application::getInstance().getSettings();
-        const auto& ic = platform::getImageConstraints();
 
-        // Calculate dynamic sidebar width based on content. min/max are
-        // platform-tuned so desktop builds get a wider sidebar (260-450px)
-        // while Vita stays at 200-350px.
-        int sidebarWidth = ic.sidebarMinWidth;
-
-        // Standard tab names to consider
-        std::vector<std::string> standardTabs = {"Home", "Library", "Music", "Search", "Live TV", "Downloads", "Settings"};
-        for (const auto& tab : standardTabs) {
-            sidebarWidth = std::max(sidebarWidth, calculateTextWidth(tab));
-        }
-
-        // If showing libraries in sidebar, check library names too (skip in offline mode)
+        // First pass populates s_cachedSections from Plex; afterwards
+        // applySidebarSizingForViewport() reuses the cache.
         if (settings.showLibrariesInSidebar && !Application::getInstance().isOfflineMode()) {
             PlexClient& client = PlexClient::getInstance();
             std::vector<LibrarySection> sections;
             if (client.fetchLibrarySections(sections)) {
-                s_cachedSections = sections;  // Cache for later use
-                for (const auto& section : sections) {
-                    sidebarWidth = std::max(sidebarWidth, calculateTextWidth(section.title));
-                }
+                s_cachedSections = sections;
             }
         }
+        applySidebarSizingForViewport();
 
-        // Apply sidebar width (with platform-tuned bounds)
-        sidebarWidth = std::min(sidebarWidth, ic.sidebarMaxWidth);
-        brls::View* sidebar = tabFrame->getView("brls/tab_frame/sidebar");
-        if (sidebar) {
-            if (settings.collapseSidebar) {
-                // Collapsed sidebar: icons only. Use ~60% of the min width.
-                int collapsedWidth = std::max(120, (ic.sidebarMinWidth * 4) / 5);
-                sidebar->setWidth(collapsedWidth);
-                brls::Logger::debug("MainActivity: Collapsed sidebar to {}px", collapsedWidth);
-            } else {
-                sidebar->setWidth(sidebarWidth);
-                brls::Logger::debug("MainActivity: Dynamic sidebar width: {}px", sidebarWidth);
-            }
-        }
+        // Re-apply sidebar width when the user rotates — portrait
+        // constraints squeeze the bar smaller so the grid has room.
+        platform::onOrientationChanged([this]() {
+            applySidebarSizingForViewport();
+        });
 
         bool isOffline = Application::getInstance().isOfflineMode();
         bool hasLiveTV = !isOffline && PlexClient::getInstance().hasLiveTV();

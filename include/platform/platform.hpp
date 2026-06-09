@@ -26,6 +26,7 @@
 #include <vector>
 #include <cstdint>
 #include <cstdio>
+#include <functional>
 
 namespace vitaplex {
 namespace platform {
@@ -142,10 +143,47 @@ struct ImageConstraints {
 };
 
 /**
- * Returns the image constraints for the current platform.
- * The reference points to a static instance — safe to keep across calls.
+ * Returns the image constraints for the current platform AND current
+ * viewport orientation. The reference points to one of two static
+ * instances per platform — a landscape one and a portrait one — chosen
+ * at call time by isPortrait(). Safe to keep across calls only as long
+ * as the orientation doesn't change between use sites; if you cache the
+ * reference and the user rotates, you'll be reading stale values.
+ *
+ * Most views consume this at construction time, which is fine for
+ * single-orientation use. Views that need to track rotation should
+ * override View::onWindowSizeChanged() and re-query.
  */
 const ImageConstraints& getImageConstraints();
+
+/**
+ * Live viewport / orientation helpers.
+ *
+ * These pull from brls::Application::contentWidth / contentHeight, which
+ * borealis updates whenever the underlying window resizes. They power
+ * the responsive layout: getImageConstraints() switches between its
+ * landscape and portrait tables based on isPortrait(), and individual
+ * views can read viewportWidth() / viewportHeight() to compute layout
+ * dimensions as a fraction of the screen rather than hard-coded pixels.
+ *
+ * Defined in a shared TU (platform_common.cpp) — same implementation on
+ * every target, since borealis abstracts the windowing system already.
+ */
+bool  isPortrait();
+float viewportWidth();
+float viewportHeight();
+
+/**
+ * Subscribe to viewport-orientation changes. Cb fires whenever
+ * isPortrait() flips (NOT on every resize tick — just the orientation
+ * boundary), so consumers can re-apply layout without thrash. The
+ * subscription survives for the lifetime of the process; callers
+ * typically install once during view construction.
+ *
+ * Implementation registers a brls::Application::getWindowSizeChangedEvent()
+ * listener internally and de-bounces orientation flips itself.
+ */
+void onOrientationChanged(std::function<void()> cb);
 
 /**
  * Per-platform Plex transcode / identification constants.

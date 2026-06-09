@@ -74,6 +74,15 @@ private:
     bool m_controlsVisible = true;
     int m_controlsIdleSeconds = 0;  // Seconds since last user interaction
 
+    // Re-size the music-mode UI (album cover) to fit the current
+    // viewport. Hard-coded XML cover size is 220×220 which floats lost
+    // in a 720-wide portrait phone window; this picks the larger of
+    // ~55% viewport width and 220 so the cover scales up gracefully on
+    // bigger / portrait screens while staying its designed size on a
+    // landscape Vita / Switch. Called when entering music mode and on
+    // every viewport-orientation flip.
+    void applyMusicLayoutForViewport();
+
     // Queue controls
     void playNext();
     void playPrevious();

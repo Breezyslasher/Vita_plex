@@ -28,12 +28,12 @@ namespace vitaplex {
 namespace platform {
 
 const ImageConstraints& getImageConstraints() {
-    // Android: phone / tablet / TV screens are usually 1080p+. 5 cols
-    // × 160px (+14px spacing) fits inside borealis's 1280-wide virtual
-    // viewport after the sidebar, and keeps GPU texture pressure low on
-    // mobile GPUs. Previous 6-column 200px layout overflowed the viewport
-    // and the last poster of each row was clipped.
-    static const ImageConstraints c = {
+    // Android LANDSCAPE (TV box, tablet landscape, phone rotated):
+    // 5 cols × 160px (+14px spacing) fits inside borealis's 1280-wide
+    // virtual viewport after the sidebar, and keeps GPU texture pressure
+    // low on mobile GPUs. Previous 6-column 200px layout overflowed and
+    // the last poster of each row was clipped.
+    static const ImageConstraints landscape = {
         /* posterWidth        */ 160,
         /* posterHeight       */ 240,
         /* squareCoverSize    */ 160,
@@ -46,9 +46,9 @@ const ImageConstraints& getImageConstraints() {
         /* descriptionFontSize*/  11,
         /* homeTitleFontSize  */  28,
         /* homeSectionFontSize*/  20,
-        /* homeRowHeight      */ 290,  // posterHeight(240) + label + padding
-        /* landscapeRowHeight */ 185,  // landscapeHeight(125) + ~60
-        /* squareRowHeight    */ 215,  // squareCoverSize(160) + ~55
+        /* homeRowHeight      */ 290,
+        /* landscapeRowHeight */ 185,
+        /* squareRowHeight    */ 215,
 
         /* listRowHeight            */  60,
         /* livetvChannelCardWidth   */ 160,
@@ -81,7 +81,69 @@ const ImageConstraints& getImageConstraints() {
         /* photoRequestWidth        */ 1920,
         /* photoRequestHeight       */ 1080,
     };
-    return c;
+
+    // Android PORTRAIT (phone). This is the dominant Android case. The
+    // viewport is something like 720×1280 in virtual coords — narrower
+    // than landscape so the same poster width that was 12% of the
+    // landscape screen would be 22% in portrait. Re-tune from scratch:
+    //
+    //   - 3 columns of slightly larger covers fills the width without
+    //     a giant void on either side
+    //   - sidebar shrinks aggressively so the grid has room
+    //   - LiveTV guide gets taller (we have the vertical real estate)
+    //   - homeRowHeight grows to match the taller posters
+    //   - dialogs / lists narrow to fit phone-width comfortably
+    //   - text-truncation chars drop because narrower rows fit fewer
+    static const ImageConstraints portrait = {
+        /* posterWidth        */ 170,
+        /* posterHeight       */ 255,
+        /* squareCoverSize    */ 170,
+        /* landscapeWidth     */ 220,
+        /* landscapeHeight    */ 125,
+        /* gridColumns        */   3,  // 5 -> 3 for narrow phone width
+        /* gridCellSpacing    */  16,
+        /* titleFontSize      */  15,
+        /* subtitleFontSize   */  12,
+        /* descriptionFontSize*/  12,
+        /* homeTitleFontSize  */  28,
+        /* homeSectionFontSize*/  20,
+        /* homeRowHeight      */ 315,
+        /* landscapeRowHeight */ 185,
+        /* squareRowHeight    */ 230,
+
+        /* listRowHeight            */  64,  // taller for finger taps
+        /* livetvChannelCardWidth   */ 150,
+        /* livetvChannelRowHeight   */ 130,
+        /* livetvGuideHeight        */ 720,  // ~2x landscape — fill the height
+
+        /* maxCellTitleChars        */  16,
+        /* maxListTitleChars        */  60,
+        /* maxLiveTVProgramChars    */  16,
+        /* maxLiveTVChannelChars    */  14,
+
+        /* sidebarMinWidth          */ 180,  // tighten so grid has room
+        /* sidebarMaxWidth          */ 240,
+
+        /* dialogWidth              */ 420,
+
+        /* imageCacheSize           */  60,
+
+        /* libraryPageSize          */ 1000,
+        /* playlistTrackPageSize    */ 150,
+        /* musicCarouselLimit       */ 100,
+
+        /* posterRequestWidth       */ 340,
+        /* posterRequestHeight      */ 510,
+        /* squareRequestSize        */ 340,
+        /* landscapeRequestWidth    */ 440,
+        /* landscapeRequestHeight   */ 250,
+        /* detailPosterRequestWidth */ 540,
+        /* detailPosterRequestHeight*/ 810,
+        /* photoRequestWidth        */ 1080,  // phone in portrait
+        /* photoRequestHeight       */ 1920,
+    };
+
+    return isPortrait() ? portrait : landscape;
 }
 
 const VideoConstraints& getVideoConstraints() {

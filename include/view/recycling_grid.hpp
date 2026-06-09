@@ -8,7 +8,9 @@
 
 #include <borealis.hpp>
 #include "app/plex_client.hpp"
+#include <atomic>
 #include <functional>
+#include <memory>
 #include <vector>
 
 namespace vitaplex {
@@ -70,6 +72,13 @@ private:
 
     bool m_hasMore = false;
     bool m_loading = false;  // Prevents duplicate fetch requests
+
+    // Lifetime guard for the orientation-change listener — the listener
+    // is global and lives forever, but the grid can be destroyed while
+    // the user navigates away. The listener checks this flag before
+    // touching `this`.
+    std::shared_ptr<std::atomic<bool>> m_alive
+        = std::make_shared<std::atomic<bool>>(true);
 };
 
 } // namespace vitaplex

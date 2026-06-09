@@ -18,12 +18,13 @@ namespace vitaplex {
 namespace platform {
 
 const ImageConstraints& getImageConstraints() {
-    // Desktop: borealis's virtual coordinate system is 1280x720, so
-    // oversized covers (240×360 × 7 cols = 1680px) overflow the viewport
-    // and look like "posters cut off at the edge". Use 170×255 covers at
-    // 5 columns so an 8-item recently-added row fits comfortably in the
-    // content area (sidebar ~230 + 5×180 + padding ≈ 1150 < 1280).
-    static const ImageConstraints c = {
+    // Desktop LANDSCAPE: borealis's virtual coordinate system is
+    // 1280x720, so oversized covers (240×360 × 7 cols = 1680px) overflow
+    // the viewport and look like "posters cut off at the edge". Use
+    // 170×255 covers at 5 columns so an 8-item recently-added row fits
+    // comfortably in the content area (sidebar ~230 + 5×180 + padding
+    // ≈ 1150 < 1280).
+    static const ImageConstraints landscape = {
         /* posterWidth        */ 170,
         /* posterHeight       */ 255,
         /* squareCoverSize    */ 170,
@@ -71,7 +72,64 @@ const ImageConstraints& getImageConstraints() {
         /* photoRequestWidth        */ 1920,
         /* photoRequestHeight       */ 1080,
     };
-    return c;
+
+    // Desktop PORTRAIT (vertical-monitor / rotated window). Narrower
+    // content area means fewer columns, slightly larger covers as a
+    // fraction of width, tighter sidebar so the grid has room to
+    // breathe. List / dialog widths shrink to match. Background-art
+    // request sizes stay full-res — the device still has the GPU/RAM
+    // budget to handle them, and we want sharp posters when they ARE
+    // shown big in detail views.
+    static const ImageConstraints portrait = {
+        /* posterWidth        */ 180,
+        /* posterHeight       */ 270,
+        /* squareCoverSize    */ 180,
+        /* landscapeWidth     */ 240,
+        /* landscapeHeight    */ 135,
+        /* gridColumns        */   3,   // 5 -> 3 to fit narrower content
+        /* gridCellSpacing    */  18,
+        /* titleFontSize      */  16,
+        /* subtitleFontSize   */  13,
+        /* descriptionFontSize*/  12,
+        /* homeTitleFontSize  */  30,
+        /* homeSectionFontSize*/  22,
+        /* homeRowHeight      */ 330,
+        /* landscapeRowHeight */ 195,
+        /* squareRowHeight    */ 240,
+
+        /* listRowHeight            */  64,
+        /* livetvChannelCardWidth   */ 170,
+        /* livetvChannelRowHeight   */ 140,
+        /* livetvGuideHeight        */ 620,  // taller window -> taller guide
+
+        /* maxCellTitleChars        */  20,
+        /* maxListTitleChars        */  80,
+        /* maxLiveTVProgramChars    */  22,
+        /* maxLiveTVChannelChars    */  18,
+
+        /* sidebarMinWidth          */ 200,
+        /* sidebarMaxWidth          */ 280,
+
+        /* dialogWidth              */ 460,
+
+        /* imageCacheSize           */ 120,
+
+        /* libraryPageSize          */ 500,
+        /* playlistTrackPageSize    */ 200,
+        /* musicCarouselLimit       */ 150,
+
+        /* posterRequestWidth       */ 360,
+        /* posterRequestHeight      */ 540,
+        /* squareRequestSize        */ 360,
+        /* landscapeRequestWidth    */ 480,
+        /* landscapeRequestHeight   */ 270,
+        /* detailPosterRequestWidth */ 600,
+        /* detailPosterRequestHeight*/ 900,
+        /* photoRequestWidth        */ 1920,
+        /* photoRequestHeight       */ 1920,
+    };
+
+    return isPortrait() ? portrait : landscape;
 }
 
 const VideoConstraints& getVideoConstraints() {
