@@ -12,6 +12,38 @@
 
 namespace vitaplex {
 
+namespace {
+// Decide how many cells fit per row given the current viewport.
+//
+// The platform's ImageConstraints::gridColumns is treated as a minimum
+// (so a single-form-factor target like PSV always shows at least its
+// designed count) but on devices whose viewport is large enough to fit
+// more, we add them — that's how a foldable phone open in portrait
+// (~1080 virtual px) shows 5 columns while a regular phone in portrait
+// (~720) shows 3 with no per-device config required.
+//
+// Available width = viewport - sidebar reserve. We deliberately use
+// `sidebarMaxWidth` rather than the live sidebar width so this can
+// run before MainActivity has populated the sidebar, and so a
+// later collapse / expand doesn't strand us with the wrong count.
+int computeColumns() {
+    const auto& ic = vitaplex::platform::getImageConstraints();
+    float vw = vitaplex::platform::viewportWidth();
+    int reserve = ic.sidebarMaxWidth + 20;        // sidebar + small padding
+    int available = (int)vw - reserve;
+    int cellW = ic.posterWidth + ic.gridCellSpacing;
+    if (cellW <= 0 || available <= 0) return ic.gridColumns;
+    int fit = available / cellW;
+    if (fit < ic.gridColumns) fit = ic.gridColumns;  // never less than the
+                                                    // platform-designed
+                                                    // minimum
+    if (fit > 12) fit = 12;                          // sanity cap — even
+                                                    // an 8K display shouldn't
+                                                    // shove 20 covers in a row
+    return fit;
+}
+}  // namespace
+
 RecyclingGrid::RecyclingGrid() {
     this->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
 
@@ -21,21 +53,18 @@ RecyclingGrid::RecyclingGrid() {
     m_contentBox->setPadding(10);
     this->setContentView(m_contentBox);
 
-    // Grid layout — column count comes from the platform layer so PSV's
-    // 960x544 screen gets 6 columns while a 1080p TV gets 7. On
-    // platforms whose user can rotate the device (Android portrait /
-    // a vertical desktop monitor), getImageConstraints() returns a
-    // different table with fewer columns; we re-query and rebuild the
-    // grid when the orientation flips so existing pages reflow.
-    const auto& ic = platform::getImageConstraints();
-    m_columns = ic.gridColumns;
+    // Grid layout — column count is computed from the current viewport
+    // width so a foldable phone (~1080) gets ~5 columns and a regular
+    // phone (~720) gets 3 without any per-device config. The platform's
+    // ImageConstraints::gridColumns is treated as a MINIMUM here.
+    m_columns = computeColumns();
     m_visibleRows = 3;
 
     std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
     platform::onOrientationChanged([this, aliveWeak]() {
         auto alive = aliveWeak.lock();
         if (!alive || !alive->load()) return;
-        int newCols = platform::getImageConstraints().gridColumns;
+        int newCols = computeColumns();
         if (newCols == m_columns) return;
         m_columns = newCols;
         if (!m_items.empty()) rebuildGrid();
