@@ -192,6 +192,15 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     // where the existing "focused button about to hide" path catches
     // it and transfers focus onto the freshly-populated content area.
     auto backHandler = [this](brls::View*) {
+        // At the TOP of the library (ALL_ITEMS) we have nothing to pop —
+        // returning false here lets borealis fall through to the
+        // MainActivity root handler that brings up the music player when
+        // a queue is active. Previously we always returned true, which
+        // consumed BUTTON_B and made the player only reachable from the
+        // sidebar (where the library's handler isn't in the focus walk).
+        if (m_viewMode == LibraryViewMode::ALL_ITEMS) {
+            return false;
+        }
         if (m_backBtn &&
             m_backBtn->getVisibility() == brls::Visibility::VISIBLE) {
             brls::Application::giveFocus(m_backBtn);

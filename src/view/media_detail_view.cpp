@@ -1732,26 +1732,29 @@ void MediaDetailView::loadTrackList() {
                 m_trackListBox->addView(row);
             }
 
-            // Set up focus transfer for album track list
+            // Set up focus transfer for album track list. Only the
+            // FIRST track gets a custom UP route — every other track
+            // keeps default vertical nav (UP -> previous track), so
+            // pressing UP from track 5 actually goes to track 4
+            // instead of jumping to the description (the Android TV
+            // bug: the for-loop below used to override UP on EVERY
+            // child, breaking track-to-track navigation entirely).
             if (!m_trackListBox->getChildren().empty()) {
                 brls::View* firstTrack = m_trackListBox->getChildren().front();
 
                 if (m_summaryLabel && !m_fullDescription.empty()) {
                     // Description exists: DOWN from description goes to first track
                     m_summaryLabel->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstTrack);
-                    // UP from tracks goes to description
-                    for (auto* child : m_trackListBox->getChildren()) {
-                        child->setCustomNavigationRoute(brls::FocusDirection::UP, m_summaryLabel);
-                    }
+                    // UP from the first track goes to description; tracks
+                    // 2..N keep default behaviour (UP -> previous track).
+                    firstTrack->setCustomNavigationRoute(brls::FocusDirection::UP, m_summaryLabel);
                 } else {
                     // No description: transfer focus to first track to avoid focus errors
                     brls::Application::giveFocus(firstTrack);
 
-                    // UP from tracks goes to play button if it exists
+                    // UP from the first track goes to play button if it exists
                     if (m_playButton) {
-                        for (auto* child : m_trackListBox->getChildren()) {
-                            child->setCustomNavigationRoute(brls::FocusDirection::UP, m_playButton);
-                        }
+                        firstTrack->setCustomNavigationRoute(brls::FocusDirection::UP, m_playButton);
                         m_playButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstTrack);
                     }
                     if (m_downloadButton) {
