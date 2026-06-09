@@ -48,6 +48,16 @@ struct GridSizing {
 // a virtual coordinate system whose width does NOT stay 1280 when the
 // window is a non-16:9 shape, so the old `viewport - sidebar` estimate
 // over-counted available space and packed in one column too many.
+//
+// Density tuning bucket: on a NARROW viewport (mobile / dragged-thin
+// desktop window) the formula refuses to shrink cells below the
+// platform's design size — better to show 2-3 substantial covers than
+// 7 cramped thumbnails the user can't make out. On a WIDE viewport the
+// formula allows cells to shrink ~30% below design so wide screens
+// actually use their horizontal space. Cells can also grow ABOVE
+// design — up to 2x on tiny windows so a single-column phone view
+// renders one large cover, narrowing to 1.2x on wide displays so a
+// 4K monitor doesn't render giant individual covers.
 GridSizing computeGridSizing(int availableWidth) {
     const auto& ic = vitaplex::platform::getImageConstraints();
     int spacing = ic.gridCellSpacing;
@@ -56,8 +66,21 @@ GridSizing computeGridSizing(int availableWidth) {
         return { std::max(2, ic.gridColumns), designW };
     }
 
-    int minCellW = std::max(80, (designW * 7) / 10);   // 70% floor
-    int maxCellW = (designW * 13) / 10;                // 130% ceiling
+    // Pick min/max cell-width scales as a function of available width.
+    // Narrow windows get the most aggressive bias toward fewer/larger
+    // cells; wide windows get the most permissive.
+    float scaleMin, scaleMax;
+    if (availableWidth < 500) {
+        scaleMin = 1.00f; scaleMax = 2.00f;   // mobile: 1-2 big covers
+    } else if (availableWidth < 800) {
+        scaleMin = 0.90f; scaleMax = 1.50f;   // narrow: design-ish, few cols
+    } else if (availableWidth < 1200) {
+        scaleMin = 0.80f; scaleMax = 1.30f;   // medium: design size
+    } else {
+        scaleMin = 0.70f; scaleMax = 1.20f;   // wide: pack more, allow shrink
+    }
+    int minCellW = std::max(80, (int)(designW * scaleMin));
+    int maxCellW = (int)(designW * scaleMax);
 
     // Per-cell footprint beyond the cover width itself:
     //   +10  MediaItemCell sets its own width to coverWidth + 10 (the
@@ -65,7 +88,7 @@ GridSizing computeGridSizing(int availableWidth) {
     //   +spacing  RecyclingGrid gives every cell a marginRight.
     // So a row of c cells consumes c*(coverWidth + 10 + spacing). Solve
     // for coverWidth and shave 1px of safety so integer rounding never
-    // nudges the last cell past the right edge (the clipping bug).
+    // nudges the last cell past the right edge.
     const int perCellOverhead = 10 + spacing;
     int bestCols  = 1;
     int bestCellW = availableWidth - perCellOverhead;
