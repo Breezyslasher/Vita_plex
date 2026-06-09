@@ -10,6 +10,7 @@
 #include "app/application.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/music_queue.hpp"
+#include "app/hint_icons.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
 #include "platform/platform.hpp"
@@ -1626,11 +1627,24 @@ void MediaDetailView::loadTrackList() {
                 rightSide->setAlignItems(brls::AlignItems::CENTER);
 
                 auto* hintIcon = new brls::Image();
-                hintIcon->setImageFromRes("images/square_button.png");
+                std::string hintPath = HintIcons::getResPath(brls::BUTTON_X);
+                if (!hintPath.empty()) {
+                    hintIcon->setImageFromRes(hintPath);
+                }
                 hintIcon->setWidth(16);
                 hintIcon->setHeight(16);
                 hintIcon->setMarginRight(2);
                 hintIcon->setVisibility(brls::Visibility::INVISIBLE);
+                // Refresh the icon if the input source flips (desktop / android).
+                // Guard with m_alive so a flip after this view is destroyed
+                // doesn't dereference the freed brls::Image.
+                std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+                HintIcons::onSourceChanged([aliveWeak, hintIcon]() {
+                    auto a = aliveWeak.lock();
+                    if (!a || !a->load()) return;
+                    std::string p = HintIcons::getResPath(brls::BUTTON_X);
+                    if (!p.empty()) hintIcon->setImageFromRes(p);
+                });
                 rightSide->addView(hintIcon);
 
                 auto* hintLabel = new brls::Label();

@@ -5,6 +5,7 @@
 #include "view/media_item_cell.hpp"
 #include "app/plex_client.hpp"
 #include "app/application.hpp"
+#include "app/hint_icons.hpp"
 #include "utils/image_loader.hpp"
 #include "platform/platform.hpp"
 #include <algorithm>
@@ -12,13 +13,16 @@
 namespace vitaplex {
 
 // Shared start-button hint texture. Loaded lazily on the first focused
-// cell that wants it (see draw()) and never released — it's one tiny
-// PNG that every grid cell shares for the life of the process. Static
-// avoids per-cell upload and the per-grid handle the old batched path
-// in RecyclingGrid had to manage.
-static int s_startHintNvg = 0;
-static int s_startHintW   = 0;
-static int s_startHintH   = 0;
+// cell that wants it (see draw()). One tiny PNG shared by every grid
+// cell. On desktop/android the icon set tracks the live input source
+// (Steam Deck / Keyboard / Touch), so we also track the loaded path and
+// reload when it flips. Older handles are deleted on the next draw via
+// nvgDeleteImage — leaking a handle per source-flip would be tiny but
+// unnecessary.
+static int         s_startHintNvg  = 0;
+static int         s_startHintW    = 0;
+static int         s_startHintH    = 0;
+static std::string s_startHintPath;
 
 MediaItemCell::MediaItemCell()
     : m_alive(std::make_shared<std::atomic<bool>>(true)) {
@@ -359,12 +363,15 @@ void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float he
     // sits on top of the cover. Shared static texture: loaded once on
     // first paint, never released (one small PNG for the app lifetime).
     if (this->isFocused() && wantsStartHint() && m_coverSlot) {
-        if (s_startHintNvg == 0) {
-            s_startHintNvg = nvgCreateImage(
-                vg, RESOURCE_PREFIX "images/start_button.png", 0);
+        std::string path = HintIcons::getResPath(brls::BUTTON_START);
+        if (!path.empty() && path != s_startHintPath) {
+            if (s_startHintNvg != 0) nvgDeleteImage(vg, s_startHintNvg);
+            std::string full = std::string(RESOURCE_PREFIX) + path;
+            s_startHintNvg = nvgCreateImage(vg, full.c_str(), 0);
             if (s_startHintNvg != 0) {
                 nvgImageSize(vg, s_startHintNvg,
                              &s_startHintW, &s_startHintH);
+                s_startHintPath = path;
             }
         }
         if (s_startHintNvg != 0 && s_startHintW > 0 && s_startHintH > 0) {

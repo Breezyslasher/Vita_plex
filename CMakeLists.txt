@@ -116,6 +116,7 @@ set(APP_SOURCES
     src/app/plex_client.cpp
     src/app/downloads_manager.cpp
     src/app/music_queue.cpp
+    src/app/hint_icons.cpp
 
     # Activities
     src/activity/main_activity.cpp
@@ -523,18 +524,25 @@ if(PLATFORM_PSV)
         FILE resources/icons/filter-menu-outline.png      resources/icons/filter-menu-outline.png
         FILE resources/icons/format-list-group.png        resources/icons/format-list-group.png
 
-        FILE resources/images/circle_button.png   resources/images/circle_button.png
-        FILE resources/images/cross_button.png    resources/images/cross_button.png
-        FILE resources/images/dpad.png            resources/images/dpad.png
-        FILE resources/images/gradient.png        resources/images/gradient.png
-        FILE resources/images/l_button.png        resources/images/l_button.png
-        FILE resources/images/logo-small.png      resources/images/logo-small.png
-        FILE resources/images/logo.png            resources/images/logo.png
-        FILE resources/images/r_button.png        resources/images/r_button.png
-        FILE resources/images/select_button.png   resources/images/select_button.png
-        FILE resources/images/square_button.png   resources/images/square_button.png
-        FILE resources/images/start_button.png    resources/images/start_button.png
-        FILE resources/images/triangle_button.png resources/images/triangle_button.png
+        # PSV-native UI assets — the logo and the gradient backdrop live
+        # at the root; the controller-hint buttons (cross/circle/square…)
+        # moved into resources/images/PSV/ when platform-specific icon sets
+        # were introduced. resources/images/PSV/ is the ONLY platform icon
+        # set bundled in the VPK — Vita doesn't need Steam Deck / Switch
+        # / Xbox / Keyboard art and bundling them would bloat the VPK and
+        # eat scarce userland storage.
+        FILE resources/images/PSV/circle_button.png   resources/images/PSV/circle_button.png
+        FILE resources/images/PSV/cross_button.png    resources/images/PSV/cross_button.png
+        FILE resources/images/PSV/dpad.png            resources/images/PSV/dpad.png
+        FILE resources/images/PSV/gradient.png        resources/images/PSV/gradient.png
+        FILE resources/images/PSV/l_button.png        resources/images/PSV/l_button.png
+        FILE resources/images/PSV/logo-small.png      resources/images/PSV/logo-small.png
+        FILE resources/images/PSV/logo.png            resources/images/PSV/logo.png
+        FILE resources/images/PSV/r_button.png        resources/images/PSV/r_button.png
+        FILE resources/images/PSV/select_button.png   resources/images/PSV/select_button.png
+        FILE resources/images/PSV/square_button.png   resources/images/PSV/square_button.png
+        FILE resources/images/PSV/start_button.png    resources/images/PSV/start_button.png
+        FILE resources/images/PSV/triangle_button.png resources/images/PSV/triangle_button.png
 
         FILE resources/font/font.ttf                      resources/font/font.ttf
         FILE resources/font/icon.ttf                      resources/font/icon.ttf
