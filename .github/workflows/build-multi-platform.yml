@@ -59,6 +59,18 @@ jobs:
 
           if [[ -n "${{ inputs.version }}" ]]; then
             V="${{ inputs.version }}"
+            # Also re-derive BASE_NUM from the override. Otherwise the
+            # numeric build (NUM = ${BASE_NUM}.${run_number}, used by
+            # CMake / Vita / PS4 / deb) keeps reading the previous
+            # VERSION-file value while the display version jumps ahead
+            # — producing a mismatch like "Display: Beta 1.0.2" but
+            # "Numeric: 1.0.1.450". The VERSION file isn't updated
+            # until the save-version job runs AFTER resolve-version,
+            # so we can't lean on it here.
+            OVERRIDE_NUM=$(echo "${V#v}" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+            if [[ -n "$OVERRIDE_NUM" ]]; then
+              BASE_NUM="$OVERRIDE_NUM"
+            fi
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             V="${APP_VERSION}"
           else
