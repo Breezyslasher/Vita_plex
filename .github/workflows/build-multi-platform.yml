@@ -59,6 +59,18 @@ jobs:
 
           if [[ -n "${{ inputs.version }}" ]]; then
             V="${{ inputs.version }}"
+            # Also re-derive BASE_NUM from the override. Otherwise the
+            # numeric build (NUM = ${BASE_NUM}.${run_number}, used by
+            # CMake / Vita / PS4 / deb) keeps reading the previous
+            # VERSION-file value while the display version jumps ahead
+            # — producing a mismatch like "Display: Beta 1.0.2" but
+            # "Numeric: 1.0.1.450". The VERSION file isn't updated
+            # until the save-version job runs AFTER resolve-version,
+            # so we can't lean on it here.
+            OVERRIDE_NUM=$(echo "${V#v}" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+            if [[ -n "$OVERRIDE_NUM" ]]; then
+              BASE_NUM="$OVERRIDE_NUM"
+            fi
           elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             V="${APP_VERSION}"
           else
@@ -66,12 +78,28 @@ jobs:
             V="${BASE}.${{ github.run_number }}"
           fi
           V="${V#v}"
-          # Extract numeric version for CMake / Vita / PS4 / deb (no labels)
+          # Extract numeric version for CMake / Vita / PS4 / deb (no labels).
+          #
+          # Drop the github.run_number suffix on any "intentional" build —
+          # artifact filenames and embedded SFOs then read "1.0.2"
+          # instead of "1.0.2.450". An intentional build is either:
+          #   - a tag push (refs/tags/v…) — git-tagged release
+          #   - any workflow_dispatch with a version override — the user
+          #     typed a number into the form, which is by definition a
+          #     release or pre-release. pre_release=true vs false just
+          #     decides where the artifact is published; both want a
+          #     clean numeric version.
+          # Plain pushes to a branch keep the suffix so consecutive CI
+          # builds remain distinguishable from one another.
+          IS_RELEASE=false
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            # Release: X.Y.Z only
+            IS_RELEASE=true
+          elif [[ -n "${{ inputs.version }}" ]]; then
+            IS_RELEASE=true
+          fi
+          if [[ "$IS_RELEASE" == "true" ]]; then
             NUM="${BASE_NUM}"
           else
-            # Non-release: X.Y.Z.build
             NUM="${BASE_NUM}.${{ github.run_number }}"
           fi
           # Filename/tag-safe version (spaces → hyphens)
@@ -260,7 +288,8 @@ jobs:
       - name: Build
         run: |
           cmake -B build -G Ninja -DPLATFORM_PSV=ON \
-          -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
+          -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+          -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
 
       - name: Upload VPK
@@ -411,7 +440,8 @@ jobs:
       - name: Build desktop target in flatpak container
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON -DUSE_GLES2=${{ matrix.gles2 }} \
-             -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
+             -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+             -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
           tar -czf VitaPlex-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz -C build VitaPlex resources
       - name: Upload Flatpak artifact
@@ -455,6 +485,7 @@ jobs:
           cmake -B build -G Ninja \
             -DPLATFORM_SWITCH=ON \
             -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+            -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}" \
             ${{ matrix.cmake_extra }}
           cmake --build build
       - name: Upload NRO
@@ -489,7 +520,8 @@ jobs:
           OPENORBIS: /opt/pacbrew/ps4/openorbis
         run: |
           cmake -B build -DPLATFORM_PS4=ON \
-            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
+            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+            -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
       - name: Upload PS4 artifacts
         uses: actions/upload-artifact@v4
@@ -525,7 +557,8 @@ jobs:
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON \
             -DCMAKE_OSX_ARCHITECTURES=${{ matrix.arch }} \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=${{ matrix.target }} \
-            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
+            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+            -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
       - name: Bundle macOS dylibs
         run: |
@@ -690,7 +723,8 @@ jobs:
       - name: Build
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON -DUSE_SYSTEM_GLFW=ON -DUSE_D3D11=ON \
-          -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
+          -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+          -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
       - name: Bundle runtime DLLs
         run: |
@@ -766,7 +800,8 @@ jobs:
       - name: Build
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON \
-            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
+            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+            -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
           PKGROOT="pkgroot"
           rm -rf "$PKGROOT"
@@ -832,7 +867,8 @@ jobs:
       - name: Build
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON \
-            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }}
+            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+            -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
           tar --zstd -cf VitaPlex-${{ github.run_number }}.pkg.tar.zst -C build VitaPlex resources
       - name: Upload aur artifact

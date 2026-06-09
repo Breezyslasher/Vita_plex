@@ -563,10 +563,12 @@ void SettingsTab::createAboutSection() {
     header->setTitle("About");
     m_contentBox->addView(header);
 
-    // Version info
+    // Version info — show the HUMAN-readable display label ("Beta 1.0.2"),
+    // not the numeric flavour ("1.0.2.455") which goes into Plex API
+    // headers and platform package metadata.
     auto* versionCell = new brls::DetailCell();
     versionCell->setText("Version");
-    versionCell->setDetailText(VITA_PLEX_VERSION);
+    versionCell->setDetailText(VITA_PLEX_DISPLAY_VERSION);
     m_contentBox->addView(versionCell);
 
     // App description

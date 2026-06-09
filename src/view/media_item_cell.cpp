@@ -130,25 +130,35 @@ void MediaItemCell::setItem(const MediaItem& item) {
     bool isClip = (item.mediaType == MediaType::CLIP);
 
     const auto& ic = platform::getImageConstraints();
+
+    // Label-area padding beneath the cover. Portrait phones / narrow
+    // viewports tighten this aggressively so the user doesn't end up
+    // staring at empty bands between rows in a music-artist grid (the
+    // screenshot bug). Episodes keep slightly more room because their
+    // subtitle line (S01E01) is visible.
+    const bool portrait     = platform::isPortrait();
+    const int  musicLabel   = portrait ? 26 : 40;
+    const int  posterLabel  = portrait ? 24 : 35;
+    const int  landscLabel  = portrait ? 32 : 45;
+
     if (isMusic) {
         // Square album art
         m_coverSlot->setWidth(ic.squareCoverSize);
         m_coverSlot->setHeight(ic.squareCoverSize);
-        // Box: cover + small padding for the title row beneath it
         this->setWidth(ic.squareCoverSize + 10);
-        this->setHeight(ic.squareCoverSize + 40);
+        this->setHeight(ic.squareCoverSize + musicLabel);
     } else if (isEpisode || isClip) {
         // Landscape episode still / extras clip
         m_coverSlot->setWidth(ic.landscapeWidth);
         m_coverSlot->setHeight(ic.landscapeHeight);
         this->setWidth(ic.landscapeWidth + 10);
-        this->setHeight(ic.landscapeHeight + 45);
+        this->setHeight(ic.landscapeHeight + landscLabel);
     } else {
         // Portrait poster
         m_coverSlot->setWidth(ic.posterWidth);
         m_coverSlot->setHeight(ic.posterHeight);
         this->setWidth(ic.posterWidth + 10);
-        this->setHeight(ic.posterHeight + 35);
+        this->setHeight(ic.posterHeight + posterLabel);
     }
 
     // Set title
