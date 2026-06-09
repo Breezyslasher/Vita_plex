@@ -38,12 +38,22 @@ public:
     // Override to detect when user tries to scroll past the bottom
     brls::View* getNextFocus(brls::FocusDirection direction, brls::View* currentView) override;
 
-    // Override to visibility-cull off-screen rows. Cover painting itself
-    // lives in MediaItemCell::draw() so non-grid containers (the home
-    // tab's HorizontalScrollRow, the detail view's HScrollingFrame) get
-    // covers too.
+    // Override to (1) visibility-cull off-screen rows and (2) paint
+    // covers via batched nvgImagePattern instead of per-cell brls::Image
+    // children. Cover painting itself lives in MediaItemCell::draw() so
+    // non-grid containers (the home tab's HorizontalScrollRow, the
+    // detail view's HScrollingFrame) get covers too.
     void draw(NVGcontext* vg, float x, float y, float width, float height,
               brls::Style style, brls::FrameContext* ctx) override;
+
+    // Override to recompute (columns, cellWidth) the moment borealis
+    // hands us a real laid-out width. The grid never guesses from
+    // viewportWidth — if data arrives before the first layout pass,
+    // setDataSource just stashes it and rebuildGrid() runs from here
+    // once the size is known. After that, every subsequent layout
+    // (window resize, orientation flip, parent reflow) flows through
+    // the same path so there's exactly one source of truth.
+    void onLayout() override;
 
     static brls::View* create();
 
@@ -70,14 +80,12 @@ private:
     // traversing every row->getChildren() each frame.
     std::vector<MediaItemCell*> m_cells;
 
-    int m_columns = 6;
-    // Per-cell cover width hint forwarded to MediaItemCell. 0 = use the
-    // platform constant. Set alongside m_columns by computeGridSizing.
+    // Column count and per-cell cover width are picked by onLayout()
+    // once the grid has a real width. cellWidth==0 also serves as the
+    // "not yet laid out" sentinel: setDataSource() defers building
+    // until onLayout sets a positive value.
+    int m_columns = 0;
     int m_cellWidth = 0;
-    // Content width the current layout was built against. draw() compares
-    // the live width to this and rebuilds once when the first real layout
-    // pass supersedes the construction-time viewport estimate.
-    int m_builtForWidth = 0;
     int m_visibleRows = 3;
     size_t m_renderedCount = 0;
 

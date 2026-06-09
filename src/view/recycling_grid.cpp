@@ -82,19 +82,18 @@ GridSizing computeGridSizing(int availableWidth) {
 }  // namespace
 
 int RecyclingGrid::availableContentWidth() {
-    // Prefer the grid's own laid-out width (minus the content box's
-    // 10px-per-side padding) — that's the ground truth for how much
-    // room the cells actually have, regardless of how borealis scaled
-    // the window into virtual coords. Before the first layout pass the
-    // width is 0; fall back to the viewport-minus-sidebar estimate so
-    // the very first build still gets a sane column count, then the
-    // post-layout recompute (see draw()) corrects it.
+    // The grid's own laid-out width, minus the content box's 10-px-
+    // per-side padding. Returns 0 when borealis hasn't laid us out yet
+    // — callers MUST treat 0 as "not ready, defer" rather than
+    // substituting a viewport guess. The viewport estimate we used to
+    // fall back on was lying when the window was a non-16:9 shape:
+    // borealis scales into a virtual coordinate system whose width
+    // does not stay 1280, so the guess over-counted available space
+    // and rows clipped past the right edge. The single source of
+    // truth is the post-layout getWidth().
     float w = this->getWidth();
-    if (w > 1.0f) {
-        return (int)w - 20;
-    }
-    const auto& ic = platform::getImageConstraints();
-    return (int)platform::viewportWidth() - ic.sidebarMinWidth - 20;
+    if (w <= 1.0f) return 0;
+    return (int)w - 20;
 }
 
 RecyclingGrid::RecyclingGrid() {
@@ -106,32 +105,17 @@ RecyclingGrid::RecyclingGrid() {
     m_contentBox->setPadding(10);
     this->setContentView(m_contentBox);
 
-    // Grid layout — column count AND per-cell width are computed from
-    // the grid's available content width so a small window shows fewer,
-    // larger covers and a wide one shows many design-sized covers.
-    auto sizing  = computeGridSizing(availableContentWidth());
-    m_columns    = sizing.columns;
-    m_cellWidth  = sizing.cellWidth;
     m_visibleRows = 3;
 
-    // React to every window-size change, not just orientation flips —
-    // a user dragging a desktop window narrower keeps the same
-    // orientation but needs the grid to drop columns and grow each
-    // cell. Short-circuit when nothing actually changed so we don't pay
-    // for rebuilds on every resize tick.
-    std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
-    auto* resizeEvt = brls::Application::getWindowSizeChangedEvent();
-    if (resizeEvt) {
-        resizeEvt->subscribe([this, aliveWeak]() {
-            auto alive = aliveWeak.lock();
-            if (!alive || !alive->load()) return;
-            auto s = computeGridSizing(availableContentWidth());
-            if (s.columns == m_columns && s.cellWidth == m_cellWidth) return;
-            m_columns   = s.columns;
-            m_cellWidth = s.cellWidth;
-            if (!m_items.empty()) rebuildGrid();
-        });
-    }
+    // Layout / sizing is computed lazily in onLayout() — the very
+    // first build needs a real laid-out width (NOT a viewport guess)
+    // to decide column count, and that width isn't available until
+    // borealis has finished its first layout pass. setDataSource()
+    // either fires immediately if onLayout has already run, or just
+    // stashes the items and lets onLayout build them once the
+    // dimensions are known. Subsequent resizes / orientation flips
+    // re-enter onLayout naturally, so we don't subscribe to the
+    // brls window-size event here either.
 }
 
 RecyclingGrid::~RecyclingGrid() {
@@ -141,7 +125,37 @@ RecyclingGrid::~RecyclingGrid() {
 void RecyclingGrid::setDataSource(const std::vector<MediaItem>& items) {
     m_items = items;
     m_loading = false;
-    rebuildGrid();
+    // Build immediately only when the grid has already been laid out —
+    // otherwise we have no idea what column count fits and a build now
+    // would have to guess. onLayout() will pick up these stashed items
+    // as soon as borealis hands us a real width.
+    if (m_cellWidth > 0) {
+        rebuildGrid();
+    }
+}
+
+void RecyclingGrid::onLayout() {
+    brls::ScrollingFrame::onLayout();
+
+    int availW = availableContentWidth();
+    if (availW <= 0) return;   // not yet laid out — re-enter once we are
+
+    auto s = computeGridSizing(availW);
+    bool sizingChanged = (s.columns != m_columns) || (s.cellWidth != m_cellWidth);
+    if (sizingChanged) {
+        m_columns   = s.columns;
+        m_cellWidth = s.cellWidth;
+    }
+
+    // Three reasons to (re)build the rows from here:
+    //   1. We have data but never built it (setDataSource ran before
+    //      we knew our width).
+    //   2. Column count or per-cell width changed (window resize,
+    //      orientation flip).
+    //   3. Neither — leave the existing rows alone.
+    bool needBuild = sizingChanged ? !m_items.empty()
+                                   : (!m_items.empty() && m_rows.empty());
+    if (needBuild) rebuildGrid();
 }
 
 void RecyclingGrid::appendItems(const std::vector<MediaItem>& newItems) {
@@ -152,6 +166,10 @@ void RecyclingGrid::appendItems(const std::vector<MediaItem>& newItems) {
 
     size_t oldSize = m_items.size();
     m_items.insert(m_items.end(), newItems.begin(), newItems.end());
+
+    // If onLayout hasn't picked column count yet, just stash the items
+    // and let the first onLayout pass build everything in one shot.
+    if (m_columns <= 0 || m_cellWidth <= 0) return;
 
     // Render the new items continuing from where we left off
     brls::Box* currentRow = nullptr;
@@ -338,11 +356,6 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
 }
 
 void RecyclingGrid::rebuildGrid() {
-    // Record the width this layout is built against so draw()'s
-    // post-layout correction and the resize listener don't trigger a
-    // redundant second rebuild for the width we just used.
-    m_builtForWidth = availableContentWidth();
-
     // Crash fix for "open category": setDataSource() runs while one of
     // our cells (the category cell the user just clicked) still owns
     // the focus. The old implementation called m_contentBox->clearViews()
@@ -433,27 +446,6 @@ void RecyclingGrid::onItemClicked(int index) {
 
 void RecyclingGrid::draw(NVGcontext* vg, float x, float y, float width, float height,
                           brls::Style style, brls::FrameContext* ctx) {
-    // First real layout pass correction. The grid is often built before
-    // it has a laid-out width (data arrives async from Plex after the
-    // view is attached but possibly before the first layout), so the
-    // construction-time sizing used the viewport ESTIMATE. Once the
-    // actual content width is known and differs enough from what we
-    // built against, recompute columns/cell-width and rebuild ONCE. The
-    // >8px guard avoids ping-ponging on sub-pixel layout jitter; the
-    // window-resize listener handles deliberate resizes separately.
-    if (!m_items.empty()) {
-        int availW = availableContentWidth();
-        if (std::abs(availW - m_builtForWidth) > 8) {
-            auto s = computeGridSizing(availW);
-            if (s.columns != m_columns || s.cellWidth != m_cellWidth) {
-                m_columns   = s.columns;
-                m_cellWidth = s.cellWidth;
-                rebuildGrid();
-            }
-            m_builtForWidth = availW;
-        }
-    }
-
     // Visibility-cull off-screen rows. ScrollingFrame::draw() walks every
     // row in m_contentBox and issues a full View::frame() pass on each —
     // even ones nowhere near the viewport. Flipping off-screen rows to
