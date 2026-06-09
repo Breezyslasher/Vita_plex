@@ -80,20 +80,21 @@ jobs:
           V="${V#v}"
           # Extract numeric version for CMake / Vita / PS4 / deb (no labels).
           #
-          # When this build is going to ship as a real release, drop the
-          # github.run_number suffix so artifact filenames and embedded
-          # SFOs read "1.0.2" instead of "1.0.2.450". Three release-shaped
-          # triggers:
-          #   - a tag push (refs/tags/v…) — always a release
-          #   - a manual workflow_dispatch with pre_release=false — the
-          #     user typed a version intending to cut a release
-          # Everything else (plain pushes, manual pre_release=true runs)
-          # keeps the run-number suffix so consecutive test builds get
-          # distinct numeric versions.
+          # Drop the github.run_number suffix on any "intentional" build —
+          # artifact filenames and embedded SFOs then read "1.0.2"
+          # instead of "1.0.2.450". An intentional build is either:
+          #   - a tag push (refs/tags/v…) — git-tagged release
+          #   - any workflow_dispatch with a version override — the user
+          #     typed a number into the form, which is by definition a
+          #     release or pre-release. pre_release=true vs false just
+          #     decides where the artifact is published; both want a
+          #     clean numeric version.
+          # Plain pushes to a branch keep the suffix so consecutive CI
+          # builds remain distinguishable from one another.
           IS_RELEASE=false
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             IS_RELEASE=true
-          elif [[ -n "${{ inputs.version }}" && "${{ inputs.pre_release }}" != "true" ]]; then
+          elif [[ -n "${{ inputs.version }}" ]]; then
             IS_RELEASE=true
           fi
           if [[ "$IS_RELEASE" == "true" ]]; then
