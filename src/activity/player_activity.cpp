@@ -2364,29 +2364,80 @@ void PlayerActivity::updateShuffleIcon() {
 void PlayerActivity::applyMusicLayoutForViewport() {
     if (!albumArt) return;
 
-    // Cover-screen / dragged-narrow / phone-portrait windows want the
-    // album art to dominate the available space — XML's 220x220 default
-    // floats lost in a 400-wide window. Bucket the target fraction by
-    // viewport width so a tiny window gets a near-full-width cover, a
-    // medium window gets a substantial one, and a wide TV gets a
-    // moderate one (the controls below it need room too).
-    //
-    // Vertical clamp at 50% prevents the cover from pushing the title
-    // / transport controls off-screen on a short window. Absolute
-    // floor / ceiling avoid pathological cases (zero-sized viewport
-    // during early init, 8K monitors).
     float vw = platform::viewportWidth();
     float vh = platform::viewportHeight();
     if (vw <= 0 || vh <= 0) return;
 
-    float target;
-    if (vw < 500.f)        target = vw * 0.85f;  // tiny window — cover dominates
-    else if (vw < 900.f)   target = vw * 0.65f;  // medium window
-    else                   target = vw * 0.45f;  // wide window
+    // The music player stacks vertically: album cover, then music_info
+    // (title + artist), then music_transport (5 buttons), then the
+    // bottom controls block (progress + time + queue). For the cover
+    // not to draw OVER music_info on a short window (the landscape
+    // phone bug in the screenshot), reserve enough vertical space for
+    // all three rows BEFORE picking the cover size — Yoga doesn't clip
+    // oversized children, so an album_art taller than its container's
+    // share of the viewport just bleeds into the row below it.
+    //
+    // Each row is also scaled to the viewport so a very short window
+    // doesn't waste 80 px of vertical real estate on touch-sized
+    // buttons that no one's going to finger-tap on a 600-tall screen
+    // anyway.
 
-    if (target > vh * 0.5f) target = vh * 0.5f;
-    if (target < 180.f)     target = 180.f;
-    if (target > 600.f)     target = 600.f;
+    // --- Row 1: title / artist labels --------------------------------
+    // Font sizes scale with viewport height: smaller fonts on shorter
+    // windows free up vertical space the cover can use, and the text
+    // is still readable from a sensible viewing distance on a phone.
+    int titleFont   = (vh < 500.f) ? 16 : (vh < 800.f ? 19 : 22);
+    int artistFont  = (vh < 500.f) ? 12 : (vh < 800.f ? 14 : 16);
+    int infoHeight  = (vh < 500.f) ? 40 : 56;
+    if (musicTitleLabel)  musicTitleLabel->setFontSize(titleFont);
+    if (musicArtistLabel) musicArtistLabel->setFontSize(artistFont);
+
+    // --- Row 2: transport buttons -----------------------------------
+    // Buttons get smaller on short viewports too — XML's 80px play /
+    // 60px prev/next / 48px shuffle/repeat are tuned for TV-distance
+    // remotes and look enormous on a phone landscape.
+    int btnPlay  = (vh < 500.f) ? 56 : (vh < 800.f ? 68 : 80);
+    int btnSide  = (vh < 500.f) ? 44 : (vh < 800.f ? 52 : 60);
+    int btnEdge  = (vh < 500.f) ? 36 : (vh < 800.f ? 42 : 48);
+    int transportHeight = btnPlay + 12;  // small breathing room
+    if (musicPlayBtn) { musicPlayBtn->setWidth(btnPlay); musicPlayBtn->setHeight(btnPlay); }
+    if (musicPrevBtn) { musicPrevBtn->setWidth(btnSide); musicPrevBtn->setHeight(btnSide); }
+    if (musicNextBtn) { musicNextBtn->setWidth(btnSide); musicNextBtn->setHeight(btnSide); }
+    if (shuffleBtn)   { shuffleBtn->setWidth(btnEdge);   shuffleBtn->setHeight(btnEdge); }
+    if (repeatBtn)    { repeatBtn->setWidth(btnEdge);    repeatBtn->setHeight(btnEdge); }
+    // Shrink the bound icons in lockstep so a 56-px play button doesn't
+    // hold a 44-px icon that crowds it (and the shuffle/repeat
+    // 36→24-px icons stay centred).
+    int iconPlay = btnPlay * 55 / 100;
+    int iconEdge = btnEdge * 50 / 100;
+    if (musicPlayIcon) { musicPlayIcon->setWidth(iconPlay); musicPlayIcon->setHeight(iconPlay); }
+    if (shuffleIcon)   { shuffleIcon->setWidth(iconEdge);   shuffleIcon->setHeight(iconEdge); }
+    if (repeatIcon)    { repeatIcon->setWidth(iconEdge);    repeatIcon->setHeight(iconEdge); }
+
+    // --- Row 3: bottom controls block (progress + time + queue btn) -
+    // Has fixed inner padding the XML can't relax without reflowing
+    // every video-mode layout; estimate its laid-out height from the
+    // viewport instead.
+    int bottomControls = (vh < 500.f) ? 140 : (vh < 800.f ? 170 : 200);
+
+    // Vertical real estate available for the cover, after subtracting
+    // every row beneath it plus a top breathing margin.
+    float reservedBelow = (float)(infoHeight + transportHeight + bottomControls + 24);
+    float availableHeight = vh - reservedBelow;
+    if (availableHeight < 160.f) availableHeight = 160.f;
+
+    // Width-driven target: tiny windows get a near-full-width cover,
+    // medium windows a substantial one, wide ones moderate.
+    float target;
+    if (vw < 500.f)        target = vw * 0.85f;
+    else if (vw < 900.f)   target = vw * 0.65f;
+    else                   target = vw * 0.45f;
+
+    // Clamp to the vertical budget so the cover NEVER overflows into
+    // the music_info zone, plus absolute sanity floor/ceiling.
+    if (target > availableHeight) target = availableHeight;
+    if (target < 160.f) target = 160.f;
+    if (target > 600.f) target = 600.f;
 
     albumArt->setWidth(target);
     albumArt->setHeight(target);
