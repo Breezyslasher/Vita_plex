@@ -101,7 +101,7 @@ const ImageConstraints& getImageConstraints() {
         /* landscapeWidth     */ 220,
         /* landscapeHeight    */ 125,
         /* gridColumns        */   3,  // 5 -> 3 for narrow phone width
-        /* gridCellSpacing    */  16,
+        /* gridCellSpacing    */  10,  // tighter than landscape's 14
         /* titleFontSize      */  15,
         /* subtitleFontSize   */  12,
         /* descriptionFontSize*/  12,

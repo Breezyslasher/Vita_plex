@@ -87,7 +87,7 @@ const ImageConstraints& getImageConstraints() {
         /* landscapeWidth     */ 240,
         /* landscapeHeight    */ 135,
         /* gridColumns        */   3,   // 5 -> 3 to fit narrower content
-        /* gridCellSpacing    */  18,
+        /* gridCellSpacing    */  12,   // tighter than landscape's 16
         /* titleFontSize      */  16,
         /* subtitleFontSize   */  13,
         /* descriptionFontSize*/  12,
