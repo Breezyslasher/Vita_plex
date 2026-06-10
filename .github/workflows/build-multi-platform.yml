@@ -608,16 +608,19 @@ jobs:
           path: build/VitaPlex.nro
 
   # ───────────────────────────────────────────────
-  # iOS / tvOS — Xcode configure validation
+  # iOS / tvOS — full build against prebuilt MPVKit
   #
-  # libmpv for iOS / tvOS is not part of the Apple SDK and no off-the-shelf
-  # Homebrew / package-manager binary exists, so we can't do a full link
-  # here without the developer supplying a prebuilt Mpv.xcframework. This
-  # job just runs the CMake configure step against borealis's iOS
-  # toolchain — that's enough to catch CMakeLists / platform_ios.mm
-  # regressions and validates that the bundle scaffolding is well-formed.
-  # To wire up a full build, set LIBMPV_XCFRAMEWORK / LIBMPV_LIBRARY +
-  # LIBMPV_INCLUDE and uncomment the cmake --build step below.
+  # Just like the Vita / Switch jobs pull a prebuilt mpv tarball from
+  # switchfin's portlibs, this job pulls MPVKit's prebuilt libmpv + ffmpeg
+  # xcframeworks (https://github.com/mpvkit/MPVKit/releases) and links
+  # against them. MPVKit statically bundles libass / freetype / harfbuzz /
+  # MoltenVK / libplacebo inside Libmpv.xcframework, so the seven Libav*
+  # frameworks plus Libmpv are everything we need.
+  #
+  # Builds for the SIMULATOR so no code-signing identity is required in CI
+  # (device builds need a provisioning profile). The produced .app runs in
+  # the iOS / tvOS Simulator; for a device install, build locally with
+  # -DPLATFORM=OS64 / TVOS and sign in Xcode.
   # ───────────────────────────────────────────────
   build-ios:
     needs: [resolve-version]
@@ -627,9 +630,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - { target: ios,  cmake_flag: PLATFORM_IOS,  platform_for_toolchain: SIMULATORARM64,    deployment: IPHONEOS_DEPLOYMENT_TARGET }
-        - { target: tvos, cmake_flag: PLATFORM_TVOS, platform_for_toolchain: SIMULATOR_TVOS,    deployment: TVOS_DEPLOYMENT_TARGET }
+        - { target: ios,  cmake_flag: PLATFORM_IOS,  platform_for_toolchain: SIMULATORARM64, sdk: iphonesimulator }
+        - { target: tvos, cmake_flag: PLATFORM_TVOS, platform_for_toolchain: SIMULATOR_TVOS, sdk: appletvsimulator }
     runs-on: macos-14
+    env:
+      # Pin to a release whose asset names match the loop below. All eight
+      # frameworks MUST come from the same release so libmpv and its ffmpeg
+      # are ABI-consistent.
+      MPVKIT_VERSION: "0.41.0"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -637,10 +645,25 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
       - name: Build libromfs-generator
-        # borealis's iOS / tvOS toolchain insists this generator be built
-        # ahead of configure, even though we only really need it when
-        # resources actually get embedded. Same step the Android job runs.
+        # borealis's iOS / tvOS toolchain requires this generator to be
+        # built ahead of configure (it embeds resources/ via libromfs).
         run: ${{ github.workspace }}/lib/borealis/build_libromfs_generator.sh
+      - name: Download MPVKit xcframeworks
+        # One zip per framework. Non-GPL variant: LGPL ffmpeg still decodes
+        # H.264 / HEVC / VP9 / AV1 / AAC / AC3 — everything Plex direct-plays.
+        run: |
+          FW_DIR="${{ github.workspace }}/mpv-frameworks"
+          mkdir -p "$FW_DIR"
+          BASE="https://github.com/mpvkit/MPVKit/releases/download/${MPVKIT_VERSION}"
+          for fw in Libmpv Libavcodec Libavformat Libavutil Libavfilter \
+                    Libswresample Libswscale Libavdevice; do
+            echo "Fetching ${fw}.xcframework.zip"
+            curl -fL --retry 4 --retry-delay 2 \
+              -o "$FW_DIR/${fw}.xcframework.zip" \
+              "${BASE}/${fw}.xcframework.zip"
+            ( cd "$FW_DIR" && unzip -q "${fw}.xcframework.zip" && rm "${fw}.xcframework.zip" )
+          done
+          echo "Downloaded frameworks:"; ls -la "$FW_DIR"
       - name: Configure
         run: |
           cmake -G Xcode -B build \
@@ -650,16 +673,24 @@ jobs:
             -DBOREALIS_LIBRARY=${{ github.workspace }}/lib/borealis/library \
             -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
             -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}" \
-            -DLIBROMFS_PREBUILT_GENERATOR=${{ github.workspace }}/lib/borealis/libromfs-generator
-      # Uncomment + supply LIBMPV_XCFRAMEWORK to produce a real artifact:
-      # - name: Build
-      #   run: |
-      #     cmake --build build --config Release \
-      #       -- -sdk ${{ matrix.target == 'tvos' && 'appletvsimulator' || 'iphonesimulator' }}
-      - name: Verify Xcode project generated
+            -DLIBROMFS_PREBUILT_GENERATOR=${{ github.workspace }}/lib/borealis/libromfs-generator \
+            -DAPPLE_MPV_XCFRAMEWORKS_DIR=${{ github.workspace }}/mpv-frameworks
+      - name: Build
         run: |
-          ls -la build/*.xcodeproj
-          test -d build/VitaPlex.xcodeproj
+          cmake --build build --config Release -- \
+            -sdk ${{ matrix.sdk }} \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+      - name: Locate and stage .app
+        run: |
+          APP="$(find build -name 'VitaPlex.app' -type d | head -1)"
+          if [ -z "$APP" ]; then echo "VitaPlex.app not produced"; exit 1; fi
+          echo "Built: $APP"
+          mkdir -p stage && cp -R "$APP" stage/
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitaPlex-${{ matrix.target }}-${{ github.run_number }}
+          path: stage/VitaPlex.app
 
   # ───────────────────────────────────────────────
   # PS4

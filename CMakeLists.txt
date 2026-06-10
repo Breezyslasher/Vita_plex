@@ -105,6 +105,31 @@ if(PLATFORM_PSV)
     endif()
 endif()
 
+# iOS / tvOS embed app resources through libromfs (borealis toolchain.cmake
+# forces USE_LIBROMFS=ON for these platforms). libromfs's own CMakeLists
+# fatals unless we tell it WHAT to embed and under what project name — set
+# both here, before borealis adds the libromfs subdirectory at
+# add_subdirectory(${BOREALIS_LIBRARY}) below. RESOURCE_LOCATION points at
+# our resources/ tree; the generator walks it at build time and bakes every
+# file into libromfs_resources.cpp, which is why RESOURCE_PREFIX is
+# "romfs:/" for these targets (set further down).
+if(PLATFORM_IOS OR PLATFORM_TVOS)
+    # libromfs embeds a SINGLE directory tree, so merge our app resources
+    # with borealis's system resources (i18n/hints.json, img/sys/) into a
+    # staging dir and point the generator at that. The app tree is copied
+    # first; borealis's is overlaid without clobbering (our i18n/en-US/
+    # main.json must survive, but we still need borealis's hints.json and
+    # img/sys/*). Done at configure time so the path exists before
+    # libromfs's CMakeLists validates it.
+    set(IOS_ROMFS_STAGE "${CMAKE_BINARY_DIR}/romfs_stage")
+    file(MAKE_DIRECTORY "${IOS_ROMFS_STAGE}")
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/resources/" DESTINATION "${IOS_ROMFS_STAGE}")
+    file(COPY "${BOREALIS_DIR}/resources/i18n" DESTINATION "${IOS_ROMFS_STAGE}")
+    file(COPY "${BOREALIS_DIR}/resources/img"  DESTINATION "${IOS_ROMFS_STAGE}")
+    set(LIBROMFS_PROJECT_NAME "VitaPlex" CACHE STRING "" FORCE)
+    set(LIBROMFS_RESOURCE_LOCATION "${IOS_ROMFS_STAGE}" CACHE PATH "" FORCE)
+endif()
+
 add_subdirectory(${BOREALIS_LIBRARY})
 
 # ---------------------------------------------------------------------------
@@ -291,17 +316,51 @@ if(PLATFORM_ANDROID)
     set(APP_FFMPEG_LIBS mpv)
     set(APP_FFMPEG_LINK_BLOCK ${APP_FFMPEG_LIBS})
 elseif(PLATFORM_IOS OR PLATFORM_TVOS)
-    # iOS / tvOS: link libmpv from a user-supplied path. The Apple
-    # platforms don't have a Homebrew-cross-compiled libmpv, so the
-    # build expects either:
-    #   -DLIBMPV_XCFRAMEWORK=/path/to/Mpv.xcframework  (preferred)
-    #   -DLIBMPV_LIBRARY=/path/to/libmpv.a -DLIBMPV_INCLUDE=/path/to/include
-    # If neither is set CMake configures cleanly but the link step
-    # will fail with an unresolved -lmpv — surfaced as a clear error
-    # rather than silently broken video playback.
-    set(APP_FFMPEG_LIBS mpv)
-    set(APP_FFMPEG_LINK_BLOCK ${APP_FFMPEG_LIBS})
-    if(LIBMPV_XCFRAMEWORK)
+    # iOS / tvOS: link libmpv + ffmpeg from prebuilt MPVKit xcframeworks.
+    # The Apple platforms have no Homebrew-cross-compiled libmpv, so —
+    # exactly like the Vita / Switch builds pull a prebuilt mpv tarball
+    # from switchfin's portlibs — the CI job downloads MPVKit's release
+    # xcframeworks and points us at the unzipped directory via:
+    #   -DAPPLE_MPV_XCFRAMEWORKS_DIR=/path/with/*.xcframework
+    # We glob every *.xcframework there and link them all (Libmpv plus
+    # the seven Libav* ffmpeg frameworks). With the Xcode generator,
+    # target_link_libraries on a .xcframework resolves the correct
+    # platform/arch slice automatically.
+    #
+    # Headers: MPVKit's Libmpv.framework ships an mpv/ header dir, so
+    # adding each framework slice's Headers to the search path makes the
+    # existing  #include <mpv/client.h>  resolve unchanged. The CI also
+    # passes -DLIBMPV_INCLUDE pointing at the extracted mpv headers as a
+    # belt-and-braces fallback.
+    #
+    # Empty FFMPEG link block — the frameworks ARE the ffmpeg libs, so we
+    # don't also want a bare -lmpv / -lavcodec in the main link list.
+    set(APP_FFMPEG_LIBS "")
+    set(APP_FFMPEG_LINK_BLOCK "")
+    if(APPLE_MPV_XCFRAMEWORKS_DIR)
+        file(GLOB _MPV_XCFRAMEWORKS "${APPLE_MPV_XCFRAMEWORKS_DIR}/*.xcframework")
+        if(NOT _MPV_XCFRAMEWORKS)
+            message(FATAL_ERROR
+                "APPLE_MPV_XCFRAMEWORKS_DIR=${APPLE_MPV_XCFRAMEWORKS_DIR} "
+                "contains no *.xcframework bundles")
+        endif()
+        foreach(_xcf ${_MPV_XCFRAMEWORKS})
+            target_link_libraries(${PROJECT_NAME} "${_xcf}")
+            # Add every slice's Headers dir so <mpv/client.h> resolves
+            # regardless of which slice Xcode selects.
+            file(GLOB _slices "${_xcf}/*/")
+            foreach(_slice ${_slices})
+                file(GLOB _fw "${_slice}/*.framework")
+                foreach(_f ${_fw})
+                    if(EXISTS "${_f}/Headers")
+                        target_include_directories(${PROJECT_NAME} PRIVATE "${_f}/Headers")
+                    endif()
+                endforeach()
+            endforeach()
+        endforeach()
+        message(STATUS "Linked MPVKit xcframeworks: ${_MPV_XCFRAMEWORKS}")
+    elseif(LIBMPV_XCFRAMEWORK)
+        # Single combined xcframework fallback.
         target_include_directories(${PROJECT_NAME} PRIVATE
             "${LIBMPV_XCFRAMEWORK}/Headers"
             "${LIBMPV_XCFRAMEWORK}")
@@ -309,6 +368,9 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
     elseif(LIBMPV_LIBRARY)
         target_include_directories(${PROJECT_NAME} PRIVATE "${LIBMPV_INCLUDE}")
         target_link_libraries(${PROJECT_NAME} "${LIBMPV_LIBRARY}")
+    endif()
+    if(LIBMPV_INCLUDE)
+        target_include_directories(${PROJECT_NAME} PRIVATE "${LIBMPV_INCLUDE}")
     endif()
 elseif(WIN32)
     set(APP_FFMPEG_LIBS mpv)
@@ -344,17 +406,15 @@ if(PLATFORM_ANDROID)
         harfbuzz
     )
 elseif(PLATFORM_IOS OR PLATFORM_TVOS)
-    # iOS / tvOS: minimal render lib set. libpng / libbz2 / mp3lame are
-    # not part of the iOS SDK; freetype + harfbuzz + libass come from
-    # the same xcframework the user supplies for libmpv (or a system
-    # install via vcpkg / a CocoaPods spec).
+    # iOS / tvOS: no standalone render libs. borealis renders through its
+    # OWN bundled nanovg + stb_truetype (no system freetype), and every
+    # mpv-side dependency (libass, freetype, harfbuzz, fribidi, zlib, …)
+    # is statically baked into MPVKit's Libmpv.xcframework. Linking bare
+    # -lass / -lfreetype here would just fail — those dylibs don't exist
+    # in the iOS SDK. libz IS in the SDK, so keep it for anything that
+    # needs zlib directly.
     set(APP_RENDER_LIBS
-        ass
-        freetype
-        fribidi
-        webp
         z
-        harfbuzz
     )
 elseif(WIN32)
     set(APP_RENDER_LIBS
@@ -386,7 +446,11 @@ set(APP_NETWORK_LIBS
     curl
 )
 
-if(NOT WIN32)
+# mbedtls is curl's TLS backend on the consoles / desktop Homebrew builds.
+# iOS / tvOS ship a system libcurl (libcurl.tbd) that uses Apple's Secure
+# Transport, so mbedtls isn't present in the SDK and must NOT be in the
+# link list — otherwise the link fails with -lmbedtls not found.
+if(NOT WIN32 AND NOT PLATFORM_IOS AND NOT PLATFORM_TVOS)
     list(APPEND APP_NETWORK_LIBS
         mbedtls
         mbedx509
@@ -463,20 +527,23 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
         "-framework QuartzCore"
         "-framework CoreMedia"
         "-framework CoreVideo"
+        "-framework CoreImage"
         "-framework AVFoundation"
         "-framework AudioToolbox"
+        "-framework VideoToolbox"          # mpv hwdec=auto-safe -> VideoToolbox
         "-framework OpenGLES"
-        "-framework Metal"
+        "-framework Metal"                 # MoltenVK / libplacebo backend
         "-framework MetalKit"
+        "-framework IOSurface"             # MoltenVK swapchain surfaces
         "-framework GameController"
         "-framework CoreServices"
         "-framework Security"
+        "-framework CFNetwork"             # system libcurl transitive
+        "-framework SystemConfiguration"
     )
-    if(PLATFORM_TVOS)
-        # tvOS doesn't have UIKit Indirect Input — GameController is the
-        # only path. The framework set is otherwise identical.
-    endif()
     target_link_libraries(${PROJECT_NAME} ${_APPLE_MOBILE_FRAMEWORKS})
+    # Apple SDKs ship these as top-level dylibs, not frameworks.
+    target_link_libraries(${PROJECT_NAME} "-lc++" "-liconv" "-lbz2")
 elseif(PLATFORM_DESKTOP)
     find_package(Threads REQUIRED)
     target_link_libraries(${PROJECT_NAME} Threads::Threads)
