@@ -689,6 +689,9 @@ jobs:
           export CC="$(xcrun --sdk ${{ matrix.sdk }} --find clang)"
           export AR="$(xcrun --sdk ${{ matrix.sdk }} --find ar)"
           export RANLIB="$(xcrun --sdk ${{ matrix.sdk }} --find ranlib)"
+          export ac_cv_func_fcntl=yes
+          export curl_cv_func_fcntl=yes
+          export curl_cv_nonblock=O_NONBLOCK
           export CFLAGS="-arch arm64 -isysroot ${SDK_PATH} ${MIN_FLAG} -O2 -fembed-bitcode=marker"
           export LDFLAGS="-arch arm64 -isysroot ${SDK_PATH} ${MIN_FLAG}"
           ./configure \
