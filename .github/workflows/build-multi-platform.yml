@@ -684,8 +684,7 @@ jobs:
             -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}" \
             -DLIBROMFS_PREBUILT_GENERATOR=${{ github.workspace }}/lib/borealis/libromfs-generator \
             -DAPPLE_MPV_XCFRAMEWORKS_DIR=${{ github.workspace }}/mpv-frameworks \
-            -DLIBCURL_INCLUDE_DIR=${{ env.LIBCURL_INCLUDE }} \
-            -DLIBCURL_LIBRARY=${{ env.LIBCURL_LIBRARY }}
+            -DCURL_INCLUDE_DIR=$(brew --prefix curl)/include
       - name: Build
         run: |
           cmake --build build --config Release -- \
