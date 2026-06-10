@@ -645,14 +645,8 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
       - name: Install curl headers
-        # The iOS / tvOS SDKs ship libcurl.tbd (for linking) but NOT the
-        # <curl/*.h> public headers — every iOS project that uses libcurl
-        # has to source those from somewhere. Homebrew's curl formula is
-        # the standard choice; its headers are ABI-compatible with the
-        # libcurl that iOS / tvOS link against at runtime.
         run: |
           brew install curl
-          echo "CURL_INCLUDE=$(brew --prefix curl)/include" >> $GITHUB_ENV
       - name: Build libromfs-generator
         # borealis's iOS / tvOS toolchain requires this generator to be
         # built ahead of configure (it embeds resources/ via libromfs).
