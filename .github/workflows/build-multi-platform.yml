@@ -658,7 +658,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/libcurl-install
-          key: libcurl-8.7.1-${{ matrix.sdk }}-v1
+          key: libcurl-8.7.1-${{ matrix.sdk }}-v2
       - name: Build static libcurl for ${{ matrix.sdk }}
         # iOS Simulator SDK ships /usr/lib/libcurl.tbd but tvOS Simulator
         # SDK does NOT — tvOS has a tighter public-library allowlist. To
@@ -699,7 +699,13 @@ jobs:
             --disable-dict --disable-telnet --disable-tftp \
             --disable-pop3 --disable-imap --disable-smtp --disable-gopher \
             --disable-mqtt --disable-smb --disable-manual \
-            --disable-debug --disable-verbose
+            --disable-debug
+          # NOTE: --disable-verbose is intentionally NOT passed. curl 8.7.1
+          # has a bug where cf-socket.c references struct fields (l_ip /
+          # l_port) that the CURL_DISABLE_VERBOSE_STRINGS guard removes,
+          # so the build fails with "no member named 'l_ip'". Fixed in
+          # later releases; for now leaving verbose strings on costs
+          # ~20KB and avoids the workaround.
           make -j$(sysctl -n hw.ncpu)
           make install
           echo "Built libcurl.a: $(file ${PREFIX}/lib/libcurl.a)"
