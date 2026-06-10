@@ -280,17 +280,20 @@ if(PLATFORM_DESKTOP AND APPLE)
 endif()
 
 if(PLATFORM_IOS OR PLATFORM_TVOS)
-    # The iOS / tvOS SDKs ship libcurl.tbd for linking but no <curl/*.h>
-    # headers, so we have to source them from the macOS host. CI passes
-    # -DLIBCURL_INCLUDE_DIR=$(brew --prefix curl)/include; local builds
-    # can do the same or fall back to /opt/homebrew/include if the user
-    # has a non-keg curl install.
+    # CI builds a minimal static libcurl from source against the matrix's
+    # SDK and passes both the headers dir and the .a path. Local builds
+    # can do the same or fall back to a Homebrew curl install for the
+    # headers (link will fail without LIBCURL_LIBRARY though — there's
+    # no point hiding that).
     if(LIBCURL_INCLUDE_DIR)
         target_include_directories(${PROJECT_NAME} PRIVATE "${LIBCURL_INCLUDE_DIR}")
     elseif(EXISTS /opt/homebrew/opt/curl/include)
         target_include_directories(${PROJECT_NAME} PRIVATE /opt/homebrew/opt/curl/include)
     elseif(EXISTS /usr/local/opt/curl/include)
         target_include_directories(${PROJECT_NAME} PRIVATE /usr/local/opt/curl/include)
+    endif()
+    if(LIBCURL_LIBRARY)
+        target_link_libraries(${PROJECT_NAME} "${LIBCURL_LIBRARY}")
     endif()
 endif()
 
@@ -495,14 +498,25 @@ if(NOT PLATFORM_PS4 AND NOT WIN32 AND NOT PLATFORM_ANDROID AND NOT PLATFORM_IOS 
     )
 endif()
 
-set(APP_NETWORK_LIBS
-    curl
-)
+# iOS / tvOS link a prebuilt static libcurl.a supplied via -DLIBCURL_LIBRARY
+# (built from source in the CI step against the matrix's SDK). The iOS
+# Simulator SDK ships /usr/lib/libcurl.tbd, but tvOS Simulator does NOT —
+# tvOS has a tighter public-library allowlist. Building static and linking
+# it directly keeps both targets on the same code path AND avoids relying
+# on whatever curl version Apple happens to ship that year. Empty
+# APP_NETWORK_LIBS here so the bare "-lcurl" / "-lmbedtls" entries don't
+# land in the link line.
+if(PLATFORM_IOS OR PLATFORM_TVOS)
+    set(APP_NETWORK_LIBS "")
+else()
+    set(APP_NETWORK_LIBS
+        curl
+    )
+endif()
 
 # mbedtls is curl's TLS backend on the consoles / desktop Homebrew builds.
-# iOS / tvOS ship a system libcurl (libcurl.tbd) that uses Apple's Secure
-# Transport, so mbedtls isn't present in the SDK and must NOT be in the
-# link list — otherwise the link fails with -lmbedtls not found.
+# iOS / tvOS use Secure Transport instead, so mbedtls isn't in the link
+# list there.
 if(NOT WIN32 AND NOT PLATFORM_IOS AND NOT PLATFORM_TVOS)
     list(APPEND APP_NETWORK_LIBS
         mbedtls
