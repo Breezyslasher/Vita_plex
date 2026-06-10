@@ -695,7 +695,7 @@ jobs:
             --host=aarch64-apple-darwin \
             --prefix="${PREFIX}" \
             --disable-shared --enable-static \
-            --with-secure-transport \
+            --without-ssl \
             --without-libpsl --without-libidn2 --without-nghttp2 \
             --without-zstd --without-brotli --without-librtmp \
             --without-libssh --without-libssh2 --without-zlib \
