@@ -88,10 +88,13 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -frtti -fexceptions")
 # this clang reports "member access into incomplete type 'tm'" all over
 # the codebase (video_view.cpp, settings_tab.cpp, etc.) on every TU that
 # pulls in borealis/core/event.hpp -> <algorithm> / <functional>.
-# Force-include <ctime> at the top of every TU so the full definition is
-# always in scope before <locale>.
+# Force-include <ctime> at the top of every C++ TU so the full
+# definition is always in scope before <locale>. Gated to C++ only via
+# COMPILE_LANGUAGE — <ctime> is a C++ header, force-including it into
+# C TUs (SDL_uikit_main.c et al.) fails with "'ctime' file not found".
 if(PLATFORM_IOS OR PLATFORM_TVOS)
-    add_compile_options(-include ctime)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-include>
+                        $<$<COMPILE_LANGUAGE:CXX>:ctime>)
 endif()
 
 # ---------------------------------------------------------------------------
