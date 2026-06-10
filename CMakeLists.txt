@@ -569,8 +569,37 @@ elseif(PLATFORM_PS4)
         COMMAND "${CMAKE_COMMAND}" -E copy_directory ${BOREALIS_DIR}/ps4 ${CMAKE_BINARY_DIR}/ps4
         # Override with our custom sce_sys (icon)
         COMMAND "${CMAKE_COMMAND}" -E copy_directory ${CMAKE_SOURCE_DIR}/app/platform/ps4 ${CMAKE_BINARY_DIR}/ps4
-        # Copy app resources
-        COMMAND "${CMAKE_COMMAND}" -E copy_directory ${CMAKE_CURRENT_SOURCE_DIR}/resources ${CMAKE_BINARY_DIR}/ps4/resources
+        # Copy app resources EXCEPT the per-platform icon directories.
+        # The pacbrew pkg-tool generates a .gp4 XML project from the
+        # bundled file list; the "Keyboard & Mouse" directory's '&' is
+        # an unescaped XML entity reference there, which crashes the
+        # tool with "An error occurred while parsing EntityName".
+        # PS4 also doesn't need Switch / Vita / Steam Deck / Touch
+        # icons, so this both unbreaks packaging AND slims the .pkg.
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/xml      ${CMAKE_BINARY_DIR}/ps4/resources/xml
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/i18n     ${CMAKE_BINARY_DIR}/ps4/resources/i18n
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons    ${CMAKE_BINARY_DIR}/ps4/resources/icons
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/font     ${CMAKE_BINARY_DIR}/ps4/resources/font
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/material ${CMAKE_BINARY_DIR}/ps4/resources/material
+        COMMAND "${CMAKE_COMMAND}" -E copy
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/cacert.pem ${CMAKE_BINARY_DIR}/ps4/resources/cacert.pem
+        # Only the icon sets the PS4 build actually consumes — the
+        # native Ps4/ set (used by HintIcons::getResPath on __PS4__),
+        # plus the cross-platform Generic and Flairs sets.
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/images/Ps4
+            ${CMAKE_BINARY_DIR}/ps4/resources/images/Ps4
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/images/Generic
+            ${CMAKE_BINARY_DIR}/ps4/resources/images/Generic
+        COMMAND "${CMAKE_COMMAND}" -E copy_directory
+            ${CMAKE_CURRENT_SOURCE_DIR}/resources/images/Flairs
+            ${CMAKE_BINARY_DIR}/ps4/resources/images/Flairs
         # Copy borealis system resources
         COMMAND "${CMAKE_COMMAND}" -E copy_directory ${BOREALIS_DIR}/resources/i18n ${CMAKE_BINARY_DIR}/ps4/resources/i18n
         COMMAND "${CMAKE_COMMAND}" -E copy_directory ${BOREALIS_DIR}/resources/img ${CMAKE_BINARY_DIR}/ps4/resources/img

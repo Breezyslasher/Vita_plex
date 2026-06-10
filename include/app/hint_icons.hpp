@@ -8,7 +8,7 @@
  * & mouse / touch) and switches at runtime.
  *
  *   PSV       -> resources/images/PSV/
- *   PS4       -> resources/images/PS5/
+ *   PS4       -> resources/images/Ps4/         (outline-* line-art set)
  *   Switch    -> resources/images/Nintendo Switch/Default/
  *   Desktop   -> resources/images/Steam Deck/Default/   (controller)
  *                resources/images/Keyboard & Mouse/Default/

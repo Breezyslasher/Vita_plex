@@ -45,18 +45,22 @@ const char* psvPath(brls::ControllerButton b) {
     }
 }
 
-const char* playstationPath(brls::ControllerButton b) {
+// PS4 native art (the line-art "outline-*" set under images/Ps4/).
+// This is the set bundled into the PS4 .pkg by CMakeLists, so any
+// button we map here MUST exist as a file in that directory.
+const char* ps4Path(brls::ControllerButton b) {
     switch (b) {
-        case brls::BUTTON_A:     return "images/PS5/Default/playstation_button_cross.png";
-        case brls::BUTTON_B:     return "images/PS5/Default/playstation_button_circle.png";
-        case brls::BUTTON_X:     return "images/PS5/Default/playstation_button_square.png";
-        case brls::BUTTON_Y:     return "images/PS5/Default/playstation_button_triangle.png";
-        case brls::BUTTON_START: return "images/PS5/Default/playstation4_button_options.png";
-        case brls::BUTTON_BACK:  return "images/PS5/Default/playstation4_button_share.png";
-        case brls::BUTTON_LB:    return "images/PS5/Default/playstation_trigger_l1.png";
-        case brls::BUTTON_RB:    return "images/PS5/Default/playstation_trigger_r1.png";
-        case brls::BUTTON_LT:    return "images/PS5/Default/playstation_trigger_l2.png";
-        case brls::BUTTON_RT:    return "images/PS5/Default/playstation_trigger_r2.png";
+        case brls::BUTTON_A:     return "images/Ps4/outline-cross.png";
+        case brls::BUTTON_B:     return "images/Ps4/outline-circle.png";
+        case brls::BUTTON_X:     return "images/Ps4/outline-square.png";
+        case brls::BUTTON_Y:     return "images/Ps4/outline-triangle.png";
+        case brls::BUTTON_START: return "images/Ps4/plain-big-option.png";
+        case brls::BUTTON_BACK:  return "images/Ps4/outline-share.png";
+        case brls::BUTTON_LB:    return "images/Ps4/outline-L1.png";
+        case brls::BUTTON_RB:    return "images/Ps4/outline-R1.png";
+        case brls::BUTTON_LT:    return "images/Ps4/outline-L2.png";
+        case brls::BUTTON_RT:    return "images/Ps4/outline-R2.png";
+        case brls::BUTTON_GUIDE: return "images/Ps4/outline-PS.png";
         default:                 return "";
     }
 }
@@ -192,7 +196,7 @@ const char* resolveStatic(brls::ControllerButton b) {
 #if defined(__vita__)
     return psvPath(b);
 #elif defined(__PS4__) || defined(__ORBIS__)
-    return playstationPath(b);
+    return ps4Path(b);
 #elif defined(__SWITCH__)
     return switchPath(b);
 #else

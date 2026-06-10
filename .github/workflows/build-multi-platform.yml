@@ -408,12 +408,21 @@ jobs:
         run: |
           if command -v apt-get >/dev/null 2>&1; then
             sudo apt-get update
+            # librtmp1 / libssh-4 are Recommends (not Depends) of
+            # libavformat on Ubuntu 24.04 — without them ldd of the
+            # build's libavformat reports "librtmp.so.1 => not found"
+            # and the bundling loop below silently skips it, then
+            # Steam Deck (which doesn't ship librtmp.so.1) fails at
+            # launch with "error while loading shared libraries:
+            # librtmp.so.1". Pull them in explicitly so they're
+            # present on the build host AND get bundled.
             sudo apt-get install -y --no-install-recommends \
               cmake ninja-build pkg-config \
               libcurl4-openssl-dev libmbedtls-dev libmpv-dev \
               libavcodec-dev libavformat-dev libavfilter-dev libswresample-dev libswscale-dev libavutil-dev \
               libmp3lame-dev libass-dev libfreetype-dev libharfbuzz-dev libfribidi-dev \
               libpng-dev libwebp-dev libzstd-dev libdbus-1-dev \
+              librtmp1 libssh-gcrypt-4 \
               libwayland-dev libxkbcommon-dev xorg-dev
           elif command -v dnf >/dev/null 2>&1; then
             dnf install -y \
@@ -464,23 +473,55 @@ jobs:
           # without accidentally catching e.g. libcurl when we meant libc.
           # Dash must be first inside the bracket to be literal in POSIX ERE.
           EXCLUDE='^(/lib(64)?/ld-|.*/(libc|libm|libpthread|libdl|librt|libresolv|libutil|libnsl|libstdc\+\+|libgcc_s|libGL|libGLX|libEGL|libGLdispatch|libGLESv|libOpenGL|libvulkan|libX11|libxcb|libXext|libXrandr|libXi|libXinerama|libXcursor|libXrender|libXfixes|libwayland|libxkbcommon|libdbus|libsystemd|libudev|libdrm|libgbm)[-.]|linux-vdso\.so)'
-          while read -r lib; do
-            [[ -z "$lib" || ! -f "$lib" ]] && continue
-            [[ "$lib" =~ $EXCLUDE ]] && continue
-            cp -L "$lib" "$BUNDLE_DIR/"
-          done < <(ldd build/VitaPlex | awk '/=>/ {print $3}')
-          # mpv recursively pulls in ffmpeg / libass / etc.; walk those too.
-          for shipped in "$BUNDLE_DIR"/*.so*; do
-            [ -f "$shipped" ] || continue
-            while read -r dep; do
-              [[ -z "$dep" || ! -f "$dep" ]] && continue
-              [[ "$dep" =~ $EXCLUDE ]] && continue
-              name=$(basename "$dep")
-              [ -f "$BUNDLE_DIR/$name" ] && continue
-              cp -L "$dep" "$BUNDLE_DIR/"
-            done < <(ldd "$shipped" | awk '/=>/ {print $3}')
-          done
+
+          # Fixed-point walk: start from the binary, bundle every non-excluded
+          # dep, then for each newly bundled lib walk ITS deps too. Previous
+          # version did only one level of recursion past the binary, which
+          # missed librtmp coming in via libavformat-via-libavformat-protocols
+          # on some distros. Loop until no new libs land in $BUNDLE_DIR.
+          # Fail loudly if ldd reports any dep as "not found" — the runtime
+          # loader will hit the same gap on Steam Deck / Bazzite and refuse
+          # to start the binary.
+          declare -A bundled
+          UNRESOLVED=""
+          walk_deps() {
+            local target="$1"
+            while IFS= read -r raw; do
+              # ldd "foo.so" lines look like:
+              #   libfoo.so.1 => /path/to/libfoo.so.1 (0xaddr)
+              #   libfoo.so.1 => not found
+              # We need the path AND must detect the "not found" case
+              # because awk '$3' silently turns it into "not".
+              local needed path
+              needed=$(echo "$raw" | awk '{print $1}')
+              path=$(echo "$raw" | awk '{print $3}')
+              if [ "$path" = "not" ]; then
+                # `not found` — record it; verdict comes after the walk.
+                UNRESOLVED+="${needed} (needed by $(basename "$target"))"$'\n'
+                continue
+              fi
+              [[ -z "$path" || ! -f "$path" ]] && continue
+              [[ "$path" =~ $EXCLUDE ]] && continue
+              local name; name=$(basename "$path")
+              if [ -z "${bundled[$name]+x}" ]; then
+                cp -L "$path" "$BUNDLE_DIR/"
+                bundled[$name]=1
+                # Recurse into the just-bundled lib.
+                walk_deps "$BUNDLE_DIR/$name"
+              fi
+            done < <(ldd "$target" 2>/dev/null | awk '/=>/')
+          }
+          walk_deps build/VitaPlex
+
           echo "Bundled libraries:"; ls -la "$BUNDLE_DIR" || true
+          if [ -n "$UNRESOLVED" ]; then
+            echo "::error::ldd reported unresolved dependencies on the build"
+            echo "host — Steam Deck / Bazzite will hit the same gap. Either"
+            echo "install the missing packages on the build runner or add"
+            echo "their providers to the apt-get install list above."
+            printf '%s' "$UNRESOLVED"
+            exit 1
+          fi
 
           # Point the binary at $ORIGIN/lib so it finds the bundled
           # copies before consulting the host's lib path. Falls back to
@@ -495,7 +536,23 @@ jobs:
               apk add --no-cache patchelf
             fi
           fi
+          # Patch the binary's RPATH to look in $ORIGIN/lib first.
+          # Then patch every BUNDLED lib too — modern ELF uses DT_RUNPATH
+          # which only resolves a library's DIRECT deps; the loader will
+          # NOT cascade the binary's RUNPATH through libavformat when
+          # libavformat asks for librtmp. So even though librtmp.so.1
+          # is sitting in $ORIGIN/lib, the system-built libavformat (no
+          # RUNPATH) couldn't see it and Steam Deck failed with
+          # "error while loading shared libraries: librtmp.so.1".
+          # Giving each bundled lib RPATH=$ORIGIN makes the bundle
+          # self-resolving.
           patchelf --set-rpath '$ORIGIN/lib' build/VitaPlex
+          for so in "$BUNDLE_DIR"/*.so*; do
+            [ -f "$so" ] || continue
+            # `|| true` because some libs (e.g. stripped vendor blobs)
+            # may refuse to be patched; non-fatal for the overall bundle.
+            patchelf --set-rpath '$ORIGIN' "$so" 2>/dev/null || true
+          done
 
           tar -czf VitaPlex-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz -C build VitaPlex resources lib
       - name: Upload Flatpak artifact
@@ -516,8 +573,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - { driver: opengl, mpv_pkg: switch-libmpv-0.41.0-5-any.pkg.tar.zst, cmake_extra: "" }
-        - { driver: deko3d, mpv_pkg: switch-libmpv-deko3d-0.41.0-5-any.pkg.tar.zst, cmake_extra: "-DUSE_DEKO3D=ON" }
+        # switchfin's portlibs release currently pins libmpv at 0.36.0-5;
+        # 0.41.0-5 was never published, so the previous URLs 404'd.
+        - { driver: opengl, mpv_pkg: switch-libmpv-0.36.0-5-any.pkg.tar.zst, cmake_extra: "" }
+        - { driver: deko3d, mpv_pkg: switch-libmpv-deko3d-0.36.0-5-any.pkg.tar.zst, cmake_extra: "-DUSE_DEKO3D=ON" }
     container:
       image: devkitpro/devkita64:20260219
     steps:
