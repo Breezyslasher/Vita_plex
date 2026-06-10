@@ -674,7 +674,7 @@ jobs:
           # ctx->l_port that don't exist in struct cf_socket_ctx — only
           # ctx->ip.local_ip / ctx->ip.local_port do, see curl#13321).
           # Fixed in 8.7.2; 8.10.1 is the well-tested release.
-          CURL_VERSION=8.10.1
+          CURL_VERSION=8.16.0
           PREFIX="${{ github.workspace }}/libcurl-install"
           SDK_PATH=$(xcrun --sdk ${{ matrix.sdk }} --show-sdk-path)
           if [ "${{ matrix.target }}" = "ios" ]; then
