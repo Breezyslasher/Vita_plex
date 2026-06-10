@@ -82,19 +82,24 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -frtti -fexceptions")
 
 # Xcode 15 / iOS SDK 17.5 libc++ workaround. <vector> transitively pulls
-# in <__format/formatter_integral.h> -> <locale>, and <locale> uses tm's
-# members (tm_min, tm_hour, tm_sec, tm_wday, tm_year) without including
-# <time.h> first. <wchar.h> only forward-declares struct tm, so without
-# this clang reports "member access into incomplete type 'tm'" all over
-# the codebase (video_view.cpp, settings_tab.cpp, etc.) on every TU that
-# pulls in borealis/core/event.hpp -> <algorithm> / <functional>.
-# Force-include <ctime> at the top of every C++ TU so the full
-# definition is always in scope before <locale>. Gated to C++ only via
-# COMPILE_LANGUAGE — <ctime> is a C++ header, force-including it into
-# C TUs (SDL_uikit_main.c et al.) fails with "'ctime' file not found".
+# in <__format/formatter_integral.h> -> <locale>, and <locale> uses
+# struct tm's members (tm_min, tm_hour, tm_sec, …) without including
+# <time.h> first. <wchar.h> only forward-declares tm, so without this
+# clang reports "member access into incomplete type 'tm'" all over the
+# codebase on every TU that pulls in borealis/core/event.hpp ->
+# <algorithm> / <functional>.
+#
+# Force-include the C header <time.h> rather than the C++ wrapper
+# <ctime>. <ctime> just does `using ::size_t _LIBCPP_USING_IF_EXISTS;`
+# which silently no-ops when ::size_t isn't declared yet — and then
+# <__type_traits/aligned_storage.h> can't resolve std::size_t and the
+# whole build collapses. <time.h> actually *defines* size_t / tm /
+# time_t in the global namespace, which makes libc++'s later
+# using-declarations resolve cleanly. <time.h> is also valid C, so
+# the SDL2 C sources (SDL_uikit_main.c et al.) don't need the
+# COMPILE_LANGUAGE:CXX gate the previous iteration carried.
 if(PLATFORM_IOS OR PLATFORM_TVOS)
-    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-include>
-                        $<$<COMPILE_LANGUAGE:CXX>:ctime>)
+    add_compile_options(-include time.h)
 endif()
 
 # ---------------------------------------------------------------------------
