@@ -608,6 +608,60 @@ jobs:
           path: build/VitaPlex.nro
 
   # ───────────────────────────────────────────────
+  # iOS / tvOS — Xcode configure validation
+  #
+  # libmpv for iOS / tvOS is not part of the Apple SDK and no off-the-shelf
+  # Homebrew / package-manager binary exists, so we can't do a full link
+  # here without the developer supplying a prebuilt Mpv.xcframework. This
+  # job just runs the CMake configure step against borealis's iOS
+  # toolchain — that's enough to catch CMakeLists / platform_ios.mm
+  # regressions and validates that the bundle scaffolding is well-formed.
+  # To wire up a full build, set LIBMPV_XCFRAMEWORK / LIBMPV_LIBRARY +
+  # LIBMPV_INCLUDE and uncomment the cmake --build step below.
+  # ───────────────────────────────────────────────
+  build-ios:
+    needs: [resolve-version]
+    if: ${{ inputs.platform == 'ios' || inputs.platform == 'tvos' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
+    name: Apple Mobile (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { target: ios,  cmake_flag: PLATFORM_IOS,  platform_for_toolchain: SIMULATORARM64,    deployment: IPHONEOS_DEPLOYMENT_TARGET }
+        - { target: tvos, cmake_flag: PLATFORM_TVOS, platform_for_toolchain: SIMULATOR_TVOS,    deployment: TVOS_DEPLOYMENT_TARGET }
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+      - name: Build libromfs-generator
+        # borealis's iOS / tvOS toolchain insists this generator be built
+        # ahead of configure, even though we only really need it when
+        # resources actually get embedded. Same step the Android job runs.
+        run: ${{ github.workspace }}/lib/borealis/build_libromfs_generator.sh
+      - name: Configure
+        run: |
+          cmake -G Xcode -B build \
+            -D${{ matrix.cmake_flag }}=ON \
+            -DPLATFORM=${{ matrix.platform_for_toolchain }} \
+            -DDEPLOYMENT_TARGET=13.0 \
+            -DBOREALIS_LIBRARY=${{ github.workspace }}/lib/borealis/library \
+            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+            -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}" \
+            -DLIBROMFS_PREBUILT_GENERATOR=${{ github.workspace }}/lib/borealis/libromfs-generator
+      # Uncomment + supply LIBMPV_XCFRAMEWORK to produce a real artifact:
+      # - name: Build
+      #   run: |
+      #     cmake --build build --config Release \
+      #       -- -sdk ${{ matrix.target == 'tvos' && 'appletvsimulator' || 'iphonesimulator' }}
+      - name: Verify Xcode project generated
+        run: |
+          ls -la build/*.xcodeproj
+          test -d build/VitaPlex.xcodeproj
+
+  # ───────────────────────────────────────────────
   # PS4
   # ───────────────────────────────────────────────
   build-ps4:

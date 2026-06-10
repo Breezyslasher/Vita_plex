@@ -12,10 +12,12 @@ option(PLATFORM_SWITCH  "Build for Nintendo Switch"                    OFF)
 option(PLATFORM_PS4     "Build for PlayStation 4"                      OFF)
 option(PLATFORM_DESKTOP "Build for Desktop (Linux/macOS/Windows)"      OFF)
 option(PLATFORM_ANDROID "Build for Android"                            OFF)
+option(PLATFORM_IOS     "Build for iOS (iPhone / iPad)"                OFF)
+option(PLATFORM_TVOS    "Build for tvOS (Apple TV)"                    OFF)
 
 # Default to desktop when nothing is specified
 set(_PLATFORM_COUNT 0)
-foreach(_P PSV SWITCH PS4 DESKTOP ANDROID)
+foreach(_P PSV SWITCH PS4 DESKTOP ANDROID IOS TVOS)
     if(PLATFORM_${_P})
         math(EXPR _PLATFORM_COUNT "${_PLATFORM_COUNT} + 1")
     endif()
@@ -38,7 +40,8 @@ set(PLATFORM_DESKTOP ${PLATFORM_DESKTOP} CACHE BOOL "" FORCE)
 set(PLATFORM_SWITCH  ${PLATFORM_SWITCH}  CACHE BOOL "" FORCE)
 set(PLATFORM_PSV     ${PLATFORM_PSV}     CACHE BOOL "" FORCE)
 set(PLATFORM_PS4     ${PLATFORM_PS4}     CACHE BOOL "" FORCE)
-set(PLATFORM_IOS     OFF                 CACHE BOOL "" FORCE)
+set(PLATFORM_IOS     ${PLATFORM_IOS}     CACHE BOOL "" FORCE)
+set(PLATFORM_TVOS    ${PLATFORM_TVOS}    CACHE BOOL "" FORCE)
 set(PLATFORM_ANDROID ${PLATFORM_ANDROID} CACHE BOOL "" FORCE)
 
 if(PLATFORM_PSV)
@@ -174,6 +177,11 @@ elseif(PLATFORM_SWITCH)
     list(APPEND APP_SOURCES src/platform/platform_switch.cpp)
 elseif(PLATFORM_ANDROID)
     list(APPEND APP_SOURCES src/platform/platform_android.cpp)
+elseif(PLATFORM_IOS OR PLATFORM_TVOS)
+    # Same source file serves both iOS and tvOS — it branches on
+    # TARGET_OS_TV from <TargetConditionals.h>, and the constraints
+    # tables differ between the two (phone-sized vs. living-room).
+    list(APPEND APP_SOURCES src/platform/platform_ios.mm)
 else()
     list(APPEND APP_SOURCES src/platform/platform_desktop.cpp)
 endif()
@@ -229,8 +237,9 @@ if(PLATFORM_PSV)
     target_compile_definitions(${PROJECT_NAME} PRIVATE RESOURCE_PREFIX=\"app0:resources/\")
 elseif(PLATFORM_PS4)
     target_compile_definitions(${PROJECT_NAME} PRIVATE RESOURCE_PREFIX=\"/app0/resources/\")
-elseif(PLATFORM_SWITCH OR USE_LIBROMFS)
-    # Switch always uses romfs. Android does NOT — resources are APK assets via SDL.
+elseif(PLATFORM_SWITCH OR PLATFORM_IOS OR PLATFORM_TVOS OR USE_LIBROMFS)
+    # Switch and iOS/tvOS always use libromfs (set by borealis toolchain.cmake).
+    # Android does NOT — resources are APK assets via SDL.
     target_compile_definitions(${PROJECT_NAME} PRIVATE RESOURCE_PREFIX=\"romfs:/\")
 else()
     target_compile_definitions(${PROJECT_NAME} PRIVATE RESOURCE_PREFIX=\"resources/\")
@@ -281,6 +290,26 @@ if(PLATFORM_ANDROID)
     # Android requires libmpv for in-app playback.
     set(APP_FFMPEG_LIBS mpv)
     set(APP_FFMPEG_LINK_BLOCK ${APP_FFMPEG_LIBS})
+elseif(PLATFORM_IOS OR PLATFORM_TVOS)
+    # iOS / tvOS: link libmpv from a user-supplied path. The Apple
+    # platforms don't have a Homebrew-cross-compiled libmpv, so the
+    # build expects either:
+    #   -DLIBMPV_XCFRAMEWORK=/path/to/Mpv.xcframework  (preferred)
+    #   -DLIBMPV_LIBRARY=/path/to/libmpv.a -DLIBMPV_INCLUDE=/path/to/include
+    # If neither is set CMake configures cleanly but the link step
+    # will fail with an unresolved -lmpv — surfaced as a clear error
+    # rather than silently broken video playback.
+    set(APP_FFMPEG_LIBS mpv)
+    set(APP_FFMPEG_LINK_BLOCK ${APP_FFMPEG_LIBS})
+    if(LIBMPV_XCFRAMEWORK)
+        target_include_directories(${PROJECT_NAME} PRIVATE
+            "${LIBMPV_XCFRAMEWORK}/Headers"
+            "${LIBMPV_XCFRAMEWORK}")
+        target_link_libraries(${PROJECT_NAME} "${LIBMPV_XCFRAMEWORK}")
+    elseif(LIBMPV_LIBRARY)
+        target_include_directories(${PROJECT_NAME} PRIVATE "${LIBMPV_INCLUDE}")
+        target_link_libraries(${PROJECT_NAME} "${LIBMPV_LIBRARY}")
+    endif()
 elseif(WIN32)
     set(APP_FFMPEG_LIBS mpv)
     set(APP_FFMPEG_LINK_BLOCK ${APP_FFMPEG_LIBS})
@@ -314,6 +343,19 @@ if(PLATFORM_ANDROID)
         c
         harfbuzz
     )
+elseif(PLATFORM_IOS OR PLATFORM_TVOS)
+    # iOS / tvOS: minimal render lib set. libpng / libbz2 / mp3lame are
+    # not part of the iOS SDK; freetype + harfbuzz + libass come from
+    # the same xcframework the user supplies for libmpv (or a system
+    # install via vcpkg / a CocoaPods spec).
+    set(APP_RENDER_LIBS
+        ass
+        freetype
+        fribidi
+        webp
+        z
+        harfbuzz
+    )
 elseif(WIN32)
     set(APP_RENDER_LIBS
         bz2
@@ -333,7 +375,7 @@ else()
     )
 endif()
 
-if(NOT PLATFORM_PS4 AND NOT WIN32 AND NOT PLATFORM_ANDROID)
+if(NOT PLATFORM_PS4 AND NOT WIN32 AND NOT PLATFORM_ANDROID AND NOT PLATFORM_IOS AND NOT PLATFORM_TVOS)
     list(APPEND APP_RENDER_LIBS
         zstd
         harfbuzz
@@ -360,7 +402,7 @@ target_link_libraries(${PROJECT_NAME}
     ${APP_RENDER_LIBS}
 )
 
-if(NOT PLATFORM_SWITCH AND NOT PLATFORM_PS4 AND NOT WIN32 AND NOT PLATFORM_ANDROID)
+if(NOT PLATFORM_SWITCH AND NOT PLATFORM_PS4 AND NOT WIN32 AND NOT PLATFORM_ANDROID AND NOT PLATFORM_IOS AND NOT PLATFORM_TVOS)
     target_link_libraries(${PROJECT_NAME} mp3lame)
 endif()
 
@@ -409,6 +451,32 @@ elseif(PLATFORM_PS4)
     target_link_libraries(${PROJECT_NAME}
         SceNet
     )
+elseif(PLATFORM_IOS OR PLATFORM_TVOS)
+    # System frameworks that mpv + SDL2 + borealis need on iOS/tvOS.
+    # Metal is added even though we render with GLES because libplacebo
+    # (mpv) and modern SDL2 reach for it for surface presentation.
+    set(_APPLE_MOBILE_FRAMEWORKS
+        "-framework UIKit"
+        "-framework Foundation"
+        "-framework CoreFoundation"
+        "-framework CoreGraphics"
+        "-framework QuartzCore"
+        "-framework CoreMedia"
+        "-framework CoreVideo"
+        "-framework AVFoundation"
+        "-framework AudioToolbox"
+        "-framework OpenGLES"
+        "-framework Metal"
+        "-framework MetalKit"
+        "-framework GameController"
+        "-framework CoreServices"
+        "-framework Security"
+    )
+    if(PLATFORM_TVOS)
+        # tvOS doesn't have UIKit Indirect Input — GameController is the
+        # only path. The framework set is otherwise identical.
+    endif()
+    target_link_libraries(${PROJECT_NAME} ${_APPLE_MOBILE_FRAMEWORKS})
 elseif(PLATFORM_DESKTOP)
     find_package(Threads REQUIRED)
     target_link_libraries(${PROJECT_NAME} Threads::Threads)
@@ -630,6 +698,61 @@ elseif(PLATFORM_SWITCH)
             --nacp=${PROJECT_NAME}.nacp
             --romfsdir=${CMAKE_BINARY_DIR}/resources
     )
+
+elseif(PLATFORM_IOS OR PLATFORM_TVOS)
+    # iOS / tvOS: turn the executable into a proper .app bundle.
+    # Resources are embedded via borealis's libromfs (RESOURCE_PREFIX
+    # is "romfs:/", same as Switch), so we don't need a separate
+    # resources/ copy step — the libromfs generator vacuums them up.
+    #
+    # The bundle ships an Info.plist + launch storyboard + asset
+    # catalog from app/platform/ios/, with substituted version /
+    # bundle-id strings. Code-signing is left to the developer (Xcode
+    # auto-sign or a manual identity); CI just produces the unsigned
+    # .app, which can be re-signed for sideloading via AltStore or
+    # ldid for TrollStore devices.
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME            "VitaPlex"
+        MACOSX_BUNDLE_BUNDLE_VERSION         "${APP_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING   "${APP_DISPLAY_VERSION}"
+        MACOSX_BUNDLE_GUI_IDENTIFIER         "com.VitaPlex.app"
+        MACOSX_BUNDLE_INFO_PLIST             "${CMAKE_SOURCE_DIR}/app/platform/ios/Info.plist.in"
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.VitaPlex.app"
+    )
+    if(PLATFORM_IOS)
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+            XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "13.0")
+    elseif(PLATFORM_TVOS)
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "3"
+            XCODE_ATTRIBUTE_TVOS_DEPLOYMENT_TARGET "13.0")
+    endif()
+
+    # Splash storyboard + asset catalog (icons). Both live under
+    # app/platform/ios/ — iphoneos/Splash.storyboard for iOS,
+    # tvos/Splash.storyboard for tvOS.
+    if(PLATFORM_IOS)
+        target_sources(${PROJECT_NAME} PRIVATE
+            ${CMAKE_SOURCE_DIR}/app/platform/ios/iphoneos/Splash.storyboard)
+        set_source_files_properties(
+            ${CMAKE_SOURCE_DIR}/app/platform/ios/iphoneos/Splash.storyboard
+            PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    elseif(PLATFORM_TVOS)
+        target_sources(${PROJECT_NAME} PRIVATE
+            ${CMAKE_SOURCE_DIR}/app/platform/ios/tvos/Splash.storyboard)
+        set_source_files_properties(
+            ${CMAKE_SOURCE_DIR}/app/platform/ios/tvos/Splash.storyboard
+            PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    endif()
+    if(EXISTS "${CMAKE_SOURCE_DIR}/app/platform/ios/Images.xcassets")
+        target_sources(${PROJECT_NAME} PRIVATE
+            ${CMAKE_SOURCE_DIR}/app/platform/ios/Images.xcassets)
+        set_source_files_properties(
+            ${CMAKE_SOURCE_DIR}/app/platform/ios/Images.xcassets
+            PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    endif()
 
 elseif(PLATFORM_DESKTOP)
     # Copy app resources next to the binary so relative paths resolve.
