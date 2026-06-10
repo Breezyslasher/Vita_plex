@@ -279,6 +279,21 @@ if(PLATFORM_DESKTOP AND APPLE)
     )
 endif()
 
+if(PLATFORM_IOS OR PLATFORM_TVOS)
+    # The iOS / tvOS SDKs ship libcurl.tbd for linking but no <curl/*.h>
+    # headers, so we have to source them from the macOS host. CI passes
+    # -DLIBCURL_INCLUDE_DIR=$(brew --prefix curl)/include; local builds
+    # can do the same or fall back to /opt/homebrew/include if the user
+    # has a non-keg curl install.
+    if(LIBCURL_INCLUDE_DIR)
+        target_include_directories(${PROJECT_NAME} PRIVATE "${LIBCURL_INCLUDE_DIR}")
+    elseif(EXISTS /opt/homebrew/opt/curl/include)
+        target_include_directories(${PROJECT_NAME} PRIVATE /opt/homebrew/opt/curl/include)
+    elseif(EXISTS /usr/local/opt/curl/include)
+        target_include_directories(${PROJECT_NAME} PRIVATE /usr/local/opt/curl/include)
+    endif()
+endif()
+
 if(PLATFORM_PSV)
     target_compile_definitions(${PROJECT_NAME} PRIVATE RESOURCE_PREFIX=\"app0:resources/\")
 elseif(PLATFORM_PS4)
