@@ -81,6 +81,19 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -frtti -fexceptions")
 
+# Xcode 15 / iOS SDK 17.5 libc++ workaround. <vector> transitively pulls
+# in <__format/formatter_integral.h> -> <locale>, and <locale> uses tm's
+# members (tm_min, tm_hour, tm_sec, tm_wday, tm_year) without including
+# <time.h> first. <wchar.h> only forward-declares struct tm, so without
+# this clang reports "member access into incomplete type 'tm'" all over
+# the codebase (video_view.cpp, settings_tab.cpp, etc.) on every TU that
+# pulls in borealis/core/event.hpp -> <algorithm> / <functional>.
+# Force-include <ctime> at the top of every TU so the full definition is
+# always in scope before <locale>.
+if(PLATFORM_IOS OR PLATFORM_TVOS)
+    add_compile_options(-include ctime)
+endif()
+
 # ---------------------------------------------------------------------------
 # Vita VPK metadata
 # ---------------------------------------------------------------------------
