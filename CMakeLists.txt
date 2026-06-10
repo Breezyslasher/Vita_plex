@@ -365,19 +365,36 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
                 "APPLE_MPV_XCFRAMEWORKS_DIR=${APPLE_MPV_XCFRAMEWORKS_DIR} "
                 "contains no *.xcframework bundles")
         endif()
+        # Link every xcframework — Xcode resolves the right slice based on
+        # SDKROOT. For headers we only want ONE thing on the include path:
+        # Libmpv's Headers/, so #include <mpv/client.h> works. Adding the
+        # Libav* frameworks' Headers shadows system headers (libavutil
+        # ships a time.h that hijacks our -include <time.h> workaround,
+        # which made every TU explode with the libc++ tm error again).
+        # None of our code includes ffmpeg headers directly anyway.
         foreach(_xcf ${_MPV_XCFRAMEWORKS})
             target_link_libraries(${PROJECT_NAME} "${_xcf}")
-            # Add every slice's Headers dir so <mpv/client.h> resolves
-            # regardless of which slice Xcode selects.
-            file(GLOB _slices "${_xcf}/*/")
-            foreach(_slice ${_slices})
-                file(GLOB _fw "${_slice}/*.framework")
-                foreach(_f ${_fw})
-                    if(EXISTS "${_f}/Headers")
-                        target_include_directories(${PROJECT_NAME} PRIVATE "${_f}/Headers")
+            get_filename_component(_xcf_name "${_xcf}" NAME_WE)
+            if(_xcf_name STREQUAL "Libmpv" OR _xcf_name STREQUAL "Libmpv-GPL")
+                # Pick the FIRST slice's Headers — headers are identical
+                # across slices (mpv's public API doesn't vary by arch).
+                file(GLOB _slices LIST_DIRECTORIES TRUE "${_xcf}/*")
+                foreach(_slice ${_slices})
+                    if(IS_DIRECTORY "${_slice}")
+                        file(GLOB _fw "${_slice}/*.framework")
+                        foreach(_f ${_fw})
+                            if(EXISTS "${_f}/Headers")
+                                target_include_directories(${PROJECT_NAME} PRIVATE "${_f}/Headers")
+                                message(STATUS "Using mpv headers from: ${_f}/Headers")
+                                break()
+                            endif()
+                        endforeach()
+                        if(_fw)
+                            break()
+                        endif()
                     endif()
                 endforeach()
-            endforeach()
+            endif()
         endforeach()
         message(STATUS "Linked MPVKit xcframeworks: ${_MPV_XCFRAMEWORKS}")
     elseif(LIBMPV_XCFRAMEWORK)
