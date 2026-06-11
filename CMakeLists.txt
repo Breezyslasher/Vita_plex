@@ -601,7 +601,9 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
         "-framework CoreImage"
         "-framework AVFoundation"
         "-framework AudioToolbox"
+        "-framework CoreAudio"             # MPVKit Package.swift linkedFramework
         "-framework VideoToolbox"          # mpv hwdec=auto-safe -> VideoToolbox
+        "-framework CoreText"              # libass ass_coretext.c CTFont* APIs
         "-framework OpenGLES"
         "-framework Metal"                 # MoltenVK / libplacebo backend
         "-framework MetalKit"
