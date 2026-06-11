@@ -713,26 +713,61 @@ jobs:
         # built ahead of configure (it embeds resources/ via libromfs).
         run: ${{ github.workspace }}/lib/borealis/build_libromfs_generator.sh
       - name: Download MPVKit xcframeworks
-        # libmpv-all.zip is the complete bundle: Libmpv + the seven Libav*
-        # ffmpeg frameworks PLUS every optional-dependency xcframework that
-        # this MPVKit build was compiled against (libass, freetype,
-        # harfbuzz, fribidi, uchardet, dav1d, libplacebo, MoltenVK,
-        # OpenSSL, …). Downloading the eight individual core zips is NOT
-        # enough — the link then fails with undefined symbols from those
-        # optional deps because MPVKit does not statically fold them into
-        # Libmpv. Non-GPL variant: LGPL ffmpeg still decodes H.264 / HEVC
-        # / VP9 / AV1 / AAC / AC3 — everything Plex direct-plays.
+        # MPVKit does NOT statically fold its optional dependencies into
+        # Libmpv.xcframework — libass / freetype / harfbuzz / fribidi /
+        # uchardet / dav1d / libplacebo / MoltenVK / OpenSSL / gnutls / …
+        # ship as separate xcframeworks hosted in mpvkit's per-dependency
+        # build repos. (libmpv-all.zip is NOT a bundle of these either —
+        # it's thin per-slice libmpv.a files only.) This list is the
+        # exact non-GPL "_MPVKit" dependency closure from MPVKit 0.41.0's
+        # Package.swift: Libmpv + the seven Libav* cores + fourteen
+        # dependency frameworks, each pinned to the release Package.swift
+        # references so everything stays ABI-consistent.
+        # Non-GPL variant: LGPL ffmpeg still decodes H.264 / HEVC / VP9 /
+        # AV1 / AAC / AC3 — everything Plex direct-plays.
         run: |
           FW_DIR="${{ github.workspace }}/mpv-frameworks"
           mkdir -p "$FW_DIR"
-          BASE="https://github.com/mpvkit/MPVKit/releases/download/${MPVKIT_VERSION}"
-          curl -fL --retry 4 --retry-delay 2 \
-            -o /tmp/libmpv-all.zip "${BASE}/libmpv-all.zip"
-          unzip -q /tmp/libmpv-all.zip -d /tmp/libmpv-all
-          # Flatten: the zip may nest the xcframeworks inside a directory;
-          # CMake globs only ${FW_DIR}/*.xcframework at the top level.
-          find /tmp/libmpv-all -name "*.xcframework" -type d -maxdepth 4 \
-            -exec mv {} "$FW_DIR/" \;
+          MPVKIT="https://github.com/mpvkit/MPVKit/releases/download/${MPVKIT_VERSION}"
+          DEPS="https://github.com/mpvkit"
+          FRAMEWORKS=(
+            "${MPVKIT}/Libmpv.xcframework.zip"
+            "${MPVKIT}/Libavcodec.xcframework.zip"
+            "${MPVKIT}/Libavdevice.xcframework.zip"
+            "${MPVKIT}/Libavfilter.xcframework.zip"
+            "${MPVKIT}/Libavformat.xcframework.zip"
+            "${MPVKIT}/Libavutil.xcframework.zip"
+            "${MPVKIT}/Libswresample.xcframework.zip"
+            "${MPVKIT}/Libswscale.xcframework.zip"
+            "${DEPS}/openssl-build/releases/download/3.3.5/Libcrypto.xcframework.zip"
+            "${DEPS}/openssl-build/releases/download/3.3.5/Libssl.xcframework.zip"
+            "${DEPS}/gnutls-build/releases/download/3.8.11/gmp.xcframework.zip"
+            "${DEPS}/gnutls-build/releases/download/3.8.11/nettle.xcframework.zip"
+            "${DEPS}/gnutls-build/releases/download/3.8.11/hogweed.xcframework.zip"
+            "${DEPS}/gnutls-build/releases/download/3.8.11/gnutls.xcframework.zip"
+            "${DEPS}/libass-build/releases/download/0.17.4/Libunibreak.xcframework.zip"
+            "${DEPS}/libass-build/releases/download/0.17.4/Libfreetype.xcframework.zip"
+            "${DEPS}/libass-build/releases/download/0.17.4/Libfribidi.xcframework.zip"
+            "${DEPS}/libass-build/releases/download/0.17.4/Libharfbuzz.xcframework.zip"
+            "${DEPS}/libass-build/releases/download/0.17.4/Libass.xcframework.zip"
+            "${DEPS}/libbluray-build/releases/download/1.4.0/Libbluray.xcframework.zip"
+            "${DEPS}/libuavs3d-build/releases/download/1.2.1-xcode/Libuavs3d.xcframework.zip"
+            "${DEPS}/libdovi-build/releases/download/3.3.2/Libdovi.xcframework.zip"
+            "${DEPS}/moltenvk-build/releases/download/1.4.1/MoltenVK.xcframework.zip"
+            "${DEPS}/libshaderc-build/releases/download/2025.5.0/Libshaderc_combined.xcframework.zip"
+            "${DEPS}/lcms2-build/releases/download/2.17.0/lcms2.xcframework.zip"
+            "${DEPS}/libplacebo-build/releases/download/7.351.0-2512/Libplacebo.xcframework.zip"
+            "${DEPS}/libdav1d-build/releases/download/1.5.2-xcode/Libdav1d.xcframework.zip"
+            "${DEPS}/libuchardet-build/releases/download/0.0.8-xcode/Libuchardet.xcframework.zip"
+            "${DEPS}/libluajit-build/releases/download/2.1.0-xcode/Libluajit.xcframework.zip"
+          )
+          for url in "${FRAMEWORKS[@]}"; do
+            name=$(basename "$url")
+            echo "Fetching ${name}"
+            curl -fL --retry 4 --retry-delay 2 -o "/tmp/${name}" "$url"
+            unzip -qo "/tmp/${name}" -d "$FW_DIR"
+            rm "/tmp/${name}"
+          done
           echo "Frameworks staged:"; ls -la "$FW_DIR"
           test -d "$FW_DIR/Libmpv.xcframework"
       - name: Configure

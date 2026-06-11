@@ -614,7 +614,10 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
     )
     target_link_libraries(${PROJECT_NAME} ${_APPLE_MOBILE_FRAMEWORKS})
     # Apple SDKs ship these as top-level dylibs, not frameworks.
-    target_link_libraries(${PROJECT_NAME} "-lc++" "-liconv" "-lbz2")
+    # bz2/iconv/expat/resolv mirror MPVKit's Package.swift linkedLibrary
+    # settings; xml2 is libbluray's dep (SDK ships libxml2.tbd).
+    target_link_libraries(${PROJECT_NAME}
+        "-lc++" "-liconv" "-lbz2" "-lexpat" "-lresolv" "-lxml2")
 elseif(PLATFORM_DESKTOP)
     find_package(Threads REQUIRED)
     target_link_libraries(${PROJECT_NAME} Threads::Threads)
