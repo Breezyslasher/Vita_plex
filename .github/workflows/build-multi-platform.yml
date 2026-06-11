@@ -649,7 +649,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/libcurl-install
-          key: libcurl-8.14.1-${{ matrix.sdk }}-v1
+          key: libcurl-8.14.1-${{ matrix.sdk }}-v2
       - name: Build static libcurl for ${{ matrix.sdk }}
         # iOS Simulator SDK ships /usr/lib/libcurl.tbd but tvOS Simulator
         # SDK does NOT, so build a minimal static libcurl against the
@@ -679,6 +679,14 @@ jobs:
           export AR="$(xcrun --sdk ${{ matrix.sdk }} --find ar)"
           export RANLIB="$(xcrun --sdk ${{ matrix.sdk }} --find ranlib)"
           export CFLAGS="-arch arm64 -isysroot ${SDK_PATH} ${MIN_FLAG} -O2"
+          # CPPFLAGS must carry the sysroot too: configure's function-
+          # prototype probes run through `clang -E` with CPPFLAGS only
+          # (not CFLAGS). macOS has no /usr/include without -isysroot,
+          # so with empty CPPFLAGS every probe failed ("is prototyped...
+          # no" for socket/fcntl/everything), HAVE_SOCKET never got
+          # defined, and the build died at transfer.c "We cannot compile
+          # without socket() support!".
+          export CPPFLAGS="-arch arm64 -isysroot ${SDK_PATH} ${MIN_FLAG}"
           export LDFLAGS="-arch arm64 -isysroot ${SDK_PATH} ${MIN_FLAG}"
           ./configure \
             --host=aarch64-apple-darwin \
