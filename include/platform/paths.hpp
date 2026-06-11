@@ -17,6 +17,10 @@
 #include <string>
 #include <cstdlib>
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
 #if defined(__vita__)
     static constexpr const char* PLATFORM_DATA_DIR = "ux0:data/VitaPlex";
 #elif defined(__SWITCH__)
@@ -29,6 +33,12 @@
     static constexpr const char* PLATFORM_DATA_DIR = "";
 #elif defined(__PS4__)
     static constexpr const char* PLATFORM_DATA_DIR = "/data/VitaPlex";
+#elif defined(__APPLE__) && (TARGET_OS_IOS || TARGET_OS_TV)
+    // iOS / tvOS apps are sandboxed. The writable path is the per-app
+    // Documents directory, resolved by NSFileManager. Look up once and
+    // cache — same pattern as Android.
+    const std::string& getIosDataDir();
+    static constexpr const char* PLATFORM_DATA_DIR = "";
 #else
     // Desktop: resolved at runtime via $HOME
     inline const std::string& getDesktopDataDir() {
@@ -81,6 +91,8 @@ inline std::string platformPath(const char* relative) {
     return getAndroidDataDir() + "/" + relative;
 #elif defined(__vita__) || defined(__SWITCH__) || defined(__PS4__)
     return std::string(PLATFORM_DATA_DIR) + "/" + relative;
+#elif defined(__APPLE__) && (TARGET_OS_IOS || TARGET_OS_TV)
+    return getIosDataDir() + "/" + relative;
 #else
     return getDesktopDataDir() + "/" + relative;
 #endif
@@ -91,6 +103,8 @@ inline std::string platformPath(const std::string& relative) {
     return getAndroidDataDir() + "/" + relative;
 #elif defined(__vita__) || defined(__SWITCH__) || defined(__PS4__)
     return std::string(PLATFORM_DATA_DIR) + "/" + relative;
+#elif defined(__APPLE__) && (TARGET_OS_IOS || TARGET_OS_TV)
+    return getIosDataDir() + "/" + relative;
 #else
     return getDesktopDataDir() + "/" + relative;
 #endif
@@ -120,6 +134,9 @@ inline bool isPlatformLocalPath(const std::string& url) {
 #elif defined(__PS4__)
     return url[0] == '/' ||
            url.find(PLATFORM_DATA_DIR) == 0;
+#elif defined(__APPLE__) && (TARGET_OS_IOS || TARGET_OS_TV)
+    return url[0] == '/' ||
+           url.find(getIosDataDir()) == 0;
 #else
     // Desktop: absolute path or anything under our data dir
     return url[0] == '/' ||

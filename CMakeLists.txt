@@ -12,10 +12,12 @@ option(PLATFORM_SWITCH  "Build for Nintendo Switch"                    OFF)
 option(PLATFORM_PS4     "Build for PlayStation 4"                      OFF)
 option(PLATFORM_DESKTOP "Build for Desktop (Linux/macOS/Windows)"      OFF)
 option(PLATFORM_ANDROID "Build for Android"                            OFF)
+option(PLATFORM_IOS     "Build for iOS (iPhone / iPad)"                OFF)
+option(PLATFORM_TVOS    "Build for tvOS (Apple TV)"                    OFF)
 
 # Default to desktop when nothing is specified
 set(_PLATFORM_COUNT 0)
-foreach(_P PSV SWITCH PS4 DESKTOP ANDROID)
+foreach(_P PSV SWITCH PS4 DESKTOP ANDROID IOS TVOS)
     if(PLATFORM_${_P})
         math(EXPR _PLATFORM_COUNT "${_PLATFORM_COUNT} + 1")
     endif()
@@ -38,7 +40,8 @@ set(PLATFORM_DESKTOP ${PLATFORM_DESKTOP} CACHE BOOL "" FORCE)
 set(PLATFORM_SWITCH  ${PLATFORM_SWITCH}  CACHE BOOL "" FORCE)
 set(PLATFORM_PSV     ${PLATFORM_PSV}     CACHE BOOL "" FORCE)
 set(PLATFORM_PS4     ${PLATFORM_PS4}     CACHE BOOL "" FORCE)
-set(PLATFORM_IOS     OFF                 CACHE BOOL "" FORCE)
+set(PLATFORM_IOS     ${PLATFORM_IOS}     CACHE BOOL "" FORCE)
+set(PLATFORM_TVOS    ${PLATFORM_TVOS}    CACHE BOOL "" FORCE)
 set(PLATFORM_ANDROID ${PLATFORM_ANDROID} CACHE BOOL "" FORCE)
 
 if(PLATFORM_PSV)
@@ -78,6 +81,27 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -frtti -fexceptions")
 
+# Xcode 15 / iOS SDK 17.5 libc++ workaround. <vector> transitively pulls
+# in <__format/formatter_integral.h> -> <locale>, and <locale> uses
+# struct tm's members (tm_min, tm_hour, tm_sec, …) without including
+# <time.h> first. <wchar.h> only forward-declares tm, so without this
+# clang reports "member access into incomplete type 'tm'" all over the
+# codebase on every TU that pulls in borealis/core/event.hpp ->
+# <algorithm> / <functional>.
+#
+# Force-include the C header <time.h> rather than the C++ wrapper
+# <ctime>. <ctime> just does `using ::size_t _LIBCPP_USING_IF_EXISTS;`
+# which silently no-ops when ::size_t isn't declared yet — and then
+# <__type_traits/aligned_storage.h> can't resolve std::size_t and the
+# whole build collapses. <time.h> actually *defines* size_t / tm /
+# time_t in the global namespace, which makes libc++'s later
+# using-declarations resolve cleanly. <time.h> is also valid C, so
+# the SDL2 C sources (SDL_uikit_main.c et al.) don't need the
+# COMPILE_LANGUAGE:CXX gate the previous iteration carried.
+if(PLATFORM_IOS OR PLATFORM_TVOS)
+    add_compile_options(-include time.h)
+endif()
+
 # ---------------------------------------------------------------------------
 # Vita VPK metadata
 # ---------------------------------------------------------------------------
@@ -100,6 +124,31 @@ if(PLATFORM_PSV)
     else()
         message(FATAL_ERROR "Patch file not found: ${PSV_PLATFORM_PATCH}")
     endif()
+endif()
+
+# iOS / tvOS embed app resources through libromfs (borealis toolchain.cmake
+# forces USE_LIBROMFS=ON for these platforms). libromfs's own CMakeLists
+# fatals unless we tell it WHAT to embed and under what project name — set
+# both here, before borealis adds the libromfs subdirectory at
+# add_subdirectory(${BOREALIS_LIBRARY}) below. RESOURCE_LOCATION points at
+# our resources/ tree; the generator walks it at build time and bakes every
+# file into libromfs_resources.cpp, which is why RESOURCE_PREFIX is
+# "romfs:/" for these targets (set further down).
+if(PLATFORM_IOS OR PLATFORM_TVOS)
+    # libromfs embeds a SINGLE directory tree, so merge our app resources
+    # with borealis's system resources (i18n/hints.json, img/sys/) into a
+    # staging dir and point the generator at that. The app tree is copied
+    # first; borealis's is overlaid without clobbering (our i18n/en-US/
+    # main.json must survive, but we still need borealis's hints.json and
+    # img/sys/*). Done at configure time so the path exists before
+    # libromfs's CMakeLists validates it.
+    set(IOS_ROMFS_STAGE "${CMAKE_BINARY_DIR}/romfs_stage")
+    file(MAKE_DIRECTORY "${IOS_ROMFS_STAGE}")
+    file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/resources/" DESTINATION "${IOS_ROMFS_STAGE}")
+    file(COPY "${BOREALIS_DIR}/resources/i18n" DESTINATION "${IOS_ROMFS_STAGE}")
+    file(COPY "${BOREALIS_DIR}/resources/img"  DESTINATION "${IOS_ROMFS_STAGE}")
+    set(LIBROMFS_PROJECT_NAME "VitaPlex" CACHE STRING "" FORCE)
+    set(LIBROMFS_RESOURCE_LOCATION "${IOS_ROMFS_STAGE}" CACHE PATH "" FORCE)
 endif()
 
 add_subdirectory(${BOREALIS_LIBRARY})
@@ -174,6 +223,11 @@ elseif(PLATFORM_SWITCH)
     list(APPEND APP_SOURCES src/platform/platform_switch.cpp)
 elseif(PLATFORM_ANDROID)
     list(APPEND APP_SOURCES src/platform/platform_android.cpp)
+elseif(PLATFORM_IOS OR PLATFORM_TVOS)
+    # Same source file serves both iOS and tvOS — it branches on
+    # TARGET_OS_TV from <TargetConditionals.h>, and the constraints
+    # tables differ between the two (phone-sized vs. living-room).
+    list(APPEND APP_SOURCES src/platform/platform_ios.mm)
 else()
     list(APPEND APP_SOURCES src/platform/platform_desktop.cpp)
 endif()
@@ -225,12 +279,35 @@ if(PLATFORM_DESKTOP AND APPLE)
     )
 endif()
 
+if(PLATFORM_IOS OR PLATFORM_TVOS)
+    # CI builds a minimal static libcurl from source against the matrix's
+    # SDK and passes both the headers dir and the .a path. Local builds
+    # can do the same or fall back to a Homebrew curl install for the
+    # headers (link will fail without LIBCURL_LIBRARY though — there's
+    # no point hiding that).
+    if(NOT LIBCURL_INCLUDE_DIR AND CURL_INCLUDE_DIR)
+        # Accept the more common variable name as an alias.
+        set(LIBCURL_INCLUDE_DIR "${CURL_INCLUDE_DIR}")
+    endif()
+    if(LIBCURL_INCLUDE_DIR)
+        target_include_directories(${PROJECT_NAME} PRIVATE "${LIBCURL_INCLUDE_DIR}")
+    elseif(EXISTS /opt/homebrew/opt/curl/include)
+        target_include_directories(${PROJECT_NAME} PRIVATE /opt/homebrew/opt/curl/include)
+    elseif(EXISTS /usr/local/opt/curl/include)
+        target_include_directories(${PROJECT_NAME} PRIVATE /usr/local/opt/curl/include)
+    endif()
+    if(LIBCURL_LIBRARY)
+        target_link_libraries(${PROJECT_NAME} "${LIBCURL_LIBRARY}")
+    endif()
+endif()
+
 if(PLATFORM_PSV)
     target_compile_definitions(${PROJECT_NAME} PRIVATE RESOURCE_PREFIX=\"app0:resources/\")
 elseif(PLATFORM_PS4)
     target_compile_definitions(${PROJECT_NAME} PRIVATE RESOURCE_PREFIX=\"/app0/resources/\")
-elseif(PLATFORM_SWITCH OR USE_LIBROMFS)
-    # Switch always uses romfs. Android does NOT — resources are APK assets via SDL.
+elseif(PLATFORM_SWITCH OR PLATFORM_IOS OR PLATFORM_TVOS OR USE_LIBROMFS)
+    # Switch and iOS/tvOS always use libromfs (set by borealis toolchain.cmake).
+    # Android does NOT — resources are APK assets via SDL.
     target_compile_definitions(${PROJECT_NAME} PRIVATE RESOURCE_PREFIX=\"romfs:/\")
 else()
     target_compile_definitions(${PROJECT_NAME} PRIVATE RESOURCE_PREFIX=\"resources/\")
@@ -281,6 +358,80 @@ if(PLATFORM_ANDROID)
     # Android requires libmpv for in-app playback.
     set(APP_FFMPEG_LIBS mpv)
     set(APP_FFMPEG_LINK_BLOCK ${APP_FFMPEG_LIBS})
+elseif(PLATFORM_IOS OR PLATFORM_TVOS)
+    # iOS / tvOS: link libmpv + ffmpeg from prebuilt MPVKit xcframeworks.
+    # The Apple platforms have no Homebrew-cross-compiled libmpv, so —
+    # exactly like the Vita / Switch builds pull a prebuilt mpv tarball
+    # from switchfin's portlibs — the CI job downloads MPVKit's release
+    # xcframeworks and points us at the unzipped directory via:
+    #   -DAPPLE_MPV_XCFRAMEWORKS_DIR=/path/with/*.xcframework
+    # We glob every *.xcframework there and link them all (Libmpv plus
+    # the seven Libav* ffmpeg frameworks). With the Xcode generator,
+    # target_link_libraries on a .xcframework resolves the correct
+    # platform/arch slice automatically.
+    #
+    # Headers: MPVKit's Libmpv.framework ships an mpv/ header dir, so
+    # adding each framework slice's Headers to the search path makes the
+    # existing  #include <mpv/client.h>  resolve unchanged. The CI also
+    # passes -DLIBMPV_INCLUDE pointing at the extracted mpv headers as a
+    # belt-and-braces fallback.
+    #
+    # Empty FFMPEG link block — the frameworks ARE the ffmpeg libs, so we
+    # don't also want a bare -lmpv / -lavcodec in the main link list.
+    set(APP_FFMPEG_LIBS "")
+    set(APP_FFMPEG_LINK_BLOCK "")
+    if(APPLE_MPV_XCFRAMEWORKS_DIR)
+        file(GLOB _MPV_XCFRAMEWORKS "${APPLE_MPV_XCFRAMEWORKS_DIR}/*.xcframework")
+        if(NOT _MPV_XCFRAMEWORKS)
+            message(FATAL_ERROR
+                "APPLE_MPV_XCFRAMEWORKS_DIR=${APPLE_MPV_XCFRAMEWORKS_DIR} "
+                "contains no *.xcframework bundles")
+        endif()
+        # Link every xcframework — Xcode resolves the right slice based on
+        # SDKROOT. For headers we only want ONE thing on the include path:
+        # Libmpv's Headers/, so #include <mpv/client.h> works. Adding the
+        # Libav* frameworks' Headers shadows system headers (libavutil
+        # ships a time.h that hijacks our -include <time.h> workaround,
+        # which made every TU explode with the libc++ tm error again).
+        # None of our code includes ffmpeg headers directly anyway.
+        foreach(_xcf ${_MPV_XCFRAMEWORKS})
+            target_link_libraries(${PROJECT_NAME} "${_xcf}")
+            get_filename_component(_xcf_name "${_xcf}" NAME_WE)
+            if(_xcf_name STREQUAL "Libmpv" OR _xcf_name STREQUAL "Libmpv-GPL")
+                # Pick the FIRST slice's Headers — headers are identical
+                # across slices (mpv's public API doesn't vary by arch).
+                file(GLOB _slices LIST_DIRECTORIES TRUE "${_xcf}/*")
+                foreach(_slice ${_slices})
+                    if(IS_DIRECTORY "${_slice}")
+                        file(GLOB _fw "${_slice}/*.framework")
+                        foreach(_f ${_fw})
+                            if(EXISTS "${_f}/Headers")
+                                target_include_directories(${PROJECT_NAME} PRIVATE "${_f}/Headers")
+                                message(STATUS "Using mpv headers from: ${_f}/Headers")
+                                break()
+                            endif()
+                        endforeach()
+                        if(_fw)
+                            break()
+                        endif()
+                    endif()
+                endforeach()
+            endif()
+        endforeach()
+        message(STATUS "Linked MPVKit xcframeworks: ${_MPV_XCFRAMEWORKS}")
+    elseif(LIBMPV_XCFRAMEWORK)
+        # Single combined xcframework fallback.
+        target_include_directories(${PROJECT_NAME} PRIVATE
+            "${LIBMPV_XCFRAMEWORK}/Headers"
+            "${LIBMPV_XCFRAMEWORK}")
+        target_link_libraries(${PROJECT_NAME} "${LIBMPV_XCFRAMEWORK}")
+    elseif(LIBMPV_LIBRARY)
+        target_include_directories(${PROJECT_NAME} PRIVATE "${LIBMPV_INCLUDE}")
+        target_link_libraries(${PROJECT_NAME} "${LIBMPV_LIBRARY}")
+    endif()
+    if(LIBMPV_INCLUDE)
+        target_include_directories(${PROJECT_NAME} PRIVATE "${LIBMPV_INCLUDE}")
+    endif()
 elseif(WIN32)
     set(APP_FFMPEG_LIBS mpv)
     set(APP_FFMPEG_LINK_BLOCK ${APP_FFMPEG_LIBS})
@@ -314,6 +465,17 @@ if(PLATFORM_ANDROID)
         c
         harfbuzz
     )
+elseif(PLATFORM_IOS OR PLATFORM_TVOS)
+    # iOS / tvOS: no standalone render libs. borealis renders through its
+    # OWN bundled nanovg + stb_truetype (no system freetype), and every
+    # mpv-side dependency (libass, freetype, harfbuzz, fribidi, zlib, …)
+    # is statically baked into MPVKit's Libmpv.xcframework. Linking bare
+    # -lass / -lfreetype here would just fail — those dylibs don't exist
+    # in the iOS SDK. libz IS in the SDK, so keep it for anything that
+    # needs zlib directly.
+    set(APP_RENDER_LIBS
+        z
+    )
 elseif(WIN32)
     set(APP_RENDER_LIBS
         bz2
@@ -333,18 +495,33 @@ else()
     )
 endif()
 
-if(NOT PLATFORM_PS4 AND NOT WIN32 AND NOT PLATFORM_ANDROID)
+if(NOT PLATFORM_PS4 AND NOT WIN32 AND NOT PLATFORM_ANDROID AND NOT PLATFORM_IOS AND NOT PLATFORM_TVOS)
     list(APPEND APP_RENDER_LIBS
         zstd
         harfbuzz
     )
 endif()
 
-set(APP_NETWORK_LIBS
-    curl
-)
+# iOS / tvOS link a prebuilt static libcurl.a supplied via -DLIBCURL_LIBRARY
+# (built from source in the CI step against the matrix's SDK). The iOS
+# Simulator SDK ships /usr/lib/libcurl.tbd, but tvOS Simulator does NOT —
+# tvOS has a tighter public-library allowlist. Building static and linking
+# it directly keeps both targets on the same code path AND avoids relying
+# on whatever curl version Apple happens to ship that year. Empty
+# APP_NETWORK_LIBS here so the bare "-lcurl" / "-lmbedtls" entries don't
+# land in the link line.
+if(PLATFORM_IOS OR PLATFORM_TVOS)
+    set(APP_NETWORK_LIBS "")
+else()
+    set(APP_NETWORK_LIBS
+        curl
+    )
+endif()
 
-if(NOT WIN32)
+# mbedtls is curl's TLS backend on the consoles / desktop Homebrew builds.
+# iOS / tvOS use Secure Transport instead, so mbedtls isn't in the link
+# list there.
+if(NOT WIN32 AND NOT PLATFORM_IOS AND NOT PLATFORM_TVOS)
     list(APPEND APP_NETWORK_LIBS
         mbedtls
         mbedx509
@@ -360,7 +537,7 @@ target_link_libraries(${PROJECT_NAME}
     ${APP_RENDER_LIBS}
 )
 
-if(NOT PLATFORM_SWITCH AND NOT PLATFORM_PS4 AND NOT WIN32 AND NOT PLATFORM_ANDROID)
+if(NOT PLATFORM_SWITCH AND NOT PLATFORM_PS4 AND NOT WIN32 AND NOT PLATFORM_ANDROID AND NOT PLATFORM_IOS AND NOT PLATFORM_TVOS)
     target_link_libraries(${PROJECT_NAME} mp3lame)
 endif()
 
@@ -409,6 +586,40 @@ elseif(PLATFORM_PS4)
     target_link_libraries(${PROJECT_NAME}
         SceNet
     )
+elseif(PLATFORM_IOS OR PLATFORM_TVOS)
+    # System frameworks that mpv + SDL2 + borealis need on iOS/tvOS.
+    # Metal is added even though we render with GLES because libplacebo
+    # (mpv) and modern SDL2 reach for it for surface presentation.
+    set(_APPLE_MOBILE_FRAMEWORKS
+        "-framework UIKit"
+        "-framework Foundation"
+        "-framework CoreFoundation"
+        "-framework CoreGraphics"
+        "-framework QuartzCore"
+        "-framework CoreMedia"
+        "-framework CoreVideo"
+        "-framework CoreImage"
+        "-framework AVFoundation"
+        "-framework AudioToolbox"
+        "-framework CoreAudio"             # MPVKit Package.swift linkedFramework
+        "-framework VideoToolbox"          # mpv hwdec=auto-safe -> VideoToolbox
+        "-framework CoreText"              # libass ass_coretext.c CTFont* APIs
+        "-framework OpenGLES"
+        "-framework Metal"                 # MoltenVK / libplacebo backend
+        "-framework MetalKit"
+        "-framework IOSurface"             # MoltenVK swapchain surfaces
+        "-framework GameController"
+        "-framework CoreServices"
+        "-framework Security"
+        "-framework CFNetwork"             # system libcurl transitive
+        "-framework SystemConfiguration"
+    )
+    target_link_libraries(${PROJECT_NAME} ${_APPLE_MOBILE_FRAMEWORKS})
+    # Apple SDKs ship these as top-level dylibs, not frameworks.
+    # bz2/iconv/expat/resolv mirror MPVKit's Package.swift linkedLibrary
+    # settings; xml2 is libbluray's dep (SDK ships libxml2.tbd).
+    target_link_libraries(${PROJECT_NAME}
+        "-lc++" "-liconv" "-lbz2" "-lexpat" "-lresolv" "-lxml2")
 elseif(PLATFORM_DESKTOP)
     find_package(Threads REQUIRED)
     target_link_libraries(${PROJECT_NAME} Threads::Threads)
@@ -630,6 +841,61 @@ elseif(PLATFORM_SWITCH)
             --nacp=${PROJECT_NAME}.nacp
             --romfsdir=${CMAKE_BINARY_DIR}/resources
     )
+
+elseif(PLATFORM_IOS OR PLATFORM_TVOS)
+    # iOS / tvOS: turn the executable into a proper .app bundle.
+    # Resources are embedded via borealis's libromfs (RESOURCE_PREFIX
+    # is "romfs:/", same as Switch), so we don't need a separate
+    # resources/ copy step — the libromfs generator vacuums them up.
+    #
+    # The bundle ships an Info.plist + launch storyboard + asset
+    # catalog from app/platform/ios/, with substituted version /
+    # bundle-id strings. Code-signing is left to the developer (Xcode
+    # auto-sign or a manual identity); CI just produces the unsigned
+    # .app, which can be re-signed for sideloading via AltStore or
+    # ldid for TrollStore devices.
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_BUNDLE_NAME            "VitaPlex"
+        MACOSX_BUNDLE_BUNDLE_VERSION         "${APP_VERSION}"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING   "${APP_DISPLAY_VERSION}"
+        MACOSX_BUNDLE_GUI_IDENTIFIER         "com.VitaPlex.app"
+        MACOSX_BUNDLE_INFO_PLIST             "${CMAKE_SOURCE_DIR}/app/platform/ios/Info.plist.in"
+        XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.VitaPlex.app"
+    )
+    if(PLATFORM_IOS)
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+            XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "14.0")
+    elseif(PLATFORM_TVOS)
+        set_target_properties(${PROJECT_NAME} PROPERTIES
+            XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "3"
+            XCODE_ATTRIBUTE_TVOS_DEPLOYMENT_TARGET "14.0")
+    endif()
+
+    # Splash storyboard + asset catalog (icons). Both live under
+    # app/platform/ios/ — iphoneos/Splash.storyboard for iOS,
+    # tvos/Splash.storyboard for tvOS.
+    if(PLATFORM_IOS)
+        target_sources(${PROJECT_NAME} PRIVATE
+            ${CMAKE_SOURCE_DIR}/app/platform/ios/iphoneos/Splash.storyboard)
+        set_source_files_properties(
+            ${CMAKE_SOURCE_DIR}/app/platform/ios/iphoneos/Splash.storyboard
+            PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    elseif(PLATFORM_TVOS)
+        target_sources(${PROJECT_NAME} PRIVATE
+            ${CMAKE_SOURCE_DIR}/app/platform/ios/tvos/Splash.storyboard)
+        set_source_files_properties(
+            ${CMAKE_SOURCE_DIR}/app/platform/ios/tvos/Splash.storyboard
+            PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    endif()
+    if(EXISTS "${CMAKE_SOURCE_DIR}/app/platform/ios/Images.xcassets")
+        target_sources(${PROJECT_NAME} PRIVATE
+            ${CMAKE_SOURCE_DIR}/app/platform/ios/Images.xcassets)
+        set_source_files_properties(
+            ${CMAKE_SOURCE_DIR}/app/platform/ios/Images.xcassets
+            PROPERTIES MACOSX_PACKAGE_LOCATION Resources)
+    endif()
 
 elseif(PLATFORM_DESKTOP)
     # Copy app resources next to the binary so relative paths resolve.

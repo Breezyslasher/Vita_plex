@@ -608,6 +608,199 @@ jobs:
           path: build/VitaPlex.nro
 
   # ───────────────────────────────────────────────
+  # iOS / tvOS — full build against prebuilt MPVKit
+  #
+  # Just like the Vita / Switch jobs pull a prebuilt mpv tarball from
+  # switchfin's portlibs, this job pulls MPVKit's prebuilt libmpv + ffmpeg
+  # xcframeworks (https://github.com/mpvkit/MPVKit/releases) and links
+  # against them. MPVKit statically bundles libass / freetype / harfbuzz /
+  # MoltenVK / libplacebo inside Libmpv.xcframework, so the seven Libav*
+  # frameworks plus Libmpv are everything we need.
+  #
+  # Builds for the SIMULATOR so no code-signing identity is required in CI
+  # (device builds need a provisioning profile). The produced .app runs in
+  # the iOS / tvOS Simulator; for a device install, build locally with
+  # -DPLATFORM=OS64 / TVOS and sign in Xcode.
+  # ───────────────────────────────────────────────
+  build-ios:
+    needs: [resolve-version]
+    if: ${{ inputs.platform == 'ios' || inputs.platform == 'tvos' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
+    name: Apple Mobile (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - { target: ios,  cmake_flag: PLATFORM_IOS,  platform_for_toolchain: SIMULATORARM64,      sdk: iphonesimulator }
+        - { target: tvos, cmake_flag: PLATFORM_TVOS, platform_for_toolchain: SIMULATORARM64_TVOS, sdk: appletvsimulator }
+    runs-on: macos-14
+    env:
+      # Pin to a release whose asset names match the loop below. All eight
+      # frameworks MUST come from the same release so libmpv and its ffmpeg
+      # are ABI-consistent.
+      MPVKIT_VERSION: "0.41.0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+      - name: Cache static libcurl for ${{ matrix.sdk }}
+        id: cache-libcurl
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/libcurl-install
+          key: libcurl-8.14.1-${{ matrix.sdk }}-min14-v1
+      - name: Build static libcurl for ${{ matrix.sdk }}
+        # iOS Simulator SDK ships /usr/lib/libcurl.tbd but tvOS Simulator
+        # SDK does NOT, so build a minimal static libcurl against the
+        # matrix's SDK and link it directly — one code path for both.
+        #
+        # Pinned to 8.14.1: the LAST release with Secure Transport (Apple
+        # TLS, zero extra deps) — curl 8.15.0 removed it, which would
+        # force a cross-built OpenSSL dependency. Plex requires HTTPS
+        # (plex.tv auth, *.plex.direct), so building --without-ssl is not
+        # an option. 8.14.1 also long postdates the cf-socket.c
+        # l_ip/l_port bug that broke 8.7.1.
+        if: steps.cache-libcurl.outputs.cache-hit != 'true'
+        run: |
+          CURL_VERSION=8.14.1
+          PREFIX="${{ github.workspace }}/libcurl-install"
+          SDK_PATH=$(xcrun --sdk ${{ matrix.sdk }} --show-sdk-path)
+          if [ "${{ matrix.target }}" = "ios" ]; then
+            MIN_FLAG="-mios-simulator-version-min=14.0"
+          else
+            MIN_FLAG="-mappletvsimulator-version-min=14.0"
+          fi
+          mkdir -p "$PREFIX"
+          cd /tmp
+          curl -fL "https://curl.se/download/curl-${CURL_VERSION}.tar.gz" | tar xz
+          cd "curl-${CURL_VERSION}"
+          export CC="$(xcrun --sdk ${{ matrix.sdk }} --find clang)"
+          export AR="$(xcrun --sdk ${{ matrix.sdk }} --find ar)"
+          export RANLIB="$(xcrun --sdk ${{ matrix.sdk }} --find ranlib)"
+          export CFLAGS="-arch arm64 -isysroot ${SDK_PATH} ${MIN_FLAG} -O2"
+          # CPPFLAGS must carry the sysroot too: configure's function-
+          # prototype probes run through `clang -E` with CPPFLAGS only
+          # (not CFLAGS). macOS has no /usr/include without -isysroot,
+          # so with empty CPPFLAGS every probe failed ("is prototyped...
+          # no" for socket/fcntl/everything), HAVE_SOCKET never got
+          # defined, and the build died at transfer.c "We cannot compile
+          # without socket() support!".
+          export CPPFLAGS="-arch arm64 -isysroot ${SDK_PATH} ${MIN_FLAG}"
+          export LDFLAGS="-arch arm64 -isysroot ${SDK_PATH} ${MIN_FLAG}"
+          ./configure \
+            --host=aarch64-apple-darwin \
+            --prefix="${PREFIX}" \
+            --disable-shared --enable-static \
+            --with-secure-transport \
+            --without-libpsl --without-libidn2 --without-nghttp2 \
+            --without-zstd --without-brotli --without-librtmp \
+            --without-libssh --without-libssh2 --without-zlib \
+            --disable-ldap --disable-ldaps --disable-rtsp \
+            --disable-dict --disable-telnet --disable-tftp \
+            --disable-pop3 --disable-imap --disable-smtp --disable-gopher \
+            --disable-mqtt --disable-smb --disable-manual \
+            --disable-debug
+          make -j$(sysctl -n hw.ncpu)
+          make install
+          echo "Built libcurl.a: $(file ${PREFIX}/lib/libcurl.a)"
+      - name: Export libcurl env
+        run: |
+          echo "LIBCURL_LIBRARY=${{ github.workspace }}/libcurl-install/lib/libcurl.a" >> $GITHUB_ENV
+          echo "LIBCURL_INCLUDE=${{ github.workspace }}/libcurl-install/include" >> $GITHUB_ENV
+      - name: Build libromfs-generator
+        # borealis's iOS / tvOS toolchain requires this generator to be
+        # built ahead of configure (it embeds resources/ via libromfs).
+        run: ${{ github.workspace }}/lib/borealis/build_libromfs_generator.sh
+      - name: Download MPVKit xcframeworks
+        # MPVKit does NOT statically fold its optional dependencies into
+        # Libmpv.xcframework — libass / freetype / harfbuzz / fribidi /
+        # uchardet / dav1d / libplacebo / MoltenVK / OpenSSL / gnutls / …
+        # ship as separate xcframeworks hosted in mpvkit's per-dependency
+        # build repos. (libmpv-all.zip is NOT a bundle of these either —
+        # it's thin per-slice libmpv.a files only.) This list is the
+        # exact non-GPL "_MPVKit" dependency closure from MPVKit 0.41.0's
+        # Package.swift: Libmpv + the seven Libav* cores + fourteen
+        # dependency frameworks, each pinned to the release Package.swift
+        # references so everything stays ABI-consistent.
+        # Non-GPL variant: LGPL ffmpeg still decodes H.264 / HEVC / VP9 /
+        # AV1 / AAC / AC3 — everything Plex direct-plays.
+        run: |
+          FW_DIR="${{ github.workspace }}/mpv-frameworks"
+          mkdir -p "$FW_DIR"
+          MPVKIT="https://github.com/mpvkit/MPVKit/releases/download/${MPVKIT_VERSION}"
+          DEPS="https://github.com/mpvkit"
+          FRAMEWORKS=(
+            "${MPVKIT}/Libmpv.xcframework.zip"
+            "${MPVKIT}/Libavcodec.xcframework.zip"
+            "${MPVKIT}/Libavdevice.xcframework.zip"
+            "${MPVKIT}/Libavfilter.xcframework.zip"
+            "${MPVKIT}/Libavformat.xcframework.zip"
+            "${MPVKIT}/Libavutil.xcframework.zip"
+            "${MPVKIT}/Libswresample.xcframework.zip"
+            "${MPVKIT}/Libswscale.xcframework.zip"
+            "${DEPS}/openssl-build/releases/download/3.3.5/Libcrypto.xcframework.zip"
+            "${DEPS}/openssl-build/releases/download/3.3.5/Libssl.xcframework.zip"
+            "${DEPS}/gnutls-build/releases/download/3.8.11/gmp.xcframework.zip"
+            "${DEPS}/gnutls-build/releases/download/3.8.11/nettle.xcframework.zip"
+            "${DEPS}/gnutls-build/releases/download/3.8.11/hogweed.xcframework.zip"
+            "${DEPS}/gnutls-build/releases/download/3.8.11/gnutls.xcframework.zip"
+            "${DEPS}/libass-build/releases/download/0.17.4/Libunibreak.xcframework.zip"
+            "${DEPS}/libass-build/releases/download/0.17.4/Libfreetype.xcframework.zip"
+            "${DEPS}/libass-build/releases/download/0.17.4/Libfribidi.xcframework.zip"
+            "${DEPS}/libass-build/releases/download/0.17.4/Libharfbuzz.xcframework.zip"
+            "${DEPS}/libass-build/releases/download/0.17.4/Libass.xcframework.zip"
+            "${DEPS}/libbluray-build/releases/download/1.4.0/Libbluray.xcframework.zip"
+            "${DEPS}/libuavs3d-build/releases/download/1.2.1-xcode/Libuavs3d.xcframework.zip"
+            "${DEPS}/libdovi-build/releases/download/3.3.2/Libdovi.xcframework.zip"
+            "${DEPS}/moltenvk-build/releases/download/1.4.1/MoltenVK.xcframework.zip"
+            "${DEPS}/libshaderc-build/releases/download/2025.5.0/Libshaderc_combined.xcframework.zip"
+            "${DEPS}/lcms2-build/releases/download/2.17.0/lcms2.xcframework.zip"
+            "${DEPS}/libplacebo-build/releases/download/7.351.0-2512/Libplacebo.xcframework.zip"
+            "${DEPS}/libdav1d-build/releases/download/1.5.2-xcode/Libdav1d.xcframework.zip"
+            "${DEPS}/libuchardet-build/releases/download/0.0.8-xcode/Libuchardet.xcframework.zip"
+            "${DEPS}/libluajit-build/releases/download/2.1.0-xcode/Libluajit.xcframework.zip"
+          )
+          for url in "${FRAMEWORKS[@]}"; do
+            name=$(basename "$url")
+            echo "Fetching ${name}"
+            curl -fL --retry 4 --retry-delay 2 -o "/tmp/${name}" "$url"
+            unzip -qo "/tmp/${name}" -d "$FW_DIR"
+            rm "/tmp/${name}"
+          done
+          echo "Frameworks staged:"; ls -la "$FW_DIR"
+          test -d "$FW_DIR/Libmpv.xcframework"
+      - name: Configure
+        run: |
+          cmake -G Xcode -B build \
+            -D${{ matrix.cmake_flag }}=ON \
+            -DPLATFORM=${{ matrix.platform_for_toolchain }} \
+            -DDEPLOYMENT_TARGET=14.0 \
+            -DBOREALIS_LIBRARY=${{ github.workspace }}/lib/borealis/library \
+            -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
+            -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}" \
+            -DLIBROMFS_PREBUILT_GENERATOR=${{ github.workspace }}/lib/borealis/libromfs-generator \
+            -DAPPLE_MPV_XCFRAMEWORKS_DIR=${{ github.workspace }}/mpv-frameworks \
+            -DLIBCURL_INCLUDE_DIR=${{ env.LIBCURL_INCLUDE }} \
+            -DLIBCURL_LIBRARY=${{ env.LIBCURL_LIBRARY }}
+      - name: Build
+        run: |
+          cmake --build build --config Release -- \
+            -sdk ${{ matrix.sdk }} \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO
+      - name: Locate and stage .app
+        run: |
+          APP="$(find build -name 'VitaPlex.app' -type d | head -1)"
+          if [ -z "$APP" ]; then echo "VitaPlex.app not produced"; exit 1; fi
+          echo "Built: $APP"
+          mkdir -p stage && cp -R "$APP" stage/
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitaPlex-${{ matrix.target }}-${{ github.run_number }}
+          path: stage/VitaPlex.app
+
+  # ───────────────────────────────────────────────
   # PS4
   # ───────────────────────────────────────────────
   build-ps4:
