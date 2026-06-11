@@ -864,11 +864,11 @@ elseif(PLATFORM_IOS OR PLATFORM_TVOS)
     if(PLATFORM_IOS)
         set_target_properties(${PROJECT_NAME} PROPERTIES
             XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
-            XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "13.0")
+            XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET "14.0")
     elseif(PLATFORM_TVOS)
         set_target_properties(${PROJECT_NAME} PROPERTIES
             XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "3"
-            XCODE_ATTRIBUTE_TVOS_DEPLOYMENT_TARGET "13.0")
+            XCODE_ATTRIBUTE_TVOS_DEPLOYMENT_TARGET "14.0")
     endif()
 
     # Splash storyboard + asset catalog (icons). Both live under

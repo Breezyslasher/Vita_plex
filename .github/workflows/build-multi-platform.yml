@@ -649,7 +649,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ github.workspace }}/libcurl-install
-          key: libcurl-8.14.1-${{ matrix.sdk }}-v2
+          key: libcurl-8.14.1-${{ matrix.sdk }}-min14-v1
       - name: Build static libcurl for ${{ matrix.sdk }}
         # iOS Simulator SDK ships /usr/lib/libcurl.tbd but tvOS Simulator
         # SDK does NOT, so build a minimal static libcurl against the
@@ -667,9 +667,9 @@ jobs:
           PREFIX="${{ github.workspace }}/libcurl-install"
           SDK_PATH=$(xcrun --sdk ${{ matrix.sdk }} --show-sdk-path)
           if [ "${{ matrix.target }}" = "ios" ]; then
-            MIN_FLAG="-mios-simulator-version-min=13.0"
+            MIN_FLAG="-mios-simulator-version-min=14.0"
           else
-            MIN_FLAG="-mappletvsimulator-version-min=13.0"
+            MIN_FLAG="-mappletvsimulator-version-min=14.0"
           fi
           mkdir -p "$PREFIX"
           cd /tmp
@@ -775,7 +775,7 @@ jobs:
           cmake -G Xcode -B build \
             -D${{ matrix.cmake_flag }}=ON \
             -DPLATFORM=${{ matrix.platform_for_toolchain }} \
-            -DDEPLOYMENT_TARGET=13.0 \
+            -DDEPLOYMENT_TARGET=14.0 \
             -DBOREALIS_LIBRARY=${{ github.workspace }}/lib/borealis/library \
             -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
             -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}" \
