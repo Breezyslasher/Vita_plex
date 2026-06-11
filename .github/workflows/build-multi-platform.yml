@@ -630,8 +630,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        - { target: ios,  cmake_flag: PLATFORM_IOS,  platform_for_toolchain: SIMULATORARM64, sdk: iphonesimulator }
-        - { target: tvos, cmake_flag: PLATFORM_TVOS, platform_for_toolchain: SIMULATOR_TVOS, sdk: appletvsimulator }
+        - { target: ios,  cmake_flag: PLATFORM_IOS,  platform_for_toolchain: SIMULATORARM64,      sdk: iphonesimulator }
+        - { target: tvos, cmake_flag: PLATFORM_TVOS, platform_for_toolchain: SIMULATORARM64_TVOS, sdk: appletvsimulator }
     runs-on: macos-14
     env:
       # Pin to a release whose asset names match the loop below. All eight
