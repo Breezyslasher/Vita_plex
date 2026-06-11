@@ -644,29 +644,89 @@ jobs:
           submodules: recursive
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
-      - name: Install curl headers
+      - name: Cache static libcurl for ${{ matrix.sdk }}
+        id: cache-libcurl
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/libcurl-install
+          key: libcurl-8.14.1-${{ matrix.sdk }}-v1
+      - name: Build static libcurl for ${{ matrix.sdk }}
+        # iOS Simulator SDK ships /usr/lib/libcurl.tbd but tvOS Simulator
+        # SDK does NOT, so build a minimal static libcurl against the
+        # matrix's SDK and link it directly — one code path for both.
+        #
+        # Pinned to 8.14.1: the LAST release with Secure Transport (Apple
+        # TLS, zero extra deps) — curl 8.15.0 removed it, which would
+        # force a cross-built OpenSSL dependency. Plex requires HTTPS
+        # (plex.tv auth, *.plex.direct), so building --without-ssl is not
+        # an option. 8.14.1 also long postdates the cf-socket.c
+        # l_ip/l_port bug that broke 8.7.1.
+        if: steps.cache-libcurl.outputs.cache-hit != 'true'
         run: |
-          brew install curl
+          CURL_VERSION=8.14.1
+          PREFIX="${{ github.workspace }}/libcurl-install"
+          SDK_PATH=$(xcrun --sdk ${{ matrix.sdk }} --show-sdk-path)
+          if [ "${{ matrix.target }}" = "ios" ]; then
+            MIN_FLAG="-mios-simulator-version-min=13.0"
+          else
+            MIN_FLAG="-mappletvsimulator-version-min=13.0"
+          fi
+          mkdir -p "$PREFIX"
+          cd /tmp
+          curl -fL "https://curl.se/download/curl-${CURL_VERSION}.tar.gz" | tar xz
+          cd "curl-${CURL_VERSION}"
+          export CC="$(xcrun --sdk ${{ matrix.sdk }} --find clang)"
+          export AR="$(xcrun --sdk ${{ matrix.sdk }} --find ar)"
+          export RANLIB="$(xcrun --sdk ${{ matrix.sdk }} --find ranlib)"
+          export CFLAGS="-arch arm64 -isysroot ${SDK_PATH} ${MIN_FLAG} -O2"
+          export LDFLAGS="-arch arm64 -isysroot ${SDK_PATH} ${MIN_FLAG}"
+          ./configure \
+            --host=aarch64-apple-darwin \
+            --prefix="${PREFIX}" \
+            --disable-shared --enable-static \
+            --with-secure-transport \
+            --without-libpsl --without-libidn2 --without-nghttp2 \
+            --without-zstd --without-brotli --without-librtmp \
+            --without-libssh --without-libssh2 --without-zlib \
+            --disable-ldap --disable-ldaps --disable-rtsp \
+            --disable-dict --disable-telnet --disable-tftp \
+            --disable-pop3 --disable-imap --disable-smtp --disable-gopher \
+            --disable-mqtt --disable-smb --disable-manual \
+            --disable-debug
+          make -j$(sysctl -n hw.ncpu)
+          make install
+          echo "Built libcurl.a: $(file ${PREFIX}/lib/libcurl.a)"
+      - name: Export libcurl env
+        run: |
+          echo "LIBCURL_LIBRARY=${{ github.workspace }}/libcurl-install/lib/libcurl.a" >> $GITHUB_ENV
+          echo "LIBCURL_INCLUDE=${{ github.workspace }}/libcurl-install/include" >> $GITHUB_ENV
       - name: Build libromfs-generator
         # borealis's iOS / tvOS toolchain requires this generator to be
         # built ahead of configure (it embeds resources/ via libromfs).
         run: ${{ github.workspace }}/lib/borealis/build_libromfs_generator.sh
       - name: Download MPVKit xcframeworks
-        # One zip per framework. Non-GPL variant: LGPL ffmpeg still decodes
-        # H.264 / HEVC / VP9 / AV1 / AAC / AC3 — everything Plex direct-plays.
+        # libmpv-all.zip is the complete bundle: Libmpv + the seven Libav*
+        # ffmpeg frameworks PLUS every optional-dependency xcframework that
+        # this MPVKit build was compiled against (libass, freetype,
+        # harfbuzz, fribidi, uchardet, dav1d, libplacebo, MoltenVK,
+        # OpenSSL, …). Downloading the eight individual core zips is NOT
+        # enough — the link then fails with undefined symbols from those
+        # optional deps because MPVKit does not statically fold them into
+        # Libmpv. Non-GPL variant: LGPL ffmpeg still decodes H.264 / HEVC
+        # / VP9 / AV1 / AAC / AC3 — everything Plex direct-plays.
         run: |
           FW_DIR="${{ github.workspace }}/mpv-frameworks"
           mkdir -p "$FW_DIR"
           BASE="https://github.com/mpvkit/MPVKit/releases/download/${MPVKIT_VERSION}"
-          for fw in Libmpv Libavcodec Libavformat Libavutil Libavfilter \
-                    Libswresample Libswscale Libavdevice; do
-            echo "Fetching ${fw}.xcframework.zip"
-            curl -fL --retry 4 --retry-delay 2 \
-              -o "$FW_DIR/${fw}.xcframework.zip" \
-              "${BASE}/${fw}.xcframework.zip"
-            ( cd "$FW_DIR" && unzip -q "${fw}.xcframework.zip" && rm "${fw}.xcframework.zip" )
-          done
-          echo "Downloaded frameworks:"; ls -la "$FW_DIR"
+          curl -fL --retry 4 --retry-delay 2 \
+            -o /tmp/libmpv-all.zip "${BASE}/libmpv-all.zip"
+          unzip -q /tmp/libmpv-all.zip -d /tmp/libmpv-all
+          # Flatten: the zip may nest the xcframeworks inside a directory;
+          # CMake globs only ${FW_DIR}/*.xcframework at the top level.
+          find /tmp/libmpv-all -name "*.xcframework" -type d -maxdepth 4 \
+            -exec mv {} "$FW_DIR/" \;
+          echo "Frameworks staged:"; ls -la "$FW_DIR"
+          test -d "$FW_DIR/Libmpv.xcframework"
       - name: Configure
         run: |
           cmake -G Xcode -B build \
@@ -678,7 +738,8 @@ jobs:
             -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}" \
             -DLIBROMFS_PREBUILT_GENERATOR=${{ github.workspace }}/lib/borealis/libromfs-generator \
             -DAPPLE_MPV_XCFRAMEWORKS_DIR=${{ github.workspace }}/mpv-frameworks \
-            -DCURL_INCLUDE_DIR=$(brew --prefix curl)/include
+            -DLIBCURL_INCLUDE_DIR=${{ env.LIBCURL_INCLUDE }} \
+            -DLIBCURL_LIBRARY=${{ env.LIBCURL_LIBRARY }}
       - name: Build
         run: |
           cmake --build build --config Release -- \

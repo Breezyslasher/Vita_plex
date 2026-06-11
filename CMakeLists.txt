@@ -285,6 +285,10 @@ if(PLATFORM_IOS OR PLATFORM_TVOS)
     # can do the same or fall back to a Homebrew curl install for the
     # headers (link will fail without LIBCURL_LIBRARY though — there's
     # no point hiding that).
+    if(NOT LIBCURL_INCLUDE_DIR AND CURL_INCLUDE_DIR)
+        # Accept the more common variable name as an alias.
+        set(LIBCURL_INCLUDE_DIR "${CURL_INCLUDE_DIR}")
+    endif()
     if(LIBCURL_INCLUDE_DIR)
         target_include_directories(${PROJECT_NAME} PRIVATE "${LIBCURL_INCLUDE_DIR}")
     elseif(EXISTS /opt/homebrew/opt/curl/include)
