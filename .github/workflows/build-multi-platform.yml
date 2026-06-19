@@ -162,6 +162,7 @@ jobs:
           files: |
             VitaPlex-windows-*.7z
             VitaPlex-macos-*/*
+            VitaPlex-switch-*/*.nro
             VitaPlex-nx-*/*.nro
             VitaPlex-ps4-*/*
             VitaPlex-vita-*/*.vpk
@@ -212,12 +213,15 @@ jobs:
             cp "$tgz" "release/VitaPlex.${FVER}-Flatpak-${info}.tar.gz"
           done
 
-          # Switch NRO
-          for dir in VitaPlex-nx-*; do
+          # Switch NRO. The build job uploads as VitaPlex-switch-<driver>-<run>;
+          # the historical name was VitaPlex-nx-* so the glob was scanning for
+          # a directory that hadn't existed in months — Switch NROs were
+          # silently dropped from every prerelease. Match both, prefer switch.
+          for dir in VitaPlex-switch-* VitaPlex-nx-*; do
             [ -d "$dir" ] || continue
-            driver=$(echo "$dir" | sed -E 's/VitaPlex-nx-([^-]+)-.*/\1/')
+            driver=$(echo "$dir" | sed -E 's/VitaPlex-(switch|nx)-([^-]+)-.*/\2/')
             nro=$(find "$dir" -name "*.nro" | head -1)
-            [ -n "$nro" ] && cp "$nro" "release/VitaPlex.${FVER}-nx-${driver}.nro"
+            [ -n "$nro" ] && cp "$nro" "release/VitaPlex.${FVER}-switch-${driver}.nro"
           done
 
           # PS4 pkg
@@ -998,8 +1002,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+        # No 32-bit Windows row: MSYS2 has retired the mingw32 (i686)
+        # package set — mingw-w64-i686-glfw is gone from the live repo so
+        # the row dies at `pacman -S` with "target not found", and
+        # setup-msys2's msystem allowlist doesn't include CLANG32 so we
+        # can't switch to it without forking the action. x64 + arm64
+        # cover every modern Windows device.
         - { arch: x64, sys: mingw64, env: x86_64, runner: windows-latest }
-        - { arch: x86, sys: mingw32, env: i686, runner: windows-latest }
         - { arch: arm64, sys: clangarm64, env: clang-aarch64, runner: windows-11-arm }
     runs-on: ${{ matrix.runner }}
     defaults:
