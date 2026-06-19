@@ -14,6 +14,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <thread>
 
 // Forward declaration — defined in src/main.cpp. SDL2's Android backend
 // dispatches into SDL_main() instead of main(), so we have to provide the
@@ -200,6 +201,12 @@ bool readLocalFile(const std::string& path,
     out.resize((std::size_t)size);
     file.read(reinterpret_cast<char*>(out.data()), size);
     return file.good() || file.eof();
+}
+
+void launchThread(std::function<void()> task, std::size_t /*stackSize*/) {
+    // Android's bionic std::thread default stack (~1 MB) is enough for
+    // our background work; stackSize hint is ignored here.
+    std::thread([t = std::move(task)]() { t(); }).detach();
 }
 
 bool needsHardExit() {

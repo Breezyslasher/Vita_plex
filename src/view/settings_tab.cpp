@@ -9,9 +9,9 @@
 #include "player/mpv_player.hpp"
 #include "activity/player_activity.hpp"
 #include "utils/http_client.hpp"
+#include "platform/platform.hpp"
 #include <set>
 #include <chrono>
-#include <thread>
 
 #ifdef __vita__
 #include <psp2/net/netctl.h>
@@ -1029,8 +1029,12 @@ void SettingsTab::onNetworkTest() {
     // Show a toast while tests run
     brls::Application::notify("Running network test...");
 
-    // Run the network tests on a detached thread to avoid blocking the UI
-    std::thread([this]() {
+    // Run the network tests on a detached thread to avoid blocking the
+    // UI. Goes through platform::launchThread() rather than std::thread
+    // so the Switch newlib std::thread shim doesn't ship a thread with
+    // an unregistered stack region and zeroed TLS (caught a real crash
+    // on hbloader — Atmosphère Instruction Abort at a page-aligned PC).
+    platform::launchThread([this]() {
         // ── 1. WiFi Check ──
         std::string ipAddress = "-";
         std::string dnsInfo = "-";
@@ -1185,7 +1189,7 @@ void SettingsTab::onNetworkTest() {
             dialog->addButton("Close", []() {});
             dialog->open();
         });
-    }).detach();
+    });
 }
 
 void SettingsTab::onTestLocalPlayback() {

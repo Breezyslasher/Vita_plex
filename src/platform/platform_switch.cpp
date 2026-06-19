@@ -14,6 +14,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <pthread.h>
 
 namespace vitaplex {
 namespace platform {
@@ -121,6 +122,42 @@ bool readLocalFile(const std::string& path,
     out.resize((std::size_t)size);
     file.read(reinterpret_cast<char*>(out.data()), size);
     return file.good() || file.eof();
+}
+
+void launchThread(std::function<void()> task, std::size_t stackSize) {
+    // Route through pthread_create rather than std::thread. libnx's
+    // newlib pthread shim registers the new thread's stack region with
+    // the kernel AND initializes TLS before the body runs; the libstdc++
+    // std::thread path on the same toolchain does not always, which
+    // produced Atmosphère Instruction Aborts (PC at a page boundary,
+    // TLS dump all zeros, no Stack Region line for the thread) the
+    // first time the body did anything indirect-call-shaped (vtable,
+    // std::function, dlsym callback). 512 KB stack matches what
+    // borealis's own worker threads use.
+    auto* taskCopy = new std::function<void()>(std::move(task));
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, stackSize);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_t tid;
+    int rc = pthread_create(&tid, &attr, [](void* arg) -> void* {
+        auto* fn = static_cast<std::function<void()>*>(arg);
+        (*fn)();
+        delete fn;
+        return nullptr;
+    }, taskCopy);
+    pthread_attr_destroy(&attr);
+    if (rc != 0) {
+        // Fall back to running inline rather than leaking the closure
+        // if the kernel can't allocate the thread. Almost never happens
+        // in practice on Switch — applets/sysmodules have a fixed cap on
+        // concurrent threads, and we're well under it.
+        brls::Logger::error(
+            "launchThread: pthread_create failed ({}), running inline",
+            rc);
+        (*taskCopy)();
+        delete taskCopy;
+    }
 }
 
 bool needsHardExit() {

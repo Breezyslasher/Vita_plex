@@ -258,6 +258,30 @@ bool readLocalFile(const std::string& path,
                    std::size_t maxBytes);
 
 /**
+ * Launch a detached background thread with a platform-appropriate stack
+ * size and proper TLS / kernel-bookkeeping setup. Always prefer this over
+ * bare `std::thread(...).detach()`.
+ *
+ *   Switch: libnx's newlib std::thread shim doesn't always register the
+ *           stack region with the kernel OR initialize TLS — a thread
+ *           launched that way crashes with an Instruction Abort the first
+ *           time it indirect-calls through a vtable or std::function. This
+ *           routes through pthread_create with explicit attr so the stack
+ *           lands in a kernel-managed region and TLS is set up.
+ *   PSV:   stdc++ std::thread defaults to a 256 KB stack which overflows
+ *           on HLS downloads with deep call stacks; use pthread + attr.
+ *   PS4:   same pthread route.
+ *   Desktop / Android: std::thread().detach() is fine, but go through the
+ *           same entry point so call sites don't have to ifdef.
+ *
+ * The task is heap-copied; ownership transfers to the new thread, which
+ * frees it after the body returns. `stackSize` is a hint — platforms with
+ * a fixed thread stack size honor it; std::thread platforms ignore it.
+ */
+void launchThread(std::function<void()> task,
+                  std::size_t stackSize = 512 * 1024);
+
+/**
  * Whether the platform exits the process via an SDK-specific call instead
  * of a normal `return` from main(). True on PSV (sceKernelExitProcess).
  */

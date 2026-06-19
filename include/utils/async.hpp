@@ -1,16 +1,23 @@
 /**
  * VitaPlex - Async utilities
- * Simple async task execution with UI thread callbacks
+ * Simple async task execution with UI thread callbacks.
+ *
+ * Every helper here routes through platform::launchThread() rather than
+ * std::thread().detach() directly. The Switch's newlib std::thread shim
+ * doesn't always register the thread's stack region with the kernel or
+ * initialize TLS — a detached thread launched that way crashes with an
+ * Atmosphère Instruction Abort (PC at a page boundary, TLS dump zeroed)
+ * the first time it indirect-calls through a std::function or vtable.
+ * platform::launchThread() routes through pthread_create with explicit
+ * attrs on Switch/PSV/PS4 (kernel-managed stack + TLS) and stays on
+ * std::thread on Desktop/Android/iOS where bare detach is fine.
  */
 
 #pragma once
 
 #include <functional>
-#include <thread>
 #include <borealis.hpp>
-#ifdef __vita__
-#include <pthread.h>
-#endif
+#include "platform/platform.hpp"
 
 namespace vitaplex {
 
@@ -22,12 +29,12 @@ namespace vitaplex {
  */
 template<typename T>
 inline void asyncTask(std::function<T()> task, std::function<void(T)> callback) {
-    std::thread([task, callback]() {
+    platform::launchThread([task, callback]() {
         T result = task();
         brls::sync([callback, result]() {
             callback(result);
         });
-    }).detach();
+    });
 }
 
 /**
@@ -37,23 +44,21 @@ inline void asyncTask(std::function<T()> task, std::function<void(T)> callback) 
  * @param callback Called on UI thread when task completes
  */
 inline void asyncTask(std::function<void()> task, std::function<void()> callback) {
-    std::thread([task, callback]() {
+    platform::launchThread([task, callback]() {
         task();
         brls::sync([callback]() {
             callback();
         });
-    }).detach();
+    });
 }
 
 /**
- * Execute a task asynchronously without a callback
+ * Execute a task asynchronously without a callback.
  *
  * @param task The task to run in background
  */
 inline void asyncRun(std::function<void()> task) {
-    std::thread([task]() {
-        task();
-    }).detach();
+    platform::launchThread(std::move(task));
 }
 
 /**
@@ -61,32 +66,13 @@ inline void asyncRun(std::function<void()> task) {
  * Use for heavy work like downloads that have deep call stacks.
  *
  * @param task The task to run in background
- * @param stackSize Stack size in bytes (default 512KB)
+ * @param stackSize Stack size in bytes (default 512KB). Honored on
+ *                  Switch/PSV/PS4; ignored on Desktop/Android/iOS where
+ *                  std::thread already gets a generous default.
  */
-inline void asyncRunLargeStack(std::function<void()> task, size_t stackSize = 512 * 1024) {
-#ifdef __vita__
-    // On Vita, std::thread uses a small default stack (256KB) which can overflow
-    // during heavy operations like HLS downloads. Use pthread directly with a
-    // larger stack to prevent crashes.
-    auto* taskCopy = new std::function<void()>(task);
-    pthread_t thread;
-    pthread_attr_t attr;
-    pthread_attr_init(&attr);
-    pthread_attr_setstacksize(&attr, stackSize);
-    pthread_create(&thread, &attr, [](void* arg) -> void* {
-        auto* fn = static_cast<std::function<void()>*>(arg);
-        (*fn)();
-        delete fn;
-        return nullptr;
-    }, taskCopy);
-    pthread_attr_destroy(&attr);
-    pthread_detach(thread);
-#else
-    // On desktop, default stack size is usually large enough
-    std::thread([task]() {
-        task();
-    }).detach();
-#endif
+inline void asyncRunLargeStack(std::function<void()> task,
+                               std::size_t stackSize = 512 * 1024) {
+    platform::launchThread(std::move(task), stackSize);
 }
 
 } // namespace vitaplex
