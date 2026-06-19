@@ -12,12 +12,19 @@
 #include <borealis.hpp>
 #include "utils/http_client.hpp"
 
+#include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <fstream>
 #include <pthread.h>
+#include <sys/stat.h>
 
 namespace vitaplex {
 namespace platform {
+
+namespace {
+FILE* g_logFile = nullptr;
+}  // namespace
 
 const ImageConstraints& getImageConstraints() {
     // Switch: 1280x720 handheld, 1920x1080 docked. Mid-size covers strike
@@ -95,19 +102,72 @@ bool init() {
         brls::Logger::error("Failed to initialize curl");
         return false;
     }
+
+    // Make sure the data dir exists before we try to open the log file.
+    // (platformPath helpers expect sdmc:/VitaPlex/* — see paths.hpp.)
+    // mkdir is idempotent; ignore EEXIST.
+    mkdir("sdmc:/VitaPlex", 0777);
+    openLogFile();
     return true;
 }
 
 void shutdown() {
+    closeLogFile();
     ::vitaplex::HttpClient::globalCleanup();
 }
 
 std::string getLogPath() {
-    return std::string{};
+    // hbloader's stdout / stderr is invisible to the user — without an
+    // on-disk log, the only data we get from a remote crash report is
+    // whatever Atmosphère's crash logger captures. Write to
+    // sdmc:/VitaPlex/vitaplex.log so users can ship the file back to
+    // us when something goes wrong (the empty sdmc:/VitaPlex/ dir was
+    // the immediate diagnostic for the "failed to connect to OMV" report).
+    return "sdmc:/VitaPlex/vitaplex.log";
 }
 
-void openLogFile() {}
-void closeLogFile() {}
+void openLogFile() {
+    if (g_logFile) return;
+    g_logFile = std::fopen(getLogPath().c_str(), "w");
+    if (!g_logFile) return;
+    // Line-buffered so a crash flushes the last log line to disk before
+    // the kernel kills us — full buffering would lose the last ~4 KB of
+    // diagnostic output, which is exactly the part that matters.
+    setvbuf(g_logFile, NULL, _IOLBF, 0);
+
+    brls::Logger::getLogEvent()->subscribe(
+        [](brls::Logger::TimePoint time, brls::LogLevel level, std::string log) {
+            if (!g_logFile) return;
+
+            const char* levelStr = "UNKNOWN";
+            switch (level) {
+                case brls::LogLevel::LOG_ERROR:   levelStr = "ERROR";   break;
+                case brls::LogLevel::LOG_WARNING: levelStr = "WARNING"; break;
+                case brls::LogLevel::LOG_INFO:    levelStr = "INFO";    break;
+                case brls::LogLevel::LOG_DEBUG:   levelStr = "DEBUG";   break;
+                case brls::LogLevel::LOG_VERBOSE: levelStr = "VERBOSE"; break;
+            }
+
+            std::time_t tt = std::chrono::system_clock::to_time_t(time);
+            std::tm time_tm = *std::localtime(&tt);
+            uint64_t ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                              time.time_since_epoch())
+                              .count() %
+                          1000;
+
+            fprintf(g_logFile, "%02d:%02d:%02d.%03d [%s] %s\n",
+                    time_tm.tm_hour, time_tm.tm_min, time_tm.tm_sec,
+                    (int)ms, levelStr, log.c_str());
+        });
+    brls::Logger::info("Log file initialized: {}", getLogPath());
+}
+
+void closeLogFile() {
+    if (g_logFile) {
+        std::fclose(g_logFile);
+        g_logFile = nullptr;
+    }
+}
 
 bool readLocalFile(const std::string& path,
                    std::vector<uint8_t>& out,
