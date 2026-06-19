@@ -16,6 +16,7 @@
 
 #include <chrono>
 #include <ctime>
+#include <pthread.h>
 #include <thread>
 
 namespace {
@@ -194,6 +195,32 @@ bool readLocalFile(const std::string& path,
     std::size_t read = std::fread(out.data(), 1, (std::size_t)size, fp);
     std::fclose(fp);
     return read == (std::size_t)size;
+}
+
+void launchThread(std::function<void()> task, std::size_t stackSize) {
+    // PS4 musl pthread — set explicit stack size for the same reason
+    // Switch needs it: the default newlib-on-Orbis stack is small enough
+    // that HLS / curl operations can overflow.
+    auto* taskCopy = new std::function<void()>(std::move(task));
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, stackSize);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_t tid;
+    int rc = pthread_create(&tid, &attr, [](void* arg) -> void* {
+        auto* fn = static_cast<std::function<void()>*>(arg);
+        (*fn)();
+        delete fn;
+        return nullptr;
+    }, taskCopy);
+    pthread_attr_destroy(&attr);
+    if (rc != 0) {
+        brls::Logger::error(
+            "launchThread: pthread_create failed ({}), running inline",
+            rc);
+        (*taskCopy)();
+        delete taskCopy;
+    }
 }
 
 bool needsHardExit() {

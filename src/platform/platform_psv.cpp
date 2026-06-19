@@ -28,6 +28,7 @@
 #include "utils/http_client.hpp"
 
 #include <chrono>
+#include <pthread.h>
 #include <ctime>
 #include <cstring>
 
@@ -302,6 +303,35 @@ bool readLocalFile(const std::string& path,
     int read = sceIoRead(fd, out.data(), size);
     sceIoClose(fd);
     return read == (int)size;
+}
+
+void launchThread(std::function<void()> task, std::size_t stackSize) {
+    // PSV: VITASDK's std::thread defaults to a 256 KB stack which
+    // overflows on HLS / curl operations with deep call stacks. Use
+    // pthread directly with an explicit stack. Same routing the existing
+    // asyncRunLargeStack() helper used before we centralised threading
+    // here — keep this consistent so every detached background task on
+    // Vita gets at least 512 KB.
+    auto* taskCopy = new std::function<void()>(std::move(task));
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, stackSize);
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+    pthread_t tid;
+    int rc = pthread_create(&tid, &attr, [](void* arg) -> void* {
+        auto* fn = static_cast<std::function<void()>*>(arg);
+        (*fn)();
+        delete fn;
+        return nullptr;
+    }, taskCopy);
+    pthread_attr_destroy(&attr);
+    if (rc != 0) {
+        brls::Logger::error(
+            "launchThread: pthread_create failed ({}), running inline",
+            rc);
+        (*taskCopy)();
+        delete taskCopy;
+    }
 }
 
 bool needsHardExit() {

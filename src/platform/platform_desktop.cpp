@@ -13,6 +13,7 @@
 
 #include <cstdio>
 #include <fstream>
+#include <thread>
 
 namespace vitaplex {
 namespace platform {
@@ -179,6 +180,13 @@ bool readLocalFile(const std::string& path,
     out.resize((std::size_t)size);
     file.read(reinterpret_cast<char*>(out.data()), size);
     return file.good() || file.eof();
+}
+
+void launchThread(std::function<void()> task, std::size_t /*stackSize*/) {
+    // Desktop platforms (Linux / macOS / Windows) have huge default
+    // thread stacks (1-8 MB) and a well-tested std::thread implementation
+    // — bare detach is fine here. stackSize hint ignored.
+    std::thread([t = std::move(task)]() { t(); }).detach();
 }
 
 bool needsHardExit() {

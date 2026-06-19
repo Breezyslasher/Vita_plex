@@ -24,6 +24,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <string>
+#include <thread>
 
 namespace vitaplex {
 namespace platform {
@@ -250,6 +251,12 @@ bool readLocalFile(const std::string& path,
     out.resize((std::size_t)size);
     file.read(reinterpret_cast<char*>(out.data()), size);
     return file.good() || file.eof();
+}
+
+void launchThread(std::function<void()> task, std::size_t /*stackSize*/) {
+    // iOS / tvOS std::thread is libc++ on Apple's pthread — generous
+    // default stack, kernel-managed; bare detach is fine.
+    std::thread([t = std::move(task)]() { t(); }).detach();
 }
 
 bool needsHardExit() { return false; }

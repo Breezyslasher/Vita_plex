@@ -7,6 +7,7 @@
 #ifdef __PS4__
 
 #include "utils/https_proxy.h"
+#include "platform/platform.hpp"
 #include <borealis.hpp>
 #include <curl/curl.h>
 
@@ -340,12 +341,17 @@ void HttpsProxy::acceptLoop() {
             continue;
         }
 
-        // Handle each connection in a detached thread to allow concurrent
-        // segment fetches during HLS playback
-        std::thread([this, clientFd]() {
+        // Handle each connection in a detached thread to allow
+        // concurrent segment fetches during HLS playback. Routed through
+        // platform::launchThread() — bare std::thread().detach() on
+        // Switch can ship the thread without registering its stack with
+        // the kernel or initialising TLS, which manifests as an
+        // Atmosphère Instruction Abort the first time handleClient()
+        // indirect-calls anything.
+        platform::launchThread([this, clientFd]() {
             handleClient(clientFd);
             close(clientFd);
-        }).detach();
+        });
     }
 }
 
