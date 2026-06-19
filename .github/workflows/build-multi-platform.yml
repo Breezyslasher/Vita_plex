@@ -187,7 +187,7 @@ jobs:
           FVER: ${{ needs.resolve-version.outputs.version_tag }}
         run: |
           mkdir -p release
-
+ 
           # Vita VPK
           for f in $(find . -name "*.vpk"); do
             cp "$f" "release/VitaPlex.${FVER}.vpk"
