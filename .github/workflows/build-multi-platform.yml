@@ -1002,12 +1002,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-        # MSYS2 has been retiring the mingw32 (i686) package set; as of
-        # this writing mingw-w64-i686-glfw is gone from the live repo
-        # and the job fails at the pacman -S step. Drop the row — 32-bit
-        # Windows isn't a meaningful target for a Plex media client and
-        # x64 + arm64 cover every modern Windows device.
+        # 32-bit Windows uses CLANG32 (mingw-w64-clang-i686-*), not the
+        # legacy MINGW32 environment. MSYS2 has been retiring the
+        # mingw32 (i686) package set — mingw-w64-i686-glfw and several
+        # others are already gone from the live repo, breaking the build
+        # at pacman -S. CLANG32 is the actively-maintained 32-bit env
+        # with the full current package set.
         - { arch: x64, sys: mingw64, env: x86_64, runner: windows-latest }
+        - { arch: x86, sys: clang32, env: clang-i686, runner: windows-latest }
         - { arch: arm64, sys: clangarm64, env: clang-aarch64, runner: windows-11-arm }
     runs-on: ${{ matrix.runner }}
     defaults:
