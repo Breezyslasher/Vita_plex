@@ -216,6 +216,25 @@ bool MpvPlayer::init() {
         // GXM-specific settings from switchfin
         mpv_set_option_string(m_mpv, "fbo-format", "rgba8");
         mpv_set_option_string(m_mpv, "video-latency-hacks", "yes");
+#elif defined(__SWITCH__)
+        // Switch software decode. mpv creates its OWN ffmpeg decoder
+        // threads via libnx pthread_create, which use libnx's DEFAULT
+        // ~128 KB stack — NOT our 512 KB launchThread wrapper, which only
+        // governs threads WE spawn. Left uncapped, mpv auto-detects
+        // thread count from the core count and frame-threading can
+        // multiply that further; the result on 1080p H.264/HEVC was a
+        // pile of 128 KB-stack workers, one of which faulted with an
+        // Instruction Abort during playback (Atmosphère report: 0x21000
+        // stack region, the tell-tale libnx default size).
+        //
+        // Cap to 4 like switchfin: bounds both the thread count and the
+        // aggregate stack pressure while still using every usable core.
+        // vd-lavc-fast trims some spec-compliance corners that also keep
+        // decode stack depth shallower. Leave the loop filter ON (Switch
+        // is far more capable than Vita) so picture quality isn't hurt.
+        mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
+        mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
+        mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
 #else
         mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
 #endif
