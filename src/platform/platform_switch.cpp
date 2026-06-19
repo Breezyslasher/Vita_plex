@@ -220,6 +220,17 @@ void launchThread(std::function<void()> task, std::size_t stackSize) {
     }
 }
 
+std::size_t maxConcurrentNetworkRequests() {
+    // libnx's bsdsockets + nsd resolver throttle hard above ~4 parallel
+    // requests in-flight. The 17-connection Plex Direct probe in
+    // login_activity demonstrated this clearly: with N=17, 10/17 came
+    // back with "Couldn't resolve host name" in <30ms while the
+    // resolver was still working through the queue. With N=4 we don't
+    // even notice the gate on a 17-element list — fan-out time is
+    // (17/4)*roundtrip ≈ 1s instead of (17)*roundtrip racing each other.
+    return 4;
+}
+
 bool needsHardExit() {
     return false;
 }
