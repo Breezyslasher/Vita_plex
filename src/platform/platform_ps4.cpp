@@ -197,6 +197,11 @@ bool readLocalFile(const std::string& path,
     return read == (std::size_t)size;
 }
 
+std::size_t maxConcurrentNetworkRequests() {
+    // sceHttp has a per-app pool; 8 is comfortable.
+    return 8;
+}
+
 void launchThread(std::function<void()> task, std::size_t stackSize) {
     // PS4 musl pthread — set explicit stack size for the same reason
     // Switch needs it: the default newlib-on-Orbis stack is small enough

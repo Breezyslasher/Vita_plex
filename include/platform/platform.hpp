@@ -282,6 +282,29 @@ void launchThread(std::function<void()> task,
                   std::size_t stackSize = 512 * 1024);
 
 /**
+ * Maximum number of concurrent network requests the platform's stack
+ * can sustain reliably. Callers that fan out parallel HTTP work
+ * (login_activity's connection-list probe, library prefetch, …) should
+ * gate the worker count with a counting semaphore set to this value.
+ *
+ * Higher is not always better:
+ *
+ *   Switch: libnx's BSD + SSL services have tight per-process socket
+ *           ceilings and a single-threaded DNS resolver. Firing all 17
+ *           Plex Direct connection probes at once produced a flood that
+ *           had 10/17 fail instantly with "Couldn't resolve host name"
+ *           (the resolver was rate-limited / overrun while the rest of
+ *           the requests were queued behind it). 4 keeps the resolver
+ *           and TLS handshake pool happy and still hides round-trip
+ *           latency on the LAN.
+ *   PSV:   sceHttp has a small pool too. 4 matches.
+ *   PS4:   higher headroom but still capped.
+ *   Desktop / Android / iOS / tvOS: 16 — enough that we never bottleneck
+ *           on the gate.
+ */
+std::size_t maxConcurrentNetworkRequests();
+
+/**
  * Whether the platform exits the process via an SDK-specific call instead
  * of a normal `return` from main(). True on PSV (sceKernelExitProcess).
  */

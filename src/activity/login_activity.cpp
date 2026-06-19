@@ -9,13 +9,41 @@
 #include "view/progress_dialog.hpp"
 #include "utils/async.hpp"
 #include "utils/http_client.hpp"
+#include "platform/platform.hpp"
 
 #include <memory>
 #include <thread>
 #include <atomic>
+#include <algorithm>
 #include <condition_variable>
+#include <mutex>
 
 namespace vitaplex {
+
+// Minimal counting semaphore. std::counting_semaphore is C++20 but the
+// project still targets C++17 for Vita / Switch toolchain compatibility,
+// so roll the obvious mutex+condvar version inline here. Only used by
+// the parallel probe loop below; no need for a header.
+namespace {
+class CountingSemaphore {
+public:
+    explicit CountingSemaphore(std::ptrdiff_t initial) : m_count(initial) {}
+    void acquire() {
+        std::unique_lock<std::mutex> lk(m_mutex);
+        m_cv.wait(lk, [&] { return m_count > 0; });
+        --m_count;
+    }
+    void release() {
+        std::lock_guard<std::mutex> lk(m_mutex);
+        ++m_count;
+        m_cv.notify_one();
+    }
+private:
+    std::mutex m_mutex;
+    std::condition_variable m_cv;
+    std::ptrdiff_t m_count;
+};
+}  // namespace
 
 LoginActivity::LoginActivity() {
     brls::Logger::debug("LoginActivity created");
@@ -183,10 +211,37 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
             progressDialog->setProgress(0.05f);
         });
 
+        // Gate concurrent in-flight HTTP requests to what the platform's
+        // network stack can sustain. On Switch (libnx) we observed 17
+        // parallel HTTPS probes overrun the resolver: 10/17 came back
+        // with "Couldn't resolve host name" within 30 ms while the rest
+        // were queued behind a single-threaded NSD resolver. With the
+        // semaphore set to platform::maxConcurrentNetworkRequests() (4
+        // on Switch, 16 on desktop) the resolver / TLS handshake pool
+        // stays healthy and every probe gets a real result instead of
+        // a flooded-out error.
+        const std::size_t maxInFlight =
+            std::max<std::size_t>(1, platform::maxConcurrentNetworkRequests());
+        CountingSemaphore sem(static_cast<std::ptrdiff_t>(maxInFlight));
+
         for (size_t i = 0; i < totalConnections; i++) {
             const auto conn = server.connections[i];
             workers.emplace_back([&, conn, i]() {
                 if (*cancelled) {
+                    completed.fetch_add(1);
+                    return;
+                }
+
+                // Hold a permit for the duration of the HTTP request.
+                // Workers wait here once maxInFlight are already running;
+                // released when the request finishes (success or error).
+                sem.acquire();
+
+                // Recheck the cancel flag and the "already found a
+                // winner" flag — we may have queued behind a long line
+                // and the answer arrived while we were waiting.
+                if (*cancelled || found.load()) {
+                    sem.release();
                     completed.fetch_add(1);
                     return;
                 }
@@ -201,6 +256,7 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
 
                 brls::Logger::debug("Parallel probe {}/{} {}", i + 1, totalConnections, conn.uri);
                 HttpResponse resp = http.request(req);
+                sem.release();
 
                 if (resp.statusCode == 200 && !found.exchange(true)) {
                     {

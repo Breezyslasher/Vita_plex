@@ -259,6 +259,10 @@ void launchThread(std::function<void()> task, std::size_t /*stackSize*/) {
     std::thread([t = std::move(task)]() { t(); }).detach();
 }
 
+std::size_t maxConcurrentNetworkRequests() {
+    return 16;
+}
+
 bool needsHardExit() { return false; }
 [[noreturn]] void hardExit(int code) { std::exit(code); }
 

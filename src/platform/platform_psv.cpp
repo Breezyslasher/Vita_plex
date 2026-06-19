@@ -305,6 +305,12 @@ bool readLocalFile(const std::string& path,
     return read == (int)size;
 }
 
+std::size_t maxConcurrentNetworkRequests() {
+    // Vita's sceHttp is extremely tight on memory; 4 keeps us under any
+    // realistic pressure when HLS playback is also using the stack.
+    return 4;
+}
+
 void launchThread(std::function<void()> task, std::size_t stackSize) {
     // PSV: VITASDK's std::thread defaults to a 256 KB stack which
     // overflows on HLS / curl operations with deep call stacks. Use
