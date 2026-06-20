@@ -390,7 +390,6 @@ public:
     bool fetchLiveTVChannels(std::vector<LiveTVChannel>& channels);
     bool fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, int hoursAhead = 4);
     bool tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl, const std::string& programMetadataKey = "");
-    bool tuneLiveTVChannelByKey(const std::string& channelKey, const std::string& epgChannelKey, std::string& streamUrl, const std::string& programMetadataKey = "");
     bool hasLiveTV() const { return m_hasLiveTV; }
     std::string getEpgProviderKey() const { return m_epgProviderKey; }
 

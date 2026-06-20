@@ -3102,25 +3102,6 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
     return !channelsWithPrograms.empty();
 }
 
-bool PlexClient::tuneLiveTVChannelByKey(const std::string& channelVcn, const std::string& epgChannelKey, std::string& streamUrl, const std::string& programMetadataKey) {
-    brls::Logger::info("tuneLiveTVChannelByKey: vcn={}, epgKey={}, metadataKey={}", channelVcn, epgChannelKey, programMetadataKey);
-
-    // Try with VCN first (official API uses deviceIdentifier like "2.1")
-    if (!channelVcn.empty()) {
-        if (tuneLiveTVChannel(channelVcn, streamUrl, programMetadataKey)) {
-            return true;
-        }
-        brls::Logger::info("tuneLiveTVChannelByKey: VCN failed, trying EPG key...");
-    }
-
-    // Fall back to EPG channel key
-    if (!epgChannelKey.empty() && epgChannelKey != channelVcn) {
-        return tuneLiveTVChannel(epgChannelKey, streamUrl, programMetadataKey);
-    }
-
-    return false;
-}
-
 bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl, const std::string& programMetadataKey) {
     brls::Logger::info("tuneLiveTVChannel: channelKey={}, programMetadataKey={}", channelKey, programMetadataKey);
 
