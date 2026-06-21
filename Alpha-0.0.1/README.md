@@ -9,7 +9,7 @@
 </div>
 ## 📊 Feature Comparison
 
-| Feature | Alpha 0.0.1 | Current Build |
+| Feature | Alpha 0.0.1 | Beta 0.6.1 |
 |---|---|---|
 | UI Framework | vita2d + custom text menus | Borealis (NanoVG + GXM) |
 | Navigation | Linear list menus | Sidebar tabs + activity stack |
@@ -40,7 +40,7 @@
   </tr>
   <tr>
     <td align="center"><b>Alpha 0.0.1</b></td>
-    <td align="center"><b>Current Build</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
     <td><img src="old/home_screen_plex_alpha_old.png" width="400"/></td>
@@ -54,7 +54,7 @@
   </tr>
   <tr>
     <td align="center"><b>Alpha 0.0.1</b></td>
-    <td align="center"><b>Current Build</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
     <td><img src="old/movies_list_old.png" width="400"/></td>
@@ -68,7 +68,7 @@
   </tr>
   <tr>
     <td align="center"><b>Alpha 0.0.1</b></td>
-    <td align="center"><b>Current Build</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
     <td><img src="old/movie_info_old.png" width="400"/></td>
@@ -83,7 +83,7 @@
   </tr>
   <tr>
     <td align="center"><b>Alpha 0.0.1</b></td>
-    <td align="center"><b>Current Build</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
     <td><img src="old/music_old.png" width="400"/></td>
@@ -99,7 +99,7 @@
   </tr>
   <tr>
     <td align="center"><b>Alpha 0.0.1</b></td>
-    <td align="center"><b>Current Build</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
     <td><img src="old/albums-page-old.png" width="400"/></td>
@@ -114,7 +114,7 @@
   </tr>
   <tr>
     <td align="center"><b>Alpha 0.0.1</b></td>
-    <td align="center"><b>Current Build</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
     <td><img src="old/track_page_old.png" width="400"/></td>
@@ -129,7 +129,7 @@
   </tr>
   <tr>
     <td align="center"><b>Alpha 0.0.1 does not exist</b></td>
-    <td align="center"><b>Current Build</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
     <td><img src="old/Transparent_Square_Tiles_Texture.png" width="400"/></td>
@@ -143,7 +143,7 @@
   </tr>
   <tr>
     <td align="center"><b>Alpha 0.0.1 </b></td>
-    <td align="center"><b>Current Build</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
     <td><img src="old/palyer_ui_old.png" width="400"/></td>
@@ -157,7 +157,7 @@
   </tr>
   <tr>
     <td align="center"><b>Alpha 0.0.1 does not exist</b></td>
-    <td align="center"><b>Current Build</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
     <td><img src="old/Transparent_Square_Tiles_Texture.png" width="400"/></td>
@@ -171,7 +171,7 @@
   </tr>
   <tr>
     <td align="center"><b>Alpha 0.0.1 </b></td>
-    <td align="center"><b>Current Build</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
     <td><img src="old/palyer_ui_old.png" width="400"/></td>
@@ -185,7 +185,7 @@
   </tr>
   <tr>
     <td align="center"><b>Alpha 0.0.1 does not exist</b></td>
-    <td align="center"><b>Current Build</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
     <td><img src="old/Transparent_Square_Tiles_Texture.png" width="400"/></td>
@@ -199,7 +199,7 @@
   </tr>
   <tr>
     <td align="center"><b>Alpha 0.0.1</b></td>
-    <td align="center"><b>Current Build</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
     <td><img src="old/live_tv_old.png" width="400"/></td>
@@ -213,7 +213,7 @@
   </tr>
   <tr>
     <td align="center"><b>Alpha 0.0.1</b></td>
-    <td align="center"><b>Current Build</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
     <td><img src="old/search_old.png" width="400"/></td>
@@ -227,7 +227,7 @@
   </tr>
   <tr>
     <td align="center"><b>Alpha 0.0.1</b></td>
-    <td align="center"><b>Current Build</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
     <td><img src="old/setting_pages_old.png" width="400"/></td>
