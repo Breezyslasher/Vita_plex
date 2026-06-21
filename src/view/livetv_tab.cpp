@@ -86,15 +86,19 @@ static const int64_t REFRESH_INTERVAL = 60;         // 1 minute between "now pla
 // and pure overdraw. Four hours = eight 30-min slots ≈ on-screen on Vita.
 static const int EPG_GRID_HOURS_VISIBLE = 4;
 
-// Hero dimensions. Derived from livetvChannelRowHeight so the same scaling
-// math that sizes the favourites pills also sizes the hero — bumping a
-// platform's channel row up scales the hero proportionally.
+// Hero dimensions. Smaller than the original so more guide rows are
+// visible below — thumbnail scales down with the hero height, and the
+// info column rearranges around it. Was max(220, channelRowHeight*2+40)
+// which left only ~3 guide rows on Vita; this drops the hero by ~70px
+// for an extra ~1.5 channel rows.
 static inline int heroHeight() {
-    return std::max(220, platform::getImageConstraints().livetvChannelRowHeight * 2 + 40);
+    return std::max(150, platform::getImageConstraints().livetvChannelRowHeight + 50);
 }
 static inline int heroThumbWidth() {
-    // Roughly 16:9 of the hero's inner height (height - padding).
-    return std::max(240, (int)((heroHeight() - 16) * 16.0 / 9.0));
+    // 4:3 of the hero's inner height — slightly less wide than the
+    // original 16:9 so the info column gets more horizontal real
+    // estate for the title + summary at the smaller hero size.
+    return std::max(170, (int)((heroHeight() - 16) * 4.0 / 3.0));
 }
 
 
@@ -368,7 +372,11 @@ void LiveTVTab::buildHero() {
     m_heroThumbHolder->setWidth(heroThumbWidth());
     m_heroThumbHolder->setHeight(heroHeight() - 16);
     m_heroThumbHolder->setMarginRight(14);
-    m_heroThumbHolder->setBackgroundColor(tok::placeholder());
+    // Match the hero card's background so the letterbox/pillarbox bars
+    // that a FIT-scaled image leaves around its natural aspect ratio
+    // blend in with the surrounding card instead of reading as a slate
+    // panel under the image.
+    m_heroThumbHolder->setBackgroundColor(tok::hero());
     m_heroThumbHolder->setCornerRadius(10);
 
     m_heroThumb = new brls::Image();
@@ -422,10 +430,13 @@ void LiveTVTab::buildHero() {
 
     info->addView(topRow);
 
-    // Program title.
+    // Program title — single line so a long episode title can't wrap
+    // into the summary's slot below. The text is clamped in
+    // updateHeroForProgram so it doesn't overflow horizontally either.
     m_heroTitleLabel = new brls::Label();
     m_heroTitleLabel->setFontSize(22);
     m_heroTitleLabel->setTextColor(tok::text());
+    m_heroTitleLabel->setSingleLine(true);
     m_heroTitleLabel->setMarginBottom(4);
     info->addView(m_heroTitleLabel);
 
@@ -548,6 +559,28 @@ void LiveTVTab::buildHero() {
     // remains a non-interactive visual.
 }
 
+void LiveTVTab::resizeHeroThumbToImage(brls::Image* img) {
+    if (!img || !m_heroThumb || !m_heroThumbHolder) return;
+    float nw = img->getOriginalImageWidth();
+    float nh = img->getOriginalImageHeight();
+    if (nw <= 0 || nh <= 0) return;
+
+    // Keep the hero's inner height fixed; compute the width that matches
+    // the loaded image's natural aspect ratio so a portrait poster gets
+    // a portrait holder and a 16:9 still gets a 16:9 holder. Clamp to
+    // sensible bounds so an extreme aspect doesn't squeeze the info
+    // column or run off the card.
+    int innerH = heroHeight() - 16;
+    int targetW = (int)((float)innerH * (nw / nh));
+    const int minW = 90;
+    const int maxW = (int)((float)innerH * 16.0f / 9.0f) + 40;
+    if (targetW < minW) targetW = minW;
+    if (targetW > maxW) targetW = maxW;
+
+    m_heroThumb->setWidth(targetW);
+    m_heroThumbHolder->setWidth(targetW);
+}
+
 void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
     // Find the currently-airing program and forward to the per-program
     // updater. Falls back to the channel's legacy currentProgram/start/end
@@ -605,11 +638,17 @@ void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
     if (m_heroThumbAlive) m_heroThumbAlive->store(false);
     m_heroThumbAlive = std::make_shared<std::atomic<bool>>(true);
     if (m_heroThumb) m_heroThumb->setVisibility(brls::Visibility::INVISIBLE);
+    // Reset to the default width while the new image loads so the
+    // holder doesn't stay sized to the previous show's aspect ratio.
+    if (m_heroThumbHolder) m_heroThumbHolder->setWidth(heroThumbWidth());
+    if (m_heroThumb)       m_heroThumb->setWidth(heroThumbWidth());
     if (!channel.thumb.empty()) {
         PlexClient& client = PlexClient::getInstance();
         std::string url = client.getThumbnailUrl(channel.thumb, heroThumbWidth(), heroHeight() - 16);
-        ImageLoader::loadAsync(url, [](brls::Image* img) {
-            if (img) img->setVisibility(brls::Visibility::VISIBLE);
+        ImageLoader::loadAsync(url, [this](brls::Image* img) {
+            if (!img) return;
+            img->setVisibility(brls::Visibility::VISIBLE);
+            resizeHeroThumbToImage(img);
         }, m_heroThumb, m_heroThumbAlive);
     }
 }
@@ -630,7 +669,16 @@ void LiveTVTab::updateHeroForProgram(const LiveTVChannel& channel,
         m_heroChannelId->setText(chId);
     }
 
-    if (m_heroTitleLabel)   m_heroTitleLabel->setText(program.title);
+    // Title is single-line. Trim very long titles with an ellipsis so
+    // they don't get cut off mid-word at the cell edge. ~46 chars is
+    // about what fits at 22px on Vita's hero info column.
+    if (m_heroTitleLabel) {
+        std::string title = program.title;
+        const size_t maxTitleChars = 46;
+        if (title.length() > maxTitleChars)
+            title = title.substr(0, maxTitleChars - 1) + "…";
+        m_heroTitleLabel->setText(title);
+    }
     if (m_heroSummaryLabel)
         m_heroSummaryLabel->setText(program.summary.empty() ? std::string(" ") : program.summary);
     if (m_heroStartLabel)   m_heroStartLabel->setText(formatTime(program.startTime));
@@ -663,12 +711,18 @@ void LiveTVTab::updateHeroForProgram(const LiveTVChannel& channel,
     m_heroThumbAlive = std::make_shared<std::atomic<bool>>(true);
     if (m_heroThumb) m_heroThumb->setVisibility(brls::Visibility::INVISIBLE);
 
+    // Reset to the default width while the new image loads.
+    if (m_heroThumbHolder) m_heroThumbHolder->setWidth(heroThumbWidth());
+    if (m_heroThumb)       m_heroThumb->setWidth(heroThumbWidth());
+
     std::string thumbSrc = !program.thumb.empty() ? program.thumb : channel.thumb;
     if (!thumbSrc.empty()) {
         PlexClient& client = PlexClient::getInstance();
         std::string url = client.getThumbnailUrl(thumbSrc, heroThumbWidth(), heroHeight() - 16);
-        ImageLoader::loadAsync(url, [](brls::Image* img) {
-            if (img) img->setVisibility(brls::Visibility::VISIBLE);
+        ImageLoader::loadAsync(url, [this](brls::Image* img) {
+            if (!img) return;
+            img->setVisibility(brls::Visibility::VISIBLE);
+            resizeHeroThumbToImage(img);
         }, m_heroThumb, m_heroThumbAlive);
     }
 }
