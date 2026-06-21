@@ -83,7 +83,6 @@ struct AppSettings {
     // UI Settings
     AppTheme theme = AppTheme::DARK;
     bool debugLogging = true;  // Enable debug logging
-    bool showDebugTab = false;  // Show debug tab in sidebar
 
     // Layout Settings
     bool showLibrariesInSidebar = false;  // Show libraries in sidebar instead of Library tab
