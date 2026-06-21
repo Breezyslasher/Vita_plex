@@ -113,6 +113,12 @@ private:
     brls::ScrollingFrame* m_guideScrollV = nullptr;  // Vertical scroll inside the guide block
     brls::Box* m_guideBox = nullptr;            // Contains channel rows; scrolls inside m_guideScrollV
     brls::Box* m_currentTimeLine = nullptr;     // Absolute-positioned cyan rule over the program area
+    // Per-row HScrollingFrame for the program cells. The channel column
+    // sits *outside* this scroll on the left so it stays put when the
+    // programs scroll horizontally. draw() reads the focused row's
+    // offset and applies it to every other row + the time header so
+    // they all move together.
+    std::vector<brls::HScrollingFrame*> m_rowProgramScrolls;
 
     // Data
     std::vector<LiveTVChannel> m_channels;
