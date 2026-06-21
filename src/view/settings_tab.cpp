@@ -43,6 +43,7 @@ SettingsTab::SettingsTab() {
     createPlaybackSection();
     createTranscodeSection();
     createDownloadsSection();
+    createLiveTVSection();
     createDebugSection();
     createAboutSection();
 
@@ -508,6 +509,28 @@ void SettingsTab::createDownloadsSection() {
     m_contentBox->addView(pathLabel);
 }
 
+void SettingsTab::createLiveTVSection() {
+    AppSettings& settings = Application::getInstance().getSettings();
+
+    auto* header = new brls::Header();
+    header->setTitle("Live TV");
+    m_contentBox->addView(header);
+
+    m_defaultDvrLibraryCell = new brls::DetailCell();
+    m_defaultDvrLibraryCell->setText("Default DVR Library");
+    m_defaultDvrLibraryCell->setDetailText(
+        settings.defaultDvrSectionId.empty()
+            ? "Server default"
+            : (settings.defaultDvrSectionTitle.empty()
+                   ? ("Library #" + settings.defaultDvrSectionId)
+                   : settings.defaultDvrSectionTitle));
+    m_defaultDvrLibraryCell->registerClickAction([this](brls::View*) {
+        onManageDefaultDvrLibrary();
+        return true;
+    });
+    m_contentBox->addView(m_defaultDvrLibraryCell);
+}
+
 void SettingsTab::createDebugSection() {
     // Section header
     auto* header = new brls::Header();
@@ -834,6 +857,69 @@ void SettingsTab::onManageHiddenLibraries() {
     }
 
     dialog->open();
+}
+
+void SettingsTab::onManageDefaultDvrLibrary() {
+    AppSettings& settings = Application::getInstance().getSettings();
+
+    std::vector<LibrarySection> sections;
+    PlexClient::getInstance().fetchLibrarySections(sections);
+
+    // DVR can only target Movies / TV Shows libraries. Filter the rest
+    // out so the user can't pick (e.g.) a music library that the
+    // server will reject when we POST /media/subscriptions.
+    std::vector<LibrarySection> eligible;
+    for (const auto& s : sections) {
+        if (s.type == "movie" || s.type == "show") eligible.push_back(s);
+    }
+
+    if (eligible.empty()) {
+        brls::Dialog* dialog = new brls::Dialog(
+            "No Movies or TV Shows libraries were found on this server.");
+        dialog->addButton("OK", []() {});
+        dialog->open();
+        return;
+    }
+
+    // Option 0 is always "Server default" so the user can revert to the
+    // template's recommendation without nuking the settings file.
+    std::vector<std::string> options;
+    options.reserve(eligible.size() + 1);
+    options.push_back("Server default");
+    for (const auto& s : eligible) {
+        options.push_back(s.title + "  (" + s.type + ")");
+    }
+
+    int selected = 0;
+    for (size_t i = 0; i < eligible.size(); i++) {
+        if (eligible[i].key == settings.defaultDvrSectionId) {
+            selected = static_cast<int>(i) + 1;
+            break;
+        }
+    }
+
+    auto* dropdown = new brls::Dropdown(
+        "Default DVR Library", options,
+        [this, eligible](int picked) {
+            AppSettings& s = Application::getInstance().getSettings();
+            if (picked <= 0 || picked > static_cast<int>(eligible.size())) {
+                s.defaultDvrSectionId.clear();
+                s.defaultDvrSectionTitle.clear();
+            } else {
+                const auto& sec = eligible[picked - 1];
+                s.defaultDvrSectionId    = sec.key;
+                s.defaultDvrSectionTitle = sec.title;
+            }
+            Application::getInstance().saveSettings();
+            if (m_defaultDvrLibraryCell) {
+                m_defaultDvrLibraryCell->setDetailText(
+                    s.defaultDvrSectionId.empty()
+                        ? "Server default"
+                        : s.defaultDvrSectionTitle);
+            }
+        },
+        selected);
+    brls::Application::pushActivity(new brls::Activity(dropdown));
 }
 
 void SettingsTab::onManageSidebarOrder() {

@@ -307,6 +307,10 @@ bool Application::loadSettings() {
     }
     m_settings.backgroundMusic = extractBool("backgroundMusic", true);
 
+    // Live TV / DVR settings
+    m_settings.defaultDvrSectionId    = extractString("defaultDvrSectionId");
+    m_settings.defaultDvrSectionTitle = extractString("defaultDvrSectionTitle");
+
     brls::Logger::info("Settings loaded successfully from {}", settingsPath);
     return !m_authToken.empty();
 }
@@ -391,7 +395,9 @@ bool Application::saveSettings() {
     json += "  \"directPlay\": " + b(m_settings.directPlay) + ",\n";
     json += "  \"deleteAfterWatch\": " + b(m_settings.deleteAfterWatch) + ",\n";
     json += "  \"trackDefaultAction\": " + std::to_string(static_cast<int>(m_settings.trackDefaultAction)) + ",\n";
-    json += "  \"backgroundMusic\": " + b(m_settings.backgroundMusic) + "\n";
+    json += "  \"backgroundMusic\": " + b(m_settings.backgroundMusic) + ",\n";
+    json += "  \"defaultDvrSectionId\": \"" + esc(m_settings.defaultDvrSectionId) + "\",\n";
+    json += "  \"defaultDvrSectionTitle\": \"" + esc(m_settings.defaultDvrSectionTitle) + "\"\n";
     json += "}\n";
 
     std::ofstream ofs(settingsPath, std::ios::trunc);

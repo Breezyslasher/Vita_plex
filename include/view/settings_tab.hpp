@@ -21,6 +21,7 @@ private:
     void createPlaybackSection();
     void createTranscodeSection();
     void createDownloadsSection();
+    void createLiveTVSection();
     void createAboutSection();
     void createDebugSection();
 
@@ -35,6 +36,7 @@ private:
     void onConnectionTimeoutChanged(int index);
     void onManageHiddenLibraries();
     void onManageSidebarOrder();
+    void onManageDefaultDvrLibrary();
 
     brls::ScrollingFrame* m_scrollView = nullptr;
     brls::Box* m_contentBox = nullptr;
@@ -86,6 +88,9 @@ private:
     // Music section
     brls::SelectorCell* m_trackActionSelector = nullptr;
     brls::BooleanCell* m_backgroundMusicToggle = nullptr;
+
+    // Live TV section
+    brls::DetailCell* m_defaultDvrLibraryCell = nullptr;
 };
 
 } // namespace vitaplex
