@@ -76,6 +76,8 @@ private:
     void updateHeroForChannel(const LiveTVChannel& channel);  // populate hero with current program
     void updateHeroForProgram(const LiveTVChannel& channel,   // populate hero with a specific
                               const GuideProgram& program);    // program (hover-driven)
+    void resizeHeroThumbToImage(brls::Image* img);   // resize the hero thumb box to the loaded
+                                                     // image's natural aspect (no letterbox)
     void updateCurrentTimeLine();    // reposition the cyan "now" rule each second
 
     // UI Components

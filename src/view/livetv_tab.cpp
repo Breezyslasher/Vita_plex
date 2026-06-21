@@ -559,6 +559,28 @@ void LiveTVTab::buildHero() {
     // remains a non-interactive visual.
 }
 
+void LiveTVTab::resizeHeroThumbToImage(brls::Image* img) {
+    if (!img || !m_heroThumb || !m_heroThumbHolder) return;
+    float nw = img->getOriginalImageWidth();
+    float nh = img->getOriginalImageHeight();
+    if (nw <= 0 || nh <= 0) return;
+
+    // Keep the hero's inner height fixed; compute the width that matches
+    // the loaded image's natural aspect ratio so a portrait poster gets
+    // a portrait holder and a 16:9 still gets a 16:9 holder. Clamp to
+    // sensible bounds so an extreme aspect doesn't squeeze the info
+    // column or run off the card.
+    int innerH = heroHeight() - 16;
+    int targetW = (int)((float)innerH * (nw / nh));
+    const int minW = 90;
+    const int maxW = (int)((float)innerH * 16.0f / 9.0f) + 40;
+    if (targetW < minW) targetW = minW;
+    if (targetW > maxW) targetW = maxW;
+
+    m_heroThumb->setWidth(targetW);
+    m_heroThumbHolder->setWidth(targetW);
+}
+
 void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
     // Find the currently-airing program and forward to the per-program
     // updater. Falls back to the channel's legacy currentProgram/start/end
@@ -616,11 +638,17 @@ void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
     if (m_heroThumbAlive) m_heroThumbAlive->store(false);
     m_heroThumbAlive = std::make_shared<std::atomic<bool>>(true);
     if (m_heroThumb) m_heroThumb->setVisibility(brls::Visibility::INVISIBLE);
+    // Reset to the default width while the new image loads so the
+    // holder doesn't stay sized to the previous show's aspect ratio.
+    if (m_heroThumbHolder) m_heroThumbHolder->setWidth(heroThumbWidth());
+    if (m_heroThumb)       m_heroThumb->setWidth(heroThumbWidth());
     if (!channel.thumb.empty()) {
         PlexClient& client = PlexClient::getInstance();
         std::string url = client.getThumbnailUrl(channel.thumb, heroThumbWidth(), heroHeight() - 16);
-        ImageLoader::loadAsync(url, [](brls::Image* img) {
-            if (img) img->setVisibility(brls::Visibility::VISIBLE);
+        ImageLoader::loadAsync(url, [this](brls::Image* img) {
+            if (!img) return;
+            img->setVisibility(brls::Visibility::VISIBLE);
+            resizeHeroThumbToImage(img);
         }, m_heroThumb, m_heroThumbAlive);
     }
 }
@@ -683,12 +711,18 @@ void LiveTVTab::updateHeroForProgram(const LiveTVChannel& channel,
     m_heroThumbAlive = std::make_shared<std::atomic<bool>>(true);
     if (m_heroThumb) m_heroThumb->setVisibility(brls::Visibility::INVISIBLE);
 
+    // Reset to the default width while the new image loads.
+    if (m_heroThumbHolder) m_heroThumbHolder->setWidth(heroThumbWidth());
+    if (m_heroThumb)       m_heroThumb->setWidth(heroThumbWidth());
+
     std::string thumbSrc = !program.thumb.empty() ? program.thumb : channel.thumb;
     if (!thumbSrc.empty()) {
         PlexClient& client = PlexClient::getInstance();
         std::string url = client.getThumbnailUrl(thumbSrc, heroThumbWidth(), heroHeight() - 16);
-        ImageLoader::loadAsync(url, [](brls::Image* img) {
-            if (img) img->setVisibility(brls::Visibility::VISIBLE);
+        ImageLoader::loadAsync(url, [this](brls::Image* img) {
+            if (!img) return;
+            img->setVisibility(brls::Visibility::VISIBLE);
+            resizeHeroThumbToImage(img);
         }, m_heroThumb, m_heroThumbAlive);
     }
 }
