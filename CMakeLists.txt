@@ -126,6 +126,52 @@ if(PLATFORM_PSV)
     endif()
 endif()
 
+# ---------------------------------------------------------------------------
+# Borealis fontstash patch (all platforms): caches kerning advances so
+# stb_truetype's GPOS table walk doesn't run per glyph pair per frame.
+# Big win for any view with lots of text (Live TV titles, library lists);
+# rendering is unchanged visually, just much faster.
+# ---------------------------------------------------------------------------
+set(FONTSTASH_PATCH  ${CMAKE_CURRENT_SOURCE_DIR}/patches/fontstash.h)
+set(FONTSTASH_TARGET ${BOREALIS_LIBRARY}/include/borealis/extern/nanovg/fontstash.h)
+if(EXISTS ${FONTSTASH_PATCH})
+    message(STATUS "Applying patch: fontstash.h")
+    configure_file(${FONTSTASH_PATCH} ${FONTSTASH_TARGET} COPYONLY)
+else()
+    message(FATAL_ERROR "Patch file not found: ${FONTSTASH_PATCH}")
+endif()
+
+# ---------------------------------------------------------------------------
+# Borealis nanovg patch (all platforms): adds nvgTextBatchBegin/End so
+# views with many text labels of identical style (the EPG grid is the
+# canonical case) can flush all of them in one render call instead of
+# one per text line. Backward-compatible — code that doesn't call the
+# new entry points keeps the original draw-per-text behaviour.
+# ---------------------------------------------------------------------------
+set(NANOVG_PATCH  ${CMAKE_CURRENT_SOURCE_DIR}/patches/nanovg.c)
+set(NANOVG_TARGET ${BOREALIS_LIBRARY}/lib/extern/nanovg/nanovg.c)
+if(EXISTS ${NANOVG_PATCH})
+    message(STATUS "Applying patch: nanovg.c")
+    configure_file(${NANOVG_PATCH} ${NANOVG_TARGET} COPYONLY)
+else()
+    message(FATAL_ERROR "Patch file not found: ${NANOVG_PATCH}")
+endif()
+
+# ---------------------------------------------------------------------------
+# GLFW keyboard mapping patch (desktop only): adds keyboard shortcuts
+# for Start / Back / X / Y / LB / RB on the desktop GLFW backend so
+# the dev workflow doesn't require a physical gamepad.
+# ---------------------------------------------------------------------------
+if(NOT PLATFORM_SWITCH AND NOT PLATFORM_PSV AND NOT PLATFORM_PS4 AND NOT PLATFORM_ANDROID
+   AND NOT PLATFORM_IOS AND NOT PLATFORM_TVOS)
+    set(GLFW_INPUT_PATCH  ${CMAKE_CURRENT_SOURCE_DIR}/patches/glfw_input.cpp)
+    set(GLFW_INPUT_TARGET ${BOREALIS_LIBRARY}/lib/platforms/glfw/glfw_input.cpp)
+    if(EXISTS ${GLFW_INPUT_PATCH})
+        message(STATUS "Applying patch: glfw_input.cpp")
+        configure_file(${GLFW_INPUT_PATCH} ${GLFW_INPUT_TARGET} COPYONLY)
+    endif()
+endif()
+
 # iOS / tvOS embed app resources through libromfs (borealis toolchain.cmake
 # forces USE_LIBROMFS=ON for these platforms). libromfs's own CMakeLists
 # fatals unless we tell it WHAT to embed and under what project name — set

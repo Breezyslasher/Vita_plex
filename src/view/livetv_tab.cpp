@@ -18,6 +18,16 @@
 #include <atomic>
 #include <ctime>
 
+// Forward declarations for the patched nanovg batch text API. The
+// patches/nanovg.c version adds these but doesn't expose them in
+// nanovg.h, so declare them here. nvgTextBatchBegin captures the
+// current fill / paint / font state and accumulates every subsequent
+// nvgText call into a single render flush, dropped by nvgTextBatchEnd.
+extern "C" {
+    void nvgTextBatchBegin(NVGcontext* ctx);
+    void nvgTextBatchEnd(NVGcontext* ctx);
+}
+
 namespace vitaplex {
 
 // ============================================================================
@@ -434,6 +444,94 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
     }
 
     brls::Box::draw(vg, x, y, width, height, style, ctx);
+
+    // Batch text rendering for the EPG cells. Every cell that's visible
+    // in its row's HScrollingFrame contributes one title and one subtitle
+    // string; the patched nvgTextBatchBegin/End API lets us flush all of
+    // them as a single render call per style. A typical visible window
+    // is ~80–120 cells, so this collapses ~200 per-Label draw calls into
+    // 2 batched ones. No path fills may happen between Begin and End or
+    // they'd clobber the batch — only nvgText.
+    if (!m_epgCells.empty() && m_guideScrollV) {
+        const float vScrollTop    = m_guideScrollV->getY();
+        const float vScrollBottom = vScrollTop + m_guideScrollV->getHeight();
+
+        // All HScrollingFrames live in the same column (channel column
+        // is fixed-width on the left), so any cell's scroll frame gives
+        // the program-area X range. Pick the first cell whose scroll
+        // frame is laid out and use it to clip the batch — without the
+        // scissor, cells panning under the channel column would still
+        // paint their text on top of the logo because batched draws
+        // bypass the per-frame scissor that the HScrollingFrame sets.
+        float clipX = 0.0f, clipW = 0.0f;
+        for (const EpgCellInfo& info : m_epgCells) {
+            if (!info.scroll) continue;
+            const float w = info.scroll->getWidth();
+            if (w <= 0) continue;
+            clipX = info.scroll->getX();
+            clipW = w;
+            break;
+        }
+        if (clipW <= 0) return;
+
+        nvgSave(vg);
+        nvgScissor(vg, clipX, vScrollTop, clipW, vScrollBottom - vScrollTop);
+        nvgFontFace(vg, "regular");
+        nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
+
+        // Pass 1: titles
+        nvgFontSize(vg, 13);
+        nvgFillColor(vg, tok::text());
+        nvgTextBatchBegin(vg);
+        for (const EpgCellInfo& info : m_epgCells) {
+            if (!info.cell || !info.scroll) continue;
+            if (info.cell->getVisibility() != brls::Visibility::VISIBLE) continue;
+
+            const float cx = info.cell->getX();
+            const float cy = info.cell->getY();
+            const float cw = info.cell->getWidth();
+            const float ch = info.cell->getHeight();
+            if (cw <= 0 || ch <= 0) continue;
+
+            const float hScrollLeft  = info.scroll->getX();
+            const float hScrollRight = hScrollLeft + info.scroll->getWidth();
+            if (cx + cw < hScrollLeft || cx > hScrollRight) continue;
+            if (cy + ch < vScrollTop  || cy > vScrollBottom) continue;
+
+            if (info.title.empty()) continue;
+
+            const float ty = cy + (ch - 26.0f) * 0.5f;
+            nvgText(vg, cx + 8.0f, ty, info.title.c_str(), nullptr);
+        }
+        nvgTextBatchEnd(vg);
+
+        // Pass 2: subtitles (smaller, dim)
+        nvgFontSize(vg, 10);
+        nvgFillColor(vg, tok::dim());
+        nvgTextBatchBegin(vg);
+        for (const EpgCellInfo& info : m_epgCells) {
+            if (!info.cell || !info.scroll) continue;
+            if (info.cell->getVisibility() != brls::Visibility::VISIBLE) continue;
+
+            const float cx = info.cell->getX();
+            const float cy = info.cell->getY();
+            const float cw = info.cell->getWidth();
+            const float ch = info.cell->getHeight();
+            if (cw <= 0 || ch <= 0) continue;
+
+            const float hScrollLeft  = info.scroll->getX();
+            const float hScrollRight = hScrollLeft + info.scroll->getWidth();
+            if (cx + cw < hScrollLeft || cx > hScrollRight) continue;
+            if (cy + ch < vScrollTop  || cy > vScrollBottom) continue;
+
+            if (info.subtitle.empty()) continue;
+
+            const float ty = cy + (ch - 26.0f) * 0.5f + 16.0f;
+            nvgText(vg, cx + 8.0f, ty, info.subtitle.c_str(), nullptr);
+        }
+        nvgTextBatchEnd(vg);
+        nvgRestore(vg);
+    }
 }
 
 void LiveTVTab::onFocusGained() {
@@ -964,6 +1062,10 @@ void LiveTVTab::buildEPGGrid() {
     // we've just cleared via m_guideBox->clearViews), so the pointers in
     // this vector are about to dangle — purge them before rebuilding.
     m_rowProgramScrolls.clear();
+    // Cell info entries reference Boxes owned by the row hierarchy we
+    // just wiped via m_guideBox->clearViews(); purge before rebuilding
+    // so draw()'s batch pass doesn't dereference freed cells.
+    m_epgCells.clear();
 
     if (m_channels.empty()) {
         auto* noDataLabel = new brls::Label();
@@ -1155,41 +1257,34 @@ void LiveTVTab::buildEPGGrid() {
                 bool isCurrently = (prog.startTime <= (int64_t)nowSec && prog.endTime > (int64_t)nowSec);
 
                 auto* progCell = new brls::Box();
-                progCell->setAxis(brls::Axis::COLUMN);
                 progCell->setWidth(cellWidth);
                 progCell->setHeight(livetvRowHeight() - 8);
-                progCell->setPaddingLeft(8);
-                progCell->setPaddingRight(8);
                 progCell->setMargins(2, 2, 2, 2);
                 progCell->setBackgroundColor(isCurrently ? tok::cellNow() : tok::cellUpcoming());
                 progCell->setCornerRadius(6);
                 progCell->setFocusable(true);
-                // Centre the title + time-range stack so the cell doesn't
-                // have a tall empty stripe under the text.
-                progCell->setJustifyContent(brls::JustifyContent::CENTER);
                 if (isCurrently) {
                     progCell->setBorderColor(tok::accent());
                     progCell->setBorderThickness(1);
                 }
 
-                auto* progTitle = new brls::Label();
+                // Cell is intentionally label-less — the title and
+                // time-range strings are batched in draw() through the
+                // patched nvgTextBatchBegin/End API so all visible cell
+                // text flushes as one render call per style instead of
+                // one per Label.
+                EpgCellInfo info;
+                info.cell = progCell;
+                info.scroll = programsScroll;
                 std::string title = prog.title;
                 int maxChars = cellWidth / 8;
                 if (maxChars < 4) maxChars = 4;
                 if ((int)title.length() > maxChars) title = title.substr(0, maxChars - 2) + "..";
-                progTitle->setText(title);
-                progTitle->setFontSize(13);
-                progTitle->setTextColor(tok::text());
-                progCell->addView(progTitle);
-
-                auto* timeRange = new brls::Label();
+                info.title = std::move(title);
                 std::string sub = formatTime(prog.startTime) + " – " + formatTime(prog.endTime);
                 if (isCurrently) sub += "  ·  on now";
-                timeRange->setText(sub);
-                timeRange->setFontSize(10);
-                timeRange->setTextColor(tok::dim());
-                timeRange->setMarginTop(3);
-                progCell->addView(timeRange);
+                info.subtitle = std::move(sub);
+                m_epgCells.push_back(info);
 
                 GuideProgram gp;
                 gp.title = prog.title;
@@ -1234,34 +1329,27 @@ void LiveTVTab::buildEPGGrid() {
             }
 
             auto* progCell = new brls::Box();
-            progCell->setAxis(brls::Axis::COLUMN);
             progCell->setWidth(cellWidth);
             progCell->setHeight(livetvRowHeight() - 8);
-            progCell->setPaddingLeft(8);
-            progCell->setPaddingRight(8);
             progCell->setMargins(2, 2, 2, 2);
             progCell->setBackgroundColor(tok::cellNow());
-            progCell->setJustifyContent(brls::JustifyContent::CENTER);
             progCell->setCornerRadius(6);
             progCell->setBorderColor(tok::accent());
             progCell->setBorderThickness(1);
             progCell->setFocusable(true);
 
-            auto* progTitle = new brls::Label();
+            // Label-less cell — text painted in batch by draw() via
+            // nvgTextBatchBegin/End. See the main loop above.
+            EpgCellInfo info;
+            info.cell = progCell;
+            info.scroll = programsScroll;
             std::string title = channel.currentProgram;
             int maxChars = cellWidth / 8;
+            if (maxChars < 4) maxChars = 4;
             if ((int)title.length() > maxChars) title = title.substr(0, maxChars - 2) + "..";
-            progTitle->setText(title);
-            progTitle->setFontSize(13);
-            progTitle->setTextColor(tok::text());
-            progCell->addView(progTitle);
-
-            auto* timeRange = new brls::Label();
-            timeRange->setText(formatTime(channel.programStart) + " – " + formatTime(channel.programEnd) + "  ·  on now");
-            timeRange->setFontSize(10);
-            timeRange->setTextColor(tok::dim());
-            timeRange->setMarginTop(3);
-            progCell->addView(timeRange);
+            info.title = std::move(title);
+            info.subtitle = formatTime(channel.programStart) + " – " + formatTime(channel.programEnd) + "  ·  on now";
+            m_epgCells.push_back(info);
 
             // Hover on the legacy fallback updates the hero with this
             // channel's "now playing" — we don't have a full program
