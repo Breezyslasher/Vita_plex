@@ -996,49 +996,158 @@ void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChann
         PlexClient& client = PlexClient::getInstance();
         HttpClient httpClient;
 
-        // Official Plex API: POST /media/subscriptions
-        // Per openapi.json, query params: type, targetLibrarySectionID, hints[title],
-        //   prefs[minVideoQuality], prefs[lineupChannel], prefs[startOffsetSeconds],
-        //   prefs[endOffsetSeconds], prefs[recordPartials]
-        std::string subUrl = client.buildApiUrlPublic("/media/subscriptions");
-
-        // Build query parameters per official API
-        std::string params = "type=2";  // type=2 for show/episode subscription
-        params += "&includeGrabs=1";
-
-        // hints[title] - the program title for matching
-        if (!program.title.empty()) {
-            params += "&hints[title]=" + HttpClient::urlEncode(program.title);
+        // Plex's /media/subscriptions endpoint requires a fully-formed
+        // `params[*]` group (airingChannels, airingTimes, mediaProviderID,
+        // libraryType) plus a real `type` and `targetLibrarySectionID`.
+        // Hand-stitching all of that off our channel/program data needs the
+        // DVR's media-provider id and target section id, which we don't
+        // otherwise have. The official app pulls the lot from
+        //   GET /media/subscriptions/template?guid=<programGuid>
+        // — the response includes a pre-encoded `parameters` querystring
+        // that already contains every hints[*] and params[*] the server
+        // expects. We use that verbatim and only layer on top our recording
+        // preferences (one-shot, 2-min padding, etc.).
+        //
+        // program.ratingKey is the EPG ratingKey, already URL-encoded once
+        // (e.g. "plex%3A%2F%2Fepisode%2F..."), which is exactly the form the
+        // template endpoint wants for the guid query value.
+        if (program.ratingKey.empty()) {
+            brls::Logger::error("LiveTVTab: scheduleRecording: missing program ratingKey");
+            brls::sync([this, program, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+                brls::Dialog* dialog = new brls::Dialog("Failed to schedule recording: " + program.title);
+                dialog->addButton("OK", []() {});
+                dialog->open();
+            });
+            return;
         }
 
-        // hints[ratingKey] - EPG rating key for specific program identification
-        if (!program.ratingKey.empty()) {
-            params += "&hints[ratingKey]=" + HttpClient::urlEncode(program.ratingKey);
+        std::string tmplUrl = client.buildApiUrlPublic(
+            "/media/subscriptions/template?guid=" + program.ratingKey);
+
+        HttpRequest tmplReq;
+        tmplReq.url = tmplUrl;
+        tmplReq.method = "GET";
+        tmplReq.headers["Accept"] = "application/json";
+        tmplReq.timeout = 15;
+
+        brls::Logger::debug("LiveTVTab: Recording template URL: {}", tmplUrl);
+        HttpResponse tmplResp = httpClient.request(tmplReq);
+        if (tmplResp.statusCode != 200 || tmplResp.body.empty()) {
+            brls::Logger::error("LiveTVTab: subscription template failed ({}): {}",
+                                tmplResp.statusCode,
+                                tmplResp.body.empty() ? "(empty)" : tmplResp.body.substr(0, 300));
+            brls::sync([this, program, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+                brls::Dialog* dialog = new brls::Dialog("Failed to schedule recording: " + program.title);
+                dialog->addButton("OK", []() {});
+                dialog->open();
+            });
+            return;
         }
 
-        // Add recording preferences per official API schema
-        params += "&prefs[minVideoQuality]=0";
-        params += "&prefs[recordPartials]=true";
-        params += "&prefs[startOffsetSeconds]=120";   // 2 min padding before
-        params += "&prefs[endOffsetSeconds]=120";     // 2 min padding after
-
-        // lineupChannel - the channel to record from
-        if (!channel.channelIdentifier.empty()) {
-            params += "&prefs[lineupChannel]=" + HttpClient::urlEncode(channel.channelIdentifier);
-        } else if (!channel.key.empty()) {
-            params += "&prefs[lineupChannel]=" + HttpClient::urlEncode(channel.key);
+        // The template body is
+        //   {"MediaContainer":{"size":1,"SubscriptionTemplate":[{"MediaSubscription":[{
+        //     "parameters":"hints%5B...%5D=...&params%5B...%5D=...",
+        //     "selected":true, "type":4, "targetLibrarySectionID":3, ...
+        //   }, ...]}]}}
+        // There can be several MediaSubscription entries ("This Episode",
+        // "This Season", "All Airings", ...). Prefer the one marked
+        // selected=true; fall back to the first.
+        const std::string& body = tmplResp.body;
+        size_t pickAt = std::string::npos;
+        {
+            size_t scan = 0;
+            const std::string sel = "\"selected\":true";
+            while (true) {
+                size_t at = body.find(sel, scan);
+                if (at == std::string::npos) break;
+                // Walk back to the start of this MediaSubscription object.
+                int depth = 0;
+                for (size_t i = at; i > 0; i--) {
+                    if (body[i] == '}') depth++;
+                    else if (body[i] == '{') {
+                        if (depth == 0) { pickAt = i; break; }
+                        depth--;
+                    }
+                }
+                if (pickAt != std::string::npos) break;
+                scan = at + sel.length();
+            }
+        }
+        if (pickAt == std::string::npos) {
+            size_t msArr = body.find("\"MediaSubscription\"");
+            if (msArr != std::string::npos) pickAt = body.find('{', msArr);
+        }
+        if (pickAt == std::string::npos) {
+            brls::Logger::error("LiveTVTab: subscription template parse failed: {}",
+                                body.substr(0, 300));
+            brls::sync([this, program, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+                brls::Dialog* dialog = new brls::Dialog("Failed to schedule recording: " + program.title);
+                dialog->addButton("OK", []() {});
+                dialog->open();
+            });
+            return;
         }
 
-        // Append params as query string (official API uses query params for POST)
-        std::string fullUrl = subUrl + "&" + params;
+        // Extract the brace-balanced MediaSubscription object so the
+        // extractJsonValue calls below don't reach into a neighbouring entry.
+        size_t depth = 0;
+        size_t objEnd = pickAt;
+        for (; objEnd < body.length(); objEnd++) {
+            if (body[objEnd] == '{') depth++;
+            else if (body[objEnd] == '}') {
+                if (--depth == 0) { objEnd++; break; }
+            }
+        }
+        std::string ms = body.substr(pickAt, objEnd - pickAt);
+
+        std::string parameters    = client.extractJsonValuePublic(ms, "parameters");
+        std::string typeStr       = client.extractJsonValuePublic(ms, "type");
+        std::string targetSection = client.extractJsonValuePublic(ms, "targetLibrarySectionID");
+
+        if (parameters.empty() || typeStr.empty()) {
+            brls::Logger::error("LiveTVTab: template missing required fields (parameters={}, type={})",
+                                parameters.empty() ? "(empty)" : "ok",
+                                typeStr.empty() ? "(empty)" : typeStr);
+            brls::sync([this, program, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+                brls::Dialog* dialog = new brls::Dialog("Failed to schedule recording: " + program.title);
+                dialog->addButton("OK", []() {});
+                dialog->open();
+            });
+            return;
+        }
+
+        // Build POST URL. The template's `parameters` field is already
+        // properly URL-encoded (hints[*] singly, values doubly) — paste it
+        // straight into the query. Layer on top recording preferences and
+        // the type/targetLibrarySectionID the template recommended.
+        std::string post = client.buildApiUrlPublic("/media/subscriptions");
+        post += "&" + parameters;
+        post += "&type=" + typeStr;
+        if (!targetSection.empty())
+            post += "&targetLibrarySectionID=" + targetSection;
+        post += "&includeGrabs=1";
+        post += "&prefs[oneShot]=true";
+        post += "&prefs[recordPartials]=true";
+        post += "&prefs[minVideoQuality]=0";
+        post += "&prefs[startOffsetMinutes]=2";
+        post += "&prefs[endOffsetMinutes]=2";
+        (void)channel;  // channel info is already baked into params[airingChannels]
 
         HttpRequest req;
-        req.url = fullUrl;
+        req.url = post;
         req.method = "POST";
         req.headers["Accept"] = "application/json";
         req.timeout = 15;
 
-        brls::Logger::debug("LiveTVTab: Recording request URL: {}", fullUrl);
+        brls::Logger::debug("LiveTVTab: Recording POST URL: {}", post);
         HttpResponse resp = httpClient.request(req);
 
         bool success = (resp.statusCode == 200 || resp.statusCode == 201);
