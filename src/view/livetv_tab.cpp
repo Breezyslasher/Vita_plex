@@ -24,21 +24,26 @@ namespace vitaplex {
 // GuideBox
 // ============================================================================
 // borealis' default Box::getNextFocus for a COLUMN box just walks to the
-// next sibling and calls getDefaultFocus on it. For our EPG grid that
+// next sibling and calls getDefaultFocus on it. For our EPG rows that
 // always lands on the row's first focusable view — the channel-logo
-// column — instead of the program cell that vertically aligns with the
-// one the user came from. Override UP/DOWN so we look up the source
-// view's horizontal centre and pick the focusable cell in the adjacent
-// row whose horizontal range contains that X. Falls back to the default
-// (first focusable) when nothing in the target row spans the source X,
-// which happens e.g. for a gap-spacer that's not focusable.
+// column — instead of the program cell that aligns with the one the
+// user came from.
+//
+// Match by the *start* of the source's box: walk the adjacent row for a
+// focusable view whose horizontal range contains source.getX(). That
+// way DOWN from a 1-hour show onto two 30-minute cells picks the *first*
+// cell (because the 1-hour cell starts at the same X as the first
+// 30-min cell), instead of bouncing onto the second when the source's
+// centre happens to land on the cell boundary. Fall back to matching
+// by the source's *end* X so a source that begins inside a gap still
+// finds a target whose end aligns. Walks further rows on visibility
+// gaps so the navigation doesn't dead-end on culled or empty rows.
 class GuideBox : public brls::Box {
 public:
     brls::View* getNextFocus(brls::FocusDirection direction,
                              brls::View* currentView) override {
         if (direction == brls::FocusDirection::DOWN ||
             direction == brls::FocusDirection::UP) {
-            // Walk up to find which row owns currentView.
             brls::View* row = currentView;
             while (row && row->getParent() != this) row = row->getParent();
             if (row) {
@@ -49,14 +54,23 @@ public:
                 }
                 int step = (direction == brls::FocusDirection::DOWN) ? 1 : -1;
                 int targetIdx = idx + step;
+                // `currentView` is whatever bubbled up the focus chain
+                // (a rowBox or programsBox), not the actually-focused
+                // leaf cell. Probe by the real focused view so the X
+                // range matches the cell the user *sees* highlighted.
+                brls::View* focused = brls::Application::getCurrentFocus();
+                if (!focused) focused = currentView;
+                // Use a small epsilon-back from the source's right edge so a
+                // box ending at exactly 440 looks at 439 (which falls inside
+                // a target cell of [320, 440)) instead of 440 (which is the
+                // start of the next cell).
+                const float sourceStart = focused->getX();
+                const float sourceEnd   = sourceStart + focused->getWidth() - 0.5f;
                 while (idx >= 0 && targetIdx >= 0 && targetIdx < (int)kids.size()) {
                     brls::View* targetRow = kids[targetIdx];
                     if (targetRow->getVisibility() == brls::Visibility::VISIBLE) {
-                        brls::Box* targetBox = dynamic_cast<brls::Box*>(targetRow);
-                        float sourceCenterX = currentView->getX()
-                                            + currentView->getWidth() / 2.0f;
-                        brls::View* hit = findFocusableAtX(targetBox, sourceCenterX);
-                        if (hit) return hit;
+                        if (brls::View* hit = findFocusableContainingX(targetRow, sourceStart)) return hit;
+                        if (brls::View* hit = findFocusableContainingX(targetRow, sourceEnd))   return hit;
                     }
                     targetIdx += step;
                 }
@@ -66,17 +80,19 @@ public:
     }
 
 private:
-    static brls::View* findFocusableAtX(brls::Box* box, float x) {
-        if (!box) return nullptr;
-        for (auto* child : box->getChildren()) {
-            if (child->getVisibility() != brls::Visibility::VISIBLE) continue;
-            float cx = child->getX();
-            float cw = child->getWidth();
-            if (x >= cx && x < cx + cw && child->isFocusable()) return child;
-            brls::Box* childBox = dynamic_cast<brls::Box*>(child);
-            if (childBox) {
-                brls::View* found = findFocusableAtX(childBox, x);
-                if (found) return found;
+    // Return the first focusable descendant of `root` whose horizontal
+    // range [X, X+W) contains the probe X.
+    static brls::View* findFocusableContainingX(brls::View* root, float x) {
+        if (!root || root->getVisibility() != brls::Visibility::VISIBLE) return nullptr;
+        if (root->isFocusable()) {
+            float cl = root->getX();
+            float cr = cl + root->getWidth();
+            if (x >= cl && x < cr) return root;
+        }
+        brls::Box* box = dynamic_cast<brls::Box*>(root);
+        if (box) {
+            for (auto* child : box->getChildren()) {
+                if (brls::View* hit = findFocusableContainingX(child, x)) return hit;
             }
         }
         return nullptr;
