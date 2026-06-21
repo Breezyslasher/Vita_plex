@@ -65,7 +65,6 @@ private:
     void loadGuide();
     void loadRecordings();
     void buildEPGGrid();
-    void updateQuickAccessPrograms();  // Update current program labels without rebuilding
     void onChannelSelected(const LiveTVChannel& channel);
     void onProgramSelected(const GuideProgram& program, const LiveTVChannel& channel);
     void scheduleRecording(const GuideProgram& program, const LiveTVChannel& channel);
@@ -74,7 +73,6 @@ private:
 
     // New layout helpers
     void buildHero();                                // build the empty hero shell
-    void buildFavouritesPill(const LiveTVChannel&);  // append a single ★ pill
     void updateHeroForChannel(const LiveTVChannel& channel);  // populate hero from data
     void updateCurrentTimeLine();    // reposition the cyan "now" rule each second
 
@@ -104,11 +102,6 @@ private:
     bool          m_heroProgramValid = false;
     std::shared_ptr<std::atomic<bool>> m_heroThumbAlive;  // ImageLoader cancel handle
 
-    // ★ Favourites pill row (compact restyle of the old quick-access row)
-    brls::Label* m_channelsLabel = nullptr;
-    brls::HScrollingFrame* m_channelsRow = nullptr;
-    brls::Box* m_channelsContent = nullptr;
-
     // EPG Guide section
     brls::Label* m_guideLabel = nullptr;
     brls::Box* m_guideContainer = nullptr;      // Contains time header + grid
@@ -132,9 +125,6 @@ private:
     bool m_loaded = false;
     int64_t m_lastFullLoadTime = 0;   // Timestamp of last full channel/EPG load
     int64_t m_lastRefreshTime = 0;    // Timestamp of last "now playing" refresh
-
-    // Quick access program labels (for lightweight refresh)
-    std::vector<brls::Label*> m_quickAccessProgLabels;
 
     // Alive flag for crash prevention on quick tab switching
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
