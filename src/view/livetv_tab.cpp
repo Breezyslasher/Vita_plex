@@ -1099,15 +1099,24 @@ void LiveTVTab::buildEPGGrid() {
         // into view. CENTERED behaviour keeps the focused cell visible
         // and the per-row scroll positions are synced together (and to
         // the time header) in draw().
+        //
+        // The explicit height matters: rowBox's alignItems=CENTER won't
+        // stretch the scroll frame to fill the row's cross axis, and
+        // HScrollingFrame::setContentView wires contentView.height to
+        // self.height — without setHeight here the scroll collapses
+        // to ~0 high, the contentView follows, and the cells inside
+        // end up with no layout slot for their labels (text invisible,
+        // cell margins gone, focus highlight floats half a row down).
         auto* programsScroll = new brls::HScrollingFrame();
         programsScroll->setGrow(1.0f);
+        programsScroll->setHeight(livetvRowHeight());
         programsScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
         programsScroll->setFocusable(false);
 
         auto* programsBox = new brls::Box();
         programsBox->setAxis(brls::Axis::ROW);
         programsBox->setJustifyContent(brls::JustifyContent::FLEX_START);
-        programsBox->setAlignItems(brls::AlignItems::STRETCH);
+        programsBox->setAlignItems(brls::AlignItems::CENTER);
 
         if (!channel.programs.empty()) {
             int64_t guideEndTime = m_guideStartTime + (gridHours * 3600);
