@@ -391,6 +391,13 @@ public:
     bool fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, int hoursAhead = 4);
     bool tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl, const std::string& programMetadataKey = "");
     bool hasLiveTV() const { return m_hasLiveTV; }
+
+    // Build a playable HLS URL for a live tune session by routing it through
+    // the transcode/universal pipeline (the raw HDHomeRun feed is mpeg2video
+    // and must be transcoded to h264).  liveSessionId is the Media uuid from
+    // the tune response; the resulting start.m3u8 URL is played like any other
+    // transcoded video.
+    bool buildLiveSessionStreamUrl(const std::string& liveSessionId, std::string& url);
     std::string getEpgProviderKey() const { return m_epgProviderKey; }
 
     // Thumbnail URL

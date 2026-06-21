@@ -3129,6 +3129,10 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     tuneReq.headers["Accept"] = "application/json";
     tuneReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
     tuneReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+    // Name the rolling-subscription session deterministically so the transcode
+    // decision (which passes the same X-Plex-Session-Identifier) resolves to
+    // this grab's consumer at /livetv/sessions/{uuid}/{sessionIdentifier}/...
+    tuneReq.headers["X-Plex-Session-Identifier"] = PLEX_CLIENT_ID;
     // A successful tune starts a long-lived "rolling subscription": the server
     // sends the MediaContainer (with the Media/session uuid we need) up front
     // but then holds the chunked HTTP response open for the life of the
@@ -3142,107 +3146,147 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     brls::Logger::debug("tuneLiveTVChannel: POST {}", tuneUrl);
     HttpResponse tuneResp = client.request(tuneReq);
 
+    // programMetadataKey is no longer used for playback (the live session itself
+    // is the source); kept in the signature for callers. Reference it to avoid
+    // an unused-parameter warning.
+    (void)programMetadataKey;
+
+    std::string sessionUuid;
     if (tuneResp.statusCode == 200 && !tuneResp.body.empty()) {
         brls::Logger::debug("tuneLiveTVChannel: Tune response ({} bytes): {}",
                             tuneResp.body.length(), tuneResp.body.substr(0, 500));
 
-        // Check for "Could not tune" error (status -1)
         // Server returns 200 but with {"MediaContainer":{"status":-1,"message":"Could not tune..."}}
+        // when the tune genuinely fails (no tuner/antenna).
         std::string tuneStatus = extractJsonValue(tuneResp.body, "status");
         std::string tuneMessage = extractJsonValue(tuneResp.body, "message");
         if (tuneStatus == "-1" || tuneResp.body.find("Could not tune") != std::string::npos) {
             brls::Logger::warning("tuneLiveTVChannel: Server reported tune failure: {}", tuneMessage);
-            // Don't return - fall through to transcode fallback
-        } else {
-            // Extract session UUID from Media object in response
-            // Per openapi.json: Media[].uuid is the session ID
-            std::string sessionUuid = extractJsonValue(tuneResp.body, "uuid");
-
-            if (!sessionUuid.empty()) {
-                // Build HLS stream URL using session endpoint
-                // Official API: GET /livetv/sessions/{sessionId}/{consumerId}/index.m3u8
-                // Use client identifier as consumerId
-                streamUrl = buildApiUrl("/livetv/sessions/" + sessionUuid + "/" +
-                                        std::string(PLEX_CLIENT_ID) + "/index.m3u8");
-                brls::Logger::info("tuneLiveTVChannel: Stream URL (session HLS) = {}", streamUrl);
-                return true;
-            }
-
-            brls::Logger::warning("tuneLiveTVChannel: No session UUID in tune response");
+            return false;
         }
+
+        // The Media uuid is the live session id used as /livetv/sessions/{uuid}.
+        sessionUuid = extractJsonValue(tuneResp.body, "uuid");
     } else if (tuneResp.statusCode == 0 || tuneResp.statusCode == -1) {
-        // Connection drop / timeout - may happen with EPG key tunes that return chunked data
+        // Connection drop / partial read - try to recover the uuid if present.
         brls::Logger::warning("tuneLiveTVChannel: Connection dropped (status {}), body so far ({} bytes): {}",
                               tuneResp.statusCode, tuneResp.body.length(),
                               tuneResp.body.empty() ? "(empty)" : tuneResp.body.substr(0, 300));
-        // Try to extract UUID from partial response if we got any data
         if (!tuneResp.body.empty()) {
-            std::string sessionUuid = extractJsonValue(tuneResp.body, "uuid");
-            if (!sessionUuid.empty()) {
-                streamUrl = buildApiUrl("/livetv/sessions/" + sessionUuid + "/" +
-                                        std::string(PLEX_CLIENT_ID) + "/index.m3u8");
-                brls::Logger::info("tuneLiveTVChannel: Stream URL from partial response = {}", streamUrl);
-                return true;
-            }
+            sessionUuid = extractJsonValue(tuneResp.body, "uuid");
         }
     } else if (tuneResp.statusCode == 500) {
         brls::Logger::error("tuneLiveTVChannel: Tune failed (500 - server error) for channel {}", channelKey);
+        return false;
     } else {
         brls::Logger::error("tuneLiveTVChannel: Tune returned {} for channel {}, body: {}",
                             tuneResp.statusCode, channelKey,
                             tuneResp.body.empty() ? "(empty)" : redactBodyForLog(tuneResp.body.substr(0, 200)));
+        return false;
     }
 
-    // Fallback: try transcode/universal with program metadata key
-    // This provides transcoding for devices that can't handle the native stream format
-    if (!programMetadataKey.empty()) {
-        brls::Logger::info("tuneLiveTVChannel: Falling back to transcode with program metadata key...");
-
-        // programMetadataKey from EPG grid is already URL-encoded (e.g. plex%3A%2F%2Fepisode%2F...)
-        // Do NOT re-encode it or we get double-encoding (plex%253A%252F%252F...) causing 400 errors
-        const auto& vc = platform::getVideoConstraints();
-        char liveBuf[256];
-        snprintf(liveBuf, sizeof(liveBuf),
-            "&protocol=hls&videoBitrate=%d&videoResolution=%s&videoQuality=100",
-            vc.defaultBitrate, vc.defaultResolution);
-        std::string params = "path=" + programMetadataKey +
-            "&mediaIndex=0&partIndex=0"
-            "&directPlay=0&directStream=1&directStreamAudio=1"
-            "&hasMDE=1&location=lan"
-            "&audioBoost=100&audioChannelCount=2" +
-            std::string(liveBuf) +
-            "&subtitles=none"
-            "&X-Plex-Client-Identifier=" + std::string(PLEX_CLIENT_ID) +
-            "&X-Plex-Product=" + std::string(PLEX_CLIENT_NAME) +
-            "&X-Plex-Version=" + std::string(PLEX_CLIENT_VERSION) +
-            "&X-Plex-Platform=" + HttpClient::urlEncode(vc.plexPlatform) +
-            "&X-Plex-Device=" + HttpClient::urlEncode(vc.plexDevice) +
-            "&X-Plex-Device-Name=" + HttpClient::urlEncode(vc.plexDevice);
-
-        std::string decisionUrl = buildApiUrl("/video/:/transcode/universal/decision?" + params);
-
-        HttpRequest decReq;
-        decReq.url = decisionUrl;
-        decReq.method = "GET";
-        decReq.headers["Accept"] = "application/json";
-        decReq.timeout = 15;
-
-        brls::Logger::debug("tuneLiveTVChannel: Decision URL: {}", decisionUrl);
-        HttpResponse decResp = client.request(decReq);
-
-        if (decResp.statusCode == 200) {
-            streamUrl = buildApiUrl("/video/:/transcode/universal/start.m3u8?" + params);
-            brls::Logger::info("tuneLiveTVChannel: Stream URL (transcode) = {}", streamUrl);
-            return true;
-        }
-
-        brls::Logger::error("tuneLiveTVChannel: Transcode decision failed: {} body: {}",
-                            decResp.statusCode,
-                            decResp.body.empty() ? "(empty)" : redactBodyForLog(decResp.body.substr(0, 300)));
+    if (sessionUuid.empty()) {
+        brls::Logger::error("tuneLiveTVChannel: No session UUID in tune response for channel {}", channelKey);
+        return false;
     }
 
-    brls::Logger::error("tuneLiveTVChannel: All tuning strategies failed for channel {}", channelKey);
+    brls::Logger::info("tuneLiveTVChannel: Live session id = {}", sessionUuid);
+
+    // The raw tune session is mpeg2video; route it through transcode/universal
+    // (exactly as the official Plex app does) to get a playable h264 HLS URL.
+    if (buildLiveSessionStreamUrl(sessionUuid, streamUrl)) {
+        return true;
+    }
+
+    brls::Logger::error("tuneLiveTVChannel: Failed to build stream URL for channel {}", channelKey);
     return false;
+}
+
+bool PlexClient::buildLiveSessionStreamUrl(const std::string& liveSessionId, std::string& url) {
+    // Mirror the working video transcode flow (getTranscodeUrl) but feed the
+    // live tune session as the source path.  The official Plex app does the
+    // same: GET /video/:/transcode/universal/decision?path=/livetv/sessions/{id}
+    // followed by start.m3u8, then plays the universal session segments.
+    AppSettings& settings = Application::getInstance().getSettings();
+    const auto& vc = platform::getVideoConstraints();
+
+    std::string encodedPath = HttpClient::urlEncode("/livetv/sessions/" + liveSessionId);
+
+    // Unique transcode session id (the server keys the playback session on it).
+    char sessionBuf[48];
+    snprintf(sessionBuf, sizeof(sessionBuf), "vita-%lu", (unsigned long)time(nullptr));
+    std::string sessionId = sessionBuf;
+    m_lastSessionId = sessionId;
+
+    char buf[256];
+    int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : vc.defaultBitrate;
+
+    std::string q;
+    q += "path=" + encodedPath;
+    q += "&mediaIndex=0&partIndex=0";
+    // Live source is mpeg2video, so the video stream must be transcoded; audio
+    // can be direct-streamed.
+    q += "&directPlay=0&directStream=0&directStreamAudio=1";
+    q += "&protocol=hls&fastSeek=1&hasMDE=1&location=lan&audioBoost=100";
+    snprintf(buf, sizeof(buf), "&videoBitrate=%d", bitrate); q += buf;
+    snprintf(buf, sizeof(buf), "&videoResolution=%s", vc.defaultResolution); q += buf;
+    q += "&videoQuality=100";
+    q += settings.showSubtitles ? "&subtitles=auto" : "&subtitles=none";
+    q += "&session=" + sessionId;
+    q += "&X-Plex-Token=" + m_authToken;
+
+    // Profile augmentation matches getTranscodeUrl's video branch so the server
+    // picks an h264/aac HLS target the player can handle.
+    char profileBuf[512];
+    snprintf(profileBuf, sizeof(profileBuf),
+        "add-transcode-target(type=videoProfile&context=streaming&protocol=hls"
+        "&container=mpegts&videoCodec=h264&audioCodec=aac&subtitleCodec=srt)"
+        "+add-limitation(scope=videoCodec&scopeName=h264&type=upperBound&name=video.level&value=%d)"
+        "+add-limitation(scope=videoCodec&scopeName=h264&type=upperBound&name=video.width&value=%d)"
+        "+add-limitation(scope=videoCodec&scopeName=h264&type=upperBound&name=video.height&value=%d)",
+        vc.maxVideoLevel, vc.maxVideoWidth, vc.maxVideoHeight);
+    std::string profileExtra = profileBuf;
+
+    // Step 1: /decision with X-Plex-* as headers.  X-Plex-Session-Identifier
+    // must match the tune's client id so the server links this transcode to the
+    // live grab's consumer (/livetv/sessions/{id}/{sessionIdentifier}/...).
+    HttpClient decisionClient;
+    HttpRequest dReq;
+    dReq.url = m_serverUrl + "/video/:/transcode/universal/decision?" + q;
+    dReq.method = "GET";
+    dReq.headers["Accept"] = "application/json";
+    dReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+    dReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+    dReq.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+    dReq.headers["X-Plex-Platform"] = vc.plexPlatform;
+    dReq.headers["X-Plex-Device"] = vc.plexDevice;
+    dReq.headers["X-Plex-Device-Name"] = vc.plexDevice;
+    dReq.headers["X-Plex-Client-Profile-Name"] = "Generic";
+    dReq.headers["X-Plex-Client-Profile-Extra"] = profileExtra;
+    dReq.headers["X-Plex-Session-Identifier"] = PLEX_CLIENT_ID;
+    dReq.timeout = 20;
+    HttpResponse dResp = decisionClient.request(dReq);
+    brls::Logger::info("buildLiveSessionStreamUrl: decision {} body: {}",
+                       dResp.statusCode,
+                       dResp.body.empty() ? "(empty)" : redactBodyForLog(dResp.body.substr(0, 300)));
+
+    // Step 2: start.m3u8 - the player needs X-Plex-* as query params too, since
+    // it fetches the playlist/segments itself.
+    std::string startQuery = q;
+    startQuery += "&X-Plex-Client-Identifier=" + std::string(PLEX_CLIENT_ID);
+    startQuery += "&X-Plex-Product=" + std::string(PLEX_CLIENT_NAME);
+    startQuery += "&X-Plex-Version=" + std::string(PLEX_CLIENT_VERSION);
+    startQuery += "&X-Plex-Platform=" + HttpClient::urlEncode(vc.plexPlatform);
+    startQuery += "&X-Plex-Device=" + HttpClient::urlEncode(vc.plexDevice);
+    startQuery += "&X-Plex-Device-Name=" + HttpClient::urlEncode(vc.plexDevice);
+    startQuery += "&X-Plex-Client-Profile-Name=Generic";
+    startQuery += "&X-Plex-Client-Profile-Extra=" + HttpClient::urlEncode(profileExtra);
+    startQuery += "&X-Plex-Session-Identifier=" + std::string(PLEX_CLIENT_ID);
+
+    url = m_serverUrl + "/video/:/transcode/universal/start.m3u8?" + startQuery;
+    brls::Logger::info("buildLiveSessionStreamUrl: stream session={} path=/livetv/sessions/{}",
+                       sessionId, liveSessionId);
+    return true;
 }
 
 std::string PlexClient::getThumbnailUrl(const std::string& thumb, int width, int height) {
