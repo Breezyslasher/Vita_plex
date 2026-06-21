@@ -59,9 +59,19 @@ void SettingsTab::createAccountSection() {
     header->setTitle("Account");
     m_contentBox->addView(header);
 
-    // User info cell
+    // User info cell. When the user has switched into a Plex Home
+    // managed user, show both the account login and the current user so
+    // it's obvious which library they'll see.
     m_userLabel = new brls::Label();
-    m_userLabel->setText("User: " + (app.getUsername().empty() ? "Not logged in" : app.getUsername()));
+    {
+        std::string base = app.getUsername().empty()
+                               ? std::string("Not logged in")
+                               : app.getUsername();
+        if (!app.getCurrentHomeUserTitle().empty()) {
+            base += " (as " + app.getCurrentHomeUserTitle() + ")";
+        }
+        m_userLabel->setText("User: " + base);
+    }
     m_userLabel->setFontSize(18);
     m_userLabel->setMarginLeft(16);
     m_userLabel->setMarginBottom(8);
@@ -75,6 +85,31 @@ void SettingsTab::createAccountSection() {
     m_serverLabel->setMarginBottom(16);
     m_contentBox->addView(m_serverLabel);
 
+    // Plex Home: auto-login + switch-user. The switch cell sits above
+    // logout so a user who wants to swap accounts (rather than fully
+    // sign out) finds the right action first.
+    AppSettings& settings = app.getSettings();
+    m_autoLoginToggle = new brls::BooleanCell();
+    m_autoLoginToggle->init("Auto-login as current user", settings.autoLoginAsLastUser,
+        [](bool v) {
+            AppSettings& s = Application::getInstance().getSettings();
+            s.autoLoginAsLastUser = v;
+            Application::getInstance().saveSettings();
+        });
+    m_contentBox->addView(m_autoLoginToggle);
+
+    m_switchUserCell = new brls::DetailCell();
+    m_switchUserCell->setText("Switch User");
+    m_switchUserCell->setDetailText(
+        app.getCurrentHomeUserTitle().empty()
+            ? "Pick another Plex Home user"
+            : ("Current: " + app.getCurrentHomeUserTitle()));
+    m_switchUserCell->registerClickAction([this](brls::View*) {
+        onSwitchUser();
+        return true;
+    });
+    m_contentBox->addView(m_switchUserCell);
+
     // Logout button
     auto* logoutCell = new brls::DetailCell();
     logoutCell->setText("Logout");
@@ -84,6 +119,27 @@ void SettingsTab::createAccountSection() {
         return true;
     });
     m_contentBox->addView(logoutCell);
+}
+
+void SettingsTab::onSwitchUser() {
+    Application::getInstance().showHomeUserPicker([this]() {
+        Application& app = Application::getInstance();
+        if (m_switchUserCell) {
+            m_switchUserCell->setDetailText(
+                app.getCurrentHomeUserTitle().empty()
+                    ? "Pick another Plex Home user"
+                    : ("Current: " + app.getCurrentHomeUserTitle()));
+        }
+        if (m_userLabel) {
+            std::string base = app.getUsername().empty()
+                                   ? std::string("Not logged in")
+                                   : app.getUsername();
+            if (!app.getCurrentHomeUserTitle().empty()) {
+                base += " (as " + app.getCurrentHomeUserTitle() + ")";
+            }
+            m_userLabel->setText("User: " + base);
+        }
+    });
 }
 
 void SettingsTab::createUISection() {
@@ -708,9 +764,13 @@ void SettingsTab::onLogout() {
     dialog->addButton("Cancel", []() {});
 
     dialog->addButton("Logout", [this]() {
-        // Clear credentials
+        // Clear credentials, including the Plex Home master token and
+        // the current-user pointer so the next login starts clean.
         PlexClient::getInstance().logout();
         Application::getInstance().setAuthToken("");
+        Application::getInstance().setMasterAuthToken("");
+        Application::getInstance().setCurrentHomeUserUuid("");
+        Application::getInstance().setCurrentHomeUserTitle("");
         Application::getInstance().setServerUrl("");
         Application::getInstance().setUsername("");
         Application::getInstance().saveSettings();

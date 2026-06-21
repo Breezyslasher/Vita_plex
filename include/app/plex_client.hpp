@@ -148,6 +148,19 @@ struct PinAuth {
     bool useJwt = false;  // Whether this PIN uses JWT authentication
 };
 
+// Plex Home managed user. plex.tv/api/v2/home/users returns the list
+// of users sharing one Plex Home — owner + family members. Each has a
+// uuid (used to /switch) and an optional 4-digit PIN.
+struct HomeUser {
+    std::string uuid;        // For POST /home/users/{uuid}/switch
+    std::string id;          // Plex numeric account ID
+    std::string title;       // Display name shown in the picker
+    std::string username;    // Account username if present (managed users may not have one)
+    std::string thumb;       // Avatar URL
+    bool hasPin = false;     // True when "protected" / "restricted" in the API
+    bool admin  = false;     // True for the Home owner
+};
+
 // Hub (for home screen)
 struct Hub {
     std::string title;
@@ -252,6 +265,21 @@ public:
     bool connectToServer(const std::string& url);
     bool connectToServer(const std::string& url, int timeoutSeconds);
     void logout();
+
+    // Plex Home / managed users
+    // fetchHomeUsers needs the *account-level* (master) token because the
+    // per-user token returned by /switch can't list siblings. Pass the
+    // master token explicitly so the caller stays in control of which
+    // token is in flight.
+    bool fetchHomeUsers(const std::string& masterToken,
+                        std::vector<HomeUser>& users);
+    // POST /api/v2/home/users/{uuid}/switch . pin is optional; pass empty
+    // string for unprotected users. On success outToken holds the
+    // per-user authToken to use for all subsequent API calls.
+    bool switchHomeUser(const std::string& masterToken,
+                        const std::string& userUuid,
+                        const std::string& pin,
+                        std::string& outToken);
 
     // Library operations
     bool fetchLibrarySections(std::vector<LibrarySection>& sections);

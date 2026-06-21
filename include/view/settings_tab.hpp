@@ -37,6 +37,7 @@ private:
     void onManageHiddenLibraries();
     void onManageSidebarOrder();
     void onManageDefaultDvrLibrary();
+    void onSwitchUser();
 
     brls::ScrollingFrame* m_scrollView = nullptr;
     brls::Box* m_contentBox = nullptr;
@@ -44,6 +45,8 @@ private:
     // Account section
     brls::Label* m_userLabel = nullptr;
     brls::Label* m_serverLabel = nullptr;
+    brls::BooleanCell* m_autoLoginToggle = nullptr;
+    brls::DetailCell*  m_switchUserCell  = nullptr;
 
     // UI section
     brls::SelectorCell* m_themeSelector = nullptr;

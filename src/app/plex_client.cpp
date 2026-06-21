@@ -333,6 +333,173 @@ bool PlexClient::checkPin(PinAuth& pinAuth) {
     return false;
 }
 
+bool PlexClient::fetchHomeUsers(const std::string& masterToken,
+                                std::vector<HomeUser>& users) {
+    users.clear();
+    if (masterToken.empty()) {
+        brls::Logger::error("fetchHomeUsers: missing master token");
+        return false;
+    }
+
+    HttpClient client;
+    HttpRequest req;
+    req.url = "https://plex.tv/api/v2/home/users";
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    req.headers["X-Plex-Token"] = masterToken;
+    req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+    req.timeout = 15;
+
+    HttpResponse resp = client.request(req);
+    // 401 here usually means the account doesn't have Plex Home enabled
+    // (regular single-user account). Treat as "no managed users" rather
+    // than an error — caller will fall back to using the master token.
+    if (resp.statusCode == 401 || resp.statusCode == 403) {
+        brls::Logger::info("fetchHomeUsers: account has no Plex Home (HTTP {})",
+                           resp.statusCode);
+        return true;
+    }
+    if (resp.statusCode != 200 || resp.body.empty()) {
+        brls::Logger::error("fetchHomeUsers: HTTP {} body={}",
+                            resp.statusCode,
+                            resp.body.empty() ? "(empty)" : resp.body.substr(0, 200));
+        return false;
+    }
+
+    // Response shape is {"id":N, "name":"...", ..., "users":[ {user1}, {user2}, ... ]}
+    // The previous naive object walker scooped up the *outer* wrapper as a
+    // single match (it contains uuid/title from users[0] when scanning the
+    // whole body) and stopped, so a Home with N members reported "got 1".
+    // Find the "users" array first and only walk the objects inside it.
+    const std::string& body = resp.body;
+    brls::Logger::debug("fetchHomeUsers: body ({} bytes), first 600: {}",
+                        body.length(), body.substr(0, 600));
+
+    size_t arrStart = std::string::npos;
+    size_t arrEnd   = std::string::npos;
+    size_t usersKey = body.find("\"users\"");
+    if (usersKey != std::string::npos) {
+        size_t open = body.find('[', usersKey);
+        if (open != std::string::npos) {
+            int depth = 1;
+            size_t scan = open + 1;
+            while (depth > 0 && scan < body.length()) {
+                if (body[scan] == '[') depth++;
+                else if (body[scan] == ']') depth--;
+                scan++;
+            }
+            if (depth == 0) {
+                arrStart = open;
+                arrEnd   = scan;
+            }
+        }
+    }
+    // Fallback for endpoints that return a bare array.
+    if (arrStart == std::string::npos) {
+        arrStart = body.find('[');
+        if (arrStart != std::string::npos) {
+            int depth = 1;
+            size_t scan = arrStart + 1;
+            while (depth > 0 && scan < body.length()) {
+                if (body[scan] == '[') depth++;
+                else if (body[scan] == ']') depth--;
+                scan++;
+            }
+            if (depth == 0) arrEnd = scan;
+        }
+    }
+    if (arrStart == std::string::npos || arrEnd == std::string::npos) {
+        brls::Logger::error("fetchHomeUsers: no users array found in response");
+        return false;
+    }
+
+    size_t pos = arrStart + 1;
+    while (pos < arrEnd) {
+        size_t objStart = body.find('{', pos);
+        if (objStart == std::string::npos || objStart >= arrEnd) break;
+
+        int depth = 1;
+        size_t objEnd = objStart + 1;
+        while (depth > 0 && objEnd < body.length()) {
+            if (body[objEnd] == '{') depth++;
+            else if (body[objEnd] == '}') depth--;
+            objEnd++;
+        }
+        if (depth != 0) break;
+        std::string obj = body.substr(objStart, objEnd - objStart);
+        pos = objEnd;
+
+        HomeUser u;
+        u.uuid     = extractJsonValue(obj, "uuid");
+        u.id       = extractJsonValue(obj, "id");
+        u.title    = extractJsonValue(obj, "title");
+        u.username = extractJsonValue(obj, "username");
+        u.thumb    = extractJsonValue(obj, "thumb");
+        u.hasPin   = extractJsonBool(obj, "protected") ||
+                     extractJsonBool(obj, "restricted");
+        u.admin    = extractJsonBool(obj, "admin") ||
+                     extractJsonBool(obj, "homeAdmin");
+
+        if (!u.uuid.empty() && !u.title.empty()) {
+            users.push_back(std::move(u));
+        }
+    }
+
+    brls::Logger::info("fetchHomeUsers: got {} users", users.size());
+    return true;
+}
+
+bool PlexClient::switchHomeUser(const std::string& masterToken,
+                                const std::string& userUuid,
+                                const std::string& pin,
+                                std::string& outToken) {
+    outToken.clear();
+    if (masterToken.empty() || userUuid.empty()) return false;
+
+    HttpClient client;
+    HttpRequest req;
+    req.url = "https://plex.tv/api/v2/home/users/" + userUuid + "/switch";
+    req.method = "POST";
+    req.headers["Accept"] = "application/json";
+    // plex.tv's nginx rejects empty-body POSTs that don't declare a
+    // content type — that's the 400 Bad Request the original version
+    // hit. Encode the PIN (empty when the user isn't protected) into a
+    // form body so the request always has a real Content-Type + body.
+    req.headers["Content-Type"] = "application/x-www-form-urlencoded";
+    req.headers["X-Plex-Token"] = masterToken;
+    // The full X-Plex-* identification block is what every other
+    // plex.tv POST in this client sends; without it the API often
+    // 401s or 400s on /home/users/{uuid}/switch.
+    {
+        const auto& vc = platform::getVideoConstraints();
+        req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+        req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+        req.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+        req.headers["X-Plex-Platform"] = vc.plexPlatform;
+        req.headers["X-Plex-Device"] = vc.plexDevice;
+    }
+    req.body = pin.empty() ? std::string("pin=")
+                            : ("pin=" + HttpClient::urlEncode(pin));
+    req.timeout = 15;
+
+    HttpResponse resp = client.request(req);
+    if (resp.statusCode != 200 && resp.statusCode != 201) {
+        brls::Logger::error("switchHomeUser: HTTP {} body={}",
+                            resp.statusCode,
+                            resp.body.empty() ? "(empty)" : resp.body.substr(0, 200));
+        return false;
+    }
+
+    outToken = extractJsonValue(resp.body, "authToken");
+    if (outToken.empty()) {
+        brls::Logger::error("switchHomeUser: response missing authToken (body={})",
+                            resp.body.substr(0, 200));
+        return false;
+    }
+    brls::Logger::info("switchHomeUser: switched to user {}", userUuid);
+    return true;
+}
+
 bool PlexClient::refreshToken() {
     // Legacy Plex tokens don't expire, but they can be revoked.
     // Validate the current token against plex.tv; if invalid, trigger reauth.

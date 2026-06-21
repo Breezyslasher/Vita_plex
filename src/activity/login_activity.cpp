@@ -300,9 +300,10 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
                     progressDialog->setProgress(1.0f);
                     Application::getInstance().saveSettings();
                     if (statusLabel) statusLabel->setText("Connected to " + server.name);
-                    brls::delay(500, [this, progressDialog]() {
+                    brls::delay(500, [progressDialog]() {
                         progressDialog->dismiss();
                         Application::getInstance().pushMainActivity();
+                        Application::getInstance().showHomeUserPicker(nullptr);
                     });
                 });
                 return;
@@ -387,6 +388,13 @@ void LoginActivity::onLoginPressed() {
     }
 
     if (loginOk) {
+        // Capture the master account token now, before any /switch can
+        // overwrite m_authToken with a per-user one. This is what
+        // fetchHomeUsers / switchHomeUser need.
+        Application::getInstance().setMasterAuthToken(
+            Application::getInstance().getAuthToken());
+        Application::getInstance().setCurrentHomeUserUuid("");
+        Application::getInstance().setCurrentHomeUserTitle("");
         Application::getInstance().setUsername(m_username);
 
         // If server URL provided, use it; otherwise auto-detect
@@ -395,8 +403,9 @@ void LoginActivity::onLoginPressed() {
             if (client.connectToServer(m_serverUrl)) {
                 Application::getInstance().saveSettings();
                 if (statusLabel) statusLabel->setText("Login successful!");
-                brls::sync([this]() {
+                brls::sync([]() {
                     Application::getInstance().pushMainActivity();
+                    Application::getInstance().showHomeUserPicker(nullptr);
                 });
             } else {
                 if (statusLabel) statusLabel->setText("Failed to connect to server");
@@ -463,6 +472,13 @@ void LoginActivity::checkPinStatus() {
         m_pinTimer.stop();
         if (pinCodeLabel) pinCodeLabel->setVisibility(brls::Visibility::GONE);
 
+        // Master token is whatever PIN auth just landed in m_authToken;
+        // stash it so the home-user picker can list siblings later.
+        Application::getInstance().setMasterAuthToken(
+            Application::getInstance().getAuthToken());
+        Application::getInstance().setCurrentHomeUserUuid("");
+        Application::getInstance().setCurrentHomeUserTitle("");
+
         if (statusLabel) statusLabel->setText("PIN authenticated! Finding servers...");
 
         // If server URL provided, use it; otherwise auto-detect
@@ -470,8 +486,9 @@ void LoginActivity::checkPinStatus() {
             if (client.connectToServer(m_serverUrl)) {
                 Application::getInstance().saveSettings();
                 if (statusLabel) statusLabel->setText("Connected!");
-                brls::sync([this]() {
+                brls::sync([]() {
                     Application::getInstance().pushMainActivity();
+                    Application::getInstance().showHomeUserPicker(nullptr);
                 });
             } else {
                 if (statusLabel) statusLabel->setText("Failed to connect to server");
