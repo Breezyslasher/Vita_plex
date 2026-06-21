@@ -94,22 +94,18 @@ LiveTVTab::LiveTVTab() {
     this->setAlignItems(brls::AlignItems::STRETCH);
     this->setGrow(1.0f);
 
-    // Create vertical scrolling container
-    m_scrollView = new brls::ScrollingFrame();
-    m_scrollView->setGrow(1.0f);
-    // CENTERED behaviour bypasses ScrollingFrame's natural-scrolling
-    // "trap" that pins focus to the current cell whenever the next one
-    // isn't fully inscribed in the viewport — that's the reason hover
-    // couldn't move past the second row before. Home tab uses the same
-    // setting and navigates cleanly through long content. See
-    // ScrollingFrame::getParentNavigationDecision in borealis.
-    m_scrollView->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
-
+    // The whole tab is a flex column with NO outer page scroll — the
+    // guide gets its own inner scroll instead, so dpad-driven hover only
+    // moves one scroll frame at a time. (Two CENTERED scroll frames
+    // stacked would each scroll on every focus change and "double-scroll"
+    // the page.) The hero, guide and DVR sit at fixed positions; only the
+    // guide rows scroll inside m_guideScrollV.
     m_scrollContent = new brls::Box();
     m_scrollContent->setAxis(brls::Axis::COLUMN);
     m_scrollContent->setJustifyContent(brls::JustifyContent::FLEX_START);
     m_scrollContent->setAlignItems(brls::AlignItems::STRETCH);
     m_scrollContent->setPadding(20);
+    m_scrollContent->setGrow(1.0f);
 
     // Title
     m_titleLabel = new brls::Label();
@@ -130,11 +126,11 @@ LiveTVTab::LiveTVTab() {
     m_guideLabel->setMarginTop(4);
     m_scrollContent->addView(m_guideLabel);
 
+    // Guide block: takes whatever space is left after hero + DVR. Uses
+    // setGrow so it expands on taller screens and shrinks on Vita.
     m_guideContainer = new brls::Box();
     m_guideContainer->setAxis(brls::Axis::COLUMN);
-    // Bumped from the platform default to put ~6 channel rows on screen
-    // since the hero/favourites already eat ~270px above.
-    m_guideContainer->setHeight(std::max(280, platform::getImageConstraints().livetvGuideHeight + 40));
+    m_guideContainer->setGrow(1.0f);
     m_guideContainer->setMarginBottom(20);
     m_guideContainer->setBackgroundColor(tok::card());
     m_guideContainer->setCornerRadius(14);
@@ -155,7 +151,9 @@ LiveTVTab::LiveTVTab() {
     m_timeHeaderScroll->setContentView(m_timeHeaderBox);
     m_guideContainer->addView(m_timeHeaderScroll);
 
-    // EPG Grid (vertical scroll containing channel rows)
+    // Inner vertical scroll for channel rows. This is the *only* scroll
+    // frame on the page so hover-driven scroll moves it alone, leaving
+    // the hero + DVR pinned to their slots above and below.
     m_guideScrollV = new brls::ScrollingFrame();
     m_guideScrollV->setGrow(1.0f);
     m_guideScrollV->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
@@ -182,29 +180,9 @@ LiveTVTab::LiveTVTab() {
 
     m_scrollContent->addView(m_guideContainer);
 
-    // DVR Recordings strip
-    m_dvrLabel = new brls::Label();
-    m_dvrLabel->setText("DVR Recordings");
-    m_dvrLabel->setFontSize(20);
-    m_dvrLabel->setMarginBottom(8);
-    m_dvrLabel->setMarginTop(4);
-    m_scrollContent->addView(m_dvrLabel);
-
-    m_dvrRow = new brls::HScrollingFrame();
-    m_dvrRow->setHeight(platform::getImageConstraints().livetvChannelRowHeight);
-    m_dvrRow->setMarginBottom(20);
-    m_dvrRow->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
-
-    m_dvrContent = new brls::Box();
-    m_dvrContent->setAxis(brls::Axis::ROW);
-    m_dvrContent->setJustifyContent(brls::JustifyContent::FLEX_START);
-    m_dvrContent->setAlignItems(brls::AlignItems::CENTER);
-
-    m_dvrRow->setContentView(m_dvrContent);
-    m_scrollContent->addView(m_dvrRow);
-
-    m_scrollView->setContentView(m_scrollContent);
-    this->addView(m_scrollView);
+    // No outer scroll: m_scrollContent goes straight into the tab so the
+    // hero stays pinned at the top and only the guide scrolls.
+    this->addView(m_scrollContent);
 
     brls::Logger::debug("LiveTVTab: Loading content...");
     loadChannels();
@@ -262,9 +240,7 @@ brls::View* LiveTVTab::findLastFocusableInBox(brls::Box* box) {
 }
 
 brls::View* LiveTVTab::getNextFocus(brls::FocusDirection direction, brls::View* currentView) {
-    // Section layout (top to bottom):
-    //   Hero (m_heroBox) -> Guide (m_guideBox) -> DVR (m_dvrRow)
-    //
+    // Section layout (top to bottom):  Hero (m_heroBox) -> Guide (m_guideBox)
     // Row-to-row movement *inside* the guide is handled by borealis' natural
     // navigation (m_guideBox is a COLUMN box, so it resolves UP/DOWN between
     // rows itself). This override only kicks in when that bubbles up to the
@@ -272,23 +248,12 @@ brls::View* LiveTVTab::getNextFocus(brls::FocusDirection direction, brls::View* 
     // section.
     const bool inHero  = isDescendantOf(currentView, m_heroBox);
     const bool inGuide = isDescendantOf(currentView, m_guideContainer);
-    const bool inDvr   = isDescendantOf(currentView, m_dvrRow);
 
-    if (direction == brls::FocusDirection::DOWN) {
-        if (inHero) {
-            if (brls::View* t = findFirstFocusableInBox(m_guideBox)) return t;
-            if (brls::View* t = findFirstFocusableInBox(m_dvrContent)) return t;
-        } else if (inGuide) {
-            if (brls::View* t = findFirstFocusableInBox(m_dvrContent)) return t;
-        }
+    if (direction == brls::FocusDirection::DOWN && inHero) {
+        if (brls::View* t = findFirstFocusableInBox(m_guideBox)) return t;
     }
-    else if (direction == brls::FocusDirection::UP) {
-        if (inDvr) {
-            if (brls::View* t = findLastFocusableInBox(m_guideBox)) return t;
-            if (brls::View* t = findFirstFocusableInBox(m_heroBox)) return t;
-        } else if (inGuide) {
-            if (brls::View* t = findFirstFocusableInBox(m_heroBox)) return t;
-        }
+    else if (direction == brls::FocusDirection::UP && inGuide) {
+        if (brls::View* t = findFirstFocusableInBox(m_heroBox)) return t;
     }
 
     // Default behavior for left/right and unhandled cases
@@ -329,7 +294,6 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
     // every frame — pure overdraw. Toggle INVISIBLE on anything scrolled
     // out of its viewport so frame() early-outs for the entire subtree.
     cullToViewport(m_guideBox, m_guideScrollV, /*vertical=*/true);
-    cullToViewport(m_dvrContent, m_dvrRow, /*vertical=*/false);
 
     // Slide the cyan "now" line each frame so it tracks the wall clock
     // even when the guide grid itself doesn't rebuild.
@@ -1182,99 +1146,13 @@ void LiveTVTab::loadRecordings() {
 
         brls::Logger::info("LiveTVTab: Found {} DVR recordings/subscriptions", recordings.size());
 
+        // Data-only refresh — the DVR strip is no longer rendered, but
+        // the fetch still keeps m_recordings consistent so other paths
+        // (cancelRecording, future re-introduction of the row) work.
         brls::sync([this, recordings, aliveWeak]() {
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
-
             m_recordings = recordings;
-            m_dvrContent->clearViews();
-
-            if (m_recordings.empty()) {
-                auto* placeholder = new brls::Label();
-                placeholder->setText("No scheduled recordings");
-                placeholder->setFontSize(13);
-                placeholder->setTextColor(tok::muted());
-                m_dvrContent->addView(placeholder);
-                return;
-            }
-
-            const auto& dvrIc = platform::getImageConstraints();
-            for (const auto& rec : m_recordings) {
-                auto* card = new brls::Box();
-                card->setAxis(brls::Axis::ROW);
-                card->setAlignItems(brls::AlignItems::CENTER);
-                card->setWidth(dvrIc.livetvChannelCardWidth + 80);
-                card->setHeight(std::max(60, dvrIc.livetvChannelRowHeight - 20));
-                card->setMarginRight(10);
-                card->setPadding(10);
-                card->setFocusable(true);
-                card->setCornerRadius(11);
-                card->setBackgroundColor(tok::cardRaised());
-                card->setBorderColor(tok::hairline());
-                card->setBorderThickness(1);
-
-                // Status chip
-                auto* chip = new brls::Box();
-                chip->setWidth(28);
-                chip->setHeight(28);
-                chip->setCornerRadius(14);
-                chip->setJustifyContent(brls::JustifyContent::CENTER);
-                chip->setAlignItems(brls::AlignItems::CENTER);
-                chip->setMarginRight(10);
-                auto* chipDot = new brls::Label();
-                if (rec.status == "recording") {
-                    chip->setBackgroundColor(nvgRGBA(255, 86, 88, 64));
-                    chipDot->setText("●");
-                    chipDot->setTextColor(tok::live());
-                } else {
-                    chip->setBackgroundColor(nvgRGBA(137, 241, 242, 48));
-                    chipDot->setText("⧗");  // clock-ish glyph
-                    chipDot->setTextColor(tok::accent());
-                }
-                chipDot->setFontSize(14);
-                chip->addView(chipDot);
-                card->addView(chip);
-
-                // Text block
-                auto* col = new brls::Box();
-                col->setAxis(brls::Axis::COLUMN);
-                col->setGrow(1.0f);
-
-                auto* titleLabel = new brls::Label();
-                std::string title = rec.title;
-                size_t dvrMaxChars = (size_t)(platform::getImageConstraints().maxLiveTVProgramChars + 6);
-                if (dvrMaxChars > 2 && title.length() > dvrMaxChars) {
-                    title = title.substr(0, dvrMaxChars - 1) + "..";
-                }
-                titleLabel->setText(title);
-                titleLabel->setFontSize(13);
-                titleLabel->setTextColor(tok::text());
-                col->addView(titleLabel);
-
-                auto* statusLabel = new brls::Label();
-                std::string statusText = rec.status;
-                if (rec.scheduledTime > 0) statusText += " · " + formatTime(rec.scheduledTime);
-                statusLabel->setText(statusText);
-                statusLabel->setFontSize(10);
-                statusLabel->setTextColor(tok::dim());
-                statusLabel->setMarginTop(3);
-                col->addView(statusLabel);
-
-                card->addView(col);
-
-                DVRRecording capturedRec = rec;
-                card->registerClickAction([this, capturedRec](brls::View*) {
-                    brls::Dialog* dialog = new brls::Dialog(capturedRec.title);
-                    dialog->addButton("Cancel Recording", [this, capturedRec]() {
-                        cancelRecording(capturedRec);
-                    });
-                    dialog->addButton("Close", []() {});
-                    dialog->open();
-                    return true;
-                });
-
-                m_dvrContent->addView(card);
-            }
         });
     });
 }

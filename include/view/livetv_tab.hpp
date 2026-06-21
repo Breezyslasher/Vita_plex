@@ -80,8 +80,7 @@ private:
 
     // UI Components
     brls::Label* m_titleLabel = nullptr;
-    brls::ScrollingFrame* m_scrollView = nullptr;
-    brls::Box* m_scrollContent = nullptr;
+    brls::Box* m_scrollContent = nullptr;       // Direct child of the tab — no outer page scroll
 
     // On-Now hero
     brls::Box*   m_heroBox          = nullptr;
@@ -109,14 +108,9 @@ private:
     brls::Box* m_guideContainer = nullptr;      // Contains time header + grid
     brls::HScrollingFrame* m_timeHeaderScroll = nullptr;
     brls::Box* m_timeHeaderBox = nullptr;       // Horizontal time slots
-    brls::ScrollingFrame* m_guideScrollV = nullptr;  // Vertical scroll for channels
-    brls::Box* m_guideBox = nullptr;            // Contains channel rows
+    brls::ScrollingFrame* m_guideScrollV = nullptr;  // Vertical scroll inside the guide block
+    brls::Box* m_guideBox = nullptr;            // Contains channel rows; scrolls inside m_guideScrollV
     brls::Box* m_currentTimeLine = nullptr;     // Absolute-positioned cyan rule over the program area
-
-    // DVR section
-    brls::Label* m_dvrLabel = nullptr;
-    brls::HScrollingFrame* m_dvrRow = nullptr;
-    brls::Box* m_dvrContent = nullptr;
 
     // Data
     std::vector<LiveTVChannel> m_channels;
