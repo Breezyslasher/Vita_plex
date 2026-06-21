@@ -90,7 +90,12 @@ private:
     brls::BooleanCell* m_backgroundMusicToggle = nullptr;
 
     // Live TV section
-    brls::DetailCell* m_defaultDvrLibraryCell = nullptr;
+    brls::DetailCell*   m_defaultDvrLibraryCell = nullptr;
+    brls::SelectorCell* m_dvrStartOffsetSelector = nullptr;
+    brls::SelectorCell* m_dvrEndOffsetSelector   = nullptr;
+    brls::BooleanCell*  m_dvrRecordPartialsToggle = nullptr;
+    brls::SelectorCell* m_dvrMinQualitySelector  = nullptr;
+    brls::SelectorCell* m_liveTvGuideHoursSelector = nullptr;
 };
 
 } // namespace vitaplex

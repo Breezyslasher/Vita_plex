@@ -548,6 +548,15 @@ void LiveTVTab::onFocusGained() {
     brls::Box::onFocusGained();
     m_alive = std::make_shared<bool>(true);
 
+    // Pick up the user's EPG-hours setting on every focus so a change in
+    // Settings → Live TV takes effect next time they tab back here,
+    // forcing a fresh fetch when the window size shifted.
+    int settingsHours = Application::getInstance().getSettings().liveTvGuideHours;
+    if (settingsHours > 0 && settingsHours != m_hoursToShow) {
+        m_hoursToShow = settingsHours;
+        m_loaded = false;
+    }
+
     if (!m_loaded) {
         loadChannels();
     } else {
@@ -1696,16 +1705,18 @@ void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChann
             return;
         }
 
+        const AppSettings& settings = Application::getInstance().getSettings();
+
         std::string post = client.buildApiUrlPublic("/media/subscriptions");
         post += "&" + parameters;
         post += "&type=" + typeStr;
         if (!targetSection.empty()) post += "&targetLibrarySectionID=" + targetSection;
         post += "&includeGrabs=1";
         post += "&prefs[oneShot]=true";
-        post += "&prefs[recordPartials]=true";
-        post += "&prefs[minVideoQuality]=0";
-        post += "&prefs[startOffsetMinutes]=2";
-        post += "&prefs[endOffsetMinutes]=2";
+        post += std::string("&prefs[recordPartials]=") + (settings.dvrRecordPartials ? "true" : "false");
+        post += "&prefs[minVideoQuality]=" + std::to_string(settings.dvrMinVideoQuality);
+        post += "&prefs[startOffsetMinutes]=" + std::to_string(settings.dvrStartOffsetMinutes);
+        post += "&prefs[endOffsetMinutes]=" + std::to_string(settings.dvrEndOffsetMinutes);
 
         HttpRequest req;
         req.url = post;

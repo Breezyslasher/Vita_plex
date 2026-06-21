@@ -310,6 +310,23 @@ bool Application::loadSettings() {
     // Live TV / DVR settings
     m_settings.defaultDvrSectionId    = extractString("defaultDvrSectionId");
     m_settings.defaultDvrSectionTitle = extractString("defaultDvrSectionTitle");
+    {
+        int v = extractInt("dvrStartOffsetMinutes");
+        if (v >= 0 && v <= 60) m_settings.dvrStartOffsetMinutes = v;
+    }
+    {
+        int v = extractInt("dvrEndOffsetMinutes");
+        if (v >= 0 && v <= 60) m_settings.dvrEndOffsetMinutes = v;
+    }
+    m_settings.dvrRecordPartials = extractBool("dvrRecordPartials", true);
+    {
+        int v = extractInt("dvrMinVideoQuality");
+        if (v >= 0 && v <= 100) m_settings.dvrMinVideoQuality = v;
+    }
+    {
+        int v = extractInt("liveTvGuideHours");
+        if (v > 0 && v <= 48) m_settings.liveTvGuideHours = v;
+    }
 
     brls::Logger::info("Settings loaded successfully from {}", settingsPath);
     return !m_authToken.empty();
@@ -397,7 +414,12 @@ bool Application::saveSettings() {
     json += "  \"trackDefaultAction\": " + std::to_string(static_cast<int>(m_settings.trackDefaultAction)) + ",\n";
     json += "  \"backgroundMusic\": " + b(m_settings.backgroundMusic) + ",\n";
     json += "  \"defaultDvrSectionId\": \"" + esc(m_settings.defaultDvrSectionId) + "\",\n";
-    json += "  \"defaultDvrSectionTitle\": \"" + esc(m_settings.defaultDvrSectionTitle) + "\"\n";
+    json += "  \"defaultDvrSectionTitle\": \"" + esc(m_settings.defaultDvrSectionTitle) + "\",\n";
+    json += "  \"dvrStartOffsetMinutes\": " + std::to_string(m_settings.dvrStartOffsetMinutes) + ",\n";
+    json += "  \"dvrEndOffsetMinutes\": " + std::to_string(m_settings.dvrEndOffsetMinutes) + ",\n";
+    json += "  \"dvrRecordPartials\": " + b(m_settings.dvrRecordPartials) + ",\n";
+    json += "  \"dvrMinVideoQuality\": " + std::to_string(m_settings.dvrMinVideoQuality) + ",\n";
+    json += "  \"liveTvGuideHours\": " + std::to_string(m_settings.liveTvGuideHours) + "\n";
     json += "}\n";
 
     std::ofstream ofs(settingsPath, std::ios::trunc);
