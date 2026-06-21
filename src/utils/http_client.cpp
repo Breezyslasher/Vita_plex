@@ -221,6 +221,14 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
     // Enable DNS caching for faster reconnects
     curl_easy_setopt(curl, CURLOPT_DNS_CACHE_TIMEOUT, 300);  // 5 minutes
 
+    // Pin HTTP/1.1.  curl_easy's default is CURL_HTTP_VERSION_2TLS, and HTTP/2
+    // multiplexed responses can leave the easy interface blocked in
+    // curl_easy_perform() waiting for END_STREAM on chunked/streamed bodies -
+    // exactly what happens with the Live TV tune POST, which delivers its
+    // success body (a ~77KB "live" MediaContainer) over a kept-alive
+    // connection.  The transcode/download path in this same client already
+    // pins HTTP/1.1 for the same reason, so we match that here.
+
     // Follow redirects
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, req.followRedirects ? 1L : 0L);
     // Cap redirect chains so a misbehaving server can't loop us forever.
@@ -228,6 +236,9 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
 
     // TLS verification, protocol allowlist, and signal safety.
     applyCurlSecurityDefaults(curl);
+
+    // Force HTTP/1.1 (see comment above CURLOPT_DNS_CACHE_TIMEOUT).
+    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
 
     // User agent
     curl_easy_setopt(curl, CURLOPT_USERAGENT, m_userAgent.c_str());
