@@ -80,8 +80,9 @@ static const SectionMeta kSections[] = {
     /* SEC_DEBUG       */ { "Debug",           "options.png",
                             "Developer tools and diagnostics." },
 };
-static_assert(sizeof(kSections) / sizeof(kSections[0]) == SettingsTab::SEC_COUNT,
-              "kSections / SectionId out of sync");
+// kSections / SectionId stay-in-sync check has to live inside a
+// member function (the constructor) so it can see the private enum.
+// File-scope static_assert can't peek at SectionId::SEC_COUNT.
 
 // ─── responsive sizing ────────────────────────────────────────────────
 // Derive the rail width from the viewport so the tab still fits on a
@@ -100,6 +101,9 @@ static int railWidthForViewport() {
 // ============================================================================
 
 SettingsTab::SettingsTab() {
+    static_assert(sizeof(kSections) / sizeof(kSections[0]) == SEC_COUNT,
+                  "kSections / SectionId out of sync");
+
     AppSettings& settings = Application::getInstance().getSettings();
 
     this->setAxis(brls::Axis::ROW);
