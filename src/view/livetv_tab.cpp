@@ -170,10 +170,9 @@ static const int64_t REFRESH_INTERVAL = 60;         // 1 minute between "now pla
 
 // EPG grid render window. Each row's program cells now sit inside an
 // HScrollingFrame, so cells past the visible width are reachable via the
-// dpad (cf. m_rowProgramScrolls). Render the full fetched window so the
-// user can pan through the whole 12-hour lookahead instead of stopping
-// at 4 hours like the old non-scrolling layout had to.
-static const int EPG_GRID_HOURS_VISIBLE = 12;
+// dpad (cf. m_rowProgramScrolls). The render path uses whatever window
+// LiveTVTab::m_hoursToShow holds — seeded from Application::getSettings()
+// .liveTvGuideHours, which is clamped to 1-48 on load.
 
 // Hero dimensions. Smaller than the original so more guide rows are
 // visible below — thumbnail scales down with the hero height, and the
@@ -547,6 +546,15 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
 void LiveTVTab::onFocusGained() {
     brls::Box::onFocusGained();
     m_alive = std::make_shared<bool>(true);
+
+    // Pick up the user's EPG-hours setting on every focus so a change in
+    // Settings → Live TV takes effect next time they tab back here,
+    // forcing a fresh fetch when the window size shifted.
+    int settingsHours = Application::getInstance().getSettings().liveTvGuideHours;
+    if (settingsHours > 0 && settingsHours != m_hoursToShow) {
+        m_hoursToShow = settingsHours;
+        m_loaded = false;
+    }
 
     if (!m_loaded) {
         loadChannels();
@@ -1050,7 +1058,7 @@ void LiveTVTab::updateCurrentTimeLine() {
     if (now == m_lastTimeLineUpdateSec) return;
     m_lastTimeLineUpdateSec = now;
 
-    int gridHours = std::min(m_hoursToShow, EPG_GRID_HOURS_VISIBLE);
+    int gridHours = m_hoursToShow;
     int64_t guideEnd = m_guideStartTime + (gridHours * 3600);
 
     if (now < m_guideStartTime || now > guideEnd) {
@@ -1115,7 +1123,7 @@ void LiveTVTab::buildEPGGrid() {
     time_t now = time(nullptr);
     m_guideStartTime = now - (now % 1800);
 
-    int gridHours = std::min(m_hoursToShow, EPG_GRID_HOURS_VISIBLE);
+    int gridHours = m_hoursToShow;
     int totalSlots = gridHours * 2;
 
     // Time header — each 30-min slot. Bold muted labels, left hairline
@@ -1696,16 +1704,18 @@ void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChann
             return;
         }
 
+        const AppSettings& settings = Application::getInstance().getSettings();
+
         std::string post = client.buildApiUrlPublic("/media/subscriptions");
         post += "&" + parameters;
         post += "&type=" + typeStr;
         if (!targetSection.empty()) post += "&targetLibrarySectionID=" + targetSection;
         post += "&includeGrabs=1";
         post += "&prefs[oneShot]=true";
-        post += "&prefs[recordPartials]=true";
-        post += "&prefs[minVideoQuality]=0";
-        post += "&prefs[startOffsetMinutes]=2";
-        post += "&prefs[endOffsetMinutes]=2";
+        post += std::string("&prefs[recordPartials]=") + (settings.dvrRecordPartials ? "true" : "false");
+        post += "&prefs[minVideoQuality]=" + std::to_string(settings.dvrMinVideoQuality);
+        post += "&prefs[startOffsetMinutes]=" + std::to_string(settings.dvrStartOffsetMinutes);
+        post += "&prefs[endOffsetMinutes]=" + std::to_string(settings.dvrEndOffsetMinutes);
 
         HttpRequest req;
         req.url = post;

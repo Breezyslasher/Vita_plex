@@ -139,6 +139,15 @@ struct AppSettings {
     // extra /library/sections fetch every time the tab opens.
     std::string defaultDvrSectionId;
     std::string defaultDvrSectionTitle;
+    // Recording knobs forwarded as /media/subscriptions?prefs[...] on the
+    // POST. Defaults mirror what scheduleRecording used to hardcode.
+    int  dvrStartOffsetMinutes = 2;    // Pad recording start by this many minutes
+    int  dvrEndOffsetMinutes   = 2;    // Pad recording end by this many minutes
+    bool dvrRecordPartials     = true; // Keep recordings that didn't fully complete
+    int  dvrMinVideoQuality    = 0;    // 0 = any; higher demands better source quality
+    // EPG window the Live TV tab fetches and renders. Stays a multiple of
+    // 6 so the time-header slots line up; LiveTVTab clamps it on read.
+    int  liveTvGuideHours      = 12;
 
     // When true, PlayerActivity overlays a small mpv-stats panel at
     // the top-left of the video so the user can see codec, hwdec,

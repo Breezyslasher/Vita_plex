@@ -529,6 +529,96 @@ void SettingsTab::createLiveTVSection() {
         return true;
     });
     m_contentBox->addView(m_defaultDvrLibraryCell);
+
+    // Recording padding — most over-the-air programs run 1-2 minutes
+    // long; a 0/1/2/3/5/10 ladder covers the realistic range without
+    // letting the user accidentally clip a 1-hour show into 45 minutes.
+    static const std::vector<int> kOffsetMinutes = { 0, 1, 2, 3, 5, 10 };
+    auto offsetLabels = []() {
+        std::vector<std::string> v;
+        for (int m : kOffsetMinutes)
+            v.push_back(m == 0 ? "Off" : (std::to_string(m) + " min"));
+        return v;
+    };
+    auto indexOfOffset = [](int v) {
+        for (size_t i = 0; i < kOffsetMinutes.size(); i++)
+            if (kOffsetMinutes[i] == v) return (int)i;
+        return 2; // default 2 min
+    };
+
+    m_dvrStartOffsetSelector = new brls::SelectorCell();
+    m_dvrStartOffsetSelector->init("Recording Start Padding",
+                                   offsetLabels(),
+                                   indexOfOffset(settings.dvrStartOffsetMinutes),
+        [](int idx) {
+            AppSettings& s = Application::getInstance().getSettings();
+            s.dvrStartOffsetMinutes = kOffsetMinutes[idx];
+            Application::getInstance().saveSettings();
+        });
+    m_contentBox->addView(m_dvrStartOffsetSelector);
+
+    m_dvrEndOffsetSelector = new brls::SelectorCell();
+    m_dvrEndOffsetSelector->init("Recording End Padding",
+                                 offsetLabels(),
+                                 indexOfOffset(settings.dvrEndOffsetMinutes),
+        [](int idx) {
+            AppSettings& s = Application::getInstance().getSettings();
+            s.dvrEndOffsetMinutes = kOffsetMinutes[idx];
+            Application::getInstance().saveSettings();
+        });
+    m_contentBox->addView(m_dvrEndOffsetSelector);
+
+    m_dvrRecordPartialsToggle = new brls::BooleanCell();
+    m_dvrRecordPartialsToggle->init("Keep Partial Recordings",
+                                    settings.dvrRecordPartials,
+        [](bool value) {
+            AppSettings& s = Application::getInstance().getSettings();
+            s.dvrRecordPartials = value;
+            Application::getInstance().saveSettings();
+        });
+    m_contentBox->addView(m_dvrRecordPartialsToggle);
+
+    // minVideoQuality is a 0-100 threshold on the Plex DVR side; the
+    // tuner picks a stream whose advertised quality meets or exceeds it.
+    // Expose four bands that cover the practical OTA / cable spread.
+    static const std::vector<int> kMinQualities = { 0, 50, 75, 100 };
+    static const std::vector<std::string> kMinQualityLabels = {
+        "Any quality", "Standard (≥480p)", "High (≥720p)", "Best (≥1080p)"
+    };
+    int qIdx = 0;
+    for (size_t i = 0; i < kMinQualities.size(); i++) {
+        if (kMinQualities[i] == settings.dvrMinVideoQuality) { qIdx = (int)i; break; }
+    }
+    m_dvrMinQualitySelector = new brls::SelectorCell();
+    m_dvrMinQualitySelector->init("Minimum Recording Quality",
+                                  kMinQualityLabels, qIdx,
+        [](int idx) {
+            AppSettings& s = Application::getInstance().getSettings();
+            s.dvrMinVideoQuality = kMinQualities[idx];
+            Application::getInstance().saveSettings();
+        });
+    m_contentBox->addView(m_dvrMinQualitySelector);
+
+    // EPG window. LiveTVTab caps at EPG_GRID_HOURS_VISIBLE internally,
+    // so this is a fetch-size hint as much as a render setting. 6/12/24
+    // are the three Plex-side daily slot boundaries.
+    static const std::vector<int> kGuideHours = { 6, 12, 24 };
+    static const std::vector<std::string> kGuideHourLabels = {
+        "6 hours", "12 hours", "24 hours"
+    };
+    int hIdx = 1; // default 12
+    for (size_t i = 0; i < kGuideHours.size(); i++) {
+        if (kGuideHours[i] == settings.liveTvGuideHours) { hIdx = (int)i; break; }
+    }
+    m_liveTvGuideHoursSelector = new brls::SelectorCell();
+    m_liveTvGuideHoursSelector->init("Program Guide Window",
+                                     kGuideHourLabels, hIdx,
+        [](int idx) {
+            AppSettings& s = Application::getInstance().getSettings();
+            s.liveTvGuideHours = kGuideHours[idx];
+            Application::getInstance().saveSettings();
+        });
+    m_contentBox->addView(m_liveTvGuideHoursSelector);
 }
 
 void SettingsTab::createDebugSection() {
