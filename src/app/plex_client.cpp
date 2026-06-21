@@ -2849,36 +2849,42 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
                 // set up to receive (~32 here), so the grid was full
                 // of "No guide data" rows for channels the user
                 // can't tune anyway.
-                bool mapped = false;
+                const ChannelMapping* matchedMapping = nullptr;
                 for (const auto& mapping : m_channelMappings) {
                     if (!channel.key.empty() && channel.key == mapping.channelKey) {
-                        channel.channelIdentifier = mapping.deviceIdentifier;
-                        mapped = true;
+                        matchedMapping = &mapping;
                         break;
                     }
                     if (!identifier.empty() && identifier == mapping.lineupIdentifier) {
-                        channel.channelIdentifier = mapping.deviceIdentifier;
-                        if (channel.key.empty()) {
-                            channel.key = mapping.channelKey;
-                        }
-                        mapped = true;
+                        matchedMapping = &mapping;
+                        if (channel.key.empty()) channel.key = mapping.channelKey;
                         break;
                     }
+                }
+                if (matchedMapping) {
+                    channel.channelIdentifier = matchedMapping->deviceIdentifier;
                 }
 
                 // Only include channels the user can actually tune.
                 // If we have no ChannelMapping data at all (some EPG
                 // providers don't), fall back to the old behaviour so
                 // the EPG isn't empty.
-                if (mapped || m_channelMappings.empty()) {
+                if (matchedMapping || m_channelMappings.empty()) {
                     if (!channel.callSign.empty() || !channel.title.empty()) {
-                        // Dedupe so a channel referenced from multiple
-                        // sections of the response doesn't show up
-                        // twice in the guide.
-                        std::string dedupeKey = !channel.key.empty()
-                            ? channel.key
-                            : channel.channelIdentifier;
-                        if (dedupeKey.empty()) dedupeKey = channel.callSign;
+                        // Dedupe by the mapping's channelKey when one
+                        // matched — two lineup entries can resolve to
+                        // the *same* physical channel via different
+                        // identifiers (lineup key vs lineupIdentifier),
+                        // so keying off channel.key alone wasn't enough
+                        // and the EPG was still showing duplicates of
+                        // 4.1 / 4.2 / 4.3, 22.3 / 22.4, etc.
+                        std::string dedupeKey = matchedMapping
+                            ? matchedMapping->channelKey
+                            : (!channel.key.empty()
+                                ? channel.key
+                                : (!channel.channelIdentifier.empty()
+                                    ? channel.channelIdentifier
+                                    : channel.callSign));
                         if (seenChannelKeys.insert(dedupeKey).second) {
                             channels.push_back(channel);
                         }
