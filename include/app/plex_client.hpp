@@ -461,6 +461,11 @@ private:
     std::string m_authToken;
     std::string m_serverUrl;
     std::string m_lastSessionId;  // Last transcode session ID for stop/restart
+    // Live-TV bookkeeping for the rolling subscription keep-alive. Both are
+    // pulled out of the tune response and consumed by reportLiveTimeline so
+    // the /:/timeline ping uses the same ratingKey the server's parser is
+    // expecting (a stock ratingKey=0 makes it 404 and the keep-alive fails).
+    std::string m_lastLiveRatingKey;
     PlexServer m_currentServer;
     bool m_hasLiveTV = false;
     std::string m_dvrId;  // DVR ID (key) from GET /livetv/dvrs

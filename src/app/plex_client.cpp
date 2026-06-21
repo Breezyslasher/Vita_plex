@@ -2589,11 +2589,16 @@ bool PlexClient::reportLiveTimeline(const std::string& liveSessionUuid, int play
     // live session path as `key=`. The server's parser fires
     //   "[Now] Updated play state for /livetv/sessions/{uuid}"
     // on receipt, which resets the rolling subscription's 300-sec stop-grab
-    // timer. ratingKey is required by the endpoint but isn't used to identify
-    // the session for live TV — any non-empty value works.
+    // timer. The server *resolves* the playing item via ratingKey first,
+    // and 404s if it can't — so we must pass the live-session metadata id
+    // the tune created (captured into m_lastLiveRatingKey).
+    if (m_lastLiveRatingKey.empty()) {
+        brls::Logger::warning("reportLiveTimeline: no live ratingKey captured; skipping keep-alive");
+        return false;
+    }
     std::string keyPath = "/livetv/sessions/" + liveSessionUuid;
     std::string params = "/:/timeline?key=" + HttpClient::urlEncode(keyPath) +
-                         "&ratingKey=0" +
+                         "&ratingKey=" + m_lastLiveRatingKey +
                          "&duration=0" +
                          "&time=0" +
                          "&playbackTime=" + std::to_string(playbackTimeMs) +
@@ -3208,6 +3213,37 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
 
         // The Media uuid is the live session id used as /livetv/sessions/{uuid}.
         sessionUuid = extractJsonValue(tuneResp.body, "uuid");
+
+        // The first numeric ratingKey in the tune response is the live-session
+        // metadata item the server just created (e.g. "Added new metadata item
+        // (Live Session ...) with ID 17594"). /:/timeline needs this to
+        // resolve the playing item — without it the call 404s and the keep-
+        // alive never resets the rolling-subscription stop-grab timer.
+        // EPG/program ratingKeys are URL-encoded strings ("plex%3A%2F%2F..."),
+        // so we skip non-numeric matches when scanning.
+        m_lastLiveRatingKey.clear();
+        {
+            size_t scan = 0;
+            const std::string needle = "\"ratingKey\"";
+            while (true) {
+                size_t at = tuneResp.body.find(needle, scan);
+                if (at == std::string::npos) break;
+                size_t colon = tuneResp.body.find(':', at);
+                if (colon == std::string::npos) break;
+                size_t vs = tuneResp.body.find_first_not_of(" \t\n\r\"", colon + 1);
+                if (vs == std::string::npos) break;
+                if (tuneResp.body[vs] >= '0' && tuneResp.body[vs] <= '9') {
+                    size_t ve = vs;
+                    while (ve < tuneResp.body.length() &&
+                           tuneResp.body[ve] >= '0' && tuneResp.body[ve] <= '9') ve++;
+                    m_lastLiveRatingKey = tuneResp.body.substr(vs, ve - vs);
+                    break;
+                }
+                scan = at + needle.length();
+            }
+        }
+        brls::Logger::debug("tuneLiveTVChannel: live ratingKey = {}",
+                            m_lastLiveRatingKey.empty() ? "(none)" : m_lastLiveRatingKey);
     } else if (tuneResp.statusCode == 0 || tuneResp.statusCode == -1) {
         // Connection drop / partial read - try to recover the uuid if present.
         brls::Logger::warning("tuneLiveTVChannel: Connection dropped (status {}), body so far ({} bytes): {}",
