@@ -2829,10 +2829,20 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
                     channel.channelIdentifier = identifier;
                 }
 
-                // Cross-reference with ChannelMapping to get deviceIdentifier for tuning
+                // Cross-reference with ChannelMapping to (a) get the
+                // device identifier for tuning and (b) drop channels
+                // that aren't actually mapped to a tuner on this
+                // server. Without (b), the EPG was showing every
+                // channel the lineup *covers* (~106 on a typical
+                // OTA list) rather than the ones the user's DVR is
+                // set up to receive (~32 here), so the grid was full
+                // of "No guide data" rows for channels the user
+                // can't tune anyway.
+                bool mapped = false;
                 for (const auto& mapping : m_channelMappings) {
                     if (!channel.key.empty() && channel.key == mapping.channelKey) {
                         channel.channelIdentifier = mapping.deviceIdentifier;
+                        mapped = true;
                         break;
                     }
                     if (!identifier.empty() && identifier == mapping.lineupIdentifier) {
@@ -2840,12 +2850,19 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
                         if (channel.key.empty()) {
                             channel.key = mapping.channelKey;
                         }
+                        mapped = true;
                         break;
                     }
                 }
 
-                if (!channel.callSign.empty() || !channel.title.empty()) {
-                    channels.push_back(channel);
+                // Only include channels the user can actually tune.
+                // If we have no ChannelMapping data at all (some EPG
+                // providers don't), fall back to the old behaviour so
+                // the EPG isn't empty.
+                if (mapped || m_channelMappings.empty()) {
+                    if (!channel.callSign.empty() || !channel.title.empty()) {
+                        channels.push_back(channel);
+                    }
                 }
 
                 pos = objEnd;
