@@ -80,13 +80,19 @@ static const int EPG_GRID_HOURS_VISIBLE = 4;
 // math that sizes the favourites pills also sizes the hero — bumping a
 // platform's channel row up scales the hero proportionally.
 static inline int heroHeight() {
-    return std::max(180, platform::getImageConstraints().livetvChannelRowHeight * 2 + 10);
+    return std::max(220, platform::getImageConstraints().livetvChannelRowHeight * 2 + 40);
 }
 static inline int heroThumbWidth() {
     // Roughly 16:9 of the hero's inner height (height - padding).
-    return std::max(220, (int)((heroHeight() - 16) * 16.0 / 9.0));
+    return std::max(240, (int)((heroHeight() - 16) * 16.0 / 9.0));
 }
-static inline int favPillHeight() { return 44; }
+
+// Favourites are vertical mini-cards: square logo on top + channel number
+// underneath, so the user can recognise the channel at a glance instead of
+// just reading the call sign.
+static inline int favCardLogoSize()  { return 44; }
+static inline int favCardWidth()     { return std::max(70, favCardLogoSize() + 18); }
+static inline int favCardHeight()    { return favCardLogoSize() + 22; }
 
 LiveTVTab::LiveTVTab() {
     this->setAxis(brls::Axis::COLUMN);
@@ -125,7 +131,7 @@ LiveTVTab::LiveTVTab() {
     m_scrollContent->addView(m_channelsLabel);
 
     m_channelsRow = new brls::HScrollingFrame();
-    m_channelsRow->setHeight(favPillHeight() + 8);
+    m_channelsRow->setHeight(favCardHeight() + 12);
     m_channelsRow->setMarginBottom(14);
 
     m_channelsContent = new brls::Box();
@@ -404,7 +410,10 @@ void LiveTVTab::buildHero() {
     m_heroBox->setCornerRadius(14);
     m_heroBox->setBorderColor(tok::hairline());
     m_heroBox->setBorderThickness(1);
-    m_heroBox->setFocusable(true);
+    // Deliberately NOT focusable: borealis' getDefaultFocus stops at the
+    // first focusable ancestor, so making the whole hero focusable would
+    // hide the Watch live / Record buttons inside it from the focus chain.
+    // The buttons themselves are the actual focus targets.
 
     // Thumbnail holder. The Image itself is added invisible — we flip it
     // on once the async load finishes; the holder Box owns the slot in
@@ -474,11 +483,13 @@ void LiveTVTab::buildHero() {
     m_heroTitleLabel->setMarginBottom(4);
     info->addView(m_heroTitleLabel);
 
-    // Summary (clamped to a couple of lines via fixed height).
+    // Summary — let it use the remaining vertical space between the title
+    // and the progress row so two or three lines of description fit
+    // instead of getting clipped.
     m_heroSummaryLabel = new brls::Label();
     m_heroSummaryLabel->setFontSize(13);
     m_heroSummaryLabel->setTextColor(tok::muted());
-    m_heroSummaryLabel->setHeight(34);
+    m_heroSummaryLabel->setGrow(1.0f);
     m_heroSummaryLabel->setMarginBottom(8);
     info->addView(m_heroSummaryLabel);
 
@@ -586,11 +597,9 @@ void LiveTVTab::buildHero() {
 
     m_heroBox->addView(info);
 
-    // Clicking anywhere on the hero card defaults to "watch live".
-    m_heroBox->registerClickAction([this](brls::View*) {
-        onChannelSelected(m_heroChannel);
-        return true;
-    });
+    // Note: no card-wide click action — the box isn't focusable, so the
+    // dpad lands on the Watch live / Record buttons directly. The thumbnail
+    // remains a non-interactive visual.
 }
 
 void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
@@ -628,6 +637,7 @@ void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
         m_heroProgram.endTime     = nowProg.endTime;
         m_heroProgram.ratingKey   = nowProg.ratingKey;
         m_heroProgram.metadataKey = nowProg.metadataKey;
+        m_heroProgram.thumb       = nowProg.thumb;
         m_heroProgramValid = true;
 
         if (m_heroTitleLabel) m_heroTitleLabel->setText(nowProg.title);
@@ -660,13 +670,20 @@ void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
         if (m_heroLiveBadge) m_heroLiveBadge->setVisibility(brls::Visibility::INVISIBLE);
     }
 
-    // Thumbnail (best-effort: use the channel art if Plex returned one).
+    // Thumbnail: prefer the program's own artwork (show/episode poster) so
+    // the hero looks like a programme promo rather than a channel slate.
+    // Falls back to the channel logo when EPG didn't carry program art.
     if (m_heroThumbAlive) m_heroThumbAlive->store(false);
     m_heroThumbAlive = std::make_shared<std::atomic<bool>>(true);
     if (m_heroThumb) m_heroThumb->setVisibility(brls::Visibility::INVISIBLE);
-    if (!channel.thumb.empty()) {
+
+    std::string thumbSrc;
+    if (m_heroProgramValid && !m_heroProgram.thumb.empty()) thumbSrc = m_heroProgram.thumb;
+    if (thumbSrc.empty()) thumbSrc = channel.thumb;
+
+    if (!thumbSrc.empty()) {
         PlexClient& client = PlexClient::getInstance();
-        std::string url = client.getThumbnailUrl(channel.thumb, heroThumbWidth(), heroHeight() - 16);
+        std::string url = client.getThumbnailUrl(thumbSrc, heroThumbWidth(), heroHeight() - 16);
         ImageLoader::loadAsync(url, [](brls::Image* img) {
             if (img) img->setVisibility(brls::Visibility::VISIBLE);
         }, m_heroThumb, m_heroThumbAlive);
@@ -674,51 +691,78 @@ void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
 }
 
 void LiveTVTab::buildFavouritesPill(const LiveTVChannel& channel) {
-    const auto& ic = platform::getImageConstraints();
+    // Vertical mini-card: square channel logo on top, channel number/id
+    // underneath. We *also* keep the call sign as a one-line subtitle
+    // below the number so the card still self-identifies when the logo
+    // hasn't loaded yet or the channel doesn't carry one.
+    auto* card = new brls::Box();
+    card->setAxis(brls::Axis::COLUMN);
+    card->setWidth(favCardWidth());
+    card->setHeight(favCardHeight());
+    card->setMarginRight(8);
+    card->setPadding(4);
+    card->setCornerRadius(10);
+    card->setBackgroundColor(tok::cardRaised());
+    card->setBorderColor(tok::hairline());
+    card->setBorderThickness(1);
+    card->setAlignItems(brls::AlignItems::CENTER);
+    card->setJustifyContent(brls::JustifyContent::FLEX_START);
+    card->setFocusable(true);
 
-    auto* pill = new brls::Box();
-    pill->setAxis(brls::Axis::ROW);
-    pill->setHeight(favPillHeight());
-    pill->setPadding(8);
-    pill->setMarginRight(8);
-    pill->setCornerRadius(favPillHeight() / 2);
-    pill->setBackgroundColor(tok::cardRaised());
-    pill->setBorderColor(tok::hairline());
-    pill->setBorderThickness(1);
-    pill->setAlignItems(brls::AlignItems::CENTER);
-    pill->setJustifyContent(brls::JustifyContent::CENTER);
-    pill->setFocusable(true);
+    // Logo holder so the layout slot is reserved even if the image
+    // hasn't loaded yet.
+    auto* logoBox = new brls::Box();
+    logoBox->setWidth(favCardLogoSize());
+    logoBox->setHeight(favCardLogoSize());
+    logoBox->setCornerRadius(8);
+    logoBox->setBackgroundColor(tok::placeholder());
+    logoBox->setMarginBottom(3);
 
+    auto* logo = new brls::Image();
+    logo->setWidth(favCardLogoSize());
+    logo->setHeight(favCardLogoSize());
+    logo->setScalingType(brls::ImageScalingType::FIT);
+    logo->setCornerRadius(8);
+    logo->setVisibility(brls::Visibility::INVISIBLE);
+    logoBox->addView(logo);
+    card->addView(logoBox);
+
+    if (!channel.thumb.empty()) {
+        PlexClient& client = PlexClient::getInstance();
+        std::string url = client.getThumbnailUrl(channel.thumb,
+                                                 favCardLogoSize() * 2,
+                                                 favCardLogoSize() * 2);
+        auto alive = std::make_shared<std::atomic<bool>>(true);
+        ImageLoader::loadAsync(url, [](brls::Image* img) {
+            if (img) img->setVisibility(brls::Visibility::VISIBLE);
+        }, logo, alive);
+        // The alive flag dangles after this scope but the loader handles
+        // that — if the load races the card's destruction, the loader
+        // drops the result. (The tab's m_alive flag also kills loads
+        // wholesale when the tab tears down via willDisappear.)
+    }
+
+    // Channel number / identifier (e.g. "2.1" or "11").
     auto* num = new brls::Label();
     num->setText(!channel.channelIdentifier.empty()
                  ? channel.channelIdentifier
                  : std::to_string(channel.channelNumber));
-    num->setFontSize(13);
+    num->setFontSize(12);
     num->setTextColor(tok::accent());
-    num->setMarginRight(6);
-    pill->addView(num);
-
-    auto* name = new brls::Label();
-    std::string n = channel.callSign.empty() ? channel.title : channel.callSign;
-    size_t maxChars = (size_t)ic.maxLiveTVChannelChars;
-    if (maxChars > 2 && n.length() > maxChars) n = n.substr(0, maxChars - 1) + "..";
-    name->setText(n);
-    name->setFontSize(13);
-    name->setTextColor(tok::text());
-    pill->addView(name);
+    num->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+    card->addView(num);
 
     LiveTVChannel captured = channel;
-    pill->registerClickAction([this, captured](brls::View*) {
+    card->registerClickAction([this, captured](brls::View*) {
         onChannelSelected(captured);
         return true;
     });
 
-    m_channelsContent->addView(pill);
+    m_channelsContent->addView(card);
 
-    // m_quickAccessProgLabels is still kept so the 60s refresh hook stays a
-    // no-op no-crash when there are no progLabels (the pills don't show
-    // current-program text). Push a null placeholder so the index lines up
-    // with m_channels for callers that iterate both in parallel.
+    // m_quickAccessProgLabels is kept index-aligned with m_channels for the
+    // 60s refresh hook (which now lives in updateQuickAccessPrograms as a
+    // no-op since the cards don't display per-channel "now playing" text).
     m_quickAccessProgLabels.push_back(nullptr);
 }
 
@@ -1035,6 +1079,7 @@ void LiveTVTab::buildEPGGrid() {
                 gp.endTime = prog.endTime;
                 gp.ratingKey = prog.ratingKey;
                 gp.metadataKey = prog.metadataKey;
+                gp.thumb = prog.thumb;
 
                 progCell->registerClickAction([this, gp, capturedChannel](brls::View*) {
                     onProgramSelected(gp, capturedChannel);

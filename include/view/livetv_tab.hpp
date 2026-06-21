@@ -19,6 +19,7 @@ struct GuideProgram {
     int64_t endTime = 0;
     std::string ratingKey;
     std::string metadataKey;  // EPG metadata path for transcode/recording
+    std::string thumb;        // Show poster / episode still for the hero card
     bool isRecording = false;
     int durationMinutes = 30;  // Duration in minutes
 };

@@ -3017,6 +3017,13 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
 
                     std::string progRatingKey = extractJsonValue(metaObj, "ratingKey");
                     std::string progMetadataKey = extractJsonValue(metaObj, "key");
+                    // Pull summary + thumb so the Live TV hero can show the show's
+                    // description and poster, not just the title.
+                    std::string progSummary = extractJsonValue(metaObj, "summary");
+                    std::string progThumb = extractJsonValue(metaObj, "thumb");
+                    if (progThumb.empty()) progThumb = extractJsonValue(metaObj, "grandparentThumb");
+                    if (progThumb.empty()) progThumb = extractJsonValue(metaObj, "parentThumb");
+                    if (progThumb.empty()) progThumb = extractJsonValue(metaObj, "art");
 
                     // Parse Media array for channel + timing info
                     size_t mediaPos = metaObj.find("\"Media\"");
@@ -3089,6 +3096,8 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
                                 prog.endTime = progEnd;
                                 prog.ratingKey = progRatingKey;
                                 prog.metadataKey = progMetadataKey;
+                                prog.summary = progSummary;
+                                prog.thumb = progThumb;
 
                                 // Avoid duplicate programs
                                 bool duplicate = false;
