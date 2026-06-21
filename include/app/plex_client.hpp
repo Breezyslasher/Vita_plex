@@ -166,6 +166,9 @@ struct ChannelProgram {
     int64_t endTime = 0;
     std::string ratingKey;   // EPG rating key (e.g., "plex://episode/...")
     std::string metadataKey; // EPG metadata path (e.g., "/tv.plex.providers.epg.cloud:40/metadata/...")
+    std::string thumb;       // Show/episode artwork URL (gracenote, etc.) — used by the
+                             // Live TV hero so it can show the show's poster instead of
+                             // the channel's station logo.
 };
 
 // DVR ChannelMapping entry (from official /livetv/dvrs API)

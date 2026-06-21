@@ -1,5 +1,11 @@
 /**
  * VitaPlex - Live TV Tab implementation
+ *
+ * Layout: On-Now hero (featured channel + current program) → ★ Favourites
+ * pill strip → full-width Program Guide (the dominant block) → DVR strip.
+ * Built directly on borealis boxes; no XML. Sizes derive from
+ * platform::getImageConstraints() so the same code scales from Vita's
+ * 960x544 logical viewport up to a 1080p TV.
  */
 
 #include "view/livetv_tab.hpp"
@@ -9,24 +15,54 @@
 #include "utils/http_client.hpp"
 #include "platform/platform.hpp"
 #include <algorithm>
+#include <atomic>
 #include <ctime>
 
 namespace vitaplex {
 
+// ============================================================================
+// Design tokens
+// ============================================================================
+// Borealis already exposes most of these via the dark theme, but the hero
+// + guide redesign mixes a couple of bespoke shades (current-cell tint,
+// cyan accent for the now-line) so we collect them in one place for
+// consistency rather than scattering nvgRGBA literals across the build
+// methods.
+namespace tok {
+    static inline NVGcolor accent()       { return nvgRGB(137, 241, 242); }
+    static inline NVGcolor accentDeep()   { return nvgRGB(25, 138, 198); }
+    static inline NVGcolor live()         { return nvgRGB(255, 86, 88); }
+    static inline NVGcolor text()         { return nvgRGB(255, 255, 255); }
+    static inline NVGcolor muted()        { return nvgRGB(163, 163, 163); }
+    static inline NVGcolor dim()          { return nvgRGB(124, 124, 132); }
+    static inline NVGcolor card()         { return nvgRGB(52, 52, 62); }
+    static inline NVGcolor cardRaised()   { return nvgRGB(60, 60, 72); }
+    static inline NVGcolor hairline()     { return nvgRGB(67, 67, 74); }
+    static inline NVGcolor hero()         { return nvgRGB(38, 42, 48); }
+    static inline NVGcolor cellUpcoming() { return nvgRGB(60, 60, 72); }
+    static inline NVGcolor cellNow()      { return nvgRGB(47, 68, 82); }
+    static inline NVGcolor placeholder()  { return nvgRGB(42, 42, 49); }
+    static inline NVGcolor primaryInk()   { return nvgRGB(22, 32, 42); }
+    static inline NVGcolor btnSecondary() { return nvgRGB(67, 67, 79); }
+}
+
 // Constants for EPG grid layout. Time-slot / row / channel-column widths are
 // derived from the platform layer at runtime so larger-screen builds get wider
 // cells than the Vita default.
-static const int TIME_HEADER_HEIGHT = 30;     // Height of time header
+static const int TIME_HEADER_HEIGHT = 36;
 
 static inline int livetvTimeSlotWidth() {
     return platform::getImageConstraints().livetvChannelCardWidth;
 }
 static inline int livetvRowHeight() {
-    return platform::getImageConstraints().listRowHeight;
+    // Slightly taller than the platform's listRowHeight so two-line cells
+    // fit the redesign's 58px target without crowding.
+    return std::max(54, platform::getImageConstraints().listRowHeight + 6);
 }
 static inline int livetvChannelColWidth() {
-    // Slightly narrower than the quick-access card width.
-    return std::max(90, platform::getImageConstraints().livetvChannelCardWidth - 20);
+    // The redesign target is 158 on logical 1280×720; clamp to a reasonable
+    // minimum on tighter Vita layouts.
+    return std::max(110, platform::getImageConstraints().livetvChannelCardWidth + 38);
 }
 
 // Cache durations
@@ -39,6 +75,24 @@ static const int64_t REFRESH_INTERVAL = 60;         // 1 minute between "now pla
 // have horizontal scroll, so anything past the viewport width is unreachable
 // and pure overdraw. Four hours = eight 30-min slots ≈ on-screen on Vita.
 static const int EPG_GRID_HOURS_VISIBLE = 4;
+
+// Hero dimensions. Derived from livetvChannelRowHeight so the same scaling
+// math that sizes the favourites pills also sizes the hero — bumping a
+// platform's channel row up scales the hero proportionally.
+static inline int heroHeight() {
+    return std::max(220, platform::getImageConstraints().livetvChannelRowHeight * 2 + 40);
+}
+static inline int heroThumbWidth() {
+    // Roughly 16:9 of the hero's inner height (height - padding).
+    return std::max(240, (int)((heroHeight() - 16) * 16.0 / 9.0));
+}
+
+// Favourites are vertical mini-cards: square logo on top + channel number
+// underneath, so the user can recognise the channel at a glance instead of
+// just reading the call sign.
+static inline int favCardLogoSize()  { return 44; }
+static inline int favCardWidth()     { return std::max(70, favCardLogoSize() + 18); }
+static inline int favCardHeight()    { return favCardLogoSize() + 22; }
 
 LiveTVTab::LiveTVTab() {
     this->setAxis(brls::Axis::COLUMN);
@@ -60,19 +114,25 @@ LiveTVTab::LiveTVTab() {
     m_titleLabel = new brls::Label();
     m_titleLabel->setText("Live TV");
     m_titleLabel->setFontSize(28);
-    m_titleLabel->setMarginBottom(20);
+    m_titleLabel->setMarginBottom(16);
     m_scrollContent->addView(m_titleLabel);
 
-    // Quick Channels section
+    // On-Now hero (single big focusable card at the top)
+    buildHero();
+    m_scrollContent->addView(m_heroBox);
+
+    // ★ Favourites pill strip
     m_channelsLabel = new brls::Label();
-    m_channelsLabel->setText("Quick Access");
-    m_channelsLabel->setFontSize(22);
-    m_channelsLabel->setMarginBottom(10);
+    m_channelsLabel->setText("★ Favourites");
+    m_channelsLabel->setFontSize(16);
+    m_channelsLabel->setTextColor(tok::muted());
+    m_channelsLabel->setMarginTop(6);
+    m_channelsLabel->setMarginBottom(6);
     m_scrollContent->addView(m_channelsLabel);
 
     m_channelsRow = new brls::HScrollingFrame();
-    m_channelsRow->setHeight(platform::getImageConstraints().livetvChannelRowHeight);
-    m_channelsRow->setMarginBottom(20);
+    m_channelsRow->setHeight(favCardHeight() + 12);
+    m_channelsRow->setMarginBottom(14);
 
     m_channelsContent = new brls::Box();
     m_channelsContent->setAxis(brls::Axis::ROW);
@@ -82,29 +142,35 @@ LiveTVTab::LiveTVTab() {
     m_channelsRow->setContentView(m_channelsContent);
     m_scrollContent->addView(m_channelsRow);
 
-    // EPG Guide section
+    // EPG Guide — the dominant block.
     m_guideLabel = new brls::Label();
     m_guideLabel->setText("Program Guide");
-    m_guideLabel->setFontSize(22);
-    m_guideLabel->setMarginBottom(10);
-    m_guideLabel->setMarginTop(10);
+    m_guideLabel->setFontSize(20);
+    m_guideLabel->setMarginBottom(8);
+    m_guideLabel->setMarginTop(4);
     m_scrollContent->addView(m_guideLabel);
 
-    // Guide container - holds time header and channel grid
     m_guideContainer = new brls::Box();
     m_guideContainer->setAxis(brls::Axis::COLUMN);
-    m_guideContainer->setHeight(platform::getImageConstraints().livetvGuideHeight);  // Fixed height for guide section
+    // Bumped from the platform default to put ~6 channel rows on screen
+    // since the hero/favourites already eat ~270px above.
+    m_guideContainer->setHeight(std::max(280, platform::getImageConstraints().livetvGuideHeight + 40));
     m_guideContainer->setMarginBottom(20);
+    m_guideContainer->setBackgroundColor(tok::card());
+    m_guideContainer->setCornerRadius(14);
+    m_guideContainer->setBorderColor(tok::hairline());
+    m_guideContainer->setBorderThickness(1);
 
-    // Time header row (horizontal scroll)
+    // Time header row (horizontal scroll, offset to clear the sticky
+    // channel column on the left).
     m_timeHeaderScroll = new brls::HScrollingFrame();
     m_timeHeaderScroll->setHeight(TIME_HEADER_HEIGHT);
-    m_timeHeaderScroll->setMarginLeft(livetvChannelColWidth());  // Offset for channel column
+    m_timeHeaderScroll->setMarginLeft(livetvChannelColWidth());
 
     m_timeHeaderBox = new brls::Box();
     m_timeHeaderBox->setAxis(brls::Axis::ROW);
     m_timeHeaderBox->setJustifyContent(brls::JustifyContent::FLEX_START);
-    m_timeHeaderBox->setBackgroundColor(nvgRGBA(40, 40, 50, 255));
+    m_timeHeaderBox->setBackgroundColor(nvgRGBA(0, 0, 0, 56));  // ~22% black overlay
     m_timeHeaderScroll->setContentView(m_timeHeaderBox);
     m_guideContainer->addView(m_timeHeaderScroll);
 
@@ -119,14 +185,27 @@ LiveTVTab::LiveTVTab() {
     m_guideScrollV->setContentView(m_guideBox);
     m_guideContainer->addView(m_guideScrollV);
 
+    // Current-time vertical line: an absolutely-positioned cyan rule
+    // overlaid on the guide container. Positioned by updateCurrentTimeLine
+    // once the grid is built and any time the layout refreshes.
+    m_currentTimeLine = new brls::Box();
+    m_currentTimeLine->setPositionType(brls::PositionType::ABSOLUTE);
+    m_currentTimeLine->setBackgroundColor(tok::accent());
+    m_currentTimeLine->setWidth(2);
+    m_currentTimeLine->setHeight(1);  // grows in updateCurrentTimeLine
+    m_currentTimeLine->setPositionTop(0);
+    m_currentTimeLine->setPositionLeft(-1);
+    m_currentTimeLine->setVisibility(brls::Visibility::INVISIBLE);
+    m_guideContainer->addView(m_currentTimeLine);
+
     m_scrollContent->addView(m_guideContainer);
 
-    // DVR Recordings section
+    // DVR Recordings strip
     m_dvrLabel = new brls::Label();
     m_dvrLabel->setText("DVR Recordings");
-    m_dvrLabel->setFontSize(22);
-    m_dvrLabel->setMarginBottom(10);
-    m_dvrLabel->setMarginTop(10);
+    m_dvrLabel->setFontSize(20);
+    m_dvrLabel->setMarginBottom(8);
+    m_dvrLabel->setMarginTop(4);
     m_scrollContent->addView(m_dvrLabel);
 
     m_dvrRow = new brls::HScrollingFrame();
@@ -144,20 +223,19 @@ LiveTVTab::LiveTVTab() {
     m_scrollView->setContentView(m_scrollContent);
     this->addView(m_scrollView);
 
-    // Load content
     brls::Logger::debug("LiveTVTab: Loading content...");
     loadChannels();
 }
 
 LiveTVTab::~LiveTVTab() {
     if (m_alive) { *m_alive = false; }
+    if (m_heroThumbAlive) { m_heroThumbAlive->store(false); }
 }
 
 void LiveTVTab::willDisappear(bool resetState) {
     brls::Box::willDisappear(resetState);
     if (m_alive) *m_alive = false;
-    // Cancel any in-flight loads owned by this tab; do NOT clear the global
-    // ImageLoader cache here — other tabs share it.
+    if (m_heroThumbAlive) m_heroThumbAlive->store(false);
     ImageLoader::cancelAll();
 }
 
@@ -173,8 +251,6 @@ bool LiveTVTab::isDescendantOf(brls::View* view, brls::View* ancestor) {
 brls::View* LiveTVTab::findFirstFocusableInBox(brls::Box* box) {
     if (!box) return nullptr;
     for (auto* child : box->getChildren()) {
-        // Skip rows/cards the viewport culling has hidden — an INVISIBLE view
-        // is off-screen and can't be a sane focus target.
         if (child->getVisibility() != brls::Visibility::VISIBLE) continue;
         if (child->isFocusable()) return child;
         brls::Box* childBox = dynamic_cast<brls::Box*>(child);
@@ -204,36 +280,41 @@ brls::View* LiveTVTab::findLastFocusableInBox(brls::Box* box) {
 
 brls::View* LiveTVTab::getNextFocus(brls::FocusDirection direction, brls::View* currentView) {
     // Section layout (top to bottom):
-    //   Quick Access (m_channelsRow) -> Program Guide (m_guideBox)
-    //   -> DVR Recordings (m_dvrRow)
+    //   Hero (m_heroBox) -> Favourites (m_channelsRow) -> Guide (m_guideBox)
+    //   -> DVR (m_dvrRow)
     //
     // Row-to-row movement *inside* the guide is handled by borealis' natural
     // navigation (m_guideBox is a COLUMN box, so it resolves UP/DOWN between
-    // rows itself). This override is only consulted when that bubbles up to the
-    // tab — i.e. at a section boundary — so all we do here is hop to the
-    // adjacent section. The previous version intercepted every UP/DOWN, which
-    // is what broke moving between guide rows.
-    const bool inQuick = isDescendantOf(currentView, m_channelsRow);
+    // rows itself). This override only kicks in when that bubbles up to the
+    // tab — i.e. at a section boundary — so all we do is hop to the adjacent
+    // section.
+    const bool inHero  = isDescendantOf(currentView, m_heroBox);
+    const bool inFav   = isDescendantOf(currentView, m_channelsRow);
     const bool inGuide = isDescendantOf(currentView, m_guideContainer);
     const bool inDvr   = isDescendantOf(currentView, m_dvrRow);
 
     if (direction == brls::FocusDirection::DOWN) {
-        if (inQuick) {
+        if (inHero) {
+            if (brls::View* t = findFirstFocusableInBox(m_channelsContent)) return t;
+            if (brls::View* t = findFirstFocusableInBox(m_guideBox)) return t;
+            if (brls::View* t = findFirstFocusableInBox(m_dvrContent)) return t;
+        } else if (inFav) {
             if (brls::View* t = findFirstFocusableInBox(m_guideBox)) return t;
             if (brls::View* t = findFirstFocusableInBox(m_dvrContent)) return t;
         } else if (inGuide) {
-            // Reached here means we're at the bottom row of the guide.
             if (brls::View* t = findFirstFocusableInBox(m_dvrContent)) return t;
         }
     }
     else if (direction == brls::FocusDirection::UP) {
         if (inDvr) {
-            // Land on the last on-screen guide row, not the very first one.
             if (brls::View* t = findLastFocusableInBox(m_guideBox)) return t;
             if (brls::View* t = findFirstFocusableInBox(m_channelsContent)) return t;
+            if (brls::View* t = findFirstFocusableInBox(m_heroBox)) return t;
         } else if (inGuide) {
-            // Reached here means we're at the top row of the guide.
             if (brls::View* t = findFirstFocusableInBox(m_channelsContent)) return t;
+            if (brls::View* t = findFirstFocusableInBox(m_heroBox)) return t;
+        } else if (inFav) {
+            if (brls::View* t = findFirstFocusableInBox(m_heroBox)) return t;
         }
     }
 
@@ -244,8 +325,6 @@ brls::View* LiveTVTab::getNextFocus(brls::FocusDirection direction, brls::View* 
 void LiveTVTab::cullToViewport(brls::Box* content, brls::View* viewport, bool vertical) {
     if (!content || !viewport) return;
 
-    // Keep one extra row/card of slack beyond each edge so the item about to
-    // scroll in (and a focus target just past the edge) is already live.
     const float margin = vertical ? (float)livetvRowHeight() : (float)livetvTimeSlotWidth();
 
     const float vpStart = vertical ? viewport->getY() : viewport->getX();
@@ -259,14 +338,11 @@ void LiveTVTab::cullToViewport(brls::Box* content, brls::View* viewport, bool ve
 
         bool visible = (cEnd >= vpStart - margin) && (cStart <= vpEnd + margin);
 
-        // Never hide the row/card that currently owns focus.
         if (!visible && focus && isDescendantOf(focus, child))
             visible = true;
 
         const brls::Visibility want = visible ? brls::Visibility::VISIBLE
                                               : brls::Visibility::INVISIBLE;
-        // setVisibility fires willAppear/willDisappear, so only touch it on a
-        // real state change (cheap no-op for the steady state).
         if (child->getVisibility() != want)
             child->setVisibility(want);
     }
@@ -274,16 +350,18 @@ void LiveTVTab::cullToViewport(brls::Box* content, brls::View* viewport, bool ve
 
 void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height,
                      brls::Style style, brls::FrameContext* ctx) {
-    // With 100+ channels the EPG grid holds ~100 rows and the Quick Access /
+    // With 100+ channels the EPG grid holds ~100 rows and the favourites /
     // DVR rows hold ~100 cards each. borealis only culls off-screen *leaf*
-    // views, never nested Boxes, so every off-screen row/card still painted its
-    // background, border and corner radius every frame — pure overdraw that
-    // tanked the frame rate on Vita. Toggle INVISIBLE on anything scrolled out
-    // of its viewport so frame() early-outs for the entire subtree. INVISIBLE
-    // (not GONE) keeps the layout, so scroll extents and positions are intact.
+    // views, never nested Boxes, so every off-screen row/card still painted
+    // every frame — pure overdraw. Toggle INVISIBLE on anything scrolled
+    // out of its viewport so frame() early-outs for the entire subtree.
     cullToViewport(m_guideBox, m_guideScrollV, /*vertical=*/true);
     cullToViewport(m_channelsContent, m_channelsRow, /*vertical=*/false);
     cullToViewport(m_dvrContent, m_dvrRow, /*vertical=*/false);
+
+    // Slide the cyan "now" line each frame so it tracks the wall clock
+    // even when the guide grid itself doesn't rebuild.
+    updateCurrentTimeLine();
 
     brls::Box::draw(vg, x, y, width, height, style, ctx);
 }
@@ -293,46 +371,404 @@ void LiveTVTab::onFocusGained() {
     m_alive = std::make_shared<bool>(true);
 
     if (!m_loaded) {
-        // First load
         loadChannels();
     } else {
-        // Already loaded - check if we need a refresh
         int64_t now = time(nullptr);
-
         if (now - m_lastFullLoadTime > FULL_RELOAD_INTERVAL) {
-            // Full reload if EPG data is stale (> 5 min)
             brls::Logger::debug("LiveTVTab: Full EPG reload (stale data)");
             loadChannels();
         } else if (now - m_lastRefreshTime > REFRESH_INTERVAL) {
-            // Lightweight refresh: just update "now playing" labels
             brls::Logger::debug("LiveTVTab: Refreshing current programs only");
             refreshCurrentPrograms();
         }
-        // Otherwise: data is fresh, do nothing (no rebuild)
     }
 }
 
 std::string LiveTVTab::formatTime(int64_t timestamp) {
-    if (timestamp == 0) {
-        // Use current time if no timestamp
-        timestamp = time(nullptr);
-    }
+    if (timestamp == 0) timestamp = time(nullptr);
 
     time_t t = (time_t)timestamp;
     struct tm* tm_info = localtime(&t);
 
     char buffer[16];
     strftime(buffer, sizeof(buffer), "%I:%M %p", tm_info);
-    // Remove leading zero from hour
-    if (buffer[0] == '0') {
-        return std::string(buffer + 1);
-    }
+    if (buffer[0] == '0') return std::string(buffer + 1);
     return std::string(buffer);
+}
+
+// ============================================================================
+// Hero panel
+// ============================================================================
+
+void LiveTVTab::buildHero() {
+    m_heroBox = new brls::Box();
+    m_heroBox->setAxis(brls::Axis::ROW);
+    m_heroBox->setHeight(heroHeight());
+    m_heroBox->setMarginBottom(16);
+    m_heroBox->setPadding(8);
+    m_heroBox->setBackgroundColor(tok::hero());
+    m_heroBox->setCornerRadius(14);
+    m_heroBox->setBorderColor(tok::hairline());
+    m_heroBox->setBorderThickness(1);
+    // Deliberately NOT focusable: borealis' getDefaultFocus stops at the
+    // first focusable ancestor, so making the whole hero focusable would
+    // hide the Watch live / Record buttons inside it from the focus chain.
+    // The buttons themselves are the actual focus targets.
+
+    // Thumbnail holder. The Image itself is added invisible — we flip it
+    // on once the async load finishes; the holder Box owns the slot in
+    // the meantime so layout doesn't jump.
+    m_heroThumbHolder = new brls::Box();
+    m_heroThumbHolder->setWidth(heroThumbWidth());
+    m_heroThumbHolder->setHeight(heroHeight() - 16);
+    m_heroThumbHolder->setMarginRight(14);
+    m_heroThumbHolder->setBackgroundColor(tok::placeholder());
+    m_heroThumbHolder->setCornerRadius(10);
+
+    m_heroThumb = new brls::Image();
+    m_heroThumb->setWidth(heroThumbWidth());
+    m_heroThumb->setHeight(heroHeight() - 16);
+    m_heroThumb->setScalingType(brls::ImageScalingType::FIT);
+    m_heroThumb->setCornerRadius(10);
+    m_heroThumb->setVisibility(brls::Visibility::INVISIBLE);
+    m_heroThumbHolder->addView(m_heroThumb);
+    m_heroBox->addView(m_heroThumbHolder);
+
+    // Right info column.
+    auto* info = new brls::Box();
+    info->setAxis(brls::Axis::COLUMN);
+    info->setGrow(1.0f);
+    info->setPadding(4);
+    info->setJustifyContent(brls::JustifyContent::FLEX_START);
+
+    // Row: LIVE badge + channel name + channel id.
+    auto* topRow = new brls::Box();
+    topRow->setAxis(brls::Axis::ROW);
+    topRow->setAlignItems(brls::AlignItems::CENTER);
+    topRow->setHeight(22);
+    topRow->setMarginBottom(8);
+
+    m_heroLiveBadge = new brls::Box();
+    m_heroLiveBadge->setWidth(46);
+    m_heroLiveBadge->setHeight(20);
+    m_heroLiveBadge->setBackgroundColor(tok::live());
+    m_heroLiveBadge->setCornerRadius(4);
+    m_heroLiveBadge->setJustifyContent(brls::JustifyContent::CENTER);
+    m_heroLiveBadge->setAlignItems(brls::AlignItems::CENTER);
+    m_heroLiveBadge->setMarginRight(10);
+    auto* liveTxt = new brls::Label();
+    liveTxt->setText("LIVE");
+    liveTxt->setFontSize(11);
+    liveTxt->setTextColor(tok::text());
+    m_heroLiveBadge->addView(liveTxt);
+    topRow->addView(m_heroLiveBadge);
+
+    m_heroChannelName = new brls::Label();
+    m_heroChannelName->setFontSize(14);
+    m_heroChannelName->setTextColor(tok::text());
+    m_heroChannelName->setMarginRight(8);
+    topRow->addView(m_heroChannelName);
+
+    m_heroChannelId = new brls::Label();
+    m_heroChannelId->setFontSize(12);
+    m_heroChannelId->setTextColor(tok::muted());
+    topRow->addView(m_heroChannelId);
+
+    info->addView(topRow);
+
+    // Program title.
+    m_heroTitleLabel = new brls::Label();
+    m_heroTitleLabel->setFontSize(22);
+    m_heroTitleLabel->setTextColor(tok::text());
+    m_heroTitleLabel->setMarginBottom(4);
+    info->addView(m_heroTitleLabel);
+
+    // Summary — let it use the remaining vertical space between the title
+    // and the progress row so two or three lines of description fit
+    // instead of getting clipped.
+    m_heroSummaryLabel = new brls::Label();
+    m_heroSummaryLabel->setFontSize(13);
+    m_heroSummaryLabel->setTextColor(tok::muted());
+    m_heroSummaryLabel->setGrow(1.0f);
+    m_heroSummaryLabel->setMarginBottom(8);
+    info->addView(m_heroSummaryLabel);
+
+    // Progress row: start time · [bar] · end time · pct.
+    auto* progressRow = new brls::Box();
+    progressRow->setAxis(brls::Axis::ROW);
+    progressRow->setAlignItems(brls::AlignItems::CENTER);
+    progressRow->setHeight(18);
+    progressRow->setMarginBottom(10);
+
+    m_heroStartLabel = new brls::Label();
+    m_heroStartLabel->setFontSize(11);
+    m_heroStartLabel->setTextColor(tok::dim());
+    m_heroStartLabel->setWidth(56);
+    progressRow->addView(m_heroStartLabel);
+
+    m_heroProgressTrack = new brls::Box();
+    m_heroProgressTrack->setHeight(5);
+    m_heroProgressTrack->setGrow(1.0f);
+    m_heroProgressTrack->setBackgroundColor(nvgRGBA(255, 255, 255, 33));
+    m_heroProgressTrack->setCornerRadius(3);
+    m_heroProgressTrack->setMarginLeft(8);
+    m_heroProgressTrack->setMarginRight(8);
+
+    m_heroProgressFill = new brls::Box();
+    m_heroProgressFill->setHeight(5);
+    m_heroProgressFill->setWidth(0);
+    m_heroProgressFill->setBackgroundColor(tok::accent());
+    m_heroProgressFill->setCornerRadius(3);
+    m_heroProgressTrack->addView(m_heroProgressFill);
+    progressRow->addView(m_heroProgressTrack);
+
+    m_heroEndLabel = new brls::Label();
+    m_heroEndLabel->setFontSize(11);
+    m_heroEndLabel->setTextColor(tok::dim());
+    m_heroEndLabel->setWidth(56);
+    m_heroEndLabel->setHorizontalAlign(brls::HorizontalAlign::RIGHT);
+    progressRow->addView(m_heroEndLabel);
+
+    m_heroPctLabel = new brls::Label();
+    m_heroPctLabel->setFontSize(11);
+    m_heroPctLabel->setTextColor(tok::accent());
+    m_heroPctLabel->setWidth(40);
+    m_heroPctLabel->setMarginLeft(8);
+    m_heroPctLabel->setHorizontalAlign(brls::HorizontalAlign::RIGHT);
+    progressRow->addView(m_heroPctLabel);
+
+    info->addView(progressRow);
+
+    // Button row.
+    auto* btnRow = new brls::Box();
+    btnRow->setAxis(brls::Axis::ROW);
+    btnRow->setHeight(36);
+    btnRow->setAlignItems(brls::AlignItems::CENTER);
+
+    m_heroWatchBtn = new brls::Box();
+    m_heroWatchBtn->setHeight(34);
+    m_heroWatchBtn->setWidth(140);
+    m_heroWatchBtn->setMarginRight(10);
+    m_heroWatchBtn->setPadding(8);
+    m_heroWatchBtn->setCornerRadius(8);
+    m_heroWatchBtn->setBackgroundColor(tok::accent());
+    m_heroWatchBtn->setJustifyContent(brls::JustifyContent::CENTER);
+    m_heroWatchBtn->setAlignItems(brls::AlignItems::CENTER);
+    m_heroWatchBtn->setFocusable(true);
+    auto* watchTxt = new brls::Label();
+    watchTxt->setText("▶  Watch live");
+    watchTxt->setFontSize(14);
+    watchTxt->setTextColor(tok::primaryInk());
+    m_heroWatchBtn->addView(watchTxt);
+    m_heroWatchBtn->registerClickAction([this](brls::View*) {
+        onChannelSelected(m_heroChannel);
+        return true;
+    });
+    btnRow->addView(m_heroWatchBtn);
+
+    m_heroRecordBtn = new brls::Box();
+    m_heroRecordBtn->setHeight(34);
+    m_heroRecordBtn->setWidth(110);
+    m_heroRecordBtn->setPadding(8);
+    m_heroRecordBtn->setCornerRadius(8);
+    m_heroRecordBtn->setBackgroundColor(tok::btnSecondary());
+    m_heroRecordBtn->setJustifyContent(brls::JustifyContent::CENTER);
+    m_heroRecordBtn->setAlignItems(brls::AlignItems::CENTER);
+    m_heroRecordBtn->setFocusable(true);
+    auto* recTxt = new brls::Label();
+    recTxt->setText("●  Record");
+    recTxt->setFontSize(14);
+    recTxt->setTextColor(tok::text());
+    m_heroRecordBtn->addView(recTxt);
+    m_heroRecordBtn->registerClickAction([this](brls::View*) {
+        if (m_heroProgramValid) {
+            scheduleRecording(m_heroProgram, m_heroChannel);
+        } else {
+            brls::Dialog* dialog = new brls::Dialog(
+                std::string("No current program to record on ") + m_heroChannel.title);
+            dialog->addButton("OK", []() {});
+            dialog->open();
+        }
+        return true;
+    });
+    btnRow->addView(m_heroRecordBtn);
+
+    info->addView(btnRow);
+
+    m_heroBox->addView(info);
+
+    // Note: no card-wide click action — the box isn't focusable, so the
+    // dpad lands on the Watch live / Record buttons directly. The thumbnail
+    // remains a non-interactive visual.
+}
+
+void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
+    m_heroChannel = channel;
+
+    // Channel chrome.
+    if (m_heroChannelName) {
+        m_heroChannelName->setText(channel.callSign.empty() ? channel.title : channel.callSign);
+    }
+    if (m_heroChannelId) {
+        std::string chId = !channel.channelIdentifier.empty()
+            ? "CH " + channel.channelIdentifier
+            : (channel.channelNumber > 0 ? "CH " + std::to_string(channel.channelNumber) : "");
+        m_heroChannelId->setText(chId);
+    }
+
+    // Current program (and a sensible fallback when EPG has nothing on now).
+    time_t now = time(nullptr);
+    ChannelProgram nowProg;
+    bool found = false;
+    for (const auto& p : channel.programs) {
+        if (p.startTime <= (int64_t)now && p.endTime > (int64_t)now) { nowProg = p; found = true; break; }
+    }
+    if (!found && !channel.currentProgram.empty() && channel.programStart > 0) {
+        nowProg.title = channel.currentProgram;
+        nowProg.startTime = channel.programStart;
+        nowProg.endTime = channel.programEnd > 0 ? channel.programEnd : channel.programStart + 1800;
+        found = true;
+    }
+
+    if (found) {
+        m_heroProgram.title       = nowProg.title;
+        m_heroProgram.summary     = nowProg.summary;
+        m_heroProgram.startTime   = nowProg.startTime;
+        m_heroProgram.endTime     = nowProg.endTime;
+        m_heroProgram.ratingKey   = nowProg.ratingKey;
+        m_heroProgram.metadataKey = nowProg.metadataKey;
+        m_heroProgram.thumb       = nowProg.thumb;
+        m_heroProgramValid = true;
+
+        if (m_heroTitleLabel) m_heroTitleLabel->setText(nowProg.title);
+        if (m_heroSummaryLabel)
+            m_heroSummaryLabel->setText(nowProg.summary.empty() ? std::string(" ") : nowProg.summary);
+        if (m_heroStartLabel) m_heroStartLabel->setText(formatTime(nowProg.startTime));
+        if (m_heroEndLabel)   m_heroEndLabel->setText(formatTime(nowProg.endTime));
+
+        int pct = 0;
+        if (nowProg.endTime > nowProg.startTime) {
+            int64_t elapsed = std::max<int64_t>(0, (int64_t)now - nowProg.startTime);
+            int64_t dur     = nowProg.endTime - nowProg.startTime;
+            pct = (int)std::min<int64_t>(100, (elapsed * 100) / dur);
+        }
+        if (m_heroPctLabel) m_heroPctLabel->setText(std::to_string(pct) + "%");
+        if (m_heroProgressFill && m_heroProgressTrack) {
+            float trackW = m_heroProgressTrack->getWidth();
+            if (trackW <= 0) trackW = 200;  // pre-layout fallback
+            m_heroProgressFill->setWidth(trackW * (pct / 100.0f));
+        }
+        if (m_heroLiveBadge) m_heroLiveBadge->setVisibility(brls::Visibility::VISIBLE);
+    } else {
+        m_heroProgramValid = false;
+        if (m_heroTitleLabel) m_heroTitleLabel->setText(channel.title);
+        if (m_heroSummaryLabel) m_heroSummaryLabel->setText("No guide data");
+        if (m_heroStartLabel) m_heroStartLabel->setText("");
+        if (m_heroEndLabel)   m_heroEndLabel->setText("");
+        if (m_heroPctLabel)   m_heroPctLabel->setText("");
+        if (m_heroProgressFill) m_heroProgressFill->setWidth(0);
+        if (m_heroLiveBadge) m_heroLiveBadge->setVisibility(brls::Visibility::INVISIBLE);
+    }
+
+    // Thumbnail: prefer the program's own artwork (show/episode poster) so
+    // the hero looks like a programme promo rather than a channel slate.
+    // Falls back to the channel logo when EPG didn't carry program art.
+    if (m_heroThumbAlive) m_heroThumbAlive->store(false);
+    m_heroThumbAlive = std::make_shared<std::atomic<bool>>(true);
+    if (m_heroThumb) m_heroThumb->setVisibility(brls::Visibility::INVISIBLE);
+
+    std::string thumbSrc;
+    if (m_heroProgramValid && !m_heroProgram.thumb.empty()) thumbSrc = m_heroProgram.thumb;
+    if (thumbSrc.empty()) thumbSrc = channel.thumb;
+
+    if (!thumbSrc.empty()) {
+        PlexClient& client = PlexClient::getInstance();
+        std::string url = client.getThumbnailUrl(thumbSrc, heroThumbWidth(), heroHeight() - 16);
+        ImageLoader::loadAsync(url, [](brls::Image* img) {
+            if (img) img->setVisibility(brls::Visibility::VISIBLE);
+        }, m_heroThumb, m_heroThumbAlive);
+    }
+}
+
+void LiveTVTab::buildFavouritesPill(const LiveTVChannel& channel) {
+    // Vertical mini-card: square channel logo on top, channel number/id
+    // underneath. We *also* keep the call sign as a one-line subtitle
+    // below the number so the card still self-identifies when the logo
+    // hasn't loaded yet or the channel doesn't carry one.
+    auto* card = new brls::Box();
+    card->setAxis(brls::Axis::COLUMN);
+    card->setWidth(favCardWidth());
+    card->setHeight(favCardHeight());
+    card->setMarginRight(8);
+    card->setPadding(4);
+    card->setCornerRadius(10);
+    card->setBackgroundColor(tok::cardRaised());
+    card->setBorderColor(tok::hairline());
+    card->setBorderThickness(1);
+    card->setAlignItems(brls::AlignItems::CENTER);
+    card->setJustifyContent(brls::JustifyContent::FLEX_START);
+    card->setFocusable(true);
+
+    // Logo holder so the layout slot is reserved even if the image
+    // hasn't loaded yet.
+    auto* logoBox = new brls::Box();
+    logoBox->setWidth(favCardLogoSize());
+    logoBox->setHeight(favCardLogoSize());
+    logoBox->setCornerRadius(8);
+    logoBox->setBackgroundColor(tok::placeholder());
+    logoBox->setMarginBottom(3);
+
+    auto* logo = new brls::Image();
+    logo->setWidth(favCardLogoSize());
+    logo->setHeight(favCardLogoSize());
+    logo->setScalingType(brls::ImageScalingType::FIT);
+    logo->setCornerRadius(8);
+    logo->setVisibility(brls::Visibility::INVISIBLE);
+    logoBox->addView(logo);
+    card->addView(logoBox);
+
+    if (!channel.thumb.empty()) {
+        PlexClient& client = PlexClient::getInstance();
+        std::string url = client.getThumbnailUrl(channel.thumb,
+                                                 favCardLogoSize() * 2,
+                                                 favCardLogoSize() * 2);
+        auto alive = std::make_shared<std::atomic<bool>>(true);
+        ImageLoader::loadAsync(url, [](brls::Image* img) {
+            if (img) img->setVisibility(brls::Visibility::VISIBLE);
+        }, logo, alive);
+        // The alive flag dangles after this scope but the loader handles
+        // that — if the load races the card's destruction, the loader
+        // drops the result. (The tab's m_alive flag also kills loads
+        // wholesale when the tab tears down via willDisappear.)
+    }
+
+    // Channel number / identifier (e.g. "2.1" or "11").
+    auto* num = new brls::Label();
+    num->setText(!channel.channelIdentifier.empty()
+                 ? channel.channelIdentifier
+                 : std::to_string(channel.channelNumber));
+    num->setFontSize(12);
+    num->setTextColor(tok::accent());
+    num->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+    card->addView(num);
+
+    LiveTVChannel captured = channel;
+    card->registerClickAction([this, captured](brls::View*) {
+        onChannelSelected(captured);
+        return true;
+    });
+
+    m_channelsContent->addView(card);
+
+    // m_quickAccessProgLabels is kept index-aligned with m_channels for the
+    // 60s refresh hook (which now lives in updateQuickAccessPrograms as a
+    // no-op since the cards don't display per-channel "now playing" text).
+    m_quickAccessProgLabels.push_back(nullptr);
 }
 
 void LiveTVTab::refreshCurrentPrograms() {
     // Lightweight refresh: fetch EPG data and only update "now playing" text
-    // without rebuilding the entire UI
+    // (hero + favourites) without rebuilding the entire UI.
     asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<LiveTVChannel> freshChannels;
@@ -345,9 +781,7 @@ void LiveTVTab::refreshCurrentPrograms() {
 
                 m_lastRefreshTime = time(nullptr);
 
-                // Update current program info in cached channel data
                 for (size_t i = 0; i < m_channels.size() && i < freshChannels.size(); i++) {
-                    // Find matching channel in fresh data
                     for (const auto& freshCh : freshChannels) {
                         if (freshCh.channelIdentifier == m_channels[i].channelIdentifier ||
                             freshCh.channelNumber == m_channels[i].channelNumber) {
@@ -360,11 +794,7 @@ void LiveTVTab::refreshCurrentPrograms() {
                     }
                 }
 
-                // Update quick access "now playing" labels. The EPG grid is
-                // left alone here — rebuilding its hundreds of cells every
-                // minute pegged the frame time. The 5-minute full reload still
-                // refreshes the grid; this lightweight path keeps the
-                // currently-airing chip on the channel cards accurate.
+                if (!m_channels.empty()) updateHeroForChannel(m_channels.front());
                 updateQuickAccessPrograms();
             });
         }
@@ -372,27 +802,10 @@ void LiveTVTab::refreshCurrentPrograms() {
 }
 
 void LiveTVTab::updateQuickAccessPrograms() {
-    // Update the current program text on quick access cards
-    for (size_t i = 0; i < m_quickAccessProgLabels.size() && i < m_channels.size(); i++) {
-        if (m_quickAccessProgLabels[i]) {
-            std::string prog = m_channels[i].currentProgram;
-            if (prog.empty()) {
-                // Find current program from programs list
-                time_t now = time(nullptr);
-                for (const auto& p : m_channels[i].programs) {
-                    if (p.startTime <= (int64_t)now && p.endTime > (int64_t)now) {
-                        prog = p.title;
-                        break;
-                    }
-                }
-            }
-            size_t maxProgChars = (size_t)platform::getImageConstraints().maxLiveTVProgramChars;
-            if (maxProgChars > 2 && prog.length() > maxProgChars) {
-                prog = prog.substr(0, maxProgChars - 2) + "..";
-            }
-            m_quickAccessProgLabels[i]->setText(prog.empty() ? "" : prog);
-        }
-    }
+    // Pills don't carry current-program text, so this is intentionally a
+    // no-op now. Kept as a member so the refresh path can call it without
+    // a conditional, and so future revisions that bring per-pill "now
+    // playing" hints can drop the logic back in.
 }
 
 void LiveTVTab::loadChannels() {
@@ -413,76 +826,20 @@ void LiveTVTab::loadChannels() {
                 m_channelsContent->clearViews();
                 m_quickAccessProgLabels.clear();
 
-                // Build quick access channel buttons
-                const auto& ic = platform::getImageConstraints();
-                for (const auto& channel : m_channels) {
-                    auto* card = new brls::Box();
-                    card->setAxis(brls::Axis::COLUMN);
-                    card->setWidth(ic.livetvChannelCardWidth);
-                    card->setHeight(std::max(60, ic.livetvChannelRowHeight - 20));
-                    card->setMarginRight(10);
-                    card->setPadding(8);
-                    card->setFocusable(true);
-                    card->setBackgroundColor(nvgRGBA(50, 50, 60, 255));
-                    card->setCornerRadius(8);
-
-                    // Channel number
-                    auto* numLabel = new brls::Label();
-                    numLabel->setText(!channel.channelIdentifier.empty() ? channel.channelIdentifier : std::to_string(channel.channelNumber));
-                    numLabel->setFontSize(20);
-                    card->addView(numLabel);
-
-                    // Channel name
-                    auto* nameLabel = new brls::Label();
-                    std::string name = channel.callSign.empty() ? channel.title : channel.callSign;
-                    size_t maxChanChars = (size_t)ic.maxLiveTVChannelChars;
-                    if (maxChanChars > 2 && name.length() > maxChanChars) {
-                        name = name.substr(0, maxChanChars - 1) + "..";
-                    }
-                    nameLabel->setText(name);
-                    nameLabel->setFontSize(12);
-                    card->addView(nameLabel);
-
-                    // Current program (stored for lightweight updates)
-                    auto* progLabel = new brls::Label();
-                    std::string prog = channel.currentProgram;
-                    if (prog.empty()) {
-                        // Check programs list for current
-                        time_t now = time(nullptr);
-                        for (const auto& p : channel.programs) {
-                            if (p.startTime <= (int64_t)now && p.endTime > (int64_t)now) {
-                                prog = p.title;
-                                break;
-                            }
-                        }
-                    }
-                    size_t maxProgChars = (size_t)ic.maxLiveTVProgramChars;
-                    if (maxProgChars > 2 && prog.length() > maxProgChars) {
-                        prog = prog.substr(0, maxProgChars - 1) + "..";
-                    }
-                    progLabel->setText(prog);
-                    progLabel->setFontSize(10);
-                    progLabel->setMarginTop(4);
-                    card->addView(progLabel);
-                    m_quickAccessProgLabels.push_back(progLabel);
-
-                    LiveTVChannel capturedChannel = channel;
-                    card->registerClickAction([this, capturedChannel](brls::View* view) {
-                        onChannelSelected(capturedChannel);
-                        return true;
-                    });
-
-                    m_channelsContent->addView(card);
+                if (!m_channels.empty()) {
+                    updateHeroForChannel(m_channels.front());
                 }
+
+                for (const auto& channel : m_channels) buildFavouritesPill(channel);
 
                 if (m_channels.empty()) {
                     auto* placeholder = new brls::Label();
                     placeholder->setText("No channels found. Set up Live TV in Plex settings.");
-                    placeholder->setFontSize(16);
+                    placeholder->setFontSize(14);
+                    placeholder->setTextColor(tok::muted());
                     m_channelsContent->addView(placeholder);
                 }
 
-                // Build the EPG grid
                 buildEPGGrid();
 
                 m_loaded = true;
@@ -497,19 +854,44 @@ void LiveTVTab::loadChannels() {
                 m_channelsContent->clearViews();
                 auto* errorLabel = new brls::Label();
                 errorLabel->setText("Failed to load Live TV");
-                errorLabel->setFontSize(16);
+                errorLabel->setFontSize(14);
+                errorLabel->setTextColor(tok::muted());
                 m_channelsContent->addView(errorLabel);
                 m_loaded = true;
             });
         }
     });
 
-    // Also load DVR recordings
     loadRecordings();
 }
 
+void LiveTVTab::updateCurrentTimeLine() {
+    if (!m_currentTimeLine || !m_guideContainer || m_guideStartTime == 0) return;
+
+    int gridHours = std::min(m_hoursToShow, EPG_GRID_HOURS_VISIBLE);
+    int64_t guideEnd = m_guideStartTime + (gridHours * 3600);
+    int64_t now = (int64_t)time(nullptr);
+
+    if (now < m_guideStartTime || now > guideEnd) {
+        if (m_currentTimeLine->getVisibility() != brls::Visibility::INVISIBLE)
+            m_currentTimeLine->setVisibility(brls::Visibility::INVISIBLE);
+        return;
+    }
+
+    float xOffset = (float)((now - m_guideStartTime) * livetvTimeSlotWidth() / 1800.0);
+    float left = (float)livetvChannelColWidth() + xOffset;
+    float top = 0;
+    float height = m_guideContainer->getHeight();
+    if (height <= 1) return;  // pre-layout
+
+    m_currentTimeLine->setPositionLeft(left);
+    m_currentTimeLine->setPositionTop(top);
+    m_currentTimeLine->setHeight(height);
+    if (m_currentTimeLine->getVisibility() != brls::Visibility::VISIBLE)
+        m_currentTimeLine->setVisibility(brls::Visibility::VISIBLE);
+}
+
 void LiveTVTab::buildEPGGrid() {
-    // Clear existing grid
     m_timeHeaderBox->clearViews();
     m_guideBox->clearViews();
 
@@ -517,20 +899,22 @@ void LiveTVTab::buildEPGGrid() {
         auto* noDataLabel = new brls::Label();
         noDataLabel->setText("No program guide data available");
         noDataLabel->setFontSize(14);
-        noDataLabel->setMarginLeft(10);
+        noDataLabel->setTextColor(tok::muted());
+        noDataLabel->setMarginLeft(12);
+        noDataLabel->setMarginTop(12);
         m_guideBox->addView(noDataLabel);
         return;
     }
 
-    // Set guide start time to current time rounded down to 30 minutes
+    // Set guide start time to current time rounded down to 30 minutes.
     time_t now = time(nullptr);
-    m_guideStartTime = now - (now % 1800);  // Round to 30 min
+    m_guideStartTime = now - (now % 1800);
 
-    // Render only the visible window even though we hold more program data.
     int gridHours = std::min(m_hoursToShow, EPG_GRID_HOURS_VISIBLE);
-    int totalSlots = gridHours * 2;  // 2 slots per hour (30 min each)
+    int totalSlots = gridHours * 2;
 
-    // Build time header
+    // Time header — each 30-min slot. Bold muted labels, left hairline
+    // separating slots.
     for (int i = 0; i < totalSlots; i++) {
         int64_t slotTime = m_guideStartTime + (i * 1800);
 
@@ -539,12 +923,26 @@ void LiveTVTab::buildEPGGrid() {
         timeSlot->setHeight(TIME_HEADER_HEIGHT);
         timeSlot->setJustifyContent(brls::JustifyContent::CENTER);
         timeSlot->setAlignItems(brls::AlignItems::CENTER);
-        timeSlot->setBorderColor(nvgRGBA(60, 60, 70, 255));
-        timeSlot->setBorderThickness(1);
+        if (i > 0) {
+            timeSlot->setBorderColor(tok::hairline());
+            timeSlot->setBorderThickness(0);  // border drawn via line below
+            // borealis Box draws a uniform border; we want only a left
+            // hairline. Skip the border and draw a thin vertical strip
+            // instead so the visual stays clean.
+            auto* leftRule = new brls::Box();
+            leftRule->setPositionType(brls::PositionType::ABSOLUTE);
+            leftRule->setWidth(1);
+            leftRule->setHeight(TIME_HEADER_HEIGHT - 12);
+            leftRule->setPositionLeft(0);
+            leftRule->setPositionTop(6);
+            leftRule->setBackgroundColor(tok::hairline());
+            timeSlot->addView(leftRule);
+        }
 
         auto* timeLabel = new brls::Label();
         timeLabel->setText(formatTime(slotTime));
-        timeLabel->setFontSize(12);
+        timeLabel->setFontSize(13);
+        timeLabel->setTextColor(tok::muted());
         timeSlot->addView(timeLabel);
 
         m_timeHeaderBox->addView(timeSlot);
@@ -552,26 +950,29 @@ void LiveTVTab::buildEPGGrid() {
 
     // Build channel rows
     for (const auto& channel : m_channels) {
-        // Create row container
         auto* rowBox = new brls::Box();
         rowBox->setAxis(brls::Axis::ROW);
         rowBox->setHeight(livetvRowHeight());
         rowBox->setJustifyContent(brls::JustifyContent::FLEX_START);
         rowBox->setAlignItems(brls::AlignItems::CENTER);
 
-        // Channel info column (fixed width)
+        // Sticky channel column.
         auto* channelCol = new brls::Box();
         channelCol->setAxis(brls::Axis::COLUMN);
         channelCol->setWidth(livetvChannelColWidth());
         channelCol->setHeight(livetvRowHeight());
-        channelCol->setPadding(4);
-        channelCol->setBackgroundColor(nvgRGBA(35, 35, 45, 255));
+        channelCol->setPadding(6);
+        channelCol->setBackgroundColor(nvgRGBA(0, 0, 0, 31));  // ~12% black overlay
         channelCol->setJustifyContent(brls::JustifyContent::CENTER);
-
-        auto* chNumLabel = new brls::Label();
-        chNumLabel->setText(!channel.channelIdentifier.empty() ? channel.channelIdentifier : std::to_string(channel.channelNumber));
-        chNumLabel->setFontSize(14);
-        channelCol->addView(chNumLabel);
+        // Right hairline separating the column from the program track.
+        auto* colRule = new brls::Box();
+        colRule->setPositionType(brls::PositionType::ABSOLUTE);
+        colRule->setWidth(1);
+        colRule->setHeight(livetvRowHeight() - 6);
+        colRule->setPositionLeft(livetvChannelColWidth() - 1);
+        colRule->setPositionTop(3);
+        colRule->setBackgroundColor(tok::hairline());
+        channelCol->addView(colRule);
 
         auto* chNameLabel = new brls::Label();
         std::string chName = channel.callSign.empty() ? channel.title : channel.callSign;
@@ -580,42 +981,47 @@ void LiveTVTab::buildEPGGrid() {
             chName = chName.substr(0, gridChanChars - 3) + "..";
         }
         chNameLabel->setText(chName);
-        chNameLabel->setFontSize(10);
+        chNameLabel->setFontSize(14);
+        chNameLabel->setTextColor(tok::text());
         channelCol->addView(chNameLabel);
 
-        // Make channel column clickable to tune
+        auto* chNumLabel = new brls::Label();
+        chNumLabel->setText(!channel.channelIdentifier.empty()
+                            ? channel.channelIdentifier
+                            : std::to_string(channel.channelNumber));
+        chNumLabel->setFontSize(11);
+        chNumLabel->setTextColor(tok::dim());
+        chNumLabel->setMarginTop(2);
+        channelCol->addView(chNumLabel);
+
         LiveTVChannel capturedChannel = channel;
         channelCol->setFocusable(true);
-        channelCol->registerClickAction([this, capturedChannel](brls::View* view) {
+        channelCol->registerClickAction([this, capturedChannel](brls::View*) {
             onChannelSelected(capturedChannel);
             return true;
         });
 
         rowBox->addView(channelCol);
 
-        // Program cells container (scrollable horizontally)
+        // Program cells container.
         auto* programsBox = new brls::Box();
         programsBox->setAxis(brls::Axis::ROW);
         programsBox->setJustifyContent(brls::JustifyContent::FLEX_START);
         programsBox->setAlignItems(brls::AlignItems::STRETCH);
         programsBox->setGrow(1.0f);
 
-        // If we have program data, create program blocks for all programs
         if (!channel.programs.empty()) {
             int64_t guideEndTime = m_guideStartTime + (gridHours * 3600);
-            int64_t lastEndTime = m_guideStartTime;  // Track position for gaps
+            int64_t lastEndTime = m_guideStartTime;
 
             for (size_t pi = 0; pi < channel.programs.size(); pi++) {
                 const auto& prog = channel.programs[pi];
 
-                // Skip programs entirely outside visible range
                 if (prog.endTime <= m_guideStartTime || prog.startTime >= guideEndTime) continue;
 
-                // Clamp to visible range
                 int64_t visStart = std::max(prog.startTime, m_guideStartTime);
                 int64_t visEnd = std::min(prog.endTime > 0 ? prog.endTime : visStart + 1800, guideEndTime);
 
-                // Add gap spacer if there's a gap before this program
                 if (visStart > lastEndTime) {
                     int gapPixels = (int)((visStart - lastEndTime) * livetvTimeSlotWidth() / 1800);
                     if (gapPixels > 0) {
@@ -626,27 +1032,26 @@ void LiveTVTab::buildEPGGrid() {
                     }
                 }
 
-                // Calculate width based on duration
                 int64_t durationSec = visEnd - visStart;
                 int cellWidth = (int)(durationSec * livetvTimeSlotWidth() / 1800);
-                if (cellWidth < 40) cellWidth = 40;  // Minimum width
+                if (cellWidth < 40) cellWidth = 40;
 
-                // Determine color: currently airing = brighter
-                time_t now = time(nullptr);
-                bool isCurrently = (prog.startTime <= (int64_t)now && prog.endTime > (int64_t)now);
-                NVGcolor bgColor = isCurrently
-                    ? nvgRGBA(60, 80, 100, 255)   // Current: brighter blue
-                    : nvgRGBA(50, 60, 80, 255);   // Upcoming: darker
+                time_t nowSec = time(nullptr);
+                bool isCurrently = (prog.startTime <= (int64_t)nowSec && prog.endTime > (int64_t)nowSec);
 
                 auto* progCell = new brls::Box();
                 progCell->setAxis(brls::Axis::COLUMN);
                 progCell->setWidth(cellWidth);
-                progCell->setHeight(livetvRowHeight() - 4);
-                progCell->setPadding(4);
-                progCell->setMargins(2, 2, 2, 2);
-                progCell->setBackgroundColor(bgColor);
-                progCell->setCornerRadius(4);
+                progCell->setHeight(livetvRowHeight() - 6);
+                progCell->setPadding(8);
+                progCell->setMargins(3, 3, 3, 3);
+                progCell->setBackgroundColor(isCurrently ? tok::cellNow() : tok::cellUpcoming());
+                progCell->setCornerRadius(7);
                 progCell->setFocusable(true);
+                if (isCurrently) {
+                    progCell->setBorderColor(tok::accent());
+                    progCell->setBorderThickness(1);
+                }
 
                 auto* progTitle = new brls::Label();
                 std::string title = prog.title;
@@ -654,24 +1059,29 @@ void LiveTVTab::buildEPGGrid() {
                 if (maxChars < 4) maxChars = 4;
                 if ((int)title.length() > maxChars) title = title.substr(0, maxChars - 2) + "..";
                 progTitle->setText(title);
-                progTitle->setFontSize(11);
+                progTitle->setFontSize(13);
+                progTitle->setTextColor(tok::text());
                 progCell->addView(progTitle);
 
-                // Show time range
                 auto* timeRange = new brls::Label();
-                timeRange->setText(formatTime(prog.startTime) + "-" + formatTime(prog.endTime));
-                timeRange->setFontSize(9);
-                timeRange->setMarginTop(2);
+                std::string sub = formatTime(prog.startTime) + " – " + formatTime(prog.endTime);
+                if (isCurrently) sub += "  ·  on now";
+                timeRange->setText(sub);
+                timeRange->setFontSize(10);
+                timeRange->setTextColor(tok::dim());
+                timeRange->setMarginTop(3);
                 progCell->addView(timeRange);
 
                 GuideProgram gp;
                 gp.title = prog.title;
+                gp.summary = prog.summary;
                 gp.startTime = prog.startTime;
                 gp.endTime = prog.endTime;
                 gp.ratingKey = prog.ratingKey;
                 gp.metadataKey = prog.metadataKey;
+                gp.thumb = prog.thumb;
 
-                progCell->registerClickAction([this, gp, capturedChannel](brls::View* view) {
+                progCell->registerClickAction([this, gp, capturedChannel](brls::View*) {
                     onProgramSelected(gp, capturedChannel);
                     return true;
                 });
@@ -680,7 +1090,6 @@ void LiveTVTab::buildEPGGrid() {
                 lastEndTime = visEnd;
             }
         } else if (!channel.currentProgram.empty() && channel.programStart > 0) {
-            // Fallback: use legacy current/next program fields
             int64_t progStart = std::max(channel.programStart, m_guideStartTime);
             int64_t guideEndTime = m_guideStartTime + (gridHours * 3600);
             int64_t progEnd = std::min(channel.programEnd > 0 ? channel.programEnd : progStart + 1800, guideEndTime);
@@ -699,11 +1108,13 @@ void LiveTVTab::buildEPGGrid() {
             auto* progCell = new brls::Box();
             progCell->setAxis(brls::Axis::COLUMN);
             progCell->setWidth(cellWidth);
-            progCell->setHeight(livetvRowHeight() - 4);
-            progCell->setPadding(4);
-            progCell->setMargins(2, 2, 2, 2);
-            progCell->setBackgroundColor(nvgRGBA(60, 80, 100, 255));
-            progCell->setCornerRadius(4);
+            progCell->setHeight(livetvRowHeight() - 6);
+            progCell->setPadding(8);
+            progCell->setMargins(3, 3, 3, 3);
+            progCell->setBackgroundColor(tok::cellNow());
+            progCell->setCornerRadius(7);
+            progCell->setBorderColor(tok::accent());
+            progCell->setBorderThickness(1);
             progCell->setFocusable(true);
 
             auto* progTitle = new brls::Label();
@@ -711,33 +1122,35 @@ void LiveTVTab::buildEPGGrid() {
             int maxChars = cellWidth / 8;
             if ((int)title.length() > maxChars) title = title.substr(0, maxChars - 2) + "..";
             progTitle->setText(title);
-            progTitle->setFontSize(11);
+            progTitle->setFontSize(13);
+            progTitle->setTextColor(tok::text());
             progCell->addView(progTitle);
 
             auto* timeRange = new brls::Label();
-            timeRange->setText(formatTime(channel.programStart) + "-" + formatTime(channel.programEnd));
-            timeRange->setFontSize(9);
-            timeRange->setMarginTop(2);
+            timeRange->setText(formatTime(channel.programStart) + " – " + formatTime(channel.programEnd) + "  ·  on now");
+            timeRange->setFontSize(10);
+            timeRange->setTextColor(tok::dim());
+            timeRange->setMarginTop(3);
             progCell->addView(timeRange);
 
             programsBox->addView(progCell);
         } else {
-            // No program data - show "No guide data" across the grid
             auto* emptyCell = new brls::Box();
-            emptyCell->setWidth(livetvTimeSlotWidth() * 2);  // Span 2 slots
-            emptyCell->setHeight(livetvRowHeight() - 4);
-            emptyCell->setMargins(2, 2, 2, 2);
-            emptyCell->setBackgroundColor(nvgRGBA(40, 40, 50, 255));
-            emptyCell->setCornerRadius(4);
+            emptyCell->setWidth(livetvTimeSlotWidth() * 2);
+            emptyCell->setHeight(livetvRowHeight() - 6);
+            emptyCell->setMargins(3, 3, 3, 3);
+            emptyCell->setBackgroundColor(tok::cardRaised());
+            emptyCell->setCornerRadius(7);
             emptyCell->setFocusable(true);
-            emptyCell->setPadding(4);
+            emptyCell->setPadding(8);
 
             auto* noInfo = new brls::Label();
             noInfo->setText("No guide data");
-            noInfo->setFontSize(10);
+            noInfo->setFontSize(11);
+            noInfo->setTextColor(tok::dim());
             emptyCell->addView(noInfo);
 
-            emptyCell->registerClickAction([this, capturedChannel](brls::View* view) {
+            emptyCell->registerClickAction([this, capturedChannel](brls::View*) {
                 onChannelSelected(capturedChannel);
                 return true;
             });
@@ -748,6 +1161,10 @@ void LiveTVTab::buildEPGGrid() {
         rowBox->addView(programsBox);
         m_guideBox->addView(rowBox);
     }
+
+    // Update the cyan time-line position now that the grid exists; the
+    // draw() override keeps it tracking the wall clock thereafter.
+    updateCurrentTimeLine();
 }
 
 void LiveTVTab::loadGuide() {
@@ -761,9 +1178,6 @@ void LiveTVTab::loadRecordings() {
         PlexClient& client = PlexClient::getInstance();
         HttpClient httpClient;
 
-        // Official API: GET /media/subscriptions?includeGrabs=1
-        // Returns MediaContainer with MediaSubscription array
-        // Per openapi.json: MediaSubscription has key, type, targetLibrarySectionID, title, Setting[]
         std::string subsUrl = client.buildApiUrlPublic("/media/subscriptions?includeGrabs=1");
         HttpRequest req;
         req.url = subsUrl;
@@ -778,9 +1192,6 @@ void LiveTVTab::loadRecordings() {
         if (resp.statusCode == 200 && !resp.body.empty()) {
             brls::Logger::debug("LiveTVTab: DVR subscriptions response ({} bytes)", resp.body.length());
 
-            // Parse MediaSubscription array
-            // Per openapi.json example: "key": "1", "type": 2, "title": "fresh off the boat"
-            // Video sub-objects contain: beginsAt, endsAt, status, mediaSubscriptionID
             size_t msPos = resp.body.find("\"MediaSubscription\"");
             if (msPos != std::string::npos) {
                 size_t arrStart = resp.body.find('[', msPos);
@@ -790,7 +1201,6 @@ void LiveTVTab::loadRecordings() {
                         size_t objStart = resp.body.find('{', pos);
                         if (objStart == std::string::npos) break;
 
-                        // Check if we've gone past the end of the array
                         std::string between = resp.body.substr(pos, objStart - pos);
                         if (between.find(']') != std::string::npos) break;
 
@@ -810,20 +1220,14 @@ void LiveTVTab::loadRecordings() {
                             DVRRecording rec;
                             rec.title = title;
                             rec.ratingKey = key;
-                            rec.mediaSubscriptionId = key;  // key is the subscription ID for DELETE
+                            rec.mediaSubscriptionId = key;
 
-                            // Look for Video sub-object with beginsAt/status
                             std::string beginsAt = client.extractJsonValuePublic(obj, "beginsAt");
-                            if (!beginsAt.empty()) {
-                                rec.scheduledTime = atoll(beginsAt.c_str());
-                            }
+                            if (!beginsAt.empty()) rec.scheduledTime = atoll(beginsAt.c_str());
 
                             std::string status = client.extractJsonValuePublic(obj, "status");
-                            if (status == "2" || status == "recording") {
-                                rec.status = "recording";
-                            } else {
-                                rec.status = "scheduled";
-                            }
+                            if (status == "2" || status == "recording") rec.status = "recording";
+                            else rec.status = "scheduled";
 
                             recordings.push_back(rec);
                         }
@@ -846,7 +1250,8 @@ void LiveTVTab::loadRecordings() {
             if (m_recordings.empty()) {
                 auto* placeholder = new brls::Label();
                 placeholder->setText("No scheduled recordings");
-                placeholder->setFontSize(14);
+                placeholder->setFontSize(13);
+                placeholder->setTextColor(tok::muted());
                 m_dvrContent->addView(placeholder);
                 return;
             }
@@ -854,22 +1259,45 @@ void LiveTVTab::loadRecordings() {
             const auto& dvrIc = platform::getImageConstraints();
             for (const auto& rec : m_recordings) {
                 auto* card = new brls::Box();
-                card->setAxis(brls::Axis::COLUMN);
-                card->setWidth(dvrIc.livetvChannelCardWidth + 60);
+                card->setAxis(brls::Axis::ROW);
+                card->setAlignItems(brls::AlignItems::CENTER);
+                card->setWidth(dvrIc.livetvChannelCardWidth + 80);
                 card->setHeight(std::max(60, dvrIc.livetvChannelRowHeight - 20));
                 card->setMarginRight(10);
-                card->setPadding(8);
+                card->setPadding(10);
                 card->setFocusable(true);
-                card->setCornerRadius(8);
+                card->setCornerRadius(11);
+                card->setBackgroundColor(tok::cardRaised());
+                card->setBorderColor(tok::hairline());
+                card->setBorderThickness(1);
 
-                // Color based on status
+                // Status chip
+                auto* chip = new brls::Box();
+                chip->setWidth(28);
+                chip->setHeight(28);
+                chip->setCornerRadius(14);
+                chip->setJustifyContent(brls::JustifyContent::CENTER);
+                chip->setAlignItems(brls::AlignItems::CENTER);
+                chip->setMarginRight(10);
+                auto* chipDot = new brls::Label();
                 if (rec.status == "recording") {
-                    card->setBackgroundColor(nvgRGBA(120, 40, 40, 255));  // Red for recording
+                    chip->setBackgroundColor(nvgRGBA(255, 86, 88, 64));
+                    chipDot->setText("●");
+                    chipDot->setTextColor(tok::live());
                 } else {
-                    card->setBackgroundColor(nvgRGBA(50, 60, 80, 255));   // Blue for scheduled
+                    chip->setBackgroundColor(nvgRGBA(137, 241, 242, 48));
+                    chipDot->setText("⧗");  // clock-ish glyph
+                    chipDot->setTextColor(tok::accent());
                 }
+                chipDot->setFontSize(14);
+                chip->addView(chipDot);
+                card->addView(chip);
 
-                // Title
+                // Text block
+                auto* col = new brls::Box();
+                col->setAxis(brls::Axis::COLUMN);
+                col->setGrow(1.0f);
+
                 auto* titleLabel = new brls::Label();
                 std::string title = rec.title;
                 size_t dvrMaxChars = (size_t)(platform::getImageConstraints().maxLiveTVProgramChars + 6);
@@ -878,28 +1306,26 @@ void LiveTVTab::loadRecordings() {
                 }
                 titleLabel->setText(title);
                 titleLabel->setFontSize(13);
-                card->addView(titleLabel);
+                titleLabel->setTextColor(tok::text());
+                col->addView(titleLabel);
 
-                // Status
                 auto* statusLabel = new brls::Label();
                 std::string statusText = rec.status;
-                if (rec.scheduledTime > 0) {
-                    statusText += " - " + formatTime(rec.scheduledTime);
-                }
+                if (rec.scheduledTime > 0) statusText += " · " + formatTime(rec.scheduledTime);
                 statusLabel->setText(statusText);
                 statusLabel->setFontSize(10);
-                statusLabel->setMarginTop(4);
-                card->addView(statusLabel);
+                statusLabel->setTextColor(tok::dim());
+                statusLabel->setMarginTop(3);
+                col->addView(statusLabel);
 
-                // Click to show options (cancel, etc.)
+                card->addView(col);
+
                 DVRRecording capturedRec = rec;
-                card->registerClickAction([this, capturedRec](brls::View* view) {
+                card->registerClickAction([this, capturedRec](brls::View*) {
                     brls::Dialog* dialog = new brls::Dialog(capturedRec.title);
-
                     dialog->addButton("Cancel Recording", [this, capturedRec]() {
                         cancelRecording(capturedRec);
                     });
-
                     dialog->addButton("Close", []() {});
                     dialog->open();
                     return true;
@@ -914,23 +1340,10 @@ void LiveTVTab::loadRecordings() {
 void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
     brls::Logger::info("LiveTVTab: Selected channel: {} ({})", channel.title, channel.channelNumber);
 
-    // POST /livetv/dvrs/{dvrId}/channels/{channel}/tune.  The spec's example
-    // shows the VCN ("2.1") for {channel}, but on a real server the device's
-    // channel map is keyed by the full EPG channel key (<lineup>-<channelId>,
-    // e.g. "5fc76c55dd53a6002dab58e3-5fc70600a05ef8002e61645f").  Tuning by
-    // VCN makes the DVR scheduler resolve the channel to "device -1 tuner -1"
-    // and fail with "The device does not tune the required channel", whereas
-    // the full key matches what the scheduled recordings tune against.  Prefer
-    // the full key and fall back to the VCN only when we don't have one.
     std::string tuneChannel = channel.key;
-    if (tuneChannel.empty()) {
-        tuneChannel = channel.channelIdentifier;
-    }
-    if (tuneChannel.empty()) {
-        tuneChannel = std::to_string(channel.channelNumber);
-    }
+    if (tuneChannel.empty()) tuneChannel = channel.channelIdentifier;
+    if (tuneChannel.empty()) tuneChannel = std::to_string(channel.channelNumber);
 
-    // Find the currently-airing program's metadata key for transcode-based tuning
     std::string programMetadataKey;
     time_t now = time(nullptr);
     for (const auto& prog : channel.programs) {
@@ -950,9 +1363,7 @@ void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
             brls::Logger::info("LiveTVTab: Got stream URL for channel {}", channel.title);
             brls::sync([streamUrl, liveSessionUuid, channel]() {
                 std::string title = channel.title;
-                if (!channel.currentProgram.empty()) {
-                    title += " - " + channel.currentProgram;
-                }
+                if (!channel.currentProgram.empty()) title += " - " + channel.currentProgram;
                 Application::getInstance().pushLiveTVPlayerActivity(streamUrl, title, liveSessionUuid);
             });
         } else {
@@ -967,62 +1378,38 @@ void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
 }
 
 void LiveTVTab::onProgramSelected(const GuideProgram& program, const LiveTVChannel& channel) {
-    // Build dialog message
     std::string message = program.title;
     if (program.startTime > 0 && program.endTime > 0) {
         message += "\n\n" + formatTime(program.startTime) + " - " + formatTime(program.endTime);
     }
-    if (!program.summary.empty()) {
-        message += "\n\n" + program.summary;
-    }
+    if (!program.summary.empty()) message += "\n\n" + program.summary;
 
     brls::Dialog* dialog = new brls::Dialog(message);
-
-    dialog->addButton("Watch Now", [this, channel]() {
-        onChannelSelected(channel);
-    });
-
-    dialog->addButton("Record", [this, program, channel]() {
-        scheduleRecording(program, channel);
-    });
-
+    dialog->addButton("Watch Now", [this, channel]() { onChannelSelected(channel); });
+    dialog->addButton("Record", [this, program, channel]() { scheduleRecording(program, channel); });
     dialog->addButton("Cancel", []() {});
-
     dialog->open();
 }
 
 void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChannel& channel) {
-    asyncRun([this, program, channel, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+    (void)channel;
+
+    if (program.ratingKey.empty()) {
+        brls::Logger::error("LiveTVTab: scheduleRecording: missing program ratingKey");
+        brls::Dialog* dialog = new brls::Dialog("Failed to schedule recording: " + program.title);
+        dialog->addButton("OK", []() {});
+        dialog->open();
+        return;
+    }
+
+    asyncRun([this, program, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         PlexClient& client = PlexClient::getInstance();
         HttpClient httpClient;
 
-        // Plex's /media/subscriptions endpoint requires a fully-formed
-        // `params[*]` group (airingChannels, airingTimes, mediaProviderID,
-        // libraryType) plus a real `type` and `targetLibrarySectionID`.
-        // Hand-stitching all of that off our channel/program data needs the
-        // DVR's media-provider id and target section id, which we don't
-        // otherwise have. The official app pulls the lot from
-        //   GET /media/subscriptions/template?guid=<programGuid>
-        // — the response includes a pre-encoded `parameters` querystring
-        // that already contains every hints[*] and params[*] the server
-        // expects. We use that verbatim and only layer on top our recording
-        // preferences (one-shot, 2-min padding, etc.).
-        //
-        // program.ratingKey is the EPG ratingKey, already URL-encoded once
-        // (e.g. "plex%3A%2F%2Fepisode%2F..."), which is exactly the form the
-        // template endpoint wants for the guid query value.
-        if (program.ratingKey.empty()) {
-            brls::Logger::error("LiveTVTab: scheduleRecording: missing program ratingKey");
-            brls::sync([this, program, aliveWeak]() {
-                auto alive = aliveWeak.lock();
-                if (!alive || !*alive) return;
-                brls::Dialog* dialog = new brls::Dialog("Failed to schedule recording: " + program.title);
-                dialog->addButton("OK", []() {});
-                dialog->open();
-            });
-            return;
-        }
-
+        // GET /media/subscriptions/template?guid=<programGuid> returns the
+        // pre-encoded querystring (hints[*] and params[*]) the server
+        // expects, plus the recommended type and target library section.
+        // We paste it verbatim and only layer recording prefs on top.
         std::string tmplUrl = client.buildApiUrlPublic(
             "/media/subscriptions/template?guid=" + program.ratingKey);
 
@@ -1038,9 +1425,7 @@ void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChann
             brls::Logger::error("LiveTVTab: subscription template failed ({}): {}",
                                 tmplResp.statusCode,
                                 tmplResp.body.empty() ? "(empty)" : tmplResp.body.substr(0, 300));
-            brls::sync([this, program, aliveWeak]() {
-                auto alive = aliveWeak.lock();
-                if (!alive || !*alive) return;
+            brls::sync([program]() {
                 brls::Dialog* dialog = new brls::Dialog("Failed to schedule recording: " + program.title);
                 dialog->addButton("OK", []() {});
                 dialog->open();
@@ -1048,14 +1433,6 @@ void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChann
             return;
         }
 
-        // The template body is
-        //   {"MediaContainer":{"size":1,"SubscriptionTemplate":[{"MediaSubscription":[{
-        //     "parameters":"hints%5B...%5D=...&params%5B...%5D=...",
-        //     "selected":true, "type":4, "targetLibrarySectionID":3, ...
-        //   }, ...]}]}}
-        // There can be several MediaSubscription entries ("This Episode",
-        // "This Season", "All Airings", ...). Prefer the one marked
-        // selected=true; fall back to the first.
         const std::string& body = tmplResp.body;
         size_t pickAt = std::string::npos;
         {
@@ -1064,7 +1441,6 @@ void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChann
             while (true) {
                 size_t at = body.find(sel, scan);
                 if (at == std::string::npos) break;
-                // Walk back to the start of this MediaSubscription object.
                 int depth = 0;
                 for (size_t i = at; i > 0; i--) {
                     if (body[i] == '}') depth++;
@@ -1084,9 +1460,7 @@ void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChann
         if (pickAt == std::string::npos) {
             brls::Logger::error("LiveTVTab: subscription template parse failed: {}",
                                 body.substr(0, 300));
-            brls::sync([this, program, aliveWeak]() {
-                auto alive = aliveWeak.lock();
-                if (!alive || !*alive) return;
+            brls::sync([program]() {
                 brls::Dialog* dialog = new brls::Dialog("Failed to schedule recording: " + program.title);
                 dialog->addButton("OK", []() {});
                 dialog->open();
@@ -1094,8 +1468,6 @@ void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChann
             return;
         }
 
-        // Extract the brace-balanced MediaSubscription object so the
-        // extractJsonValue calls below don't reach into a neighbouring entry.
         size_t depth = 0;
         size_t objEnd = pickAt;
         for (; objEnd < body.length(); objEnd++) {
@@ -1114,9 +1486,7 @@ void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChann
             brls::Logger::error("LiveTVTab: template missing required fields (parameters={}, type={})",
                                 parameters.empty() ? "(empty)" : "ok",
                                 typeStr.empty() ? "(empty)" : typeStr);
-            brls::sync([this, program, aliveWeak]() {
-                auto alive = aliveWeak.lock();
-                if (!alive || !*alive) return;
+            brls::sync([program]() {
                 brls::Dialog* dialog = new brls::Dialog("Failed to schedule recording: " + program.title);
                 dialog->addButton("OK", []() {});
                 dialog->open();
@@ -1124,22 +1494,16 @@ void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChann
             return;
         }
 
-        // Build POST URL. The template's `parameters` field is already
-        // properly URL-encoded (hints[*] singly, values doubly) — paste it
-        // straight into the query. Layer on top recording preferences and
-        // the type/targetLibrarySectionID the template recommended.
         std::string post = client.buildApiUrlPublic("/media/subscriptions");
         post += "&" + parameters;
         post += "&type=" + typeStr;
-        if (!targetSection.empty())
-            post += "&targetLibrarySectionID=" + targetSection;
+        if (!targetSection.empty()) post += "&targetLibrarySectionID=" + targetSection;
         post += "&includeGrabs=1";
         post += "&prefs[oneShot]=true";
         post += "&prefs[recordPartials]=true";
         post += "&prefs[minVideoQuality]=0";
         post += "&prefs[startOffsetMinutes]=2";
         post += "&prefs[endOffsetMinutes]=2";
-        (void)channel;  // channel info is already baked into params[airingChannels]
 
         HttpRequest req;
         req.url = post;
@@ -1190,19 +1554,21 @@ void LiveTVTab::cancelRecording(const DVRRecording& recording) {
         req.timeout = 15;
 
         HttpResponse resp = httpClient.request(req);
-
         bool success = (resp.statusCode == 200 || resp.statusCode == 204);
-        std::string title = recording.title;
 
-        brls::sync([this, success, title, aliveWeak]() {
+        brls::sync([this, success, recording, aliveWeak]() {
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
 
             if (success) {
-                brls::Application::notify("Recording cancelled: " + title);
+                brls::Dialog* dialog = new brls::Dialog("Cancelled recording: " + recording.title);
+                dialog->addButton("OK", []() {});
+                dialog->open();
                 loadRecordings();
             } else {
-                brls::Application::notify("Failed to cancel recording");
+                brls::Dialog* dialog = new brls::Dialog("Failed to cancel recording");
+                dialog->addButton("OK", []() {});
+                dialog->open();
             }
         });
     });

@@ -19,6 +19,7 @@ struct GuideProgram {
     int64_t endTime = 0;
     std::string ratingKey;
     std::string metadataKey;  // EPG metadata path for transcode/recording
+    std::string thumb;        // Show poster / episode still for the hero card
     bool isRecording = false;
     int durationMinutes = 30;  // Duration in minutes
 };
@@ -71,12 +72,39 @@ private:
     void cancelRecording(const DVRRecording& recording);
     std::string formatTime(int64_t timestamp);
 
+    // New layout helpers
+    void buildHero();                                // build the empty hero shell
+    void buildFavouritesPill(const LiveTVChannel&);  // append a single ★ pill
+    void updateHeroForChannel(const LiveTVChannel& channel);  // populate hero from data
+    void updateCurrentTimeLine();    // reposition the cyan "now" rule each second
+
     // UI Components
     brls::Label* m_titleLabel = nullptr;
     brls::ScrollingFrame* m_scrollView = nullptr;
     brls::Box* m_scrollContent = nullptr;
 
-    // Channels quick access section
+    // On-Now hero
+    brls::Box*   m_heroBox          = nullptr;
+    brls::Image* m_heroThumb        = nullptr;
+    brls::Box*   m_heroThumbHolder  = nullptr;  // fixed-size holder so the image keeps its slot while loading
+    brls::Box*   m_heroLiveBadge    = nullptr;
+    brls::Label* m_heroChannelName  = nullptr;
+    brls::Label* m_heroChannelId    = nullptr;
+    brls::Label* m_heroTitleLabel   = nullptr;
+    brls::Label* m_heroSummaryLabel = nullptr;
+    brls::Label* m_heroStartLabel   = nullptr;
+    brls::Label* m_heroEndLabel     = nullptr;
+    brls::Label* m_heroPctLabel     = nullptr;
+    brls::Box*   m_heroProgressTrack = nullptr;
+    brls::Box*   m_heroProgressFill  = nullptr;
+    brls::Box*   m_heroWatchBtn     = nullptr;
+    brls::Box*   m_heroRecordBtn    = nullptr;
+    LiveTVChannel m_heroChannel;
+    GuideProgram  m_heroProgram;
+    bool          m_heroProgramValid = false;
+    std::shared_ptr<std::atomic<bool>> m_heroThumbAlive;  // ImageLoader cancel handle
+
+    // ★ Favourites pill row (compact restyle of the old quick-access row)
     brls::Label* m_channelsLabel = nullptr;
     brls::HScrollingFrame* m_channelsRow = nullptr;
     brls::Box* m_channelsContent = nullptr;
@@ -88,6 +116,7 @@ private:
     brls::Box* m_timeHeaderBox = nullptr;       // Horizontal time slots
     brls::ScrollingFrame* m_guideScrollV = nullptr;  // Vertical scroll for channels
     brls::Box* m_guideBox = nullptr;            // Contains channel rows
+    brls::Box* m_currentTimeLine = nullptr;     // Absolute-positioned cyan rule over the program area
 
     // DVR section
     brls::Label* m_dvrLabel = nullptr;
