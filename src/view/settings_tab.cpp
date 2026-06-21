@@ -406,6 +406,16 @@ void SettingsTab::showSection(int sectionId) {
         }
         m_detailContent->addView(target);
         m_attachedSection = target;
+
+        // Re-point lastFocusedView along the ancestor chain so a later
+        // RIGHT-from-rail walk doesn't tunnel through the stale
+        // lastFocusedView (which still pointed into the detached
+        // section's cells) and re-focus an invisible widget. Without
+        // this the focus jumped back into Account's autoLogin toggle
+        // even when Account was no longer the visible section.
+        m_detailContent->setLastFocusedView(target);
+        if (m_detailScroll) m_detailScroll->setLastFocusedView(m_detailContent);
+        if (m_detailContainer) m_detailContainer->setLastFocusedView(m_detailScroll);
     }
 
     // Header text.
