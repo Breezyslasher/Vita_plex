@@ -130,11 +130,13 @@ LiveTVTab::LiveTVTab() {
     m_guideLabel->setMarginTop(4);
     m_scrollContent->addView(m_guideLabel);
 
+    // The guide is a flex column that grows with its content — the
+    // page-level m_scrollView is the only thing that scrolls. With an
+    // inner ScrollingFrame here, both the inner *and* the page scroll
+    // reacted to focus changes, so scrolling one cell visibly shifted
+    // the rest of the page too.
     m_guideContainer = new brls::Box();
     m_guideContainer->setAxis(brls::Axis::COLUMN);
-    // Bumped from the platform default to put ~6 channel rows on screen
-    // since the hero/favourites already eat ~270px above.
-    m_guideContainer->setHeight(std::max(280, platform::getImageConstraints().livetvGuideHeight + 40));
     m_guideContainer->setMarginBottom(20);
     m_guideContainer->setBackgroundColor(tok::card());
     m_guideContainer->setCornerRadius(14);
@@ -155,17 +157,12 @@ LiveTVTab::LiveTVTab() {
     m_timeHeaderScroll->setContentView(m_timeHeaderBox);
     m_guideContainer->addView(m_timeHeaderScroll);
 
-    // EPG Grid (vertical scroll containing channel rows)
-    m_guideScrollV = new brls::ScrollingFrame();
-    m_guideScrollV->setGrow(1.0f);
-    m_guideScrollV->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
-
+    // EPG channel rows sit directly in the container — no inner scroll.
     m_guideBox = new brls::Box();
     m_guideBox->setAxis(brls::Axis::COLUMN);
     m_guideBox->setJustifyContent(brls::JustifyContent::FLEX_START);
     m_guideBox->setAlignItems(brls::AlignItems::STRETCH);
-    m_guideScrollV->setContentView(m_guideBox);
-    m_guideContainer->addView(m_guideScrollV);
+    m_guideContainer->addView(m_guideBox);
 
     // Current-time vertical line: an absolutely-positioned cyan rule
     // overlaid on the guide container. Positioned by updateCurrentTimeLine
@@ -328,7 +325,9 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
     // views, never nested Boxes, so every off-screen row/card still painted
     // every frame — pure overdraw. Toggle INVISIBLE on anything scrolled
     // out of its viewport so frame() early-outs for the entire subtree.
-    cullToViewport(m_guideBox, m_guideScrollV, /*vertical=*/true);
+    // Guide rows are culled against the page scroll now that there's no
+    // inner viewport.
+    cullToViewport(m_guideBox, m_scrollView, /*vertical=*/true);
     cullToViewport(m_dvrContent, m_dvrRow, /*vertical=*/false);
 
     // Slide the cyan "now" line each frame so it tracks the wall clock

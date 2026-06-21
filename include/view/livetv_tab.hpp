@@ -109,8 +109,7 @@ private:
     brls::Box* m_guideContainer = nullptr;      // Contains time header + grid
     brls::HScrollingFrame* m_timeHeaderScroll = nullptr;
     brls::Box* m_timeHeaderBox = nullptr;       // Horizontal time slots
-    brls::ScrollingFrame* m_guideScrollV = nullptr;  // Vertical scroll for channels
-    brls::Box* m_guideBox = nullptr;            // Contains channel rows
+    brls::Box* m_guideBox = nullptr;            // Contains channel rows; scrolls via the page scroll
     brls::Box* m_currentTimeLine = nullptr;     // Absolute-positioned cyan rule over the program area
 
     // DVR section
