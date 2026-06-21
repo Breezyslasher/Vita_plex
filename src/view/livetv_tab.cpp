@@ -632,6 +632,12 @@ void LiveTVTab::buildHero() {
     m_heroWatchBtn->setJustifyContent(brls::JustifyContent::CENTER);
     m_heroWatchBtn->setAlignItems(brls::AlignItems::CENTER);
     m_heroWatchBtn->setFocusable(true);
+    // Drop the dark grey highlight overlay borealis paints behind a
+    // focused view — on the cyan Watch live button it muddies the
+    // background and makes the dark "▶  Watch live" text hard to read.
+    // The focus border glow still draws so the user sees what's
+    // selected.
+    m_heroWatchBtn->setHideHighlightBackground(true);
     auto* watchTxt = new brls::Label();
     watchTxt->setText("▶  Watch live");
     watchTxt->setFontSize(14);
@@ -655,6 +661,7 @@ void LiveTVTab::buildHero() {
     m_heroRecordBtn->setJustifyContent(brls::JustifyContent::CENTER);
     m_heroRecordBtn->setAlignItems(brls::AlignItems::CENTER);
     m_heroRecordBtn->setFocusable(true);
+    m_heroRecordBtn->setHideHighlightBackground(true);
     auto* recTxt = new brls::Label();
     recTxt->setText("●  Record");
     recTxt->setFontSize(14);
