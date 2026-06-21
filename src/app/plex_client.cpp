@@ -2829,10 +2829,20 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
                     channel.channelIdentifier = identifier;
                 }
 
-                // Cross-reference with ChannelMapping to get deviceIdentifier for tuning
+                // Cross-reference with ChannelMapping to (a) get the
+                // device identifier for tuning and (b) drop channels
+                // that aren't actually mapped to a tuner on this
+                // server. Without (b), the EPG was showing every
+                // channel the lineup *covers* (~106 on a typical
+                // OTA list) rather than the ones the user's DVR is
+                // set up to receive (~32 here), so the grid was full
+                // of "No guide data" rows for channels the user
+                // can't tune anyway.
+                bool mapped = false;
                 for (const auto& mapping : m_channelMappings) {
                     if (!channel.key.empty() && channel.key == mapping.channelKey) {
                         channel.channelIdentifier = mapping.deviceIdentifier;
+                        mapped = true;
                         break;
                     }
                     if (!identifier.empty() && identifier == mapping.lineupIdentifier) {
@@ -2840,12 +2850,19 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
                         if (channel.key.empty()) {
                             channel.key = mapping.channelKey;
                         }
+                        mapped = true;
                         break;
                     }
                 }
 
-                if (!channel.callSign.empty() || !channel.title.empty()) {
-                    channels.push_back(channel);
+                // Only include channels the user can actually tune.
+                // If we have no ChannelMapping data at all (some EPG
+                // providers don't), fall back to the old behaviour so
+                // the EPG isn't empty.
+                if (mapped || m_channelMappings.empty()) {
+                    if (!channel.callSign.empty() || !channel.title.empty()) {
+                        channels.push_back(channel);
+                    }
                 }
 
                 pos = objEnd;
@@ -3135,6 +3152,136 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
             } else {
                 brls::Logger::debug("fetchEPGGrid: Grid endpoint returned {} for type={}",
                                     resp.statusCode, gridType);
+            }
+        }
+    }
+
+    // Per-channel grid. Mirrors what the official Plex apps do — they
+    // skip the type-filtered grid entirely and just query each channel's
+    // grid for the day:
+    //   GET /{provider}/grid?channelGridKey=<key>&date=YYYY-MM-DD
+    // which returns *every* airing for that channel regardless of EPG
+    // type. The type-filtered loop above only catches movies (1) and
+    // episodes (4); sports, news, and talk-shows tagged with other
+    // types would otherwise show up empty. Running this for every
+    // channel ensures parity with the official app.
+    if (!m_epgProviderKey.empty()) {
+        time_t nowTs = time(nullptr);
+        struct tm* lt = localtime(&nowTs);
+        char dateBuf[16];
+        strftime(dateBuf, sizeof(dateBuf), "%Y-%m-%d", lt);
+        const std::string today = dateBuf;
+
+        for (auto& channel : channelsWithPrograms) {
+            if (channel.key.empty()) continue;
+
+            std::string url = buildApiUrl("/" + m_epgProviderKey + "/grid");
+            url += "&channelGridKey=" + HttpClient::urlEncode(channel.key);
+            url += "&date=" + today;
+            req.url = url;
+            HttpResponse resp = client.request(req);
+            if (resp.statusCode != 200 || resp.body.empty()) continue;
+
+            size_t metaArrayPos = resp.body.find("\"Metadata\"");
+            if (metaArrayPos == std::string::npos) continue;
+            size_t arrayStart = resp.body.find('[', metaArrayPos);
+            if (arrayStart == std::string::npos) continue;
+
+            size_t pos = arrayStart + 1;
+            while (pos < resp.body.length()) {
+                while (pos < resp.body.length() && (resp.body[pos] == ' ' || resp.body[pos] == ',' ||
+                       resp.body[pos] == '\n' || resp.body[pos] == '\r' || resp.body[pos] == '\t')) {
+                    pos++;
+                }
+                if (pos >= resp.body.length() || resp.body[pos] == ']') break;
+                if (resp.body[pos] != '{') { pos++; continue; }
+
+                size_t objStart = pos;
+                int braceCount = 1;
+                pos++;
+                while (braceCount > 0 && pos < resp.body.length()) {
+                    if (resp.body[pos] == '{') braceCount++;
+                    else if (resp.body[pos] == '}') braceCount--;
+                    pos++;
+                }
+                std::string metaObj = resp.body.substr(objStart, pos - objStart);
+
+                std::string progTitle = extractJsonValue(metaObj, "title");
+                if (progTitle.empty()) continue;
+                std::string grandparentTitle = extractJsonValue(metaObj, "grandparentTitle");
+                std::string displayTitle = (!grandparentTitle.empty())
+                    ? grandparentTitle + ": " + progTitle : progTitle;
+
+                std::string progRatingKey   = extractJsonValue(metaObj, "ratingKey");
+                std::string progMetadataKey = extractJsonValue(metaObj, "key");
+                std::string progSummary     = extractJsonValue(metaObj, "summary");
+                std::string progThumb       = extractJsonValue(metaObj, "thumb");
+                if (progThumb.empty()) progThumb = extractJsonValue(metaObj, "grandparentThumb");
+                if (progThumb.empty()) progThumb = extractJsonValue(metaObj, "parentThumb");
+                if (progThumb.empty()) progThumb = extractJsonValue(metaObj, "art");
+
+                size_t mediaPos = metaObj.find("\"Media\"");
+                if (mediaPos == std::string::npos) continue;
+                size_t mediaArrayStart = metaObj.find('[', mediaPos);
+                if (mediaArrayStart == std::string::npos) continue;
+
+                size_t mPos = mediaArrayStart + 1;
+                while (mPos < metaObj.length()) {
+                    size_t mObjStart = metaObj.find('{', mPos);
+                    if (mObjStart == std::string::npos || mObjStart >= metaObj.length()) break;
+
+                    int mBraceCount = 1;
+                    size_t mObjEnd = mObjStart + 1;
+                    while (mBraceCount > 0 && mObjEnd < metaObj.length()) {
+                        if (metaObj[mObjEnd] == '{') mBraceCount++;
+                        else if (metaObj[mObjEnd] == '}') mBraceCount--;
+                        mObjEnd++;
+                    }
+                    std::string mediaObj = metaObj.substr(mObjStart, mObjEnd - mObjStart);
+                    mPos = mObjEnd;
+
+                    std::string beginsAtStr = extractJsonValue(mediaObj, "beginsAt");
+                    std::string endsAtStr   = extractJsonValue(mediaObj, "endsAt");
+                    if (beginsAtStr.empty() || endsAtStr.empty()) continue;
+
+                    int64_t progStart = atoll(beginsAtStr.c_str());
+                    int64_t progEnd   = atoll(endsAtStr.c_str());
+                    if (progEnd < (int64_t)now) continue;
+
+                    // Channel is fixed by the channelGridKey query, so no
+                    // cross-matching needed.
+                    bool duplicate = false;
+                    for (const auto& existing : channel.programs) {
+                        if (existing.startTime == progStart && existing.title == displayTitle) {
+                            duplicate = true; break;
+                        }
+                    }
+                    if (!duplicate) {
+                        ChannelProgram prog;
+                        prog.title       = displayTitle;
+                        prog.startTime   = progStart;
+                        prog.endTime     = progEnd;
+                        prog.ratingKey   = progRatingKey;
+                        prog.metadataKey = progMetadataKey;
+                        prog.summary     = progSummary;
+                        prog.thumb       = progThumb;
+                        channel.programs.push_back(prog);
+                        gotProgramData = true;
+                    }
+
+                    if (progStart <= (int64_t)now && progEnd > (int64_t)now) {
+                        if (channel.currentProgram.empty()) {
+                            channel.currentProgram = displayTitle;
+                            channel.programStart   = progStart;
+                            channel.programEnd     = progEnd;
+                        }
+                    } else if (progStart >= (int64_t)now) {
+                        if (channel.nextProgram.empty()) channel.nextProgram = displayTitle;
+                    }
+
+                    size_t nextComma = metaObj.find_first_of(",]", mPos);
+                    if (nextComma != std::string::npos && metaObj[nextComma] == ']') break;
+                }
             }
         }
     }
