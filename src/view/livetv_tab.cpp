@@ -456,7 +456,26 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         const float vScrollTop    = m_guideScrollV->getY();
         const float vScrollBottom = vScrollTop + m_guideScrollV->getHeight();
 
+        // All HScrollingFrames live in the same column (channel column
+        // is fixed-width on the left), so any cell's scroll frame gives
+        // the program-area X range. Pick the first cell whose scroll
+        // frame is laid out and use it to clip the batch — without the
+        // scissor, cells panning under the channel column would still
+        // paint their text on top of the logo because batched draws
+        // bypass the per-frame scissor that the HScrollingFrame sets.
+        float clipX = 0.0f, clipW = 0.0f;
+        for (const EpgCellInfo& info : m_epgCells) {
+            if (!info.scroll) continue;
+            const float w = info.scroll->getWidth();
+            if (w <= 0) continue;
+            clipX = info.scroll->getX();
+            clipW = w;
+            break;
+        }
+        if (clipW <= 0) return;
+
         nvgSave(vg);
+        nvgScissor(vg, clipX, vScrollTop, clipW, vScrollBottom - vScrollTop);
         nvgFontFace(vg, "regular");
         nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
 
