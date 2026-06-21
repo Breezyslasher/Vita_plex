@@ -435,8 +435,12 @@ bool PlexClient::fetchHomeUsers(const std::string& masterToken,
         u.title    = extractJsonValue(obj, "title");
         u.username = extractJsonValue(obj, "username");
         u.thumb    = extractJsonValue(obj, "thumb");
-        u.hasPin   = extractJsonBool(obj, "protected") ||
-                     extractJsonBool(obj, "restricted");
+        // "protected" is the only field that means a PIN is required at
+        // /switch time. "restricted" just means content-restrictions
+        // (kid accounts) — those users may or may not have a PIN, so
+        // OR'ing them in here was prompting unprotected restricted users
+        // for a PIN that doesn't exist.
+        u.hasPin   = extractJsonBool(obj, "protected");
         u.admin    = extractJsonBool(obj, "admin") ||
                      extractJsonBool(obj, "homeAdmin");
 
