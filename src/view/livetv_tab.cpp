@@ -847,14 +847,20 @@ void LiveTVTab::loadRecordings() {
 void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
     brls::Logger::info("LiveTVTab: Selected channel: {} ({})", channel.title, channel.channelNumber);
 
-    // Per spec (POST /livetv/dvrs/{dvrId}/channels/{channel}/tune), {channel}
-    // is the VCN / deviceIdentifier like "2.1".  Falling back to the EPG
-    // channel-key UUID-pair used to be tried as a recovery path but it isn't
-    // a documented {channel} format and just produces "Could not tune"
-    // responses.
-    std::string channelVcn = channel.channelIdentifier;
-    if (channelVcn.empty()) {
-        channelVcn = std::to_string(channel.channelNumber);
+    // POST /livetv/dvrs/{dvrId}/channels/{channel}/tune.  The spec's example
+    // shows the VCN ("2.1") for {channel}, but on a real server the device's
+    // channel map is keyed by the full EPG channel key (<lineup>-<channelId>,
+    // e.g. "5fc76c55dd53a6002dab58e3-5fc70600a05ef8002e61645f").  Tuning by
+    // VCN makes the DVR scheduler resolve the channel to "device -1 tuner -1"
+    // and fail with "The device does not tune the required channel", whereas
+    // the full key matches what the scheduled recordings tune against.  Prefer
+    // the full key and fall back to the VCN only when we don't have one.
+    std::string tuneChannel = channel.key;
+    if (tuneChannel.empty()) {
+        tuneChannel = channel.channelIdentifier;
+    }
+    if (tuneChannel.empty()) {
+        tuneChannel = std::to_string(channel.channelNumber);
     }
 
     // Find the currently-airing program's metadata key for transcode-based tuning
@@ -868,11 +874,11 @@ void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
         }
     }
 
-    asyncRun([this, channel, channelVcn, programMetadataKey, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+    asyncRun([this, channel, tuneChannel, programMetadataKey, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         PlexClient& client = PlexClient::getInstance();
         std::string streamUrl;
 
-        if (client.tuneLiveTVChannel(channelVcn, streamUrl, programMetadataKey)) {
+        if (client.tuneLiveTVChannel(tuneChannel, streamUrl, programMetadataKey)) {
             brls::Logger::info("LiveTVTab: Got stream URL for channel {}", channel.title);
             brls::sync([streamUrl, channel]() {
                 std::string title = channel.title;

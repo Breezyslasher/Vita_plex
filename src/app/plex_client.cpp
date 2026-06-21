@@ -3117,7 +3117,9 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     HttpClient client;
 
     // Official API: POST /livetv/dvrs/{dvrId}/channels/{channel}/tune
-    // Per openapi.json: channel param is a string like "2.1" (the deviceIdentifier)
+    // {channel} must be the full EPG channel key (<lineup>-<channelId>) that the
+    // device's channel map is keyed by; the VCN ("2.1") shown in the spec example
+    // is not recognized by the grabber and yields "device does not tune" errors.
     // Returns Media with uuid (session ID) which can be used for HLS streaming
     std::string tuneUrl = buildApiUrl("/livetv/dvrs/" + m_dvrId + "/channels/" + channelKey + "/tune");
 
