@@ -120,6 +120,20 @@ private:
     // they all move together.
     std::vector<brls::HScrollingFrame*> m_rowProgramScrolls;
 
+    // Batch text rendering for the EPG cells. The patched nanovg lets
+    // us flush every visible cell's title (and separately, every
+    // subtitle) as a single render call instead of one per Label —
+    // ~100 cells per build x ~2 labels each = ~200 draw calls otherwise.
+    // Cells themselves are intentionally label-less; draw() walks this
+    // vector after the standard Box::draw to paint the text on top.
+    struct EpgCellInfo {
+        brls::Box* cell = nullptr;     // owns the rect / focus / background
+        brls::HScrollingFrame* scroll = nullptr;  // viewport the cell lives in
+        std::string title;
+        std::string subtitle;          // start-end + " · on now" if currently airing
+    };
+    std::vector<EpgCellInfo> m_epgCells;
+
     // Data
     std::vector<LiveTVChannel> m_channels;
     std::vector<EPGChannel> m_epgChannels;
