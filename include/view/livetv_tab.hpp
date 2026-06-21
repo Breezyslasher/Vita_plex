@@ -112,11 +112,6 @@ private:
     brls::Box* m_guideBox = nullptr;            // Contains channel rows; scrolls inside m_guideScrollV
     brls::Box* m_currentTimeLine = nullptr;     // Absolute-positioned cyan rule over the program area
 
-    // DVR section
-    brls::Label* m_dvrLabel = nullptr;
-    brls::HScrollingFrame* m_dvrRow = nullptr;
-    brls::Box* m_dvrContent = nullptr;
-
     // Data
     std::vector<LiveTVChannel> m_channels;
     std::vector<EPGChannel> m_epgChannels;
