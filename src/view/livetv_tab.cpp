@@ -55,14 +55,24 @@ static inline int livetvTimeSlotWidth() {
     return platform::getImageConstraints().livetvChannelCardWidth;
 }
 static inline int livetvRowHeight() {
-    // Slightly taller than the platform's listRowHeight so two-line cells
-    // fit the redesign's 58px target without crowding.
-    return std::max(54, platform::getImageConstraints().listRowHeight + 6);
+    // Just tall enough to fit the channel logo + channel-number label in
+    // the sticky column. The cell only needs ~32px for the title +
+    // time-range stack, the rest was empty space the user flagged.
+    return std::max(50, platform::getImageConstraints().listRowHeight - 2);
 }
+// Sticky channel-column logo: a wide 16:9 chip (channel logos are
+// banners, not avatars). Height anchored to livetvRowHeight() so it
+// scales with the row.
+static inline int gridChannelLogoHeight() {
+    return std::max(28, livetvRowHeight() - 18);
+}
+static inline int gridChannelLogoWidth() {
+    return (int)((float)gridChannelLogoHeight() * 16.0f / 9.0f);
+}
+// Column hugs the logo with a small horizontal margin — was max(110, …),
+// which left a lot of dead space either side of the logo.
 static inline int livetvChannelColWidth() {
-    // The redesign target is 158 on logical 1280×720; clamp to a reasonable
-    // minimum on tighter Vita layouts.
-    return std::max(110, platform::getImageConstraints().livetvChannelCardWidth + 38);
+    return gridChannelLogoWidth() + 14;
 }
 
 // Cache durations
@@ -827,14 +837,17 @@ void LiveTVTab::buildEPGGrid() {
         rowBox->setJustifyContent(brls::JustifyContent::FLEX_START);
         rowBox->setAlignItems(brls::AlignItems::CENTER);
 
-        // Sticky channel column.
+        // Sticky channel column — wide 16:9 logo on top, channel number
+        // underneath. No call sign so a user scrolling 100+ channels
+        // scans by logo instead of reading.
         auto* channelCol = new brls::Box();
         channelCol->setAxis(brls::Axis::COLUMN);
         channelCol->setWidth(livetvChannelColWidth());
         channelCol->setHeight(livetvRowHeight());
-        channelCol->setPadding(6);
+        channelCol->setPadding(4);
         channelCol->setBackgroundColor(nvgRGBA(0, 0, 0, 31));  // ~12% black overlay
         channelCol->setJustifyContent(brls::JustifyContent::CENTER);
+        channelCol->setAlignItems(brls::AlignItems::CENTER);
         // Right hairline separating the column from the program track.
         auto* colRule = new brls::Box();
         colRule->setPositionType(brls::PositionType::ABSOLUTE);
@@ -845,24 +858,41 @@ void LiveTVTab::buildEPGGrid() {
         colRule->setBackgroundColor(tok::hairline());
         channelCol->addView(colRule);
 
-        auto* chNameLabel = new brls::Label();
-        std::string chName = channel.callSign.empty() ? channel.title : channel.callSign;
-        size_t gridChanChars = (size_t)platform::getImageConstraints().maxLiveTVChannelChars;
-        if (gridChanChars > 2 && chName.length() > gridChanChars - 2) {
-            chName = chName.substr(0, gridChanChars - 3) + "..";
+        const int logoW = gridChannelLogoWidth();
+        const int logoH = gridChannelLogoHeight();
+        auto* logoBox = new brls::Box();
+        logoBox->setWidth(logoW);
+        logoBox->setHeight(logoH);
+        logoBox->setCornerRadius(6);
+        logoBox->setBackgroundColor(tok::placeholder());
+        logoBox->setMarginBottom(2);
+
+        auto* logo = new brls::Image();
+        logo->setWidth(logoW);
+        logo->setHeight(logoH);
+        logo->setScalingType(brls::ImageScalingType::FIT);
+        logo->setCornerRadius(6);
+        logo->setVisibility(brls::Visibility::INVISIBLE);
+        logoBox->addView(logo);
+        channelCol->addView(logoBox);
+
+        if (!channel.thumb.empty()) {
+            PlexClient& client = PlexClient::getInstance();
+            std::string url = client.getThumbnailUrl(channel.thumb,
+                                                     logoW * 2, logoH * 2);
+            auto alive = std::make_shared<std::atomic<bool>>(true);
+            ImageLoader::loadAsync(url, [](brls::Image* img) {
+                if (img) img->setVisibility(brls::Visibility::VISIBLE);
+            }, logo, alive);
         }
-        chNameLabel->setText(chName);
-        chNameLabel->setFontSize(14);
-        chNameLabel->setTextColor(tok::text());
-        channelCol->addView(chNameLabel);
 
         auto* chNumLabel = new brls::Label();
         chNumLabel->setText(!channel.channelIdentifier.empty()
                             ? channel.channelIdentifier
                             : std::to_string(channel.channelNumber));
         chNumLabel->setFontSize(11);
-        chNumLabel->setTextColor(tok::dim());
-        chNumLabel->setMarginTop(2);
+        chNumLabel->setTextColor(tok::accent());
+        chNumLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
         channelCol->addView(chNumLabel);
 
         LiveTVChannel capturedChannel = channel;
@@ -920,12 +950,16 @@ void LiveTVTab::buildEPGGrid() {
                 auto* progCell = new brls::Box();
                 progCell->setAxis(brls::Axis::COLUMN);
                 progCell->setWidth(cellWidth);
-                progCell->setHeight(livetvRowHeight() - 6);
-                progCell->setPadding(8);
-                progCell->setMargins(3, 3, 3, 3);
+                progCell->setHeight(livetvRowHeight() - 8);
+                progCell->setPaddingLeft(8);
+                progCell->setPaddingRight(8);
+                progCell->setMargins(2, 2, 2, 2);
                 progCell->setBackgroundColor(isCurrently ? tok::cellNow() : tok::cellUpcoming());
-                progCell->setCornerRadius(7);
+                progCell->setCornerRadius(6);
                 progCell->setFocusable(true);
+                // Centre the title + time-range stack so the cell doesn't
+                // have a tall empty stripe under the text.
+                progCell->setJustifyContent(brls::JustifyContent::CENTER);
                 if (isCurrently) {
                     progCell->setBorderColor(tok::accent());
                     progCell->setBorderThickness(1);
@@ -994,11 +1028,13 @@ void LiveTVTab::buildEPGGrid() {
             auto* progCell = new brls::Box();
             progCell->setAxis(brls::Axis::COLUMN);
             progCell->setWidth(cellWidth);
-            progCell->setHeight(livetvRowHeight() - 6);
-            progCell->setPadding(8);
-            progCell->setMargins(3, 3, 3, 3);
+            progCell->setHeight(livetvRowHeight() - 8);
+            progCell->setPaddingLeft(8);
+            progCell->setPaddingRight(8);
+            progCell->setMargins(2, 2, 2, 2);
             progCell->setBackgroundColor(tok::cellNow());
-            progCell->setCornerRadius(7);
+            progCell->setJustifyContent(brls::JustifyContent::CENTER);
+            progCell->setCornerRadius(6);
             progCell->setBorderColor(tok::accent());
             progCell->setBorderThickness(1);
             progCell->setFocusable(true);
