@@ -47,11 +47,18 @@ public:
 
     void onFocusGained() override;
     void willDisappear(bool resetState) override;
+    void draw(NVGcontext* vg, float x, float y, float width, float height,
+              brls::Style style, brls::FrameContext* ctx) override;
     brls::View* getNextFocus(brls::FocusDirection direction, brls::View* currentView) override;
 
 private:
     brls::View* findFirstFocusableInBox(brls::Box* box);
+    brls::View* findLastFocusableInBox(brls::Box* box);
     bool isDescendantOf(brls::View* view, brls::View* ancestor);
+
+    // Hide rows/cards that have scrolled out of their viewport so borealis
+    // doesn't draw the whole off-screen subtree every frame (see draw()).
+    void cullToViewport(brls::Box* content, brls::View* viewport, bool vertical);
     void loadChannels();
     void refreshCurrentPrograms();  // Lightweight refresh: only update "now playing" info
     void loadGuide();
