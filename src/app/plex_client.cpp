@@ -459,14 +459,27 @@ bool PlexClient::switchHomeUser(const std::string& masterToken,
     HttpClient client;
     HttpRequest req;
     req.url = "https://plex.tv/api/v2/home/users/" + userUuid + "/switch";
-    if (!pin.empty()) {
-        req.url += "?pin=" + HttpClient::urlEncode(pin);
-    }
     req.method = "POST";
     req.headers["Accept"] = "application/json";
+    // plex.tv's nginx rejects empty-body POSTs that don't declare a
+    // content type — that's the 400 Bad Request the original version
+    // hit. Encode the PIN (empty when the user isn't protected) into a
+    // form body so the request always has a real Content-Type + body.
+    req.headers["Content-Type"] = "application/x-www-form-urlencoded";
     req.headers["X-Plex-Token"] = masterToken;
-    req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
-    req.headers["Content-Length"] = "0";
+    // The full X-Plex-* identification block is what every other
+    // plex.tv POST in this client sends; without it the API often
+    // 401s or 400s on /home/users/{uuid}/switch.
+    {
+        const auto& vc = platform::getVideoConstraints();
+        req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+        req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+        req.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+        req.headers["X-Plex-Platform"] = vc.plexPlatform;
+        req.headers["X-Plex-Device"] = vc.plexDevice;
+    }
+    req.body = pin.empty() ? std::string("pin=")
+                            : ("pin=" + HttpClient::urlEncode(pin));
     req.timeout = 15;
 
     HttpResponse resp = client.request(req);
@@ -479,7 +492,8 @@ bool PlexClient::switchHomeUser(const std::string& masterToken,
 
     outToken = extractJsonValue(resp.body, "authToken");
     if (outToken.empty()) {
-        brls::Logger::error("switchHomeUser: response missing authToken");
+        brls::Logger::error("switchHomeUser: response missing authToken (body={})",
+                            resp.body.substr(0, 200));
         return false;
     }
     brls::Logger::info("switchHomeUser: switched to user {}", userUuid);
