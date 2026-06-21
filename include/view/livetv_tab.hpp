@@ -73,7 +73,9 @@ private:
 
     // New layout helpers
     void buildHero();                                // build the empty hero shell
-    void updateHeroForChannel(const LiveTVChannel& channel);  // populate hero from data
+    void updateHeroForChannel(const LiveTVChannel& channel);  // populate hero with current program
+    void updateHeroForProgram(const LiveTVChannel& channel,   // populate hero with a specific
+                              const GuideProgram& program);    // program (hover-driven)
     void updateCurrentTimeLine();    // reposition the cyan "now" rule each second
 
     // UI Components
