@@ -14,17 +14,8 @@
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
-#include "player/mpv_player.hpp"
-#include "activity/player_activity.hpp"
-#include "utils/http_client.hpp"
 #include "platform/platform.hpp"
 #include <set>
-#include <chrono>
-
-#ifdef __vita__
-#include <psp2/net/netctl.h>
-#include <psp2/net/net.h>
-#endif
 
 namespace vitaplex {
 
@@ -51,14 +42,18 @@ struct SectionMeta {
     const char* subtitle;  // one-liner shown under the detail title
 };
 
-// Many of the existing icon assets aren't perfect category matches —
-// pick the closest existing glyph rather than adding new files. The
-// "menu" / "options" assets cover the generic catch-all sections.
+// Sections that use a dedicated MDI glyph use the matching PNG under
+// resources/icons/ (rasterised from the MDI SVG at build time). The
+// rest fall back to the closest existing in-tree asset.
+//
+// SEC_ABOUT is special — it never opens a sub-page, so its name field
+// here is a placeholder; the rail builds it as a static info row that
+// shows VITA_PLEX_DISPLAY_VERSION instead of "About".
 static const SectionMeta kSections[] = {
-    /* SEC_ACCOUNT     */ { "Account",         "options.png",
+    /* SEC_ACCOUNT     */ { "Account",         "account.png",
                             "Sign-in, switch user, and auto-login." },
-    /* SEC_INTERFACE   */ { "Interface",       "options.png",
-                            "Theme and developer surfaces." },
+    /* SEC_INTERFACE   */ { "Interface",       "theme-light-dark.png",
+                            "Theme and logging." },
     /* SEC_LAYOUT      */ { "Layout",          "menu.png",
                             "Sidebar contents, order, and hidden libraries." },
     /* SEC_CONTENT     */ { "Content Display", "show.png",
@@ -71,14 +66,12 @@ static const SectionMeta kSections[] = {
                             "Connection timeout for slow links." },
     /* SEC_DOWNLOADS   */ { "Downloads",       "download.png",
                             "Storage, cleanup, and delete-after-watch." },
-    /* SEC_MUSIC       */ { "Music",           "radio.png",
+    /* SEC_MUSIC       */ { "Music",           "music.png",
                             "Background playback and default track action." },
-    /* SEC_LIVETV      */ { "Live TV & DVR",   "video-image.png",
+    /* SEC_LIVETV      */ { "Live TV & DVR",   "television-guide.png",
                             "Channel guide window and recording defaults." },
-    /* SEC_ABOUT       */ { "About",           "tag.png",
-                            "Version and credits." },
-    /* SEC_DEBUG       */ { "Debug",           "options.png",
-                            "Developer tools and diagnostics." },
+    /* SEC_ABOUT       */ { "About",           "information.png",
+                            "" /* unused — rail uses the version string */ },
 };
 // kSections / SectionId stay-in-sync check has to live inside a
 // member function (the constructor) so it can see the private enum.
@@ -233,8 +226,9 @@ SettingsTab::SettingsTab() {
 
     // ─── Section boxes ─────────────────────────────────────────────
     // Build every section's Box up-front and stash it; showSection()
-    // toggles visibility instead of rebuilding. Order must match
-    // SectionId so m_sectionBoxes[id] resolves correctly.
+    // attaches one at a time. Order must match SectionId so
+    // m_sectionBoxes[id] resolves correctly. SEC_ABOUT has no box —
+    // its rail row is a static version readout, not a sub-page.
     m_sectionBoxes.resize(SEC_COUNT, nullptr);
     m_sectionBoxes[SEC_ACCOUNT]     = createAccountSection();
     m_sectionBoxes[SEC_INTERFACE]   = createUISection();
@@ -246,8 +240,6 @@ SettingsTab::SettingsTab() {
     m_sectionBoxes[SEC_DOWNLOADS]   = createDownloadsSection();
     m_sectionBoxes[SEC_MUSIC]       = createMusicSection();
     m_sectionBoxes[SEC_LIVETV]      = createLiveTVSection();
-    m_sectionBoxes[SEC_ABOUT]       = createAboutSection();
-    m_sectionBoxes[SEC_DEBUG]       = createDebugSection();
 
     // Stage every section's box but do NOT add any of them to the
     // detail content yet — showSection() adds exactly one at a time.
@@ -271,10 +263,17 @@ SettingsTab::SettingsTab() {
     // ─── Rail rows ─────────────────────────────────────────────────
     m_railRows.resize(SEC_COUNT, nullptr);
     for (int id = 0; id < SEC_COUNT; id++) {
-        // Debug row is conditional on the user's "Show Debug Tab" setting,
-        // matching the gate the live app uses for the debug surface.
-        if (id == SEC_DEBUG && !settings.showDebugTab) continue;
-
+        if (id == SEC_ABOUT) {
+            // About is a static, non-focusable readout — the version
+            // string replaces the "About" label and there's no sub-page.
+            // It sits at the bottom of the rail so the regular sections
+            // remain reachable above it.
+            brls::Box* info = makeRailInfoRow(kSections[id].icon,
+                                              VITA_PLEX_DISPLAY_VERSION);
+            m_railRows[id] = info;
+            m_railBox->addView(info);
+            continue;
+        }
         brls::Box* row = makeRailRow(kSections[id].icon,
                                      kSections[id].name,
                                      id);
@@ -385,6 +384,44 @@ brls::Box* SettingsTab::makeRailRow(const std::string& iconPath,
             showSection(sectionId);
         }
     });
+
+    return row;
+}
+
+// Static rail footer entry — same icon + label scaffolding as a regular
+// rail row but with focusable=false, no click handler, no chevron, and
+// muted text. Used for the version readout at the bottom of the rail.
+brls::Box* SettingsTab::makeRailInfoRow(const std::string& iconPath,
+                                        const std::string& title) {
+    auto* row = new brls::Box();
+    row->setAxis(brls::Axis::ROW);
+    row->setAlignItems(brls::AlignItems::CENTER);
+    row->setHeight(40);
+    row->setMarginLeft(8);
+    row->setMarginRight(8);
+    row->setMarginTop(6);
+    row->setMarginBottom(4);
+    row->setPaddingLeft(12);
+    row->setPaddingRight(10);
+    // Explicitly non-focusable — Box defaults to false but the
+    // surrounding rows are focusable=true so spell it out here too
+    // to keep the contrast obvious to readers.
+    row->setFocusable(false);
+
+    auto* icon = new brls::Image();
+    icon->setWidth(18);
+    icon->setHeight(18);
+    icon->setScalingType(brls::ImageScalingType::FIT);
+    icon->setMarginRight(10);
+    icon->setImageFromRes("icons/" + iconPath);
+    row->addView(icon);
+
+    auto* label = new brls::Label();
+    label->setText(title);
+    label->setFontSize(13);
+    label->setTextColor(tok::muted());
+    label->setGrow(1.0f);
+    row->addView(label);
 
     return row;
 }
@@ -556,22 +593,6 @@ brls::Box* SettingsTab::createUISection() {
         Application::getInstance().saveSettings();
     });
     box->addView(m_debugLogToggle);
-
-    // Show debug tab toggle
-    m_showDebugTabToggle = new brls::BooleanCell();
-    m_showDebugTabToggle->init("Show Debug Tab", settings.showDebugTab, [&settings](bool value) {
-        settings.showDebugTab = value;
-        Application::getInstance().saveSettings();
-    });
-    box->addView(m_showDebugTabToggle);
-
-    // Info label for debug tab setting
-    auto* debugInfoLabel = new brls::Label();
-    debugInfoLabel->setText("Debug tab change requires app restart");
-    debugInfoLabel->setFontSize(14);
-    debugInfoLabel->setMarginLeft(16);
-    debugInfoLabel->setMarginTop(8);
-    box->addView(debugInfoLabel);
 
     return box;
 }
@@ -1072,85 +1093,6 @@ brls::Box* SettingsTab::createLiveTVSection() {
             Application::getInstance().saveSettings();
         });
     box->addView(m_liveTvGuideHoursSelector);
-
-    return box;
-}
-
-brls::Box* SettingsTab::createDebugSection() {
-    brls::Box* box = makeSectionBox();
-
-    // Network test button
-    auto* networkTestCell = new brls::DetailCell();
-    networkTestCell->setText("Network Test");
-    networkTestCell->setDetailText("View network info and test Plex connection");
-    networkTestCell->registerClickAction([this](brls::View* view) {
-        onNetworkTest();
-        return true;
-    });
-    box->addView(networkTestCell);
-
-    // Test local playback button
-    auto* testLocalCell = new brls::DetailCell();
-    testLocalCell->setText("Test Local Playback");
-    testLocalCell->setDetailText("ux0:data/VitaPlex/test.mp3");
-    testLocalCell->registerClickAction([this](brls::View* view) {
-        onTestLocalPlayback();
-        return true;
-    });
-    box->addView(testLocalCell);
-
-    // MPV stats overlay toggle — surfaces codec, hwdec, FPS, frame
-    // drops, and cache state on top of the video so you can see why
-    // playback is choppy without an adb cable. See
-    // PlayerActivity::updateMpvStatsOverlay().
-    AppSettings& settings = Application::getInstance().getSettings();
-    auto* mpvStatsToggle = new brls::BooleanCell();
-    mpvStatsToggle->init("MPV Stats Overlay", settings.showMpvStats,
-                         [&settings](bool value) {
-        settings.showMpvStats = value;
-        Application::getInstance().saveSettings();
-    });
-    box->addView(mpvStatsToggle);
-
-    // Info label
-    auto* infoLabel = new brls::Label();
-    infoLabel->setText("Place test.mp3 or test.mp4 in ux0:data/VitaPlex/");
-    infoLabel->setFontSize(14);
-    infoLabel->setMarginLeft(16);
-    infoLabel->setMarginTop(8);
-    infoLabel->setMarginBottom(16);
-    box->addView(infoLabel);
-
-    return box;
-}
-
-brls::Box* SettingsTab::createAboutSection() {
-    brls::Box* box = makeSectionBox();
-
-    // Version info — show the HUMAN-readable display label ("Beta 1.0.2"),
-    // not the numeric flavour ("1.0.2.455") which goes into Plex API
-    // headers and platform package metadata.
-    auto* versionCell = new brls::DetailCell();
-    versionCell->setText("Version");
-    versionCell->setDetailText(VITA_PLEX_DISPLAY_VERSION);
-    box->addView(versionCell);
-
-    // App description
-    auto* descLabel = new brls::Label();
-    descLabel->setText("VitaPlex - Plex Client for PlayStation Vita");
-    descLabel->setFontSize(16);
-    descLabel->setMarginLeft(16);
-    descLabel->setMarginTop(8);
-    box->addView(descLabel);
-
-    // Credit
-    auto* creditLabel = new brls::Label();
-    creditLabel->setText("UI powered by Borealis");
-    creditLabel->setFontSize(14);
-    creditLabel->setMarginLeft(16);
-    creditLabel->setMarginTop(4);
-    creditLabel->setMarginBottom(20);
-    box->addView(creditLabel);
 
     return box;
 }
@@ -1660,210 +1602,6 @@ void SettingsTab::onManageSidebarOrder() {
     });
 
     dialog->open();
-}
-
-void SettingsTab::onNetworkTest() {
-    // Show a toast while tests run
-    brls::Application::notify("Running network test...");
-
-    // Run the network tests on a detached thread to avoid blocking the
-    // UI. Goes through platform::launchThread() rather than std::thread
-    // so the Switch newlib std::thread shim doesn't ship a thread with
-    // an unregistered stack region and zeroed TLS (caught a real crash
-    // on hbloader — Atmosphère Instruction Abort at a page-aligned PC).
-    platform::launchThread([this]() {
-        // ── 1. WiFi Check ──
-        std::string ipAddress = "-";
-        std::string dnsInfo = "-";
-        std::string signalStr = "-";
-        std::string ssid = "-";
-        bool wifiConnected = false;
-
-#ifdef __vita__
-        SceNetCtlInfo info;
-
-        int ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_IP_ADDRESS, &info);
-        if (ret >= 0) {
-            ipAddress = std::string(info.ip_address);
-            wifiConnected = true;
-        }
-
-        ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_SSID, &info);
-        if (ret >= 0) {
-            ssid = std::string(info.ssid);
-        }
-
-        ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_RSSI_PERCENTAGE, &info);
-        if (ret >= 0) {
-            signalStr = std::to_string(info.rssi_percentage) + "%";
-        }
-
-        ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_PRIMARY_DNS, &info);
-        if (ret >= 0) {
-            dnsInfo = std::string(info.primary_dns);
-            ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_SECONDARY_DNS, &info);
-            if (ret >= 0) {
-                dnsInfo += " / " + std::string(info.secondary_dns);
-            }
-        }
-#else
-        ipAddress = "127.0.0.1";
-        dnsInfo = "8.8.8.8";
-        signalStr = "100%";
-        ssid = "Desktop";
-        wifiConnected = true;
-#endif
-
-        // ── 2. Internet Check (latency) ──
-        std::string internetStatus = "Skipped (no WiFi)";
-        if (wifiConnected) {
-            HttpClient netClient;
-            netClient.setTimeout(10);
-
-            auto start = std::chrono::steady_clock::now();
-            std::string response;
-            bool ok = netClient.get("http://connectivitycheck.gstatic.com/generate_204", response);
-            auto end = std::chrono::steady_clock::now();
-            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-
-            if (ok) {
-                internetStatus = "Reachable (" + std::to_string(ms) + "ms)";
-            } else {
-                internetStatus = "Unreachable (" + std::to_string(ms) + "ms)";
-            }
-        }
-
-        // ── 3. Plex Server Check (latency) ──
-        Application& app = Application::getInstance();
-        std::string serverUrl = app.getServerUrl();
-        std::string plexStatus;
-        std::string plexLatency = "-";
-
-        if (serverUrl.empty()) {
-            plexStatus = "Not configured";
-        } else if (!wifiConnected) {
-            plexStatus = "Skipped (no WiFi)";
-        } else {
-            HttpClient plexClient;
-            plexClient.setTimeout(10);
-            plexClient.setDefaultHeader("X-Plex-Token", app.getAuthToken());
-            plexClient.setDefaultHeader("Accept", "application/json");
-
-            auto start = std::chrono::steady_clock::now();
-            std::string response;
-            bool ok = plexClient.get(serverUrl + "/identity", response);
-            auto end = std::chrono::steady_clock::now();
-            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
-
-            plexLatency = std::to_string(ms) + "ms";
-            if (ok) {
-                plexStatus = "Connected (" + std::to_string(ms) + "ms)";
-            } else {
-                plexStatus = "Failed (" + std::to_string(ms) + "ms)";
-            }
-        }
-
-        // ── Build dialog on main thread ──
-        // Capture results by value for the lambda
-        brls::sync([=]() {
-            brls::Box* content = new brls::Box();
-            content->setAxis(brls::Axis::COLUMN);
-            content->setWidth(700);
-            content->setHeight(420);
-            content->setPadding(25);
-
-            auto* titleLabel = new brls::Label();
-            titleLabel->setText("Network Test Results");
-            titleLabel->setFontSize(22);
-            titleLabel->setMarginBottom(15);
-            content->addView(titleLabel);
-
-            // Helper to create info rows (item #11 style)
-            auto addRow = [&content](const std::string& label, const std::string& value) {
-                auto* row = new brls::Box();
-                row->setAxis(brls::Axis::ROW);
-                row->setMarginBottom(8);
-                auto* lblA = new brls::Label();
-                lblA->setText(label);
-                lblA->setFontSize(16);
-                lblA->setWidth(220);
-                row->addView(lblA);
-                auto* lblB = new brls::Label();
-                lblB->setText(value);
-                lblB->setFontSize(16);
-                row->addView(lblB);
-                content->addView(row);
-            };
-
-            // Helper for section headers
-            auto addHeader = [&content](const std::string& text) {
-                auto* lbl = new brls::Label();
-                lbl->setText(text);
-                lbl->setFontSize(16);
-                lbl->setMarginBottom(6);
-                lbl->setMarginTop(4);
-                content->addView(lbl);
-            };
-
-            // WiFi section
-            addHeader("-- WiFi --");
-            addRow("Status:", wifiConnected ? "Connected" : "Not Connected");
-            addRow("Network:", ssid);
-            addRow("IP Address:", ipAddress);
-            addRow("DNS:", dnsInfo);
-            addRow("Signal:", signalStr);
-
-            // Internet section
-            addHeader("-- Internet --");
-            addRow("Connectivity:", internetStatus);
-
-            // Plex server section
-            addHeader("-- Plex Server --");
-            addRow("Server:", serverUrl.empty() ? "Not configured" : serverUrl);
-            addRow("Connection:", plexStatus);
-
-            auto* dialog = new brls::Dialog(content);
-            dialog->addButton("Close", []() {});
-            dialog->open();
-        });
-    });
-}
-
-void SettingsTab::onTestLocalPlayback() {
-    brls::Logger::info("SettingsTab: Testing local playback...");
-
-    // Check for test files
-    const std::string basePath = "ux0:data/VitaPlex/";
-    std::string testFile;
-
-    // Try mp4 first (to test video), then audio files
-    std::vector<std::string> testFiles = {
-        basePath + "test.mp4",
-        basePath + "test.mp3",
-        basePath + "test.ogg",
-        basePath + "test.wav"
-    };
-
-    for (const auto& file : testFiles) {
-        FILE* f = fopen(file.c_str(), "rb");
-        if (f) {
-            fclose(f);
-            testFile = file;
-            brls::Logger::info("SettingsTab: Found test file: {}", testFile);
-            break;
-        }
-    }
-
-    if (testFile.empty()) {
-        brls::Application::notify("No test file found in ux0:data/VitaPlex/");
-        brls::Logger::error("SettingsTab: No test file found");
-        return;
-    }
-
-    // Push player activity with the test file (this shows the video view properly)
-    brls::Logger::info("SettingsTab: Pushing player activity for: {}", testFile);
-    PlayerActivity* activity = PlayerActivity::createForDirectFile(testFile);
-    brls::Application::pushActivity(activity);
 }
 
 } // namespace vitaplex

@@ -32,6 +32,12 @@ private:
     // Section IDs. Order matches kSections in the cpp and the order in
     // which the rail rows are added. Keep them dense and contiguous —
     // showSection() indexes m_sectionBoxes / m_railRows by these.
+    //
+    // SEC_ABOUT is intentionally last and has no section box — the
+    // rail renders it as a static, non-focusable version readout
+    // instead of a clickable category. SEC_COUNT therefore counts
+    // every entry including About (used to size m_railRows /
+    // m_sectionBoxes); m_sectionBoxes[SEC_ABOUT] stays null.
     enum SectionId : int {
         SEC_ACCOUNT = 0,
         SEC_INTERFACE,
@@ -44,7 +50,6 @@ private:
         SEC_MUSIC,
         SEC_LIVETV,
         SEC_ABOUT,
-        SEC_DEBUG,
         SEC_COUNT
     };
 
@@ -62,14 +67,17 @@ private:
     brls::Box* createDownloadsSection();
     brls::Box* createMusicSection();
     brls::Box* createLiveTVSection();
-    brls::Box* createAboutSection();
-    brls::Box* createDebugSection();
 
     // Master/detail plumbing — see settings_tab.cpp for the layout.
     brls::Box*           makeSectionBox();
     brls::Box*           makeRailRow(const std::string& iconPath,
                                      const std::string& title,
                                      int sectionId);
+    // Static, non-focusable row used for the About footer — shows the
+    // version next to an icon and is skipped by focus navigation so
+    // the user can't accidentally land on it.
+    brls::Box*           makeRailInfoRow(const std::string& iconPath,
+                                         const std::string& title);
     void                 showSection(int sectionId);
     // Refresh the left-bar / background / text colour on every rail row
     // so the visually-selected one matches m_activeSection. Called by
@@ -77,8 +85,6 @@ private:
     void                 paintRailRowSelection();
 
     void onLogout();
-    void onNetworkTest();
-    void onTestLocalPlayback();
     void onThemeChanged(int index);
     void onQualityChanged(int index);
     void onSubtitleSizeChanged(int index);
@@ -119,7 +125,6 @@ private:
     // UI section
     brls::SelectorCell* m_themeSelector = nullptr;
     brls::BooleanCell* m_debugLogToggle = nullptr;
-    brls::BooleanCell* m_showDebugTabToggle = nullptr;
 
     // Layout section
     brls::BooleanCell* m_sidebarLibrariesToggle = nullptr;

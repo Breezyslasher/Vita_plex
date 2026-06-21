@@ -8,7 +8,6 @@
 #include "view/library_section_tab.hpp"
 #include "view/search_tab.hpp"
 #include "view/settings_tab.hpp"
-#include "view/debug_tab.hpp"
 #include "view/livetv_tab.hpp"
 #include "view/downloads_tab.hpp"
 #include "view/music_tab.hpp"
@@ -173,11 +172,10 @@ void MainActivity::onContentAvailable() {
         // Downloads tab (always available)
         tabFrame->addTab("Downloads", []() { return new DownloadsTab(); });
 
-        // Debug and Settings always at the bottom
+        // Settings sits at the bottom. The Debug tab and its gating
+        // showDebugTab setting were removed when the Settings tab UI
+        // dropped its Debug sub-section.
         tabFrame->addSeparator();
-        if (settings.showDebugTab) {
-            tabFrame->addTab("Debug", []() { return new DebugTab(); });
-        }
         tabFrame->addTab("Settings", []() { return new SettingsTab(); });
 
         // Focus first tab

@@ -356,7 +356,6 @@ bool Application::loadSettings() {
     // UI settings
     m_settings.theme = static_cast<AppTheme>(extractInt("theme"));
     m_settings.debugLogging = extractBool("debugLogging", true);
-    m_settings.showDebugTab = extractBool("showDebugTab", false);
 
     // Layout settings
     m_settings.showLibrariesInSidebar = extractBool("showLibrariesInSidebar", false);
@@ -503,7 +502,6 @@ bool Application::saveSettings() {
     json += "  \"username\": \"" + esc(m_username) + "\",\n";
     json += "  \"theme\": " + std::to_string(static_cast<int>(m_settings.theme)) + ",\n";
     json += "  \"debugLogging\": " + b(m_settings.debugLogging) + ",\n";
-    json += "  \"showDebugTab\": " + b(m_settings.showDebugTab) + ",\n";
     json += "  \"showLibrariesInSidebar\": " + b(m_settings.showLibrariesInSidebar) + ",\n";
     json += "  \"collapseSidebar\": " + b(m_settings.collapseSidebar) + ",\n";
     json += "  \"hiddenLibraries\": \"" + esc(m_settings.hiddenLibraries) + "\",\n";
