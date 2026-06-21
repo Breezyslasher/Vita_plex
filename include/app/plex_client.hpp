@@ -303,6 +303,13 @@ public:
     bool reportTimeline(const std::string& ratingKey, const std::string& key,
                         const std::string& state, int timeMs, int durationMs,
                         int playQueueItemID = 0);
+    // Keep-alive ping for a live-TV rolling subscription. The server's grab
+    // has a hard 300-second stop-timer; each /:/timeline call with
+    // key=/livetv/sessions/{uuid} resets it. The official Plex app fires one
+    // every ~1 sec while playing; we ping less often (every 5 sec) which is
+    // still well inside the timer's window.
+    bool reportLiveTimeline(const std::string& liveSessionUuid, int playbackTimeMs,
+                            const std::string& state = "playing");
     bool markAsWatched(const std::string& ratingKey);
     bool markAsUnwatched(const std::string& ratingKey);
 
@@ -389,7 +396,9 @@ public:
     // Live TV
     bool fetchLiveTVChannels(std::vector<LiveTVChannel>& channels);
     bool fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, int hoursAhead = 4);
-    bool tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl, const std::string& programMetadataKey = "");
+    bool tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl,
+                           std::string& liveSessionUuid,
+                           const std::string& programMetadataKey = "");
     bool hasLiveTV() const { return m_hasLiveTV; }
 
     // Build a playable HLS URL for a live tune session by routing it through

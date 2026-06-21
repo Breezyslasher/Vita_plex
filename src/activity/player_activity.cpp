@@ -8,6 +8,7 @@
 #include "app/downloads_manager.hpp"
 #include "app/music_queue.hpp"
 #include "player/mpv_player.hpp"
+#include "utils/async.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/http_client.hpp"
 #include "utils/pip.h"
@@ -47,12 +48,16 @@ PlayerActivity* PlayerActivity::createForDirectFile(const std::string& filePath)
     return activity;
 }
 
-PlayerActivity* PlayerActivity::createForStream(const std::string& streamUrl, const std::string& title) {
+PlayerActivity* PlayerActivity::createForStream(const std::string& streamUrl, const std::string& title,
+                                                const std::string& liveSessionUuid) {
     PlayerActivity* activity = new PlayerActivity("", false);
     activity->m_isDirectFile = true;  // Use direct file path for stream URLs too
     activity->m_directFilePath = streamUrl;
     activity->m_streamTitle = title;
-    brls::Logger::info("PlayerActivity created for stream: {} ({})", title, streamUrl);
+    activity->m_liveSessionUuid = liveSessionUuid;
+    brls::Logger::info("PlayerActivity created for stream: {} ({}){}",
+                       title, streamUrl,
+                       liveSessionUuid.empty() ? "" : " [live]");
     return activity;
 }
 
@@ -1490,6 +1495,23 @@ void PlayerActivity::updateProgress() {
         m_controlsIdleSeconds++;
         if (m_controlsIdleSeconds >= autoHide) {
             hideControls();
+        }
+    }
+
+    // Live TV keep-alive: each /:/timeline ping resets the server's 300-sec
+    // rolling-subscription stop-grab timer. Without it the grab dies after
+    // ~5 min, the universal transcode session that's fed by it gets killed,
+    // and mpv starts getting 404s on the next playlist refresh.
+    if (!m_liveSessionUuid.empty() && !m_destroying) {
+        m_liveKeepaliveCounter++;
+        if (m_liveKeepaliveCounter >= 5) {
+            m_liveKeepaliveCounter = 0;
+            const std::string state = player.isPaused() ? "paused" : "playing";
+            int playbackMs = (int)(position * 1000);
+            std::string sess = m_liveSessionUuid;
+            asyncRun([sess, state, playbackMs]() {
+                PlexClient::getInstance().reportLiveTimeline(sess, playbackMs, state);
+            });
         }
     }
 

@@ -2581,6 +2581,44 @@ bool PlexClient::reportTimeline(const std::string& ratingKey, const std::string&
     return resp.statusCode == 200;
 }
 
+bool PlexClient::reportLiveTimeline(const std::string& liveSessionUuid, int playbackTimeMs,
+                                    const std::string& state) {
+    if (liveSessionUuid.empty()) return false;
+
+    // Match the official Plex app's keep-alive call: GET /:/timeline with the
+    // live session path as `key=`. The server's parser fires
+    //   "[Now] Updated play state for /livetv/sessions/{uuid}"
+    // on receipt, which resets the rolling subscription's 300-sec stop-grab
+    // timer. ratingKey is required by the endpoint but isn't used to identify
+    // the session for live TV — any non-empty value works.
+    std::string keyPath = "/livetv/sessions/" + liveSessionUuid;
+    std::string params = "/:/timeline?key=" + HttpClient::urlEncode(keyPath) +
+                         "&ratingKey=0" +
+                         "&duration=0" +
+                         "&time=0" +
+                         "&playbackTime=" + std::to_string(playbackTimeMs) +
+                         "&hasMDE=1" +
+                         "&state=" + state;
+
+    HttpRequest req;
+    req.url = buildApiUrl(params);
+    req.method = "GET";
+    req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+    req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+    // Bind the timeline to the same consumer the tune/decision used so the
+    // server attributes it to the right rolling subscription.
+    req.headers["X-Plex-Session-Identifier"] = PLEX_CLIENT_ID;
+    req.timeout = 10;
+
+    HttpClient client;
+    HttpResponse resp = client.request(req);
+    if (resp.statusCode != 200) {
+        brls::Logger::debug("reportLiveTimeline: status={} for /livetv/sessions/{}",
+                            resp.statusCode, liveSessionUuid);
+    }
+    return resp.statusCode == 200;
+}
+
 bool PlexClient::markAsWatched(const std::string& ratingKey) {
     HttpClient client;
     std::string url = buildApiUrl("/:/scrobble?key=" + ratingKey + "&identifier=com.plexapp.plugins.library");
@@ -3102,7 +3140,10 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
     return !channelsWithPrograms.empty();
 }
 
-bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl, const std::string& programMetadataKey) {
+bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl,
+                                   std::string& liveSessionUuid,
+                                   const std::string& programMetadataKey) {
+    liveSessionUuid.clear();
     brls::Logger::info("tuneLiveTVChannel: channelKey={}, programMetadataKey={}", channelKey, programMetadataKey);
 
     // Ensure we have DVR ID
@@ -3195,6 +3236,7 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     // The raw tune session is mpeg2video; route it through transcode/universal
     // (exactly as the official Plex app does) to get a playable h264 HLS URL.
     if (buildLiveSessionStreamUrl(sessionUuid, streamUrl)) {
+        liveSessionUuid = sessionUuid;
         return true;
     }
 

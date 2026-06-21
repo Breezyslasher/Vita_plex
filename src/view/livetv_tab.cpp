@@ -944,15 +944,16 @@ void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
     asyncRun([this, channel, tuneChannel, programMetadataKey, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         PlexClient& client = PlexClient::getInstance();
         std::string streamUrl;
+        std::string liveSessionUuid;
 
-        if (client.tuneLiveTVChannel(tuneChannel, streamUrl, programMetadataKey)) {
+        if (client.tuneLiveTVChannel(tuneChannel, streamUrl, liveSessionUuid, programMetadataKey)) {
             brls::Logger::info("LiveTVTab: Got stream URL for channel {}", channel.title);
-            brls::sync([streamUrl, channel]() {
+            brls::sync([streamUrl, liveSessionUuid, channel]() {
                 std::string title = channel.title;
                 if (!channel.currentProgram.empty()) {
                     title += " - " + channel.currentProgram;
                 }
-                Application::getInstance().pushLiveTVPlayerActivity(streamUrl, title);
+                Application::getInstance().pushLiveTVPlayerActivity(streamUrl, title, liveSessionUuid);
             });
         } else {
             brls::Logger::error("LiveTVTab: Failed to tune channel {}", channel.title);
