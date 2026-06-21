@@ -565,12 +565,80 @@ void LiveTVTab::buildHero() {
 }
 
 void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
+    // Find the currently-airing program and forward to the per-program
+    // updater. Falls back to the channel's legacy currentProgram/start/end
+    // fields if the EPG didn't fill the programs vector.
+    time_t now = time(nullptr);
+    GuideProgram nowProg;
+    bool found = false;
+    for (const auto& p : channel.programs) {
+        if (p.startTime <= (int64_t)now && p.endTime > (int64_t)now) {
+            nowProg.title       = p.title;
+            nowProg.summary     = p.summary;
+            nowProg.startTime   = p.startTime;
+            nowProg.endTime     = p.endTime;
+            nowProg.ratingKey   = p.ratingKey;
+            nowProg.metadataKey = p.metadataKey;
+            nowProg.thumb       = p.thumb;
+            found = true;
+            break;
+        }
+    }
+    if (!found && !channel.currentProgram.empty() && channel.programStart > 0) {
+        nowProg.title     = channel.currentProgram;
+        nowProg.startTime = channel.programStart;
+        nowProg.endTime   = channel.programEnd > 0
+                            ? channel.programEnd
+                            : channel.programStart + 1800;
+        found = true;
+    }
+
+    if (found) {
+        updateHeroForProgram(channel, nowProg);
+        return;
+    }
+
+    // No program data — show channel-only state.
     m_heroChannel = channel;
+    m_heroProgramValid = false;
+    if (m_heroChannelName)
+        m_heroChannelName->setText(channel.callSign.empty() ? channel.title : channel.callSign);
+    if (m_heroChannelId) {
+        std::string chId = !channel.channelIdentifier.empty()
+            ? "CH " + channel.channelIdentifier
+            : (channel.channelNumber > 0 ? "CH " + std::to_string(channel.channelNumber) : "");
+        m_heroChannelId->setText(chId);
+    }
+    if (m_heroTitleLabel)   m_heroTitleLabel->setText(channel.title);
+    if (m_heroSummaryLabel) m_heroSummaryLabel->setText("No guide data");
+    if (m_heroStartLabel)   m_heroStartLabel->setText("");
+    if (m_heroEndLabel)     m_heroEndLabel->setText("");
+    if (m_heroPctLabel)     m_heroPctLabel->setText("");
+    if (m_heroProgressFill) m_heroProgressFill->setWidth(0);
+    if (m_heroLiveBadge)    m_heroLiveBadge->setVisibility(brls::Visibility::INVISIBLE);
+
+    // Thumb falls back to the channel's own art.
+    if (m_heroThumbAlive) m_heroThumbAlive->store(false);
+    m_heroThumbAlive = std::make_shared<std::atomic<bool>>(true);
+    if (m_heroThumb) m_heroThumb->setVisibility(brls::Visibility::INVISIBLE);
+    if (!channel.thumb.empty()) {
+        PlexClient& client = PlexClient::getInstance();
+        std::string url = client.getThumbnailUrl(channel.thumb, heroThumbWidth(), heroHeight() - 16);
+        ImageLoader::loadAsync(url, [](brls::Image* img) {
+            if (img) img->setVisibility(brls::Visibility::VISIBLE);
+        }, m_heroThumb, m_heroThumbAlive);
+    }
+}
+
+void LiveTVTab::updateHeroForProgram(const LiveTVChannel& channel,
+                                     const GuideProgram& program) {
+    m_heroChannel      = channel;
+    m_heroProgram      = program;
+    m_heroProgramValid = true;
 
     // Channel chrome.
-    if (m_heroChannelName) {
+    if (m_heroChannelName)
         m_heroChannelName->setText(channel.callSign.empty() ? channel.title : channel.callSign);
-    }
     if (m_heroChannelId) {
         std::string chId = !channel.channelIdentifier.empty()
             ? "CH " + channel.channelIdentifier
@@ -578,71 +646,40 @@ void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
         m_heroChannelId->setText(chId);
     }
 
-    // Current program (and a sensible fallback when EPG has nothing on now).
+    if (m_heroTitleLabel)   m_heroTitleLabel->setText(program.title);
+    if (m_heroSummaryLabel)
+        m_heroSummaryLabel->setText(program.summary.empty() ? std::string(" ") : program.summary);
+    if (m_heroStartLabel)   m_heroStartLabel->setText(formatTime(program.startTime));
+    if (m_heroEndLabel)     m_heroEndLabel->setText(formatTime(program.endTime));
+
+    // Progress + LIVE badge are only meaningful when the program is
+    // currently airing; future / past programs show 0% and no badge.
     time_t now = time(nullptr);
-    ChannelProgram nowProg;
-    bool found = false;
-    for (const auto& p : channel.programs) {
-        if (p.startTime <= (int64_t)now && p.endTime > (int64_t)now) { nowProg = p; found = true; break; }
+    bool isLive = (program.startTime <= (int64_t)now && program.endTime > (int64_t)now);
+
+    int pct = 0;
+    if (isLive && program.endTime > program.startTime) {
+        int64_t elapsed = std::max<int64_t>(0, (int64_t)now - program.startTime);
+        int64_t dur     = program.endTime - program.startTime;
+        pct = (int)std::min<int64_t>(100, (elapsed * 100) / dur);
     }
-    if (!found && !channel.currentProgram.empty() && channel.programStart > 0) {
-        nowProg.title = channel.currentProgram;
-        nowProg.startTime = channel.programStart;
-        nowProg.endTime = channel.programEnd > 0 ? channel.programEnd : channel.programStart + 1800;
-        found = true;
+    if (m_heroPctLabel) m_heroPctLabel->setText(std::to_string(pct) + "%");
+    if (m_heroProgressFill && m_heroProgressTrack) {
+        float trackW = m_heroProgressTrack->getWidth();
+        if (trackW <= 0) trackW = 200;  // pre-layout fallback
+        m_heroProgressFill->setWidth(trackW * (pct / 100.0f));
     }
+    if (m_heroLiveBadge)
+        m_heroLiveBadge->setVisibility(isLive ? brls::Visibility::VISIBLE
+                                              : brls::Visibility::INVISIBLE);
 
-    if (found) {
-        m_heroProgram.title       = nowProg.title;
-        m_heroProgram.summary     = nowProg.summary;
-        m_heroProgram.startTime   = nowProg.startTime;
-        m_heroProgram.endTime     = nowProg.endTime;
-        m_heroProgram.ratingKey   = nowProg.ratingKey;
-        m_heroProgram.metadataKey = nowProg.metadataKey;
-        m_heroProgram.thumb       = nowProg.thumb;
-        m_heroProgramValid = true;
-
-        if (m_heroTitleLabel) m_heroTitleLabel->setText(nowProg.title);
-        if (m_heroSummaryLabel)
-            m_heroSummaryLabel->setText(nowProg.summary.empty() ? std::string(" ") : nowProg.summary);
-        if (m_heroStartLabel) m_heroStartLabel->setText(formatTime(nowProg.startTime));
-        if (m_heroEndLabel)   m_heroEndLabel->setText(formatTime(nowProg.endTime));
-
-        int pct = 0;
-        if (nowProg.endTime > nowProg.startTime) {
-            int64_t elapsed = std::max<int64_t>(0, (int64_t)now - nowProg.startTime);
-            int64_t dur     = nowProg.endTime - nowProg.startTime;
-            pct = (int)std::min<int64_t>(100, (elapsed * 100) / dur);
-        }
-        if (m_heroPctLabel) m_heroPctLabel->setText(std::to_string(pct) + "%");
-        if (m_heroProgressFill && m_heroProgressTrack) {
-            float trackW = m_heroProgressTrack->getWidth();
-            if (trackW <= 0) trackW = 200;  // pre-layout fallback
-            m_heroProgressFill->setWidth(trackW * (pct / 100.0f));
-        }
-        if (m_heroLiveBadge) m_heroLiveBadge->setVisibility(brls::Visibility::VISIBLE);
-    } else {
-        m_heroProgramValid = false;
-        if (m_heroTitleLabel) m_heroTitleLabel->setText(channel.title);
-        if (m_heroSummaryLabel) m_heroSummaryLabel->setText("No guide data");
-        if (m_heroStartLabel) m_heroStartLabel->setText("");
-        if (m_heroEndLabel)   m_heroEndLabel->setText("");
-        if (m_heroPctLabel)   m_heroPctLabel->setText("");
-        if (m_heroProgressFill) m_heroProgressFill->setWidth(0);
-        if (m_heroLiveBadge) m_heroLiveBadge->setVisibility(brls::Visibility::INVISIBLE);
-    }
-
-    // Thumbnail: prefer the program's own artwork (show/episode poster) so
-    // the hero looks like a programme promo rather than a channel slate.
-    // Falls back to the channel logo when EPG didn't carry program art.
+    // Thumbnail: prefer the program's own artwork; fall back to channel
+    // logo if EPG didn't carry program art for this entry.
     if (m_heroThumbAlive) m_heroThumbAlive->store(false);
     m_heroThumbAlive = std::make_shared<std::atomic<bool>>(true);
     if (m_heroThumb) m_heroThumb->setVisibility(brls::Visibility::INVISIBLE);
 
-    std::string thumbSrc;
-    if (m_heroProgramValid && !m_heroProgram.thumb.empty()) thumbSrc = m_heroProgram.thumb;
-    if (thumbSrc.empty()) thumbSrc = channel.thumb;
-
+    std::string thumbSrc = !program.thumb.empty() ? program.thumb : channel.thumb;
     if (!thumbSrc.empty()) {
         PlexClient& client = PlexClient::getInstance();
         std::string url = client.getThumbnailUrl(thumbSrc, heroThumbWidth(), heroHeight() - 16);
@@ -860,6 +897,13 @@ void LiveTVTab::buildEPGGrid() {
             onChannelSelected(capturedChannel);
             return true;
         });
+        // Hover on the channel column shows the channel's current show
+        // in the hero — keeps the preview in sync as the user scrolls
+        // through the channel list with the dpad.
+        channelCol->getFocusEvent()->subscribe(
+            [this, capturedChannel](brls::View*) {
+                updateHeroForChannel(capturedChannel);
+            });
 
         rowBox->addView(channelCol);
 
@@ -945,6 +989,14 @@ void LiveTVTab::buildEPGGrid() {
                     onProgramSelected(gp, capturedChannel);
                     return true;
                 });
+                // Hover → live-update the hero with this program's
+                // details (title, summary, thumb, progress, channel
+                // chrome). Watch live + Record buttons follow because
+                // they read from m_heroChannel / m_heroProgram.
+                progCell->getFocusEvent()->subscribe(
+                    [this, gp, capturedChannel](brls::View*) {
+                        updateHeroForProgram(capturedChannel, gp);
+                    });
 
                 programsBox->addView(progCell);
                 lastEndTime = visEnd;
@@ -993,6 +1045,20 @@ void LiveTVTab::buildEPGGrid() {
             timeRange->setMarginTop(3);
             progCell->addView(timeRange);
 
+            // Hover on the legacy fallback updates the hero with this
+            // channel's "now playing" — we don't have a full program
+            // struct here, so synthesize one from the channel fields.
+            GuideProgram legacyGp;
+            legacyGp.title     = channel.currentProgram;
+            legacyGp.startTime = channel.programStart;
+            legacyGp.endTime   = channel.programEnd > 0
+                                  ? channel.programEnd
+                                  : channel.programStart + 1800;
+            progCell->getFocusEvent()->subscribe(
+                [this, legacyGp, capturedChannel](brls::View*) {
+                    updateHeroForProgram(capturedChannel, legacyGp);
+                });
+
             programsBox->addView(progCell);
         } else {
             auto* emptyCell = new brls::Box();
@@ -1014,6 +1080,12 @@ void LiveTVTab::buildEPGGrid() {
                 onChannelSelected(capturedChannel);
                 return true;
             });
+            // Hover on a no-data cell still updates the channel chrome
+            // on the hero so the user knows which channel they'd tune.
+            emptyCell->getFocusEvent()->subscribe(
+                [this, capturedChannel](brls::View*) {
+                    updateHeroForChannel(capturedChannel);
+                });
 
             programsBox->addView(emptyCell);
         }
