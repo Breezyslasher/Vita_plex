@@ -11,6 +11,7 @@
 #include <cstring>
 #include <ctime>
 #include <algorithm>
+#include <set>
 
 namespace vitaplex {
 
@@ -2785,6 +2786,16 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
 
             // Parse Channel array from response
             // Per openapi.json schema: Channel objects have callSign, identifier, channelVcn, thumb, title, key
+            //
+            // The response can reference a single channel from more than
+            // one section of the JSON — once as the lineup's Channel
+            // object and again as a ChannelMapping's nested copy — and
+            // our "find every \"callSign\" then walk back to its
+            // enclosing object" parser catches all of them. Dedupe by
+            // channel.key (or VCN as a fallback for entries without a
+            // key) before pushing so the EPG doesn't show double rows
+            // for 4.1, 4.2, 4.3 etc.
+            std::set<std::string> seenChannelKeys;
             size_t pos = 0;
             while ((pos = resp.body.find("\"callSign\"", pos)) != std::string::npos) {
                 size_t objStart = resp.body.rfind('{', pos);
@@ -2861,7 +2872,16 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
                 // the EPG isn't empty.
                 if (mapped || m_channelMappings.empty()) {
                     if (!channel.callSign.empty() || !channel.title.empty()) {
-                        channels.push_back(channel);
+                        // Dedupe so a channel referenced from multiple
+                        // sections of the response doesn't show up
+                        // twice in the guide.
+                        std::string dedupeKey = !channel.key.empty()
+                            ? channel.key
+                            : channel.channelIdentifier;
+                        if (dedupeKey.empty()) dedupeKey = channel.callSign;
+                        if (seenChannelKeys.insert(dedupeKey).second) {
+                            channels.push_back(channel);
+                        }
                     }
                 }
 
