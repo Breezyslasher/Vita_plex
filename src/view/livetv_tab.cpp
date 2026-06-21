@@ -60,12 +60,6 @@ static inline int livetvRowHeight() {
     // time-range stack, the rest was empty space the user flagged.
     return std::max(50, platform::getImageConstraints().listRowHeight - 2);
 }
-static inline int livetvChannelColWidth() {
-    // The redesign target is 158 on logical 1280×720; clamp to a reasonable
-    // minimum on tighter Vita layouts.
-    return std::max(110, platform::getImageConstraints().livetvChannelCardWidth + 38);
-}
-
 // Sticky channel-column logo: a wide 16:9 chip (channel logos are
 // banners, not avatars). Height anchored to livetvRowHeight() so it
 // scales with the row.
@@ -73,10 +67,12 @@ static inline int gridChannelLogoHeight() {
     return std::max(28, livetvRowHeight() - 18);
 }
 static inline int gridChannelLogoWidth() {
-    int h = gridChannelLogoHeight();
-    int w = (int)((float)h * 16.0f / 9.0f);
-    int maxW = std::max(60, livetvChannelColWidth() - 14);
-    return std::min(w, maxW);
+    return (int)((float)gridChannelLogoHeight() * 16.0f / 9.0f);
+}
+// Column hugs the logo with a small horizontal margin — was max(110, …),
+// which left a lot of dead space either side of the logo.
+static inline int livetvChannelColWidth() {
+    return gridChannelLogoWidth() + 14;
 }
 
 // Cache durations
