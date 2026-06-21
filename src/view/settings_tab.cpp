@@ -249,13 +249,23 @@ SettingsTab::SettingsTab() {
     m_sectionBoxes[SEC_ABOUT]       = createAboutSection();
     m_sectionBoxes[SEC_DEBUG]       = createDebugSection();
 
-    // Stage them inside the detail content holder. Visibility is the
-    // swap mechanism — Visibility::GONE removes them from layout so
-    // the active section uses the full scroll viewport.
+    // Stage every section's box but do NOT add any of them to the
+    // detail content yet — showSection() adds exactly one at a time.
+    // The reason is borealis' Box::getDefaultFocus walks children and
+    // their descendants for the first focusable view, *without*
+    // checking Visibility::GONE. If we add every section box and only
+    // toggle visibility, RIGHT from the rail lands on the first
+    // focusable cell of section[0] (Account) regardless of which
+    // section the user actually selected — focus goes to an invisible
+    // cell.
+    //
+    // Keeping the unused section boxes detached (no parent) makes them
+    // invisible to the focus walker and to Yoga; addView re-parents
+    // the one we want to show, removeView(_, /*free=*/false) detaches
+    // the previous one without destroying it.
     for (brls::Box* sec : m_sectionBoxes) {
         if (!sec) continue;
-        sec->setVisibility(brls::Visibility::GONE);
-        m_detailContent->addView(sec);
+        sec->setVisibility(brls::Visibility::VISIBLE);
     }
 
     // ─── Rail rows ─────────────────────────────────────────────────
@@ -275,6 +285,18 @@ SettingsTab::SettingsTab() {
     // Default landing — Account on first open.
     m_activeSection = SEC_ACCOUNT;
     showSection(m_activeSection);
+}
+
+SettingsTab::~SettingsTab() {
+    // Each section box that's NOT the currently-attached one has no
+    // parent; brls::Box::~Box only deletes children, so those orphans
+    // would leak. Delete them here. The attached one is owned by
+    // m_detailContent and will be freed by the base class destructor.
+    for (brls::Box* sec : m_sectionBoxes) {
+        if (sec && sec != m_attachedSection) {
+            delete sec;
+        }
+    }
 }
 
 // Make a fresh column box with the spacing the detail pane expects.
@@ -369,14 +391,21 @@ brls::Box* SettingsTab::makeRailRow(const std::string& iconPath,
 
 void SettingsTab::showSection(int sectionId) {
     if (sectionId < 0 || sectionId >= SEC_COUNT) return;
-    if (!m_sectionBoxes[sectionId]) return;
+    brls::Box* target = m_sectionBoxes[sectionId];
+    if (!target) return;
 
-    // Hide every section box, show only the active one.
-    for (int i = 0; i < SEC_COUNT; i++) {
-        if (!m_sectionBoxes[i]) continue;
-        m_sectionBoxes[i]->setVisibility(
-            i == sectionId ? brls::Visibility::VISIBLE
-                            : brls::Visibility::GONE);
+    // Swap which section box owns the detail content holder. We rely on
+    // m_attachedSection rather than getParent() because brls
+    // removeView(_, /*free=*/false) doesn't clear the view's parent
+    // pointer, so getParent() lies after a detach. Borealis' focus
+    // walker only sees attached children, so detaching the previous
+    // section's box stops RIGHT-from-rail from landing on its cells.
+    if (m_attachedSection != target) {
+        if (m_attachedSection) {
+            m_detailContent->removeView(m_attachedSection, /*free=*/false);
+        }
+        m_detailContent->addView(target);
+        m_attachedSection = target;
     }
 
     // Header text.

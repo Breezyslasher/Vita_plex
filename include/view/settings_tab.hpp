@@ -22,6 +22,11 @@ namespace vitaplex {
 class SettingsTab : public brls::Box {
 public:
     SettingsTab();
+    // Section boxes that aren't currently attached to m_detailContent
+    // have no parent, so brls::Box::~Box's "delete every child" sweep
+    // won't reach them. The destructor walks m_sectionBoxes and frees
+    // the detached ones explicitly.
+    ~SettingsTab() override;
 
 private:
     // Section IDs. Order matches kSections in the cpp and the order in
@@ -98,6 +103,11 @@ private:
 
     std::vector<brls::Box*> m_railRows;       // one per section, indexed by SectionId
     std::vector<brls::Box*> m_sectionBoxes;   // one per section, indexed by SectionId
+    // Which section box is currently parented to m_detailContent. brls
+    // Box::removeView with free=false doesn't reset the view's parent
+    // pointer, so getParent() can't be used to tell whether we already
+    // attached a particular section. Track it explicitly here.
+    brls::Box*              m_attachedSection = nullptr;
     int                     m_activeSection = SEC_ACCOUNT;
 
     // Account section
