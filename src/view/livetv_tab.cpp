@@ -33,6 +33,13 @@ static inline int livetvChannelColWidth() {
 static const int64_t FULL_RELOAD_INTERVAL = 300;   // 5 minutes between full EPG reloads
 static const int64_t REFRESH_INTERVAL = 60;         // 1 minute between "now playing" refreshes
 
+// EPG grid render window. We fetch m_hoursToShow hours of programming so the
+// quick-access cards and the program-selected dialog can describe "next up",
+// but we only build cells for the first few hours — the row containers don't
+// have horizontal scroll, so anything past the viewport width is unreachable
+// and pure overdraw. Four hours = eight 30-min slots ≈ on-screen on Vita.
+static const int EPG_GRID_HOURS_VISIBLE = 4;
+
 LiveTVTab::LiveTVTab() {
     this->setAxis(brls::Axis::COLUMN);
     this->setJustifyContent(brls::JustifyContent::FLEX_START);
@@ -149,8 +156,9 @@ LiveTVTab::~LiveTVTab() {
 void LiveTVTab::willDisappear(bool resetState) {
     brls::Box::willDisappear(resetState);
     if (m_alive) *m_alive = false;
+    // Cancel any in-flight loads owned by this tab; do NOT clear the global
+    // ImageLoader cache here — other tabs share it.
     ImageLoader::cancelAll();
-    ImageLoader::clearCache();
 }
 
 bool LiveTVTab::isDescendantOf(brls::View* view, brls::View* ancestor) {
@@ -271,7 +279,6 @@ void LiveTVTab::refreshCurrentPrograms() {
                 m_lastRefreshTime = time(nullptr);
 
                 // Update current program info in cached channel data
-                time_t now = time(nullptr);
                 for (size_t i = 0; i < m_channels.size() && i < freshChannels.size(); i++) {
                     // Find matching channel in fresh data
                     for (const auto& freshCh : freshChannels) {
@@ -286,11 +293,12 @@ void LiveTVTab::refreshCurrentPrograms() {
                     }
                 }
 
-                // Update quick access "now playing" labels
+                // Update quick access "now playing" labels. The EPG grid is
+                // left alone here — rebuilding its hundreds of cells every
+                // minute pegged the frame time. The 5-minute full reload still
+                // refreshes the grid; this lightweight path keeps the
+                // currently-airing chip on the channel cards accurate.
                 updateQuickAccessPrograms();
-
-                // Rebuild the EPG grid with fresh program data
-                buildEPGGrid();
             });
         }
     });
@@ -451,7 +459,9 @@ void LiveTVTab::buildEPGGrid() {
     time_t now = time(nullptr);
     m_guideStartTime = now - (now % 1800);  // Round to 30 min
 
-    int totalSlots = m_hoursToShow * 2;  // 2 slots per hour (30 min each)
+    // Render only the visible window even though we hold more program data.
+    int gridHours = std::min(m_hoursToShow, EPG_GRID_HOURS_VISIBLE);
+    int totalSlots = gridHours * 2;  // 2 slots per hour (30 min each)
 
     // Build time header
     for (int i = 0; i < totalSlots; i++) {
@@ -525,7 +535,7 @@ void LiveTVTab::buildEPGGrid() {
 
         // If we have program data, create program blocks for all programs
         if (!channel.programs.empty()) {
-            int64_t guideEndTime = m_guideStartTime + (m_hoursToShow * 3600);
+            int64_t guideEndTime = m_guideStartTime + (gridHours * 3600);
             int64_t lastEndTime = m_guideStartTime;  // Track position for gaps
 
             for (size_t pi = 0; pi < channel.programs.size(); pi++) {
@@ -605,7 +615,7 @@ void LiveTVTab::buildEPGGrid() {
         } else if (!channel.currentProgram.empty() && channel.programStart > 0) {
             // Fallback: use legacy current/next program fields
             int64_t progStart = std::max(channel.programStart, m_guideStartTime);
-            int64_t guideEndTime = m_guideStartTime + (m_hoursToShow * 3600);
+            int64_t guideEndTime = m_guideStartTime + (gridHours * 3600);
             int64_t progEnd = std::min(channel.programEnd > 0 ? channel.programEnd : progStart + 1800, guideEndTime);
 
             int startOffset = (int)((progStart - m_guideStartTime) * livetvTimeSlotWidth() / 1800);
@@ -837,14 +847,21 @@ void LiveTVTab::loadRecordings() {
 void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
     brls::Logger::info("LiveTVTab: Selected channel: {} ({})", channel.title, channel.channelNumber);
 
-    // Use the VCN (e.g., "2.1") and the full EPG key for tuning
-    std::string channelVcn = channel.channelIdentifier;
-    if (channelVcn.empty()) {
-        channelVcn = std::to_string(channel.channelNumber);
+    // POST /livetv/dvrs/{dvrId}/channels/{channel}/tune.  The spec's example
+    // shows the VCN ("2.1") for {channel}, but on a real server the device's
+    // channel map is keyed by the full EPG channel key (<lineup>-<channelId>,
+    // e.g. "5fc76c55dd53a6002dab58e3-5fc70600a05ef8002e61645f").  Tuning by
+    // VCN makes the DVR scheduler resolve the channel to "device -1 tuner -1"
+    // and fail with "The device does not tune the required channel", whereas
+    // the full key matches what the scheduled recordings tune against.  Prefer
+    // the full key and fall back to the VCN only when we don't have one.
+    std::string tuneChannel = channel.key;
+    if (tuneChannel.empty()) {
+        tuneChannel = channel.channelIdentifier;
     }
-
-    // The full EPG channel key (e.g., "5fc76c55dd53a6002dab58e3-5fc70600a05ef8002e61645f")
-    std::string epgKey = channel.key;
+    if (tuneChannel.empty()) {
+        tuneChannel = std::to_string(channel.channelNumber);
+    }
 
     // Find the currently-airing program's metadata key for transcode-based tuning
     std::string programMetadataKey;
@@ -857,12 +874,11 @@ void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
         }
     }
 
-    asyncRun([this, channel, channelVcn, epgKey, programMetadataKey, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+    asyncRun([this, channel, tuneChannel, programMetadataKey, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         PlexClient& client = PlexClient::getInstance();
         std::string streamUrl;
 
-        // Try with EPG key first (more reliable), then fall back to VCN
-        if (client.tuneLiveTVChannelByKey(channelVcn, epgKey, streamUrl, programMetadataKey)) {
+        if (client.tuneLiveTVChannel(tuneChannel, streamUrl, programMetadataKey)) {
             brls::Logger::info("LiveTVTab: Got stream URL for channel {}", channel.title);
             brls::sync([streamUrl, channel]() {
                 std::string title = channel.title;

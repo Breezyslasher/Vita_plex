@@ -89,6 +89,14 @@ static void applyCurlSecurityDefaults(CURL* curl) {
 struct WriteCallbackData {
     std::string* buffer;
     int64_t totalSize;
+
+    // Early-stop-at-top-level-JSON-close support (see HttpRequest::stopAtJsonClose).
+    bool stopAtJsonClose = false;  // enable the brace-tracking below
+    bool stopped = false;          // set true once a full object was received
+    int  jsonDepth = 0;            // current brace nesting depth
+    bool jsonSawOpen = false;      // have we seen the first '{' yet
+    bool jsonInString = false;     // inside a JSON string literal
+    bool jsonEscape = false;       // previous char was a backslash in a string
 };
 
 bool HttpClient::globalInit() {
@@ -130,8 +138,49 @@ size_t HttpClient::writeCallback(void* contents, size_t size, size_t nmemb, void
     size_t totalSize = size * nmemb;
     WriteCallbackData* data = (WriteCallbackData*)userp;
 
-    if (data && data->buffer) {
+    if (!data || !data->buffer) {
+        return totalSize;
+    }
+
+    if (!data->stopAtJsonClose) {
         data->buffer->append((char*)contents, totalSize);
+        return totalSize;
+    }
+
+    // Append byte-by-byte while tracking JSON structure so we can stop the
+    // transfer the instant the first complete top-level object is in hand.
+    const char* bytes = (const char*)contents;
+    for (size_t i = 0; i < totalSize; i++) {
+        char c = bytes[i];
+        data->buffer->push_back(c);
+
+        if (data->jsonInString) {
+            if (data->jsonEscape) {
+                data->jsonEscape = false;
+            } else if (c == '\\') {
+                data->jsonEscape = true;
+            } else if (c == '"') {
+                data->jsonInString = false;
+            }
+            continue;
+        }
+
+        if (c == '"') {
+            data->jsonInString = true;
+        } else if (c == '{') {
+            data->jsonDepth++;
+            data->jsonSawOpen = true;
+        } else if (c == '}') {
+            data->jsonDepth--;
+            if (data->jsonSawOpen && data->jsonDepth <= 0) {
+                // Full top-level object received - abort the rest of the
+                // (potentially never-ending) stream. Returning a short count
+                // makes curl_easy_perform finish with CURLE_WRITE_ERROR,
+                // which request() treats as success because `stopped` is set.
+                data->stopped = true;
+                return i + 1;
+            }
+        }
     }
 
     return totalSize;
@@ -221,6 +270,14 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
     // Enable DNS caching for faster reconnects
     curl_easy_setopt(curl, CURLOPT_DNS_CACHE_TIMEOUT, 300);  // 5 minutes
 
+    // Pin HTTP/1.1.  curl_easy's default is CURL_HTTP_VERSION_2TLS, and HTTP/2
+    // multiplexed responses can leave the easy interface blocked in
+    // curl_easy_perform() waiting for END_STREAM on chunked/streamed bodies -
+    // exactly what happens with the Live TV tune POST, which delivers its
+    // success body (a ~77KB "live" MediaContainer) over a kept-alive
+    // connection.  The transcode/download path in this same client already
+    // pins HTTP/1.1 for the same reason, so we match that here.
+
     // Follow redirects
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, req.followRedirects ? 1L : 0L);
     // Cap redirect chains so a misbehaving server can't loop us forever.
@@ -229,6 +286,9 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
     // TLS verification, protocol allowlist, and signal safety.
     applyCurlSecurityDefaults(curl);
 
+    // Force HTTP/1.1 (see comment above CURLOPT_DNS_CACHE_TIMEOUT).
+    curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
+
     // User agent
     curl_easy_setopt(curl, CURLOPT_USERAGENT, m_userAgent.c_str());
 
@@ -236,6 +296,7 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
     WriteCallbackData writeData;
     writeData.buffer = &response.body;
     writeData.totalSize = 0;
+    writeData.stopAtJsonClose = req.stopAtJsonClose;
 
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &writeData);
@@ -292,14 +353,17 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
         curl_slist_free_all(headerList);
     }
 
-    // Check result
-    if (res == CURLE_OK) {
+    // Check result. A deliberate early stop (stopAtJsonClose) surfaces as
+    // CURLE_WRITE_ERROR even though we have the full payload we wanted, so
+    // treat that as a normal completion.
+    if (res == CURLE_OK || (res == CURLE_WRITE_ERROR && writeData.stopped)) {
         long httpCode;
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
         response.statusCode = (int)httpCode;
         response.success = (httpCode >= 200 && httpCode < 300);
 
-        brls::Logger::debug("HTTP response: {} ({} bytes)", response.statusCode, response.body.length());
+        brls::Logger::debug("HTTP response: {} ({} bytes{})", response.statusCode,
+                            response.body.length(), writeData.stopped ? ", stopped at JSON close" : "");
     } else {
         response.error = curl_easy_strerror(res);
         brls::Logger::error("HTTP error: {}", response.error);
