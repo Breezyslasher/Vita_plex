@@ -54,12 +54,18 @@ public:
                 }
                 int step = (direction == brls::FocusDirection::DOWN) ? 1 : -1;
                 int targetIdx = idx + step;
+                // `currentView` is whatever bubbled up the focus chain
+                // (a rowBox or programsBox), not the actually-focused
+                // leaf cell. Probe by the real focused view so the X
+                // range matches the cell the user *sees* highlighted.
+                brls::View* focused = brls::Application::getCurrentFocus();
+                if (!focused) focused = currentView;
                 // Use a small epsilon-back from the source's right edge so a
                 // box ending at exactly 440 looks at 439 (which falls inside
                 // a target cell of [320, 440)) instead of 440 (which is the
                 // start of the next cell).
-                const float sourceStart = currentView->getX();
-                const float sourceEnd   = sourceStart + currentView->getWidth() - 0.5f;
+                const float sourceStart = focused->getX();
+                const float sourceEnd   = sourceStart + focused->getWidth() - 0.5f;
                 while (idx >= 0 && targetIdx >= 0 && targetIdx < (int)kids.size()) {
                     brls::View* targetRow = kids[targetIdx];
                     if (targetRow->getVisibility() == brls::Visibility::VISIBLE) {
