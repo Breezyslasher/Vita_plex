@@ -231,11 +231,16 @@ LiveTVTab::LiveTVTab() {
     m_guideContainer->setBorderThickness(1);
 
     // Time header row (horizontal scroll, offset to clear the sticky
-    // channel column on the left).
+    // channel column on the left). Mark it non-focusable because the
+    // slot labels inside are not interactive — if we left it focusable,
+    // DOWN from the hero would land on the empty time strip first (it's
+    // the guide container's first child), forcing a second press to
+    // descend into the rows.
     m_timeHeaderScroll = new brls::HScrollingFrame();
     m_timeHeaderScroll->setHeight(TIME_HEADER_HEIGHT);
     m_timeHeaderScroll->setMarginLeft(livetvChannelColWidth());
     m_timeHeaderScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
+    m_timeHeaderScroll->setFocusable(false);
 
     m_timeHeaderBox = new brls::Box();
     m_timeHeaderBox->setAxis(brls::Axis::ROW);
