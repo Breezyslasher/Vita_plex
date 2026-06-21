@@ -86,15 +86,19 @@ static const int64_t REFRESH_INTERVAL = 60;         // 1 minute between "now pla
 // and pure overdraw. Four hours = eight 30-min slots ≈ on-screen on Vita.
 static const int EPG_GRID_HOURS_VISIBLE = 4;
 
-// Hero dimensions. Derived from livetvChannelRowHeight so the same scaling
-// math that sizes the favourites pills also sizes the hero — bumping a
-// platform's channel row up scales the hero proportionally.
+// Hero dimensions. Smaller than the original so more guide rows are
+// visible below — thumbnail scales down with the hero height, and the
+// info column rearranges around it. Was max(220, channelRowHeight*2+40)
+// which left only ~3 guide rows on Vita; this drops the hero by ~70px
+// for an extra ~1.5 channel rows.
 static inline int heroHeight() {
-    return std::max(220, platform::getImageConstraints().livetvChannelRowHeight * 2 + 40);
+    return std::max(150, platform::getImageConstraints().livetvChannelRowHeight + 50);
 }
 static inline int heroThumbWidth() {
-    // Roughly 16:9 of the hero's inner height (height - padding).
-    return std::max(240, (int)((heroHeight() - 16) * 16.0 / 9.0));
+    // 4:3 of the hero's inner height — slightly less wide than the
+    // original 16:9 so the info column gets more horizontal real
+    // estate for the title + summary at the smaller hero size.
+    return std::max(170, (int)((heroHeight() - 16) * 4.0 / 3.0));
 }
 
 
