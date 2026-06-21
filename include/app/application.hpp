@@ -149,6 +149,12 @@ struct AppSettings {
     // 6 so the time-header slots line up; LiveTVTab clamps it on read.
     int  liveTvGuideHours      = 12;
 
+    // Plex Home users. When true, restoring a saved session goes straight
+    // into the last-used user (current behaviour). When false, the boot
+    // flow shows the user picker first so the user can switch accounts
+    // without logging out.
+    bool autoLoginAsLastUser = true;
+
     // When true, PlayerActivity overlays a small mpv-stats panel at
     // the top-left of the video so the user can see codec, hwdec,
     // FPS, frame drops, and cache state in real time. Driven from the
@@ -182,9 +188,31 @@ public:
     const std::string& getServerUrl() const { return m_serverUrl; }
     void setServerUrl(const std::string& url) { m_serverUrl = url; }
 
+    // Plex Home user state. The master token is the account-level token
+    // returned by /users/signin or /pins/{id}; it's what fetchHomeUsers
+    // and switchHomeUser need. m_authToken is the *effective* token,
+    // either the master one (no user switched) or the per-user token
+    // from switchHomeUser. When the user hasn't switched away from the
+    // owner, master == authToken and the home-user fields stay empty.
+    const std::string& getMasterAuthToken() const { return m_masterAuthToken; }
+    void setMasterAuthToken(const std::string& token) { m_masterAuthToken = token; }
+    const std::string& getCurrentHomeUserUuid() const { return m_currentHomeUserUuid; }
+    void setCurrentHomeUserUuid(const std::string& uuid) { m_currentHomeUserUuid = uuid; }
+    const std::string& getCurrentHomeUserTitle() const { return m_currentHomeUserTitle; }
+    void setCurrentHomeUserTitle(const std::string& t) { m_currentHomeUserTitle = t; }
+
     // Settings persistence
     bool loadSettings();
     bool saveSettings();
+
+    // Plex Home user picker. Fetches the Home users list using the
+    // master token and presents a Dropdown of names. On pick, prompts
+    // for a PIN if the user is protected, switches via /home/users/{uuid}/
+    // switch, saves the new per-user token to settings, then invokes the
+    // onComplete callback. If the account has no Plex Home, only the
+    // owner, or the master token is missing, onComplete is invoked
+    // immediately with no UI shown — caller proceeds normally.
+    void showHomeUserPicker(std::function<void()> onComplete);
 
     // User info
     const std::string& getUsername() const { return m_username; }
@@ -218,6 +246,9 @@ private:
     bool m_initialized = false;
     bool m_offlineMode = false;
     std::string m_authToken;
+    std::string m_masterAuthToken;
+    std::string m_currentHomeUserUuid;
+    std::string m_currentHomeUserTitle;
     std::string m_serverUrl;
     std::string m_username;
     AppSettings m_settings;

@@ -71,7 +71,15 @@ void Application::run() {
             // Bidirectional sync: push local offline progress, pull server progress
             DownloadsManager::getInstance().init();
             DownloadsManager::getInstance().syncProgressBidirectional();
+            // Push Main first regardless — if the user backs out of the
+            // picker (or never has one, because no Plex Home), they land
+            // on the app as the last-used user. Then overlay the picker
+            // when Auto-login is off. showHomeUserPicker no-ops when the
+            // account has no Plex Home or only the owner.
             pushMainActivity();
+            if (!m_settings.autoLoginAsLastUser) {
+                showHomeUserPicker(nullptr);
+            }
         } else {
             brls::Logger::error("Failed to connect to saved server, showing login");
             pushLoginActivity();
@@ -96,6 +104,93 @@ void Application::shutdown() {
 
 void Application::pushLoginActivity() {
     brls::Application::pushActivity(new LoginActivity());
+}
+
+void Application::showHomeUserPicker(std::function<void()> onComplete) {
+    // No master token = nothing to switch with. Caller proceeds as-is.
+    if (m_masterAuthToken.empty()) {
+        if (onComplete) onComplete();
+        return;
+    }
+
+    std::vector<HomeUser> users;
+    if (!PlexClient::getInstance().fetchHomeUsers(m_masterAuthToken, users)) {
+        brls::Logger::warning("showHomeUserPicker: fetchHomeUsers failed");
+        if (onComplete) onComplete();
+        return;
+    }
+
+    // 0 users = no Plex Home on this account. 1 user = just the owner;
+    // /switch isn't needed because master token IS that user's token.
+    if (users.size() < 2) {
+        if (onComplete) onComplete();
+        return;
+    }
+
+    std::vector<std::string> labels;
+    labels.reserve(users.size());
+    for (const auto& u : users) {
+        std::string label = u.title;
+        if (u.hasPin) label += "  (PIN)";
+        if (u.admin)  label += "  (admin)";
+        labels.push_back(label);
+    }
+
+    int selected = 0;
+    if (!m_currentHomeUserUuid.empty()) {
+        for (size_t i = 0; i < users.size(); i++) {
+            if (users[i].uuid == m_currentHomeUserUuid) {
+                selected = (int)i;
+                break;
+            }
+        }
+    }
+
+    auto* dropdown = new brls::Dropdown(
+        "Choose Plex Home User", labels,
+        [users, onComplete](int picked) {
+            if (picked < 0 || picked >= (int)users.size()) {
+                if (onComplete) onComplete();
+                return;
+            }
+            const HomeUser& chosen = users[picked];
+
+            auto doSwitch = [chosen, onComplete](const std::string& pin) {
+                Application& app = Application::getInstance();
+                std::string newToken;
+                if (!PlexClient::getInstance().switchHomeUser(
+                        app.getMasterAuthToken(), chosen.uuid, pin, newToken)) {
+                    brls::Dialog* d = new brls::Dialog(
+                        "Failed to switch to " + chosen.title +
+                        (pin.empty() ? "" : " — check the PIN."));
+                    d->addButton("OK", [onComplete]() {
+                        if (onComplete) onComplete();
+                    });
+                    d->open();
+                    return;
+                }
+                app.setAuthToken(newToken);
+                PlexClient::getInstance().setAuthToken(newToken);
+                app.setCurrentHomeUserUuid(chosen.uuid);
+                app.setCurrentHomeUserTitle(chosen.title);
+                app.saveSettings();
+                if (onComplete) onComplete();
+            };
+
+            if (chosen.hasPin) {
+                // Plex Home PINs are numeric, 4 digits. Use the standard
+                // IME — keeps the UI consistent and works on Vita / Switch
+                // / desktop without a custom keypad.
+                brls::Application::getImeManager()->openForText(
+                    [doSwitch](std::string pin) { doSwitch(pin); },
+                    "Enter PIN for " + chosen.title,
+                    "4-digit PIN", 8, "", 0);
+            } else {
+                doSwitch("");
+            }
+        },
+        selected);
+    brls::Application::pushActivity(new brls::Activity(dropdown));
 }
 
 void Application::pushMainActivity() {
@@ -234,6 +329,15 @@ bool Application::loadSettings() {
     m_serverUrl = extractString("serverUrl");
     m_username  = extractString("username");
 
+    // Plex Home user state. masterAuthToken falls back to authToken when
+    // the saved file predates the home-users feature, so the very first
+    // load after upgrading still has a valid master token to list users
+    // with — otherwise the picker would be empty.
+    m_masterAuthToken      = extractString("masterAuthToken");
+    if (m_masterAuthToken.empty()) m_masterAuthToken = m_authToken;
+    m_currentHomeUserUuid  = extractString("currentHomeUserUuid");
+    m_currentHomeUserTitle = extractString("currentHomeUserTitle");
+
     brls::Logger::info("loadSettings: authToken={}, serverUrl={}, username={}",
                        m_authToken.empty() ? "(empty)" : "(set)",
                        m_serverUrl.empty() ? "(empty)" : m_serverUrl,
@@ -327,6 +431,7 @@ bool Application::loadSettings() {
         int v = extractInt("liveTvGuideHours");
         if (v > 0 && v <= 48) m_settings.liveTvGuideHours = v;
     }
+    m_settings.autoLoginAsLastUser = extractBool("autoLoginAsLastUser", true);
 
     brls::Logger::info("Settings loaded successfully from {}", settingsPath);
     return !m_authToken.empty();
@@ -381,6 +486,9 @@ bool Application::saveSettings() {
 
     std::string json = "{\n";
     json += "  \"authToken\": \"" + esc(m_authToken) + "\",\n";
+    json += "  \"masterAuthToken\": \"" + esc(m_masterAuthToken) + "\",\n";
+    json += "  \"currentHomeUserUuid\": \"" + esc(m_currentHomeUserUuid) + "\",\n";
+    json += "  \"currentHomeUserTitle\": \"" + esc(m_currentHomeUserTitle) + "\",\n";
     json += "  \"serverUrl\": \"" + esc(m_serverUrl) + "\",\n";
     json += "  \"username\": \"" + esc(m_username) + "\",\n";
     json += "  \"theme\": " + std::to_string(static_cast<int>(m_settings.theme)) + ",\n";
@@ -419,7 +527,8 @@ bool Application::saveSettings() {
     json += "  \"dvrEndOffsetMinutes\": " + std::to_string(m_settings.dvrEndOffsetMinutes) + ",\n";
     json += "  \"dvrRecordPartials\": " + b(m_settings.dvrRecordPartials) + ",\n";
     json += "  \"dvrMinVideoQuality\": " + std::to_string(m_settings.dvrMinVideoQuality) + ",\n";
-    json += "  \"liveTvGuideHours\": " + std::to_string(m_settings.liveTvGuideHours) + "\n";
+    json += "  \"liveTvGuideHours\": " + std::to_string(m_settings.liveTvGuideHours) + ",\n";
+    json += "  \"autoLoginAsLastUser\": " + b(m_settings.autoLoginAsLastUser) + "\n";
     json += "}\n";
 
     std::ofstream ofs(settingsPath, std::ios::trunc);
