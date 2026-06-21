@@ -154,7 +154,8 @@ public:
     void pushLoginActivity();
     void pushMainActivity();
     void pushPlayerActivity(const std::string& mediaKey, bool isLocalFile = false);
-    void pushLiveTVPlayerActivity(const std::string& streamUrl, const std::string& channelTitle);
+    void pushLiveTVPlayerActivity(const std::string& streamUrl, const std::string& channelTitle,
+                                  const std::string& liveSessionUuid = "");
 
     // Authentication state
     bool isLoggedIn() const { return !m_authToken.empty(); }

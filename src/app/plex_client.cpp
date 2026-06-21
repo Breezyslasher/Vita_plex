@@ -2581,6 +2581,49 @@ bool PlexClient::reportTimeline(const std::string& ratingKey, const std::string&
     return resp.statusCode == 200;
 }
 
+bool PlexClient::reportLiveTimeline(const std::string& liveSessionUuid, int playbackTimeMs,
+                                    const std::string& state) {
+    if (liveSessionUuid.empty()) return false;
+
+    // Match the official Plex app's keep-alive call: GET /:/timeline with the
+    // live session path as `key=`. The server's parser fires
+    //   "[Now] Updated play state for /livetv/sessions/{uuid}"
+    // on receipt, which resets the rolling subscription's 300-sec stop-grab
+    // timer. The server *resolves* the playing item via ratingKey first,
+    // and 404s if it can't — so we must pass the live-session metadata id
+    // the tune created (captured into m_lastLiveRatingKey).
+    if (m_lastLiveRatingKey.empty()) {
+        brls::Logger::warning("reportLiveTimeline: no live ratingKey captured; skipping keep-alive");
+        return false;
+    }
+    std::string keyPath = "/livetv/sessions/" + liveSessionUuid;
+    std::string params = "/:/timeline?key=" + HttpClient::urlEncode(keyPath) +
+                         "&ratingKey=" + m_lastLiveRatingKey +
+                         "&duration=0" +
+                         "&time=0" +
+                         "&playbackTime=" + std::to_string(playbackTimeMs) +
+                         "&hasMDE=1" +
+                         "&state=" + state;
+
+    HttpRequest req;
+    req.url = buildApiUrl(params);
+    req.method = "GET";
+    req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+    req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+    // Bind the timeline to the same consumer the tune/decision used so the
+    // server attributes it to the right rolling subscription.
+    req.headers["X-Plex-Session-Identifier"] = PLEX_CLIENT_ID;
+    req.timeout = 10;
+
+    HttpClient client;
+    HttpResponse resp = client.request(req);
+    if (resp.statusCode != 200) {
+        brls::Logger::debug("reportLiveTimeline: status={} for /livetv/sessions/{}",
+                            resp.statusCode, liveSessionUuid);
+    }
+    return resp.statusCode == 200;
+}
+
 bool PlexClient::markAsWatched(const std::string& ratingKey) {
     HttpClient client;
     std::string url = buildApiUrl("/:/scrobble?key=" + ratingKey + "&identifier=com.plexapp.plugins.library");
@@ -3102,7 +3145,10 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
     return !channelsWithPrograms.empty();
 }
 
-bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl, const std::string& programMetadataKey) {
+bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl,
+                                   std::string& liveSessionUuid,
+                                   const std::string& programMetadataKey) {
+    liveSessionUuid.clear();
     brls::Logger::info("tuneLiveTVChannel: channelKey={}, programMetadataKey={}", channelKey, programMetadataKey);
 
     // Ensure we have DVR ID
@@ -3167,6 +3213,37 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
 
         // The Media uuid is the live session id used as /livetv/sessions/{uuid}.
         sessionUuid = extractJsonValue(tuneResp.body, "uuid");
+
+        // The first numeric ratingKey in the tune response is the live-session
+        // metadata item the server just created (e.g. "Added new metadata item
+        // (Live Session ...) with ID 17594"). /:/timeline needs this to
+        // resolve the playing item — without it the call 404s and the keep-
+        // alive never resets the rolling-subscription stop-grab timer.
+        // EPG/program ratingKeys are URL-encoded strings ("plex%3A%2F%2F..."),
+        // so we skip non-numeric matches when scanning.
+        m_lastLiveRatingKey.clear();
+        {
+            size_t scan = 0;
+            const std::string needle = "\"ratingKey\"";
+            while (true) {
+                size_t at = tuneResp.body.find(needle, scan);
+                if (at == std::string::npos) break;
+                size_t colon = tuneResp.body.find(':', at);
+                if (colon == std::string::npos) break;
+                size_t vs = tuneResp.body.find_first_not_of(" \t\n\r\"", colon + 1);
+                if (vs == std::string::npos) break;
+                if (tuneResp.body[vs] >= '0' && tuneResp.body[vs] <= '9') {
+                    size_t ve = vs;
+                    while (ve < tuneResp.body.length() &&
+                           tuneResp.body[ve] >= '0' && tuneResp.body[ve] <= '9') ve++;
+                    m_lastLiveRatingKey = tuneResp.body.substr(vs, ve - vs);
+                    break;
+                }
+                scan = at + needle.length();
+            }
+        }
+        brls::Logger::debug("tuneLiveTVChannel: live ratingKey = {}",
+                            m_lastLiveRatingKey.empty() ? "(none)" : m_lastLiveRatingKey);
     } else if (tuneResp.statusCode == 0 || tuneResp.statusCode == -1) {
         // Connection drop / partial read - try to recover the uuid if present.
         brls::Logger::warning("tuneLiveTVChannel: Connection dropped (status {}), body so far ({} bytes): {}",
@@ -3195,6 +3272,7 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     // The raw tune session is mpeg2video; route it through transcode/universal
     // (exactly as the official Plex app does) to get a playable h264 HLS URL.
     if (buildLiveSessionStreamUrl(sessionUuid, streamUrl)) {
+        liveSessionUuid = sessionUuid;
         return true;
     }
 

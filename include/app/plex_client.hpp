@@ -303,6 +303,13 @@ public:
     bool reportTimeline(const std::string& ratingKey, const std::string& key,
                         const std::string& state, int timeMs, int durationMs,
                         int playQueueItemID = 0);
+    // Keep-alive ping for a live-TV rolling subscription. The server's grab
+    // has a hard 300-second stop-timer; each /:/timeline call with
+    // key=/livetv/sessions/{uuid} resets it. The official Plex app fires one
+    // every ~1 sec while playing; we ping less often (every 5 sec) which is
+    // still well inside the timer's window.
+    bool reportLiveTimeline(const std::string& liveSessionUuid, int playbackTimeMs,
+                            const std::string& state = "playing");
     bool markAsWatched(const std::string& ratingKey);
     bool markAsUnwatched(const std::string& ratingKey);
 
@@ -389,7 +396,9 @@ public:
     // Live TV
     bool fetchLiveTVChannels(std::vector<LiveTVChannel>& channels);
     bool fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, int hoursAhead = 4);
-    bool tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl, const std::string& programMetadataKey = "");
+    bool tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl,
+                           std::string& liveSessionUuid,
+                           const std::string& programMetadataKey = "");
     bool hasLiveTV() const { return m_hasLiveTV; }
 
     // Build a playable HLS URL for a live tune session by routing it through
@@ -452,6 +461,11 @@ private:
     std::string m_authToken;
     std::string m_serverUrl;
     std::string m_lastSessionId;  // Last transcode session ID for stop/restart
+    // Live-TV bookkeeping for the rolling subscription keep-alive. Both are
+    // pulled out of the tune response and consumed by reportLiveTimeline so
+    // the /:/timeline ping uses the same ratingKey the server's parser is
+    // expecting (a stock ratingKey=0 makes it 404 and the keep-alive fails).
+    std::string m_lastLiveRatingKey;
     PlexServer m_currentServer;
     bool m_hasLiveTV = false;
     std::string m_dvrId;  // DVR ID (key) from GET /livetv/dvrs

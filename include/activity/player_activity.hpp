@@ -35,8 +35,12 @@ public:
     // Play direct file path (for debug/testing)
     static PlayerActivity* createForDirectFile(const std::string& filePath);
 
-    // Play a direct stream URL (for Live TV HLS streams)
-    static PlayerActivity* createForStream(const std::string& streamUrl, const std::string& title);
+    // Play a direct stream URL (for Live TV HLS streams).
+    // liveSessionUuid (optional) is the Plex Live TV session id; when set, the
+    // activity sends periodic /:/timeline keep-alives so the server's 300-sec
+    // rolling-subscription stop-timer doesn't kill playback after ~5 min.
+    static PlayerActivity* createForStream(const std::string& streamUrl, const std::string& title,
+                                           const std::string& liveSessionUuid = "");
 
     // Play from queue (album, playlist, etc.)
     // Automatically creates a server-side play queue when online,
@@ -188,6 +192,9 @@ private:
     std::string m_mediaKey;
     std::string m_directFilePath;  // For direct file playback (debug) or stream URL
     std::string m_streamTitle;     // Title for stream playback (Live TV)
+    std::string m_liveSessionUuid; // Set for Live TV streams; triggers periodic
+                                   // /:/timeline keep-alive pings in updateProgress
+    int m_liveKeepaliveCounter = 0;  // Seconds since last live-TV keep-alive
     MediaType m_mediaType = MediaType::UNKNOWN;  // Type of media being played
     std::string m_parentRatingKey;  // Season/album ratingKey for auto-play-next
     std::string m_grandparentRatingKey;  // Show ratingKey for cross-season auto-play-next

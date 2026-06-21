@@ -106,8 +106,10 @@ void Application::pushPlayerActivity(const std::string& mediaKey, bool isLocalFi
     brls::Application::pushActivity(new PlayerActivity(mediaKey, isLocalFile));
 }
 
-void Application::pushLiveTVPlayerActivity(const std::string& streamUrl, const std::string& channelTitle) {
-    brls::Application::pushActivity(PlayerActivity::createForStream(streamUrl, channelTitle));
+void Application::pushLiveTVPlayerActivity(const std::string& streamUrl, const std::string& channelTitle,
+                                           const std::string& liveSessionUuid) {
+    brls::Application::pushActivity(
+        PlayerActivity::createForStream(streamUrl, channelTitle, liveSessionUuid));
 }
 
 void Application::applyTheme() {
