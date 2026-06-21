@@ -404,6 +404,35 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
     // even when the guide grid itself doesn't rebuild.
     updateCurrentTimeLine();
 
+    // Horizontal scroll sync. Each guide row has its own HScrollingFrame
+    // for the program cells (so RIGHT navigation can scroll past the
+    // visible width), but the user only sees one row's scroll *react*
+    // to their input. Match the other rows + the time header to the
+    // focused row's offset so the visible time slice is consistent
+    // across the whole guide — and so the time labels above always
+    // align with the cells below.
+    if (!m_rowProgramScrolls.empty()) {
+        brls::View* focused = brls::Application::getCurrentFocus();
+        brls::HScrollingFrame* anchor = nullptr;
+        if (focused) {
+            for (brls::HScrollingFrame* hs : m_rowProgramScrolls) {
+                if (isDescendantOf(focused, hs)) { anchor = hs; break; }
+            }
+        }
+        if (anchor) {
+            const float target = anchor->getContentOffsetX();
+            for (brls::HScrollingFrame* hs : m_rowProgramScrolls) {
+                if (hs == anchor) continue;
+                if (std::abs(hs->getContentOffsetX() - target) > 0.5f)
+                    hs->setContentOffsetX(target, false);
+            }
+            if (m_timeHeaderScroll &&
+                std::abs(m_timeHeaderScroll->getContentOffsetX() - target) > 0.5f) {
+                m_timeHeaderScroll->setContentOffsetX(target, false);
+            }
+        }
+    }
+
     brls::Box::draw(vg, x, y, width, height, style, ctx);
 }
 
@@ -924,6 +953,10 @@ void LiveTVTab::updateCurrentTimeLine() {
 void LiveTVTab::buildEPGGrid() {
     m_timeHeaderBox->clearViews();
     m_guideBox->clearViews();
+    // Per-row HScrollingFrame pointers are owned by their rowBoxes (which
+    // we've just cleared via m_guideBox->clearViews), so the pointers in
+    // this vector are about to dangle — purge them before rebuilding.
+    m_rowProgramScrolls.clear();
 
     if (m_channels.empty()) {
         auto* noDataLabel = new brls::Label();
@@ -1061,12 +1094,20 @@ void LiveTVTab::buildEPGGrid() {
 
         rowBox->addView(channelCol);
 
-        // Program cells container.
+        // Program cells live inside their own HScrollingFrame so RIGHT
+        // arrow can pan past the visible width and bring later shows
+        // into view. CENTERED behaviour keeps the focused cell visible
+        // and the per-row scroll positions are synced together (and to
+        // the time header) in draw().
+        auto* programsScroll = new brls::HScrollingFrame();
+        programsScroll->setGrow(1.0f);
+        programsScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
+        programsScroll->setFocusable(false);
+
         auto* programsBox = new brls::Box();
         programsBox->setAxis(brls::Axis::ROW);
         programsBox->setJustifyContent(brls::JustifyContent::FLEX_START);
         programsBox->setAlignItems(brls::AlignItems::STRETCH);
-        programsBox->setGrow(1.0f);
 
         if (!channel.programs.empty()) {
             int64_t guideEndTime = m_guideStartTime + (gridHours * 3600);
@@ -1252,7 +1293,9 @@ void LiveTVTab::buildEPGGrid() {
             programsBox->addView(emptyCell);
         }
 
-        rowBox->addView(programsBox);
+        programsScroll->setContentView(programsBox);
+        rowBox->addView(programsScroll);
+        m_rowProgramScrolls.push_back(programsScroll);
         m_guideBox->addView(rowBox);
     }
 
