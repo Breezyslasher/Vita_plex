@@ -250,6 +250,13 @@ LiveTVTab::LiveTVTab() {
     m_guideScrollV = new brls::ScrollingFrame();
     m_guideScrollV->setGrow(1.0f);
     m_guideScrollV->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
+    // The ScrollingFrame ctor sets focusable=true, but our cells inside
+    // are the real focus targets. Leaving the scroll focusable made
+    // DOWN from the hero land on the scroll frame itself first (felt
+    // like an invisible stop in between), forcing a second DOWN to
+    // actually reach a guide cell. Mark it non-focusable so
+    // getDefaultFocus descends straight to the cells.
+    m_guideScrollV->setFocusable(false);
 
     m_guideBox = new GuideBox();
     m_guideBox->setAxis(brls::Axis::COLUMN);
@@ -600,6 +607,9 @@ void LiveTVTab::buildHero() {
         onChannelSelected(m_heroChannel);
         return true;
     });
+    // Touch support: a tap on the button triggers the primary action
+    // (BUTTON_A click) just like the dpad would.
+    m_heroWatchBtn->addGestureRecognizer(new brls::TapGestureRecognizer(m_heroWatchBtn));
     btnRow->addView(m_heroWatchBtn);
 
     m_heroRecordBtn = new brls::Box();
@@ -627,6 +637,7 @@ void LiveTVTab::buildHero() {
         }
         return true;
     });
+    m_heroRecordBtn->addGestureRecognizer(new brls::TapGestureRecognizer(m_heroRecordBtn));
     btnRow->addView(m_heroRecordBtn);
 
     info->addView(btnRow);
@@ -1034,6 +1045,7 @@ void LiveTVTab::buildEPGGrid() {
             onChannelSelected(capturedChannel);
             return true;
         });
+        channelCol->addGestureRecognizer(new brls::TapGestureRecognizer(channelCol));
         // Hover on the channel column shows the channel's current show
         // in the hero — keeps the preview in sync as the user scrolls
         // through the channel list with the dpad.
@@ -1130,6 +1142,7 @@ void LiveTVTab::buildEPGGrid() {
                     onProgramSelected(gp, capturedChannel);
                     return true;
                 });
+                progCell->addGestureRecognizer(new brls::TapGestureRecognizer(progCell));
                 // Hover → live-update the hero with this program's
                 // details (title, summary, thumb, progress, channel
                 // chrome). Watch live + Record buttons follow because
@@ -1223,6 +1236,7 @@ void LiveTVTab::buildEPGGrid() {
                 onChannelSelected(capturedChannel);
                 return true;
             });
+            emptyCell->addGestureRecognizer(new brls::TapGestureRecognizer(emptyCell));
             // Hover on a no-data cell still updates the channel chrome
             // on the hero so the user knows which channel they'd tune.
             emptyCell->getFocusEvent()->subscribe(
