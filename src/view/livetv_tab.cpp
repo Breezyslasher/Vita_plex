@@ -158,12 +158,12 @@ static inline int livetvChannelColWidth() {
 static const int64_t FULL_RELOAD_INTERVAL = 300;   // 5 minutes between full EPG reloads
 static const int64_t REFRESH_INTERVAL = 60;         // 1 minute between "now playing" refreshes
 
-// EPG grid render window. We fetch m_hoursToShow hours of programming so the
-// quick-access cards and the program-selected dialog can describe "next up",
-// but we only build cells for the first few hours — the row containers don't
-// have horizontal scroll, so anything past the viewport width is unreachable
-// and pure overdraw. Four hours = eight 30-min slots ≈ on-screen on Vita.
-static const int EPG_GRID_HOURS_VISIBLE = 4;
+// EPG grid render window. Each row's program cells now sit inside an
+// HScrollingFrame, so cells past the visible width are reachable via the
+// dpad (cf. m_rowProgramScrolls). Render the full fetched window so the
+// user can pan through the whole 12-hour lookahead instead of stopping
+// at 4 hours like the old non-scrolling layout had to.
+static const int EPG_GRID_HOURS_VISIBLE = 12;
 
 // Hero dimensions. Smaller than the original so more guide rows are
 // visible below — thumbnail scales down with the hero height, and the
