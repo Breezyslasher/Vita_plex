@@ -1670,6 +1670,20 @@ void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChann
         std::string typeStr       = client.extractJsonValuePublic(ms, "type");
         std::string targetSection = client.extractJsonValuePublic(ms, "targetLibrarySectionID");
 
+        // User-configured default DVR library wins over the template's
+        // recommendation. Lets the user route every recording to one
+        // section ("DVR TV Shows") instead of whatever Plex picked for
+        // each individual program.
+        const std::string& userTarget = Application::getInstance()
+                                            .getSettings().defaultDvrSectionId;
+        if (!userTarget.empty()) {
+            brls::Logger::debug("LiveTVTab: overriding targetLibrarySectionID "
+                                "{} → {} (user default)",
+                                targetSection.empty() ? "(none)" : targetSection,
+                                userTarget);
+            targetSection = userTarget;
+        }
+
         if (parameters.empty() || typeStr.empty()) {
             brls::Logger::error("LiveTVTab: template missing required fields (parameters={}, type={})",
                                 parameters.empty() ? "(empty)" : "ok",

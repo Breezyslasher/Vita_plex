@@ -131,6 +131,15 @@ struct AppSettings {
     TrackDefaultAction trackDefaultAction = TrackDefaultAction::ASK_EACH_TIME;  // Default action for tracks
     bool backgroundMusic = true;       // Allow leaving player without stopping music
 
+    // Live TV / DVR Settings
+    // Library section the user wants new DVR recordings to land in. When
+    // empty, scheduleRecording falls back to whatever the server-side
+    // /media/subscriptions/template recommended. The title is cached
+    // alongside the ID so the settings cell can render it without an
+    // extra /library/sections fetch every time the tab opens.
+    std::string defaultDvrSectionId;
+    std::string defaultDvrSectionTitle;
+
     // When true, PlayerActivity overlays a small mpv-stats panel at
     // the top-left of the video so the user can see codec, hwdec,
     // FPS, frame drops, and cache state in real time. Driven from the
