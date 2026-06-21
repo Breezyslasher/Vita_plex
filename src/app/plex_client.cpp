@@ -3129,6 +3129,16 @@ bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& s
     tuneReq.headers["Accept"] = "application/json";
     tuneReq.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
     tuneReq.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+    // A successful tune is served over the server's keep-alive/pipelined
+    // connection as a streamed "live" MediaContainer.  Without an explicit
+    // close, libcurl can sit in curl_easy_perform() waiting for either a
+    // chunked terminator or a socket close that doesn't arrive until the
+    // hard timeout below - so the whole tune appears to hang.  Asking the
+    // server to close the connection after the response gives curl a clean
+    // EOF and lets it return as soon as the body is delivered.  The recording
+    // session itself is server-side and independent of this HTTP connection,
+    // so closing it does not tear down the stream.
+    tuneReq.headers["Connection"] = "close";
     // Use longer timeout - tune can take time, especially with EPG channel keys
     // that may create MediaSubscription responses with chunked data
     tuneReq.timeout = 30;
