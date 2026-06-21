@@ -378,7 +378,7 @@ void LiveTVTab::buildHero() {
     m_heroThumb = new brls::Image();
     m_heroThumb->setWidth(heroThumbWidth());
     m_heroThumb->setHeight(heroHeight() - 16);
-    m_heroThumb->setScalingType(brls::ImageScalingType::FIT);
+    m_heroThumb->setScalingType(brls::ImageScalingType::FILL);
     m_heroThumb->setCornerRadius(10);
     m_heroThumb->setVisibility(brls::Visibility::INVISIBLE);
     m_heroThumbHolder->addView(m_heroThumb);
@@ -426,10 +426,13 @@ void LiveTVTab::buildHero() {
 
     info->addView(topRow);
 
-    // Program title.
+    // Program title — single line so a long episode title can't wrap
+    // into the summary's slot below. The text is clamped in
+    // updateHeroForProgram so it doesn't overflow horizontally either.
     m_heroTitleLabel = new brls::Label();
     m_heroTitleLabel->setFontSize(22);
     m_heroTitleLabel->setTextColor(tok::text());
+    m_heroTitleLabel->setSingleLine(true);
     m_heroTitleLabel->setMarginBottom(4);
     info->addView(m_heroTitleLabel);
 
@@ -634,7 +637,16 @@ void LiveTVTab::updateHeroForProgram(const LiveTVChannel& channel,
         m_heroChannelId->setText(chId);
     }
 
-    if (m_heroTitleLabel)   m_heroTitleLabel->setText(program.title);
+    // Title is single-line. Trim very long titles with an ellipsis so
+    // they don't get cut off mid-word at the cell edge. ~46 chars is
+    // about what fits at 22px on Vita's hero info column.
+    if (m_heroTitleLabel) {
+        std::string title = program.title;
+        const size_t maxTitleChars = 46;
+        if (title.length() > maxTitleChars)
+            title = title.substr(0, maxTitleChars - 1) + "…";
+        m_heroTitleLabel->setText(title);
+    }
     if (m_heroSummaryLabel)
         m_heroSummaryLabel->setText(program.summary.empty() ? std::string(" ") : program.summary);
     if (m_heroStartLabel)   m_heroStartLabel->setText(formatTime(program.startTime));
