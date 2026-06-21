@@ -366,13 +366,57 @@ bool PlexClient::fetchHomeUsers(const std::string& masterToken,
         return false;
     }
 
-    // The response is either a top-level {"users":[...]} or a bare array.
-    // Walk the body looking for objects that have both "uuid" and "title".
+    // Response shape is {"id":N, "name":"...", ..., "users":[ {user1}, {user2}, ... ]}
+    // The previous naive object walker scooped up the *outer* wrapper as a
+    // single match (it contains uuid/title from users[0] when scanning the
+    // whole body) and stopped, so a Home with N members reported "got 1".
+    // Find the "users" array first and only walk the objects inside it.
     const std::string& body = resp.body;
-    size_t pos = 0;
-    while (pos < body.length()) {
+    brls::Logger::debug("fetchHomeUsers: body ({} bytes), first 600: {}",
+                        body.length(), body.substr(0, 600));
+
+    size_t arrStart = std::string::npos;
+    size_t arrEnd   = std::string::npos;
+    size_t usersKey = body.find("\"users\"");
+    if (usersKey != std::string::npos) {
+        size_t open = body.find('[', usersKey);
+        if (open != std::string::npos) {
+            int depth = 1;
+            size_t scan = open + 1;
+            while (depth > 0 && scan < body.length()) {
+                if (body[scan] == '[') depth++;
+                else if (body[scan] == ']') depth--;
+                scan++;
+            }
+            if (depth == 0) {
+                arrStart = open;
+                arrEnd   = scan;
+            }
+        }
+    }
+    // Fallback for endpoints that return a bare array.
+    if (arrStart == std::string::npos) {
+        arrStart = body.find('[');
+        if (arrStart != std::string::npos) {
+            int depth = 1;
+            size_t scan = arrStart + 1;
+            while (depth > 0 && scan < body.length()) {
+                if (body[scan] == '[') depth++;
+                else if (body[scan] == ']') depth--;
+                scan++;
+            }
+            if (depth == 0) arrEnd = scan;
+        }
+    }
+    if (arrStart == std::string::npos || arrEnd == std::string::npos) {
+        brls::Logger::error("fetchHomeUsers: no users array found in response");
+        return false;
+    }
+
+    size_t pos = arrStart + 1;
+    while (pos < arrEnd) {
         size_t objStart = body.find('{', pos);
-        if (objStart == std::string::npos) break;
+        if (objStart == std::string::npos || objStart >= arrEnd) break;
 
         int depth = 1;
         size_t objEnd = objStart + 1;
@@ -384,9 +428,6 @@ bool PlexClient::fetchHomeUsers(const std::string& masterToken,
         if (depth != 0) break;
         std::string obj = body.substr(objStart, objEnd - objStart);
         pos = objEnd;
-
-        if (obj.find("\"uuid\"") == std::string::npos) continue;
-        if (obj.find("\"title\"") == std::string::npos) continue;
 
         HomeUser u;
         u.uuid     = extractJsonValue(obj, "uuid");
