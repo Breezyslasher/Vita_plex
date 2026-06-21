@@ -3139,15 +3139,15 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
         }
     }
 
-    // Per-channel grid fallback. The type-filtered loop above only
-    // captures movies (1) and episodes (4) — sports, news, talk-shows
-    // or anything tagged with another EPG type ends up with an empty
-    // programs list. For those channels, fall back to the official
-    // per-channel grid endpoint
+    // Per-channel grid. Mirrors what the official Plex apps do — they
+    // skip the type-filtered grid entirely and just query each channel's
+    // grid for the day:
     //   GET /{provider}/grid?channelGridKey=<key>&date=YYYY-MM-DD
-    // which returns *every* airing for that channel on the day,
-    // regardless of type. Only run it for channels still empty so we
-    // don't issue 30+ extra requests on a healthy server.
+    // which returns *every* airing for that channel regardless of EPG
+    // type. The type-filtered loop above only catches movies (1) and
+    // episodes (4); sports, news, and talk-shows tagged with other
+    // types would otherwise show up empty. Running this for every
+    // channel ensures parity with the official app.
     if (!m_epgProviderKey.empty()) {
         time_t nowTs = time(nullptr);
         struct tm* lt = localtime(&nowTs);
@@ -3156,7 +3156,6 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
         const std::string today = dateBuf;
 
         for (auto& channel : channelsWithPrograms) {
-            if (!channel.programs.empty()) continue;
             if (channel.key.empty()) continue;
 
             std::string url = buildApiUrl("/" + m_epgProviderKey + "/grid");
