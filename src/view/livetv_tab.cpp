@@ -372,13 +372,17 @@ void LiveTVTab::buildHero() {
     m_heroThumbHolder->setWidth(heroThumbWidth());
     m_heroThumbHolder->setHeight(heroHeight() - 16);
     m_heroThumbHolder->setMarginRight(14);
-    m_heroThumbHolder->setBackgroundColor(tok::placeholder());
+    // Match the hero card's background so the letterbox/pillarbox bars
+    // that a FIT-scaled image leaves around its natural aspect ratio
+    // blend in with the surrounding card instead of reading as a slate
+    // panel under the image.
+    m_heroThumbHolder->setBackgroundColor(tok::hero());
     m_heroThumbHolder->setCornerRadius(10);
 
     m_heroThumb = new brls::Image();
     m_heroThumb->setWidth(heroThumbWidth());
     m_heroThumb->setHeight(heroHeight() - 16);
-    m_heroThumb->setScalingType(brls::ImageScalingType::FILL);
+    m_heroThumb->setScalingType(brls::ImageScalingType::FIT);
     m_heroThumb->setCornerRadius(10);
     m_heroThumb->setVisibility(brls::Visibility::INVISIBLE);
     m_heroThumbHolder->addView(m_heroThumb);
