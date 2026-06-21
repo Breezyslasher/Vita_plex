@@ -1,11 +1,11 @@
 /**
  * VitaPlex - Live TV Tab implementation
  *
- * Layout: On-Now hero (featured channel + current program) → ★ Favourites
- * pill strip → full-width Program Guide (the dominant block) → DVR strip.
- * Built directly on borealis boxes; no XML. Sizes derive from
- * platform::getImageConstraints() so the same code scales from Vita's
- * 960x544 logical viewport up to a 1080p TV.
+ * Layout: On-Now hero (featured channel + current program) → full-width
+ * Program Guide (the dominant block) → DVR strip. Built directly on
+ * borealis boxes; no XML. Sizes derive from platform::getImageConstraints()
+ * so the same code scales from Vita's 960×544 logical viewport up to a
+ * 1080p TV.
  */
 
 #include "view/livetv_tab.hpp"
@@ -87,12 +87,6 @@ static inline int heroThumbWidth() {
     return std::max(240, (int)((heroHeight() - 16) * 16.0 / 9.0));
 }
 
-// Favourites are vertical mini-cards: square logo on top + channel number
-// underneath, so the user can recognise the channel at a glance instead of
-// just reading the call sign.
-static inline int favCardLogoSize()  { return 44; }
-static inline int favCardWidth()     { return std::max(70, favCardLogoSize() + 18); }
-static inline int favCardHeight()    { return favCardLogoSize() + 22; }
 
 LiveTVTab::LiveTVTab() {
     this->setAxis(brls::Axis::COLUMN);
@@ -120,27 +114,6 @@ LiveTVTab::LiveTVTab() {
     // On-Now hero (single big focusable card at the top)
     buildHero();
     m_scrollContent->addView(m_heroBox);
-
-    // ★ Favourites pill strip
-    m_channelsLabel = new brls::Label();
-    m_channelsLabel->setText("★ Favourites");
-    m_channelsLabel->setFontSize(16);
-    m_channelsLabel->setTextColor(tok::muted());
-    m_channelsLabel->setMarginTop(6);
-    m_channelsLabel->setMarginBottom(6);
-    m_scrollContent->addView(m_channelsLabel);
-
-    m_channelsRow = new brls::HScrollingFrame();
-    m_channelsRow->setHeight(favCardHeight() + 12);
-    m_channelsRow->setMarginBottom(14);
-
-    m_channelsContent = new brls::Box();
-    m_channelsContent->setAxis(brls::Axis::ROW);
-    m_channelsContent->setJustifyContent(brls::JustifyContent::FLEX_START);
-    m_channelsContent->setAlignItems(brls::AlignItems::CENTER);
-
-    m_channelsRow->setContentView(m_channelsContent);
-    m_scrollContent->addView(m_channelsRow);
 
     // EPG Guide — the dominant block.
     m_guideLabel = new brls::Label();
@@ -280,8 +253,7 @@ brls::View* LiveTVTab::findLastFocusableInBox(brls::Box* box) {
 
 brls::View* LiveTVTab::getNextFocus(brls::FocusDirection direction, brls::View* currentView) {
     // Section layout (top to bottom):
-    //   Hero (m_heroBox) -> Favourites (m_channelsRow) -> Guide (m_guideBox)
-    //   -> DVR (m_dvrRow)
+    //   Hero (m_heroBox) -> Guide (m_guideBox) -> DVR (m_dvrRow)
     //
     // Row-to-row movement *inside* the guide is handled by borealis' natural
     // navigation (m_guideBox is a COLUMN box, so it resolves UP/DOWN between
@@ -289,16 +261,11 @@ brls::View* LiveTVTab::getNextFocus(brls::FocusDirection direction, brls::View* 
     // tab — i.e. at a section boundary — so all we do is hop to the adjacent
     // section.
     const bool inHero  = isDescendantOf(currentView, m_heroBox);
-    const bool inFav   = isDescendantOf(currentView, m_channelsRow);
     const bool inGuide = isDescendantOf(currentView, m_guideContainer);
     const bool inDvr   = isDescendantOf(currentView, m_dvrRow);
 
     if (direction == brls::FocusDirection::DOWN) {
         if (inHero) {
-            if (brls::View* t = findFirstFocusableInBox(m_channelsContent)) return t;
-            if (brls::View* t = findFirstFocusableInBox(m_guideBox)) return t;
-            if (brls::View* t = findFirstFocusableInBox(m_dvrContent)) return t;
-        } else if (inFav) {
             if (brls::View* t = findFirstFocusableInBox(m_guideBox)) return t;
             if (brls::View* t = findFirstFocusableInBox(m_dvrContent)) return t;
         } else if (inGuide) {
@@ -308,12 +275,8 @@ brls::View* LiveTVTab::getNextFocus(brls::FocusDirection direction, brls::View* 
     else if (direction == brls::FocusDirection::UP) {
         if (inDvr) {
             if (brls::View* t = findLastFocusableInBox(m_guideBox)) return t;
-            if (brls::View* t = findFirstFocusableInBox(m_channelsContent)) return t;
             if (brls::View* t = findFirstFocusableInBox(m_heroBox)) return t;
         } else if (inGuide) {
-            if (brls::View* t = findFirstFocusableInBox(m_channelsContent)) return t;
-            if (brls::View* t = findFirstFocusableInBox(m_heroBox)) return t;
-        } else if (inFav) {
             if (brls::View* t = findFirstFocusableInBox(m_heroBox)) return t;
         }
     }
@@ -356,7 +319,6 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
     // every frame — pure overdraw. Toggle INVISIBLE on anything scrolled
     // out of its viewport so frame() early-outs for the entire subtree.
     cullToViewport(m_guideBox, m_guideScrollV, /*vertical=*/true);
-    cullToViewport(m_channelsContent, m_channelsRow, /*vertical=*/false);
     cullToViewport(m_dvrContent, m_dvrRow, /*vertical=*/false);
 
     // Slide the cyan "now" line each frame so it tracks the wall clock
@@ -690,85 +652,9 @@ void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
     }
 }
 
-void LiveTVTab::buildFavouritesPill(const LiveTVChannel& channel) {
-    // Vertical mini-card: square channel logo on top, channel number/id
-    // underneath. We *also* keep the call sign as a one-line subtitle
-    // below the number so the card still self-identifies when the logo
-    // hasn't loaded yet or the channel doesn't carry one.
-    auto* card = new brls::Box();
-    card->setAxis(brls::Axis::COLUMN);
-    card->setWidth(favCardWidth());
-    card->setHeight(favCardHeight());
-    card->setMarginRight(8);
-    card->setPadding(4);
-    card->setCornerRadius(10);
-    card->setBackgroundColor(tok::cardRaised());
-    card->setBorderColor(tok::hairline());
-    card->setBorderThickness(1);
-    card->setAlignItems(brls::AlignItems::CENTER);
-    card->setJustifyContent(brls::JustifyContent::FLEX_START);
-    card->setFocusable(true);
-
-    // Logo holder so the layout slot is reserved even if the image
-    // hasn't loaded yet.
-    auto* logoBox = new brls::Box();
-    logoBox->setWidth(favCardLogoSize());
-    logoBox->setHeight(favCardLogoSize());
-    logoBox->setCornerRadius(8);
-    logoBox->setBackgroundColor(tok::placeholder());
-    logoBox->setMarginBottom(3);
-
-    auto* logo = new brls::Image();
-    logo->setWidth(favCardLogoSize());
-    logo->setHeight(favCardLogoSize());
-    logo->setScalingType(brls::ImageScalingType::FIT);
-    logo->setCornerRadius(8);
-    logo->setVisibility(brls::Visibility::INVISIBLE);
-    logoBox->addView(logo);
-    card->addView(logoBox);
-
-    if (!channel.thumb.empty()) {
-        PlexClient& client = PlexClient::getInstance();
-        std::string url = client.getThumbnailUrl(channel.thumb,
-                                                 favCardLogoSize() * 2,
-                                                 favCardLogoSize() * 2);
-        auto alive = std::make_shared<std::atomic<bool>>(true);
-        ImageLoader::loadAsync(url, [](brls::Image* img) {
-            if (img) img->setVisibility(brls::Visibility::VISIBLE);
-        }, logo, alive);
-        // The alive flag dangles after this scope but the loader handles
-        // that — if the load races the card's destruction, the loader
-        // drops the result. (The tab's m_alive flag also kills loads
-        // wholesale when the tab tears down via willDisappear.)
-    }
-
-    // Channel number / identifier (e.g. "2.1" or "11").
-    auto* num = new brls::Label();
-    num->setText(!channel.channelIdentifier.empty()
-                 ? channel.channelIdentifier
-                 : std::to_string(channel.channelNumber));
-    num->setFontSize(12);
-    num->setTextColor(tok::accent());
-    num->setHorizontalAlign(brls::HorizontalAlign::CENTER);
-    card->addView(num);
-
-    LiveTVChannel captured = channel;
-    card->registerClickAction([this, captured](brls::View*) {
-        onChannelSelected(captured);
-        return true;
-    });
-
-    m_channelsContent->addView(card);
-
-    // m_quickAccessProgLabels is kept index-aligned with m_channels for the
-    // 60s refresh hook (which now lives in updateQuickAccessPrograms as a
-    // no-op since the cards don't display per-channel "now playing" text).
-    m_quickAccessProgLabels.push_back(nullptr);
-}
-
 void LiveTVTab::refreshCurrentPrograms() {
-    // Lightweight refresh: fetch EPG data and only update "now playing" text
-    // (hero + favourites) without rebuilding the entire UI.
+    // Lightweight refresh: fetch EPG data and just update the hero's
+    // "now playing" info without rebuilding the entire UI.
     asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<LiveTVChannel> freshChannels;
@@ -795,17 +681,9 @@ void LiveTVTab::refreshCurrentPrograms() {
                 }
 
                 if (!m_channels.empty()) updateHeroForChannel(m_channels.front());
-                updateQuickAccessPrograms();
             });
         }
     });
-}
-
-void LiveTVTab::updateQuickAccessPrograms() {
-    // Pills don't carry current-program text, so this is intentionally a
-    // no-op now. Kept as a member so the refresh path can call it without
-    // a conditional, and so future revisions that bring per-pill "now
-    // playing" hints can drop the logic back in.
 }
 
 void LiveTVTab::loadChannels() {
@@ -823,21 +701,9 @@ void LiveTVTab::loadChannels() {
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
                 m_channels = channels;
-                m_channelsContent->clearViews();
-                m_quickAccessProgLabels.clear();
 
                 if (!m_channels.empty()) {
                     updateHeroForChannel(m_channels.front());
-                }
-
-                for (const auto& channel : m_channels) buildFavouritesPill(channel);
-
-                if (m_channels.empty()) {
-                    auto* placeholder = new brls::Label();
-                    placeholder->setText("No channels found. Set up Live TV in Plex settings.");
-                    placeholder->setFontSize(14);
-                    placeholder->setTextColor(tok::muted());
-                    m_channelsContent->addView(placeholder);
                 }
 
                 buildEPGGrid();
@@ -851,12 +717,6 @@ void LiveTVTab::loadChannels() {
             brls::sync([this, aliveWeak]() {
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
-                m_channelsContent->clearViews();
-                auto* errorLabel = new brls::Label();
-                errorLabel->setText("Failed to load Live TV");
-                errorLabel->setFontSize(14);
-                errorLabel->setTextColor(tok::muted());
-                m_channelsContent->addView(errorLabel);
                 m_loaded = true;
             });
         }
