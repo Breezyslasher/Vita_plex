@@ -11,6 +11,7 @@
 #include <cstring>
 #include <ctime>
 #include <algorithm>
+#include <set>
 
 namespace vitaplex {
 
@@ -2785,6 +2786,16 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
 
             // Parse Channel array from response
             // Per openapi.json schema: Channel objects have callSign, identifier, channelVcn, thumb, title, key
+            //
+            // The response can reference a single channel from more than
+            // one section of the JSON — once as the lineup's Channel
+            // object and again as a ChannelMapping's nested copy — and
+            // our "find every \"callSign\" then walk back to its
+            // enclosing object" parser catches all of them. Dedupe by
+            // channel.key (or VCN as a fallback for entries without a
+            // key) before pushing so the EPG doesn't show double rows
+            // for 4.1, 4.2, 4.3 etc.
+            std::set<std::string> seenChannelKeys;
             size_t pos = 0;
             while ((pos = resp.body.find("\"callSign\"", pos)) != std::string::npos) {
                 size_t objStart = resp.body.rfind('{', pos);
@@ -2838,30 +2849,45 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
                 // set up to receive (~32 here), so the grid was full
                 // of "No guide data" rows for channels the user
                 // can't tune anyway.
-                bool mapped = false;
+                const ChannelMapping* matchedMapping = nullptr;
                 for (const auto& mapping : m_channelMappings) {
                     if (!channel.key.empty() && channel.key == mapping.channelKey) {
-                        channel.channelIdentifier = mapping.deviceIdentifier;
-                        mapped = true;
+                        matchedMapping = &mapping;
                         break;
                     }
                     if (!identifier.empty() && identifier == mapping.lineupIdentifier) {
-                        channel.channelIdentifier = mapping.deviceIdentifier;
-                        if (channel.key.empty()) {
-                            channel.key = mapping.channelKey;
-                        }
-                        mapped = true;
+                        matchedMapping = &mapping;
+                        if (channel.key.empty()) channel.key = mapping.channelKey;
                         break;
                     }
+                }
+                if (matchedMapping) {
+                    channel.channelIdentifier = matchedMapping->deviceIdentifier;
                 }
 
                 // Only include channels the user can actually tune.
                 // If we have no ChannelMapping data at all (some EPG
                 // providers don't), fall back to the old behaviour so
                 // the EPG isn't empty.
-                if (mapped || m_channelMappings.empty()) {
+                if (matchedMapping || m_channelMappings.empty()) {
                     if (!channel.callSign.empty() || !channel.title.empty()) {
-                        channels.push_back(channel);
+                        // Dedupe by the mapping's channelKey when one
+                        // matched — two lineup entries can resolve to
+                        // the *same* physical channel via different
+                        // identifiers (lineup key vs lineupIdentifier),
+                        // so keying off channel.key alone wasn't enough
+                        // and the EPG was still showing duplicates of
+                        // 4.1 / 4.2 / 4.3, 22.3 / 22.4, etc.
+                        std::string dedupeKey = matchedMapping
+                            ? matchedMapping->channelKey
+                            : (!channel.key.empty()
+                                ? channel.key
+                                : (!channel.channelIdentifier.empty()
+                                    ? channel.channelIdentifier
+                                    : channel.callSign));
+                        if (seenChannelKeys.insert(dedupeKey).second) {
+                            channels.push_back(channel);
+                        }
                     }
                 }
 
