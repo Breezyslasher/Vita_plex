@@ -173,6 +173,9 @@ bool LiveTVTab::isDescendantOf(brls::View* view, brls::View* ancestor) {
 brls::View* LiveTVTab::findFirstFocusableInBox(brls::Box* box) {
     if (!box) return nullptr;
     for (auto* child : box->getChildren()) {
+        // Skip rows/cards the viewport culling has hidden — an INVISIBLE view
+        // is off-screen and can't be a sane focus target.
+        if (child->getVisibility() != brls::Visibility::VISIBLE) continue;
         if (child->isFocusable()) return child;
         brls::Box* childBox = dynamic_cast<brls::Box*>(child);
         if (childBox) {
@@ -183,42 +186,106 @@ brls::View* LiveTVTab::findFirstFocusableInBox(brls::Box* box) {
     return nullptr;
 }
 
-brls::View* LiveTVTab::getNextFocus(brls::FocusDirection direction, brls::View* currentView) {
-    // Handle vertical navigation between the three sections:
-    // Quick Access (m_channelsRow) -> Program Guide (m_guideContainer) -> DVR Recordings (m_dvrRow)
-    if (direction == brls::FocusDirection::DOWN) {
-        // If in quick access section, go to program guide
-        if (isDescendantOf(currentView, m_channelsRow) || isDescendantOf(currentView, m_channelsContent)) {
-            brls::View* target = findFirstFocusableInBox(m_guideBox);
-            if (target) return target;
-            // Fall through to DVR if no guide items
-            target = findFirstFocusableInBox(m_dvrContent);
-            if (target) return target;
+brls::View* LiveTVTab::findLastFocusableInBox(brls::Box* box) {
+    if (!box) return nullptr;
+    auto& children = box->getChildren();
+    for (auto it = children.rbegin(); it != children.rend(); ++it) {
+        brls::View* child = *it;
+        if (child->getVisibility() != brls::Visibility::VISIBLE) continue;
+        brls::Box* childBox = dynamic_cast<brls::Box*>(child);
+        if (childBox) {
+            brls::View* found = findLastFocusableInBox(childBox);
+            if (found) return found;
         }
-        // If in program guide section, go to DVR recordings
-        if (isDescendantOf(currentView, m_guideContainer) || isDescendantOf(currentView, m_guideBox)) {
-            brls::View* target = findFirstFocusableInBox(m_dvrContent);
-            if (target) return target;
+        if (child->isFocusable()) return child;
+    }
+    return nullptr;
+}
+
+brls::View* LiveTVTab::getNextFocus(brls::FocusDirection direction, brls::View* currentView) {
+    // Section layout (top to bottom):
+    //   Quick Access (m_channelsRow) -> Program Guide (m_guideBox)
+    //   -> DVR Recordings (m_dvrRow)
+    //
+    // Row-to-row movement *inside* the guide is handled by borealis' natural
+    // navigation (m_guideBox is a COLUMN box, so it resolves UP/DOWN between
+    // rows itself). This override is only consulted when that bubbles up to the
+    // tab — i.e. at a section boundary — so all we do here is hop to the
+    // adjacent section. The previous version intercepted every UP/DOWN, which
+    // is what broke moving between guide rows.
+    const bool inQuick = isDescendantOf(currentView, m_channelsRow);
+    const bool inGuide = isDescendantOf(currentView, m_guideContainer);
+    const bool inDvr   = isDescendantOf(currentView, m_dvrRow);
+
+    if (direction == brls::FocusDirection::DOWN) {
+        if (inQuick) {
+            if (brls::View* t = findFirstFocusableInBox(m_guideBox)) return t;
+            if (brls::View* t = findFirstFocusableInBox(m_dvrContent)) return t;
+        } else if (inGuide) {
+            // Reached here means we're at the bottom row of the guide.
+            if (brls::View* t = findFirstFocusableInBox(m_dvrContent)) return t;
         }
     }
     else if (direction == brls::FocusDirection::UP) {
-        // If in DVR section, go to program guide
-        if (isDescendantOf(currentView, m_dvrRow) || isDescendantOf(currentView, m_dvrContent)) {
-            brls::View* target = findFirstFocusableInBox(m_guideBox);
-            if (target) return target;
-            // Fall through to quick access if no guide items
-            target = findFirstFocusableInBox(m_channelsContent);
-            if (target) return target;
-        }
-        // If in program guide section, go to quick access
-        if (isDescendantOf(currentView, m_guideContainer) || isDescendantOf(currentView, m_guideBox)) {
-            brls::View* target = findFirstFocusableInBox(m_channelsContent);
-            if (target) return target;
+        if (inDvr) {
+            // Land on the last on-screen guide row, not the very first one.
+            if (brls::View* t = findLastFocusableInBox(m_guideBox)) return t;
+            if (brls::View* t = findFirstFocusableInBox(m_channelsContent)) return t;
+        } else if (inGuide) {
+            // Reached here means we're at the top row of the guide.
+            if (brls::View* t = findFirstFocusableInBox(m_channelsContent)) return t;
         }
     }
 
     // Default behavior for left/right and unhandled cases
     return brls::Box::getNextFocus(direction, currentView);
+}
+
+void LiveTVTab::cullToViewport(brls::Box* content, brls::View* viewport, bool vertical) {
+    if (!content || !viewport) return;
+
+    // Keep one extra row/card of slack beyond each edge so the item about to
+    // scroll in (and a focus target just past the edge) is already live.
+    const float margin = vertical ? (float)livetvRowHeight() : (float)livetvTimeSlotWidth();
+
+    const float vpStart = vertical ? viewport->getY() : viewport->getX();
+    const float vpEnd   = vpStart + (vertical ? viewport->getHeight() : viewport->getWidth());
+
+    brls::View* focus = brls::Application::getCurrentFocus();
+
+    for (brls::View* child : content->getChildren()) {
+        const float cStart = vertical ? child->getY() : child->getX();
+        const float cEnd   = cStart + (vertical ? child->getHeight() : child->getWidth());
+
+        bool visible = (cEnd >= vpStart - margin) && (cStart <= vpEnd + margin);
+
+        // Never hide the row/card that currently owns focus.
+        if (!visible && focus && isDescendantOf(focus, child))
+            visible = true;
+
+        const brls::Visibility want = visible ? brls::Visibility::VISIBLE
+                                              : brls::Visibility::INVISIBLE;
+        // setVisibility fires willAppear/willDisappear, so only touch it on a
+        // real state change (cheap no-op for the steady state).
+        if (child->getVisibility() != want)
+            child->setVisibility(want);
+    }
+}
+
+void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height,
+                     brls::Style style, brls::FrameContext* ctx) {
+    // With 100+ channels the EPG grid holds ~100 rows and the Quick Access /
+    // DVR rows hold ~100 cards each. borealis only culls off-screen *leaf*
+    // views, never nested Boxes, so every off-screen row/card still painted its
+    // background, border and corner radius every frame — pure overdraw that
+    // tanked the frame rate on Vita. Toggle INVISIBLE on anything scrolled out
+    // of its viewport so frame() early-outs for the entire subtree. INVISIBLE
+    // (not GONE) keeps the layout, so scroll extents and positions are intact.
+    cullToViewport(m_guideBox, m_guideScrollV, /*vertical=*/true);
+    cullToViewport(m_channelsContent, m_channelsRow, /*vertical=*/false);
+    cullToViewport(m_dvrContent, m_dvrRow, /*vertical=*/false);
+
+    brls::Box::draw(vg, x, y, width, height, style, ctx);
 }
 
 void LiveTVTab::onFocusGained() {

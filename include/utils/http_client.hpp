@@ -29,6 +29,16 @@ struct HttpRequest {
     std::map<std::string, std::string> headers;
     int timeout = 30;
     bool followRedirects = true;
+
+    // Stop receiving as soon as the response body contains one complete,
+    // brace-balanced top-level JSON object, then return what we have.
+    //
+    // Needed for endpoints that return their JSON payload up front but keep
+    // the HTTP response open afterwards (e.g. the Live TV tune, which is a
+    // long-lived "rolling subscription": the Media/session metadata arrives
+    // immediately but the server holds the chunked stream open for the life
+    // of the recording, so a normal read blocks until the request times out).
+    bool stopAtJsonClose = false;
 };
 
 /**
