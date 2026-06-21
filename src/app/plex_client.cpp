@@ -3192,21 +3192,38 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
     // types would otherwise show up empty. Running this for every
     // channel ensures parity with the official app.
     if (!m_epgProviderKey.empty()) {
-        time_t nowTs = time(nullptr);
-        struct tm* lt = localtime(&nowTs);
-        char dateBuf[16];
-        strftime(dateBuf, sizeof(dateBuf), "%Y-%m-%d", lt);
-        const std::string today = dateBuf;
+        // Build the list of calendar dates the lookahead window spans.
+        // The per-channel grid is keyed by `date=YYYY-MM-DD`, so a 12h
+        // window starting after noon will need both today *and*
+        // tomorrow to cover the whole range; querying only today drops
+        // everything past midnight.
+        auto formatLocalDate = [](time_t t) {
+            struct tm* lt = localtime(&t);
+            char buf[16];
+            strftime(buf, sizeof(buf), "%Y-%m-%d", lt);
+            return std::string(buf);
+        };
+        std::vector<std::string> dates;
+        {
+            std::string lastDate;
+            for (time_t t = (time_t)now; t <= (time_t)endTime; t += 12 * 3600) {
+                std::string d = formatLocalDate(t);
+                if (d != lastDate) { dates.push_back(d); lastDate = d; }
+            }
+            std::string endDate = formatLocalDate((time_t)endTime);
+            if (dates.empty() || dates.back() != endDate) dates.push_back(endDate);
+        }
 
         for (auto& channel : channelsWithPrograms) {
             if (channel.key.empty()) continue;
 
-            std::string url = buildApiUrl("/" + m_epgProviderKey + "/grid");
-            url += "&channelGridKey=" + HttpClient::urlEncode(channel.key);
-            url += "&date=" + today;
-            req.url = url;
-            HttpResponse resp = client.request(req);
-            if (resp.statusCode != 200 || resp.body.empty()) continue;
+            for (const std::string& date : dates) {
+                std::string url = buildApiUrl("/" + m_epgProviderKey + "/grid");
+                url += "&channelGridKey=" + HttpClient::urlEncode(channel.key);
+                url += "&date=" + date;
+                req.url = url;
+                HttpResponse resp = client.request(req);
+                if (resp.statusCode != 200 || resp.body.empty()) continue;
 
             size_t metaArrayPos = resp.body.find("\"Metadata\"");
             if (metaArrayPos == std::string::npos) continue;
@@ -3309,6 +3326,7 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
                     if (nextComma != std::string::npos && metaObj[nextComma] == ']') break;
                 }
             }
+            }  // per-date loop
         }
     }
 

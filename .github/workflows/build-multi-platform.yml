@@ -187,7 +187,17 @@ jobs:
           FVER: ${{ needs.resolve-version.outputs.version_tag }}
         run: |
           mkdir -p release
- 
+
+          # What did we actually get? Helpful when one of the per-
+          # platform globs further down silently misses (Switch NROs
+          # in particular have a history of being dropped because the
+          # artifact name changed without the rename loop following).
+          echo "=== Downloaded artifact directories ==="
+          ls -d */ 2>/dev/null || true
+          echo "=== All *.nro found ==="
+          find . -name "*.nro" -print 2>/dev/null || true
+          echo "======================================="
+
           # Vita VPK
           for f in $(find . -name "*.vpk"); do
             cp "$f" "release/VitaPlex.${FVER}.vpk"
@@ -213,16 +223,21 @@ jobs:
             cp "$tgz" "release/VitaPlex.${FVER}-Flatpak-${info}.tar.gz"
           done
 
-          # Switch NRO. The build job uploads as VitaPlex-switch-<driver>-<run>;
-          # the historical name was VitaPlex-nx-* so the glob was scanning for
-          # a directory that hadn't existed in months — Switch NROs were
-          # silently dropped from every prerelease. Match both, prefer switch.
-          for dir in VitaPlex-switch-* VitaPlex-nx-*; do
-            [ -d "$dir" ] || continue
-            driver=$(echo "$dir" | sed -E 's/VitaPlex-(switch|nx)-([^-]+)-.*/\2/')
-            nro=$(find "$dir" -name "*.nro" | head -1)
-            [ -n "$nro" ] && cp "$nro" "release/VitaPlex.${FVER}-switch-${driver}.nro"
-          done
+          # Switch NRO. Walk every *.nro the download step pulled
+          # down — we don't care what the artifact directory was
+          # named (history has it as VitaPlex-nx-*, VitaPlex-switch-*,
+          # NX-*…). Pull the driver name out of the *containing
+          # artifact directory* when it follows the convention; fall
+          # back to the bare basename otherwise so we still ship
+          # *something* even when the upload step's name changes.
+          while IFS= read -r nro; do
+            [ -z "$nro" ] && continue
+            top=$(echo "$nro" | awk -F/ '{print $2}')
+            driver=$(echo "$top" | sed -nE 's/^(VitaPlex-)?(nx|switch|NX)-([A-Za-z0-9]+).*$/\3/p')
+            [ -z "$driver" ] && driver=$(basename "$nro" .nro | tr -d ' ' | tr -dc 'A-Za-z0-9_-')
+            [ -z "$driver" ] && driver=switch
+            cp "$nro" "release/VitaPlex.${FVER}-switch-${driver}.nro"
+          done < <(find . -type f -name "*.nro")
 
           # PS4 pkg
           for f in $(find . -path "*ps4*" -name "*.pkg"); do
