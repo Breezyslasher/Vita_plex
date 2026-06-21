@@ -144,6 +144,16 @@ private:
     int64_t m_lastFullLoadTime = 0;   // Timestamp of last full channel/EPG load
     int64_t m_lastRefreshTime = 0;    // Timestamp of last "now playing" refresh
 
+    // Per-frame optimisation caches — see draw() / updateCurrentTimeLine().
+    // The wall-clock-driven time line and the cross-row scroll sync both
+    // produce identical output across most frames; cache the last applied
+    // state so we can short-circuit the Yoga / scroll setter calls when
+    // nothing has actually changed.
+    int64_t m_lastTimeLineUpdateSec = 0;   // Wall-clock second of last time-line update
+    float   m_lastTimeLineLeft      = -1;  // Last applied left in px (-1 = unset)
+    float   m_lastTimeLineHeight    = -1;  // Last applied height in px (-1 = unset)
+    float   m_lastSyncedScrollX     = -1;  // Last anchor offset propagated to other rows
+
     // Alive flag for crash prevention on quick tab switching
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
 };

@@ -431,14 +431,20 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         }
         if (anchor) {
             const float target = anchor->getContentOffsetX();
-            for (brls::HScrollingFrame* hs : m_rowProgramScrolls) {
-                if (hs == anchor) continue;
-                if (std::abs(hs->getContentOffsetX() - target) > 0.5f)
-                    hs->setContentOffsetX(target, false);
-            }
-            if (m_timeHeaderScroll &&
-                std::abs(m_timeHeaderScroll->getContentOffsetX() - target) > 0.5f) {
-                m_timeHeaderScroll->setContentOffsetX(target, false);
+            // Steady-state (not actively scrolling) is the common case —
+            // the anchor's offset matches what we already pushed to the
+            // other rows. Skip the whole O(rows) sync loop in that case.
+            if (std::abs(target - m_lastSyncedScrollX) > 0.5f) {
+                for (brls::HScrollingFrame* hs : m_rowProgramScrolls) {
+                    if (hs == anchor) continue;
+                    if (std::abs(hs->getContentOffsetX() - target) > 0.5f)
+                        hs->setContentOffsetX(target, false);
+                }
+                if (m_timeHeaderScroll &&
+                    std::abs(m_timeHeaderScroll->getContentOffsetX() - target) > 0.5f) {
+                    m_timeHeaderScroll->setContentOffsetX(target, false);
+                }
+                m_lastSyncedScrollX = target;
             }
         }
     }
@@ -474,6 +480,42 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         }
         if (clipW <= 0) return;
 
+        // Resolve visible cells once, then iterate the (much smaller)
+        // filtered list twice — once per batch — instead of redoing the
+        // ~7 getter calls per cell on every pass.
+        struct VisibleCell {
+            float x, y;
+            const std::string* title;
+            const std::string* subtitle;
+        };
+        std::vector<VisibleCell> visible;
+        visible.reserve(m_epgCells.size());
+
+        for (const EpgCellInfo& info : m_epgCells) {
+            if (!info.cell || !info.scroll) continue;
+            if (info.cell->getVisibility() != brls::Visibility::VISIBLE) continue;
+
+            const float cx = info.cell->getX();
+            const float cy = info.cell->getY();
+            const float cw = info.cell->getWidth();
+            const float ch = info.cell->getHeight();
+            if (cw <= 0 || ch <= 0) continue;
+
+            const float hScrollLeft  = info.scroll->getX();
+            const float hScrollRight = hScrollLeft + info.scroll->getWidth();
+            if (cx + cw < hScrollLeft || cx > hScrollRight) continue;
+            if (cy + ch < vScrollTop  || cy > vScrollBottom) continue;
+
+            VisibleCell v;
+            v.x = cx + 8.0f;
+            v.y = cy + (ch - 26.0f) * 0.5f;
+            v.title    = &info.title;
+            v.subtitle = &info.subtitle;
+            visible.push_back(v);
+        }
+
+        if (visible.empty()) return;
+
         nvgSave(vg);
         nvgScissor(vg, clipX, vScrollTop, clipW, vScrollBottom - vScrollTop);
         nvgFontFace(vg, "regular");
@@ -483,25 +525,9 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         nvgFontSize(vg, 13);
         nvgFillColor(vg, tok::text());
         nvgTextBatchBegin(vg);
-        for (const EpgCellInfo& info : m_epgCells) {
-            if (!info.cell || !info.scroll) continue;
-            if (info.cell->getVisibility() != brls::Visibility::VISIBLE) continue;
-
-            const float cx = info.cell->getX();
-            const float cy = info.cell->getY();
-            const float cw = info.cell->getWidth();
-            const float ch = info.cell->getHeight();
-            if (cw <= 0 || ch <= 0) continue;
-
-            const float hScrollLeft  = info.scroll->getX();
-            const float hScrollRight = hScrollLeft + info.scroll->getWidth();
-            if (cx + cw < hScrollLeft || cx > hScrollRight) continue;
-            if (cy + ch < vScrollTop  || cy > vScrollBottom) continue;
-
-            if (info.title.empty()) continue;
-
-            const float ty = cy + (ch - 26.0f) * 0.5f;
-            nvgText(vg, cx + 8.0f, ty, info.title.c_str(), nullptr);
+        for (const VisibleCell& v : visible) {
+            if (v.title->empty()) continue;
+            nvgText(vg, v.x, v.y, v.title->c_str(), nullptr);
         }
         nvgTextBatchEnd(vg);
 
@@ -509,25 +535,9 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         nvgFontSize(vg, 10);
         nvgFillColor(vg, tok::dim());
         nvgTextBatchBegin(vg);
-        for (const EpgCellInfo& info : m_epgCells) {
-            if (!info.cell || !info.scroll) continue;
-            if (info.cell->getVisibility() != brls::Visibility::VISIBLE) continue;
-
-            const float cx = info.cell->getX();
-            const float cy = info.cell->getY();
-            const float cw = info.cell->getWidth();
-            const float ch = info.cell->getHeight();
-            if (cw <= 0 || ch <= 0) continue;
-
-            const float hScrollLeft  = info.scroll->getX();
-            const float hScrollRight = hScrollLeft + info.scroll->getWidth();
-            if (cx + cw < hScrollLeft || cx > hScrollRight) continue;
-            if (cy + ch < vScrollTop  || cy > vScrollBottom) continue;
-
-            if (info.subtitle.empty()) continue;
-
-            const float ty = cy + (ch - 26.0f) * 0.5f + 16.0f;
-            nvgText(vg, cx + 8.0f, ty, info.subtitle.c_str(), nullptr);
+        for (const VisibleCell& v : visible) {
+            if (v.subtitle->empty()) continue;
+            nvgText(vg, v.x, v.y + 16.0f, v.subtitle->c_str(), nullptr);
         }
         nvgTextBatchEnd(vg);
         nvgRestore(vg);
@@ -1032,9 +1042,16 @@ void LiveTVTab::loadChannels() {
 void LiveTVTab::updateCurrentTimeLine() {
     if (!m_currentTimeLine || !m_guideContainer || m_guideStartTime == 0) return;
 
+    // Called every frame from draw() — but the wall clock only ticks
+    // once per second, and at typical slot widths the line moves under
+    // one pixel per second. Throttle the actual recompute to one per
+    // second; everything else this would do is a no-op anyway.
+    int64_t now = (int64_t)time(nullptr);
+    if (now == m_lastTimeLineUpdateSec) return;
+    m_lastTimeLineUpdateSec = now;
+
     int gridHours = std::min(m_hoursToShow, EPG_GRID_HOURS_VISIBLE);
     int64_t guideEnd = m_guideStartTime + (gridHours * 3600);
-    int64_t now = (int64_t)time(nullptr);
 
     if (now < m_guideStartTime || now > guideEnd) {
         if (m_currentTimeLine->getVisibility() != brls::Visibility::INVISIBLE)
@@ -1044,13 +1061,23 @@ void LiveTVTab::updateCurrentTimeLine() {
 
     float xOffset = (float)((now - m_guideStartTime) * livetvTimeSlotWidth() / 1800.0);
     float left = (float)livetvChannelColWidth() + xOffset;
-    float top = 0;
     float height = m_guideContainer->getHeight();
-    if (height <= 1) return;  // pre-layout
+    if (height <= 1) {
+        // pre-layout — try again next second
+        m_lastTimeLineUpdateSec = 0;
+        return;
+    }
 
-    m_currentTimeLine->setPositionLeft(left);
-    m_currentTimeLine->setPositionTop(top);
-    m_currentTimeLine->setHeight(height);
+    // Yoga itself short-circuits identical values but the setter wrapper
+    // still pays for the call; gate on cached state to skip entirely.
+    if (left != m_lastTimeLineLeft) {
+        m_currentTimeLine->setPositionLeft(left);
+        m_lastTimeLineLeft = left;
+    }
+    if (height != m_lastTimeLineHeight) {
+        m_currentTimeLine->setHeight(height);
+        m_lastTimeLineHeight = height;
+    }
     if (m_currentTimeLine->getVisibility() != brls::Visibility::VISIBLE)
         m_currentTimeLine->setVisibility(brls::Visibility::VISIBLE);
 }
@@ -1066,6 +1093,12 @@ void LiveTVTab::buildEPGGrid() {
     // just wiped via m_guideBox->clearViews(); purge before rebuilding
     // so draw()'s batch pass doesn't dereference freed cells.
     m_epgCells.clear();
+    // Reset the per-frame sync / time-line caches — the grid start time
+    // shifts on rebuild and the row scroll frames have been recreated.
+    m_lastSyncedScrollX     = -1;
+    m_lastTimeLineUpdateSec = 0;
+    m_lastTimeLineLeft      = -1;
+    m_lastTimeLineHeight    = -1;
 
     if (m_channels.empty()) {
         auto* noDataLabel = new brls::Label();
