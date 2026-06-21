@@ -94,22 +94,18 @@ LiveTVTab::LiveTVTab() {
     this->setAlignItems(brls::AlignItems::STRETCH);
     this->setGrow(1.0f);
 
-    // Create vertical scrolling container
-    m_scrollView = new brls::ScrollingFrame();
-    m_scrollView->setGrow(1.0f);
-    // CENTERED behaviour bypasses ScrollingFrame's natural-scrolling
-    // "trap" that pins focus to the current cell whenever the next one
-    // isn't fully inscribed in the viewport — that's the reason hover
-    // couldn't move past the second row before. Home tab uses the same
-    // setting and navigates cleanly through long content. See
-    // ScrollingFrame::getParentNavigationDecision in borealis.
-    m_scrollView->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
-
+    // The whole tab is a flex column with NO outer page scroll — the
+    // guide gets its own inner scroll instead, so dpad-driven hover only
+    // moves one scroll frame at a time. (Two CENTERED scroll frames
+    // stacked would each scroll on every focus change and "double-scroll"
+    // the page.) The hero, guide and DVR sit at fixed positions; only the
+    // guide rows scroll inside m_guideScrollV.
     m_scrollContent = new brls::Box();
     m_scrollContent->setAxis(brls::Axis::COLUMN);
     m_scrollContent->setJustifyContent(brls::JustifyContent::FLEX_START);
     m_scrollContent->setAlignItems(brls::AlignItems::STRETCH);
     m_scrollContent->setPadding(20);
+    m_scrollContent->setGrow(1.0f);
 
     // Title
     m_titleLabel = new brls::Label();
@@ -130,13 +126,11 @@ LiveTVTab::LiveTVTab() {
     m_guideLabel->setMarginTop(4);
     m_scrollContent->addView(m_guideLabel);
 
-    // The guide is a flex column that grows with its content — the
-    // page-level m_scrollView is the only thing that scrolls. With an
-    // inner ScrollingFrame here, both the inner *and* the page scroll
-    // reacted to focus changes, so scrolling one cell visibly shifted
-    // the rest of the page too.
+    // Guide block: takes whatever space is left after hero + DVR. Uses
+    // setGrow so it expands on taller screens and shrinks on Vita.
     m_guideContainer = new brls::Box();
     m_guideContainer->setAxis(brls::Axis::COLUMN);
+    m_guideContainer->setGrow(1.0f);
     m_guideContainer->setMarginBottom(20);
     m_guideContainer->setBackgroundColor(tok::card());
     m_guideContainer->setCornerRadius(14);
@@ -157,12 +151,19 @@ LiveTVTab::LiveTVTab() {
     m_timeHeaderScroll->setContentView(m_timeHeaderBox);
     m_guideContainer->addView(m_timeHeaderScroll);
 
-    // EPG channel rows sit directly in the container — no inner scroll.
+    // Inner vertical scroll for channel rows. This is the *only* scroll
+    // frame on the page so hover-driven scroll moves it alone, leaving
+    // the hero + DVR pinned to their slots above and below.
+    m_guideScrollV = new brls::ScrollingFrame();
+    m_guideScrollV->setGrow(1.0f);
+    m_guideScrollV->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
+
     m_guideBox = new brls::Box();
     m_guideBox->setAxis(brls::Axis::COLUMN);
     m_guideBox->setJustifyContent(brls::JustifyContent::FLEX_START);
     m_guideBox->setAlignItems(brls::AlignItems::STRETCH);
-    m_guideContainer->addView(m_guideBox);
+    m_guideScrollV->setContentView(m_guideBox);
+    m_guideContainer->addView(m_guideScrollV);
 
     // Current-time vertical line: an absolutely-positioned cyan rule
     // overlaid on the guide container. Positioned by updateCurrentTimeLine
@@ -200,8 +201,9 @@ LiveTVTab::LiveTVTab() {
     m_dvrRow->setContentView(m_dvrContent);
     m_scrollContent->addView(m_dvrRow);
 
-    m_scrollView->setContentView(m_scrollContent);
-    this->addView(m_scrollView);
+    // No outer scroll: m_scrollContent goes straight into the tab so the
+    // hero + DVR rows stay pinned and only the guide scrolls.
+    this->addView(m_scrollContent);
 
     brls::Logger::debug("LiveTVTab: Loading content...");
     loadChannels();
@@ -325,9 +327,7 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
     // views, never nested Boxes, so every off-screen row/card still painted
     // every frame — pure overdraw. Toggle INVISIBLE on anything scrolled
     // out of its viewport so frame() early-outs for the entire subtree.
-    // Guide rows are culled against the page scroll now that there's no
-    // inner viewport.
-    cullToViewport(m_guideBox, m_scrollView, /*vertical=*/true);
+    cullToViewport(m_guideBox, m_guideScrollV, /*vertical=*/true);
     cullToViewport(m_dvrContent, m_dvrRow, /*vertical=*/false);
 
     // Slide the cyan "now" line each frame so it tracks the wall clock
