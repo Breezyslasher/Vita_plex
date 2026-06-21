@@ -97,6 +97,13 @@ LiveTVTab::LiveTVTab() {
     // Create vertical scrolling container
     m_scrollView = new brls::ScrollingFrame();
     m_scrollView->setGrow(1.0f);
+    // CENTERED behaviour bypasses ScrollingFrame's natural-scrolling
+    // "trap" that pins focus to the current cell whenever the next one
+    // isn't fully inscribed in the viewport — that's the reason hover
+    // couldn't move past the second row before. Home tab uses the same
+    // setting and navigates cleanly through long content. See
+    // ScrollingFrame::getParentNavigationDecision in borealis.
+    m_scrollView->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
 
     m_scrollContent = new brls::Box();
     m_scrollContent->setAxis(brls::Axis::COLUMN);
@@ -139,6 +146,7 @@ LiveTVTab::LiveTVTab() {
     m_timeHeaderScroll = new brls::HScrollingFrame();
     m_timeHeaderScroll->setHeight(TIME_HEADER_HEIGHT);
     m_timeHeaderScroll->setMarginLeft(livetvChannelColWidth());
+    m_timeHeaderScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
 
     m_timeHeaderBox = new brls::Box();
     m_timeHeaderBox->setAxis(brls::Axis::ROW);
@@ -150,6 +158,7 @@ LiveTVTab::LiveTVTab() {
     // EPG Grid (vertical scroll containing channel rows)
     m_guideScrollV = new brls::ScrollingFrame();
     m_guideScrollV->setGrow(1.0f);
+    m_guideScrollV->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
 
     m_guideBox = new brls::Box();
     m_guideBox->setAxis(brls::Axis::COLUMN);
@@ -184,6 +193,7 @@ LiveTVTab::LiveTVTab() {
     m_dvrRow = new brls::HScrollingFrame();
     m_dvrRow->setHeight(platform::getImageConstraints().livetvChannelRowHeight);
     m_dvrRow->setMarginBottom(20);
+    m_dvrRow->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
 
     m_dvrContent = new brls::Box();
     m_dvrContent->setAxis(brls::Axis::ROW);
