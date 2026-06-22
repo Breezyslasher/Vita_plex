@@ -158,6 +158,32 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# Borealis Application patch (all platforms): adds a hold-A-to-open-
+# menu shim. Default behaviour is off, so non-Android paths keep the
+# original press-time click semantics; main_activity.cpp flips it on
+# at runtime only when SDL_IsAndroidTV() returns true so the bare
+# 5-button TV remotes (no Menu/Guide key) can still reach the
+# Options context menu via a long-press on OK.
+# ---------------------------------------------------------------------------
+set(BRLS_APP_HPP_PATCH  ${CMAKE_CURRENT_SOURCE_DIR}/patches/brls_application.hpp)
+set(BRLS_APP_HPP_TARGET ${BOREALIS_LIBRARY}/include/borealis/core/application.hpp)
+if(EXISTS ${BRLS_APP_HPP_PATCH})
+    message(STATUS "Applying patch: borealis application.hpp")
+    configure_file(${BRLS_APP_HPP_PATCH} ${BRLS_APP_HPP_TARGET} COPYONLY)
+else()
+    message(FATAL_ERROR "Patch file not found: ${BRLS_APP_HPP_PATCH}")
+endif()
+
+set(BRLS_APP_CPP_PATCH  ${CMAKE_CURRENT_SOURCE_DIR}/patches/brls_application.cpp)
+set(BRLS_APP_CPP_TARGET ${BOREALIS_LIBRARY}/lib/core/application.cpp)
+if(EXISTS ${BRLS_APP_CPP_PATCH})
+    message(STATUS "Applying patch: borealis application.cpp")
+    configure_file(${BRLS_APP_CPP_PATCH} ${BRLS_APP_CPP_TARGET} COPYONLY)
+else()
+    message(FATAL_ERROR "Patch file not found: ${BRLS_APP_CPP_PATCH}")
+endif()
+
+# ---------------------------------------------------------------------------
 # GLFW keyboard mapping patch (desktop only): adds keyboard shortcuts
 # for Start / Back / X / Y / LB / RB on the desktop GLFW backend so
 # the dev workflow doesn't require a physical gamepad.

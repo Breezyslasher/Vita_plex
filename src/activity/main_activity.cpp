@@ -19,6 +19,10 @@
 #include "utils/async.hpp"
 #include "platform/platform.hpp"
 
+#if defined(__ANDROID__)
+#include <SDL2/SDL_system.h>
+#endif
+
 #include <algorithm>
 
 namespace vitaplex {
@@ -87,6 +91,19 @@ void MainActivity::applySidebarSizingForViewport() {
 
 void MainActivity::onContentAvailable() {
     brls::Logger::debug("MainActivity content available");
+
+#if defined(__ANDROID__)
+    // Android TV remotes have no Menu/Guide hardware button, and the
+    // existing GUIDE → START re-dispatch only helps remotes that *do*
+    // surface one. For the bare 5-button remote (D-pad + OK + Back +
+    // Home) the only way to reach the Options context menu is via the
+    // OK key, so wire hold-OK as a synthetic GUIDE press. Phones and
+    // tablets stay on the default press-time click semantics.
+    if (SDL_IsAndroidTV()) {
+        brls::Application::setHoldAToOpenMenu(true);
+        brls::Logger::info("MainActivity: Android TV detected — hold-OK opens Options menu");
+    }
+#endif
 
     if (tabFrame) {
         AppSettings& settings = Application::getInstance().getSettings();
