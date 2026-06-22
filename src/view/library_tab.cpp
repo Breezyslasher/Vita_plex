@@ -139,8 +139,8 @@ void LibraryTab::styleButton(brls::Button* btn, bool active) {
     btn->setHighlightCornerRadius(16);
     btn->setPadding(6, 16, 6, 16);
     if (active) {
-        btn->setBackgroundColor(nvgRGBA(70, 90, 210, 220));
-        btn->setBorderColor(nvgRGBA(120, 160, 255, 200));
+        btn->setBackgroundColor(nvgRGBA(229, 160, 13, 220));
+        btn->setBorderColor(nvgRGBA(255, 196, 64, 200));
         btn->setBorderThickness(1.5f);
     } else {
         btn->setBackgroundColor(nvgRGBA(60, 60, 70, 180));

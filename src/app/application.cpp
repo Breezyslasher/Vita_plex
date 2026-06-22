@@ -235,6 +235,42 @@ void Application::applyTheme() {
     }
 
     brls::Application::getPlatform()->setThemeVariant(variant);
+
+    // Repaint every borealis accent slot in Plex yellow so the
+    // sidebar selection bar, list-value text, slider fill, primary
+    // buttons, and focus glow all match the app accent instead of
+    // borealis's default teal. Theme::addColor overrides the slot
+    // for the rest of the process — no borealis patch required. We
+    // apply on both Light + Dark theme tables so the swap survives a
+    // runtime theme change.
+    const NVGcolor plexYellow      = nvgRGB(229, 160, 13);     // #E5A00D
+    const NVGcolor plexYellowLight = nvgRGB(255, 196, 64);     // brightened for the highlight inner glow
+    const NVGcolor plexYellowDeep  = nvgRGB(204, 123, 25);     // #CC7B19 — slider rail / pressed button bg
+    const NVGcolor plexYellowSoft  = nvgRGBA(229, 160, 13, 38); // ~15% alpha for click pulse
+    const NVGcolor onYellowText    = nvgRGB(35, 26, 0);        // near-black text for contrast on the yellow primary button
+    for (brls::Theme* theme : { &brls::Theme::getDarkTheme(),
+                                 &brls::Theme::getLightTheme() }) {
+        // Generic accent (used by some library widgets directly)
+        theme->addColor("brls/accent",                         plexYellow);
+        // Focus glow
+        theme->addColor("brls/highlight/color1",               plexYellow);
+        theme->addColor("brls/highlight/color2",               plexYellowLight);
+        theme->addColor("brls/click_pulse",                    plexYellowSoft);
+        // Sidebar — the selected-tab bar + label colour
+        theme->addColor("brls/sidebar/active_item",            plexYellow);
+        // List cells — the value/detail text on the right of DetailCell
+        theme->addColor("brls/list/listItem_value_color",      plexYellow);
+        // Primary button (the one borealis paints "filled")
+        theme->addColor("brls/button/primary_enabled_background",  plexYellow);
+        theme->addColor("brls/button/primary_enabled_text",        onYellowText);
+        // "Highlight" button variant text
+        theme->addColor("brls/button/highlight_enabled_text",  plexYellow);
+        theme->addColor("brls/button/highlight_disabled_text", plexYellow);
+        // Slider filled portion
+        theme->addColor("brls/slider/line_filled",             plexYellow);
+        (void)plexYellowDeep;  // reserved for future borealis additions
+    }
+
     brls::Logger::info("Applied theme: {}", getThemeString(m_settings.theme));
 }
 

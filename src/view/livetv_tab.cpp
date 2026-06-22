@@ -118,8 +118,12 @@ private:
 // consistency rather than scattering nvgRGBA literals across the build
 // methods.
 namespace tok {
-    static inline NVGcolor accent()       { return nvgRGB(137, 241, 242); }
-    static inline NVGcolor accentDeep()   { return nvgRGB(25, 138, 198); }
+    // Plex brand colours — the standard yellow (#E5A00D) and a deeper
+    // gold (#CC7B19) for the EPG "on now" outline / current-time line
+    // / progress bar fill so the app reads as a Plex client instead
+    // of a generic teal-accented one.
+    static inline NVGcolor accent()       { return nvgRGB(229, 160, 13); }
+    static inline NVGcolor accentDeep()   { return nvgRGB(204, 123, 25); }
     static inline NVGcolor live()         { return nvgRGB(255, 86, 88); }
     static inline NVGcolor text()         { return nvgRGB(255, 255, 255); }
     static inline NVGcolor muted()        { return nvgRGB(163, 163, 163); }
@@ -129,7 +133,9 @@ namespace tok {
     static inline NVGcolor hairline()     { return nvgRGB(67, 67, 74); }
     static inline NVGcolor hero()         { return nvgRGB(38, 42, 48); }
     static inline NVGcolor cellUpcoming() { return nvgRGB(60, 60, 72); }
-    static inline NVGcolor cellNow()      { return nvgRGB(47, 68, 82); }
+    // "On now" cell fill — warm tint that reads as Plex-yellow-adjacent
+    // instead of the old teal-blue (47,68,82) which fought the accent.
+    static inline NVGcolor cellNow()      { return nvgRGB(70, 56, 32); }
     static inline NVGcolor placeholder()  { return nvgRGB(42, 42, 49); }
     static inline NVGcolor primaryInk()   { return nvgRGB(22, 32, 42); }
     static inline NVGcolor btnSecondary() { return nvgRGB(67, 67, 79); }

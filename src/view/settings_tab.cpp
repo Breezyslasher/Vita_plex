@@ -78,8 +78,9 @@ namespace tok {
     static inline NVGcolor text()      { return nvgRGB(255, 255, 255); }
     static inline NVGcolor muted()     { return nvgRGB(163, 163, 163); }
     static inline NVGcolor dim()       { return nvgRGB(124, 124, 132); }
-    static inline NVGcolor accent()    { return nvgRGB(0, 255, 204); }
-    static inline NVGcolor chipBg()    { return nvgRGBA(0, 255, 204, 30); }  // ~12% alpha
+    // Plex brand yellow (#E5A00D) used as the app-wide accent.
+    static inline NVGcolor accent()    { return nvgRGB(229, 160, 13); }
+    static inline NVGcolor chipBg()    { return nvgRGBA(229, 160, 13, 38); }  // ~15% alpha
 }
 
 // Per-section metadata. The rail rows + detail header pull from this
