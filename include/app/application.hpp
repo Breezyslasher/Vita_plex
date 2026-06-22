@@ -154,6 +154,12 @@ struct AppSettings {
     // without logging out.
     bool autoLoginAsLastUser = true;
 
+    // HTTP response cache. Lifetime in minutes for the global on-disk
+    // cache used by PlexClient (library sections, Live TV channels,
+    // Home hubs). 0 disables caching entirely; non-zero values let
+    // get() reuse a cached body up to that many minutes old.
+    int cacheLifetimeMinutes = 60;
+
     // When true, PlayerActivity overlays a small mpv-stats panel at
     // the top-left of the video so the user can see codec, hwdec,
     // FPS, frame drops, and cache state in real time. Driven from the

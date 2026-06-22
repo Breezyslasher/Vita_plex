@@ -441,6 +441,12 @@ bool Application::loadSettings() {
         if (v > 0 && v <= 48) m_settings.liveTvGuideHours = v;
     }
     m_settings.autoLoginAsLastUser = extractBool("autoLoginAsLastUser", true);
+    {
+        // 0 = disabled; cap at one week so a corrupt settings file
+        // can't pin us to a stale response forever.
+        int v = extractInt("cacheLifetimeMinutes");
+        if (v >= 0 && v <= 10080) m_settings.cacheLifetimeMinutes = v;
+    }
 
     brls::Logger::info("Settings loaded successfully from {}", settingsPath);
     return !m_authToken.empty();
@@ -536,7 +542,8 @@ bool Application::saveSettings() {
     json += "  \"dvrRecordPartials\": " + b(m_settings.dvrRecordPartials) + ",\n";
     json += "  \"dvrMinVideoQuality\": " + std::to_string(m_settings.dvrMinVideoQuality) + ",\n";
     json += "  \"liveTvGuideHours\": " + std::to_string(m_settings.liveTvGuideHours) + ",\n";
-    json += "  \"autoLoginAsLastUser\": " + b(m_settings.autoLoginAsLastUser) + "\n";
+    json += "  \"autoLoginAsLastUser\": " + b(m_settings.autoLoginAsLastUser) + ",\n";
+    json += "  \"cacheLifetimeMinutes\": " + std::to_string(m_settings.cacheLifetimeMinutes) + "\n";
     json += "}\n";
 
     std::ofstream ofs(settingsPath, std::ios::trunc);
