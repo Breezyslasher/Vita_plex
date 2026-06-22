@@ -329,19 +329,24 @@ brls::Box* LoginActivity::buildServerCard(const PlexServer& server,
     card->setMarginBottom(10);
     card->setFocusable(true);
 
-    // Left icon tile.
+    // Left icon tile — gold MDI server glyph on a gold-tinted square,
+    // matching the dialog eyebrow. resources/icons/server.png is the
+    // #E5A00D-filled raster.
     auto* tile = new brls::Box();
-    tile->setWidth(40);
-    tile->setHeight(40);
+    tile->setWidth(44);
+    tile->setHeight(44);
     tile->setCornerRadius(11);
-    tile->setBackgroundColor(nvgRGB(67, 67, 79));
+    tile->setBackgroundColor(nvgRGBA(229, 160, 13, 45));
+    tile->setBorderColor(nvgRGBA(229, 160, 13, 90));
+    tile->setBorderThickness(1);
     tile->setJustifyContent(brls::JustifyContent::CENTER);
     tile->setAlignItems(brls::AlignItems::CENTER);
     tile->setMarginRight(12);
-    auto* tileGlyph = new brls::Label();
-    tileGlyph->setText("●");
-    tileGlyph->setFontSize(14);
-    tileGlyph->setTextColor(nvgRGB(163, 163, 163));
+    auto* tileGlyph = new brls::Image();
+    tileGlyph->setWidth(24);
+    tileGlyph->setHeight(24);
+    tileGlyph->setScalingType(brls::ImageScalingType::FIT);
+    tileGlyph->setImageFromRes("icons/server.png");
     tile->addView(tileGlyph);
     card->addView(tile);
 
@@ -480,19 +485,6 @@ void LoginActivity::showServerSelectionDialog(const std::vector<PlexServer>& ser
     }
     scroll->setContentView(cardCol);
     content->addView(scroll);
-
-    // Footer hint row — "A Connect · B Back".
-    auto* footer = new brls::Box();
-    footer->setAxis(brls::Axis::ROW);
-    footer->setAlignItems(brls::AlignItems::CENTER);
-    footer->setJustifyContent(brls::JustifyContent::FLEX_END);
-    footer->setMarginTop(14);
-    auto* hint = new brls::Label();
-    hint->setText("A  Connect    B  Back");
-    hint->setFontSize(12);
-    hint->setTextColor(nvgRGB(124, 124, 132));
-    footer->addView(hint);
-    content->addView(footer);
 
     dialog->registerAction("Back", brls::ControllerButton::BUTTON_B,
         [dialog](brls::View*) {
