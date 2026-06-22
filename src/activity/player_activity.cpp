@@ -2541,8 +2541,8 @@ void PlayerActivity::updateQueueDisplay() {
                 brls::Box* row = static_cast<brls::Box*>(pair.first);
                 bool isCurrent = (pair.second.trackIdx == currentIdx);
                 if (isCurrent) {
-                    row->setBackgroundColor(nvgRGBA(70, 90, 210, 150));
-                    row->setBorderColor(nvgRGBA(120, 160, 255, 200));
+                    row->setBackgroundColor(nvgRGBA(229, 160, 13, 150));
+                    row->setBorderColor(nvgRGBA(255, 196, 64, 200));
                     row->setBorderThickness(1.5f);
                 } else {
                     row->setBackgroundColor(nvgRGBA(255, 255, 255, 8));
@@ -2579,8 +2579,8 @@ void PlayerActivity::showQueueOverlay() {
             brls::Box* row = static_cast<brls::Box*>(pair.first);
             bool isCurrent = (pair.second.trackIdx == currentIdx);
             if (isCurrent) {
-                row->setBackgroundColor(nvgRGBA(70, 90, 210, 150));
-                row->setBorderColor(nvgRGBA(120, 160, 255, 200));
+                row->setBackgroundColor(nvgRGBA(229, 160, 13, 150));
+                row->setBorderColor(nvgRGBA(255, 196, 64, 200));
                 row->setBorderThickness(1.5f);
             } else {
                 row->setBackgroundColor(nvgRGBA(255, 255, 255, 8));
@@ -2712,8 +2712,8 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     row->setMarginBottom(3);
 
     if (isCurrent) {
-        row->setBackgroundColor(nvgRGBA(70, 90, 210, 150));
-        row->setBorderColor(nvgRGBA(120, 160, 255, 200));
+        row->setBackgroundColor(nvgRGBA(229, 160, 13, 150));
+        row->setBorderColor(nvgRGBA(255, 196, 64, 200));
         row->setBorderThickness(1.5f);
     } else {
         row->setBackgroundColor(nvgRGBA(255, 255, 255, 8));
@@ -3104,7 +3104,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 if (it != m_queueRowData.end()) {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (it->second.trackIdx == queue.getCurrentIndex()) {
-                        row->setBackgroundColor(nvgRGBA(70, 90, 210, 150));
+                        row->setBackgroundColor(nvgRGBA(229, 160, 13, 150));
                     } else {
                         row->setBackgroundColor(nvgRGBA(255, 255, 255, 8));
                     }
@@ -3572,8 +3572,8 @@ void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB, bool skipTh
 
     // --- Swap background/border colors (current track highlighting) ---
     if (isCurrA) {
-        rowA->setBackgroundColor(nvgRGBA(70, 90, 210, 150));
-        rowA->setBorderColor(nvgRGBA(120, 160, 255, 200));
+        rowA->setBackgroundColor(nvgRGBA(229, 160, 13, 150));
+        rowA->setBorderColor(nvgRGBA(255, 196, 64, 200));
         rowA->setBorderThickness(1.5f);
     } else {
         rowA->setBackgroundColor(nvgRGBA(255, 255, 255, 8));
@@ -3581,8 +3581,8 @@ void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB, bool skipTh
         rowA->setBorderThickness(0);
     }
     if (isCurrB) {
-        rowB->setBackgroundColor(nvgRGBA(70, 90, 210, 150));
-        rowB->setBorderColor(nvgRGBA(120, 160, 255, 200));
+        rowB->setBackgroundColor(nvgRGBA(229, 160, 13, 150));
+        rowB->setBorderColor(nvgRGBA(255, 196, 64, 200));
         rowB->setBorderThickness(1.5f);
     } else {
         rowB->setBackgroundColor(nvgRGBA(255, 255, 255, 8));
@@ -3652,8 +3652,8 @@ void PlayerActivity::reassignQueueRange(int origIdx, int targetIdx) {
 
         bool isCurr = (trackIdx == currentTrackIdx);
         if (isCurr) {
-            rowBox->setBackgroundColor(nvgRGBA(70, 90, 210, 150));
-            rowBox->setBorderColor(nvgRGBA(120, 160, 255, 200));
+            rowBox->setBackgroundColor(nvgRGBA(229, 160, 13, 150));
+            rowBox->setBorderColor(nvgRGBA(255, 196, 64, 200));
             rowBox->setBorderThickness(1.5f);
         } else {
             rowBox->setBackgroundColor(nvgRGBA(255, 255, 255, 8));
