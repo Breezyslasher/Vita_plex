@@ -612,8 +612,16 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers) {
             obj.find("\"server\"") != std::string::npos) {
 
             PlexServer server;
-            server.name = extractJsonValue(obj, "name");
+            server.name             = extractJsonValue(obj, "name");
             server.machineIdentifier = extractJsonValue(obj, "clientIdentifier");
+            // owned + version + sourceTitle drive the new server-picker
+            // card: gold tint + "OWNED" chip for owned, "Shared by …"
+            // line for friends, and a version readout next to the
+            // address. All three are scalar fields on the resource
+            // object, so extractJsonValue / extractJsonBool reach them.
+            server.owned       = extractJsonBool(obj, "owned");
+            server.version     = extractJsonValue(obj, "productVersion");
+            server.sourceTitle = extractJsonValue(obj, "sourceTitle");
 
             // Parse connections array - store ALL connections for fallback
             size_t connPos = obj.find("\"connections\"");
