@@ -1,93 +1,343 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Login screen — PIN-first redesign.
+
+  Layout: brand mark top-left, a centered card (~680px wide) whose body
+  swaps between a "Link your device" PIN view (the default + auto-
+  started in onContentAvailable) and a "Sign in with credentials"
+  sub-view that the user opts into via the "Use credentials" button.
+
+  Existing IDs preserved where the cpp still binds them:
+    login/server_label, login/username_label, login/password_label
+        — moved INSIDE the credentials sub-view (the field-row look
+          comes from the surrounding rounded Box; the Label itself is
+          still the click target for the existing IME handlers).
+    login/login_button   — Sign-in button inside the credentials view.
+    login/pin_button     — repurposed as the "Get a new code" button
+                            (hidden until the PIN expires).
+    login/offline_button — Offline button in the PIN view's secondary row.
+    login/status         — status text (Waiting for confirmation…, etc.)
+    login/pin_code       — kept as a vestigial GONE label so the
+                            BRLS_BIND in the hpp resolves; the actual
+                            digits are rendered as tiles inside
+                            login/pin_tiles by login_activity.cpp.
+
+  New IDs:
+    login/card, login/pin_view, login/cred_view, login/pin_tiles,
+    login/status_dot, login/expiry, login/quick_pill,
+    login/use_credentials, login/back_to_pin
+-->
 <brls:Box
     width="100%"
     height="100%"
     axis="column"
-    justifyContent="center"
-    alignItems="center"
-    paddingTop="50"
-    paddingBottom="50"
-    paddingLeft="100"
-    paddingRight="100">
+    backgroundColor="#2d2d2d">
 
-    <!-- Title -->
-    <brls:Label
-        id="login/title"
-        text="VitaPlex"
-        fontSize="36"
-        marginBottom="40"/>
-
-    <!-- Input container -->
-    <brls:Box
-        id="login/input_container"
-        width="400"
-        axis="column"
-        alignItems="stretch"
-        marginBottom="30">
-
-        <!-- Server URL -->
-        <brls:Label
-            id="login/server_label"
-            text="Server: Not set"
-            fontSize="18"
-            marginBottom="15"
-            focusable="true"/>
-
-        <!-- Username -->
-        <brls:Label
-            id="login/username_label"
-            text="Username: Not set"
-            fontSize="18"
-            marginBottom="15"
-            focusable="true"/>
-
-        <!-- Password -->
-        <brls:Label
-            id="login/password_label"
-            text="Password: Not set"
-            fontSize="18"
-            marginBottom="30"
-            focusable="true"/>
-
-    </brls:Box>
-
-    <!-- Buttons -->
+    <!-- Brand mark top-left ("Vita" white + "plex" teal). -->
     <brls:Box
         axis="row"
-        justifyContent="center"
-        marginBottom="30">
-
-        <brls:Button
-            id="login/login_button"
-            text="Login"
-            width="180"
-            marginRight="20"/>
-
-        <brls:Button
-            id="login/pin_button"
-            text="Use PIN"
-            width="180"/>
-
+        paddingLeft="40"
+        paddingTop="30"
+        paddingBottom="10"
+        alignItems="center">
+        <brls:Label text="Vita" fontSize="22" textColor="#FFFFFF"/>
+        <brls:Label text="plex" fontSize="22" textColor="#00FFCC"/>
     </brls:Box>
 
-    <!-- Offline mode button -->
-    <brls:Button
-        id="login/offline_button"
-        text="Offline Mode"
-        width="200"
-        marginBottom="20"/>
+    <!-- Centered card region. -->
+    <brls:Box
+        grow="1.0"
+        axis="column"
+        justifyContent="center"
+        alignItems="center"
+        paddingLeft="32"
+        paddingRight="32">
 
-    <!-- PIN Code display -->
-    <brls:Label
-        id="login/pin_code"
-        text=""
-        fontSize="48"
-        marginBottom="20"/>
+        <brls:Box
+            id="login/card"
+            width="680"
+            maxWidth="100%"
+            axis="column"
+            alignItems="stretch"
+            backgroundColor="#34343e"
+            cornerRadius="22"
+            borderColor="#43434a"
+            borderThickness="1"
+            paddingLeft="36"
+            paddingRight="36"
+            paddingTop="30"
+            paddingBottom="30">
 
-    <!-- Status message -->
-    <brls:Label
-        id="login/status"
-        text=""
-        fontSize="16"/>
+            <!-- ============================================================
+                 PIN view — the default / hero.
+                 ============================================================ -->
+            <brls:Box
+                id="login/pin_view"
+                axis="column"
+                alignItems="center">
+
+                <!-- "Quick connect" pill (teal text; bg colour applied
+                     in cpp because brls XML doesn't take alpha colours). -->
+                <brls:Box
+                    id="login/quick_pill"
+                    axis="row"
+                    cornerRadius="12"
+                    paddingLeft="12"
+                    paddingRight="12"
+                    paddingTop="4"
+                    paddingBottom="4"
+                    marginBottom="14">
+                    <brls:Label
+                        text="Quick connect"
+                        fontSize="12"
+                        textColor="#00FFCC"/>
+                </brls:Box>
+
+                <!-- Heading. -->
+                <brls:Label
+                    text="Link your device"
+                    fontSize="30"
+                    marginBottom="10"
+                    textColor="#FFFFFF"/>
+
+                <!-- Lead line — three labels in a row so plex.tv/link can
+                     be white/bold while the rest stays muted. -->
+                <brls:Box
+                    axis="row"
+                    justifyContent="center"
+                    marginBottom="22">
+                    <brls:Label
+                        text="On your phone or computer, visit "
+                        fontSize="15"
+                        textColor="#A3A3A3"/>
+                    <brls:Label
+                        text="plex.tv/link"
+                        fontSize="15"
+                        textColor="#FFFFFF"/>
+                    <brls:Label
+                        text=" and enter the code below."
+                        fontSize="15"
+                        textColor="#A3A3A3"/>
+                </brls:Box>
+
+                <!-- PIN digit tiles — built at runtime from
+                     m_pinAuth.code. Empty until onPinLoginPressed
+                     succeeds; renderPinTiles() populates. -->
+                <brls:Box
+                    id="login/pin_tiles"
+                    axis="row"
+                    justifyContent="center"
+                    marginBottom="22"/>
+
+                <!-- Status row: teal dot + status text + expiry countdown. -->
+                <brls:Box
+                    axis="row"
+                    alignItems="center"
+                    justifyContent="center"
+                    marginBottom="18">
+                    <brls:Box
+                        id="login/status_dot"
+                        width="8"
+                        height="8"
+                        cornerRadius="4"
+                        backgroundColor="#00FFCC"
+                        marginRight="10"/>
+                    <brls:Label
+                        id="login/status"
+                        text=""
+                        fontSize="14"
+                        textColor="#FFFFFF"
+                        marginRight="18"/>
+                    <brls:Label
+                        id="login/expiry"
+                        text=""
+                        fontSize="14"
+                        textColor="#A3A3A3"/>
+                </brls:Box>
+
+                <!-- "Get a new code" — repurposed pin_button; hidden
+                     until checkPinStatus() flags expiry. -->
+                <brls:Box
+                    id="login/get_new_code_row"
+                    axis="row"
+                    justifyContent="center"
+                    marginBottom="18"
+                    visibility="gone">
+                    <brls:Button
+                        id="login/pin_button"
+                        text="Get a new code"
+                        width="220"/>
+                </brls:Box>
+
+                <!-- OR divider — hairlines on either side, label in middle. -->
+                <brls:Box
+                    axis="row"
+                    alignItems="center"
+                    justifyContent="center"
+                    width="380"
+                    marginBottom="18">
+                    <brls:Box grow="1.0" height="1" backgroundColor="#43434a"/>
+                    <brls:Label
+                        text="OR"
+                        fontSize="13"
+                        textColor="#7C7C84"
+                        marginLeft="12"
+                        marginRight="12"/>
+                    <brls:Box grow="1.0" height="1" backgroundColor="#43434a"/>
+                </brls:Box>
+
+                <!-- Secondary action row. cpp will stack vertically on
+                     narrow viewports (axis switch in onContentAvailable). -->
+                <brls:Box
+                    id="login/secondary_row"
+                    axis="row"
+                    justifyContent="center">
+                    <brls:Button
+                        id="login/use_credentials"
+                        text="Use credentials"
+                        width="210"
+                        marginRight="12"/>
+                    <brls:Button
+                        id="login/offline_button"
+                        text="Offline"
+                        width="160"/>
+                </brls:Box>
+
+                <!-- Vestigial label that the hpp still BRLS_BINDs. The
+                     real PIN digits live in login/pin_tiles. -->
+                <brls:Label
+                    id="login/pin_code"
+                    text=""
+                    visibility="gone"/>
+
+            </brls:Box>
+
+            <!-- ============================================================
+                 Credentials sub-view — shown when "Use credentials" is
+                 clicked; B / "Back to PIN" returns to the PIN view.
+                 ============================================================ -->
+            <brls:Box
+                id="login/cred_view"
+                axis="column"
+                alignItems="stretch"
+                visibility="gone">
+
+                <brls:Label
+                    text="Sign in with credentials"
+                    fontSize="26"
+                    textColor="#FFFFFF"
+                    marginBottom="6"/>
+                <brls:Label
+                    text="Tap a field to type via the on-screen keyboard."
+                    fontSize="13"
+                    textColor="#A3A3A3"
+                    marginBottom="20"/>
+
+                <!-- Server field. -->
+                <brls:Box axis="column" marginBottom="14">
+                    <brls:Label
+                        text="SERVER URL"
+                        fontSize="11"
+                        textColor="#7C7C84"
+                        marginBottom="6"/>
+                    <brls:Box
+                        axis="row"
+                        alignItems="center"
+                        backgroundColor="#34343e"
+                        borderColor="#43434a"
+                        borderThickness="1"
+                        cornerRadius="12"
+                        paddingLeft="14"
+                        paddingRight="14"
+                        paddingTop="10"
+                        paddingBottom="10">
+                        <brls:Label
+                            id="login/server_label"
+                            text="Not set"
+                            fontSize="15"
+                            textColor="#A3A3A3"
+                            focusable="true"
+                            grow="1.0"/>
+                    </brls:Box>
+                </brls:Box>
+
+                <!-- Username field. -->
+                <brls:Box axis="column" marginBottom="14">
+                    <brls:Label
+                        text="USERNAME"
+                        fontSize="11"
+                        textColor="#7C7C84"
+                        marginBottom="6"/>
+                    <brls:Box
+                        axis="row"
+                        alignItems="center"
+                        backgroundColor="#34343e"
+                        borderColor="#43434a"
+                        borderThickness="1"
+                        cornerRadius="12"
+                        paddingLeft="14"
+                        paddingRight="14"
+                        paddingTop="10"
+                        paddingBottom="10">
+                        <brls:Label
+                            id="login/username_label"
+                            text="Not set"
+                            fontSize="15"
+                            textColor="#A3A3A3"
+                            focusable="true"
+                            grow="1.0"/>
+                    </brls:Box>
+                </brls:Box>
+
+                <!-- Password field — text shows bullets, click opens
+                     the password IME (existing handler). -->
+                <brls:Box axis="column" marginBottom="22">
+                    <brls:Label
+                        text="PASSWORD"
+                        fontSize="11"
+                        textColor="#7C7C84"
+                        marginBottom="6"/>
+                    <brls:Box
+                        axis="row"
+                        alignItems="center"
+                        backgroundColor="#34343e"
+                        borderColor="#43434a"
+                        borderThickness="1"
+                        cornerRadius="12"
+                        paddingLeft="14"
+                        paddingRight="14"
+                        paddingTop="10"
+                        paddingBottom="10">
+                        <brls:Label
+                            id="login/password_label"
+                            text="Not set"
+                            fontSize="15"
+                            textColor="#A3A3A3"
+                            focusable="true"
+                            grow="1.0"/>
+                    </brls:Box>
+                </brls:Box>
+
+                <!-- Action row — Back returns to PIN view, Sign in
+                     fires onLoginPressed() unchanged. -->
+                <brls:Box
+                    axis="row"
+                    justifyContent="center">
+                    <brls:Button
+                        id="login/back_to_pin"
+                        text="Back to PIN"
+                        width="180"
+                        marginRight="12"/>
+                    <brls:Button
+                        id="login/login_button"
+                        text="Sign in"
+                        width="180"/>
+                </brls:Box>
+
+            </brls:Box>
+
+        </brls:Box>
+
+    </brls:Box>
 
 </brls:Box>
