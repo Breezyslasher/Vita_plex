@@ -17,6 +17,7 @@
 #include "activity/player_activity.hpp"
 #include "utils/http_client.hpp"
 #include "platform/platform.hpp"
+#include "platform/paths.hpp"
 #include <set>
 #include <chrono>
 #include <fstream>
@@ -879,7 +880,14 @@ brls::Box* SettingsTab::createPlaybackSection() {
     // (now-removed) Debug section.
     auto* testLocalCell = new brls::DetailCell();
     testLocalCell->setText("Test Local Playback");
-    testLocalCell->setDetailText("ux0:data/VitaPlex/test.mp4 or test.mp3");
+    // Show the platform's actual data dir so the user knows where to
+    // drop the test file. platformPath("") yields "<root>/" — strip
+    // the trailing slash for a clean display string.
+    {
+        std::string dataDir = platformPath("");
+        if (!dataDir.empty() && dataDir.back() == '/') dataDir.pop_back();
+        testLocalCell->setDetailText("Place test.mp4 or test.mp3 in " + dataDir);
+    }
     testLocalCell->registerClickAction([this](brls::View*) {
         onTestLocalPlayback();
         return true;
@@ -1942,16 +1950,16 @@ void SettingsTab::onNetworkTest() {
 void SettingsTab::onTestLocalPlayback() {
     brls::Logger::info("SettingsTab: Testing local playback...");
 
-    // Check for test files
-    const std::string basePath = "ux0:data/VitaPlex/";
+    // Look for the first existing test file under the platform's data
+    // directory (ux0:data/VitaPlex/ on Vita, sdmc:/VitaPlex/ on Switch,
+    // ~/.local/share/VitaPlex/ on desktop Linux, the SDL internal
+    // storage path on Android, etc.) — platformPath() resolves it.
     std::string testFile;
-
-    // Try mp4 first (to test video), then audio files
-    std::vector<std::string> testFiles = {
-        basePath + "test.mp4",
-        basePath + "test.mp3",
-        basePath + "test.ogg",
-        basePath + "test.wav"
+    const std::vector<std::string> testFiles = {
+        platformPath("test.mp4"),
+        platformPath("test.mp3"),
+        platformPath("test.ogg"),
+        platformPath("test.wav"),
     };
 
     for (const auto& file : testFiles) {
@@ -1965,8 +1973,10 @@ void SettingsTab::onTestLocalPlayback() {
     }
 
     if (testFile.empty()) {
-        brls::Application::notify("No test file found in ux0:data/VitaPlex/");
-        brls::Logger::error("SettingsTab: No test file found");
+        std::string dataDir = platformPath("");
+        if (!dataDir.empty() && dataDir.back() == '/') dataDir.pop_back();
+        brls::Application::notify("No test file found in " + dataDir);
+        brls::Logger::error("SettingsTab: No test file found under {}", dataDir);
         return;
     }
 
