@@ -33,12 +33,16 @@
 #include <iphlpapi.h>
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "ws2_32.lib")
+#elif defined(__SWITCH__)
+// libnx exposes the in-system network manager (nifm) for IP/profile
+// queries. ifaddrs/resolv.conf don't exist on the Switch toolchain,
+// so it gets its own branch.
+#include <switch.h>
 #else
-// POSIX path (Linux / macOS / Android / iOS / tvOS / Switch via libnx /
-// PS4). getifaddrs gives us per-interface IPv4; /etc/resolv.conf gives
-// the active resolvers. SSID/signal stay blank because there's no
-// portable way to read them without nl80211 / CoreWLAN / NetworkManager
-// bindings.
+// POSIX path (Linux / macOS / Android / iOS / tvOS / PS4). getifaddrs
+// gives us per-interface IPv4; /etc/resolv.conf gives the active
+// resolvers. SSID/signal stay blank because there's no portable way
+// to read them without nl80211 / CoreWLAN / NetworkManager bindings.
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
@@ -1777,6 +1781,34 @@ void SettingsTab::onNetworkTest() {
         }
         // No portable wireless RSSI without WlanGetNetworkBssList; leave
         // signal blank so the dialog renders it as "-" rather than lying.
+#elif defined(__SWITCH__)
+        // libnx nifm. nifmInitialize must succeed before any of the
+        // accessor calls; tear it down with nifmExit when done so we
+        // don't keep the system service handle open for the rest of
+        // the session.
+        if (R_SUCCEEDED(nifmInitialize(NifmServiceType_User))) {
+            u32 ipAddrBE = 0;
+            if (R_SUCCEEDED(nifmGetCurrentIpAddress(&ipAddrBE)) && ipAddrBE != 0) {
+                // IP comes back in network (big-endian) byte order. Format
+                // by hand instead of dragging in inet_ntop, which on libnx
+                // would require setting up the bsd: service first.
+                char buf[16];
+                snprintf(buf, sizeof(buf), "%u.%u.%u.%u",
+                         (unsigned)((ipAddrBE >>  0) & 0xff),
+                         (unsigned)((ipAddrBE >>  8) & 0xff),
+                         (unsigned)((ipAddrBE >> 16) & 0xff),
+                         (unsigned)((ipAddrBE >> 24) & 0xff));
+                ipAddress = buf;
+                wifiConnected = true;
+            }
+            bool wireless = false;
+            if (R_SUCCEEDED(nifmIsWirelessCommunicationEnabled(&wireless))) {
+                ssid = wireless ? "Wireless" : "Wired";
+            }
+            nifmExit();
+        }
+        // DNS isn't queryable through the basic nifm API without the
+        // full network-profile struct; leave it as "-" rather than lie.
 #else
         // POSIX path. Walk the interface list and grab the first up,
         // non-loopback IPv4 address. ssid is repurposed as the
