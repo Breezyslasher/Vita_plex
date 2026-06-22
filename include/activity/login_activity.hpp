@@ -14,6 +14,7 @@
 
 #include <borealis.hpp>
 #include <borealis/core/timer.hpp>
+#include <functional>
 #include "app/plex_client.hpp"
 
 namespace vitaplex {
@@ -34,12 +35,13 @@ private:
     void showServerSelectionDialog(const std::vector<PlexServer>& servers);
     void connectToSelectedServer(const PlexServer& server);
 
-    // Build one focusable server card row for showServerSelectionDialog.
-    // Sub-line carries the URI, version, and the Local/Remote/Relay
-    // badges derived from server.connections — the same list the
-    // parallel probe in connectToSelectedServer will hit.
+    // Build one focusable server card for showServerSelectionDialog.
+    // Sub-line carries the host + the Local/Remote/Relay badges derived
+    // from server.connections — the same list the parallel probe in
+    // connectToSelectedServer will hit. onActivate runs on A / tap
+    // (dismiss the modal + connect).
     brls::Box* buildServerCard(const PlexServer& server,
-                               brls::Dialog* dialog);
+                               std::function<void()> onActivate);
 
     // Build a row of digit tiles inside login/pin_tiles from
     // m_pinAuth.code (one tile per character). Called on each

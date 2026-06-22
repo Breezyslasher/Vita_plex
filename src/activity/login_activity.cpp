@@ -263,82 +263,146 @@ void LoginActivity::updateExpiryCountdown() {
 
 namespace {
 
-// Gold "eyebrow" row at the top of the dialog — small glyph + caps
-// label in the brand colour.
+// ── colour tokens (from the spec) ────────────────────────────────────
+inline NVGcolor cDialog()   { return nvgRGB(44, 44, 52); }   // #2c2c34
+inline NVGcolor cCard()     { return nvgRGB(52, 52, 62); }   // #34343e
+inline NVGcolor cCard3()    { return nvgRGB(67, 67, 79); }   // #43434f
+inline NVGcolor cLine()     { return nvgRGB(67, 67, 74); }   // #43434a
+inline NVGcolor cText()     { return nvgRGB(255, 255, 255); }
+inline NVGcolor cMuted()    { return nvgRGB(163, 163, 163); }
+inline NVGcolor cDim()      { return nvgRGB(124, 124, 132); }
+inline NVGcolor cGold()     { return nvgRGB(229, 160, 13); }
+inline NVGcolor cGoldInk()  { return nvgRGB(36, 28, 8); }
+
+// Server "rack" glyph — two stacked outlined rounded bars, recreated
+// from the spec's 24x24 path (rect 3,4,18,7 r2 + rect 3,13,18,7 r2).
+// Drawn as borealis Boxes so no PNG asset is needed; `stroke` is the
+// bar outline colour.
+brls::Box* makeServerGlyph(float box, NVGcolor stroke, float strokeW) {
+    auto* g = new brls::Box();
+    g->setWidth(box);
+    g->setHeight(box);
+    g->setAxis(brls::Axis::COLUMN);
+    g->setJustifyContent(brls::JustifyContent::CENTER);
+    g->setAlignItems(brls::AlignItems::CENTER);
+    const float s = box / 24.0f;
+    for (int i = 0; i < 2; i++) {
+        auto* bar = new brls::Box();
+        bar->setWidth(18.0f * s);
+        bar->setHeight(7.0f * s);
+        bar->setCornerRadius(2.0f * s);
+        bar->setBorderColor(stroke);
+        bar->setBorderThickness(std::max(1.0f, strokeW * s));
+        if (i == 0) bar->setMarginBottom(2.0f * s);
+        g->addView(bar);
+    }
+    return g;
+}
+
+// Gold eyebrow row: server glyph + "CHOOSE A SERVER".
 brls::Box* makeServerEyebrow() {
     auto* row = new brls::Box();
     row->setAxis(brls::Axis::ROW);
     row->setAlignItems(brls::AlignItems::CENTER);
-    row->setMarginBottom(8);
-    auto* dot = new brls::Box();
-    dot->setWidth(8);
-    dot->setHeight(8);
-    dot->setCornerRadius(4);
-    dot->setBackgroundColor(nvgRGB(229, 160, 13));
-    dot->setMarginRight(8);
-    row->addView(dot);
+    row->setMarginBottom(9);
+    auto* glyph = makeServerGlyph(15, cGold(), 2.0f);
+    glyph->setMarginRight(8);
+    row->addView(glyph);
     auto* lbl = new brls::Label();
     lbl->setText("CHOOSE A SERVER");
-    lbl->setFontSize(11);
-    lbl->setTextColor(nvgRGB(229, 160, 13));
+    lbl->setFontSize(12);
+    lbl->setTextColor(cGold());
     row->addView(lbl);
     return row;
 }
 
-// Connection-type chip — small rounded badge with caps label.
-brls::Box* makeConnBadge(const std::string& text, NVGcolor color) {
+// Connection-type badge: rounded pill with a coloured dot + label.
+// bg / dot / label colours come straight from the spec per type.
+brls::Box* makeConnBadge(const std::string& text, NVGcolor bg,
+                         NVGcolor dot, NVGcolor label) {
     auto* chip = new brls::Box();
     chip->setAxis(brls::Axis::ROW);
     chip->setAlignItems(brls::AlignItems::CENTER);
+    chip->setHeight(21);
     chip->setCornerRadius(6);
-    chip->setBackgroundColor(nvgRGBA(color.r * 255, color.g * 255, color.b * 255, 50));
-    chip->setBorderColor(color);
-    chip->setBorderThickness(1);
-    chip->setPaddingLeft(7);
-    chip->setPaddingRight(7);
-    chip->setPaddingTop(2);
-    chip->setPaddingBottom(2);
-    chip->setMarginRight(6);
+    chip->setBackgroundColor(bg);
+    chip->setPaddingLeft(8);
+    chip->setPaddingRight(8);
+    chip->setMarginRight(7);
+    auto* d = new brls::Box();
+    d->setWidth(6);
+    d->setHeight(6);
+    d->setCornerRadius(3);
+    d->setBackgroundColor(dot);
+    d->setMarginRight(5);
+    chip->addView(d);
     auto* lbl = new brls::Label();
     lbl->setText(text);
     lbl->setFontSize(10);
-    lbl->setTextColor(color);
+    lbl->setTextColor(label);
     chip->addView(lbl);
     return chip;
+}
+
+// Footer button hint: filled circle with a letter + a muted label.
+brls::Box* makeButtonHint(const std::string& letter, NVGcolor circleBg,
+                          const std::string& label) {
+    auto* row = new brls::Box();
+    row->setAxis(brls::Axis::ROW);
+    row->setAlignItems(brls::AlignItems::CENTER);
+    row->setMarginRight(16);
+    auto* circle = new brls::Box();
+    circle->setWidth(21);
+    circle->setHeight(21);
+    circle->setCornerRadius(10.5f);
+    circle->setBackgroundColor(circleBg);
+    circle->setJustifyContent(brls::JustifyContent::CENTER);
+    circle->setAlignItems(brls::AlignItems::CENTER);
+    circle->setMarginRight(8);
+    auto* l = new brls::Label();
+    l->setText(letter);
+    l->setFontSize(11);
+    l->setTextColor(nvgRGB(16, 18, 22));
+    circle->addView(l);
+    row->addView(circle);
+    auto* lbl = new brls::Label();
+    lbl->setText(label);
+    lbl->setFontSize(12);
+    lbl->setTextColor(cMuted());
+    row->addView(lbl);
+    return row;
 }
 
 } // namespace
 
 brls::Box* LoginActivity::buildServerCard(const PlexServer& server,
-                                         brls::Dialog* dialog) {
+                                         std::function<void()> onActivate) {
     auto* card = new brls::Box();
     card->setAxis(brls::Axis::ROW);
     card->setAlignItems(brls::AlignItems::CENTER);
-    card->setBackgroundColor(nvgRGB(52, 52, 62));
-    card->setBorderColor(nvgRGB(67, 67, 74));
+    card->setBackgroundColor(cCard());
+    card->setBorderColor(cLine());
     card->setBorderThickness(1);
     card->setCornerRadius(13);
-    card->setPaddingLeft(14);
-    card->setPaddingRight(14);
-    card->setPaddingTop(12);
-    card->setPaddingBottom(12);
-    card->setMarginBottom(10);
+    card->setPaddingLeft(15);
+    card->setPaddingRight(15);
+    card->setPaddingTop(14);
+    card->setPaddingBottom(14);
+    card->setMarginBottom(9);
     card->setFocusable(true);
 
-    // Left icon tile.
+    // Left icon tile (44×44) with the server glyph. PlexServer at this
+    // commit carries no "owned" flag, so every tile uses the neutral
+    // style; the owned-gold variant is wired but currently unused.
     auto* tile = new brls::Box();
-    tile->setWidth(40);
-    tile->setHeight(40);
+    tile->setWidth(44);
+    tile->setHeight(44);
     tile->setCornerRadius(11);
-    tile->setBackgroundColor(nvgRGB(67, 67, 79));
+    tile->setBackgroundColor(cCard3());
     tile->setJustifyContent(brls::JustifyContent::CENTER);
     tile->setAlignItems(brls::AlignItems::CENTER);
-    tile->setMarginRight(12);
-    auto* tileGlyph = new brls::Label();
-    tileGlyph->setText("●");
-    tileGlyph->setFontSize(14);
-    tileGlyph->setTextColor(nvgRGB(163, 163, 163));
-    tile->addView(tileGlyph);
+    tile->setMarginRight(14);
+    tile->addView(makeServerGlyph(22, cMuted(), 1.7f));
     card->addView(tile);
 
     // Name + sub-line column.
@@ -347,17 +411,14 @@ brls::Box* LoginActivity::buildServerCard(const PlexServer& server,
     col->setAlignItems(brls::AlignItems::FLEX_START);
     col->setGrow(1.0f);
 
-    auto* nameRow = new brls::Box();
-    nameRow->setAxis(brls::Axis::ROW);
-    nameRow->setAlignItems(brls::AlignItems::CENTER);
     auto* name = new brls::Label();
     name->setText(server.name.empty() ? std::string("(unnamed server)") : server.name);
     name->setFontSize(16);
-    name->setTextColor(nvgRGB(255, 255, 255));
-    nameRow->addView(name);
-    col->addView(nameRow);
+    name->setTextColor(cText());
+    col->addView(name);
 
-    // Sub-line: address (port) — dim, mono-ish read.
+    // Sub-line: host (+ port when non-default). Version / owner are
+    // omitted because PlexServer doesn't carry them at this commit.
     auto* sub = new brls::Label();
     {
         std::string s = server.address;
@@ -368,11 +429,11 @@ brls::Box* LoginActivity::buildServerCard(const PlexServer& server,
         sub->setText(s);
     }
     sub->setFontSize(12);
-    sub->setTextColor(nvgRGB(163, 163, 163));
-    sub->setMarginTop(2);
+    sub->setTextColor(cDim());
+    sub->setMarginTop(3);
     col->addView(sub);
 
-    // Connection-type badges from the actual server.connections list.
+    // Connection-type badges — one per type the server actually exposes.
     int nLocal = 0, nRelay = 0, nRemote = 0;
     for (const auto& c : server.connections) {
         if (c.local)      nLocal++;
@@ -382,36 +443,52 @@ brls::Box* LoginActivity::buildServerCard(const PlexServer& server,
     if (nLocal + nRelay + nRemote > 0) {
         auto* badges = new brls::Box();
         badges->setAxis(brls::Axis::ROW);
-        badges->setMarginTop(6);
-        if (nLocal > 0)  badges->addView(makeConnBadge("LOCAL",  nvgRGB(62, 207, 142)));
-        if (nRemote > 0) badges->addView(makeConnBadge("REMOTE", nvgRGB(137, 241, 242)));
-        if (nRelay > 0)  badges->addView(makeConnBadge("RELAY",  nvgRGB(163, 163, 163)));
+        badges->setMarginTop(8);
+        if (nLocal > 0)
+            badges->addView(makeConnBadge("LOCAL",
+                nvgRGBA(62, 207, 142, 38), nvgRGB(62, 207, 142), nvgRGB(95, 224, 166)));
+        if (nRemote > 0)
+            badges->addView(makeConnBadge("REMOTE",
+                nvgRGBA(137, 241, 242, 33), nvgRGB(137, 241, 242), nvgRGB(158, 240, 241)));
+        if (nRelay > 0)
+            badges->addView(makeConnBadge("RELAY",
+                nvgRGBA(163, 163, 163, 36), nvgRGB(124, 124, 132), nvgRGB(188, 188, 196)));
         col->addView(badges);
     }
 
     card->addView(col);
 
-    // Right chevron chip — neutral fill, focus glow lit by borealis.
+    // Right chevron chip (30×30). Neutral until focused; on focus it
+    // fills gold with a gold-ink glyph — the single gold cue, while the
+    // focus ring itself stays borealis-native cyan.
     auto* chev = new brls::Box();
     chev->setWidth(30);
     chev->setHeight(30);
     chev->setCornerRadius(15);
-    chev->setBackgroundColor(nvgRGB(67, 67, 79));
+    chev->setBackgroundColor(cCard3());
     chev->setJustifyContent(brls::JustifyContent::CENTER);
     chev->setAlignItems(brls::AlignItems::CENTER);
-    chev->setMarginLeft(10);
+    chev->setMarginLeft(12);
     auto* chevLbl = new brls::Label();
     chevLbl->setText(">");
-    chevLbl->setFontSize(14);
-    chevLbl->setTextColor(nvgRGB(255, 255, 255));
+    chevLbl->setFontSize(15);
+    chevLbl->setTextColor(cMuted());
     chev->addView(chevLbl);
     card->addView(chev);
 
-    // A button = connect; reuse the existing parallel-probe path.
-    PlexServer s = server;
-    card->registerClickAction([this, s, dialog](brls::View*) {
-        dialog->dismiss();
-        connectToSelectedServer(s);
+    card->getFocusEvent()->subscribe([chev, chevLbl](brls::View*) {
+        chev->setBackgroundColor(cGold());
+        chevLbl->setTextColor(cGoldInk());
+    });
+    card->getFocusLostEvent()->subscribe([chev, chevLbl](brls::View*) {
+        chev->setBackgroundColor(cCard3());
+        chevLbl->setTextColor(cMuted());
+    });
+
+    // A / tap = pick this server. onActivate dismisses the modal and
+    // hands off to the unchanged parallel-probe connect.
+    card->registerClickAction([onActivate](brls::View*) {
+        if (onActivate) onActivate();
         return true;
     });
     card->addGestureRecognizer(new brls::TapGestureRecognizer(card));
@@ -419,78 +496,133 @@ brls::Box* LoginActivity::buildServerCard(const PlexServer& server,
 }
 
 void LoginActivity::showServerSelectionDialog(const std::vector<PlexServer>& servers) {
-    auto* content = new brls::Box();
-    content->setAxis(brls::Axis::COLUMN);
-    content->setAlignItems(brls::AlignItems::STRETCH);
-    // Card dialog ~560px wide — borealis Dialog wraps this with a
-    // translucent backdrop and the native shadow.
-    int cardW = 560;
-    if (brls::Application::contentWidth < 640) {
-        cardW = static_cast<int>(brls::Application::contentWidth) - 40;
-    }
-    content->setWidth(cardW);
-    content->setPaddingLeft(28);
-    content->setPaddingRight(28);
-    content->setPaddingTop(24);
-    content->setPaddingBottom(20);
-    content->setBackgroundColor(nvgRGB(44, 44, 52));
-    content->setCornerRadius(20);
+    // Self-contained modal: a full-viewport scrim Box centering the
+    // 560-px dialog shell, pushed as its own Activity. brls::Dialog
+    // can't render a custom 560 shell cleanly (its fixed 720 AppletFrame
+    // shows behind), and only seeds default focus when it has buttons,
+    // so we own the backdrop + focus here instead.
+    auto* root = new brls::Box();
+    root->setWidth(brls::Application::contentWidth);
+    root->setHeight(brls::Application::contentHeight);
+    root->setAxis(brls::Axis::COLUMN);
+    root->setJustifyContent(brls::JustifyContent::CENTER);
+    root->setAlignItems(brls::AlignItems::CENTER);
+    root->setBackgroundColor(nvgRGBA(10, 11, 14, 158));  // scrim ~62%
 
-    content->addView(makeServerEyebrow());
+    int cardW = 560;
+    if (brls::Application::contentWidth < 620) {
+        cardW = std::max(360, static_cast<int>(brls::Application::contentWidth) - 40);
+    }
+
+    auto* shell = new brls::Box();
+    shell->setAxis(brls::Axis::COLUMN);
+    shell->setAlignItems(brls::AlignItems::STRETCH);
+    shell->setWidth(cardW);
+    shell->setBackgroundColor(cDialog());
+    shell->setBorderColor(cLine());
+    shell->setBorderThickness(1);
+    shell->setCornerRadius(20);
+    shell->setShadowType(brls::ShadowType::GENERIC);
+    shell->setShadowVisibility(true);
+
+    // ── Header ──────────────────────────────────────────────────────
+    auto* header = new brls::Box();
+    header->setAxis(brls::Axis::COLUMN);
+    header->setAlignItems(brls::AlignItems::STRETCH);
+    header->setPaddingTop(24);
+    header->setPaddingLeft(26);
+    header->setPaddingRight(26);
+    header->setPaddingBottom(18);
+
+    header->addView(makeServerEyebrow());
 
     auto* title = new brls::Label();
-    {
-        std::string s = "We found " + std::to_string(servers.size()) +
-                        (servers.size() == 1 ? " server" : " servers");
-        title->setText(s);
-    }
-    title->setFontSize(22);
-    title->setTextColor(nvgRGB(255, 255, 255));
-    title->setMarginBottom(4);
-    content->addView(title);
+    title->setText("We found " + std::to_string(servers.size()) +
+                   (servers.size() == 1 ? " server" : " servers"));
+    title->setFontSize(23);
+    title->setTextColor(cText());
+    header->addView(title);
 
     auto* subtitle = new brls::Label();
     subtitle->setText("Pick one to connect — we'll test every address and use the fastest.");
     subtitle->setFontSize(13);
-    subtitle->setTextColor(nvgRGB(163, 163, 163));
-    subtitle->setMarginBottom(16);
-    content->addView(subtitle);
+    subtitle->setTextColor(cMuted());
+    subtitle->setMarginTop(4);
+    header->addView(subtitle);
 
-    // Cards in a scroll frame so a large server list still fits.
+    shell->addView(header);
+
+    auto* headerLine = new brls::Box();
+    headerLine->setHeight(1);
+    headerLine->setBackgroundColor(cLine());
+    shell->addView(headerLine);
+
+    // ── Body (scrolling card list) ──────────────────────────────────
+    auto* body = new brls::Box();
+    body->setAxis(brls::Axis::COLUMN);
+    body->setAlignItems(brls::AlignItems::STRETCH);
+    body->setPadding(16);
+
     auto* scroll = new brls::ScrollingFrame();
-    scroll->setHeight(std::min(360, (int)servers.size() * 86 + 4));
+    scroll->setHeight(std::min(392, (int)servers.size() * 96 + 4));
     scroll->setFocusable(false);
     auto* cardCol = new brls::Box();
     cardCol->setAxis(brls::Axis::COLUMN);
     cardCol->setAlignItems(brls::AlignItems::STRETCH);
 
-    brls::Dialog* dialog = new brls::Dialog(content);
+    auto dismiss = []() { brls::Application::popActivity(); };
 
+    brls::Box* firstCard = nullptr;
     for (const auto& server : servers) {
-        cardCol->addView(buildServerCard(server, dialog));
+        PlexServer s = server;
+        brls::Box* cardView = buildServerCard(server, [this, s, dismiss]() {
+            dismiss();
+            connectToSelectedServer(s);
+        });
+        if (!firstCard) firstCard = cardView;
+        cardCol->addView(cardView);
     }
     scroll->setContentView(cardCol);
-    content->addView(scroll);
+    body->addView(scroll);
+    shell->addView(body);
 
-    // Footer hint row — "A Connect · B Back".
+    // ── Footer (A Connect · B Back) ─────────────────────────────────
+    auto* footerLine = new brls::Box();
+    footerLine->setHeight(1);
+    footerLine->setBackgroundColor(cLine());
+    shell->addView(footerLine);
+
     auto* footer = new brls::Box();
     footer->setAxis(brls::Axis::ROW);
     footer->setAlignItems(brls::AlignItems::CENTER);
-    footer->setJustifyContent(brls::JustifyContent::FLEX_END);
-    footer->setMarginTop(14);
-    auto* hint = new brls::Label();
-    hint->setText("A  Connect    B  Back");
-    hint->setFontSize(12);
-    hint->setTextColor(nvgRGB(124, 124, 132));
-    footer->addView(hint);
-    content->addView(footer);
+    footer->setPaddingTop(14);
+    footer->setPaddingBottom(14);
+    footer->setPaddingLeft(20);
+    footer->setPaddingRight(20);
+    footer->addView(makeButtonHint("A", nvgRGB(159, 231, 182), "Connect"));
+    footer->addView(makeButtonHint("B", nvgRGB(240, 160, 160), "Back"));
+    shell->addView(footer);
 
-    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B,
-        [dialog](brls::View*) {
-            dialog->dismiss();
+    root->addView(shell);
+
+    // B = back: pop the modal, leave the login as it was.
+    root->registerAction("Back", brls::ControllerButton::BUTTON_B,
+        [](brls::View*) {
+            brls::Application::popActivity();
             return true;
         });
-    dialog->open();
+
+    // Seed default focus down the parent chain so pushActivity's
+    // getDefaultFocus walk lands on the first card.
+    if (firstCard) {
+        cardCol->setLastFocusedView(firstCard);
+        scroll->setLastFocusedView(cardCol);
+        body->setLastFocusedView(scroll);
+        shell->setLastFocusedView(body);
+        root->setLastFocusedView(shell);
+    }
+
+    brls::Application::pushActivity(new brls::Activity(root));
 }
 
 // ─── Connecting state ────────────────────────────────────────────────
@@ -965,7 +1097,7 @@ void LoginActivity::onLoginPressed() {
                     connectToSelectedServer(servers[0]);
                 } else {
                     // Multiple servers, show selection dialog
-                    if (statusLabel) statusLabel->setText("Select a server:");
+                    if (statusLabel) statusLabel->setText("");  // cleared — the modal owns this step
                     showServerSelectionDialog(servers);
                 }
             } else {
@@ -1055,7 +1187,7 @@ void LoginActivity::checkPinStatus() {
                     connectToSelectedServer(servers[0]);
                 } else {
                     // Multiple servers, show selection dialog
-                    if (statusLabel) statusLabel->setText("Select a server:");
+                    if (statusLabel) statusLabel->setText("");  // cleared — the modal owns this step
                     showServerSelectionDialog(servers);
                 }
             } else {
