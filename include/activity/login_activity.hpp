@@ -34,6 +34,13 @@ private:
     void showServerSelectionDialog(const std::vector<PlexServer>& servers);
     void connectToSelectedServer(const PlexServer& server);
 
+    // Build one focusable server card row for showServerSelectionDialog.
+    // Sub-line carries the URI, version, and the Local/Remote/Relay
+    // badges derived from server.connections — the same list the
+    // parallel probe in connectToSelectedServer will hit.
+    brls::Box* buildServerCard(const PlexServer& server,
+                               brls::Dialog* dialog);
+
     // Build a row of digit tiles inside login/pin_tiles from
     // m_pinAuth.code (one tile per character). Called on each
     // successful onPinLoginPressed.

@@ -6,7 +6,6 @@
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
-#include "view/progress_dialog.hpp"
 #include "utils/async.hpp"
 #include "utils/http_client.hpp"
 #include "platform/platform.hpp"
@@ -255,80 +254,479 @@ void LoginActivity::updateExpiryCountdown() {
     expiryLabel->setText(buf);
 }
 
-void LoginActivity::showServerSelectionDialog(const std::vector<PlexServer>& servers) {
-    // Create dialog with server list
-    auto* dialog = new brls::Dialog("Select Server");
+// ─── Server selection ────────────────────────────────────────────────
+// Replaces the plain dropdown with a card dialog: gold eyebrow, "We
+// found N servers" headline, then a focusable card per server
+// carrying its address + version + connection-type badges (Local /
+// Remote / Relay) derived from PlexServer.connections — the same
+// list connectToSelectedServer probes in parallel below.
 
-    auto* list = new brls::Box();
-    list->setAxis(brls::Axis::COLUMN);
-    list->setPadding(20);
+namespace {
 
-    for (size_t i = 0; i < servers.size(); i++) {
-        auto* btn = new brls::Button();
-        btn->setText(servers[i].name);
-        btn->setMarginBottom(10);
+// Gold "eyebrow" row at the top of the dialog — gold MDI server
+// glyph + caps label in the brand colour. The icon is the bundled
+// resources/icons/server.png (rasterised from MDI /server with a gold
+// fill at build time).
+brls::Box* makeServerEyebrow() {
+    auto* row = new brls::Box();
+    row->setAxis(brls::Axis::ROW);
+    row->setAlignItems(brls::AlignItems::CENTER);
+    row->setMarginBottom(8);
 
-        // Capture server by value
-        PlexServer server = servers[i];
-        btn->registerClickAction([this, server, dialog](brls::View* view) {
-            dialog->dismiss();
-            connectToSelectedServer(server);
-            return true;
-        });
+    auto* icon = new brls::Image();
+    icon->setWidth(18);
+    icon->setHeight(18);
+    icon->setScalingType(brls::ImageScalingType::FIT);
+    icon->setImageFromRes("icons/server.png");
+    icon->setMarginRight(10);
+    row->addView(icon);
 
-        list->addView(btn);
+    auto* lbl = new brls::Label();
+    lbl->setText("CHOOSE A SERVER");
+    lbl->setFontSize(11);
+    lbl->setTextColor(nvgRGB(229, 160, 13));
+    row->addView(lbl);
+    return row;
+}
+
+// Connection-type chip — small rounded badge with caps label.
+brls::Box* makeConnBadge(const std::string& text, NVGcolor color) {
+    auto* chip = new brls::Box();
+    chip->setAxis(brls::Axis::ROW);
+    chip->setAlignItems(brls::AlignItems::CENTER);
+    chip->setCornerRadius(6);
+    chip->setBackgroundColor(nvgRGBA(color.r * 255, color.g * 255, color.b * 255, 50));
+    chip->setBorderColor(color);
+    chip->setBorderThickness(1);
+    chip->setPaddingLeft(7);
+    chip->setPaddingRight(7);
+    chip->setPaddingTop(2);
+    chip->setPaddingBottom(2);
+    chip->setMarginRight(6);
+    auto* lbl = new brls::Label();
+    lbl->setText(text);
+    lbl->setFontSize(10);
+    lbl->setTextColor(color);
+    chip->addView(lbl);
+    return chip;
+}
+
+} // namespace
+
+brls::Box* LoginActivity::buildServerCard(const PlexServer& server,
+                                         brls::Dialog* dialog) {
+    auto* card = new brls::Box();
+    card->setAxis(brls::Axis::ROW);
+    card->setAlignItems(brls::AlignItems::CENTER);
+    card->setBackgroundColor(nvgRGB(52, 52, 62));
+    card->setBorderColor(nvgRGB(67, 67, 74));
+    card->setBorderThickness(1);
+    card->setCornerRadius(13);
+    card->setPaddingLeft(14);
+    card->setPaddingRight(14);
+    card->setPaddingTop(12);
+    card->setPaddingBottom(12);
+    card->setMarginBottom(10);
+    card->setFocusable(true);
+
+    // Left icon tile — gold MDI server glyph on a gold-tinted square,
+    // matching the dialog eyebrow. resources/icons/server.png is the
+    // #E5A00D-filled raster.
+    auto* tile = new brls::Box();
+    tile->setWidth(44);
+    tile->setHeight(44);
+    tile->setCornerRadius(11);
+    tile->setBackgroundColor(nvgRGBA(229, 160, 13, 45));
+    tile->setBorderColor(nvgRGBA(229, 160, 13, 90));
+    tile->setBorderThickness(1);
+    tile->setJustifyContent(brls::JustifyContent::CENTER);
+    tile->setAlignItems(brls::AlignItems::CENTER);
+    tile->setMarginRight(12);
+    auto* tileGlyph = new brls::Image();
+    tileGlyph->setWidth(24);
+    tileGlyph->setHeight(24);
+    tileGlyph->setScalingType(brls::ImageScalingType::FIT);
+    tileGlyph->setImageFromRes("icons/server.png");
+    tile->addView(tileGlyph);
+    card->addView(tile);
+
+    // Name + sub-line column.
+    auto* col = new brls::Box();
+    col->setAxis(brls::Axis::COLUMN);
+    col->setAlignItems(brls::AlignItems::FLEX_START);
+    col->setGrow(1.0f);
+
+    auto* nameRow = new brls::Box();
+    nameRow->setAxis(brls::Axis::ROW);
+    nameRow->setAlignItems(brls::AlignItems::CENTER);
+    auto* name = new brls::Label();
+    name->setText(server.name.empty() ? std::string("(unnamed server)") : server.name);
+    name->setFontSize(16);
+    name->setTextColor(nvgRGB(255, 255, 255));
+    nameRow->addView(name);
+    col->addView(nameRow);
+
+    // Sub-line: address (port) · version — version is parsed by
+    // fetchServers from the resource JSON's productVersion field.
+    auto* sub = new brls::Label();
+    {
+        std::string s = server.address;
+        if (server.port > 0 && server.port != 32400) {
+            s += ":" + std::to_string(server.port);
+        }
+        if (s.empty() && !server.connections.empty()) s = server.connections.front().uri;
+        if (!server.version.empty()) s += "  ·  v" + server.version;
+        sub->setText(s);
+    }
+    sub->setFontSize(12);
+    sub->setTextColor(nvgRGB(163, 163, 163));
+    sub->setMarginTop(2);
+    col->addView(sub);
+
+    // Connection-type badges from the actual server.connections list.
+    int nLocal = 0, nRelay = 0, nRemote = 0;
+    for (const auto& c : server.connections) {
+        if (c.local)      nLocal++;
+        else if (c.relay) nRelay++;
+        else              nRemote++;
+    }
+    if (nLocal + nRelay + nRemote > 0) {
+        auto* badges = new brls::Box();
+        badges->setAxis(brls::Axis::ROW);
+        badges->setMarginTop(6);
+        if (nLocal > 0)  badges->addView(makeConnBadge("LOCAL",  nvgRGB(62, 207, 142)));
+        if (nRemote > 0) badges->addView(makeConnBadge("REMOTE", nvgRGB(137, 241, 242)));
+        if (nRelay > 0)  badges->addView(makeConnBadge("RELAY",  nvgRGB(163, 163, 163)));
+        col->addView(badges);
     }
 
-    dialog->addView(list);
-    dialog->addButton("Cancel", []() {});
+    card->addView(col);
 
-    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
+    // Right chevron chip — neutral fill, focus glow lit by borealis.
+    auto* chev = new brls::Box();
+    chev->setWidth(30);
+    chev->setHeight(30);
+    chev->setCornerRadius(15);
+    chev->setBackgroundColor(nvgRGB(67, 67, 79));
+    chev->setJustifyContent(brls::JustifyContent::CENTER);
+    chev->setAlignItems(brls::AlignItems::CENTER);
+    chev->setMarginLeft(10);
+    auto* chevLbl = new brls::Label();
+    chevLbl->setText(">");
+    chevLbl->setFontSize(14);
+    chevLbl->setTextColor(nvgRGB(255, 255, 255));
+    chev->addView(chevLbl);
+    card->addView(chev);
+
+    // A button = connect; reuse the existing parallel-probe path.
+    PlexServer s = server;
+    card->registerClickAction([this, s, dialog](brls::View*) {
         dialog->dismiss();
+        connectToSelectedServer(s);
         return true;
     });
-    brls::Application::pushActivity(new brls::Activity(dialog));
+    card->addGestureRecognizer(new brls::TapGestureRecognizer(card));
+    return card;
 }
+
+void LoginActivity::showServerSelectionDialog(const std::vector<PlexServer>& servers) {
+    auto* content = new brls::Box();
+    content->setAxis(brls::Axis::COLUMN);
+    content->setAlignItems(brls::AlignItems::STRETCH);
+    // Card dialog — wider than the previous 560 so the long plex.direct
+    // URIs + the version suffix on the sub-line have room without
+    // shrinking the chevron column. Scales down on narrow viewports.
+    int cardW = 720;
+    if (brls::Application::contentWidth < 800) {
+        cardW = std::max(360, static_cast<int>(brls::Application::contentWidth) - 40);
+    }
+    content->setWidth(cardW);
+    content->setPaddingLeft(28);
+    content->setPaddingRight(28);
+    content->setPaddingTop(24);
+    content->setPaddingBottom(20);
+    content->setBackgroundColor(nvgRGB(44, 44, 52));
+    content->setCornerRadius(20);
+
+    content->addView(makeServerEyebrow());
+
+    auto* title = new brls::Label();
+    {
+        std::string s = "We found " + std::to_string(servers.size()) +
+                        (servers.size() == 1 ? " server" : " servers");
+        title->setText(s);
+    }
+    title->setFontSize(22);
+    title->setTextColor(nvgRGB(255, 255, 255));
+    title->setMarginBottom(4);
+    content->addView(title);
+
+    auto* subtitle = new brls::Label();
+    subtitle->setText("Pick one to connect — we'll test every address and use the fastest.");
+    subtitle->setFontSize(13);
+    subtitle->setTextColor(nvgRGB(163, 163, 163));
+    subtitle->setMarginBottom(16);
+    content->addView(subtitle);
+
+    // Cards in a scroll frame so a large server list still fits. The
+    // ~100px-per-card budget covers a name row + sub-line + a wrapped
+    // version suffix without clipping the badges underneath.
+    auto* scroll = new brls::ScrollingFrame();
+    scroll->setHeight(std::min(440, (int)servers.size() * 100 + 8));
+    scroll->setFocusable(false);
+    auto* cardCol = new brls::Box();
+    cardCol->setAxis(brls::Axis::COLUMN);
+    cardCol->setAlignItems(brls::AlignItems::STRETCH);
+
+    brls::Dialog* dialog = new brls::Dialog(content);
+
+    for (const auto& server : servers) {
+        cardCol->addView(buildServerCard(server, dialog));
+    }
+    scroll->setContentView(cardCol);
+    content->addView(scroll);
+
+    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B,
+        [dialog](brls::View*) {
+            dialog->dismiss();
+            return true;
+        });
+    dialog->open();
+}
+
+// ─── Connecting state ────────────────────────────────────────────────
+// Live probe-list dialog driven by the same parallel-200-wins network
+// flow as before. Each candidate URI gets its own row; workers update
+// its state via brls::sync as the probe transitions queued →
+// connecting → 200 OK / Failed. The fastest 200 marks the winner row
+// green; the rest dim out with their actual result.
+
+namespace {
+
+// Per-row UI handles. We hand the worker thread a shared_ptr<ConnectingUI>
+// that owns vectors of these; brls keeps the actual views alive for the
+// lifetime of the dialog (parents own their children).
+struct ProbeRow {
+    brls::Box*   dot       = nullptr; // state indicator (colour changes)
+    brls::Label* uriLabel  = nullptr; // mono-style URI text
+    brls::Label* statusLbl = nullptr; // "Connecting…", "200 OK", "Failed", …
+};
+
+struct ConnectingUI {
+    brls::Dialog* dialog       = nullptr;
+    brls::Label*  counterLbl   = nullptr;
+    brls::Box*    progressFill = nullptr;
+    int           progressTrackW = 360;
+    std::vector<ProbeRow> rows;
+    // Flipped by the cancel handler so post-async sync()'s know not to
+    // touch the now-dismissed dialog.
+    std::atomic<bool> dismissed{false};
+};
+
+void setRowState(ProbeRow& r, const std::string& status, NVGcolor color) {
+    if (r.dot)       r.dot->setBackgroundColor(color);
+    if (r.statusLbl) {
+        r.statusLbl->setText(status);
+        r.statusLbl->setTextColor(color);
+    }
+}
+
+} // namespace
 
 void LoginActivity::connectToSelectedServer(const PlexServer& server) {
     PlexClient& client = PlexClient::getInstance();
-
-    // Show progress dialog
-    auto* progressDialog = new ProgressDialog("Connecting");
-    progressDialog->setStatus("Connecting to " + server.name + "...");
-    progressDialog->show();
-
-    // Track if connection was cancelled - use shared_ptr so it persists across async operation
+    const size_t totalConnections = server.connections.size();
     auto cancelled = std::make_shared<bool>(false);
-    progressDialog->setCancelCallback([cancelled]() {
+
+    // ── Build the connecting dialog ────────────────────────────────
+    auto ui = std::make_shared<ConnectingUI>();
+
+    int cardW = 560;
+    if (brls::Application::contentWidth < 640) {
+        cardW = static_cast<int>(brls::Application::contentWidth) - 40;
+    }
+    auto* content = new brls::Box();
+    content->setAxis(brls::Axis::COLUMN);
+    content->setAlignItems(brls::AlignItems::STRETCH);
+    content->setWidth(cardW);
+    content->setPaddingLeft(28);
+    content->setPaddingRight(28);
+    content->setPaddingTop(24);
+    content->setPaddingBottom(20);
+    content->setBackgroundColor(nvgRGB(44, 44, 52));
+    content->setCornerRadius(20);
+
+    // Gold spinner + heading row. brls::ProgressSpinner is the
+    // canonical "we're working" ring; setting its size keeps it
+    // proportional to the heading.
+    auto* topRow = new brls::Box();
+    topRow->setAxis(brls::Axis::ROW);
+    topRow->setAlignItems(brls::AlignItems::CENTER);
+    topRow->setMarginBottom(8);
+    auto* spinner = new brls::ProgressSpinner();
+    spinner->setWidth(28);
+    spinner->setHeight(28);
+    spinner->setMarginRight(12);
+    topRow->addView(spinner);
+    auto* headCol = new brls::Box();
+    headCol->setAxis(brls::Axis::COLUMN);
+    headCol->setGrow(1.0f);
+    auto* heading = new brls::Label();
+    heading->setText("Connecting to " + (server.name.empty() ? std::string("server") : server.name));
+    heading->setFontSize(20);
+    heading->setTextColor(nvgRGB(255, 255, 255));
+    headCol->addView(heading);
+    auto* subline = new brls::Label();
+    subline->setText("Testing " + std::to_string(totalConnections) +
+                     " address" + (totalConnections == 1 ? "" : "es") +
+                     " in parallel — fastest wins.");
+    subline->setFontSize(13);
+    subline->setTextColor(nvgRGB(163, 163, 163));
+    subline->setMarginTop(2);
+    headCol->addView(subline);
+    topRow->addView(headCol);
+    content->addView(topRow);
+
+    // Progress bar + counter.
+    auto* meterRow = new brls::Box();
+    meterRow->setAxis(brls::Axis::ROW);
+    meterRow->setAlignItems(brls::AlignItems::CENTER);
+    meterRow->setMarginTop(16);
+    meterRow->setMarginBottom(12);
+
+    // Pin the track to a known width so the absolute-positioned fill's
+    // width math (progressFill->setWidth(p * trackW)) tracks the visible
+    // bar exactly — flex grow would force us to query the realised
+    // width at draw time.
+    const int progressTrackW = std::max(160, cardW - 28 * 2 - 12 - 150);
+    auto* track = new brls::Box();
+    track->setWidth(progressTrackW);
+    track->setHeight(6);
+    track->setCornerRadius(3);
+    track->setBackgroundColor(nvgRGB(67, 67, 79));
+    track->setMarginRight(12);
+
+    auto* fill = new brls::Box();
+    fill->setPositionType(brls::PositionType::ABSOLUTE);
+    fill->setPositionLeft(0);
+    fill->setPositionTop(0);
+    fill->setWidth(0);
+    fill->setHeight(6);
+    fill->setCornerRadius(3);
+    fill->setBackgroundColor(nvgRGB(229, 160, 13));
+    track->addView(fill);
+    meterRow->addView(track);
+
+    auto* counter = new brls::Label();
+    counter->setText("0 of " + std::to_string(totalConnections) + " checked");
+    counter->setFontSize(12);
+    counter->setTextColor(nvgRGB(163, 163, 163));
+    counter->setWidth(150);
+    meterRow->addView(counter);
+
+    content->addView(meterRow);
+
+    // Probe list. One row per connection URI; status updates per row
+    // come from the async workers below via brls::sync.
+    auto* listBox = new brls::Box();
+    listBox->setAxis(brls::Axis::COLUMN);
+    listBox->setAlignItems(brls::AlignItems::STRETCH);
+    listBox->setMarginBottom(14);
+
+    ui->rows.reserve(totalConnections);
+    for (size_t i = 0; i < totalConnections; i++) {
+        const auto& conn = server.connections[i];
+        auto* row = new brls::Box();
+        row->setAxis(brls::Axis::ROW);
+        row->setAlignItems(brls::AlignItems::CENTER);
+        row->setPaddingTop(7);
+        row->setPaddingBottom(7);
+        row->setPaddingLeft(10);
+        row->setPaddingRight(10);
+        row->setMarginBottom(4);
+        row->setCornerRadius(8);
+        row->setBackgroundColor(nvgRGB(52, 52, 62));
+
+        // State indicator.
+        auto* dot = new brls::Box();
+        dot->setWidth(10);
+        dot->setHeight(10);
+        dot->setCornerRadius(5);
+        dot->setBackgroundColor(nvgRGB(124, 124, 132));   // queued = dim grey
+        dot->setMarginRight(10);
+        row->addView(dot);
+
+        // Connection-type tag for context (Local / Remote / Relay).
+        std::string typeTag = conn.local ? "LOCAL " : (conn.relay ? "RELAY " : "REMOTE ");
+        auto* uriLbl = new brls::Label();
+        uriLbl->setText(typeTag + conn.uri);
+        uriLbl->setFontSize(12);
+        uriLbl->setTextColor(nvgRGB(255, 255, 255));
+        uriLbl->setGrow(1.0f);
+        row->addView(uriLbl);
+
+        // Per-row status text.
+        auto* status = new brls::Label();
+        status->setText("Queued");
+        status->setFontSize(12);
+        status->setTextColor(nvgRGB(124, 124, 132));
+        row->addView(status);
+
+        listBox->addView(row);
+        ui->rows.push_back({ dot, uriLbl, status });
+    }
+    content->addView(listBox);
+
+    // Cancel button — focusable, cyan focus ring is borealis-native.
+    auto* footer = new brls::Box();
+    footer->setAxis(brls::Axis::ROW);
+    footer->setJustifyContent(brls::JustifyContent::FLEX_END);
+
+    auto* cancelBtn = new brls::Button();
+    cancelBtn->setText("Cancel");
+    cancelBtn->setWidth(140);
+    footer->addView(cancelBtn);
+    content->addView(footer);
+
+    brls::Dialog* dialog = new brls::Dialog(content);
+    ui->dialog         = dialog;
+    ui->counterLbl     = counter;
+    ui->progressFill   = fill;
+    ui->progressTrackW = progressTrackW;
+
+    cancelBtn->registerClickAction([dialog, cancelled, ui](brls::View*) {
         *cancelled = true;
+        ui->dismissed.store(true);
+        dialog->dismiss();
+        return true;
     });
+    dialog->registerAction("Cancel", brls::ControllerButton::BUTTON_B,
+        [dialog, cancelled, ui](brls::View*) {
+            *cancelled = true;
+            ui->dismissed.store(true);
+            dialog->dismiss();
+            return true;
+        });
+    dialog->open();
 
-    size_t totalConnections = server.connections.size();
+    if (totalConnections == 0) {
+        if (heading) heading->setText("No valid server connections");
+        brls::delay(800, [ui]() { if (ui && ui->dialog) ui->dialog->dismiss(); });
+        return;
+    }
 
-    // Run connection attempts asynchronously
-    asyncRun([this, server, progressDialog, totalConnections, cancelled]() {
+    // ── Async parallel probe (unchanged network logic) ─────────────
+    asyncRun([this, server, ui, totalConnections, cancelled]() {
         PlexClient& client = PlexClient::getInstance();
-
-        if (totalConnections == 0) {
-            brls::sync([this, progressDialog]() {
-                progressDialog->setStatus("No valid server connections");
-                brls::delay(800, [progressDialog]() { progressDialog->dismiss(); });
-            });
-            return;
-        }
 
         std::atomic<bool> found{false};
         std::atomic<int> completed{0};
+        std::atomic<int> winnerIdx{-1};
         std::mutex winnerMutex;
         std::condition_variable winnerCv;
         std::string winnerUri;
         std::vector<std::thread> workers;
         workers.reserve(totalConnections);
-
-        brls::sync([progressDialog]() {
-            progressDialog->setStatus("Testing all server URLs in parallel...");
-            progressDialog->setProgress(0.05f);
-        });
 
         // Gate concurrent in-flight HTTP requests to what the platform's
         // network stack can sustain. On Switch (libnx) we observed 17
@@ -346,24 +744,21 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
         for (size_t i = 0; i < totalConnections; i++) {
             const auto conn = server.connections[i];
             workers.emplace_back([&, conn, i]() {
-                if (*cancelled) {
-                    completed.fetch_add(1);
-                    return;
-                }
+                if (*cancelled) { completed.fetch_add(1); return; }
 
-                // Hold a permit for the duration of the HTTP request.
-                // Workers wait here once maxInFlight are already running;
-                // released when the request finishes (success or error).
                 sem.acquire();
-
-                // Recheck the cancel flag and the "already found a
-                // winner" flag — we may have queued behind a long line
-                // and the answer arrived while we were waiting.
                 if (*cancelled || found.load()) {
                     sem.release();
                     completed.fetch_add(1);
                     return;
                 }
+
+                // Flip the row to "connecting" — gold dot + gold text.
+                brls::sync([ui, i]() {
+                    if (ui->dismissed.load()) return;
+                    if (i < ui->rows.size())
+                        setRowState(ui->rows[i], "Connecting…", nvgRGB(229, 160, 13));
+                });
 
                 int timeout = conn.local ? 8 : (conn.relay ? 16 : 12);
                 HttpClient http;
@@ -377,19 +772,48 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
                 HttpResponse resp = http.request(req);
                 sem.release();
 
-                if (resp.statusCode == 200 && !found.exchange(true)) {
+                bool is200 = (resp.statusCode == 200);
+                bool weAreWinner = false;
+                if (is200 && !found.exchange(true)) {
                     {
                         std::lock_guard<std::mutex> lk(winnerMutex);
                         winnerUri = conn.uri;
                     }
+                    winnerIdx.store(static_cast<int>(i));
+                    weAreWinner = true;
                     winnerCv.notify_one();
                 }
 
+                // Update this row's terminal state.
+                int statusCode = resp.statusCode;
+                brls::sync([ui, i, is200, weAreWinner, statusCode]() {
+                    if (ui->dismissed.load()) return;
+                    if (i >= ui->rows.size()) return;
+                    if (weAreWinner) {
+                        setRowState(ui->rows[i], "200 OK ✓", nvgRGB(62, 207, 142));
+                    } else if (is200) {
+                        // Reached but a faster URL already won.
+                        setRowState(ui->rows[i], "Slower (200 OK)", nvgRGB(124, 124, 132));
+                    } else if (statusCode == 0) {
+                        setRowState(ui->rows[i], "Timeout", nvgRGB(255, 86, 88));
+                    } else {
+                        setRowState(ui->rows[i], "HTTP " + std::to_string(statusCode),
+                                    nvgRGB(255, 86, 88));
+                    }
+                });
+
                 int doneNow = completed.fetch_add(1) + 1;
-                brls::sync([progressDialog, doneNow, totalConnections]() {
-                    float p = 0.1f + (0.7f * (float)doneNow / (float)totalConnections);
-                    progressDialog->setProgress(std::min(0.85f, p));
-                    progressDialog->setAttempt(doneNow, totalConnections);
+                brls::sync([ui, doneNow, totalConnections]() {
+                    if (ui->dismissed.load()) return;
+                    float p = (float)doneNow / (float)totalConnections;
+                    if (ui->counterLbl) {
+                        ui->counterLbl->setText(std::to_string(doneNow) + " of " +
+                                                std::to_string(totalConnections) +
+                                                " checked");
+                    }
+                    if (ui->progressFill) {
+                        ui->progressFill->setWidth(p * (float)ui->progressTrackW);
+                    }
                 });
                 winnerCv.notify_one();
             });
@@ -414,13 +838,18 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
             }
             brls::Logger::info("Fastest server URL selected: {}", uri);
             if (client.connectToServer(uri, 15)) {
-                brls::sync([this, progressDialog, server]() {
-                    progressDialog->setStatus("Connected!");
-                    progressDialog->setProgress(1.0f);
+                brls::sync([this, ui, server]() {
+                    if (!ui->dismissed.load() && ui->dialog) {
+                        // Snap progress to 100% for the brief beat
+                        // before pushing main.
+                        if (ui->progressFill)
+                            ui->progressFill->setWidth(ui->progressTrackW);
+                    }
                     Application::getInstance().saveSettings();
                     if (statusLabel) statusLabel->setText("Connected to " + server.name);
-                    brls::delay(500, [progressDialog]() {
-                        progressDialog->dismiss();
+                    brls::delay(500, [ui]() {
+                        ui->dismissed.store(true);
+                        if (ui->dialog) ui->dialog->dismiss();
                         Application::getInstance().pushMainActivity();
                         Application::getInstance().showHomeUserPicker(nullptr);
                     });
@@ -429,19 +858,17 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
             }
         }
 
-        // All connections failed
-        brls::sync([this, progressDialog, server, totalConnections]() {
-            progressDialog->setStatus("All " + std::to_string(totalConnections) + " connection attempts failed");
-            progressDialog->setProgress(1.0f);
-
-            if (statusLabel) statusLabel->setText("Failed to connect to " + server.name);
-            brls::Logger::error("All {} connections failed for {}", totalConnections, server.name);
-
-            // Delay then dismiss
-            brls::delay(2000, [progressDialog]() {
-                progressDialog->dismiss();
+        // All connections failed (or user cancelled).
+        if (!*cancelled) {
+            brls::sync([this, ui, server, totalConnections]() {
+                if (statusLabel) statusLabel->setText("Failed to connect to " + server.name);
+                brls::Logger::error("All {} connections failed for {}", totalConnections, server.name);
+                brls::delay(1800, [ui]() {
+                    ui->dismissed.store(true);
+                    if (ui->dialog) ui->dialog->dismiss();
+                });
             });
-        });
+        }
     });
 }
 

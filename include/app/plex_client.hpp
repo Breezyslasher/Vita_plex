@@ -136,6 +136,14 @@ struct PlexServer {
     std::string machineIdentifier;
     std::string accessToken;
     std::vector<ServerConnection> connections;  // All available connections
+    // Plex resource metadata — owned reflects whether this Plex account
+    // owns the server (vs. it being shared in via Plex Home / friends);
+    // sourceTitle is the owner's display name on shared servers
+    // ("Shared by Dad"); version is the productVersion string. All
+    // three are parsed from /api/v2/resources at fetchServers time.
+    bool owned = false;
+    std::string sourceTitle;
+    std::string version;
 };
 
 // PIN authentication info
