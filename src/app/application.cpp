@@ -273,11 +273,12 @@ void Application::applyTheme() {
         t->addColor("brls/highlight/color2",     pal::focusHalo);  // outer — bright cream
         t->addColor("brls/highlight/background", pal::surface2);   // warm fill behind focus
         t->addColor("brls/click_pulse",          goldPulse);
-        // slider
+        // slider — gold filled line + gold scrubber knob (bright knob with a
+        // deeper-gold rim so it stays distinct from the filled line)
         t->addColor("brls/slider/line_filled",          pal::gold);
         t->addColor("brls/slider/line_empty",           pal::surface3);
-        t->addColor("brls/slider/pointer_color",        pal::text);
-        t->addColor("brls/slider/pointer_border_color", pal::gold);
+        t->addColor("brls/slider/pointer_color",        pal::goldBright);
+        t->addColor("brls/slider/pointer_border_color", pal::goldDeep);
         // spinner → warm gold
         t->addColor("brls/spinner/bar_color",           spinnerGold);
     }

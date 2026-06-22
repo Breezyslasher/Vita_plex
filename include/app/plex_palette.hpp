@@ -1,10 +1,10 @@
 /**
  * VitaPlex — all-Plex palette tokens.
  *
- * One warm, premium dark palette shared by the borealis theme override
- * (Application::applyTheme) and any app-drawn control. Plex gold is the
- * accent (brand / active / selected / primary); focus is a bright warm
- * "gold-white" halo — same family, different treatment, so a focused
+ * Dark palette shared by the borealis theme override (Application::applyTheme)
+ * and any app-drawn control: neutral dark surfaces with Plex gold as the
+ * accent (brand / active / selected / primary). Focus is a bright warm
+ * "gold-white" halo — same gold family, different treatment, so a focused
  * element never reads as the gold *selected* state.
  *
  * The two rules that keep focus and selection distinct on a TV/controller:
@@ -23,18 +23,18 @@
 namespace vitaplex {
 namespace palette {
 
-// ── surfaces (warm charcoal) ───────────────────────────────────────
-inline const NVGcolor bg        = nvgRGB(28, 26, 36);   // #1C1A24 app background
-inline const NVGcolor panel     = nvgRGB(36, 34, 48);   // #242230 sidebars / sheets
-inline const NVGcolor surface   = nvgRGB(44, 42, 56);   // #2C2A38 cards / cells
-inline const NVGcolor surface2  = nvgRGB(52, 50, 63);   // #34323F raised / hover
-inline const NVGcolor surface3  = nvgRGB(60, 58, 71);   // #3C3A47 chips / 2ndary buttons
-inline const NVGcolor line      = nvgRGB(58, 56, 69);   // #3A3845 hairline borders
+// ── surfaces (neutral dark — borealis/app defaults, not tinted) ────
+inline const NVGcolor bg        = nvgRGB(45, 45, 45);   // app background / backdrop
+inline const NVGcolor panel     = nvgRGB(50, 50, 50);   // sidebars / sheets
+inline const NVGcolor surface   = nvgRGB(52, 52, 62);   // cards / cells
+inline const NVGcolor surface2  = nvgRGB(60, 60, 72);   // raised / hover
+inline const NVGcolor surface3  = nvgRGB(67, 67, 79);   // chips / 2ndary buttons
+inline const NVGcolor line      = nvgRGB(67, 67, 74);   // hairline borders
 
 // ── text ───────────────────────────────────────────────────────────
 inline const NVGcolor text      = nvgRGB(255, 255, 255); // #FFFFFF
-inline const NVGcolor muted     = nvgRGB(168, 166, 180); // #A8A6B4
-inline const NVGcolor dim       = nvgRGB(128, 126, 140); // #807E8C
+inline const NVGcolor muted     = nvgRGB(163, 163, 163); // secondary text
+inline const NVGcolor dim       = nvgRGB(124, 124, 132); // tertiary text
 
 // ── accent — Plex gold (brand / active / selected / primary) ───────
 inline const NVGcolor gold       = nvgRGB(229, 160, 13); // #E5A00D
