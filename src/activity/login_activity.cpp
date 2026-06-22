@@ -344,35 +344,6 @@ brls::Box* makeConnBadge(const std::string& text, NVGcolor bg,
     return chip;
 }
 
-// Footer button hint: filled circle with a letter + a muted label.
-brls::Box* makeButtonHint(const std::string& letter, NVGcolor circleBg,
-                          const std::string& label) {
-    auto* row = new brls::Box();
-    row->setAxis(brls::Axis::ROW);
-    row->setAlignItems(brls::AlignItems::CENTER);
-    row->setMarginRight(16);
-    auto* circle = new brls::Box();
-    circle->setWidth(21);
-    circle->setHeight(21);
-    circle->setCornerRadius(10.5f);
-    circle->setBackgroundColor(circleBg);
-    circle->setJustifyContent(brls::JustifyContent::CENTER);
-    circle->setAlignItems(brls::AlignItems::CENTER);
-    circle->setMarginRight(8);
-    auto* l = new brls::Label();
-    l->setText(letter);
-    l->setFontSize(11);
-    l->setTextColor(nvgRGB(16, 18, 22));
-    circle->addView(l);
-    row->addView(circle);
-    auto* lbl = new brls::Label();
-    lbl->setText(label);
-    lbl->setFontSize(12);
-    lbl->setTextColor(cMuted());
-    row->addView(lbl);
-    return row;
-}
-
 } // namespace
 
 brls::Box* LoginActivity::buildServerCard(const PlexServer& server,
@@ -391,18 +362,23 @@ brls::Box* LoginActivity::buildServerCard(const PlexServer& server,
     card->setMarginBottom(9);
     card->setFocusable(true);
 
-    // Left icon tile (44×44) with the server glyph. PlexServer at this
-    // commit carries no "owned" flag, so every tile uses the neutral
-    // style; the owned-gold variant is wired but currently unused.
+    // Left icon tile (44×44) — gold-filled background with the MDI
+    // server-outline glyph rasterised in gold-ink so the icon reads
+    // dark-on-gold instead of competing with the brand colour.
     auto* tile = new brls::Box();
     tile->setWidth(44);
     tile->setHeight(44);
     tile->setCornerRadius(11);
-    tile->setBackgroundColor(cCard3());
+    tile->setBackgroundColor(cGold());
     tile->setJustifyContent(brls::JustifyContent::CENTER);
     tile->setAlignItems(brls::AlignItems::CENTER);
     tile->setMarginRight(14);
-    tile->addView(makeServerGlyph(22, cMuted(), 1.7f));
+    auto* tileGlyph = new brls::Image();
+    tileGlyph->setWidth(24);
+    tileGlyph->setHeight(24);
+    tileGlyph->setScalingType(brls::ImageScalingType::FIT);
+    tileGlyph->setImageFromRes("icons/server-outline.png");
+    tile->addView(tileGlyph);
     card->addView(tile);
 
     // Name + sub-line column.
@@ -586,22 +562,8 @@ void LoginActivity::showServerSelectionDialog(const std::vector<PlexServer>& ser
     body->addView(scroll);
     shell->addView(body);
 
-    // ── Footer (A Connect · B Back) ─────────────────────────────────
-    auto* footerLine = new brls::Box();
-    footerLine->setHeight(1);
-    footerLine->setBackgroundColor(cLine());
-    shell->addView(footerLine);
-
-    auto* footer = new brls::Box();
-    footer->setAxis(brls::Axis::ROW);
-    footer->setAlignItems(brls::AlignItems::CENTER);
-    footer->setPaddingTop(14);
-    footer->setPaddingBottom(14);
-    footer->setPaddingLeft(20);
-    footer->setPaddingRight(20);
-    footer->addView(makeButtonHint("A", nvgRGB(159, 231, 182), "Connect"));
-    footer->addView(makeButtonHint("B", nvgRGB(240, 160, 160), "Back"));
-    shell->addView(footer);
+    // (No A/B hint footer — the back action is still wired to BUTTON_B
+    // below; users see the glow change as they navigate cards.)
 
     root->addView(shell);
 
