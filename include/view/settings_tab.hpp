@@ -85,6 +85,8 @@ private:
     void                 paintRailRowSelection();
 
     void onLogout();
+    void onNetworkTest();
+    void onTestLocalPlayback();
     void onThemeChanged(int index);
     void onQualityChanged(int index);
     void onSubtitleSizeChanged(int index);
