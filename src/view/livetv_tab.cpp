@@ -118,8 +118,12 @@ private:
 // consistency rather than scattering nvgRGBA literals across the build
 // methods.
 namespace tok {
-    static inline NVGcolor accent()       { return nvgRGB(137, 241, 242); }
-    static inline NVGcolor accentDeep()   { return nvgRGB(25, 138, 198); }
+    // Plex brand colours — the standard yellow (#E5A00D) and a deeper
+    // gold (#CC7B19) for the EPG "on now" outline / current-time line
+    // / progress bar fill so the app reads as a Plex client instead
+    // of a generic teal-accented one.
+    static inline NVGcolor accent()       { return nvgRGB(229, 160, 13); }
+    static inline NVGcolor accentDeep()   { return nvgRGB(204, 123, 25); }
     static inline NVGcolor live()         { return nvgRGB(255, 86, 88); }
     static inline NVGcolor text()         { return nvgRGB(255, 255, 255); }
     static inline NVGcolor muted()        { return nvgRGB(163, 163, 163); }

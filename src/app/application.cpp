@@ -235,6 +235,24 @@ void Application::applyTheme() {
     }
 
     brls::Application::getPlatform()->setThemeVariant(variant);
+
+    // Repaint the borealis built-in focus highlight in Plex yellow so
+    // the cyan glow doesn't fight the app's accent. Theme::addColor
+    // overrides the named slot for the rest of the process — no
+    // borealis patch required. We apply on both Light + Dark theme
+    // tables so the swap survives a runtime theme change.
+    const NVGcolor plexYellow      = nvgRGB(229, 160, 13);     // #E5A00D
+    const NVGcolor plexYellowLight = nvgRGB(255, 196, 64);     // brightened for the highlight inner glow
+    const NVGcolor plexYellowSoft  = nvgRGBA(229, 160, 13, 38); // ~15% alpha for click pulse
+    for (brls::Theme* theme : { &brls::Theme::getDarkTheme(),
+                                 &brls::Theme::getLightTheme() }) {
+        theme->addColor("brls/highlight/color1", plexYellow);
+        theme->addColor("brls/highlight/color2", plexYellowLight);
+        theme->addColor("brls/click_pulse",      plexYellowSoft);
+        theme->addColor("brls/button/highlight_enabled_text",  plexYellow);
+        theme->addColor("brls/button/highlight_disabled_text", plexYellow);
+    }
+
     brls::Logger::info("Applied theme: {}", getThemeString(m_settings.theme));
 }
 
