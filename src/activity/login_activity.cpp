@@ -56,84 +56,203 @@ brls::View* LoginActivity::createContentView() {
 void LoginActivity::onContentAvailable() {
     brls::Logger::debug("LoginActivity content available");
 
-    // Set initial values
-    if (titleLabel) {
-        titleLabel->setText("VitaPlex");
+    // Pill background — brls XML doesn't accept rgba colours, so paint
+    // the teal-12%-alpha bg here. Same trick for the focus-able-but-
+    // not-yet-built tile container is unnecessary because it's empty
+    // until renderPinTiles() runs.
+    if (quickPill) {
+        quickPill->setBackgroundColor(nvgRGBA(0, 255, 204, 30));
     }
 
-    if (statusLabel) {
-        statusLabel->setText("Enter your Plex server URL and credentials");
-    }
-
-    if (pinCodeLabel) {
-        pinCodeLabel->setVisibility(brls::Visibility::GONE);
-    }
-
-    // Server URL input
+    // ── Server / Username / Password inputs ────────────────────────
+    // Same IME handlers as before — only the surrounding presentation
+    // changed (the Label now sits inside a rounded field-row Box in
+    // the credentials sub-view). The text we set on the label switches
+    // colour between muted (placeholder) and white (entered value).
     if (serverLabel) {
-        serverLabel->setText(std::string("Server: ") + (m_serverUrl.empty() ? "Not set" : m_serverUrl));
-        serverLabel->registerClickAction([this](brls::View* view) {
+        std::string current = m_serverUrl.empty() ? std::string("Not set") : m_serverUrl;
+        serverLabel->setText(current);
+        serverLabel->setTextColor(m_serverUrl.empty() ? nvgRGB(163, 163, 163) : nvgRGB(255, 255, 255));
+        serverLabel->registerClickAction([this](brls::View*) {
             brls::Application::getImeManager()->openForText([this](std::string text) {
                 m_serverUrl = text;
-                serverLabel->setText(std::string("Server: ") + text);
+                if (serverLabel) {
+                    serverLabel->setText(text.empty() ? std::string("Not set") : text);
+                    serverLabel->setTextColor(text.empty() ? nvgRGB(163, 163, 163) : nvgRGB(255, 255, 255));
+                }
             }, "Enter Server URL", "http://your-server:32400", 256, m_serverUrl);
             return true;
         });
         serverLabel->addGestureRecognizer(new brls::TapGestureRecognizer(serverLabel));
     }
 
-    // Username input
     if (usernameLabel) {
-        usernameLabel->setText(std::string("Username: ") + (m_username.empty() ? "Not set" : m_username));
-        usernameLabel->registerClickAction([this](brls::View* view) {
+        std::string current = m_username.empty() ? std::string("Not set") : m_username;
+        usernameLabel->setText(current);
+        usernameLabel->setTextColor(m_username.empty() ? nvgRGB(163, 163, 163) : nvgRGB(255, 255, 255));
+        usernameLabel->registerClickAction([this](brls::View*) {
             brls::Application::getImeManager()->openForText([this](std::string text) {
                 m_username = text;
-                usernameLabel->setText(std::string("Username: ") + text);
+                if (usernameLabel) {
+                    usernameLabel->setText(text.empty() ? std::string("Not set") : text);
+                    usernameLabel->setTextColor(text.empty() ? nvgRGB(163, 163, 163) : nvgRGB(255, 255, 255));
+                }
             }, "Enter Username", "", 128, m_username);
             return true;
         });
         usernameLabel->addGestureRecognizer(new brls::TapGestureRecognizer(usernameLabel));
     }
 
-    // Password input
     if (passwordLabel) {
-        passwordLabel->setText(std::string("Password: ") + (m_password.empty() ? "Not set" : "********"));
-        passwordLabel->registerClickAction([this](brls::View* view) {
+        passwordLabel->setText(m_password.empty() ? std::string("Not set") : std::string("********"));
+        passwordLabel->setTextColor(m_password.empty() ? nvgRGB(163, 163, 163) : nvgRGB(255, 255, 255));
+        passwordLabel->registerClickAction([this](brls::View*) {
             brls::Application::getImeManager()->openForPassword([this](std::string text) {
                 m_password = text;
-                passwordLabel->setText("Password: ********");
+                if (passwordLabel) {
+                    passwordLabel->setText(text.empty() ? std::string("Not set") : std::string("********"));
+                    passwordLabel->setTextColor(text.empty() ? nvgRGB(163, 163, 163) : nvgRGB(255, 255, 255));
+                }
             }, "Enter Password", "", 128, "");
             return true;
         });
         passwordLabel->addGestureRecognizer(new brls::TapGestureRecognizer(passwordLabel));
     }
 
-    // Login button
+    // ── Buttons ────────────────────────────────────────────────────
+    // Sign-in button — fires the credentials path verbatim.
     if (loginButton) {
-        loginButton->setText("Login with Credentials");
-        loginButton->registerClickAction([this](brls::View* view) {
+        loginButton->registerClickAction([this](brls::View*) {
             onLoginPressed();
             return true;
         });
     }
 
-    // PIN login button
+    // "Get a new code" — repurposed pin_button. Re-runs the PIN flow
+    // so the user gets a fresh code without leaving the screen.
     if (pinButton) {
-        pinButton->setText("Login with PIN (plex.tv/link)");
-        pinButton->registerClickAction([this](brls::View* view) {
+        pinButton->registerClickAction([this](brls::View*) {
             onPinLoginPressed();
             return true;
         });
     }
 
-    // Offline mode button
     if (offlineButton) {
-        offlineButton->setText("Offline Mode");
-        offlineButton->registerClickAction([this](brls::View* view) {
+        offlineButton->registerClickAction([this](brls::View*) {
             onOfflinePressed();
             return true;
         });
     }
+
+    // "Use credentials" — swap the card to the credentials sub-view.
+    if (useCredentialsButton) {
+        useCredentialsButton->registerClickAction([this](brls::View*) {
+            showCredentialsView();
+            return true;
+        });
+    }
+
+    // Back to PIN — return to the device-link view. Also wire B button
+    // on the credentials view so D-pad users get the same shortcut.
+    if (backToPinButton) {
+        backToPinButton->registerClickAction([this](brls::View*) {
+            showPinView();
+            return true;
+        });
+    }
+    if (credView) {
+        credView->registerAction("Back to PIN", brls::ControllerButton::BUTTON_B,
+            [this](brls::View*) {
+                showPinView();
+                return true;
+            });
+    }
+
+    // Narrow / portrait phone: stack the secondary buttons vertically
+    // and let the card take comfortable side margins. Threshold lines
+    // up with the responsive break in main_activity / settings_tab.
+    if (secondaryRow && brls::Application::contentWidth < 560) {
+        secondaryRow->setAxis(brls::Axis::COLUMN);
+        if (useCredentialsButton) {
+            useCredentialsButton->setMarginRight(0);
+            useCredentialsButton->setMarginBottom(10);
+        }
+    }
+
+    // ── Initial state ──────────────────────────────────────────────
+    if (statusLabel) statusLabel->setText("Requesting code…");
+    if (expiryLabel) expiryLabel->setText("");
+    showPinView();
+
+    // Auto-start the PIN flow so the code is on screen the instant
+    // the activity opens — the spec's whole "PIN-first" pivot.
+    onPinLoginPressed();
+}
+
+// Build the digit-tile row from m_pinAuth.code. Each character lives
+// in its own teal-bordered Box with a Label centred inside; codes
+// shorter or longer than 4 chars lay out N tiles instead of clipping.
+void LoginActivity::renderPinTiles() {
+    if (!pinTilesBox) return;
+    pinTilesBox->clearViews();
+
+    const std::string& code = m_pinAuth.code;
+    if (code.empty()) return;
+
+    for (size_t i = 0; i < code.size(); i++) {
+        auto* tile = new brls::Box();
+        tile->setWidth(74);
+        tile->setHeight(92);
+        tile->setCornerRadius(14);
+        tile->setBackgroundColor(nvgRGBA(0, 255, 204, 24));   // soft teal glow
+        tile->setBorderColor(nvgRGB(0, 255, 204));
+        tile->setBorderThickness(1);
+        tile->setJustifyContent(brls::JustifyContent::CENTER);
+        tile->setAlignItems(brls::AlignItems::CENTER);
+        if (i + 1 < code.size()) tile->setMarginRight(10);
+
+        auto* digit = new brls::Label();
+        std::string s(1, code[i]);
+        digit->setText(s);
+        digit->setFontSize(46);
+        digit->setTextColor(nvgRGB(0, 255, 204));
+        tile->addView(digit);
+
+        pinTilesBox->addView(tile);
+    }
+}
+
+void LoginActivity::showPinView() {
+    if (pinView)  pinView->setVisibility(brls::Visibility::VISIBLE);
+    if (credView) credView->setVisibility(brls::Visibility::GONE);
+    // Default focus lands on "Use credentials" so the user can opt in
+    // immediately on a controller. brls picks lastFocusedView on its
+    // own when there's history.
+    if (useCredentialsButton) {
+        brls::Application::giveFocus(useCredentialsButton);
+    }
+}
+
+void LoginActivity::showCredentialsView() {
+    if (pinView)  pinView->setVisibility(brls::Visibility::GONE);
+    if (credView) credView->setVisibility(brls::Visibility::VISIBLE);
+    if (serverLabel) {
+        brls::Application::giveFocus(serverLabel);
+    }
+}
+
+// Drive an MM:SS countdown off the existing 2-second tick. The PIN
+// is valid 5 minutes (m_pinCheckTimer > 150 means expired); each
+// tick the remaining seconds = max(0, 300 - m_pinCheckTimer*2).
+void LoginActivity::updateExpiryCountdown() {
+    if (!expiryLabel) return;
+    int remaining = 300 - m_pinCheckTimer * 2;
+    if (remaining < 0) remaining = 0;
+    int mins = remaining / 60;
+    int secs = remaining % 60;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "Expires in %d:%02d", mins, secs);
+    expiryLabel->setText(buf);
 }
 
 void LoginActivity::showServerSelectionDialog(const std::vector<PlexServer>& servers) {
@@ -438,22 +557,28 @@ void LoginActivity::onPinLoginPressed() {
     PlexClient& client = PlexClient::getInstance();
 
     if (client.requestPin(m_pinAuth)) {
-        if (pinCodeLabel) {
-            pinCodeLabel->setVisibility(brls::Visibility::VISIBLE);
-            pinCodeLabel->setText(std::string("PIN: ") + m_pinAuth.code);
-        }
-        if (statusLabel) {
-            statusLabel->setText("Go to plex.tv/link and enter the PIN above");
-        }
+        // Render the digits as tiles in the new layout. pinCodeLabel
+        // is the vestigial hidden Label kept for binding compatibility;
+        // keep it updated for any callers that still read it.
+        if (pinCodeLabel) pinCodeLabel->setText(m_pinAuth.code);
+        renderPinTiles();
+
+        if (statusLabel) statusLabel->setText("Waiting for confirmation…");
+        if (statusDot)   statusDot->setBackgroundColor(nvgRGB(0, 255, 204));
+        if (getNewCodeRow) getNewCodeRow->setVisibility(brls::Visibility::GONE);
 
         // Start checking PIN status using RepeatingTimer
         m_pinCheckTimer = 0;
+        updateExpiryCountdown();
         m_pinTimer.setCallback([this]() {
             checkPinStatus();
         });
         m_pinTimer.start(2000); // Check every 2 seconds
     } else {
         if (statusLabel) statusLabel->setText("Failed to request PIN");
+        if (statusDot)   statusDot->setBackgroundColor(nvgRGB(255, 86, 88));
+        if (expiryLabel) expiryLabel->setText("");
+        if (getNewCodeRow) getNewCodeRow->setVisibility(brls::Visibility::VISIBLE);
     }
 }
 
@@ -464,6 +589,7 @@ void LoginActivity::checkPinStatus() {
     }
 
     m_pinCheckTimer++;
+    updateExpiryCountdown();
 
     PlexClient& client = PlexClient::getInstance();
 
@@ -480,6 +606,7 @@ void LoginActivity::checkPinStatus() {
         Application::getInstance().setCurrentHomeUserTitle("");
 
         if (statusLabel) statusLabel->setText("PIN authenticated! Finding servers...");
+        if (expiryLabel) expiryLabel->setText("");
 
         // If server URL provided, use it; otherwise auto-detect
         if (!m_serverUrl.empty()) {
@@ -510,11 +637,20 @@ void LoginActivity::checkPinStatus() {
             }
         }
     } else if (m_pinAuth.expired || m_pinCheckTimer > 150) {
-        // PIN expired (5 minutes)
+        // PIN expired (5 minutes). Status dot turns red, countdown
+        // disappears, "Get a new code" button reveals so the user can
+        // retry without leaving the screen.
         m_pinMode = false;
         m_pinTimer.stop();
-        if (statusLabel) statusLabel->setText("PIN expired - try again");
-        if (pinCodeLabel) pinCodeLabel->setVisibility(brls::Visibility::GONE);
+        if (statusLabel) statusLabel->setText("Code expired");
+        if (statusDot)   statusDot->setBackgroundColor(nvgRGB(255, 86, 88));
+        if (expiryLabel) expiryLabel->setText("");
+        if (getNewCodeRow) {
+            getNewCodeRow->setVisibility(brls::Visibility::VISIBLE);
+            if (pinButton) brls::Application::giveFocus(pinButton);
+        }
+        // Clear the displayed tiles too — they're no longer valid.
+        if (pinTilesBox) pinTilesBox->clearViews();
     }
 }
 
