@@ -594,6 +594,19 @@ brls::Box* SettingsTab::createUISection() {
     });
     box->addView(m_debugLogToggle);
 
+    // MPV stats overlay toggle — surfaces codec, hwdec, FPS, frame
+    // drops, and cache state on top of the video so playback issues
+    // can be diagnosed without an adb cable. Lives in Interface
+    // alongside "Debug Logging" — both are developer-focused toggles.
+    // See PlayerActivity::updateMpvStatsOverlay().
+    auto* mpvStatsToggle = new brls::BooleanCell();
+    mpvStatsToggle->init("MPV Stats Overlay", settings.showMpvStats,
+                         [&settings](bool value) {
+        settings.showMpvStats = value;
+        Application::getInstance().saveSettings();
+    });
+    box->addView(mpvStatsToggle);
+
     return box;
 }
 
