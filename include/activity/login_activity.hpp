@@ -77,7 +77,8 @@ private:
     void updateExpiryCountdown();
 
     // Existing IDs — preserved so onContentAvailable can still find them.
-    BRLS_BIND(brls::Label,  serverLabel,         "login/server_label");
+    // (The Server URL field was removed; server addresses are entered via
+    // the picker's "Enter address manually" affordance instead.)
     BRLS_BIND(brls::Label,  usernameLabel,       "login/username_label");
     BRLS_BIND(brls::Label,  passwordLabel,       "login/password_label");
     BRLS_BIND(brls::Button, loginButton,         "login/login_button");

@@ -361,28 +361,12 @@ void LoginActivity::onContentAvailable() {
         quickPill->setBackgroundColor(nvgRGBA(229, 160, 13, 38));
     }
 
-    // ── Server / Username / Password inputs ────────────────────────
-    // Same IME handlers as before — only the surrounding presentation
-    // changed (the Label now sits inside a rounded field-row Box in
-    // the credentials sub-view). The text we set on the label switches
-    // colour between muted (placeholder) and white (entered value).
-    if (serverLabel) {
-        std::string current = m_serverUrl.empty() ? std::string("Not set") : m_serverUrl;
-        serverLabel->setText(current);
-        serverLabel->setTextColor(m_serverUrl.empty() ? nvgRGB(163, 163, 163) : nvgRGB(255, 255, 255));
-        serverLabel->registerClickAction([this](brls::View*) {
-            brls::Application::getImeManager()->openForText([this](std::string text) {
-                m_serverUrl = text;
-                if (serverLabel) {
-                    serverLabel->setText(text.empty() ? std::string("Not set") : text);
-                    serverLabel->setTextColor(text.empty() ? nvgRGB(163, 163, 163) : nvgRGB(255, 255, 255));
-                }
-            }, "Enter Server URL", "http://your-server:32400", 256, m_serverUrl);
-            return true;
-        });
-        serverLabel->addGestureRecognizer(new brls::TapGestureRecognizer(serverLabel));
-    }
-
+    // ── Username / Password inputs ─────────────────────────────────
+    // Same IME handlers as before. The Server URL field was removed — a
+    // server address is now entered through the picker's "Enter address
+    // manually" affordance (which also covers the no-servers-found case),
+    // so the credentials view is just username + password. The text we set
+    // switches colour between muted (placeholder) and white (entered value).
     if (usernameLabel) {
         std::string current = m_username.empty() ? std::string("Not set") : m_username;
         usernameLabel->setText(current);
@@ -544,8 +528,8 @@ void LoginActivity::showPinView() {
 void LoginActivity::showCredentialsView() {
     if (pinView)  pinView->setVisibility(brls::Visibility::GONE);
     if (credView) credView->setVisibility(brls::Visibility::VISIBLE);
-    if (serverLabel) {
-        brls::Application::giveFocus(serverLabel);
+    if (usernameLabel) {
+        brls::Application::giveFocus(usernameLabel);
     }
 }
 
@@ -603,19 +587,24 @@ void LoginActivity::showServerSelectionContent() {
     auto* eg = new GlyphView(Glyph::Server, kGold);
     eg->setWidth(15); eg->setHeight(15); eg->setMarginRight(8);
     eyebrow->addView(eg);
+    // Header copy adapts to the no-servers case: when auto-detect turned up
+    // nothing this dialog is purely the manual-entry surface.
+    const bool empty = m_servers.empty();
     auto* el = new brls::Label();
-    el->setText("CHOOSE A SERVER");
+    el->setText(empty ? "ADD A SERVER" : "CHOOSE A SERVER");
     el->setFontSize(12); el->setTextColor(kGold);
     eyebrow->addView(el);
     head->addView(eyebrow);
 
     auto* title = new brls::Label();
-    title->setText("We found " + std::to_string(m_servers.size()) + " servers");
+    title->setText(empty ? std::string("No servers found")
+                         : "We found " + std::to_string(m_servers.size()) + " servers");
     title->setFontSize(23); title->setTextColor(kWhite);
     head->addView(title);
 
     auto* sub = new brls::Label();
-    sub->setText("Pick one to connect — we'll test every address and use the fastest.");
+    sub->setText(empty ? "Enter your server's address to connect."
+                       : "Pick one to connect — we'll test every address and use the fastest.");
     sub->setFontSize(14); sub->setTextColor(kMuted); sub->setMarginTop(4);
     head->addView(sub);
     card->addView(head);
@@ -680,7 +669,9 @@ void LoginActivity::showServerSelectionContent() {
         });
 
     m_overlayMode = 1;
-    presentDialogCard(card, firstCard);
+    // With no servers there are no cards to focus — land on the manual-entry
+    // affordance so the user can act immediately.
+    presentDialogCard(card, firstCard ? firstCard : static_cast<brls::View*>(add));
 }
 
 brls::Box* LoginActivity::buildServerCard(const PlexServer& server,
@@ -827,6 +818,7 @@ void LoginActivity::onEnterAddressManually() {
     brls::Application::getImeManager()->openForText(
         [this, fromList](std::string url) {
             if (url.empty()) return;
+            m_serverUrl = url;   // remembered so a retry pre-fills the IME
             PlexServer manual;
             manual.name  = "Manual server";
             manual.owned = false;
@@ -1266,38 +1258,30 @@ void LoginActivity::onLoginPressed() {
         Application::getInstance().setCurrentHomeUserTitle("");
         Application::getInstance().setUsername(m_username);
 
-        // If server URL provided, use it; otherwise auto-detect
-        if (!m_serverUrl.empty()) {
-            if (statusLabel) statusLabel->setText("Connecting to server...");
-            if (client.connectToServer(m_serverUrl)) {
-                Application::getInstance().saveSettings();
-                if (statusLabel) statusLabel->setText("Login successful!");
-                brls::sync([]() {
-                    Application::getInstance().pushMainActivity();
-                    Application::getInstance().showHomeUserPicker(nullptr);
-                });
+        // Auto-detect the account's servers, then let the picker take over.
+        if (statusLabel) statusLabel->setText("Finding your servers...");
+        std::vector<PlexServer> servers;
+        if (client.fetchServers(servers) && !servers.empty()) {
+            if (servers.size() == 1) {
+                // Only one server, connect directly. No list to fall back
+                // to, so the connecting state's Cancel closes the modal
+                // rather than returning to a picker.
+                m_returnToList = false;
+                connectToSelectedServer(servers[0]);
             } else {
-                if (statusLabel) statusLabel->setText("Failed to connect to server");
+                // Multiple servers, show selection dialog
+                if (statusLabel) statusLabel->setText("Select a server:");
+                showServerSelectionDialog(servers);
             }
         } else {
-            // Auto-detect servers
-            if (statusLabel) statusLabel->setText("Finding your servers...");
-            std::vector<PlexServer> servers;
-            if (client.fetchServers(servers) && !servers.empty()) {
-                if (servers.size() == 1) {
-                    // Only one server, connect directly. No list to fall
-                    // back to, so the connecting state's Cancel closes the
-                    // modal rather than returning to a picker.
-                    m_returnToList = false;
-                    connectToSelectedServer(servers[0]);
-                } else {
-                    // Multiple servers, show selection dialog
-                    if (statusLabel) statusLabel->setText("Select a server:");
-                    showServerSelectionDialog(servers);
-                }
-            } else {
-                if (statusLabel) statusLabel->setText("No servers found - enter URL manually");
-            }
+            // No servers auto-detected. The picker dialog now hosts manual
+            // server entry (the login page no longer has a Server URL
+            // field), so float it as the manual-entry surface and pop the
+            // keyboard straight away.
+            if (statusLabel) statusLabel->setText("No servers found");
+            m_servers.clear();
+            showServerSelectionContent();
+            onEnterAddressManually();
         }
     } else {
         if (statusLabel) statusLabel->setText("Login failed - check credentials");
@@ -1361,36 +1345,29 @@ void LoginActivity::checkPinStatus() {
         if (statusLabel) statusLabel->setText("PIN authenticated! Finding servers...");
         if (expiryLabel) expiryLabel->setText("");
 
-        // If server URL provided, use it; otherwise auto-detect
-        if (!m_serverUrl.empty()) {
-            if (client.connectToServer(m_serverUrl)) {
-                Application::getInstance().saveSettings();
-                if (statusLabel) statusLabel->setText("Connected!");
-                brls::sync([]() {
-                    Application::getInstance().pushMainActivity();
-                    Application::getInstance().showHomeUserPicker(nullptr);
-                });
+        // Auto-detect the account's servers, then let the picker take over.
+        std::vector<PlexServer> servers;
+        if (client.fetchServers(servers) && !servers.empty()) {
+            if (servers.size() == 1) {
+                // Only one server, connect directly. No list to fall back
+                // to, so the connecting state's Cancel closes the modal
+                // rather than returning to a picker.
+                m_returnToList = false;
+                connectToSelectedServer(servers[0]);
             } else {
-                if (statusLabel) statusLabel->setText("Failed to connect to server");
+                // Multiple servers, show selection dialog
+                if (statusLabel) statusLabel->setText("Select a server:");
+                showServerSelectionDialog(servers);
             }
         } else {
-            // Auto-detect servers
-            std::vector<PlexServer> servers;
-            if (client.fetchServers(servers) && !servers.empty()) {
-                if (servers.size() == 1) {
-                    // Only one server, connect directly. No list to fall
-                    // back to, so the connecting state's Cancel closes the
-                    // modal rather than returning to a picker.
-                    m_returnToList = false;
-                    connectToSelectedServer(servers[0]);
-                } else {
-                    // Multiple servers, show selection dialog
-                    if (statusLabel) statusLabel->setText("Select a server:");
-                    showServerSelectionDialog(servers);
-                }
-            } else {
-                if (statusLabel) statusLabel->setText("No servers found - enter URL manually");
-            }
+            // No servers auto-detected. The picker dialog now hosts manual
+            // server entry (the login page no longer has a Server URL
+            // field), so float it as the manual-entry surface and pop the
+            // keyboard straight away.
+            if (statusLabel) statusLabel->setText("No servers found");
+            m_servers.clear();
+            showServerSelectionContent();
+            onEnterAddressManually();
         }
     } else if (m_pinAuth.expired || m_pinCheckTimer > 150) {
         // PIN expired (5 minutes). Status dot turns red, countdown

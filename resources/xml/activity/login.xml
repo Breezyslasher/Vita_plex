@@ -8,10 +8,12 @@
   sub-view that the user opts into via the "Use credentials" button.
 
   Existing IDs preserved where the cpp still binds them:
-    login/server_label, login/username_label, login/password_label
-        — moved INSIDE the credentials sub-view (the field-row look
-          comes from the surrounding rounded Box; the Label itself is
-          still the click target for the existing IME handlers).
+    login/username_label, login/password_label
+        — inside the credentials sub-view (the field-row look comes from
+          the surrounding rounded Box; the Label itself is still the click
+          target for the existing IME handlers). The Server URL field was
+          removed — a server address is entered through the picker's
+          "Enter address manually" affordance instead.
     login/login_button   — Sign-in button inside the credentials view.
     login/pin_button     — repurposed as the "Get a new code" button
                             (hidden until the PIN expires).
@@ -221,34 +223,6 @@
                     fontSize="13"
                     textColor="#A3A3A3"
                     marginBottom="20"/>
-
-                <!-- Server field. -->
-                <brls:Box axis="column" marginBottom="14">
-                    <brls:Label
-                        text="SERVER URL"
-                        fontSize="11"
-                        textColor="#7C7C84"
-                        marginBottom="6"/>
-                    <brls:Box
-                        axis="row"
-                        alignItems="center"
-                        backgroundColor="#34343e"
-                        borderColor="#43434a"
-                        borderThickness="1"
-                        cornerRadius="12"
-                        paddingLeft="14"
-                        paddingRight="14"
-                        paddingTop="10"
-                        paddingBottom="10">
-                        <brls:Label
-                            id="login/server_label"
-                            text="Not set"
-                            fontSize="15"
-                            textColor="#A3A3A3"
-                            focusable="true"
-                            grow="1.0"/>
-                    </brls:Box>
-                </brls:Box>
 
                 <!-- Username field. -->
                 <brls:Box axis="column" marginBottom="14">
