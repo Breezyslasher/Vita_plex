@@ -14,8 +14,16 @@
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
+#include "activity/player_activity.hpp"
+#include "utils/http_client.hpp"
 #include "platform/platform.hpp"
 #include <set>
+#include <chrono>
+
+#ifdef __vita__
+#include <psp2/net/netctl.h>
+#include <psp2/net/net.h>
+#endif
 
 namespace vitaplex {
 
@@ -594,6 +602,19 @@ brls::Box* SettingsTab::createUISection() {
     });
     box->addView(m_debugLogToggle);
 
+    // MPV stats overlay toggle — surfaces codec, hwdec, FPS, frame
+    // drops, and cache state on top of the video so playback issues
+    // can be diagnosed without an adb cable. Lives in Interface
+    // alongside "Debug Logging" — both are developer-focused toggles.
+    // See PlayerActivity::updateMpvStatsOverlay().
+    auto* mpvStatsToggle = new brls::BooleanCell();
+    mpvStatsToggle->init("MPV Stats Overlay", settings.showMpvStats,
+                         [&settings](bool value) {
+        settings.showMpvStats = value;
+        Application::getInstance().saveSettings();
+    });
+    box->addView(mpvStatsToggle);
+
     return box;
 }
 
@@ -834,6 +855,18 @@ brls::Box* SettingsTab::createPlaybackSection() {
     skipInfoLabel->setMarginTop(8);
     box->addView(skipInfoLabel);
 
+    // Local playback smoke test — opens the player on a known-good
+    // file under ux0:data/VitaPlex/. Was previously under the
+    // (now-removed) Debug section.
+    auto* testLocalCell = new brls::DetailCell();
+    testLocalCell->setText("Test Local Playback");
+    testLocalCell->setDetailText("ux0:data/VitaPlex/test.mp4 or test.mp3");
+    testLocalCell->registerClickAction([this](brls::View*) {
+        onTestLocalPlayback();
+        return true;
+    });
+    box->addView(testLocalCell);
+
     return box;
 }
 
@@ -925,6 +958,18 @@ brls::Box* SettingsTab::createNetworkSection() {
             onConnectionTimeoutChanged(index);
         });
     box->addView(m_connectionTimeoutSelector);
+
+    // Network diagnostic — opens a dialog showing WiFi info, internet
+    // reachability, and Plex server latency. Was previously under the
+    // (now-removed) Debug section.
+    auto* networkTestCell = new brls::DetailCell();
+    networkTestCell->setText("Network Test");
+    networkTestCell->setDetailText("View WiFi info and test Plex connection");
+    networkTestCell->registerClickAction([this](brls::View*) {
+        onNetworkTest();
+        return true;
+    });
+    box->addView(networkTestCell);
 
     auto* infoLabel = new brls::Label();
     infoLabel->setText("Raise the timeout if you're on a slow or unstable link.");
@@ -1602,6 +1647,211 @@ void SettingsTab::onManageSidebarOrder() {
     });
 
     dialog->open();
+}
+
+
+void SettingsTab::onNetworkTest() {
+    // Show a toast while tests run
+    brls::Application::notify("Running network test...");
+
+    // Run the network tests on a detached thread to avoid blocking the
+    // UI. Goes through platform::launchThread() rather than std::thread
+    // so the Switch newlib std::thread shim doesn't ship a thread with
+    // an unregistered stack region and zeroed TLS (caught a real crash
+    // on hbloader — Atmosphère Instruction Abort at a page-aligned PC).
+    platform::launchThread([this]() {
+        // ── 1. WiFi Check ──
+        std::string ipAddress = "-";
+        std::string dnsInfo = "-";
+        std::string signalStr = "-";
+        std::string ssid = "-";
+        bool wifiConnected = false;
+
+#ifdef __vita__
+        SceNetCtlInfo info;
+
+        int ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_IP_ADDRESS, &info);
+        if (ret >= 0) {
+            ipAddress = std::string(info.ip_address);
+            wifiConnected = true;
+        }
+
+        ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_SSID, &info);
+        if (ret >= 0) {
+            ssid = std::string(info.ssid);
+        }
+
+        ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_RSSI_PERCENTAGE, &info);
+        if (ret >= 0) {
+            signalStr = std::to_string(info.rssi_percentage) + "%";
+        }
+
+        ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_PRIMARY_DNS, &info);
+        if (ret >= 0) {
+            dnsInfo = std::string(info.primary_dns);
+            ret = sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_SECONDARY_DNS, &info);
+            if (ret >= 0) {
+                dnsInfo += " / " + std::string(info.secondary_dns);
+            }
+        }
+#else
+        ipAddress = "127.0.0.1";
+        dnsInfo = "8.8.8.8";
+        signalStr = "100%";
+        ssid = "Desktop";
+        wifiConnected = true;
+#endif
+
+        // ── 2. Internet Check (latency) ──
+        std::string internetStatus = "Skipped (no WiFi)";
+        if (wifiConnected) {
+            HttpClient netClient;
+            netClient.setTimeout(10);
+
+            auto start = std::chrono::steady_clock::now();
+            std::string response;
+            bool ok = netClient.get("http://connectivitycheck.gstatic.com/generate_204", response);
+            auto end = std::chrono::steady_clock::now();
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+            if (ok) {
+                internetStatus = "Reachable (" + std::to_string(ms) + "ms)";
+            } else {
+                internetStatus = "Unreachable (" + std::to_string(ms) + "ms)";
+            }
+        }
+
+        // ── 3. Plex Server Check (latency) ──
+        Application& app = Application::getInstance();
+        std::string serverUrl = app.getServerUrl();
+        std::string plexStatus;
+        std::string plexLatency = "-";
+
+        if (serverUrl.empty()) {
+            plexStatus = "Not configured";
+        } else if (!wifiConnected) {
+            plexStatus = "Skipped (no WiFi)";
+        } else {
+            HttpClient plexClient;
+            plexClient.setTimeout(10);
+            plexClient.setDefaultHeader("X-Plex-Token", app.getAuthToken());
+            plexClient.setDefaultHeader("Accept", "application/json");
+
+            auto start = std::chrono::steady_clock::now();
+            std::string response;
+            bool ok = plexClient.get(serverUrl + "/identity", response);
+            auto end = std::chrono::steady_clock::now();
+            auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+
+            plexLatency = std::to_string(ms) + "ms";
+            if (ok) {
+                plexStatus = "Connected (" + std::to_string(ms) + "ms)";
+            } else {
+                plexStatus = "Failed (" + std::to_string(ms) + "ms)";
+            }
+        }
+
+        // ── Build dialog on main thread ──
+        // Capture results by value for the lambda
+        brls::sync([=]() {
+            brls::Box* content = new brls::Box();
+            content->setAxis(brls::Axis::COLUMN);
+            content->setWidth(700);
+            content->setHeight(420);
+            content->setPadding(25);
+
+            auto* titleLabel = new brls::Label();
+            titleLabel->setText("Network Test Results");
+            titleLabel->setFontSize(22);
+            titleLabel->setMarginBottom(15);
+            content->addView(titleLabel);
+
+            // Helper to create info rows (item #11 style)
+            auto addRow = [&content](const std::string& label, const std::string& value) {
+                auto* row = new brls::Box();
+                row->setAxis(brls::Axis::ROW);
+                row->setMarginBottom(8);
+                auto* lblA = new brls::Label();
+                lblA->setText(label);
+                lblA->setFontSize(16);
+                lblA->setWidth(220);
+                row->addView(lblA);
+                auto* lblB = new brls::Label();
+                lblB->setText(value);
+                lblB->setFontSize(16);
+                row->addView(lblB);
+                content->addView(row);
+            };
+
+            // Helper for section headers
+            auto addHeader = [&content](const std::string& text) {
+                auto* lbl = new brls::Label();
+                lbl->setText(text);
+                lbl->setFontSize(16);
+                lbl->setMarginBottom(6);
+                lbl->setMarginTop(4);
+                content->addView(lbl);
+            };
+
+            // WiFi section
+            addHeader("-- WiFi --");
+            addRow("Status:", wifiConnected ? "Connected" : "Not Connected");
+            addRow("Network:", ssid);
+            addRow("IP Address:", ipAddress);
+            addRow("DNS:", dnsInfo);
+            addRow("Signal:", signalStr);
+
+            // Internet section
+            addHeader("-- Internet --");
+            addRow("Connectivity:", internetStatus);
+
+            // Plex server section
+            addHeader("-- Plex Server --");
+            addRow("Server:", serverUrl.empty() ? "Not configured" : serverUrl);
+            addRow("Connection:", plexStatus);
+
+            auto* dialog = new brls::Dialog(content);
+            dialog->addButton("Close", []() {});
+            dialog->open();
+        });
+    });
+}
+
+void SettingsTab::onTestLocalPlayback() {
+    brls::Logger::info("SettingsTab: Testing local playback...");
+
+    // Check for test files
+    const std::string basePath = "ux0:data/VitaPlex/";
+    std::string testFile;
+
+    // Try mp4 first (to test video), then audio files
+    std::vector<std::string> testFiles = {
+        basePath + "test.mp4",
+        basePath + "test.mp3",
+        basePath + "test.ogg",
+        basePath + "test.wav"
+    };
+
+    for (const auto& file : testFiles) {
+        FILE* f = fopen(file.c_str(), "rb");
+        if (f) {
+            fclose(f);
+            testFile = file;
+            brls::Logger::info("SettingsTab: Found test file: {}", testFile);
+            break;
+        }
+    }
+
+    if (testFile.empty()) {
+        brls::Application::notify("No test file found in ux0:data/VitaPlex/");
+        brls::Logger::error("SettingsTab: No test file found");
+        return;
+    }
+
+    // Push player activity with the test file (this shows the video view properly)
+    brls::Logger::info("SettingsTab: Pushing player activity for: {}", testFile);
+    PlayerActivity* activity = PlayerActivity::createForDirectFile(testFile);
+    brls::Application::pushActivity(activity);
 }
 
 } // namespace vitaplex
