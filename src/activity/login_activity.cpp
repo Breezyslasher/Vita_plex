@@ -295,9 +295,12 @@ struct ConnectingUI {
     std::atomic<bool> alive { true };
     std::vector<ProbeIcon*>   icons;
     std::vector<brls::Label*> statuses;
-    brls::Label* counter = nullptr;
-    GradientBar* bar     = nullptr;
-    int total            = 0;
+    brls::Label* counter         = nullptr;
+    GradientBar* bar             = nullptr;
+    brls::ScrollingFrame* scroll = nullptr;  // wraps the probe list when long
+    float rowStride              = 40.0f;    // approx per-row height incl. margin
+    float viewH                  = 0.0f;     // visible height of the probe frame
+    int total                    = 0;
 };
 
 // Truncate to a character budget with a trailing ellipsis (keeps long
@@ -928,7 +931,6 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
     auto* probes = new brls::Box();
     probes->setAxis(brls::Axis::COLUMN);
     probes->setWidth(innerW);
-    probes->setMarginTop(18);
     for (size_t i = 0; i < totalConnections; i++) {
         auto* row = new brls::Box();
         row->setAxis(brls::Axis::ROW);
@@ -957,7 +959,26 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
 
         probes->addView(row);
     }
-    card->addView(probes);
+
+    // A server can advertise many connection URIs (Plex commonly exposes
+    // 10+ across local / plex.direct / relay), which would push the dialog
+    // off-screen. Wrap the list in a vertical ScrollingFrame capped to a
+    // fraction of the viewport: short lists fit exactly, long ones scroll
+    // (touch / wheel) and auto-follow the live frontier (see setProbe).
+    const float rowStride  = 40.0f;
+    const float maxVisible = std::max(3.0f,
+        std::floor(brls::Application::contentHeight * 0.42f / rowStride));
+    const float probesH    = std::min(static_cast<float>(totalConnections), maxVisible) * rowStride;
+
+    auto* scroll = new brls::ScrollingFrame();
+    scroll->setWidth(innerW);
+    scroll->setHeight(probesH);
+    scroll->setMarginTop(18);
+    scroll->setContentView(probes);
+    ui->scroll    = scroll;
+    ui->rowStride = rowStride;
+    ui->viewH     = probesH;
+    card->addView(scroll);
 
     // Cancel — focusable Box so it gets the native cyan ring.
     auto* cancel = new brls::Box();
@@ -1007,6 +1028,16 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
             if (i < ui->statuses.size() && ui->statuses[i]) {
                 ui->statuses[i]->setText(text);
                 ui->statuses[i]->setTextColor(color);
+            }
+            // Follow the active / just-resolved row downward so a long list
+            // keeps the live frontier (and the eventual winner) on screen even
+            // though only Cancel is focusable. Monotonic-down: never yanks back
+            // up, so concurrent updates don't make it jitter.
+            if (ui->scroll) {
+                const float target = std::max(0.0f,
+                    static_cast<float>(i + 1) * ui->rowStride - ui->viewH);
+                if (target > ui->scroll->getContentOffsetY() + 1.0f)
+                    ui->scroll->setContentOffsetY(target, true);
             }
         });
     };
