@@ -16,6 +16,7 @@
 #include "app/downloads_manager.hpp"
 #include "activity/player_activity.hpp"
 #include "utils/http_client.hpp"
+#include "utils/http_cache.hpp"
 #include "platform/platform.hpp"
 #include "platform/paths.hpp"
 #include <set>
@@ -1024,6 +1025,60 @@ brls::Box* SettingsTab::createNetworkSection() {
     infoLabel->setMarginTop(8);
     box->addView(infoLabel);
 
+    // HTTP cache controls. Lifetime is a single global TTL applied to
+    // every cached endpoint (library sections, Home hubs, Live TV
+    // channels). "Off" disables both reads and writes so the user gets
+    // fully live data; the other presets cover from "snappy nav" (15
+    // min) to "set and forget" (1 week).
+    static const std::vector<int> kCacheMinutes = { 0, 15, 60, 1440, 10080 };
+    static const std::vector<std::string> kCacheLabels = {
+        "Off", "15 minutes", "1 hour", "1 day", "1 week"
+    };
+    int cacheIdx = 2;  // default 1 hour
+    for (size_t i = 0; i < kCacheMinutes.size(); i++) {
+        if (kCacheMinutes[i] == settings.cacheLifetimeMinutes) {
+            cacheIdx = (int)i;
+            break;
+        }
+    }
+    m_cacheLifetimeSelector = new brls::SelectorCell();
+    m_cacheLifetimeSelector->init("Cache Lifetime", kCacheLabels, cacheIdx,
+        [](int idx) {
+            AppSettings& s = Application::getInstance().getSettings();
+            s.cacheLifetimeMinutes = kCacheMinutes[idx];
+            Application::getInstance().saveSettings();
+        });
+    box->addView(m_cacheLifetimeSelector);
+
+    // Clear cache button. Detail text shows the live byte count so the
+    // user can see whether the cache is actually doing anything.
+    m_clearCacheCell = new brls::DetailCell();
+    m_clearCacheCell->setText("Clear Cache");
+    {
+        size_t bytes = HttpCache::totalBytes();
+        size_t entries = HttpCache::entryCount();
+        if (entries == 0) {
+            m_clearCacheCell->setDetailText("Empty");
+        } else {
+            char buf[64];
+            if (bytes >= 1024 * 1024) {
+                snprintf(buf, sizeof(buf), "%zu entries, %.1f MB",
+                         entries, bytes / (1024.0 * 1024.0));
+            } else {
+                snprintf(buf, sizeof(buf), "%zu entries, %zu KB",
+                         entries, (bytes + 1023) / 1024);
+            }
+            m_clearCacheCell->setDetailText(buf);
+        }
+    }
+    m_clearCacheCell->registerClickAction([this](brls::View*) {
+        HttpCache::clear();
+        if (m_clearCacheCell) m_clearCacheCell->setDetailText("Empty");
+        brls::Application::notify("Cache cleared");
+        return true;
+    });
+    box->addView(m_clearCacheCell);
+
     return box;
 }
 
@@ -1200,6 +1255,10 @@ void SettingsTab::onLogout() {
     dialog->addButton("Logout", [this]() {
         // Clear credentials, including the Plex Home master token and
         // the current-user pointer so the next login starts clean.
+        // Also wipe the HTTP cache — the cached bodies came back with
+        // the soon-to-be-revoked token in their URLs and would just be
+        // dead weight for the next sign-in.
+        HttpCache::clear();
         PlexClient::getInstance().logout();
         Application::getInstance().setAuthToken("");
         Application::getInstance().setMasterAuthToken("");

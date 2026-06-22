@@ -5,6 +5,7 @@
 #include "app/plex_client.hpp"
 #include "app/application.hpp"
 #include "utils/http_client.hpp"
+#include "utils/http_cache.hpp"
 #include "platform/platform.hpp"
 
 #include <borealis.hpp>
@@ -745,46 +746,57 @@ bool PlexClient::fetchLibrarySections(std::vector<LibrarySection>& sections) {
     brls::Logger::debug("fetchLibrarySections: serverUrl={}, hasToken={}",
                         m_serverUrl, !m_authToken.empty());
 
-    HttpClient client;
     std::string url = buildApiUrl("/library/sections");
     brls::Logger::debug("Fetching: {}", url);
 
-    // Request JSON format (Plex returns XML by default)
-    HttpRequest req;
-    req.url = url;
-    req.method = "GET";
-    req.headers["Accept"] = "application/json";
-    HttpResponse resp = client.request(req);
-    brls::Logger::debug("Response: {} - {} bytes", resp.statusCode, resp.body.length());
+    // Cache check — library sections rarely change. Skipping the
+    // network entirely on a hit cuts a 100-500ms round-trip every time
+    // a tab that needs the section list is opened.
+    const int ttlSec = Application::getInstance().getSettings().cacheLifetimeMinutes * 60;
+    std::string body;
+    bool fromCache = HttpCache::get(url, ttlSec, body);
 
-    if (resp.statusCode != 200) {
-        brls::Logger::error("Failed to fetch sections: {}", resp.statusCode);
-        if (isAuthError(resp.statusCode)) {
-            handleUnauthorized();
+    if (!fromCache) {
+        HttpClient client;
+        // Request JSON format (Plex returns XML by default)
+        HttpRequest req;
+        req.url = url;
+        req.method = "GET";
+        req.headers["Accept"] = "application/json";
+        HttpResponse resp = client.request(req);
+        brls::Logger::debug("Response: {} - {} bytes", resp.statusCode, resp.body.length());
+
+        if (resp.statusCode != 200) {
+            brls::Logger::error("Failed to fetch sections: {}", resp.statusCode);
+            if (isAuthError(resp.statusCode)) {
+                handleUnauthorized();
+            }
+            if (!resp.body.empty()) {
+                brls::Logger::debug("Body: {}", redactBodyForLog(resp.body.substr(0, 500)));
+            }
+            return false;
         }
-        if (!resp.body.empty()) {
-            brls::Logger::debug("Body: {}", redactBodyForLog(resp.body.substr(0, 500)));
-        }
-        return false;
+        body = resp.body;
+        HttpCache::put(url, body, ttlSec);
     }
 
     // Log first part of response for debugging
-    brls::Logger::debug("Response body: {}", redactBodyForLog(resp.body.substr(0, std::min((size_t)500, resp.body.length()))));
+    brls::Logger::debug("Response body: {}", redactBodyForLog(body.substr(0, std::min((size_t)500, body.length()))));
 
     sections.clear();
 
     // Find all Directory entries - in JSON arrays
     size_t pos = 0;
-    while ((pos = resp.body.find("\"key\"", pos)) != std::string::npos) {
+    while ((pos = body.find("\"key\"", pos)) != std::string::npos) {
         // Go back to find the start of this object
-        size_t objStart = resp.body.rfind('{', pos);
+        size_t objStart = body.rfind('{', pos);
         if (objStart == std::string::npos) {
             pos++;
             continue;
         }
 
         // Check if we've already processed this object
-        std::string beforeObj = resp.body.substr(objStart, pos - objStart);
+        std::string beforeObj = body.substr(objStart, pos - objStart);
         if (beforeObj.find("\"key\"") != std::string::npos) {
             pos++;
             continue;
@@ -793,13 +805,13 @@ bool PlexClient::fetchLibrarySections(std::vector<LibrarySection>& sections) {
         // Find end of object
         int braceCount = 1;
         size_t objEnd = objStart + 1;
-        while (braceCount > 0 && objEnd < resp.body.length()) {
-            if (resp.body[objEnd] == '{') braceCount++;
-            else if (resp.body[objEnd] == '}') braceCount--;
+        while (braceCount > 0 && objEnd < body.length()) {
+            if (body[objEnd] == '{') braceCount++;
+            else if (body[objEnd] == '}') braceCount--;
             objEnd++;
         }
 
-        std::string obj = resp.body.substr(objStart, objEnd - objStart);
+        std::string obj = body.substr(objStart, objEnd - objStart);
 
         // Check if this looks like a library section (has title and type)
         if (obj.find("\"title\"") != std::string::npos &&
@@ -1411,31 +1423,42 @@ bool PlexClient::fetchArtistHubs(const std::string& ratingKey, std::vector<Hub>&
 bool PlexClient::fetchHubs(std::vector<Hub>& hubs) {
     brls::Logger::debug("fetchHubs: serverUrl={}", m_serverUrl);
 
-    HttpClient client;
     std::string url = buildApiUrl("/hubs");
 
-    // Request JSON format
-    HttpRequest req;
-    req.url = url;
-    req.method = "GET";
-    req.headers["Accept"] = "application/json";
-    HttpResponse resp = client.request(req);
+    // Cache the Home hub bundle — biggest single response on the Home
+    // tab, fetched every time it gets focus. Stale by at most one TTL
+    // tick after the user adds new content; user can Clear Cache in
+    // Settings if they want the new items immediately.
+    const int ttlSec = Application::getInstance().getSettings().cacheLifetimeMinutes * 60;
+    std::string body;
+    bool fromCache = HttpCache::get(url, ttlSec, body);
 
-    brls::Logger::debug("Hubs response: {} - {} bytes", resp.statusCode, resp.body.length());
+    if (!fromCache) {
+        HttpClient client;
+        // Request JSON format
+        HttpRequest req;
+        req.url = url;
+        req.method = "GET";
+        req.headers["Accept"] = "application/json";
+        HttpResponse resp = client.request(req);
+        brls::Logger::debug("Hubs response: {} - {} bytes", resp.statusCode, resp.body.length());
 
-    if (resp.statusCode != 200) {
-        brls::Logger::error("Failed to fetch hubs: {}", resp.statusCode);
-        if (isAuthError(resp.statusCode)) handleUnauthorized();
-        return false;
+        if (resp.statusCode != 200) {
+            brls::Logger::error("Failed to fetch hubs: {}", resp.statusCode);
+            if (isAuthError(resp.statusCode)) handleUnauthorized();
+            return false;
+        }
+        body = resp.body;
+        HttpCache::put(url, body, ttlSec);
     }
 
     hubs.clear();
 
     // Parse hubs - look for objects with "hubIdentifier" field
     size_t pos = 0;
-    while ((pos = resp.body.find("\"hubIdentifier\"", pos)) != std::string::npos) {
+    while ((pos = body.find("\"hubIdentifier\"", pos)) != std::string::npos) {
         // Go back to find start of this hub object
-        size_t hubStart = resp.body.rfind('{', pos);
+        size_t hubStart = body.rfind('{', pos);
         if (hubStart == std::string::npos) {
             pos++;
             continue;
@@ -1444,13 +1467,13 @@ bool PlexClient::fetchHubs(std::vector<Hub>& hubs) {
         // Find end of hub object
         int braceCount = 1;
         size_t hubEnd = hubStart + 1;
-        while (braceCount > 0 && hubEnd < resp.body.length()) {
-            if (resp.body[hubEnd] == '{') braceCount++;
-            else if (resp.body[hubEnd] == '}') braceCount--;
+        while (braceCount > 0 && hubEnd < body.length()) {
+            if (body[hubEnd] == '{') braceCount++;
+            else if (body[hubEnd] == '}') braceCount--;
             hubEnd++;
         }
 
-        std::string hubObj = resp.body.substr(hubStart, hubEnd - hubStart);
+        std::string hubObj = body.substr(hubStart, hubEnd - hubStart);
 
         Hub hub;
         hub.title = extractJsonValue(hubObj, "title");
@@ -2950,7 +2973,27 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
         req.url = url;
         brls::Logger::debug("fetchLiveTVChannels: GET /livetv/epg/channels?lineup={}", m_lineupUri);
 
-        HttpResponse resp = client.request(req);
+        // Cache the channels list — call signs, channel numbers, and
+        // station logos almost never change. This is the body the user
+        // specifically called out as worth caching ("EPG channel number
+        // and logo stay relatively consistent"). Programs themselves
+        // come from fetchEPGGrid below and aren't cached.
+        const int ttlSec = Application::getInstance().getSettings().cacheLifetimeMinutes * 60;
+        std::string respBody;
+        bool fromCache = HttpCache::get(url, ttlSec, respBody);
+        int statusCode = 200;
+        if (!fromCache) {
+            HttpResponse resp = client.request(req);
+            statusCode = resp.statusCode;
+            respBody = std::move(resp.body);
+            if (statusCode == 200 && !respBody.empty()) {
+                HttpCache::put(url, respBody, ttlSec);
+            }
+        }
+        // Shim — the rest of this block was written against `resp.body`
+        // and `resp.statusCode`. Re-expose them as a local without
+        // touching the parser.
+        struct { int statusCode; std::string body; } resp{statusCode, std::move(respBody)};
         if (resp.statusCode == 200 && !resp.body.empty()) {
             brls::Logger::debug("fetchLiveTVChannels: EPG channels response ({} bytes, first 500): {}",
                                 resp.body.length(), resp.body.substr(0, 500));

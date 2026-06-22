@@ -159,6 +159,10 @@ private:
     // Network section (split out of Transcoding so it gets its own rail
     // row; the cell + handler are unchanged).
     brls::SelectorCell* m_connectionTimeoutSelector = nullptr;
+    // HTTP response cache controls live in Network too — keeps all the
+    // server-traffic settings in one place.
+    brls::SelectorCell* m_cacheLifetimeSelector = nullptr;
+    brls::DetailCell*   m_clearCacheCell        = nullptr;
 
     // Downloads section
     brls::BooleanCell* m_deleteAfterWatchToggle = nullptr;
