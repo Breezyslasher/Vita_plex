@@ -19,10 +19,29 @@
 #include "platform/platform.hpp"
 #include <set>
 #include <chrono>
+#include <fstream>
 
 #ifdef __vita__
 #include <psp2/net/netctl.h>
 #include <psp2/net/net.h>
+#elif defined(_WIN32)
+// Windows IP helper API for adapter enumeration + DNS info.
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "ws2_32.lib")
+#else
+// POSIX path (Linux / macOS / Android / iOS / tvOS / Switch via libnx /
+// PS4). getifaddrs gives us per-interface IPv4; /etc/resolv.conf gives
+// the active resolvers. SSID/signal stay blank because there's no
+// portable way to read them without nl80211 / CoreWLAN / NetworkManager
+// bindings.
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #endif
 
 namespace vitaplex {
@@ -1694,12 +1713,110 @@ void SettingsTab::onNetworkTest() {
                 dnsInfo += " / " + std::string(info.secondary_dns);
             }
         }
+#elif defined(_WIN32)
+        // Adapter enumeration — pick the first up, non-loopback IPv4
+        // address. GetAdaptersAddresses needs a sizing pass first
+        // (NO_OVERFLOW returns the required buffer size in outLen).
+        ULONG outLen = 0;
+        GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST,
+                             nullptr, nullptr, &outLen);
+        if (outLen > 0) {
+            std::vector<unsigned char> buf(outLen);
+            auto* head = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data());
+            if (GetAdaptersAddresses(AF_INET,
+                                     GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST,
+                                     nullptr, head, &outLen) == NO_ERROR) {
+                for (auto* a = head; a; a = a->Next) {
+                    if (a->OperStatus != IfOperStatusUp) continue;
+                    if (a->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+                    for (auto* u = a->FirstUnicastAddress; u; u = u->Next) {
+                        auto* sa = u->Address.lpSockaddr;
+                        if (!sa || sa->sa_family != AF_INET) continue;
+                        char addrBuf[INET_ADDRSTRLEN] = {0};
+                        auto* sin = reinterpret_cast<sockaddr_in*>(sa);
+                        if (InetNtopA(AF_INET, &sin->sin_addr, addrBuf, sizeof(addrBuf))) {
+                            ipAddress = addrBuf;
+                            // a->FriendlyName is UTF-16; convert lossily.
+                            if (a->FriendlyName) {
+                                char nameBuf[128] = {0};
+                                WideCharToMultiByte(CP_UTF8, 0, a->FriendlyName, -1,
+                                                    nameBuf, sizeof(nameBuf), nullptr, nullptr);
+                                ssid = nameBuf;
+                            }
+                            wifiConnected = true;
+                        }
+                        if (wifiConnected) break;
+                    }
+                    if (wifiConnected) break;
+                }
+            }
+        }
+        // DNS — GetNetworkParams returns the OS-wide resolver list.
+        ULONG dnsLen = 0;
+        GetNetworkParams(nullptr, &dnsLen);
+        if (dnsLen > 0) {
+            std::vector<unsigned char> dnsBuf(dnsLen);
+            auto* params = reinterpret_cast<FIXED_INFO*>(dnsBuf.data());
+            if (GetNetworkParams(params, &dnsLen) == NO_ERROR) {
+                std::string out;
+                for (auto* s = &params->DnsServerList; s; s = s->Next) {
+                    if (s->IpAddress.String[0] == '\0') continue;
+                    if (!out.empty()) out += " / ";
+                    out += s->IpAddress.String;
+                }
+                if (!out.empty()) dnsInfo = out;
+            }
+        }
+        // No portable wireless RSSI without WlanGetNetworkBssList; leave
+        // signal blank so the dialog renders it as "-" rather than lying.
 #else
-        ipAddress = "127.0.0.1";
-        dnsInfo = "8.8.8.8";
-        signalStr = "100%";
-        ssid = "Desktop";
-        wifiConnected = true;
+        // POSIX path. Walk the interface list and grab the first up,
+        // non-loopback IPv4 address. ssid is repurposed as the
+        // interface name so the user can see whether it picked wlan0,
+        // en0, eth0, etc.
+        struct ifaddrs* ifList = nullptr;
+        if (getifaddrs(&ifList) == 0) {
+            for (auto* ifa = ifList; ifa; ifa = ifa->ifa_next) {
+                if (!ifa->ifa_addr) continue;
+                if (ifa->ifa_addr->sa_family != AF_INET) continue;
+                if (ifa->ifa_flags & IFF_LOOPBACK) continue;
+                if (!(ifa->ifa_flags & IFF_UP)) continue;
+                auto* sin = reinterpret_cast<struct sockaddr_in*>(ifa->ifa_addr);
+                char addrBuf[INET_ADDRSTRLEN] = {0};
+                if (inet_ntop(AF_INET, &sin->sin_addr, addrBuf, sizeof(addrBuf))) {
+                    ipAddress = addrBuf;
+                    if (ifa->ifa_name) ssid = ifa->ifa_name;
+                    wifiConnected = true;
+                    break;
+                }
+            }
+            freeifaddrs(ifList);
+        }
+        // /etc/resolv.conf is the lowest-common-denominator DNS source
+        // on every POSIX target we ship — works on Linux, macOS,
+        // Android, iOS / tvOS, and Switch's newlib. Just grab the
+        // first one or two "nameserver" lines.
+        std::ifstream resolv("/etc/resolv.conf");
+        if (resolv.is_open()) {
+            std::string line, primary, secondary;
+            while (std::getline(resolv, line)) {
+                if (line.compare(0, 11, "nameserver ") != 0) continue;
+                std::string addr = line.substr(11);
+                while (!addr.empty() &&
+                       (addr.back() == ' ' || addr.back() == '\t' ||
+                        addr.back() == '\r' || addr.back() == '\n')) {
+                    addr.pop_back();
+                }
+                if (addr.empty()) continue;
+                if (primary.empty()) primary = addr;
+                else if (secondary.empty()) { secondary = addr; break; }
+            }
+            if (!primary.empty()) {
+                dnsInfo = primary;
+                if (!secondary.empty()) dnsInfo += " / " + secondary;
+            }
+        }
+        // No portable RSSI / SSID query — leave signal as "-".
 #endif
 
         // ── 2. Internet Check (latency) ──
@@ -1793,13 +1910,18 @@ void SettingsTab::onNetworkTest() {
                 content->addView(lbl);
             };
 
-            // WiFi section
-            addHeader("-- WiFi --");
+            // Connection section. Header says "Connection" (not "WiFi")
+            // because most non-Vita platforms may be on Ethernet.
+            // "Interface" replaces "Network" so the row makes sense
+            // whether the value is an SSID (Vita) or an adapter name
+            // (eth0 / en0 / "Wi-Fi 2"). Signal only shows when the
+            // platform actually reported one — POSIX/Win don't.
+            addHeader("-- Connection --");
             addRow("Status:", wifiConnected ? "Connected" : "Not Connected");
-            addRow("Network:", ssid);
+            addRow("Interface:", ssid);
             addRow("IP Address:", ipAddress);
             addRow("DNS:", dnsInfo);
-            addRow("Signal:", signalStr);
+            if (signalStr != "-") addRow("Signal:", signalStr);
 
             // Internet section
             addHeader("-- Internet --");
