@@ -263,20 +263,24 @@ void LoginActivity::updateExpiryCountdown() {
 
 namespace {
 
-// Gold "eyebrow" row at the top of the dialog — small glyph + caps
-// label in the brand colour.
+// Gold "eyebrow" row at the top of the dialog — gold MDI server
+// glyph + caps label in the brand colour. The icon is the bundled
+// resources/icons/server.png (rasterised from MDI /server with a gold
+// fill at build time).
 brls::Box* makeServerEyebrow() {
     auto* row = new brls::Box();
     row->setAxis(brls::Axis::ROW);
     row->setAlignItems(brls::AlignItems::CENTER);
     row->setMarginBottom(8);
-    auto* dot = new brls::Box();
-    dot->setWidth(8);
-    dot->setHeight(8);
-    dot->setCornerRadius(4);
-    dot->setBackgroundColor(nvgRGB(229, 160, 13));
-    dot->setMarginRight(8);
-    row->addView(dot);
+
+    auto* icon = new brls::Image();
+    icon->setWidth(18);
+    icon->setHeight(18);
+    icon->setScalingType(brls::ImageScalingType::FIT);
+    icon->setImageFromRes("icons/server.png");
+    icon->setMarginRight(10);
+    row->addView(icon);
+
     auto* lbl = new brls::Label();
     lbl->setText("CHOOSE A SERVER");
     lbl->setFontSize(11);
