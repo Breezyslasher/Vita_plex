@@ -133,7 +133,9 @@ namespace tok {
     static inline NVGcolor hairline()     { return nvgRGB(67, 67, 74); }
     static inline NVGcolor hero()         { return nvgRGB(38, 42, 48); }
     static inline NVGcolor cellUpcoming() { return nvgRGB(60, 60, 72); }
-    static inline NVGcolor cellNow()      { return nvgRGB(47, 68, 82); }
+    // "On now" cell fill — warm tint that reads as Plex-yellow-adjacent
+    // instead of the old teal-blue (47,68,82) which fought the accent.
+    static inline NVGcolor cellNow()      { return nvgRGB(70, 56, 32); }
     static inline NVGcolor placeholder()  { return nvgRGB(42, 42, 49); }
     static inline NVGcolor primaryInk()   { return nvgRGB(22, 32, 42); }
     static inline NVGcolor btnSecondary() { return nvgRGB(67, 67, 79); }
