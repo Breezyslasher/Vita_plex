@@ -638,39 +638,15 @@ void LoginActivity::showServerSelectionContent() {
     }
     card->addView(body);
 
-    // ── Footer: A/B hints + "Enter address manually" ────────────────
-    auto makeHint = [](const std::string& key, NVGcolor circle, const std::string& text) {
-        auto* h = new brls::Box();
-        h->setAxis(brls::Axis::ROW);
-        h->setAlignItems(brls::AlignItems::CENTER);
-        h->setMarginRight(16);
-        auto* c = new brls::Box();
-        c->setWidth(21); c->setHeight(21); c->setCornerRadius(11);
-        c->setJustifyContent(brls::JustifyContent::CENTER);
-        c->setAlignItems(brls::AlignItems::CENTER);
-        c->setMarginRight(7);
-        c->setBackgroundColor(circle);
-        auto* kl = new brls::Label();
-        kl->setText(key); kl->setFontSize(11); kl->setTextColor(nvgRGB(16, 18, 22));
-        c->addView(kl);
-        h->addView(c);
-        auto* t = new brls::Label();
-        t->setText(text); t->setFontSize(13); t->setTextColor(kMuted);
-        h->addView(t);
-        return h;
-    };
-
+    // ── Footer: "Enter address manually" ────────────────────────────
     auto* foot = new brls::Box();
     foot->setAxis(brls::Axis::ROW);
     foot->setAlignItems(brls::AlignItems::CENTER);
     foot->setPadding(14, 20, 14, 20);
     foot->setLineTop(1);
     foot->setLineColor(kLine);
-    // Controller hints are noise on a portrait/touch phone — drop them there
-    // (and the spacer) so the row never overflows; keep the manual affordance.
+    // Right-align the manual affordance on wide layouts (left on narrow).
     if (!narrow) {
-        foot->addView(makeHint("A", nvgRGB(159, 231, 182), "Connect"));
-        foot->addView(makeHint("B", nvgRGB(240, 160, 160), "Back"));
         auto* spacer = new brls::Box();
         spacer->setGrow(1.0f);
         foot->addView(spacer);
