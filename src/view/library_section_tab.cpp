@@ -5,6 +5,7 @@
 #include "view/library_section_tab.hpp"
 #include "view/media_item_cell.hpp"
 #include "view/media_detail_view.hpp"
+#include "view/filter_chip.hpp"
 #include "activity/player_activity.hpp"
 #include "app/application.hpp"
 #include "app/plex_palette.hpp"
@@ -55,7 +56,7 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     m_viewModeBox->setMarginBottom(15);
 
     // All Items button
-    m_allBtn = new brls::Button();
+    m_allBtn = new vitaplex::FilterChip();
     m_allBtn->setText("All");
     m_allBtn->setMarginRight(10);
     styleButton(m_allBtn, true);  // Active by default
@@ -67,7 +68,7 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
 
     // Collections button (only show if enabled)
     if (settings.showCollections) {
-        m_collectionsBtn = new brls::Button();
+        m_collectionsBtn = new vitaplex::FilterChip();
         m_collectionsBtn->setText("Collections");
         m_collectionsBtn->setMarginRight(10);
         styleButton(m_collectionsBtn, false);
@@ -80,7 +81,7 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
 
     // Categories button (only show if enabled)
     if (settings.showGenres) {
-        m_categoriesBtn = new brls::Button();
+        m_categoriesBtn = new vitaplex::FilterChip();
         m_categoriesBtn->setText("Categories");
         m_categoriesBtn->setMarginRight(10);
         styleButton(m_categoriesBtn, false);
@@ -93,7 +94,7 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
 
     // Playlists button (only for music/artist sections)
     if (settings.showPlaylists && sectionType == "artist") {
-        m_playlistsBtn = new brls::Button();
+        m_playlistsBtn = new vitaplex::FilterChip();
         m_playlistsBtn->setText("Playlists");
         m_playlistsBtn->setMarginRight(10);
         styleButton(m_playlistsBtn, false);
@@ -109,7 +110,6 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     m_backBtn->setText("< Back");
     m_backBtn->setVisibility(brls::Visibility::GONE);
     styleButton(m_backBtn, false);
-    m_backBtn->setBackgroundColor(nvgRGBA(80, 60, 50, 200));
     m_backBtn->registerClickAction([this](brls::View* view) {
         // Move focus off the back button and defer navigateBack() to the
         // next frame so the click event (action loop walk-up + click
@@ -520,25 +520,21 @@ void LibrarySectionTab::showCategories() {
 }
 
 void LibrarySectionTab::styleButton(brls::Button* btn, bool active) {
+    // The view-mode pills are FilterChips: they own the full pick ladder
+    // (gold fill picked, gold-bright when picked+focused — palette rules 1-2).
+    if (auto* chip = dynamic_cast<vitaplex::FilterChip*>(btn)) {
+        chip->setPicked(active);
+        return;
+    }
+    // Non-chip buttons (e.g. the Back pill) get the neutral resting style.
+    namespace pal = vitaplex::palette;
     btn->setCornerRadius(16);
     btn->setHighlightCornerRadius(16);
     btn->setPadding(6, 16, 6, 16);
-    namespace pal = vitaplex::palette;
-    if (active) {
-        // Picked: solid gold fill + ink glyph/label (never white on gold).
-        // Focus adds the warm cream halo on top, so picked-and-focused stays
-        // distinct from picked-at-rest (palette rules 1-2).
-        btn->setBackgroundColor(pal::gold);
-        btn->setTextColor(pal::goldInk);
-        btn->setBorderColor(pal::goldBright);
-        btn->setBorderThickness(1.5f);
-    } else {
-        // Default (not picked): neutral raised surface, muted label.
-        btn->setBackgroundColor(pal::surface3);
-        btn->setTextColor(pal::muted);
-        btn->setBorderColor(nvgRGBA(0, 0, 0, 0));
-        btn->setBorderThickness(0);
-    }
+    btn->setBackgroundColor(active ? pal::gold : pal::surface3);
+    btn->setTextColor(active ? pal::goldInk : pal::muted);
+    btn->setBorderColor(active ? pal::goldBright : nvgRGBA(0, 0, 0, 0));
+    btn->setBorderThickness(active ? 1.5f : 0.0f);
 }
 
 void LibrarySectionTab::updateViewModeButtons() {

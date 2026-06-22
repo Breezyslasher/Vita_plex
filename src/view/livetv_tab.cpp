@@ -10,6 +10,7 @@
 
 #include "view/livetv_tab.hpp"
 #include "app/application.hpp"
+#include "app/plex_palette.hpp"
 #include "utils/async.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/http_client.hpp"
@@ -122,23 +123,23 @@ namespace tok {
     // gold (#CC7B19) for the EPG "on now" outline / current-time line
     // / progress bar fill so the app reads as a Plex client instead
     // of a generic teal-accented one.
-    static inline NVGcolor accent()       { return nvgRGB(229, 160, 13); }
-    static inline NVGcolor accentDeep()   { return nvgRGB(204, 123, 25); }
-    static inline NVGcolor live()         { return nvgRGB(255, 86, 88); }
-    static inline NVGcolor text()         { return nvgRGB(255, 255, 255); }
-    static inline NVGcolor muted()        { return nvgRGB(163, 163, 163); }
-    static inline NVGcolor dim()          { return nvgRGB(124, 124, 132); }
-    static inline NVGcolor card()         { return nvgRGB(52, 52, 62); }
-    static inline NVGcolor cardRaised()   { return nvgRGB(60, 60, 72); }
-    static inline NVGcolor hairline()     { return nvgRGB(67, 67, 74); }
-    static inline NVGcolor hero()         { return nvgRGB(38, 42, 48); }
-    static inline NVGcolor cellUpcoming() { return nvgRGB(60, 60, 72); }
+    static inline NVGcolor accent()       { return vitaplex::palette::gold; }
+    static inline NVGcolor accentDeep()   { return vitaplex::palette::goldDeep; }
+    static inline NVGcolor live()         { return vitaplex::palette::live; }
+    static inline NVGcolor text()         { return vitaplex::palette::text; }
+    static inline NVGcolor muted()        { return vitaplex::palette::muted; }
+    static inline NVGcolor dim()          { return vitaplex::palette::dim; }
+    static inline NVGcolor card()         { return vitaplex::palette::surface; }
+    static inline NVGcolor cardRaised()   { return vitaplex::palette::surface2; }
+    static inline NVGcolor hairline()     { return vitaplex::palette::line; }
+    static inline NVGcolor hero()         { return vitaplex::palette::panel; }
+    static inline NVGcolor cellUpcoming() { return vitaplex::palette::surface2; }
     // "On now" cell fill — warm tint that reads as Plex-yellow-adjacent
     // instead of the old teal-blue (47,68,82) which fought the accent.
     static inline NVGcolor cellNow()      { return nvgRGB(70, 56, 32); }
-    static inline NVGcolor placeholder()  { return nvgRGB(42, 42, 49); }
-    static inline NVGcolor primaryInk()   { return nvgRGB(22, 32, 42); }
-    static inline NVGcolor btnSecondary() { return nvgRGB(67, 67, 79); }
+    static inline NVGcolor placeholder()  { return vitaplex::palette::surface; }
+    static inline NVGcolor primaryInk()   { return vitaplex::palette::goldInk; }
+    static inline NVGcolor btnSecondary() { return vitaplex::palette::surface3; }
 }
 
 // Constants for EPG grid layout. Time-slot / row / channel-column widths are
