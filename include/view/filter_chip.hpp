@@ -57,10 +57,11 @@ private:
             this->setBorderColor(pal::goldBright);
             this->setBorderThickness(1.5f);
         } else {
+            // Not picked: neutral surface with a bright white label (kept
+            // legible at rest); the warm halo signals focus, the gold fill
+            // signals selection.
             this->setBackgroundColor(pal::surface3);
-            // Label brightens to white on focus (default + focused ladder row);
-            // the warm halo still signals where the cursor is.
-            this->setTextColor(this->isFocused() ? pal::text : pal::muted);
+            this->setTextColor(pal::text);
             this->setBorderColor(nvgRGBA(0, 0, 0, 0));
             this->setBorderThickness(0.0f);
         }

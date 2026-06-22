@@ -191,7 +191,7 @@ void MusicTab::styleButton(brls::Button* btn, bool active) {
     btn->setHighlightCornerRadius(16);
     btn->setPadding(6, 16, 6, 16);
     btn->setBackgroundColor(active ? pal::gold : pal::surface3);
-    btn->setTextColor(active ? pal::goldInk : pal::muted);
+    btn->setTextColor(active ? pal::goldInk : pal::text);
     btn->setBorderColor(active ? pal::goldBright : nvgRGBA(0, 0, 0, 0));
     btn->setBorderThickness(active ? 1.5f : 0.0f);
 }
