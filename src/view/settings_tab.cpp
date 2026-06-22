@@ -33,20 +33,35 @@
 #include <iphlpapi.h>
 #pragma comment(lib, "iphlpapi.lib")
 #pragma comment(lib, "ws2_32.lib")
+// windows.h drags in <wingdi.h> which #defines ABSOLUTE (and a few
+// other generic names) for the old GDI line-draw API. That collides
+// head-on with brls::PositionType::ABSOLUTE used elsewhere in this
+// file. Drop the GDI macros before the borealis headers see them.
+#ifdef ABSOLUTE
+#  undef ABSOLUTE
+#endif
+#ifdef RELATIVE
+#  undef RELATIVE
+#endif
 #elif defined(__SWITCH__)
 // libnx exposes the in-system network manager (nifm) for IP/profile
 // queries. ifaddrs/resolv.conf don't exist on the Switch toolchain,
 // so it gets its own branch.
 #include <switch.h>
 #else
-// POSIX path (Linux / macOS / Android / iOS / tvOS / PS4). getifaddrs
-// gives us per-interface IPv4; /etc/resolv.conf gives the active
-// resolvers. SSID/signal stay blank because there's no portable way
-// to read them without nl80211 / CoreWLAN / NetworkManager bindings.
-#include <ifaddrs.h>
-#include <net/if.h>
+// POSIX path (Linux / macOS / Android / iOS / tvOS / PS4). Uses the
+// classic "connect a UDP socket to a public address and ask the
+// kernel which local IP it chose" trick to get the active outbound
+// IPv4 — works on every POSIX flavour without needing getifaddrs
+// (which only landed in Android NDK at API 24). /etc/resolv.conf
+// gives the resolver list where it exists. SSID/signal stay blank
+// because there's no portable way to read them without nl80211 /
+// CoreWLAN / NetworkManager bindings.
+#include <sys/types.h>
+#include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+#include <unistd.h>
 #endif
 
 namespace vitaplex {
@@ -1810,32 +1825,44 @@ void SettingsTab::onNetworkTest() {
         // DNS isn't queryable through the basic nifm API without the
         // full network-profile struct; leave it as "-" rather than lie.
 #else
-        // POSIX path. Walk the interface list and grab the first up,
-        // non-loopback IPv4 address. ssid is repurposed as the
-        // interface name so the user can see whether it picked wlan0,
-        // en0, eth0, etc.
-        struct ifaddrs* ifList = nullptr;
-        if (getifaddrs(&ifList) == 0) {
-            for (auto* ifa = ifList; ifa; ifa = ifa->ifa_next) {
-                if (!ifa->ifa_addr) continue;
-                if (ifa->ifa_addr->sa_family != AF_INET) continue;
-                if (ifa->ifa_flags & IFF_LOOPBACK) continue;
-                if (!(ifa->ifa_flags & IFF_UP)) continue;
-                auto* sin = reinterpret_cast<struct sockaddr_in*>(ifa->ifa_addr);
-                char addrBuf[INET_ADDRSTRLEN] = {0};
-                if (inet_ntop(AF_INET, &sin->sin_addr, addrBuf, sizeof(addrBuf))) {
-                    ipAddress = addrBuf;
-                    if (ifa->ifa_name) ssid = ifa->ifa_name;
-                    wifiConnected = true;
-                    break;
+        // POSIX. Open a UDP socket, "connect" it to a public address
+        // (no packets are actually sent — UDP connect just primes the
+        // routing decision), then ask the kernel which local IPv4 it
+        // chose via getsockname. This sidesteps getifaddrs entirely,
+        // which is necessary on Android < API 24 where the function
+        // isn't exposed even though <ifaddrs.h> is.
+        int probe = socket(AF_INET, SOCK_DGRAM, 0);
+        if (probe >= 0) {
+            sockaddr_in target = {};
+            target.sin_family = AF_INET;
+            target.sin_port = htons(53);  // DNS port, just so the route makes sense
+            inet_pton(AF_INET, "8.8.8.8", &target.sin_addr);
+            if (connect(probe, reinterpret_cast<sockaddr*>(&target),
+                        sizeof(target)) == 0) {
+                sockaddr_in local = {};
+                socklen_t locLen = sizeof(local);
+                if (getsockname(probe, reinterpret_cast<sockaddr*>(&local),
+                                &locLen) == 0) {
+                    char addrBuf[INET_ADDRSTRLEN] = {0};
+                    if (inet_ntop(AF_INET, &local.sin_addr,
+                                  addrBuf, sizeof(addrBuf))) {
+                        ipAddress = addrBuf;
+                        wifiConnected = true;
+                    }
                 }
             }
-            freeifaddrs(ifList);
+            close(probe);
         }
+        // The interface name isn't trivially recoverable from the
+        // local IP alone without enumerating adapters; leave the
+        // Interface row blank on POSIX rather than guessing.
+        ssid = "-";
+
         // /etc/resolv.conf is the lowest-common-denominator DNS source
-        // on every POSIX target we ship — works on Linux, macOS,
-        // Android, iOS / tvOS, and Switch's newlib. Just grab the
-        // first one or two "nameserver" lines.
+        // on Linux / macOS / iOS / tvOS. Android stopped populating it
+        // around 8.0 (resolution moved into netd), so this branch is a
+        // best-effort lookup that quietly no-ops where the file is
+        // empty or missing.
         std::ifstream resolv("/etc/resolv.conf");
         if (resolv.is_open()) {
             std::string line, primary, secondary;
