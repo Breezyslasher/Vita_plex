@@ -190,17 +190,6 @@ void PlayerActivity::onContentAvailable() {
 
     // Set up controls
     if (progressSlider) {
-        // Force the seek bar to the Plex palette. brls::Slider captures its
-        // colours from the theme at construction; the filled line wasn't
-        // coming through gold, so set them on the public line/pointer members
-        // here (after the slider exists) where it's guaranteed to stick.
-        namespace pal = vitaplex::palette;
-        if (progressSlider->line)      progressSlider->line->setColor(pal::gold);       // filled = gold
-        if (progressSlider->lineEmpty) progressSlider->lineEmpty->setColor(pal::surface3);
-        if (progressSlider->pointer) {
-            progressSlider->pointer->setColor(pal::text);        // white knob for contrast
-            progressSlider->pointer->setBorderColor(pal::gold);  // with a gold ring
-        }
         progressSlider->setProgress(0.0f);
         progressSlider->getProgressEvent()->subscribe([this](float progress) {
             // Skip if this is a programmatic update (not user interaction)
