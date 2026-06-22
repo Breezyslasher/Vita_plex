@@ -17,12 +17,51 @@
 #include "activity/player_activity.hpp"
 #include "utils/http_client.hpp"
 #include "platform/platform.hpp"
+#include "platform/paths.hpp"
 #include <set>
 #include <chrono>
+#include <fstream>
 
 #ifdef __vita__
 #include <psp2/net/netctl.h>
 #include <psp2/net/net.h>
+#elif defined(_WIN32)
+// Windows IP helper API for adapter enumeration + DNS info.
+#define WIN32_LEAN_AND_MEAN
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <iphlpapi.h>
+#pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "ws2_32.lib")
+// windows.h drags in <wingdi.h> which #defines ABSOLUTE (and a few
+// other generic names) for the old GDI line-draw API. That collides
+// head-on with brls::PositionType::ABSOLUTE used elsewhere in this
+// file. Drop the GDI macros before the borealis headers see them.
+#ifdef ABSOLUTE
+#  undef ABSOLUTE
+#endif
+#ifdef RELATIVE
+#  undef RELATIVE
+#endif
+#elif defined(__SWITCH__)
+// libnx exposes the in-system network manager (nifm) for IP/profile
+// queries. ifaddrs/resolv.conf don't exist on the Switch toolchain,
+// so it gets its own branch.
+#include <switch.h>
+#else
+// POSIX path (Linux / macOS / Android / iOS / tvOS / PS4). Uses the
+// classic "connect a UDP socket to a public address and ask the
+// kernel which local IP it chose" trick to get the active outbound
+// IPv4 — works on every POSIX flavour without needing getifaddrs
+// (which only landed in Android NDK at API 24). /etc/resolv.conf
+// gives the resolver list where it exists. SSID/signal stay blank
+// because there's no portable way to read them without nl80211 /
+// CoreWLAN / NetworkManager bindings.
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
 #endif
 
 namespace vitaplex {
@@ -860,7 +899,14 @@ brls::Box* SettingsTab::createPlaybackSection() {
     // (now-removed) Debug section.
     auto* testLocalCell = new brls::DetailCell();
     testLocalCell->setText("Test Local Playback");
-    testLocalCell->setDetailText("ux0:data/VitaPlex/test.mp4 or test.mp3");
+    // Show the platform's actual data dir so the user knows where to
+    // drop the test file. platformPath("") yields "<root>/" — strip
+    // the trailing slash for a clean display string.
+    {
+        std::string dataDir = platformPath("");
+        if (!dataDir.empty() && dataDir.back() == '/') dataDir.pop_back();
+        testLocalCell->setDetailText("Place test.mp4 or test.mp3 in " + dataDir);
+    }
     testLocalCell->registerClickAction([this](brls::View*) {
         onTestLocalPlayback();
         return true;
@@ -1694,12 +1740,150 @@ void SettingsTab::onNetworkTest() {
                 dnsInfo += " / " + std::string(info.secondary_dns);
             }
         }
+#elif defined(_WIN32)
+        // Adapter enumeration — pick the first up, non-loopback IPv4
+        // address. GetAdaptersAddresses needs a sizing pass first
+        // (NO_OVERFLOW returns the required buffer size in outLen).
+        ULONG outLen = 0;
+        GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST,
+                             nullptr, nullptr, &outLen);
+        if (outLen > 0) {
+            std::vector<unsigned char> buf(outLen);
+            auto* head = reinterpret_cast<IP_ADAPTER_ADDRESSES*>(buf.data());
+            if (GetAdaptersAddresses(AF_INET,
+                                     GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST,
+                                     nullptr, head, &outLen) == NO_ERROR) {
+                for (auto* a = head; a; a = a->Next) {
+                    if (a->OperStatus != IfOperStatusUp) continue;
+                    if (a->IfType == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+                    for (auto* u = a->FirstUnicastAddress; u; u = u->Next) {
+                        auto* sa = u->Address.lpSockaddr;
+                        if (!sa || sa->sa_family != AF_INET) continue;
+                        char addrBuf[INET_ADDRSTRLEN] = {0};
+                        auto* sin = reinterpret_cast<sockaddr_in*>(sa);
+                        if (InetNtopA(AF_INET, &sin->sin_addr, addrBuf, sizeof(addrBuf))) {
+                            ipAddress = addrBuf;
+                            // a->FriendlyName is UTF-16; convert lossily.
+                            if (a->FriendlyName) {
+                                char nameBuf[128] = {0};
+                                WideCharToMultiByte(CP_UTF8, 0, a->FriendlyName, -1,
+                                                    nameBuf, sizeof(nameBuf), nullptr, nullptr);
+                                ssid = nameBuf;
+                            }
+                            wifiConnected = true;
+                        }
+                        if (wifiConnected) break;
+                    }
+                    if (wifiConnected) break;
+                }
+            }
+        }
+        // DNS — GetNetworkParams returns the OS-wide resolver list.
+        ULONG dnsLen = 0;
+        GetNetworkParams(nullptr, &dnsLen);
+        if (dnsLen > 0) {
+            std::vector<unsigned char> dnsBuf(dnsLen);
+            auto* params = reinterpret_cast<FIXED_INFO*>(dnsBuf.data());
+            if (GetNetworkParams(params, &dnsLen) == NO_ERROR) {
+                std::string out;
+                for (auto* s = &params->DnsServerList; s; s = s->Next) {
+                    if (s->IpAddress.String[0] == '\0') continue;
+                    if (!out.empty()) out += " / ";
+                    out += s->IpAddress.String;
+                }
+                if (!out.empty()) dnsInfo = out;
+            }
+        }
+        // No portable wireless RSSI without WlanGetNetworkBssList; leave
+        // signal blank so the dialog renders it as "-" rather than lying.
+#elif defined(__SWITCH__)
+        // libnx nifm. nifmInitialize must succeed before any of the
+        // accessor calls; tear it down with nifmExit when done so we
+        // don't keep the system service handle open for the rest of
+        // the session.
+        if (R_SUCCEEDED(nifmInitialize(NifmServiceType_User))) {
+            u32 ipAddrBE = 0;
+            if (R_SUCCEEDED(nifmGetCurrentIpAddress(&ipAddrBE)) && ipAddrBE != 0) {
+                // IP comes back in network (big-endian) byte order. Format
+                // by hand instead of dragging in inet_ntop, which on libnx
+                // would require setting up the bsd: service first.
+                char buf[16];
+                snprintf(buf, sizeof(buf), "%u.%u.%u.%u",
+                         (unsigned)((ipAddrBE >>  0) & 0xff),
+                         (unsigned)((ipAddrBE >>  8) & 0xff),
+                         (unsigned)((ipAddrBE >> 16) & 0xff),
+                         (unsigned)((ipAddrBE >> 24) & 0xff));
+                ipAddress = buf;
+                wifiConnected = true;
+            }
+            bool wireless = false;
+            if (R_SUCCEEDED(nifmIsWirelessCommunicationEnabled(&wireless))) {
+                ssid = wireless ? "Wireless" : "Wired";
+            }
+            nifmExit();
+        }
+        // DNS isn't queryable through the basic nifm API without the
+        // full network-profile struct; leave it as "-" rather than lie.
 #else
-        ipAddress = "127.0.0.1";
-        dnsInfo = "8.8.8.8";
-        signalStr = "100%";
-        ssid = "Desktop";
-        wifiConnected = true;
+        // POSIX. Open a UDP socket, "connect" it to a public address
+        // (no packets are actually sent — UDP connect just primes the
+        // routing decision), then ask the kernel which local IPv4 it
+        // chose via getsockname. This sidesteps getifaddrs entirely,
+        // which is necessary on Android < API 24 where the function
+        // isn't exposed even though <ifaddrs.h> is.
+        int probe = socket(AF_INET, SOCK_DGRAM, 0);
+        if (probe >= 0) {
+            sockaddr_in target = {};
+            target.sin_family = AF_INET;
+            target.sin_port = htons(53);  // DNS port, just so the route makes sense
+            inet_pton(AF_INET, "8.8.8.8", &target.sin_addr);
+            if (connect(probe, reinterpret_cast<sockaddr*>(&target),
+                        sizeof(target)) == 0) {
+                sockaddr_in local = {};
+                socklen_t locLen = sizeof(local);
+                if (getsockname(probe, reinterpret_cast<sockaddr*>(&local),
+                                &locLen) == 0) {
+                    char addrBuf[INET_ADDRSTRLEN] = {0};
+                    if (inet_ntop(AF_INET, &local.sin_addr,
+                                  addrBuf, sizeof(addrBuf))) {
+                        ipAddress = addrBuf;
+                        wifiConnected = true;
+                    }
+                }
+            }
+            close(probe);
+        }
+        // The interface name isn't trivially recoverable from the
+        // local IP alone without enumerating adapters; leave the
+        // Interface row blank on POSIX rather than guessing.
+        ssid = "-";
+
+        // /etc/resolv.conf is the lowest-common-denominator DNS source
+        // on Linux / macOS / iOS / tvOS. Android stopped populating it
+        // around 8.0 (resolution moved into netd), so this branch is a
+        // best-effort lookup that quietly no-ops where the file is
+        // empty or missing.
+        std::ifstream resolv("/etc/resolv.conf");
+        if (resolv.is_open()) {
+            std::string line, primary, secondary;
+            while (std::getline(resolv, line)) {
+                if (line.compare(0, 11, "nameserver ") != 0) continue;
+                std::string addr = line.substr(11);
+                while (!addr.empty() &&
+                       (addr.back() == ' ' || addr.back() == '\t' ||
+                        addr.back() == '\r' || addr.back() == '\n')) {
+                    addr.pop_back();
+                }
+                if (addr.empty()) continue;
+                if (primary.empty()) primary = addr;
+                else if (secondary.empty()) { secondary = addr; break; }
+            }
+            if (!primary.empty()) {
+                dnsInfo = primary;
+                if (!secondary.empty()) dnsInfo += " / " + secondary;
+            }
+        }
+        // No portable RSSI / SSID query — leave signal as "-".
 #endif
 
         // ── 2. Internet Check (latency) ──
@@ -1793,13 +1977,18 @@ void SettingsTab::onNetworkTest() {
                 content->addView(lbl);
             };
 
-            // WiFi section
-            addHeader("-- WiFi --");
+            // Connection section. Header says "Connection" (not "WiFi")
+            // because most non-Vita platforms may be on Ethernet.
+            // "Interface" replaces "Network" so the row makes sense
+            // whether the value is an SSID (Vita) or an adapter name
+            // (eth0 / en0 / "Wi-Fi 2"). Signal only shows when the
+            // platform actually reported one — POSIX/Win don't.
+            addHeader("-- Connection --");
             addRow("Status:", wifiConnected ? "Connected" : "Not Connected");
-            addRow("Network:", ssid);
+            addRow("Interface:", ssid);
             addRow("IP Address:", ipAddress);
             addRow("DNS:", dnsInfo);
-            addRow("Signal:", signalStr);
+            if (signalStr != "-") addRow("Signal:", signalStr);
 
             // Internet section
             addHeader("-- Internet --");
@@ -1820,16 +2009,16 @@ void SettingsTab::onNetworkTest() {
 void SettingsTab::onTestLocalPlayback() {
     brls::Logger::info("SettingsTab: Testing local playback...");
 
-    // Check for test files
-    const std::string basePath = "ux0:data/VitaPlex/";
+    // Look for the first existing test file under the platform's data
+    // directory (ux0:data/VitaPlex/ on Vita, sdmc:/VitaPlex/ on Switch,
+    // ~/.local/share/VitaPlex/ on desktop Linux, the SDL internal
+    // storage path on Android, etc.) — platformPath() resolves it.
     std::string testFile;
-
-    // Try mp4 first (to test video), then audio files
-    std::vector<std::string> testFiles = {
-        basePath + "test.mp4",
-        basePath + "test.mp3",
-        basePath + "test.ogg",
-        basePath + "test.wav"
+    const std::vector<std::string> testFiles = {
+        platformPath("test.mp4"),
+        platformPath("test.mp3"),
+        platformPath("test.ogg"),
+        platformPath("test.wav"),
     };
 
     for (const auto& file : testFiles) {
@@ -1843,8 +2032,10 @@ void SettingsTab::onTestLocalPlayback() {
     }
 
     if (testFile.empty()) {
-        brls::Application::notify("No test file found in ux0:data/VitaPlex/");
-        brls::Logger::error("SettingsTab: No test file found");
+        std::string dataDir = platformPath("");
+        if (!dataDir.empty() && dataDir.back() == '/') dataDir.pop_back();
+        brls::Application::notify("No test file found in " + dataDir);
+        brls::Logger::error("SettingsTab: No test file found under {}", dataDir);
         return;
     }
 
