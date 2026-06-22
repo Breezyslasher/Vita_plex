@@ -3,6 +3,8 @@
  */
 
 #include "view/music_tab.hpp"
+#include "view/filter_chip.hpp"
+#include "app/plex_palette.hpp"
 #include "view/media_item_cell.hpp"
 #include "view/media_detail_view.hpp"
 #include "view/long_press_gesture.hpp"
@@ -178,18 +180,22 @@ brls::Box* MusicTab::createHorizontalRow(const std::string& title) {
 }
 
 void MusicTab::styleButton(brls::Button* btn, bool active) {
+    // Pickable section pills are FilterChips (full pick ladder, rules 1-2).
+    if (auto* chip = dynamic_cast<vitaplex::FilterChip*>(btn)) {
+        chip->setPicked(active);
+        return;
+    }
+    // Non-chip buttons (playlist / collection / back rows) — neutral resting.
+    namespace pal = vitaplex::palette;
     btn->setCornerRadius(16);
     btn->setHighlightCornerRadius(16);
     btn->setPadding(6, 16, 6, 16);
-    if (active) {
-        btn->setBackgroundColor(nvgRGBA(229, 160, 13, 220));
-        btn->setBorderColor(nvgRGBA(255, 196, 64, 200));
-        btn->setBorderThickness(1.5f);
-    } else {
-        btn->setBackgroundColor(nvgRGBA(60, 60, 70, 180));
-        btn->setBorderColor(nvgRGBA(0, 0, 0, 0));
-        btn->setBorderThickness(0);
-    }
+    // setTextColor() triggers Button::applyStyle() which resets the bg, so
+    // set the label colour first and the fill/border last (see FilterChip).
+    btn->setTextColor(active ? pal::goldInk : pal::text);
+    btn->setBackgroundColor(active ? pal::gold : pal::surface3);
+    btn->setBorderColor(active ? pal::goldBright : nvgRGBA(0, 0, 0, 0));
+    btn->setBorderThickness(active ? 1.5f : 0.0f);
 }
 
 void MusicTab::updateSectionButtonStyles() {
@@ -249,7 +255,7 @@ void MusicTab::loadSections() {
 
                 for (const auto& section : m_sections) {
                     brls::Logger::debug("MusicTab: Adding section button: {}", section.title);
-                    auto* btn = new brls::Button();
+                    auto* btn = new vitaplex::FilterChip();
                     btn->setText(section.title);
                     btn->setMarginRight(10);
                     styleButton(btn, false);

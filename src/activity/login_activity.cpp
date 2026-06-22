@@ -300,6 +300,17 @@ struct ConnectingUI {
     int total            = 0;
 };
 
+// Plex reports a long build string ("1.43.2.10687-563d026ea"); show just the
+// marketing version ("1.43.2") so the card sub-line stays tidy.
+std::string shortVersion(const std::string& v) {
+    std::string s = v.substr(0, v.find('-'));   // drop the "-<buildhash>" tail
+    int dots = 0;
+    for (size_t i = 0; i < s.size(); i++) {
+        if (s[i] == '.' && ++dots == 3) return s.substr(0, i);  // keep 3 components
+    }
+    return s;
+}
+
 // Truncate to a character budget with a trailing ellipsis (keeps long
 // plex.direct hostnames from overflowing the card / probe row).
 std::string ellipsize(const std::string& s, size_t budget) {
@@ -757,7 +768,7 @@ brls::Box* LoginActivity::buildServerCard(const PlexServer& server,
     subRow->setAlignItems(brls::AlignItems::CENTER);
     subRow->setMarginTop(3);
     auto* hostL = new brls::Label();
-    hostL->setText(ellipsize(host, narrow ? 26 : 42));
+    hostL->setText(ellipsize(host, narrow ? 22 : 34));
     hostL->setFontSize(12.5f);
     hostL->setTextColor(kDim);
     hostL->setSingleLine(true);
@@ -769,7 +780,7 @@ brls::Box* LoginActivity::buildServerCard(const PlexServer& server,
         dot->setMarginLeft(9); dot->setMarginRight(9);
         subRow->addView(dot);
         auto* ver = new brls::Label();
-        ver->setText("v" + server.version);
+        ver->setText("v" + shortVersion(server.version));
         ver->setFontSize(12.5f); ver->setTextColor(kDim);
         ver->setSingleLine(true);
         subRow->addView(ver);

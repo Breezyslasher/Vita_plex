@@ -5,6 +5,7 @@
 #include "view/media_item_cell.hpp"
 #include "app/plex_client.hpp"
 #include "app/application.hpp"
+#include "app/plex_palette.hpp"
 #include "app/hint_icons.hpp"
 #include "utils/image_loader.hpp"
 #include "platform/platform.hpp"
@@ -396,10 +397,12 @@ void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float he
 
 void MediaItemCell::onFocusGained() {
     brls::Box::onFocusGained();
-    // Focused background color (like Suwayomi's getFocusedRowBg)
-    this->setBackgroundColor(nvgRGBA(60, 60, 80, 255));
-    // Selection border
-    this->setBorderColor(nvgRGBA(229, 160, 13, 255));  // Plex orange
+    // Focus = warm cream halo, never a gold fill (palette rule 1): a raised
+    // warm surface behind the cover + a bright gold-white ring. Keeping the
+    // ring off-gold means a focused poster never reads like a gold "selected"
+    // state. (borealis also paints its native warm highlight on top.)
+    this->setBackgroundColor(vitaplex::palette::surface2);
+    this->setBorderColor(vitaplex::palette::focusHalo);
     this->setBorderThickness(2.0f);
     updateFocusInfo(true);
 }

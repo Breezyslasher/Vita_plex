@@ -13,6 +13,7 @@
 #include "view/settings_tab.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
+#include "app/plex_palette.hpp"
 #include "app/downloads_manager.hpp"
 #include "activity/player_activity.hpp"
 #include "utils/http_client.hpp"
@@ -71,16 +72,16 @@ namespace vitaplex {
 // Pulled from the redesign spec — kept inline (rather than in a header)
 // because this is the only file that paints with them.
 namespace tok {
-    static inline NVGcolor bg()        { return nvgRGB(45, 45, 45); }
-    static inline NVGcolor railBg()    { return nvgRGB(42, 42, 42); }
-    static inline NVGcolor raised()    { return nvgRGB(52, 52, 62); }
-    static inline NVGcolor hairline()  { return nvgRGB(67, 67, 74); }
-    static inline NVGcolor text()      { return nvgRGB(255, 255, 255); }
-    static inline NVGcolor muted()     { return nvgRGB(163, 163, 163); }
-    static inline NVGcolor dim()       { return nvgRGB(124, 124, 132); }
+    static inline NVGcolor bg()        { return vitaplex::palette::bg; }
+    static inline NVGcolor railBg()    { return vitaplex::palette::panel; }
+    static inline NVGcolor raised()    { return vitaplex::palette::surface2; }
+    static inline NVGcolor hairline()  { return vitaplex::palette::line; }
+    static inline NVGcolor text()      { return vitaplex::palette::text; }
+    static inline NVGcolor muted()     { return vitaplex::palette::muted; }
+    static inline NVGcolor dim()       { return vitaplex::palette::dim; }
     // Plex brand yellow (#E5A00D) used as the app-wide accent.
-    static inline NVGcolor accent()    { return nvgRGB(229, 160, 13); }
-    static inline NVGcolor chipBg()    { return nvgRGBA(229, 160, 13, 38); }  // ~15% alpha
+    static inline NVGcolor accent()    { return vitaplex::palette::gold; }
+    static inline NVGcolor chipBg()    { return vitaplex::palette::goldTint(0.15f); }  // ~15% alpha
 }
 
 // Per-section metadata. The rail rows + detail header pull from this
@@ -625,14 +626,6 @@ brls::Box* SettingsTab::createUISection() {
     Application& app = Application::getInstance();
     AppSettings& settings = app.getSettings();
     brls::Box* box = makeSectionBox();
-
-    // Theme selector
-    m_themeSelector = new brls::SelectorCell();
-    m_themeSelector->init("Theme", {"System", "Light", "Dark"}, static_cast<int>(settings.theme),
-        [this](int index) {
-            onThemeChanged(index);
-        });
-    box->addView(m_themeSelector);
 
     // Debug logging toggle
     m_debugLogToggle = new brls::BooleanCell();

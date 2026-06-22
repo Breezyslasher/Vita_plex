@@ -5,6 +5,7 @@
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
+#include "app/plex_palette.hpp"
 #include "activity/login_activity.hpp"
 #include "activity/main_activity.hpp"
 #include "activity/player_activity.hpp"
@@ -218,57 +219,70 @@ void Application::pushLiveTVPlayerActivity(const std::string& streamUrl, const s
 }
 
 void Application::applyTheme() {
-    brls::ThemeVariant variant;
+    namespace pal = vitaplex::palette;
 
-    switch (m_settings.theme) {
-        case AppTheme::LIGHT:
-            variant = brls::ThemeVariant::LIGHT;
-            break;
-        case AppTheme::DARK:
-            variant = brls::ThemeVariant::DARK;
-            break;
-        case AppTheme::SYSTEM:
-        default:
-            // Default to dark for Vita
-            variant = brls::ThemeVariant::DARK;
-            break;
+    // The app ships ONE cohesive dark "all-Plex" palette, so force the dark
+    // variant regardless of the (now-cosmetic) theme setting.
+    brls::Application::getPlatform()->setThemeVariant(brls::ThemeVariant::DARK);
+
+    // Repaint the borealis theme slots in place (no submodule fork). Applied
+    // to BOTH tables so any stray light-theme read still lands on the warm
+    // palette. Two rules keep focus and selection distinct from across a room:
+    //   - Plex GOLD is the accent: brand / active / selected / primary FILL.
+    //   - The highlight gradient is a warm cream HALO (gold -> #FFD46B), never
+    //     a fill — so a focused control reads differently from a gold-filled
+    //     selected one. (We deliberately move the old cyan glow to warm; the
+    //     halo's brightness + the fact selection is a *fill* keep them apart.)
+    const NVGcolor goldPulse   = pal::goldTint(0.15f);          // click ripple, gold low-alpha
+    const NVGcolor spinnerGold = nvgRGBA(229, 160, 13, 90);     // global loading spinner
+    for (brls::Theme* t : { &brls::Theme::getDarkTheme(),
+                            &brls::Theme::getLightTheme() }) {
+        // surfaces (warm charcoal)
+        t->addColor("brls/clear",                     pal::bg);
+        t->addColor("brls/background",                pal::bg);
+        t->addColor("brls/sidebar/background",        pal::panel);
+        t->addColor("brls/sidebar/separator",         pal::line);
+        t->addColor("brls/applet_frame/separator",    pal::line);
+        t->addColor("brls/header/border",             pal::line);
+        // text
+        t->addColor("brls/text",                      pal::text);
+        t->addColor("brls/text_disabled",             pal::dim);
+        t->addColor("brls/header/subtitle",           pal::muted);
+        t->addColor("brls/header/rectangle",          pal::muted);
+        // accent = gold (brand / active / selected)
+        t->addColor("brls/accent",                    pal::gold);
+        t->addColor("brls/sidebar/active_item",       pal::gold);
+        t->addColor("brls/list/listItem_value_color", pal::gold);
+        // primary button = gold FILL + ink text (the "picked" CTA)
+        t->addColor("brls/button/primary_enabled_background",  pal::gold);
+        t->addColor("brls/button/primary_enabled_text",        pal::goldInk);
+        t->addColor("brls/button/primary_disabled_background", pal::surface3);
+        t->addColor("brls/button/primary_disabled_text",       pal::dim);
+        // default (secondary) button = surface-3 / white
+        t->addColor("brls/button/default_enabled_background",  pal::surface3);
+        t->addColor("brls/button/default_disabled_background", pal::surface2);
+        t->addColor("brls/button/default_enabled_text",        pal::text);
+        t->addColor("brls/button/default_disabled_text",       pal::dim);
+        t->addColor("brls/button/enabled_border_color",        pal::line);
+        t->addColor("brls/button/disabled_border_color",       pal::line);
+        // "highlight" text-button variant
+        t->addColor("brls/button/highlight_enabled_text",      pal::gold);
+        t->addColor("brls/button/highlight_disabled_text",     pal::dim);
+        // FOCUS HALO = warm gold-white (the borealis highlight gradient)
+        t->addColor("brls/highlight/color1",     pal::gold);       // inner — ties to gold
+        t->addColor("brls/highlight/color2",     pal::focusHalo);  // outer — bright cream
+        t->addColor("brls/highlight/background", pal::surface2);   // warm fill behind focus
+        t->addColor("brls/click_pulse",          goldPulse);
+        // slider
+        t->addColor("brls/slider/line_filled",          pal::gold);
+        t->addColor("brls/slider/line_empty",           pal::surface3);
+        t->addColor("brls/slider/pointer_color",        pal::text);
+        t->addColor("brls/slider/pointer_border_color", pal::gold);
+        // spinner → warm gold
+        t->addColor("brls/spinner/bar_color",           spinnerGold);
     }
 
-    brls::Application::getPlatform()->setThemeVariant(variant);
-
-    // Repaint borealis accent slots in Plex yellow — sidebar selection,
-    // list-value text, slider fill, primary buttons, the "highlight"
-    // button-variant text. Theme::addColor overrides the slot for the
-    // rest of the process so no borealis patch is required, and we
-    // apply on both Light + Dark tables so the swap survives a runtime
-    // theme change.
-    //
-    // We deliberately *do not* override brls/highlight/color1, color2,
-    // or brls/click_pulse — those drive the focus glow. Keep it cyan
-    // so a focused gold button has a clear "where am I" affordance on
-    // a controller; if the glow were also gold, focus would blend
-    // into the active state and the focus ring would disappear.
-    const NVGcolor plexYellow      = nvgRGB(229, 160, 13);     // #E5A00D
-    const NVGcolor onYellowText    = nvgRGB(35, 26, 0);        // near-black for contrast on the yellow primary button
-    for (brls::Theme* theme : { &brls::Theme::getDarkTheme(),
-                                 &brls::Theme::getLightTheme() }) {
-        // Generic accent (used by some library widgets directly)
-        theme->addColor("brls/accent",                         plexYellow);
-        // Sidebar — the selected-tab bar + label colour
-        theme->addColor("brls/sidebar/active_item",            plexYellow);
-        // List cells — the value/detail text on the right of DetailCell
-        theme->addColor("brls/list/listItem_value_color",      plexYellow);
-        // Primary button (the one borealis paints "filled")
-        theme->addColor("brls/button/primary_enabled_background",  plexYellow);
-        theme->addColor("brls/button/primary_enabled_text",        onYellowText);
-        // "Highlight" button variant text colour
-        theme->addColor("brls/button/highlight_enabled_text",  plexYellow);
-        theme->addColor("brls/button/highlight_disabled_text", plexYellow);
-        // Slider filled portion
-        theme->addColor("brls/slider/line_filled",             plexYellow);
-    }
-
-    brls::Logger::info("Applied theme: {}", getThemeString(m_settings.theme));
+    brls::Logger::info("Applied all-Plex dark palette");
 }
 
 void Application::applyLogLevel() {
