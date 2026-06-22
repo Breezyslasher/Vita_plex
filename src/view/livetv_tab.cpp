@@ -1229,7 +1229,11 @@ void LiveTVTab::buildEPGGrid() {
                             ? channel.channelIdentifier
                             : std::to_string(channel.channelNumber));
         chNumLabel->setFontSize(11);
-        chNumLabel->setTextColor(tok::accent());
+        // Channel number is body text in a long vertical list — keep
+        // it muted so the gold accent stays reserved for fills,
+        // selected states, and key hero numbers rather than shimmering
+        // down every row of the channel sidebar.
+        chNumLabel->setTextColor(tok::muted());
         chNumLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
         channelCol->addView(chNumLabel);
 
