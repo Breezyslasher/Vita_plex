@@ -531,8 +531,10 @@ void LibrarySectionTab::styleButton(brls::Button* btn, bool active) {
     btn->setCornerRadius(16);
     btn->setHighlightCornerRadius(16);
     btn->setPadding(6, 16, 6, 16);
-    btn->setBackgroundColor(active ? pal::gold : pal::surface3);
+    // setTextColor() triggers Button::applyStyle() which resets the bg, so
+    // set the label colour first and the fill/border last (see FilterChip).
     btn->setTextColor(active ? pal::goldInk : pal::text);
+    btn->setBackgroundColor(active ? pal::gold : pal::surface3);
     btn->setBorderColor(active ? pal::goldBright : nvgRGBA(0, 0, 0, 0));
     btn->setBorderThickness(active ? 1.5f : 0.0f);
 }

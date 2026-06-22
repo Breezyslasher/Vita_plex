@@ -51,17 +51,21 @@ public:
 private:
     void restyle() {
         namespace pal = vitaplex::palette;
+        // NB: brls::Button::setTextColor() calls applyStyle(), which resets the
+        // background + border to the theme defaults (there is no "overridden"
+        // guard for the background like there is for text). So set the text
+        // colour FIRST, then paint the fill/border LAST so they survive.
         if (m_picked) {
-            this->setBackgroundColor(this->isFocused() ? pal::goldBright : pal::gold);
             this->setTextColor(pal::goldInk);
+            this->setBackgroundColor(this->isFocused() ? pal::goldBright : pal::gold);
             this->setBorderColor(pal::goldBright);
             this->setBorderThickness(1.5f);
         } else {
             // Not picked: neutral surface with a bright white label (kept
             // legible at rest); the warm halo signals focus, the gold fill
             // signals selection.
-            this->setBackgroundColor(pal::surface3);
             this->setTextColor(pal::text);
+            this->setBackgroundColor(pal::surface3);
             this->setBorderColor(nvgRGBA(0, 0, 0, 0));
             this->setBorderThickness(0.0f);
         }
