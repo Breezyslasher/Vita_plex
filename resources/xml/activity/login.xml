@@ -33,17 +33,6 @@
     axis="column"
     backgroundColor="#2d2d2d">
 
-    <!-- Brand mark top-left ("Vita" white + "plex" teal). -->
-    <brls:Box
-        axis="row"
-        paddingLeft="40"
-        paddingTop="30"
-        paddingBottom="10"
-        alignItems="center">
-        <brls:Label text="Vita" fontSize="22" textColor="#FFFFFF"/>
-        <brls:Label text="plex" fontSize="22" textColor="#00FFCC"/>
-    </brls:Box>
-
     <!-- Centered card region. -->
     <brls:Box
         grow="1.0"
@@ -90,7 +79,7 @@
                     <brls:Label
                         text="Quick connect"
                         fontSize="12"
-                        textColor="#00FFCC"/>
+                        textColor="#E5A00D"/>
                 </brls:Box>
 
                 <!-- Heading. -->
@@ -140,7 +129,7 @@
                         width="8"
                         height="8"
                         cornerRadius="4"
-                        backgroundColor="#00FFCC"
+                        backgroundColor="#E5A00D"
                         marginRight="10"/>
                     <brls:Label
                         id="login/status"

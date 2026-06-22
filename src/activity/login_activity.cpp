@@ -57,11 +57,11 @@ void LoginActivity::onContentAvailable() {
     brls::Logger::debug("LoginActivity content available");
 
     // Pill background — brls XML doesn't accept rgba colours, so paint
-    // the teal-12%-alpha bg here. Same trick for the focus-able-but-
-    // not-yet-built tile container is unnecessary because it's empty
-    // until renderPinTiles() runs.
+    // the Plex-yellow-12%-alpha bg here. Same trick for the focus-able-
+    // but-not-yet-built tile container is unnecessary because it's
+    // empty until renderPinTiles() runs.
     if (quickPill) {
-        quickPill->setBackgroundColor(nvgRGBA(0, 255, 204, 30));
+        quickPill->setBackgroundColor(nvgRGBA(229, 160, 13, 38));
     }
 
     // ── Server / Username / Password inputs ────────────────────────
@@ -204,8 +204,8 @@ void LoginActivity::renderPinTiles() {
         tile->setWidth(74);
         tile->setHeight(92);
         tile->setCornerRadius(14);
-        tile->setBackgroundColor(nvgRGBA(0, 255, 204, 24));   // soft teal glow
-        tile->setBorderColor(nvgRGB(0, 255, 204));
+        tile->setBackgroundColor(nvgRGBA(229, 160, 13, 30));  // soft Plex-yellow glow
+        tile->setBorderColor(nvgRGB(229, 160, 13));
         tile->setBorderThickness(1);
         tile->setJustifyContent(brls::JustifyContent::CENTER);
         tile->setAlignItems(brls::AlignItems::CENTER);
@@ -215,7 +215,7 @@ void LoginActivity::renderPinTiles() {
         std::string s(1, code[i]);
         digit->setText(s);
         digit->setFontSize(46);
-        digit->setTextColor(nvgRGB(0, 255, 204));
+        digit->setTextColor(nvgRGB(229, 160, 13));
         tile->addView(digit);
 
         pinTilesBox->addView(tile);
@@ -564,7 +564,7 @@ void LoginActivity::onPinLoginPressed() {
         renderPinTiles();
 
         if (statusLabel) statusLabel->setText("Waiting for confirmation…");
-        if (statusDot)   statusDot->setBackgroundColor(nvgRGB(0, 255, 204));
+        if (statusDot)   statusDot->setBackgroundColor(nvgRGB(229, 160, 13));
         if (getNewCodeRow) getNewCodeRow->setVisibility(brls::Visibility::GONE);
 
         // Start checking PIN status using RepeatingTimer
