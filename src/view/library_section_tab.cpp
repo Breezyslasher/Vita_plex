@@ -7,6 +7,7 @@
 #include "view/media_detail_view.hpp"
 #include "activity/player_activity.hpp"
 #include "app/application.hpp"
+#include "app/plex_palette.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
 #include "app/music_queue.hpp"
@@ -522,17 +523,19 @@ void LibrarySectionTab::styleButton(brls::Button* btn, bool active) {
     btn->setCornerRadius(16);
     btn->setHighlightCornerRadius(16);
     btn->setPadding(6, 16, 6, 16);
+    namespace pal = vitaplex::palette;
     if (active) {
-        // Plex yellow fill + brightened yellow border. Text colour is
-        // forced to dark so the label stays readable on the warm fill;
-        // brls Button doesn't accept setTextColor directly, so we
-        // settle for the default white-on-yellow read which still has
-        // enough contrast given the tinted alpha.
-        btn->setBackgroundColor(nvgRGBA(229, 160, 13, 220));
-        btn->setBorderColor(nvgRGBA(255, 196, 64, 200));
+        // Picked: solid gold fill + ink glyph/label (never white on gold).
+        // Focus adds the warm cream halo on top, so picked-and-focused stays
+        // distinct from picked-at-rest (palette rules 1-2).
+        btn->setBackgroundColor(pal::gold);
+        btn->setTextColor(pal::goldInk);
+        btn->setBorderColor(pal::goldBright);
         btn->setBorderThickness(1.5f);
     } else {
-        btn->setBackgroundColor(nvgRGBA(60, 60, 70, 180));
+        // Default (not picked): neutral raised surface, muted label.
+        btn->setBackgroundColor(pal::surface3);
+        btn->setTextColor(pal::muted);
         btn->setBorderColor(nvgRGBA(0, 0, 0, 0));
         btn->setBorderThickness(0);
     }

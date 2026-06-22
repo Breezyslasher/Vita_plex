@@ -7,6 +7,7 @@
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/music_queue.hpp"
+#include "app/plex_palette.hpp"
 #include "player/mpv_player.hpp"
 #include "utils/async.hpp"
 #include "utils/image_loader.hpp"
@@ -685,18 +686,16 @@ void PlayerActivity::onContentAvailable() {
 void PlayerActivity::setBackgroundTransparent(bool transparent) {
 #ifdef __ANDROID__
     // Toggled by the audio/video branches in loadMedia / loadFromQueue
-    // and reset on willDisappear. The dark-theme opaque value matches
-    // theme.cpp's default (45,45,45); the light-theme one matches its
-    // (235,235,235) so a theme switch can't leave a stale clear behind.
-    // Both themes are updated for symmetry, but the only one that
-    // matters is whichever Application::getTheme() returns at render
-    // time.
+    // and reset on willDisappear. The opaque restore value must match the
+    // all-Plex background (palette::bg) that applyTheme() installs, so the
+    // GL clear can't leave a stale cool-grey behind once video ends. Both
+    // tables are updated for symmetry; only the active one is rendered.
     if (transparent) {
         brls::Theme::getDarkTheme().addColor("brls/clear", nvgRGBA(0, 0, 0, 0));
         brls::Theme::getLightTheme().addColor("brls/clear", nvgRGBA(0, 0, 0, 0));
     } else {
-        brls::Theme::getDarkTheme().addColor("brls/clear", nvgRGB(45, 45, 45));
-        brls::Theme::getLightTheme().addColor("brls/clear", nvgRGB(235, 235, 235));
+        brls::Theme::getDarkTheme().addColor("brls/clear", vitaplex::palette::bg);
+        brls::Theme::getLightTheme().addColor("brls/clear", vitaplex::palette::bg);
     }
 #else
     (void)transparent;
