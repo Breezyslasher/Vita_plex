@@ -43,7 +43,7 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/home_screen_plex_alpha_old.png" width="400"/></td>
+    <td><img src="old/home_page_new.png" width="400"/></td>
     <td><img src="new/home_page_new.png" width="400"/></td>
   </tr>
 </table>
@@ -57,7 +57,7 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/movies_list_old.png" width="400"/></td>
+    <td><img src="old/movies.png" width="400"/></td>
     <td><img src="new/movies.png" width="400"/></td>
   </tr>
 </table>
@@ -71,7 +71,7 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/movie_info_old.png" width="400"/></td>
+    <td><img src="old/movie_info_page.png" width="400"/></td>
     <td><img src="new/movie_info_page.png" width="400"/></td>
   </tr>
 </table>
@@ -86,7 +86,7 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/music_old.png" width="400"/></td>
+    <td><img src="old/music_page.png" width="400"/></td>
     <td><img src="new/music_page.png" width="400"/></td>
   </tr>
 </table>
@@ -102,7 +102,7 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/albums-page-old.png" width="400"/></td>
+    <td><img src="old/album_page.png" width="400"/></td>
     <td><img src="new/album_page.png" width="400"/></td>
   </tr>
 </table>
@@ -117,7 +117,7 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/track_page_old.png" width="400"/></td>
+    <td><img src="old/track_page.png" width="400"/></td>
     <td><img src="new/track_page.png" width="400"/></td>
   </tr>
 </table>
@@ -128,11 +128,11 @@
     <th colspan="2" align="center">Artist Download View</th>
   </tr>
   <tr>
-    <td align="center"><b>Beta 0.6.1 does not exist</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/Transparent_Square_Tiles_Texture.png" width="400"/></td>
+    <td><img src="old/artist_downlaod.png" width="400"/></td>
     <td><img src="new/artist_downlaod.png" width="400"/></td>
   </tr>
 </table>
@@ -146,7 +146,7 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/palyer_ui_old.png" width="400"/></td>
+    <td><img src="old/music_palyer_ui.png" width="400"/></td>
     <td><img src="new/music_palyer_ui.png" width="400"/></td>
   </tr>
 </table>
@@ -156,11 +156,11 @@
     <th colspan="2" align="center">Music Queue</th>
   </tr>
   <tr>
-    <td align="center"><b>Beta 0.6.1 does not exist</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/Transparent_Square_Tiles_Texture.png" width="400"/></td>
+    <td><img src="old/music_queue.png" width="400"/></td>
     <td><img src="new/music_queue.png" width="400"/></td>
   </tr>
 </table>
@@ -174,7 +174,7 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/palyer_ui_old.png" width="400"/></td>
+    <td><img src="old/video_player_ui.png" width="400"/></td>
     <td><img src="new/video_player_ui.png" width="400"/></td>
   </tr>
 </table>
@@ -184,11 +184,11 @@
     <th colspan="2" align="center">Downloads Tab</th>
   </tr>
   <tr>
-    <td align="center"><b>Beta 0.6.1 does not exist</b></td>
+    <td align="center"><b>Beta 0.6.1</b></td>
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/Transparent_Square_Tiles_Texture.png" width="400"/></td>
+    <td><img src="old/downlaods_tab.png" width="400"/></td>
     <td><img src="new/downlaods_tab.png" width="400"/></td>
   </tr>
 </table>
@@ -202,7 +202,7 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/live_tv_old.png" width="400"/></td>
+    <td><img src="old/live_tv.png" width="400"/></td>
     <td><img src="new/live_tv.png" width="400"/></td>
   </tr>
 </table>
@@ -216,7 +216,7 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/search_old.png" width="400"/></td>
+    <td><img src="old/search.png" width="400"/></td>
     <td><img src="new/search.png" width="400"/></td>
   </tr>
 </table>
@@ -230,7 +230,7 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/setting_pages_old.png" width="400"/></td>
+    <td><img src="old/setting_tab_1.png" width="400"/></td>
     <td><img src="new/setting_tab_1.png" width="400"/></td>
   </tr>
   <tr>
