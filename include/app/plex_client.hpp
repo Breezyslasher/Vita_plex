@@ -368,6 +368,9 @@ public:
         std::string language;     // Language name
         std::string languageCode; // Language code (e.g., "eng")
         std::string provider;     // e.g., "opensubtitles"
+        int score = 0;            // Provider match score (0-100)
+        bool hearingImpaired = false; // SDH
+        bool forced = false;          // Forced (signs/songs)
     };
     bool searchSubtitles(const std::string& ratingKey, const std::string& language,
                          std::vector<SubtitleResult>& results);

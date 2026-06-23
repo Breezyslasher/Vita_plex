@@ -3876,6 +3876,7 @@ namespace pickcol {
     inline NVGcolor goldTint()  { return nvgRGBA(229, 160, 13, 41); }  // 16%
     inline NVGcolor scrim()     { return nvgRGBA(0, 0, 0, 115); }       // ~0.45
     inline NVGcolor clear()     { return nvgRGBA(0, 0, 0, 0); }
+    inline NVGcolor ok()        { return nvgRGB(62, 207, 142); }        // #3ECF8E
 }
 
 enum class StreamBadge { None, Ext, Emb, Forced };
@@ -4048,6 +4049,77 @@ static brls::Box* makeStreamRow(const std::string& langCode,
         bl->setTextColor(btx);
         bdg->addView(bl);
         row->addView(bdg);
+    }
+
+    row->registerClickAction(onClick);
+    row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
+    return row;
+}
+
+// Online search-result row: a gold download glyph, the release title +
+// "{language} · {provider} · {extra}" sub-line, and a green match metric on
+// the right (provider score). Distinct from the installed-track rows.
+static brls::Box* makeResultRow(const std::string& title,
+                                const std::string& sub,
+                                int score,
+                                std::function<bool(brls::View*)> onClick) {
+    namespace pc = pickcol;
+    auto* row = new brls::Box();
+    row->setAxis(brls::Axis::ROW);
+    row->setAlignItems(brls::AlignItems::CENTER);
+    row->setHeight(54.0f);
+    row->setCornerRadius(11.0f);
+    row->setPaddingLeft(12.0f);
+    row->setPaddingRight(12.0f);
+    row->setMarginBottom(5.0f);
+    row->setFocusable(true);
+    row->setHighlightCornerRadius(11.0f);
+
+    // Gold download glyph (the action).
+    auto* dl = new MdiGlyphIcon(MdiGlyph::Download, pc::gold());
+    dl->setWidth(22.0f);
+    dl->setHeight(22.0f);
+    dl->setMarginRight(13.0f);
+    row->addView(dl);
+
+    // Release title + meta sub-line.
+    auto* col = new brls::Box();
+    col->setAxis(brls::Axis::COLUMN);
+    col->setGrow(1.0f);
+    col->setJustifyContent(brls::JustifyContent::CENTER);
+    auto* titleLbl = new brls::Label();
+    titleLbl->setText(title);
+    titleLbl->setFontSize(15.0f);
+    titleLbl->setSingleLine(true);
+    titleLbl->setTextColor(pc::text());
+    col->addView(titleLbl);
+    if (!sub.empty()) {
+        auto* subLbl = new brls::Label();
+        subLbl->setText(sub);
+        subLbl->setFontSize(12.0f);
+        subLbl->setSingleLine(true);
+        subLbl->setTextColor(pc::dim());
+        col->addView(subLbl);
+    }
+    row->addView(col);
+
+    // Green match metric (provider score), echoing the reference's count.
+    if (score > 0) {
+        auto* metric = new brls::Box();
+        metric->setAxis(brls::Axis::ROW);
+        metric->setAlignItems(brls::AlignItems::CENTER);
+        metric->setMarginLeft(8.0f);
+        auto* g = new MdiGlyphIcon(MdiGlyph::Download, pc::ok());
+        g->setWidth(15.0f);
+        g->setHeight(15.0f);
+        g->setMarginRight(4.0f);
+        metric->addView(g);
+        auto* ml = new brls::Label();
+        ml->setText(std::to_string(score) + "%");
+        ml->setFontSize(13.0f);
+        ml->setTextColor(pc::ok());
+        metric->addView(ml);
+        row->addView(metric);
     }
 
     row->registerClickAction(onClick);
@@ -4432,10 +4504,18 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
 
         for (const auto& r : results) {
             std::string display   = r.displayTitle.empty() ? r.language : r.displayTitle;
-            std::string provider  = r.provider;
             std::string key       = r.key;
             std::string ratingKey = m_item.ratingKey;
-            listBox->addView(makeStreamRow("", display, provider, false, StreamBadge::None,
+
+            // Sub-line: language (+ SDH) · provider (· forced signs).
+            std::string meta = r.language;
+            if (r.hearingImpaired && !meta.empty()) meta += " (SDH)";
+            if (!r.provider.empty())
+                meta += (meta.empty() ? "" : "  \xC2\xB7  ") + r.provider;
+            if (r.forced)
+                meta += (meta.empty() ? "" : "  \xC2\xB7  ") + std::string("forced signs");
+
+            listBox->addView(makeResultRow(display, meta, r.score,
                 [this, alive, key, ratingKey, display](brls::View*) {
                     brls::Application::popActivity();
                     int partId = m_partId;

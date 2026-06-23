@@ -2482,6 +2482,9 @@ bool PlexClient::searchSubtitles(const std::string& ratingKey, const std::string
         sub.language = extractJsonValue(obj, "language");
         sub.languageCode = extractJsonValue(obj, "languageCode");
         sub.provider = extractJsonValue(obj, "provider");
+        sub.score = extractJsonInt(obj, "score");
+        sub.hearingImpaired = extractJsonBool(obj, "hearingImpaired");
+        sub.forced = extractJsonBool(obj, "forced");
 
         // Also try alternate field names
         if (sub.displayTitle.empty()) {
