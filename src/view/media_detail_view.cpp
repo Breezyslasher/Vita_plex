@@ -22,6 +22,28 @@
 
 namespace vitaplex {
 
+namespace {
+// Scroll box for the summary. The wrapped, non-focusable description label
+// lives inside; the frame makes *itself* focusable only when the text
+// overflows the visible box. Short descriptions stay display-only (so they
+// can't steal RIGHT/UP focus), while long ones can be focused and scrolled
+// with D-pad UP/DOWN (NATURAL behaviour) to read in full.
+class DescriptionScroll : public brls::ScrollingFrame {
+public:
+    DescriptionScroll() { this->setFocusable(false); }
+    void onLayout() override {
+        brls::ScrollingFrame::onLayout();
+        bool overflow = getContentHeight() > getHeight() + 1.0f;
+        if (overflow != m_scrollable) {
+            m_scrollable = overflow;
+            this->setFocusable(overflow);
+        }
+    }
+private:
+    bool m_scrollable = false;
+};
+}  // namespace
+
 MediaDetailView::MediaDetailView(const MediaItem& item)
     : m_item(item), m_alive(std::make_shared<std::atomic<bool>>(true)) {
 
@@ -295,14 +317,14 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     // all, and the async update below flips it visible.
     m_fullDescription = m_item.summary;
 
-    m_summaryScroll = new brls::ScrollingFrame();
+    m_summaryScroll = new DescriptionScroll();
     m_summaryScroll->setHeight(200);
     m_summaryScroll->setMarginBottom(20);
-    // ScrollingFrame defaults to focusable; pressing RIGHT would land on the
-    // (often mostly-empty) 200px scroll box and look like focusing nothing.
-    // Keep the whole description area display-only, paired with the
-    // non-focusable label below.
-    m_summaryScroll->setFocusable(false);
+    // NATURAL lets the frame scroll on D-pad UP/DOWN once it's focused, and
+    // DescriptionScroll only makes itself focusable when the text overflows
+    // the 200px box — short descriptions stay display-only (no focus theft),
+    // long ones can be focused and scrolled to read in full.
+    m_summaryScroll->setScrollingBehavior(brls::ScrollingBehavior::NATURAL);
 
     m_summaryLabel = new brls::Label();
     m_summaryLabel->setFontSize(16);
