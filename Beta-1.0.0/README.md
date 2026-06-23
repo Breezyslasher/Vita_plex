@@ -9,25 +9,25 @@
 </div>
 ## 📊 Feature Comparison
 
-| Feature | Alpha 0.0.1 | Beta 0.6.1 | Beta 1.0.0 |
-|---|---|---|---|
-| UI Framework | vita2d + custom text menus | Borealis (NanoVG + GXM) | Borealis + full Plex theme (gold palette) |
-| Navigation | Linear list menus | Sidebar tabs + activity stack | Sidebar tabs + activity stack |
-| Library Browse | Text list with `[M]/[T]/[A]` tags | Poster grid with All / Categories | Poster grid with All / Categories |
-| Cover Art | Music only | Movies, TV, Music, Music Videos | Movies, TV, Music, Music Videos |
-| Audio Playback | SceAvPlayer (basic) | MPV with `ao=vita` driver | MPV with `ao=vita` driver |
-| Video Playback | SceAvPlayer (basic) | MPV HLS/MPEG-TS pipeline | MPV HLS/MPEG-TS pipeline |
-| Music Queue | ❌ | ✅ Drag / swipe / LB-RB reorder | ✅ Drag / swipe / LB-RB reorder |
-| Offline Downloads | ❌ | ✅ Movies, Shows, Music | ✅ Movies, Shows, Music |
-| Live TV | Empty-state only | Full program guide + DVR | Full program guide + DVR |
-| Search | Text list | Typed, grouped results with art | Typed, grouped results with art |
-| Settings | Minimal | UI / Layout / Playback / Music / Transcoding / Downloads / Debug | UI / Layout / Playback / Music / Transcoding / Downloads / Debug |
-| Auth | Credentials | PIN + Credentials + multi-server auto-detect | Redesigned multi-server picker (live probe) + Home-user profiles & PIN |
-| Subtitles | ❌ | ✅ Toggle + size selection | ✅ Toggle + size selection |
-| Controller Navigation | Manual wiring | Automatic D-pad / stick focus | Automatic D-pad / stick focus |
-| Touch Support | Limited | Full touchscreen | Full touchscreen |
-| Tv Remote Support | None | Full Media Buttons | Full Media Buttons |
-| Supported Platforms| Vita | Linux, Mac, Windows, PS4, Vita, Switch, Andriod, Andriod TV | Linux, Mac, Windows, PS4, Vita, Switch, Andriod, Andriod TV |
+| Feature | Beta 0.6.1 | Beta 1.0.0 |
+|---|---|---|
+| UI Framework | Borealis (NanoVG + GXM) | Borealis + full Plex theme (gold palette) |
+| Navigation | Sidebar tabs + activity stack | Sidebar tabs + activity stack |
+| Library Browse | Poster grid with All / Categories | Poster grid with All / Categories |
+| Cover Art | Movies, TV, Music, Music Videos | Movies, TV, Music, Music Videos |
+| Audio Playback | MPV with `ao=vita` driver | MPV with `ao=vita` driver |
+| Video Playback | MPV HLS/MPEG-TS pipeline | MPV HLS/MPEG-TS pipeline |
+| Music Queue | ✅ Drag / swipe / LB-RB reorder | ✅ Drag / swipe / LB-RB reorder |
+| Offline Downloads | ✅ Movies, Shows, Music | ✅ Movies, Shows, Music |
+| Live TV | Full program guide + DVR | Full program guide + DVR |
+| Search | Typed, grouped results with art | Typed, grouped results with art |
+| Settings | UI / Layout / Playback / Music / Transcoding / Downloads / Debug | UI / Layout / Playback / Music / Transcoding / Downloads / Debug |
+| Auth | PIN + Credentials + multi-server auto-detect | Redesigned multi-server picker (live probe) + Home-user profiles & PIN |
+| Subtitles | ✅ Toggle + size selection | ✅ Toggle + size selection |
+| Controller Navigation | Automatic D-pad / stick focus | Automatic D-pad / stick focus |
+| Touch Support | Full touchscreen | Full touchscreen |
+| Tv Remote Support | Full Media Buttons | Full Media Buttons |
+| Supported Platforms| Linux, Mac, Windows, PS4, Vita, Switch, Andriod, Andriod TV | Linux, Mac, Windows, PS4, Vita, Switch, Andriod, Andriod TV |
 
 ---
 
