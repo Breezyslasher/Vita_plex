@@ -407,6 +407,17 @@ DownloadsTab::DownloadsTab()
         m_clearBtn->setCustomNavigationRoute(brls::FocusDirection::UP, m_typeTabs[0].tab);
     }
 
+    // LEFT from the leftmost tab and the first toolbar button escapes to the
+    // sidebar. Unlike a RecyclingGrid (the tab root in other tabs), this
+    // Box-in-a-Box layout doesn't bubble LEFT out to the TabFrame on its own,
+    // so route it explicitly by the sidebar's id. Only the leftmost elements
+    // get this, so Left/Right between tabs and toolbar buttons still works.
+    if (m_typeTabs[0].tab)
+        m_typeTabs[0].tab->setCustomNavigationRoute(brls::FocusDirection::LEFT,
+                                                    std::string("brls/tab_frame/sidebar"));
+    m_startStopBtn->setCustomNavigationRoute(brls::FocusDirection::LEFT,
+                                             std::string("brls/tab_frame/sidebar"));
+
     applyTabVisuals();
     applyResponsiveLayout();
     // Re-flow the header on rotation. Guarded by the alive flag because
@@ -603,28 +614,6 @@ void DownloadsTab::applyResponsiveLayout() {
     }
 }
 
-void DownloadsTab::logGeometry(const std::string& phase) {
-    auto F = [](const char* name, brls::View* v) {
-        if (!v) { brls::Logger::info("[DLgeom] {} (null)", name); return; }
-        brls::Logger::info("[DLgeom] {} x={} y={} w={} h={} vis={}",
-                           name, v->getX(), v->getY(), v->getWidth(), v->getHeight(),
-                           static_cast<int>(v->getVisibility()));
-    };
-    brls::Logger::info("[DLgeom] ===== {} =====", phase);
-    F("this       ", this);
-    F("parent     ", this->getParent());
-    if (this->getParent()) F("grandparent", this->getParent()->getParent());
-    F("headerRow  ", m_headerRow);
-    F("titleLabel ", m_titleLabel);
-    F("storageBox ", m_storageBox);
-    F("storageUsed", m_storageUsedLabel);
-    F("meterFill  ", m_storageMeterFill);
-    F("tabBar     ", m_tabBar);
-    F("actionsRow ", m_actionsRow);
-    F("scrollView ", m_scrollView);
-    F("listContain", m_listContainer);
-}
-
 void DownloadsTab::willAppear(bool resetState) {
     brls::Box::willAppear(resetState);
 
@@ -637,14 +626,6 @@ void DownloadsTab::willAppear(bool resetState) {
     m_lastState.clear();
     rebuildList();
     startAutoRefresh();
-
-    // Temporary layout diagnostics: dump computed geometry after the
-    // first layout pass has settled.
-    auto aliveWeak = std::weak_ptr<bool>(m_alive);
-    brls::delay(300, [this, aliveWeak]() {
-        auto a = aliveWeak.lock();
-        if (a && *a) logGeometry("willAppear+300ms");
-    });
 }
 
 void DownloadsTab::willDisappear(bool resetState) {
@@ -970,10 +951,13 @@ void DownloadsTab::rebuildList() {
         if (m_syncBtn) m_syncBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstListItem);
         if (m_clearBtn) m_clearBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstListItem);
 
-        // UP from each list item -> first action button (Start/Stop)
+        // UP from each list item -> first action button (Start/Stop);
+        // LEFT escapes to the sidebar (same Box-in-a-Box caveat as above).
         for (auto* child : children) {
             if (child->isFocusable()) {
                 child->setCustomNavigationRoute(brls::FocusDirection::UP, m_startStopBtn);
+                child->setCustomNavigationRoute(brls::FocusDirection::LEFT,
+                                                std::string("brls/tab_frame/sidebar"));
             }
         }
     }
