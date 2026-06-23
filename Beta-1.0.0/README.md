@@ -231,7 +231,11 @@
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/Login_Page.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/search.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/login.png" width="400"/></td>
+  </tr>
+  <tr>
+    <td></td>
+    <td><img src="../Screenshots/Beta-1.0.0/login_2.png" width="400"/></td>
   </tr>
 </table>
 
@@ -245,7 +249,7 @@
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/Server.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/search.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/server.png" width="400"/></td>
   </tr>
 </table>
 <table>
@@ -257,8 +261,8 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="../Screenshots/Beta-0.6.1/search.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/search.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/Url_test.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/url_test.png" width="400"/></td>
   </tr>
 </table>
 
