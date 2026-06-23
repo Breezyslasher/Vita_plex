@@ -219,6 +219,12 @@ void SearchTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaIte
                     MediaDetailView::showAlbumContextMenuStatic(capturedItem);
                     return true;
                 });
+        } else if (capturedItem.mediaType == MediaType::MUSIC_TRACK) {
+            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                [capturedItem](brls::View* view) {
+                    MediaDetailView::showTrackContextMenuStatic(capturedItem);
+                    return true;
+                });
         }
 
         // Long press on touch = same as START button options
@@ -240,6 +246,8 @@ void SearchTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaIte
                     MediaDetailView::showArtistContextMenuStatic(capturedItem);
                 } else if (capturedItem.mediaType == MediaType::MUSIC_ALBUM) {
                     MediaDetailView::showAlbumContextMenuStatic(capturedItem);
+                } else if (capturedItem.mediaType == MediaType::MUSIC_TRACK) {
+                    MediaDetailView::showTrackContextMenuStatic(capturedItem);
                 }
             }));
 

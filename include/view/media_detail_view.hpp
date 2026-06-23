@@ -76,6 +76,7 @@ public:
     static void showArtistContextMenuStatic(const MediaItem& artist);
     static void showAlbumContextMenuStatic(const MediaItem& album);
     static void performTrackActionStatic(const MediaItem& track);
+    static void showTrackContextMenuStatic(const MediaItem& track);
 
     // Shared builder for the compact options popover (artboard "D4a"). Anchors a
     // 320px panel to `anchor` (the focused cell, usually

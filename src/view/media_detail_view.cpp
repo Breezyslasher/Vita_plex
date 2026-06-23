@@ -3469,6 +3469,62 @@ void MediaDetailView::performTrackActionStatic(const MediaItem& track) {
     }
 }
 
+// Always-on options menu for a single track (START / long-press), as
+// opposed to performTrackActionStatic which follows the default-action
+// setting (and may just play without a menu). Mirrors the member
+// showTrackActionDialog's actions, minus the playlist flow that needs a
+// MediaDetailView instance.
+void MediaDetailView::showTrackContextMenuStatic(const MediaItem& track) {
+    brls::View* anchor = brls::Application::getCurrentFocus();
+
+    MediaItem capturedTrack = track;
+
+    std::vector<OptionRow> rows;
+
+    rows.push_back({ "play.png", "Play Now (Clear Queue)", "", true, false,
+        [capturedTrack](brls::View*) {
+        std::vector<MediaItem> single = {capturedTrack};
+        auto* playerActivity = PlayerActivity::createWithQueue(single, 0);
+        brls::Application::pushActivity(playerActivity);
+        return true;
+    }});
+
+    rows.push_back({ "skip-next.png", "Play Next", "", false, false,
+        [capturedTrack](brls::View*) {
+        MusicQueue& queue = MusicQueue::getInstance();
+        if (queue.isEmpty()) {
+            std::vector<MediaItem> single = {capturedTrack};
+            auto* playerActivity = PlayerActivity::createWithQueue(single, 0);
+            brls::Application::pushActivity(playerActivity);
+        } else {
+            queue.insertTrackAfterCurrent(capturedTrack);
+            brls::Application::notify("Playing next: " + capturedTrack.title);
+        }
+        return true;
+    }});
+
+    rows.push_back({ "format-list-group.png", "Add to Bottom of Queue", "", false, false,
+        [capturedTrack](brls::View*) {
+        MusicQueue& queue = MusicQueue::getInstance();
+        if (queue.isEmpty()) {
+            std::vector<MediaItem> single = {capturedTrack};
+            auto* playerActivity = PlayerActivity::createWithQueue(single, 0);
+            brls::Application::pushActivity(playerActivity);
+        } else {
+            queue.addTrack(capturedTrack);
+            brls::Application::notify("Added to queue: " + capturedTrack.title);
+        }
+        return true;
+    }});
+
+    rows.push_back({ "cross.png", "Cancel", "", false, true,
+        [](brls::View*) {
+        return true;
+    }});
+
+    showOptionsPopover(anchor, "TRACK", track.title, std::move(rows));
+}
+
 void MediaDetailView::setupChildrenFocusTransfer() {
     bool hasChildren = m_childrenBox && !m_childrenBox->getChildren().empty();
     bool hasExtras = m_extrasBox && !m_extrasBox->getChildren().empty();
