@@ -967,9 +967,10 @@ void MediaDetailView::loadMusicCategories() {
                     }
                 }
 
-                // Focus setup: if no description, transfer focus to first category item
-                if (m_fullDescription.empty() && m_musicCategoriesBox &&
-                    !m_musicCategoriesBox->getChildren().empty()) {
+                // Land focus on the first category row once it's loaded. The
+                // description is display-only (non-focusable), so it can't
+                // hold focus — without this, focus would be stranded.
+                if (m_musicCategoriesBox && !m_musicCategoriesBox->getChildren().empty()) {
                     // Find first focusable view in the categories
                     for (auto* child : m_musicCategoriesBox->getChildren()) {
                         auto* hScroll = dynamic_cast<brls::HScrollingFrame*>(child);
@@ -1083,9 +1084,10 @@ void MediaDetailView::loadMusicCategories() {
                 }
             }
 
-            // Focus setup: if no description, transfer focus to first category item
-            if (m_fullDescription.empty() && m_musicCategoriesBox &&
-                !m_musicCategoriesBox->getChildren().empty()) {
+            // Land focus on the first category row once it's loaded. The
+            // description is display-only (non-focusable), so it can't hold
+            // focus — without this, focus would be stranded.
+            if (m_musicCategoriesBox && !m_musicCategoriesBox->getChildren().empty()) {
                 for (auto* child : m_musicCategoriesBox->getChildren()) {
                     auto* hScroll = dynamic_cast<brls::HScrollingFrame*>(child);
                     if (hScroll) {
@@ -3776,9 +3778,12 @@ void MediaDetailView::setupChildrenFocusTransfer() {
             lastLeftButton->setCustomNavigationRoute(
                 brls::FocusDirection::DOWN, firstFocusable);
         }
-        // Pull initial focus onto the first item only when there's no
-        // description to read (unchanged from before).
-        if (m_fullDescription.empty()) {
+        // Land focus on the first child/extra when there's no description to
+        // read OR no left-column button to hold the default focus. The
+        // description is display-only (non-focusable), so without this, a
+        // button-less layout (e.g. some artist/show headers) would strand
+        // focus on it. Layouts with a Play/etc. button keep their default.
+        if (m_fullDescription.empty() || !lastLeftButton) {
             brls::Application::giveFocus(firstFocusable);
         }
     }
