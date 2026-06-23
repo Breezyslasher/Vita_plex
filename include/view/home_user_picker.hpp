@@ -407,6 +407,7 @@ public:
         const char* rows[4][3] = {
             { "1", "2", "3" }, { "4", "5", "6" }, { "7", "8", "9" }, { "", "0", "\b" }
         };
+        brls::Box* cells[4][3] = { { nullptr } };   // nullptr = non-focusable (spacer)
         for (int r = 0; r < 4; r++) {
             auto* rowBox = new brls::Box();
             rowBox->setAxis(brls::Axis::ROW);
@@ -415,14 +416,16 @@ public:
                 const std::string key = rows[r][c];
                 brls::Box* cell;
                 if (key.empty()) {
-                    cell = new brls::Box();           // spacer
+                    cell = new brls::Box();           // spacer (not a focus target)
                     cell->setWidth(kw);
                     cell->setHeight(kh);
                 } else if (key == "\b") {
                     cell = new KeyButton("", [this]() { backspace(); }, true, kw, kh);
+                    cells[r][c] = cell;
                 } else {
                     const char d = key[0];
                     cell = new KeyButton(key, [this, d]() { addDigit(d); }, false, kw, kh);
+                    cells[r][c] = cell;
                     if (d == '5') m_defaultKey = cell;
                 }
                 cell->setMarginLeft(c == 0 ? 0.0f : 5.0f);
@@ -430,6 +433,20 @@ public:
                 rowBox->addView(cell);
             }
             grid->addView(rowBox);
+        }
+        // Wire explicit grid navigation so D-pad moves to the column/row-
+        // aligned key (the keypad is built as separate flex rows, so borealis'
+        // default vertical nav would otherwise jump to a row's first key —
+        // e.g. Up from 5 -> 1 instead of 2). Routes skip the blank spacer.
+        for (int r = 0; r < 4; r++) {
+            for (int c = 0; c < 3; c++) {
+                brls::Box* cell = cells[r][c];
+                if (!cell) continue;
+                for (int rr = r - 1; rr >= 0; rr--) if (cells[rr][c]) { cell->setCustomNavigationRoute(brls::FocusDirection::UP,    cells[rr][c]); break; }
+                for (int rr = r + 1; rr <  4; rr++) if (cells[rr][c]) { cell->setCustomNavigationRoute(brls::FocusDirection::DOWN,  cells[rr][c]); break; }
+                for (int cc = c - 1; cc >= 0; cc--) if (cells[r][cc]) { cell->setCustomNavigationRoute(brls::FocusDirection::LEFT,  cells[r][cc]); break; }
+                for (int cc = c + 1; cc <  3; cc++) if (cells[r][cc]) { cell->setCustomNavigationRoute(brls::FocusDirection::RIGHT, cells[r][cc]); break; }
+            }
         }
         card->addView(grid);
         this->addView(card);
