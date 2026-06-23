@@ -1854,8 +1854,11 @@ namespace {
 
 // Palette literals scoped to this component (matches artboard "D4a").
 namespace popcol {
-    inline NVGcolor panel()     { return nvgRGB(0x24, 0x22, 0x30); }
-    inline NVGcolor line()      { return nvgRGB(0x3A, 0x38, 0x45); }
+    // Match the app shell: panel = sidebar/sheet surface (#323232),
+    // line = the sidebar separator hairline. Keeps the popover reading as
+    // the same neutral surface as the background and sidebar, not a tint.
+    inline NVGcolor panel()     { return nvgRGB(50, 50, 50); }
+    inline NVGcolor line()      { return nvgRGB(67, 67, 74); }
     inline NVGcolor text()      { return nvgRGB(255, 255, 255); }
     inline NVGcolor muted()     { return nvgRGB(0xA8, 0xA6, 0xB4); }
     inline NVGcolor dim()       { return nvgRGB(0x80, 0x7E, 0x8C); }
@@ -1871,6 +1874,77 @@ class PopoverActivity : public brls::Activity {
 public:
     explicit PopoverActivity(brls::Box* content) : brls::Activity(content) {}
     bool isTranslucent() override { return true; }
+};
+
+// The three glyphs the user standardised on (download / restart / close)
+// are drawn as exact MDI vector paths (24x24 viewBox) rather than relying
+// on whichever PNG is in resources/icons — crisp at any size and tintable.
+// nanovg fills with nonzero winding, so download's separate bar + arrow
+// sub-paths render correctly. Mirrors login_activity's drawStrokeGlyph.
+enum class MdiGlyph { Download, Restart, Close };
+
+class MdiGlyphIcon : public brls::Box {
+public:
+    MdiGlyphIcon(MdiGlyph g, NVGcolor color) : m_glyph(g), m_color(color) {}
+    void draw(NVGcontext* vg, float x, float y, float w, float h,
+              brls::Style style, brls::FrameContext* ctx) override {
+        brls::Box::draw(vg, x, y, w, h, style, ctx);
+        const float side = (w < h) ? w : h;
+        const float gx = x + (w - side) * 0.5f;
+        const float gy = y + (h - side) * 0.5f;
+        const float s  = side / 24.0f;
+        auto X = [=](float v) { return gx + v * s; };
+        auto Y = [=](float v) { return gy + v * s; };
+        nvgBeginPath(vg);
+        switch (m_glyph) {
+            case MdiGlyph::Close:
+                nvgMoveTo(vg, X(19), Y(6.41f));   nvgLineTo(vg, X(17.59f), Y(5));
+                nvgLineTo(vg, X(12), Y(10.59f));  nvgLineTo(vg, X(6.41f), Y(5));
+                nvgLineTo(vg, X(5), Y(6.41f));    nvgLineTo(vg, X(10.59f), Y(12));
+                nvgLineTo(vg, X(5), Y(17.59f));   nvgLineTo(vg, X(6.41f), Y(19));
+                nvgLineTo(vg, X(12), Y(13.41f));  nvgLineTo(vg, X(17.59f), Y(19));
+                nvgLineTo(vg, X(19), Y(17.59f));  nvgLineTo(vg, X(13.41f), Y(12));
+                nvgClosePath(vg);
+                break;
+            case MdiGlyph::Download:
+                nvgMoveTo(vg, X(5), Y(20));  nvgLineTo(vg, X(19), Y(20));
+                nvgLineTo(vg, X(19), Y(18)); nvgLineTo(vg, X(5), Y(18));
+                nvgClosePath(vg);
+                nvgMoveTo(vg, X(19), Y(9));  nvgLineTo(vg, X(15), Y(9));
+                nvgLineTo(vg, X(15), Y(3));  nvgLineTo(vg, X(9), Y(3));
+                nvgLineTo(vg, X(9), Y(9));   nvgLineTo(vg, X(5), Y(9));
+                nvgLineTo(vg, X(12), Y(16)); nvgLineTo(vg, X(19), Y(9));
+                nvgClosePath(vg);
+                break;
+            case MdiGlyph::Restart:
+                nvgMoveTo(vg, X(12), Y(4));
+                nvgBezierTo(vg, X(14.1f), Y(4),     X(16.1f), Y(4.8f),  X(17.6f), Y(6.3f));
+                nvgBezierTo(vg, X(20.7f), Y(9.4f),  X(20.7f), Y(14.5f), X(17.6f), Y(17.6f));
+                nvgBezierTo(vg, X(15.8f), Y(19.5f), X(13.3f), Y(20.2f), X(10.9f), Y(19.9f));
+                nvgLineTo(vg, X(11.4f), Y(17.9f));
+                nvgBezierTo(vg, X(13.1f), Y(18.1f), X(14.9f), Y(17.5f), X(16.2f), Y(16.2f));
+                nvgBezierTo(vg, X(18.5f), Y(13.9f), X(18.5f), Y(10.1f), X(16.2f), Y(7.7f));
+                nvgBezierTo(vg, X(15.1f), Y(6.6f),  X(13.5f), Y(6),     X(12),    Y(6));
+                nvgLineTo(vg, X(12), Y(10.6f));
+                nvgLineTo(vg, X(7),  Y(5.6f));
+                nvgLineTo(vg, X(12), Y(0.6f));
+                nvgClosePath(vg);
+                nvgMoveTo(vg, X(6.3f), Y(17.6f));
+                nvgBezierTo(vg, X(3.7f), Y(15),    X(3.3f), Y(11),    X(5.1f), Y(7.9f));
+                nvgLineTo(vg, X(6.6f), Y(9.4f));
+                nvgBezierTo(vg, X(5.5f), Y(11.6f), X(5.9f), Y(14.4f), X(7.8f), Y(16.2f));
+                nvgBezierTo(vg, X(8.3f), Y(16.7f), X(8.9f), Y(17.1f), X(9.6f), Y(17.4f));
+                nvgLineTo(vg, X(9), Y(19.4f));
+                nvgBezierTo(vg, X(8), Y(19),       X(7.1f), Y(18.4f), X(6.3f), Y(17.6f));
+                nvgClosePath(vg);
+                break;
+        }
+        nvgFillColor(vg, m_color);
+        nvgFill(vg);
+    }
+private:
+    MdiGlyph m_glyph;
+    NVGcolor m_color;
 };
 
 }  // namespace
@@ -2001,14 +2075,26 @@ void MediaDetailView::showOptionsPopover(brls::View* anchor,
             rowBox->setBackgroundColor(pc::gold());
         }
 
-        // Leading icon.
-        auto* icon = new brls::Image();
-        if (!row.icon.empty()) icon->setImageFromRes("icons/" + row.icon);
-        icon->setScalingType(brls::ImageScalingType::FIT);
-        icon->setWidth(20.0f);
-        icon->setHeight(20.0f);
-        icon->setMarginRight(11.0f);
-        rowBox->addView(icon);
+        // Leading icon. download/restart/close are drawn as exact MDI
+        // vectors (tinted to match the row); everything else uses its PNG.
+        brls::View* iconView;
+        NVGcolor iconColor = row.primary ? pc::goldInk() : pc::text();
+        if (row.icon == "download.png") {
+            iconView = new MdiGlyphIcon(MdiGlyph::Download, iconColor);
+        } else if (row.icon == "refresh.png") {
+            iconView = new MdiGlyphIcon(MdiGlyph::Restart, iconColor);
+        } else if (row.icon == "cross.png") {
+            iconView = new MdiGlyphIcon(MdiGlyph::Close, iconColor);
+        } else {
+            auto* img = new brls::Image();
+            if (!row.icon.empty()) img->setImageFromRes("icons/" + row.icon);
+            img->setScalingType(brls::ImageScalingType::FIT);
+            iconView = img;
+        }
+        iconView->setWidth(20.0f);
+        iconView->setHeight(20.0f);
+        iconView->setMarginRight(11.0f);
+        rowBox->addView(iconView);
 
         // Label.
         auto* lbl = new brls::Label();
