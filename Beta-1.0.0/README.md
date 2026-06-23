@@ -33,6 +33,109 @@
 
 ---
 
+<table>
+  <tr>
+    <th colspan="2" align="center">Downloads Tab</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Beta-0.6.1/downlaods_tab.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/downlaods.png" width="400"/></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <th colspan="2" align="center">Live TV / Program Guide</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Beta-0.6.1/live_tv.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/live_tv.png" width="400"/></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <th colspan="2" align="center">Login</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Beta-0.6.1/Login_Page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/login.png" width="400"/></td>
+  </tr>
+  <tr>
+    <td></td>
+    <td><img src="../Screenshots/Beta-1.0.0/login_2.png" width="400"/></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <th colspan="2" align="center">Server Dialog</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Beta-0.6.1/Server.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/server.png" width="400"/></td>
+  </tr>
+</table>
+<table>
+  <tr>
+    <th colspan="2" align="center">URL testing Dialog</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Beta-0.6.1/Url_test.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/url_test.png" width="400"/></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <th colspan="2" align="center">users</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1 Does not exist</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
+  </tr>
+  <tr>
+   <td><img src="../Screenshots/Alpha-0.0.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
+   <td><img src="../Screenshots/Beta-1.0.0/users.png" width="400"/></td>
+  </tr>
+  <tr>
+    <td></td>
+    <td><img src="../Screenshots/Beta-1.0.0/pin.png" width="400"/></td>
+  </tr>
+</table>
+<table>
+  <tr>
+    <th colspan="2" align="center">Settings</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Beta-0.6.1/setting_tab_1.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/setting_tab_1.png" width="400"/></td>
+  </tr>
+</table>
 
 <table>
   <tr>
@@ -193,107 +296,5 @@
   </tr>
 </table>
 
-<table>
-  <tr>
-    <th colspan="2" align="center">Downloads Tab</th>
-  </tr>
-  <tr>
-    <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.1.3</b></td>
-  </tr>
-  <tr>
-    <td><img src="../Screenshots/Beta-0.6.1/downlaods_tab.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/downlaods.png" width="400"/></td>
-  </tr>
-</table>
 
-<table>
-  <tr>
-    <th colspan="2" align="center">Live TV / Program Guide</th>
-  </tr>
-  <tr>
-    <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.1.3</b></td>
-  </tr>
-  <tr>
-    <td><img src="../Screenshots/Beta-0.6.1/live_tv.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/live_tv.png" width="400"/></td>
-  </tr>
-</table>
-
-<table>
-  <tr>
-    <th colspan="2" align="center">Login</th>
-  </tr>
-  <tr>
-    <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.1.3</b></td>
-  </tr>
-  <tr>
-    <td><img src="../Screenshots/Beta-0.6.1/Login_Page.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/login.png" width="400"/></td>
-  </tr>
-  <tr>
-    <td></td>
-    <td><img src="../Screenshots/Beta-1.0.0/login_2.png" width="400"/></td>
-  </tr>
-</table>
-
-<table>
-  <tr>
-    <th colspan="2" align="center">Server Dialog</th>
-  </tr>
-  <tr>
-    <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.1.3</b></td>
-  </tr>
-  <tr>
-    <td><img src="../Screenshots/Beta-0.6.1/Server.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/server.png" width="400"/></td>
-  </tr>
-</table>
-<table>
-  <tr>
-    <th colspan="2" align="center">URL testing Dialog</th>
-  </tr>
-  <tr>
-    <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.1.3</b></td>
-  </tr>
-  <tr>
-    <td><img src="../Screenshots/Beta-0.6.1/Url_test.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/url_test.png" width="400"/></td>
-  </tr>
-</table>
-
-<table>
-  <tr>
-    <th colspan="2" align="center">users</th>
-  </tr>
-  <tr>
-    <td align="center"><b>Beta 0.6.1 Does not exist</b></td>
-    <td align="center"><b>Beta 1.1.3</b></td>
-  </tr>
-  <tr>
-   <td><img src="../Screenshots/Alpha-0.0.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
-   <td><img src="../Screenshots/Beta-1.0.0/users.png" width="400"/></td>
-  </tr>
-  <tr>
-    <td></td>
-    <td><img src="../Screenshots/Beta-1.0.0/pin.png" width="400"/></td>
-  </tr>
-</table>
-<table>
-  <tr>
-    <th colspan="2" align="center">Settings</th>
-  </tr>
-  <tr>
-    <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.1.3</b></td>
-  </tr>
-  <tr>
-    <td><img src="../Screenshots/Beta-0.6.1/setting_tab_1.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/setting_tab_1.png" width="400"/></td>
-  </tr>
-</table>
 
