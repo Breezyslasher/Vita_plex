@@ -4015,6 +4015,7 @@ static brls::Box* makeStreamRow(const std::string& langCode,
     auto* col = new brls::Box();
     col->setAxis(brls::Axis::COLUMN);
     col->setGrow(1.0f);
+    col->setShrink(1.0f);   // yield space so the badge never gets squeezed
     col->setJustifyContent(brls::JustifyContent::CENTER);
     auto* nameLbl = new brls::Label();
     nameLbl->setText(name);
@@ -4039,13 +4040,21 @@ static brls::Box* makeStreamRow(const std::string& langCode,
         if (badge == StreamBadge::Ext) { bbg = nvgRGBA(137, 241, 242, 33); btx = nvgRGB(137, 241, 242); btext = "EXT"; }
         else if (badge == StreamBadge::Emb) { bbg = nvgRGBA(62, 207, 142, 36); btx = nvgRGB(62, 207, 142); btext = "EMB"; }
         auto* bdg = new brls::Box();
+        bdg->setAxis(brls::Axis::ROW);
+        bdg->setJustifyContent(brls::JustifyContent::CENTER);
+        bdg->setAlignItems(brls::AlignItems::CENTER);
+        bdg->setHeight(22.0f);
+        bdg->setMinWidth(34.0f);
+        bdg->setShrink(0.0f);   // never squeeze the badge; the name yields instead
         bdg->setCornerRadius(6.0f);
         bdg->setBackgroundColor(bbg);
-        bdg->setPadding(3.0f, 7.0f, 3.0f, 7.0f);
+        bdg->setPaddingLeft(8.0f);
+        bdg->setPaddingRight(8.0f);
         bdg->setMarginLeft(8.0f);
         auto* bl = new brls::Label();
         bl->setText(btext);
         bl->setFontSize(10.0f);
+        bl->setSingleLine(true);
         bl->setTextColor(btx);
         bdg->addView(bl);
         row->addView(bdg);
@@ -4056,12 +4065,11 @@ static brls::Box* makeStreamRow(const std::string& langCode,
     return row;
 }
 
-// Online search-result row: a gold download glyph, the release title +
-// "{language} · {provider} · {extra}" sub-line, and a green match metric on
-// the right (provider score). Distinct from the installed-track rows.
+// Online search-result row: a gold download glyph and the release title +
+// "{language} · {provider} · {extra}" sub-line. Distinct from the
+// installed-track rows.
 static brls::Box* makeResultRow(const std::string& title,
                                 const std::string& sub,
-                                int score,
                                 std::function<bool(brls::View*)> onClick) {
     namespace pc = pickcol;
     auto* row = new brls::Box();
@@ -4086,6 +4094,7 @@ static brls::Box* makeResultRow(const std::string& title,
     auto* col = new brls::Box();
     col->setAxis(brls::Axis::COLUMN);
     col->setGrow(1.0f);
+    col->setShrink(1.0f);
     col->setJustifyContent(brls::JustifyContent::CENTER);
     auto* titleLbl = new brls::Label();
     titleLbl->setText(title);
@@ -4102,25 +4111,6 @@ static brls::Box* makeResultRow(const std::string& title,
         col->addView(subLbl);
     }
     row->addView(col);
-
-    // Green match metric (provider score), echoing the reference's count.
-    if (score > 0) {
-        auto* metric = new brls::Box();
-        metric->setAxis(brls::Axis::ROW);
-        metric->setAlignItems(brls::AlignItems::CENTER);
-        metric->setMarginLeft(8.0f);
-        auto* g = new MdiGlyphIcon(MdiGlyph::Download, pc::ok());
-        g->setWidth(15.0f);
-        g->setHeight(15.0f);
-        g->setMarginRight(4.0f);
-        metric->addView(g);
-        auto* ml = new brls::Label();
-        ml->setText(std::to_string(score) + "%");
-        ml->setFontSize(13.0f);
-        ml->setTextColor(pc::ok());
-        metric->addView(ml);
-        row->addView(metric);
-    }
 
     row->registerClickAction(onClick);
     row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
@@ -4468,29 +4458,12 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
 
     // Search-results view inside the same scroll. Picking a result installs
     // it (selectSearchedSubtitle), then refetches streams. Verbatim flow.
-    *showResults = [this, alive, dlgAlive, listBox, searchRow, setSearchBtnFor, buildInstalledList](
+    *showResults = [this, alive, dlgAlive, listBox, searchRow, setSearchBtnFor](
             const std::vector<PlexClient::SubtitleResult>& results) {
         if (!alive->load() || !*dlgAlive) return;
         setSearchBtnFor(/*resultsMode=*/true);
         brls::Application::giveFocus(searchRow);
         listBox->clearViews();
-
-        auto* back = new brls::Button();
-        back->setText("\xE2\x80\xB9 Back to installed");
-        back->setHeight(36.0f);
-        back->setMarginBottom(10.0f);
-        back->setPaddingLeft(14.0f);
-        // Defer the rebuild so this click handler returns before listBox
-        // (which holds this very button) is torn down.
-        back->registerClickAction([dlgAlive, buildInstalledList](brls::View*) {
-            brls::sync([dlgAlive, buildInstalledList]() {
-                if (!*dlgAlive) return;
-                (*buildInstalledList)();
-            });
-            return true;
-        });
-        back->addGestureRecognizer(new brls::TapGestureRecognizer(back));
-        listBox->addView(back);
 
         if (results.empty()) {
             auto* none = new brls::Label();
@@ -4502,6 +4475,7 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
             return;
         }
 
+        brls::View* first = nullptr;
         for (const auto& r : results) {
             std::string display   = r.displayTitle.empty() ? r.language : r.displayTitle;
             std::string key       = r.key;
@@ -4515,7 +4489,7 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
             if (r.forced)
                 meta += (meta.empty() ? "" : "  \xC2\xB7  ") + std::string("forced signs");
 
-            listBox->addView(makeResultRow(display, meta, r.score,
+            auto* rr = makeResultRow(display, meta,
                 [this, alive, key, ratingKey, display](brls::View*) {
                     brls::Application::popActivity();
                     int partId = m_partId;
@@ -4538,8 +4512,11 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
                         });
                     });
                     return true;
-                }));
+                });
+            listBox->addView(rr);
+            if (!first) first = rr;
         }
+        if (first) brls::Application::giveFocus(first);
     };
 
     // Loading-state + asyncRun + handoff glue. Verbatim from before.
@@ -4580,9 +4557,10 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     };
 
     // Tab switch: restyle, toggle the search row, rebuild the list.
-    *selectTab = [alive, dlgAlive, activeTab, styleTabs, searchRow, buildAudioList, buildInstalledList](int tab) {
+    *selectTab = [alive, dlgAlive, activeTab, styleTabs, searchRow, resultsMode, buildAudioList, buildInstalledList](int tab) {
         if (!alive->load() || !*dlgAlive) return;
         *activeTab = tab;
+        *resultsMode = false;  // leaving any results view; Back now dismisses
         styleTabs();
         if (tab == 0) {
             searchRow->setVisibility(brls::Visibility::GONE);
@@ -4611,8 +4589,20 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     searchRow->addGestureRecognizer(new brls::TapGestureRecognizer(searchRow));
 
     scrim->addView(panel);
+    // Back: from the online-results view, return to the installed list;
+    // otherwise close the dialog. (No on-screen "Back to installed" row.)
     scrim->registerAction("Back", brls::ControllerButton::BUTTON_B,
-        [](brls::View*) { brls::Application::popActivity(); return true; });
+        [resultsMode, dlgAlive, buildInstalledList](brls::View*) {
+            if (*resultsMode) {
+                brls::sync([dlgAlive, buildInstalledList]() {
+                    if (!*dlgAlive) return;
+                    (*buildInstalledList)();
+                });
+            } else {
+                brls::Application::popActivity();
+            }
+            return true;
+        });
 
     brls::Application::pushActivity(new PopoverActivity(scrim));
     (*selectTab)(defaultTab == 0 ? 0 : 1);
