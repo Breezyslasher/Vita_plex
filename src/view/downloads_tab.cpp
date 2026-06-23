@@ -381,18 +381,28 @@ DownloadsTab::DownloadsTab()
     m_listContainer->setAxis(brls::Axis::COLUMN);
     m_listContainer->setGrow(1.0f);
 
-    // Empty label (text swapped per filter in rebuildList)
+    m_scrollView->setContentView(m_listContainer);
+    this->addView(m_scrollView);
+
+    // Empty-state placeholder. Kept OUT of the scroll and given grow=1 as a
+    // direct child: a ScrollingFrame collapses to its content height when
+    // empty, which lets the whole column drift to the middle. A plain
+    // grow-filling Box always claims the space, anchoring the header at the
+    // top whether or not there are downloads. rebuildList toggles which of
+    // the two (scroll vs. placeholder) is visible.
+    m_emptyView = new brls::Box();
+    m_emptyView->setAxis(brls::Axis::COLUMN);
+    m_emptyView->setGrow(1.0f);
+    m_emptyView->setJustifyContent(brls::JustifyContent::CENTER);
+    m_emptyView->setAlignItems(brls::AlignItems::CENTER);
+    m_emptyView->setVisibility(brls::Visibility::GONE);
+
     m_emptyLabel = new brls::Label();
     m_emptyLabel->setText("No downloads yet.\nUse the download button on media details to save for offline viewing.");
     m_emptyLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
-    m_emptyLabel->setVerticalAlign(brls::VerticalAlign::CENTER);
     m_emptyLabel->setTextColor(kMuted);
-    m_emptyLabel->setGrow(1.0f);
-    m_emptyLabel->setVisibility(brls::Visibility::GONE);
-    m_listContainer->addView(m_emptyLabel);
-
-    m_scrollView->setContentView(m_listContainer);
-    this->addView(m_scrollView);
+    m_emptyView->addView(m_emptyLabel);
+    this->addView(m_emptyView);
 
     // ── Focus wiring: tabs <-> toolbar ──
     // Down from any tab drops into the toolbar; Up from any toolbar
@@ -826,8 +836,9 @@ void DownloadsTab::rebuildList() {
     // dereference -> segfault. Clear it explicitly first.
     m_listContainer->setLastFocusedView(nullptr);
 
-    // Clear existing items (except empty label which is always last)
-    while (m_listContainer->getChildren().size() > 1) {
+    // Clear existing rows. The empty-state placeholder lives outside the
+    // scroll now, so every child here is a real row.
+    while (!m_listContainer->getChildren().empty()) {
         m_listContainer->removeView(m_listContainer->getChildren()[0]);
     }
 
@@ -840,11 +851,13 @@ void DownloadsTab::rebuildList() {
                            : (m_activeType == Type::MUSIC)  ? "Music" : "";
             m_emptyLabel->setText(std::string("No ") + tn + " downloads");
         }
-        m_emptyLabel->setVisibility(brls::Visibility::VISIBLE);
+        if (m_scrollView) m_scrollView->setVisibility(brls::Visibility::GONE);
+        if (m_emptyView)  m_emptyView->setVisibility(brls::Visibility::VISIBLE);
         return;
     }
 
-    m_emptyLabel->setVisibility(brls::Visibility::GONE);
+    if (m_emptyView)  m_emptyView->setVisibility(brls::Visibility::GONE);
+    if (m_scrollView) m_scrollView->setVisibility(brls::Visibility::VISIBLE);
 
     // Group information
     struct GroupInfo {
@@ -900,13 +913,13 @@ void DownloadsTab::rebuildList() {
         auto* row = buildGroupRow(gi.type, gi.key, gi.title, gi.thumb,
                                    gi.total, gi.completed, gi.downloading,
                                    gi.contentTotal);
-        m_listContainer->addView(row, m_listContainer->getChildren().size() - 1);
+        m_listContainer->addView(row);
     }
 
     // Add ungrouped items
     for (const auto& item : ungrouped) {
         auto* row = buildItemRow(item);
-        m_listContainer->addView(row, m_listContainer->getChildren().size() - 1);
+        m_listContainer->addView(row);
     }
 
     // Set up focus navigation between action buttons and list items
