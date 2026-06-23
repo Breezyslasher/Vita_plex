@@ -43,8 +43,8 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/home_page_new.png" width="400"/></td>
-    <td><img src="new/home_page_new.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/home_page_new.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/home_page_new.png" width="400"/></td>
   </tr>
 </table>
 
@@ -57,8 +57,8 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/movies.png" width="400"/></td>
-    <td><img src="new/movies.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/movies.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/movies.png" width="400"/></td>
   </tr>
 </table>
 
@@ -71,8 +71,8 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/movie_info_page.png" width="400"/></td>
-    <td><img src="new/movie_info_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/movie_info_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/movie_info_page.png" width="400"/></td>
   </tr>
 </table>
 
@@ -86,8 +86,8 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/music_page.png" width="400"/></td>
-    <td><img src="new/music_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/music_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/music_page.png" width="400"/></td>
   </tr>
 </table>
 
@@ -102,8 +102,8 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/album_page.png" width="400"/></td>
-    <td><img src="new/album_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/album_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/album_page.png" width="400"/></td>
   </tr>
 </table>
 
@@ -117,8 +117,8 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/track_page.png" width="400"/></td>
-    <td><img src="new/track_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/track_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/track_page.png" width="400"/></td>
   </tr>
 </table>
 
@@ -132,8 +132,8 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/artist_downlaod.png" width="400"/></td>
-    <td><img src="new/artist_downlaod.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/artist_downlaod.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/artist_downlaod.png" width="400"/></td>
   </tr>
 </table>
 
@@ -146,8 +146,8 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/music_palyer_ui.png" width="400"/></td>
-    <td><img src="new/music_palyer_ui.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/music_palyer_ui.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/music_palyer_ui.png" width="400"/></td>
   </tr>
 </table>
 
@@ -160,8 +160,8 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/music_queue.png" width="400"/></td>
-    <td><img src="new/music_queue.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/music_queue.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/music_queue.png" width="400"/></td>
   </tr>
 </table>
 
@@ -174,8 +174,8 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/video_player_ui.png" width="400"/></td>
-    <td><img src="new/video_player_ui.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/video_player_ui.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/video_player_ui.png" width="400"/></td>
   </tr>
 </table>
 
@@ -188,8 +188,8 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/downlaods_tab.png" width="400"/></td>
-    <td><img src="new/downlaods_tab.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/downlaods_tab.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/downlaods_tab.png" width="400"/></td>
   </tr>
 </table>
 
@@ -202,8 +202,8 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/live_tv.png" width="400"/></td>
-    <td><img src="new/live_tv.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/live_tv.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/live_tv.png" width="400"/></td>
   </tr>
 </table>
 
@@ -216,8 +216,8 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/search.png" width="400"/></td>
-    <td><img src="new/search.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/search.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/search.png" width="400"/></td>
   </tr>
 </table>
 
@@ -230,21 +230,21 @@
     <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/setting_tab_1.png" width="400"/></td>
-    <td><img src="new/setting_tab_1.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/setting_tab_1.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/setting_tab_1.png" width="400"/></td>
   </tr>
   <tr>
     <td></td>
-    <td><img src="new/setting_2.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/setting_2.png" width="400"/></td>
   </tr>
    <tr>
     <td></td>
-    <td><img src="new/setting_3.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/setting_3.png" width="400"/></td>
   </tr>
     </tr>
    <tr>
     <td></td>
-    <td><img src="new/setting_4.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/setting_4.png" width="400"/></td>
   </tr>
 </table>
 
