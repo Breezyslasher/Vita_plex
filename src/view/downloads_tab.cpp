@@ -222,27 +222,40 @@ DownloadsTab::DownloadsTab()
     this->setAxis(brls::Axis::COLUMN);
     this->setPadding(20);
     this->setGrow(1.0f);
+    this->setJustifyContent(brls::JustifyContent::FLEX_START);
+    this->setAlignItems(brls::AlignItems::STRETCH);
 
     // ── Header: page title + offline-storage readout ──
     m_headerRow = new brls::Box();
     m_headerRow->setAxis(brls::Axis::ROW);
     m_headerRow->setAlignItems(brls::AlignItems::CENTER);
+    m_headerRow->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
     m_headerRow->setMargins(0, 0, 6, 0);
 
     m_titleLabel = new brls::Label();
     m_titleLabel->setText("Downloads");
     m_titleLabel->setFontSize(28);
     m_titleLabel->setTextColor(kText);
-    m_titleLabel->setGrow(1.0f);
     m_headerRow->addView(m_titleLabel);
 
     m_storageBox = new brls::Box();
     m_storageBox->setAxis(brls::Axis::COLUMN);
+    m_storageBox->setWidth(210);
+    // Pin the height + disable grow/shrink: when the list scroll collapses
+    // (empty), the freed vertical space was cascading into this box and
+    // ballooning the header to ~570px. An explicit size keeps it out of
+    // the flex distribution entirely.
+    m_storageBox->setHeight(40);
+    m_storageBox->setGrow(0.0f);
+    m_storageBox->setShrink(0.0f);
     m_storageBox->setAlignItems(brls::AlignItems::FLEX_END);
     m_storageBox->setJustifyContent(brls::JustifyContent::CENTER);
 
     auto* storageText = new brls::Box();
     storageText->setAxis(brls::Axis::ROW);
+    storageText->setHeight(22);
+    storageText->setGrow(0.0f);
+    storageText->setShrink(0.0f);
     storageText->setAlignItems(brls::AlignItems::CENTER);
     m_storageUsedLabel = new brls::Label();
     m_storageUsedLabel->setFontSize(15);
@@ -378,16 +391,6 @@ DownloadsTab::DownloadsTab()
     m_listContainer->setAxis(brls::Axis::COLUMN);
     m_listContainer->setGrow(1.0f);
 
-    // Empty label (text swapped per filter in rebuildList)
-    m_emptyLabel = new brls::Label();
-    m_emptyLabel->setText("No downloads yet.\nUse the download button on media details to save for offline viewing.");
-    m_emptyLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
-    m_emptyLabel->setVerticalAlign(brls::VerticalAlign::CENTER);
-    m_emptyLabel->setTextColor(kMuted);
-    m_emptyLabel->setGrow(1.0f);
-    m_emptyLabel->setVisibility(brls::Visibility::GONE);
-    m_listContainer->addView(m_emptyLabel);
-
     m_scrollView->setContentView(m_listContainer);
     this->addView(m_scrollView);
 
@@ -518,11 +521,10 @@ brls::Box* DownloadsTab::buildTypeTabs() {
     scroll->setContentView(tabsRow);
     bar->addView(scroll);
 
-    // 1px baseline the active underline sits on (overlaps it by 1px).
+    // 1px baseline the active underline sits on.
     auto* baseline = new brls::Box();
     baseline->setHeight(1);
     baseline->setBackgroundColor(kLine);
-    baseline->setMarginTop(-1);
     bar->addView(baseline);
 
     return bar;
@@ -601,6 +603,28 @@ void DownloadsTab::applyResponsiveLayout() {
     }
 }
 
+void DownloadsTab::logGeometry(const std::string& phase) {
+    auto F = [](const char* name, brls::View* v) {
+        if (!v) { brls::Logger::info("[DLgeom] {} (null)", name); return; }
+        brls::Logger::info("[DLgeom] {} x={} y={} w={} h={} vis={}",
+                           name, v->getX(), v->getY(), v->getWidth(), v->getHeight(),
+                           static_cast<int>(v->getVisibility()));
+    };
+    brls::Logger::info("[DLgeom] ===== {} =====", phase);
+    F("this       ", this);
+    F("parent     ", this->getParent());
+    if (this->getParent()) F("grandparent", this->getParent()->getParent());
+    F("headerRow  ", m_headerRow);
+    F("titleLabel ", m_titleLabel);
+    F("storageBox ", m_storageBox);
+    F("storageUsed", m_storageUsedLabel);
+    F("meterFill  ", m_storageMeterFill);
+    F("tabBar     ", m_tabBar);
+    F("actionsRow ", m_actionsRow);
+    F("scrollView ", m_scrollView);
+    F("listContain", m_listContainer);
+}
+
 void DownloadsTab::willAppear(bool resetState) {
     brls::Box::willAppear(resetState);
 
@@ -613,6 +637,14 @@ void DownloadsTab::willAppear(bool resetState) {
     m_lastState.clear();
     rebuildList();
     startAutoRefresh();
+
+    // Temporary layout diagnostics: dump computed geometry after the
+    // first layout pass has settled.
+    auto aliveWeak = std::weak_ptr<bool>(m_alive);
+    brls::delay(300, [this, aliveWeak]() {
+        auto a = aliveWeak.lock();
+        if (a && *a) logGeometry("willAppear+300ms");
+    });
 }
 
 void DownloadsTab::willDisappear(bool resetState) {
@@ -824,25 +856,39 @@ void DownloadsTab::rebuildList() {
     // dereference -> segfault. Clear it explicitly first.
     m_listContainer->setLastFocusedView(nullptr);
 
-    // Clear existing items (except empty label which is always last)
-    while (m_listContainer->getChildren().size() > 1) {
+    // Clear existing rows. The empty-state placeholder lives outside the
+    // scroll now, so every child here is a real row.
+    while (!m_listContainer->getChildren().empty()) {
         m_listContainer->removeView(m_listContainer->getChildren()[0]);
     }
 
     if (downloads.empty()) {
+        std::string msg;
         if (allDownloads.empty()) {
-            m_emptyLabel->setText("No downloads yet.\nUse the download button on media details to save for offline viewing.");
+            msg = "No downloads yet.\nUse the download button on media details to save for offline viewing.";
         } else {
             const char* tn = (m_activeType == Type::MOVIES) ? "Movies"
                            : (m_activeType == Type::SHOWS)  ? "Shows"
                            : (m_activeType == Type::MUSIC)  ? "Music" : "";
-            m_emptyLabel->setText(std::string("No ") + tn + " downloads");
+            msg = std::string("No ") + tn + " downloads";
         }
-        m_emptyLabel->setVisibility(brls::Visibility::VISIBLE);
+        // Give the scroll a single non-focusable placeholder item. An empty
+        // ScrollingFrame collapses (the column then drifts to the middle);
+        // one real item makes it lay out exactly like the populated case,
+        // which is the only configuration we've seen render correctly.
+        auto* placeholder = new brls::Box();
+        placeholder->setAxis(brls::Axis::COLUMN);
+        placeholder->setJustifyContent(brls::JustifyContent::CENTER);
+        placeholder->setAlignItems(brls::AlignItems::CENTER);
+        placeholder->setHeight(220);
+        m_emptyLabel = new brls::Label();
+        m_emptyLabel->setText(msg);
+        m_emptyLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+        m_emptyLabel->setTextColor(kMuted);
+        placeholder->addView(m_emptyLabel);
+        m_listContainer->addView(placeholder);
         return;
     }
-
-    m_emptyLabel->setVisibility(brls::Visibility::GONE);
 
     // Group information
     struct GroupInfo {
@@ -898,20 +944,20 @@ void DownloadsTab::rebuildList() {
         auto* row = buildGroupRow(gi.type, gi.key, gi.title, gi.thumb,
                                    gi.total, gi.completed, gi.downloading,
                                    gi.contentTotal);
-        m_listContainer->addView(row, m_listContainer->getChildren().size() - 1);
+        m_listContainer->addView(row);
     }
 
     // Add ungrouped items
     for (const auto& item : ungrouped) {
         auto* row = buildItemRow(item);
-        m_listContainer->addView(row, m_listContainer->getChildren().size() - 1);
+        m_listContainer->addView(row);
     }
 
     // Set up focus navigation between action buttons and list items
     auto& children = m_listContainer->getChildren();
     brls::View* firstListItem = nullptr;
     for (auto* child : children) {
-        if (child != m_emptyLabel && child->isFocusable()) {
+        if (child->isFocusable()) {
             firstListItem = child;
             break;
         }
@@ -926,7 +972,7 @@ void DownloadsTab::rebuildList() {
 
         // UP from each list item -> first action button (Start/Stop)
         for (auto* child : children) {
-            if (child != m_emptyLabel && child->isFocusable()) {
+            if (child->isFocusable()) {
                 child->setCustomNavigationRoute(brls::FocusDirection::UP, m_startStopBtn);
             }
         }
