@@ -22,38 +22,6 @@
 
 namespace vitaplex {
 
-namespace {
-// Scroll box for the summary. The wrapped, non-focusable description label
-// lives inside; the frame makes *itself* focusable only when the text
-// overflows the visible box. Short descriptions stay display-only (so they
-// can't steal RIGHT/UP focus), while long ones can be focused and scrolled
-// with D-pad UP/DOWN (NATURAL behaviour) to read in full.
-class DescriptionScroll : public brls::ScrollingFrame {
-public:
-    DescriptionScroll() {
-        this->setFocusable(false);
-        // ScrollingFrame hides its own highlight (it expects a focusable
-        // child to carry one). Our label is non-focusable, so show the
-        // frame's focus outline when *it* is focused — otherwise the user
-        // can't tell the description is selected and that UP/DOWN scrolls it
-        // (it just looks like it "moves on its own"). Keep the background
-        // hidden so the outline doesn't tint the text.
-        this->setHideHighlightBorder(false);
-        this->setHighlightCornerRadius(8.0f);
-    }
-    void onLayout() override {
-        brls::ScrollingFrame::onLayout();
-        bool overflow = getContentHeight() > getHeight() + 1.0f;
-        if (overflow != m_scrollable) {
-            m_scrollable = overflow;
-            this->setFocusable(overflow);
-        }
-    }
-private:
-    bool m_scrollable = false;
-};
-}  // namespace
-
 MediaDetailView::MediaDetailView(const MediaItem& item)
     : m_item(item), m_alive(std::make_shared<std::atomic<bool>>(true)) {
 
@@ -327,14 +295,13 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     // all, and the async update below flips it visible.
     m_fullDescription = m_item.summary;
 
-    m_summaryScroll = new DescriptionScroll();
+    m_summaryScroll = new brls::ScrollingFrame();
     m_summaryScroll->setHeight(200);
     m_summaryScroll->setMarginBottom(20);
-    // NATURAL lets the frame scroll on D-pad UP/DOWN once it's focused, and
-    // DescriptionScroll only makes itself focusable when the text overflows
-    // the 200px box — short descriptions stay display-only (no focus theft),
-    // long ones can be focused and scrolled to read in full.
-    m_summaryScroll->setScrollingBehavior(brls::ScrollingBehavior::NATURAL);
+    // Display-only for now: non-focusable so the description never enters the
+    // navigation flow or captures D-pad input. A long description is simply
+    // clipped to the 200px box (no in-place scroll / popup).
+    m_summaryScroll->setFocusable(false);
 
     m_summaryLabel = new brls::Label();
     m_summaryLabel->setFontSize(16);
