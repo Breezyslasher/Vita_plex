@@ -222,22 +222,25 @@ DownloadsTab::DownloadsTab()
     this->setAxis(brls::Axis::COLUMN);
     this->setPadding(20);
     this->setGrow(1.0f);
+    this->setJustifyContent(brls::JustifyContent::FLEX_START);
+    this->setAlignItems(brls::AlignItems::STRETCH);
 
     // ── Header: page title + offline-storage readout ──
     m_headerRow = new brls::Box();
     m_headerRow->setAxis(brls::Axis::ROW);
     m_headerRow->setAlignItems(brls::AlignItems::CENTER);
+    m_headerRow->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
     m_headerRow->setMargins(0, 0, 6, 0);
 
     m_titleLabel = new brls::Label();
     m_titleLabel->setText("Downloads");
     m_titleLabel->setFontSize(28);
     m_titleLabel->setTextColor(kText);
-    m_titleLabel->setGrow(1.0f);
     m_headerRow->addView(m_titleLabel);
 
     m_storageBox = new brls::Box();
     m_storageBox->setAxis(brls::Axis::COLUMN);
+    m_storageBox->setWidth(210);
     m_storageBox->setAlignItems(brls::AlignItems::FLEX_END);
     m_storageBox->setJustifyContent(brls::JustifyContent::CENTER);
 
@@ -518,11 +521,10 @@ brls::Box* DownloadsTab::buildTypeTabs() {
     scroll->setContentView(tabsRow);
     bar->addView(scroll);
 
-    // 1px baseline the active underline sits on (overlaps it by 1px).
+    // 1px baseline the active underline sits on.
     auto* baseline = new brls::Box();
     baseline->setHeight(1);
     baseline->setBackgroundColor(kLine);
-    baseline->setMarginTop(-1);
     bar->addView(baseline);
 
     return bar;
