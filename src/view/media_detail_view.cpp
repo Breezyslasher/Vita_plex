@@ -2071,14 +2071,10 @@ void MediaDetailView::showOptionsPopover(brls::View* anchor,
         rowBox->setFocusable(true);
         rowBox->setHighlightCornerRadius(9.0f);
 
-        if (row.primary) {
-            rowBox->setBackgroundColor(pc::gold());
-        }
-
         // Leading icon. download/restart/close are drawn as exact MDI
         // vectors (tinted to match the row); everything else uses its PNG.
         brls::View* iconView;
-        NVGcolor iconColor = row.primary ? pc::goldInk() : pc::text();
+        NVGcolor iconColor = pc::text();
         if (row.icon == "download.png") {
             iconView = new MdiGlyphIcon(MdiGlyph::Download, iconColor);
         } else if (row.icon == "refresh.png") {
@@ -2102,9 +2098,8 @@ void MediaDetailView::showOptionsPopover(brls::View* anchor,
         lbl->setFontSize(15.0f);
         lbl->setSingleLine(true);
         lbl->setGrow(1.0f);
-        if (row.primary)      lbl->setTextColor(pc::goldInk());
-        else if (row.danger)  lbl->setTextColor(pc::muted());
-        else                  lbl->setTextColor(pc::text());
+        if (row.danger) lbl->setTextColor(pc::muted());
+        else            lbl->setTextColor(pc::text());
         rowBox->addView(lbl);
 
         // Trailing mono sub-value.
@@ -2115,7 +2110,7 @@ void MediaDetailView::showOptionsPopover(brls::View* anchor,
             sub->setHorizontalAlign(brls::HorizontalAlign::RIGHT);
             sub->setSingleLine(true);
             sub->setMarginLeft(8.0f);
-            sub->setTextColor(row.primary ? pc::goldInkSub() : pc::dim());
+            sub->setTextColor(pc::dim());
             rowBox->addView(sub);
         }
 
@@ -2129,15 +2124,6 @@ void MediaDetailView::showOptionsPopover(brls::View* anchor,
         };
         rowBox->registerClickAction(onActivate);
         rowBox->addGestureRecognizer(new brls::TapGestureRecognizer(rowBox));
-
-        // Brighten the gold fill on focus (nice-to-have); keep the warm halo.
-        if (row.primary) {
-            brls::Box* rb = rowBox;
-            rb->getFocusEvent()->subscribe(
-                [rb](brls::View*) { rb->setBackgroundColor(popcol::goldBright()); });
-            rb->getFocusLostEvent()->subscribe(
-                [rb](brls::View*) { rb->setBackgroundColor(popcol::gold()); });
-        }
 
         panel->addView(rowBox);
         if (!firstRow) firstRow = rowBox;
@@ -3305,6 +3291,50 @@ void MediaDetailView::showAlbumContextMenuStatic(const MediaItem& album) {
                     }
                 });
             }
+        });
+        return true;
+    }});
+
+    // Download Album — home-menu albums reach this static menu, which had
+    // no download action. Queue every track (mirrors Download Artist).
+    rows.push_back({ "download.png", "Download Album", "", false, false,
+        [capturedAlbum](brls::View*) {
+        asyncRun([capturedAlbum]() {
+            PlexClient& client = PlexClient::getInstance();
+            auto& mgr = DownloadsManager::getInstance();
+            std::vector<MediaItem> tracks;
+            int queued = 0;
+            int skipped = 0;
+
+            if (client.fetchChildren(capturedAlbum.ratingKey, tracks)) {
+                for (const auto& track : tracks) {
+                    if (mgr.isDownloaded(track.ratingKey) ||
+                        mgr.getDownload(track.ratingKey) != nullptr) {
+                        skipped++;
+                        continue;
+                    }
+                    MediaItem fullItem;
+                    if (client.fetchMediaDetails(track.ratingKey, fullItem) && !fullItem.partPath.empty()) {
+                        if (mgr.queueDownload(
+                            fullItem.ratingKey, fullItem.title, fullItem.partPath,
+                            fullItem.duration, "track",
+                            capturedAlbum.title, fullItem.parentIndex, fullItem.index,
+                            fullItem.thumb,
+                            DownloadGroupType::ALBUM, capturedAlbum.ratingKey,
+                            capturedAlbum.title, capturedAlbum.thumb,
+                            fullItem.parentTitle)) {
+                            queued++;
+                        }
+                    }
+                }
+            }
+
+            mgr.startDownloads();
+            brls::sync([queued, skipped]() {
+                std::string msg = "Queued " + std::to_string(queued) + " tracks";
+                if (skipped > 0) msg += " (" + std::to_string(skipped) + " already downloaded)";
+                brls::Application::notify(msg);
+            });
         });
         return true;
     }});
