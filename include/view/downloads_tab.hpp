@@ -24,6 +24,10 @@ public:
     DownloadsTab();
     ~DownloadsTab() override;
 
+    // Media-type sub-tab filter (D8). ALL must stay 0 so the per-type
+    // count array can index MOVIES/SHOWS/MUSIC directly.
+    enum class Type { ALL = 0, MOVIES = 1, SHOWS = 2, MUSIC = 3 };
+
     void willAppear(bool resetState) override;
     void willDisappear(bool resetState) override;
 
@@ -33,6 +37,15 @@ private:
     void updateProgressInPlace(const std::vector<DownloadItem>& downloads);
     void startAutoRefresh();
     void stopAutoRefresh();
+
+    // D8 sub-tab bar + type filtering (layout/filter only — no change to
+    // the download engine, item model, or per-row actions).
+    brls::Box* buildTypeTabs();
+    void setTypeFilter(Type type);
+    void applyTabVisuals();
+    void updateTypeCounts(const std::vector<DownloadItem>& all);
+    void updateStorageReadout(const std::vector<DownloadItem>& all);
+    void applyResponsiveLayout();
 
     // Show the track list for a group
     void showGroupDetail(DownloadGroupType groupType, const std::string& groupKey,
@@ -63,8 +76,26 @@ private:
     brls::Button* m_syncBtn = nullptr;
     brls::Button* m_clearBtn = nullptr;
 
-    // Download status
-    brls::Label* m_statusLabel = nullptr;
+    // Header: page title + offline-storage readout (D8)
+    brls::Box*   m_headerRow = nullptr;
+    brls::Label* m_titleLabel = nullptr;
+    brls::Box*   m_storageBox = nullptr;
+    brls::Label* m_storageUsedLabel = nullptr;
+    brls::Label* m_storageTotalLabel = nullptr;
+    brls::Box*   m_storageMeterFill = nullptr;
+
+    // Media-type sub-tab bar (D8)
+    Type m_activeType = Type::ALL;
+    struct TypeTab {
+        brls::Box*   tab = nullptr;
+        brls::Image* icon = nullptr;
+        brls::Label* label = nullptr;
+        brls::Box*   badge = nullptr;
+        brls::Label* count = nullptr;
+        brls::Box*   underline = nullptr;
+    };
+    TypeTab m_typeTabs[4];
+    brls::Box* m_tabBar = nullptr;
 
     // List container
     brls::ScrollingFrame* m_scrollView = nullptr;
@@ -87,6 +118,8 @@ private:
     std::map<std::string, brls::Box*> m_itemRows;             // ratingKey -> row box (for color updates)
     std::map<std::string, brls::Label*> m_groupStatusLabels;  // compositeKey -> status label
     std::map<std::string, brls::Box*> m_groupRows;            // compositeKey -> row box (for color updates)
+    std::map<std::string, brls::Box*> m_itemStrips;           // ratingKey -> left state-accent strip
+    std::map<std::string, brls::Box*> m_groupStrips;          // compositeKey -> left state-accent strip
 
     // Auto-refresh
     std::atomic<bool> m_autoRefreshEnabled{false};

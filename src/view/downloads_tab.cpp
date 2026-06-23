@@ -132,13 +132,88 @@ static int buttonCategory(DownloadState s) {
     }
 }
 
-// Background colour for a group row (set by rebuildList). Mirrors the
-// inline logic so updateProgressInPlace can repaint without rebuilding.
-static NVGcolor groupRowColor(int completed, int displayTotal, int downloading) {
-    if (displayTotal > 0 && completed == displayTotal) return nvgRGBA(20, 40, 60, 200);  // blue (done)
-    if (downloading > 0)                               return nvgRGBA(20, 60, 20, 200);  // green (active)
-    return nvgRGBA(40, 40, 40, 200);                                                     // gray (queued)
+// ── D8 palette (literal design tokens) ─────────────────────────────
+namespace {
+const NVGcolor kSurface  = nvgRGB(0x38, 0x38, 0x38);  // cards / rows
+const NVGcolor kSurface3 = nvgRGB(0x49, 0x49, 0x49);  // chips / 2ndary buttons / badge / meter track
+const NVGcolor kLine     = nvgRGB(0x47, 0x47, 0x47);  // tab-bar baseline
+const NVGcolor kText     = nvgRGB(0xFF, 0xFF, 0xFF);
+const NVGcolor kMuted    = nvgRGB(0xA8, 0xA6, 0xB4);
+const NVGcolor kGold     = nvgRGB(0xE5, 0xA0, 0x0D);  // accent / active underline + badge
+const NVGcolor kGoldInk  = nvgRGB(0x24, 0x1C, 0x08);  // text on gold (never white)
+
+// Bright per-state accent for the 4px left strip.
+const NVGcolor kStDownloading = nvgRGB(0x3E, 0xCF, 0x8E);
+const NVGcolor kStTranscoding = nvgRGB(0x9A, 0x6C, 0xFF);
+const NVGcolor kStQueued      = nvgRGB(0x80, 0x7E, 0x8C);
+const NVGcolor kStPaused      = nvgRGB(0xE5, 0xA0, 0x0D);
+const NVGcolor kStReady       = nvgRGB(0x89, 0xF1, 0xF2);
+const NVGcolor kStFailed      = nvgRGB(0xFF, 0x56, 0x58);
+
+// Map a download item to its sub-tab bucket. Episodes (or anything in a
+// SHOW group) are Shows; tracks / playlist / album / artist groups are
+// Music; everything else (movies + unknown video) is Movies.
+DownloadsTab::Type itemType(const DownloadItem& it) {
+    if (it.mediaType == "track" ||
+        it.groupType == DownloadGroupType::PLAYLIST ||
+        it.groupType == DownloadGroupType::ALBUM ||
+        it.groupType == DownloadGroupType::ARTIST)
+        return DownloadsTab::Type::MUSIC;
+    if (it.mediaType == "episode" || it.groupType == DownloadGroupType::SHOW)
+        return DownloadsTab::Type::SHOWS;
+    return DownloadsTab::Type::MOVIES;
 }
+
+NVGcolor stateStripColor(DownloadState s) {
+    switch (s) {
+        case DownloadState::DOWNLOADING: return kStDownloading;
+        case DownloadState::TRANSCODING: return kStTranscoding;
+        case DownloadState::PAUSED:      return kStPaused;
+        case DownloadState::COMPLETED:   return kStReady;
+        case DownloadState::FAILED:      return kStFailed;
+        case DownloadState::QUEUED:
+        default:                         return kStQueued;
+    }
+}
+
+// Strip colour for a group row, mirroring the group background logic.
+NVGcolor groupStripColor(int completed, int displayTotal, int downloading) {
+    if (displayTotal > 0 && completed == displayTotal) return kStReady;       // done
+    if (downloading > 0)                               return kStDownloading; // active
+    return kStQueued;                                                         // queued
+}
+
+// Human-readable byte size, e.g. "14.2 GB", "640 MB", "0 B".
+std::string formatBytes(int64_t bytes) {
+    if (bytes <= 0) return "0 B";
+    double gb = (double)bytes / (1024.0 * 1024.0 * 1024.0);
+    if (gb >= 1.0) {
+        char buf[32]; snprintf(buf, sizeof(buf), "%.1f GB", gb); return buf;
+    }
+    double mb = (double)bytes / (1024.0 * 1024.0);
+    if (mb >= 1.0) {
+        char buf[32]; snprintf(buf, sizeof(buf), "%.0f MB", mb); return buf;
+    }
+    char buf[32]; snprintf(buf, sizeof(buf), "%.0f KB", (double)bytes / 1024.0); return buf;
+}
+
+// Restyle one of the existing toolbar / per-row buttons to the palette
+// without disturbing its registered click action. Primary = gold fill +
+// ink label; secondary = neutral surface-3 + white label. Focus is the
+// borealis warm halo (the dark highlight fill is hidden), never a gold
+// fill. The button keeps its child Label, so we colour that label rather
+// than calling Button::setTextColor (which would re-run applyStyle and
+// clobber the background we set here).
+void styleToolbarButton(brls::Button* btn, brls::Label* label, bool primary) {
+    if (!btn) return;
+    btn->setCornerRadius(10);
+    btn->setBorderThickness(0);
+    btn->setHideHighlightBackground(true);
+    btn->setHighlightCornerRadius(10);
+    btn->setBackgroundColor(primary ? kGold : kSurface3);
+    if (label) label->setTextColor(primary ? kGoldInk : kText);
+}
+}  // namespace
 
 DownloadsTab::DownloadsTab()
     : m_alive(std::make_shared<bool>(true))
@@ -148,26 +223,68 @@ DownloadsTab::DownloadsTab()
     this->setPadding(20);
     this->setGrow(1.0f);
 
-    // Header
-    auto header = new brls::Label();
-    header->setText("Downloads");
-    header->setFontSize(24);
-    header->setMargins(0, 0, 10, 0);
-    this->addView(header);
+    // ── Header: page title + offline-storage readout ──
+    m_headerRow = new brls::Box();
+    m_headerRow->setAxis(brls::Axis::ROW);
+    m_headerRow->setAlignItems(brls::AlignItems::CENTER);
+    m_headerRow->setMargins(0, 0, 6, 0);
 
-    // Status label
-    m_statusLabel = new brls::Label();
-    m_statusLabel->setFontSize(14);
-    m_statusLabel->setTextColor(nvgRGBA(180, 180, 180, 255));
-    m_statusLabel->setMargins(0, 0, 10, 0);
-    this->addView(m_statusLabel);
+    m_titleLabel = new brls::Label();
+    m_titleLabel->setText("Downloads");
+    m_titleLabel->setFontSize(28);
+    m_titleLabel->setTextColor(kText);
+    m_titleLabel->setGrow(1.0f);
+    m_headerRow->addView(m_titleLabel);
 
-    // Action buttons row
+    m_storageBox = new brls::Box();
+    m_storageBox->setAxis(brls::Axis::COLUMN);
+    m_storageBox->setAlignItems(brls::AlignItems::FLEX_END);
+    m_storageBox->setJustifyContent(brls::JustifyContent::CENTER);
+
+    auto* storageText = new brls::Box();
+    storageText->setAxis(brls::Axis::ROW);
+    storageText->setAlignItems(brls::AlignItems::CENTER);
+    m_storageUsedLabel = new brls::Label();
+    m_storageUsedLabel->setFontSize(15);
+    m_storageUsedLabel->setTextColor(kGold);
+    m_storageUsedLabel->setText("0 B");
+    storageText->addView(m_storageUsedLabel);
+    m_storageTotalLabel = new brls::Label();
+    m_storageTotalLabel->setFontSize(15);
+    m_storageTotalLabel->setTextColor(kMuted);
+    m_storageTotalLabel->setMarginLeft(5);
+    m_storageTotalLabel->setText("");
+    storageText->addView(m_storageTotalLabel);
+    m_storageBox->addView(storageText);
+
+    auto* meterTrack = new brls::Box();
+    meterTrack->setAxis(brls::Axis::ROW);
+    meterTrack->setWidth(200);
+    meterTrack->setHeight(6);
+    meterTrack->setCornerRadius(3);
+    meterTrack->setBackgroundColor(kSurface3);
+    meterTrack->setMarginTop(5);
+    m_storageMeterFill = new brls::Box();
+    m_storageMeterFill->setWidth(0);
+    m_storageMeterFill->setHeight(6);
+    m_storageMeterFill->setCornerRadius(3);
+    m_storageMeterFill->setBackgroundColor(kGold);
+    meterTrack->addView(m_storageMeterFill);
+    m_storageBox->addView(meterTrack);
+
+    m_headerRow->addView(m_storageBox);
+    this->addView(m_headerRow);
+
+    // ── Media-type sub-tab bar (filters the list below) ──
+    m_tabBar = buildTypeTabs();
+    this->addView(m_tabBar);
+
+    // ── Action toolbar (existing actions, restyled to the palette) ──
     m_actionsRow = new brls::Box();
     m_actionsRow->setAxis(brls::Axis::ROW);
     m_actionsRow->setMargins(0, 0, 15, 0);
 
-    // Start/Stop button
+    // Start/Stop button (primary)
     m_startStopBtn = new brls::Button();
     m_startStopLabel = new brls::Label();
     m_startStopLabel->setText("Start");
@@ -187,6 +304,7 @@ DownloadsTab::DownloadsTab()
         }
         return true;
     });
+    styleToolbarButton(m_startStopBtn, m_startStopLabel, true);
     m_actionsRow->addView(m_startStopBtn);
 
     // Resume button
@@ -208,6 +326,7 @@ DownloadsTab::DownloadsTab()
         }
         return true;
     });
+    styleToolbarButton(m_resumeBtn, resumeLabel, false);
     m_actionsRow->addView(m_resumeBtn);
 
     // Sync button
@@ -223,6 +342,7 @@ DownloadsTab::DownloadsTab()
         brls::Application::notify("Progress synced");
         return true;
     });
+    styleToolbarButton(syncBtn, syncLabel, false);
     m_actionsRow->addView(syncBtn);
 
     // Clear completed button
@@ -245,6 +365,7 @@ DownloadsTab::DownloadsTab()
         rebuildList();
         return true;
     });
+    styleToolbarButton(m_clearBtn, clearLabel, false);
     m_actionsRow->addView(m_clearBtn);
 
     this->addView(m_actionsRow);
@@ -257,23 +378,227 @@ DownloadsTab::DownloadsTab()
     m_listContainer->setAxis(brls::Axis::COLUMN);
     m_listContainer->setGrow(1.0f);
 
-    // Empty label
+    // Empty label (text swapped per filter in rebuildList)
     m_emptyLabel = new brls::Label();
     m_emptyLabel->setText("No downloads yet.\nUse the download button on media details to save for offline viewing.");
     m_emptyLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
     m_emptyLabel->setVerticalAlign(brls::VerticalAlign::CENTER);
+    m_emptyLabel->setTextColor(kMuted);
     m_emptyLabel->setGrow(1.0f);
     m_emptyLabel->setVisibility(brls::Visibility::GONE);
     m_listContainer->addView(m_emptyLabel);
 
     m_scrollView->setContentView(m_listContainer);
     this->addView(m_scrollView);
+
+    // ── Focus wiring: tabs <-> toolbar ──
+    // Down from any tab drops into the toolbar; Up from any toolbar
+    // button returns to the active tab (kept current in setTypeFilter).
+    for (auto& T : m_typeTabs) {
+        if (T.tab) T.tab->setCustomNavigationRoute(brls::FocusDirection::DOWN, m_startStopBtn);
+    }
+    if (m_typeTabs[0].tab) {
+        m_startStopBtn->setCustomNavigationRoute(brls::FocusDirection::UP, m_typeTabs[0].tab);
+        m_resumeBtn->setCustomNavigationRoute(brls::FocusDirection::UP, m_typeTabs[0].tab);
+        m_syncBtn->setCustomNavigationRoute(brls::FocusDirection::UP, m_typeTabs[0].tab);
+        m_clearBtn->setCustomNavigationRoute(brls::FocusDirection::UP, m_typeTabs[0].tab);
+    }
+
+    applyTabVisuals();
+    applyResponsiveLayout();
+    // Re-flow the header on rotation. Guarded by the alive flag because
+    // the orientation subscription outlives this view (tab can be torn
+    // down and rebuilt as the user switches sidebar tabs).
+    auto aliveWeak = std::weak_ptr<bool>(m_alive);
+    platform::onOrientationChanged([this, aliveWeak]() {
+        auto a = aliveWeak.lock();
+        if (!a || !*a) return;
+        applyResponsiveLayout();
+    });
 }
 
 DownloadsTab::~DownloadsTab() {
     *m_alive = false;
     m_aliveAtomic->store(false);
     stopAutoRefresh();
+}
+
+brls::Box* DownloadsTab::buildTypeTabs() {
+    m_activeType = Type::ALL;
+
+    auto* bar = new brls::Box();
+    bar->setAxis(brls::Axis::COLUMN);
+    bar->setAlignItems(brls::AlignItems::STRETCH);
+    bar->setMargins(6, 0, 10, 0);
+
+    // Horizontal scroll so the strip stays usable when a narrow / portrait
+    // viewport can't fit all four tabs.
+    auto* scroll = new brls::HScrollingFrame();
+    scroll->setHeight(52);  // 46 content + 3 underline + headroom for the focus ring
+    scroll->setScrollingIndicatorVisible(false);
+
+    auto* tabsRow = new brls::Box();
+    tabsRow->setAxis(brls::Axis::ROW);
+    tabsRow->setAlignItems(brls::AlignItems::FLEX_END);
+
+    static const char* kIcons[4]  = { "format-list-group.png", "video-image.png", "show.png", "music.png" };
+    static const char* kLabels[4] = { "All", "Movies", "Shows", "Music" };
+
+    for (int i = 0; i < 4; i++) {
+        auto* tab = new brls::Box();
+        tab->setAxis(brls::Axis::COLUMN);
+        tab->setAlignItems(brls::AlignItems::STRETCH);
+        tab->setFocusable(true);
+        tab->setHideHighlightBackground(true);   // focus = warm halo, never a fill
+        tab->setHighlightCornerRadius(9);
+        if (i < 3) tab->setMarginRight(6);
+
+        auto* content = new brls::Box();
+        content->setAxis(brls::Axis::ROW);
+        content->setAlignItems(brls::AlignItems::CENTER);
+        content->setJustifyContent(brls::JustifyContent::CENTER);
+        content->setHeight(46);
+        content->setPaddingLeft(18);
+        content->setPaddingRight(18);
+
+        auto* icon = new brls::Image();
+        icon->setImageFromRes(std::string("icons/") + kIcons[i]);
+        icon->setWidth(18);
+        icon->setHeight(18);
+        icon->setScalingType(brls::ImageScalingType::FIT);
+        icon->setMarginRight(9);
+        content->addView(icon);
+
+        auto* label = new brls::Label();
+        label->setText(kLabels[i]);
+        label->setFontSize(15);
+        label->setTextColor(kMuted);
+        label->setMarginRight(9);
+        content->addView(label);
+
+        auto* badge = new brls::Box();
+        badge->setAxis(brls::Axis::ROW);
+        badge->setJustifyContent(brls::JustifyContent::CENTER);
+        badge->setAlignItems(brls::AlignItems::CENTER);
+        badge->setHeight(22);
+        badge->setMinWidth(22);
+        badge->setCornerRadius(11);
+        badge->setPaddingLeft(7);
+        badge->setPaddingRight(7);
+        badge->setBackgroundColor(kSurface3);
+
+        auto* count = new brls::Label();
+        count->setText("0");
+        count->setFontSize(12);
+        count->setTextColor(kMuted);
+        badge->addView(count);
+        content->addView(badge);
+
+        tab->addView(content);
+
+        // Per-tab gold underline; visibility toggled by applyTabVisuals.
+        auto* underline = new brls::Box();
+        underline->setHeight(3);
+        underline->setCornerRadius(3);
+        underline->setBackgroundColor(kGold);
+        underline->setVisibility(brls::Visibility::GONE);
+        tab->addView(underline);
+
+        Type t = static_cast<Type>(i);
+        tab->registerClickAction([this, t](brls::View*) {
+            setTypeFilter(t);
+            return true;
+        });
+        tab->addGestureRecognizer(new brls::TapGestureRecognizer(tab));
+
+        m_typeTabs[i] = TypeTab{ tab, icon, label, badge, count, underline };
+        tabsRow->addView(tab);
+    }
+
+    scroll->setContentView(tabsRow);
+    bar->addView(scroll);
+
+    // 1px baseline the active underline sits on (overlaps it by 1px).
+    auto* baseline = new brls::Box();
+    baseline->setHeight(1);
+    baseline->setBackgroundColor(kLine);
+    baseline->setMarginTop(-1);
+    bar->addView(baseline);
+
+    return bar;
+}
+
+void DownloadsTab::applyTabVisuals() {
+    for (int i = 0; i < 4; i++) {
+        auto& T = m_typeTabs[i];
+        if (!T.tab) continue;
+        bool active = (static_cast<Type>(i) == m_activeType);
+        if (T.label)     T.label->setTextColor(active ? kText : kMuted);
+        if (T.icon)      T.icon->setAlpha(active ? 1.0f : 0.7f);
+        if (T.underline) T.underline->setVisibility(active ? brls::Visibility::VISIBLE
+                                                           : brls::Visibility::GONE);
+        if (T.badge)     T.badge->setBackgroundColor(active ? kGold : kSurface3);
+        if (T.count)     T.count->setTextColor(active ? kGoldInk : kMuted);
+    }
+}
+
+void DownloadsTab::setTypeFilter(Type type) {
+    m_activeType = type;
+    applyTabVisuals();
+
+    // Keep "Up from the toolbar" landing on the now-active tab.
+    brls::View* up = m_typeTabs[static_cast<int>(type)].tab;
+    if (up) {
+        if (m_startStopBtn) m_startStopBtn->setCustomNavigationRoute(brls::FocusDirection::UP, up);
+        if (m_resumeBtn)    m_resumeBtn->setCustomNavigationRoute(brls::FocusDirection::UP, up);
+        if (m_syncBtn)      m_syncBtn->setCustomNavigationRoute(brls::FocusDirection::UP, up);
+        if (m_clearBtn)     m_clearBtn->setCustomNavigationRoute(brls::FocusDirection::UP, up);
+    }
+
+    // Re-filter the in-memory list (no refetch of the engine).
+    rebuildList();
+}
+
+void DownloadsTab::updateTypeCounts(const std::vector<DownloadItem>& all) {
+    int counts[4] = { static_cast<int>(all.size()), 0, 0, 0 };
+    for (const auto& it : all) counts[static_cast<int>(itemType(it))]++;
+    for (int i = 0; i < 4; i++) {
+        if (m_typeTabs[i].count) m_typeTabs[i].count->setText(std::to_string(counts[i]));
+    }
+}
+
+void DownloadsTab::updateStorageReadout(const std::vector<DownloadItem>& all) {
+    int64_t used = 0, total = 0;
+    for (const auto& it : all) {
+        if (it.downloadedBytes > 0) used += it.downloadedBytes;
+        total += (it.totalBytes > 0) ? it.totalBytes : it.downloadedBytes;
+    }
+    if (m_storageUsedLabel)  m_storageUsedLabel->setText(formatBytes(used));
+    if (m_storageTotalLabel) m_storageTotalLabel->setText(total > 0 ? ("of " + formatBytes(total)) : "");
+    if (m_storageMeterFill) {
+        float frac = (total > 0) ? static_cast<float>((double)used / (double)total) : 0.0f;
+        if (frac < 0.0f) frac = 0.0f;
+        if (frac > 1.0f) frac = 1.0f;
+        m_storageMeterFill->setWidth(200.0f * frac);
+    }
+}
+
+void DownloadsTab::applyResponsiveLayout() {
+    if (!m_headerRow || !m_storageBox) return;
+    if (platform::isPortrait()) {
+        // Drop the storage readout under the title on narrow screens.
+        m_headerRow->setAxis(brls::Axis::COLUMN);
+        m_headerRow->setAlignItems(brls::AlignItems::FLEX_START);
+        m_storageBox->setAlignItems(brls::AlignItems::FLEX_START);
+        m_storageBox->setMarginTop(8);
+        if (m_titleLabel) m_titleLabel->setGrow(0.0f);
+    } else {
+        m_headerRow->setAxis(brls::Axis::ROW);
+        m_headerRow->setAlignItems(brls::AlignItems::CENTER);
+        m_storageBox->setAlignItems(brls::AlignItems::FLEX_END);
+        m_storageBox->setMarginTop(0);
+        if (m_titleLabel) m_titleLabel->setGrow(1.0f);
+    }
 }
 
 void DownloadsTab::willAppear(bool resetState) {
@@ -345,33 +670,12 @@ void DownloadsTab::stopAutoRefresh() {
 void DownloadsTab::refresh() {
     auto downloads = DownloadsManager::getInstance().getDownloads();
 
-    // Update status label
-    int queued = 0, downloading = 0, transcoding = 0, completed = 0, paused = 0, failed = 0;
-    for (const auto& d : downloads) {
-        switch (d.state) {
-            case DownloadState::QUEUED: queued++; break;
-            case DownloadState::TRANSCODING: transcoding++; break;
-            case DownloadState::DOWNLOADING: downloading++; break;
-            case DownloadState::COMPLETED: completed++; break;
-            case DownloadState::PAUSED: paused++; break;
-            case DownloadState::FAILED: failed++; break;
-            default: break;
-        }
-    }
-
-    std::string status;
-    if (downloads.empty()) {
-        status = "No downloads";
-    } else {
-        status = std::to_string(downloads.size()) + " items";
-        if (transcoding > 0) status += " | " + std::to_string(transcoding) + " transcoding";
-        if (downloading > 0) status += " | " + std::to_string(downloading) + " downloading";
-        if (queued > 0) status += " | " + std::to_string(queued) + " queued";
-        if (paused > 0) status += " | " + std::to_string(paused) + " paused";
-        if (failed > 0) status += " | " + std::to_string(failed) + " failed";
-        if (completed > 0) status += " | " + std::to_string(completed) + " ready";
-    }
-    m_statusLabel->setText(status);
+    // Keep the sub-tab count badges and storage readout live. Counts only
+    // change on add/remove (which forces a structural rebuild below), but
+    // the storage figure ticks up byte-by-byte during a download, so both
+    // are refreshed here every cycle off the full list.
+    updateTypeCounts(downloads);
+    updateStorageReadout(downloads);
 
     if (DownloadsManager::getInstance().isDownloading()) {
         m_startStopLabel->setText("Stop");
@@ -449,7 +753,19 @@ void DownloadsTab::refresh() {
 }
 
 void DownloadsTab::rebuildList() {
-    auto downloads = DownloadsManager::getInstance().getDownloads();
+    auto allDownloads = DownloadsManager::getInstance().getDownloads();
+
+    // Keep the sub-tab count badges and storage readout live off the
+    // full list, then narrow to the active type for what's rendered.
+    updateTypeCounts(allDownloads);
+    updateStorageReadout(allDownloads);
+
+    std::vector<DownloadItem> downloads;
+    downloads.reserve(allDownloads.size());
+    for (const auto& d : allDownloads) {
+        if (m_activeType == Type::ALL || itemType(d) == m_activeType)
+            downloads.push_back(d);
+    }
 
     // Remember which row currently has focus, by stable identifier (item
     // ratingKey or group compositeKey). The previous behaviour just
@@ -479,6 +795,8 @@ void DownloadsTab::rebuildList() {
     m_itemRows.clear();
     m_groupStatusLabels.clear();
     m_groupRows.clear();
+    m_itemStrips.clear();
+    m_groupStrips.clear();
 
     // Invalidate all in-flight async image loads from previous rebuild cycle.
     // This prevents use-after-free when old brls::Image* targets are destroyed
@@ -512,6 +830,14 @@ void DownloadsTab::rebuildList() {
     }
 
     if (downloads.empty()) {
+        if (allDownloads.empty()) {
+            m_emptyLabel->setText("No downloads yet.\nUse the download button on media details to save for offline viewing.");
+        } else {
+            const char* tn = (m_activeType == Type::MOVIES) ? "Movies"
+                           : (m_activeType == Type::SHOWS)  ? "Shows"
+                           : (m_activeType == Type::MUSIC)  ? "Music" : "";
+            m_emptyLabel->setText(std::string("No ") + tn + " downloads");
+        }
         m_emptyLabel->setVisibility(brls::Visibility::VISIBLE);
         return;
     }
@@ -637,9 +963,9 @@ void DownloadsTab::updateProgressInPlace(const std::vector<DownloadItem>& downlo
         if (it != m_itemStatusLabels.end()) {
             it->second->setText(buildItemStatusText(item));
         }
-        auto rowIt = m_itemRows.find(item.ratingKey);
-        if (rowIt != m_itemRows.end()) {
-            rowIt->second->setBackgroundColor(getStateColor(item.state));
+        auto stripIt = m_itemStrips.find(item.ratingKey);
+        if (stripIt != m_itemStrips.end()) {
+            stripIt->second->setBackgroundColor(stateStripColor(item.state));
         }
     }
 
@@ -686,10 +1012,10 @@ void DownloadsTab::updateProgressInPlace(const std::vector<DownloadItem>& downlo
             }
             it->second->setText(statusText);
         }
-        auto rowIt = m_groupRows.find(pair.first);
-        if (rowIt != m_groupRows.end()) {
-            rowIt->second->setBackgroundColor(
-                groupRowColor(gp.completed, displayTotal, gp.downloading));
+        auto stripIt = m_groupStrips.find(pair.first);
+        if (stripIt != m_groupStrips.end()) {
+            stripIt->second->setBackgroundColor(
+                groupStripColor(gp.completed, displayTotal, gp.downloading));
         }
     }
 }
@@ -705,17 +1031,21 @@ brls::Box* DownloadsTab::buildGroupRow(DownloadGroupType groupType, const std::s
     row->setAlignItems(brls::AlignItems::CENTER);
     row->setPadding(8);
     row->setMargins(0, 0, 8, 0);
-    row->setCornerRadius(8);
+    row->setCornerRadius(13);
     row->setFocusable(true);
+    row->setHideHighlightBackground(true);
+    row->setHighlightCornerRadius(13);
+    row->setBackgroundColor(kSurface);
 
-    // Background color based on completion status
-    if (completedItems == displayTotal) {
-        row->setBackgroundColor(nvgRGBA(20, 40, 60, 200));  // Blue - all done
-    } else if (downloadingItems > 0) {
-        row->setBackgroundColor(nvgRGBA(20, 60, 20, 200));  // Green - downloading
-    } else {
-        row->setBackgroundColor(nvgRGBA(40, 40, 40, 200));  // Gray - queued
-    }
+    // 4px left state-accent strip (recoloured in place by updateProgressInPlace)
+    auto* strip = new brls::Box();
+    strip->setWidth(4);
+    strip->setCornerRadius(2);
+    strip->setAlignSelf(brls::AlignSelf::STRETCH);
+    strip->setMarginRight(8);
+    strip->setBackgroundColor(groupStripColor(completedItems, displayTotal, downloadingItems));
+    row->addView(strip);
+    m_groupStrips[std::to_string(static_cast<int>(groupType)) + ":" + groupKey] = strip;
 
     // Cover art thumbnail
     auto* thumbImage = new brls::Image();
@@ -775,11 +1105,12 @@ brls::Box* DownloadsTab::buildGroupRow(DownloadGroupType groupType, const std::s
     auto* titleLabel = new brls::Label();
     titleLabel->setText(groupTitle);
     titleLabel->setFontSize(18);
+    titleLabel->setTextColor(kText);
     infoBox->addView(titleLabel);
 
     auto* statusLabel = new brls::Label();
     statusLabel->setFontSize(14);
-    statusLabel->setTextColor(nvgRGBA(200, 200, 200, 255));
+    statusLabel->setTextColor(kMuted);
     std::string statusText = typePrefix + " - " + std::to_string(completedItems) + "/" +
                              std::to_string(displayTotal) + " ready";
     if (downloadingItems > 0) {
@@ -821,9 +1152,21 @@ brls::Box* DownloadsTab::buildItemRow(const DownloadItem& item) {
     row->setAlignItems(brls::AlignItems::CENTER);
     row->setPadding(8);
     row->setMargins(0, 0, 8, 0);
-    row->setCornerRadius(8);
+    row->setCornerRadius(13);
     row->setFocusable(true);
-    row->setBackgroundColor(getStateColor(item.state));
+    row->setHideHighlightBackground(true);
+    row->setHighlightCornerRadius(13);
+    row->setBackgroundColor(kSurface);
+
+    // 4px left state-accent strip (recoloured in place by updateProgressInPlace)
+    auto* strip = new brls::Box();
+    strip->setWidth(4);
+    strip->setCornerRadius(2);
+    strip->setAlignSelf(brls::AlignSelf::STRETCH);
+    strip->setMarginRight(8);
+    strip->setBackgroundColor(stateStripColor(item.state));
+    row->addView(strip);
+    m_itemStrips[item.ratingKey] = strip;
 
     // Cover art / poster thumbnail
     auto* thumbImage = new brls::Image();
@@ -869,12 +1212,13 @@ brls::Box* DownloadsTab::buildItemRow(const DownloadItem& item) {
     }
     titleLabel->setText(displayTitle);
     titleLabel->setFontSize(18);
+    titleLabel->setTextColor(kText);
     infoBox->addView(titleLabel);
 
     auto* statusLabel = new brls::Label();
     statusLabel->setFontSize(14);
     statusLabel->setText(buildItemStatusText(item));
-    statusLabel->setTextColor(nvgRGBA(200, 200, 200, 255));
+    statusLabel->setTextColor(kMuted);
     infoBox->addView(statusLabel);
 
     // Track for in-place progress updates
@@ -924,6 +1268,7 @@ brls::Box* DownloadsTab::buildItemRow(const DownloadItem& item) {
             }
             return true;
         });
+        styleToolbarButton(playBtn, playLabel, true);
         buttonsBox->addView(playBtn);
 
         auto* deleteBtn = new brls::Button();
@@ -939,6 +1284,7 @@ brls::Box* DownloadsTab::buildItemRow(const DownloadItem& item) {
             m_lastState.clear();
             return true;
         });
+        styleToolbarButton(deleteBtn, delLabel, false);
         buttonsBox->addView(deleteBtn);
     } else if (item.state == DownloadState::DOWNLOADING ||
                item.state == DownloadState::TRANSCODING ||
@@ -956,6 +1302,7 @@ brls::Box* DownloadsTab::buildItemRow(const DownloadItem& item) {
             m_lastState.clear();
             return true;
         });
+        styleToolbarButton(cancelBtn, cancelLabel, false);
         buttonsBox->addView(cancelBtn);
     } else if (item.state == DownloadState::PAUSED ||
                item.state == DownloadState::FAILED) {
@@ -972,6 +1319,7 @@ brls::Box* DownloadsTab::buildItemRow(const DownloadItem& item) {
             m_lastState.clear();
             return true;
         });
+        styleToolbarButton(cancelBtn, cancelLabel, false);
         buttonsBox->addView(cancelBtn);
     }
 
