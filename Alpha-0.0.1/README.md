@@ -43,8 +43,8 @@
     <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
-    <td><img src="old/home_screen_plex_alpha_old.png" width="400"/></td>
-    <td><img src="new/home_page_new.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/home_screen_plex_alpha_old.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/home_page_new.png" width="400"/></td>
   </tr>
 </table>
 
@@ -57,8 +57,8 @@
     <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
-    <td><img src="old/movies_list_old.png" width="400"/></td>
-    <td><img src="new/movies.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/movies_list_old.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/movies.png" width="400"/></td>
   </tr>
 </table>
 
@@ -71,8 +71,8 @@
     <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
-    <td><img src="old/movie_info_old.png" width="400"/></td>
-    <td><img src="new/movie_info_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/movie_info_old.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/movie_info_page.png" width="400"/></td>
   </tr>
 </table>
 
@@ -86,8 +86,8 @@
     <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
-    <td><img src="old/music_old.png" width="400"/></td>
-    <td><img src="new/music_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/music_old.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/music_page.png" width="400"/></td>
   </tr>
 </table>
 
@@ -102,8 +102,8 @@
     <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
-    <td><img src="old/albums-page-old.png" width="400"/></td>
-    <td><img src="new/album_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/albums-page-old.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/album_page.png" width="400"/></td>
   </tr>
 </table>
 
@@ -117,8 +117,8 @@
     <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
-    <td><img src="old/track_page_old.png" width="400"/></td>
-    <td><img src="new/track_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/track_page_old.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/track_page.png" width="400"/></td>
   </tr>
 </table>
 
@@ -132,8 +132,8 @@
     <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
-    <td><img src="old/Transparent_Square_Tiles_Texture.png" width="400"/></td>
-    <td><img src="new/artist_downlaod.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/artist_downlaod.png" width="400"/></td>
   </tr>
 </table>
 
@@ -146,8 +146,8 @@
     <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
-    <td><img src="old/palyer_ui_old.png" width="400"/></td>
-    <td><img src="new/music_palyer_ui.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/palyer_ui_old.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/music_palyer_ui.png" width="400"/></td>
   </tr>
 </table>
 
@@ -160,8 +160,8 @@
     <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
-    <td><img src="old/Transparent_Square_Tiles_Texture.png" width="400"/></td>
-    <td><img src="new/music_queue.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/music_queue.png" width="400"/></td>
   </tr>
 </table>
 
@@ -174,8 +174,8 @@
     <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
-    <td><img src="old/palyer_ui_old.png" width="400"/></td>
-    <td><img src="new/video_player_ui.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/palyer_ui_old.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/video_player_ui.png" width="400"/></td>
   </tr>
 </table>
 
@@ -188,8 +188,8 @@
     <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
-    <td><img src="old/Transparent_Square_Tiles_Texture.png" width="400"/></td>
-    <td><img src="new/downlaods_tab.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/downlaods_tab.png" width="400"/></td>
   </tr>
 </table>
 
@@ -202,8 +202,8 @@
     <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
-    <td><img src="old/live_tv_old.png" width="400"/></td>
-    <td><img src="new/live_tv.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/live_tv_old.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/live_tv.png" width="400"/></td>
   </tr>
 </table>
 
@@ -216,8 +216,8 @@
     <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
-    <td><img src="old/search_old.png" width="400"/></td>
-    <td><img src="new/search.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/search_old.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/search.png" width="400"/></td>
   </tr>
 </table>
 
@@ -230,21 +230,21 @@
     <td align="center"><b>Beta 0.6.1</b></td>
   </tr>
   <tr>
-    <td><img src="old/setting_pages_old.png" width="400"/></td>
-    <td><img src="new/setting_tab_1.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/setting_pages_old.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/setting_tab_1.png" width="400"/></td>
   </tr>
   <tr>
     <td></td>
-    <td><img src="new/setting_2.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/setting_2.png" width="400"/></td>
   </tr>
    <tr>
     <td></td>
-    <td><img src="new/setting_3.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/setting_3.png" width="400"/></td>
   </tr>
     </tr>
    <tr>
     <td></td>
-    <td><img src="new/setting_4.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/setting_4.png" width="400"/></td>
   </tr>
 </table>
 
