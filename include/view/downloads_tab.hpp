@@ -46,6 +46,7 @@ private:
     void updateTypeCounts(const std::vector<DownloadItem>& all);
     void updateStorageReadout(const std::vector<DownloadItem>& all);
     void applyResponsiveLayout();
+    void logGeometry(const std::string& phase);   // temporary layout diagnostics
 
     // Show the track list for a group
     void showGroupDetail(DownloadGroupType groupType, const std::string& groupKey,

@@ -593,6 +593,28 @@ void DownloadsTab::applyResponsiveLayout() {
     }
 }
 
+void DownloadsTab::logGeometry(const std::string& phase) {
+    auto F = [](const char* name, brls::View* v) {
+        if (!v) { brls::Logger::info("[DLgeom] {} (null)", name); return; }
+        brls::Logger::info("[DLgeom] {} x={} y={} w={} h={} vis={}",
+                           name, v->getX(), v->getY(), v->getWidth(), v->getHeight(),
+                           static_cast<int>(v->getVisibility()));
+    };
+    brls::Logger::info("[DLgeom] ===== {} =====", phase);
+    F("this       ", this);
+    F("parent     ", this->getParent());
+    if (this->getParent()) F("grandparent", this->getParent()->getParent());
+    F("headerRow  ", m_headerRow);
+    F("titleLabel ", m_titleLabel);
+    F("storageBox ", m_storageBox);
+    F("storageUsed", m_storageUsedLabel);
+    F("meterFill  ", m_storageMeterFill);
+    F("tabBar     ", m_tabBar);
+    F("actionsRow ", m_actionsRow);
+    F("scrollView ", m_scrollView);
+    F("listContain", m_listContainer);
+}
+
 void DownloadsTab::willAppear(bool resetState) {
     brls::Box::willAppear(resetState);
 
@@ -605,6 +627,14 @@ void DownloadsTab::willAppear(bool resetState) {
     m_lastState.clear();
     rebuildList();
     startAutoRefresh();
+
+    // Temporary layout diagnostics: dump computed geometry after the
+    // first layout pass has settled.
+    auto aliveWeak = std::weak_ptr<bool>(m_alive);
+    brls::delay(300, [this, aliveWeak]() {
+        auto a = aliveWeak.lock();
+        if (a && *a) logGeometry("willAppear+300ms");
+    });
 }
 
 void DownloadsTab::willDisappear(bool resetState) {
