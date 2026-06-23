@@ -298,16 +298,22 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     m_summaryScroll = new brls::ScrollingFrame();
     m_summaryScroll->setHeight(200);
     m_summaryScroll->setMarginBottom(20);
+    // ScrollingFrame defaults to focusable; pressing RIGHT would land on the
+    // (often mostly-empty) 200px scroll box and look like focusing nothing.
+    // Keep the whole description area display-only, paired with the
+    // non-focusable label below.
+    m_summaryScroll->setFocusable(false);
 
     m_summaryLabel = new brls::Label();
     m_summaryLabel->setFontSize(16);
     m_summaryLabel->setText(m_fullDescription);
-    // Movies put AUDIO/SUBTITLES buttons in this same column; a focusable
-    // description steals RIGHT-navigation from the poster/play button and
-    // lands on the text instead of AUDIO. Movies have no children that need
-    // the summary as an UP target, so only keep it focusable for the types
-    // that do (shows/seasons → children navigate UP onto the description).
-    m_summaryLabel->setFocusable(m_item.mediaType != MediaType::MOVIE);
+    // The description is display-only. A focusable label renders as a single
+    // marquee line and steals RIGHT/UP navigation (landing on the text
+    // instead of AUDIO or the action buttons). Keeping it non-focusable lets
+    // it wrap into a normal multi-line paragraph and lets navigation flow
+    // straight between the action buttons and the children/tracks — the same
+    // way the movie detail already behaves.
+    m_summaryLabel->setFocusable(false);
 
     m_summaryScroll->setContentView(m_summaryLabel);
     if (m_fullDescription.empty()) {
@@ -3734,13 +3740,11 @@ void MediaDetailView::setupChildrenFocusTransfer() {
         firstFocusable = m_extrasBox->getChildren().front();
     }
 
-    if (m_fullDescription.empty() && firstFocusable) {
-        brls::Application::giveFocus(firstFocusable);
-
-        // Bridge the last leftBox button down to the children/extras row.
-        // Only the bottom button gets this route — the rest of the chain
-        // (Play→Resume→Download→Watched) was wired explicitly in the
-        // constructor and we don't want to short-circuit it here.
+    if (firstFocusable) {
+        // The description is non-focusable, so it can't bridge the leftBox
+        // buttons down to the children/extras. Wire DOWN from the bottom
+        // button straight onto the first item. (Play→Resume→Download→Watched
+        // were chained in the constructor; only the bottom one needs this.)
         brls::View* lastLeftButton = m_markWatchedButton
             ? m_markWatchedButton
             : (m_downloadButton
@@ -3749,6 +3753,11 @@ void MediaDetailView::setupChildrenFocusTransfer() {
         if (lastLeftButton) {
             lastLeftButton->setCustomNavigationRoute(
                 brls::FocusDirection::DOWN, firstFocusable);
+        }
+        // Pull initial focus onto the first item only when there's no
+        // description to read (unchanged from before).
+        if (m_fullDescription.empty()) {
+            brls::Application::giveFocus(firstFocusable);
         }
     }
 }
