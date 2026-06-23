@@ -2343,6 +2343,10 @@ bool PlexClient::fetchStreams(const std::string& ratingKey, std::vector<PlexStre
         stream.selected = extractJsonBool(obj, "selected");
         stream.channels = extractJsonInt(obj, "channels");
         stream.title = extractJsonValue(obj, "title");
+        stream.forced = extractJsonBool(obj, "forced");
+        stream.hearingImpaired = extractJsonBool(obj, "hearingImpaired");
+        // External (sidecar) subtitles carry a stream key; embedded don't.
+        stream.external = !extractJsonValue(obj, "key").empty();
 
         if (stream.id > 0 && stream.streamType > 0) {
             streams.push_back(stream);

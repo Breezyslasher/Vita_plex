@@ -1881,7 +1881,7 @@ public:
 // on whichever PNG is in resources/icons — crisp at any size and tintable.
 // nanovg fills with nonzero winding, so download's separate bar + arrow
 // sub-paths render correctly. Mirrors login_activity's drawStrokeGlyph.
-enum class MdiGlyph { Download, Restart, Close, ClosedCaption };
+enum class MdiGlyph { Download, Restart, Close, ClosedCaption, Web };
 
 class MdiGlyphIcon : public brls::Box {
 public:
@@ -1895,6 +1895,21 @@ public:
         const float s  = side / 24.0f;
         auto X = [=](float v) { return gx + v * s; };
         auto Y = [=](float v) { return gy + v * s; };
+        if (m_glyph == MdiGlyph::Web) {
+            // Line-art globe: mdi-web's filled body uses elliptical arcs nanovg
+            // can't express directly, so stroke an equivalent globe (outer
+            // circle + meridian ellipse + parallels) tinted to m_color.
+            nvgBeginPath(vg);
+            nvgCircle(vg, X(12), Y(12), 10.0f * s);
+            nvgEllipse(vg, X(12), Y(12), 4.0f * s, 10.0f * s);
+            nvgMoveTo(vg, X(2.5f), Y(12));  nvgLineTo(vg, X(21.5f), Y(12));
+            nvgMoveTo(vg, X(4.5f), Y(8));   nvgLineTo(vg, X(19.5f), Y(8));
+            nvgMoveTo(vg, X(4.5f), Y(16));  nvgLineTo(vg, X(19.5f), Y(16));
+            nvgStrokeColor(vg, m_color);
+            nvgStrokeWidth(vg, 1.5f * s);
+            nvgStroke(vg);
+            return;
+        }
         nvgBeginPath(vg);
         switch (m_glyph) {
             case MdiGlyph::Close:
@@ -3896,22 +3911,50 @@ static std::string audioSubLine(const PlexStream& s) {
     if (ch.empty())    return codec;
     return codec + "  \xC2\xB7  " + ch;
 }
-static std::string subtitleSubLine(const PlexStream& s) {
-    return pkUpper(s.codec);
+// 2-letter language tile text (EN, ES, FR…) from the Plex language code.
+static std::string langTile(const PlexStream& s) {
+    std::string c = pkLower(s.languageCode);
+    if (c.size() == 2) return pkUpper(c);
+    struct M { const char* k; const char* v; };
+    static const M kMap[] = {
+        {"eng","EN"},{"spa","ES"},{"fre","FR"},{"fra","FR"},{"ger","DE"},{"deu","DE"},
+        {"ita","IT"},{"por","PT"},{"rus","RU"},{"jpn","JA"},{"kor","KO"},{"chi","ZH"},
+        {"zho","ZH"},{"dut","NL"},{"nld","NL"},{"pol","PL"},{"swe","SV"},{"nor","NO"},
+        {"dan","DA"},{"fin","FI"},{"ara","AR"},{"heb","HE"},{"hin","HI"},{"tur","TR"},
+        {"ell","EL"},{"gre","EL"},{"ces","CS"},{"cze","CS"},{"hun","HU"},{"tha","TH"},
+        {"vie","VI"},{"ukr","UK"},{"ron","RO"},{"rum","RO"},{"ind","ID"},
+    };
+    for (const auto& m : kMap) if (c == m.k) return m.v;
+    if (c.size() >= 2)            return pkUpper(c.substr(0, 2));
+    if (s.language.size() >= 2)   return pkUpper(s.language.substr(0, 2));
+    return "";
 }
-// Only FORCED is derivable from the stream data we hold (no external/
-// embedded flag on PlexStream); leave others off rather than guess.
+// Subtitle sub-line ("SRT · Full") — codec plus a content descriptor that
+// complements the location badge (EXT/EMB) rather than duplicating it.
+static std::string subtitleDescriptor(const PlexStream& s) {
+    if (s.forced)          return "Forced";
+    if (s.hearingImpaired) return "SDH";
+    return "Full";
+}
+static std::string subtitleSubLine(const PlexStream& s) {
+    std::string codec = pkUpper(s.codec);
+    std::string desc  = subtitleDescriptor(s);
+    if (codec.empty()) return desc;
+    return codec + "  \xC2\xB7  " + desc;
+}
+// Forced wins the badge; otherwise show where the track lives (external
+// sidecar vs embedded in the container).
 static StreamBadge subtitleBadge(const PlexStream& s) {
-    std::string t = pkLower(s.displayTitle + " " + s.title);
-    if (t.find("forced") != std::string::npos) return StreamBadge::Forced;
-    return StreamBadge::None;
+    if (s.forced) return StreamBadge::Forced;
+    return s.external ? StreamBadge::Ext : StreamBadge::Emb;
 }
 
 // One picker row: a 24px check (gold fill + ink tick when selected, else a
 // hollow ring), a name + optional codec sub-line, and an optional trailing
 // format badge. Focus uses the borealis-native highlight (left as-is); the
 // gold check is the *selected* state, kept visually separate from focus.
-static brls::Box* makeStreamRow(const std::string& name,
+static brls::Box* makeStreamRow(const std::string& langCode,
+                                const std::string& name,
                                 const std::string& sub,
                                 bool selected,
                                 StreamBadge badge,
@@ -3948,6 +3991,24 @@ static brls::Box* makeStreamRow(const std::string& name,
         check->setBorderThickness(2.0f);
     }
     row->addView(check);
+
+    // Language code tile (EN / ES …).
+    if (!langCode.empty()) {
+        auto* lt = new brls::Box();
+        lt->setWidth(32.0f);
+        lt->setHeight(23.0f);
+        lt->setCornerRadius(6.0f);
+        lt->setBackgroundColor(pc::surface3());
+        lt->setJustifyContent(brls::JustifyContent::CENTER);
+        lt->setAlignItems(brls::AlignItems::CENTER);
+        lt->setMarginRight(12.0f);
+        auto* ltl = new brls::Label();
+        ltl->setText(langCode);
+        ltl->setFontSize(11.0f);
+        ltl->setTextColor(pc::muted());
+        lt->addView(ltl);
+        row->addView(lt);
+    }
 
     // Name + sub-line.
     auto* col = new brls::Box();
@@ -4005,7 +4066,7 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     auto alive = m_alive;
 
     // Scrim doubles as the dialog-lifetime sentinel: async closures below
-    // hold raw pointers to listBox / searchBtn, so they capture dlgAlive
+    // hold raw pointers to listBox / searchRow, so they capture dlgAlive
     // and bail once the overlay is popped (same idea as the old
     // SubtitleDialog destructor).
     struct PickerScrim : public brls::Box {
@@ -4154,26 +4215,78 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     scroll->setContentView(listBox);
     body->addView(scroll);
 
-    // The search row lives outside listBox so it survives the list
-    // rebuilds (and stays a stable focus-park target, exactly as before).
-    // Kept a brls::Button so the original get/setText "which mode" logic
-    // works verbatim; shown only on the Subtitles tab.
-    auto* searchBtn = new brls::Button();
-    searchBtn->setText("Search online for subtitles\xE2\x80\xA6");
-    searchBtn->setHeight(44.0f);
-    searchBtn->setMarginTop(8.0f);
-    searchBtn->setPaddingLeft(14.0f);
-    body->addView(searchBtn);
+    // Search row: globe tile + two-line label + chevron, with a gold-tint
+    // (dashed-style) border. Lives outside listBox so it survives rebuilds
+    // and stays a stable focus-park target; shown only on the Subtitles tab.
+    auto* searchRow = new brls::Box();
+    searchRow->setAxis(brls::Axis::ROW);
+    searchRow->setAlignItems(brls::AlignItems::CENTER);
+    searchRow->setHeight(56.0f);
+    searchRow->setCornerRadius(12.0f);
+    searchRow->setPadding(0.0f, 14.0f, 0.0f, 14.0f);
+    searchRow->setMarginTop(8.0f);
+    searchRow->setBorderColor(pc::goldTint());
+    searchRow->setBorderThickness(1.0f);
+    searchRow->setFocusable(true);
+    searchRow->setHighlightCornerRadius(12.0f);
+
+    auto* globeTile = new brls::Box();
+    globeTile->setWidth(34.0f);
+    globeTile->setHeight(34.0f);
+    globeTile->setCornerRadius(17.0f);
+    globeTile->setBackgroundColor(pc::goldTint());
+    globeTile->setJustifyContent(brls::JustifyContent::CENTER);
+    globeTile->setAlignItems(brls::AlignItems::CENTER);
+    globeTile->setMarginRight(12.0f);
+    auto* globe = new MdiGlyphIcon(MdiGlyph::Web, pc::gold());
+    globe->setWidth(20.0f);
+    globe->setHeight(20.0f);
+    globeTile->addView(globe);
+    searchRow->addView(globeTile);
+
+    auto* searchCol = new brls::Box();
+    searchCol->setAxis(brls::Axis::COLUMN);
+    searchCol->setGrow(1.0f);
+    searchCol->setJustifyContent(brls::JustifyContent::CENTER);
+    auto* searchMainLbl = new brls::Label();
+    searchMainLbl->setText("Search online for subtitles\xE2\x80\xA6");
+    searchMainLbl->setFontSize(15.0f);
+    searchMainLbl->setSingleLine(true);
+    searchMainLbl->setTextColor(pc::gold());
+    searchCol->addView(searchMainLbl);
+    auto* searchSubLbl = new brls::Label();
+    searchSubLbl->setText("OpenSubtitles \xC2\xB7 enter a language");
+    searchSubLbl->setFontSize(12.0f);
+    searchSubLbl->setSingleLine(true);
+    searchSubLbl->setTextColor(pc::dim());
+    searchCol->addView(searchSubLbl);
+    searchRow->addView(searchCol);
+
+    auto* chevron = new brls::Label();
+    chevron->setText("\xE2\x80\xBA");  // ›
+    chevron->setFontSize(20.0f);
+    chevron->setTextColor(pc::dim());
+    chevron->setMarginLeft(8.0f);
+    searchRow->addView(chevron);
+
+    body->addView(searchRow);
     panel->addView(body);
 
-    // Language driving the results view (shared by the IME callback and
-    // the re-labelling helper). Verbatim from the old subtitle picker.
+    // Language driving the results view (shared by the IME callback and the
+    // re-labelling helper). resultsMode replaces the old button-text probe.
     auto currentLang = std::make_shared<std::string>(
         Application::getInstance().getSettings().defaultSubtitleLanguage);
     if (currentLang->empty()) *currentLang = "en";
-    auto setSearchBtnFor = [searchBtn, currentLang](bool resultsMode) {
-        if (resultsMode) searchBtn->setText("Change language: " + *currentLang);
-        else             searchBtn->setText("Search online for subtitles\xE2\x80\xA6");
+    auto resultsMode = std::make_shared<bool>(false);
+    auto setSearchBtnFor = [searchMainLbl, searchSubLbl, currentLang, resultsMode](bool inResults) {
+        *resultsMode = inResults;
+        if (inResults) {
+            searchMainLbl->setText("Change language");
+            searchSubLbl->setText("Currently: " + *currentLang);
+        } else {
+            searchMainLbl->setText("Search online for subtitles\xE2\x80\xA6");
+            searchSubLbl->setText("OpenSubtitles \xC2\xB7 enter a language");
+        }
     };
 
     // Closures declared up front so they can reference each other.
@@ -4195,7 +4308,7 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
             if (s.streamType != 2) continue;
             int streamId = s.id;
             std::string display = streamName(s);
-            auto* rowv = makeStreamRow(display, audioSubLine(s), s.selected, StreamBadge::None,
+            auto* rowv = makeStreamRow(langTile(s), display, audioSubLine(s), s.selected, StreamBadge::None,
                 [this, alive, streamId, display](brls::View*) {
                     brls::Application::popActivity();
                     int partId = m_partId;
@@ -4227,17 +4340,17 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
 
     // Subtitles tab: "None" then each installed track. Verbatim selection
     // handlers (setStreamSelection), now rendered as rich rows.
-    *buildInstalledList = [this, alive, dlgAlive, listBox, searchBtn, setSearchBtnFor]() {
+    *buildInstalledList = [this, alive, dlgAlive, listBox, searchRow, setSearchBtnFor]() {
         if (!alive->load() || !*dlgAlive) return;
         setSearchBtnFor(/*resultsMode=*/false);
-        brls::Application::giveFocus(searchBtn);  // park before clearViews
+        brls::Application::giveFocus(searchRow);  // park before clearViews
         listBox->clearViews();
 
         bool anyOn = false;
         for (const auto& s : m_streams)
             if ((s.streamType == 3 || s.streamType == 4) && s.selected) { anyOn = true; break; }
 
-        auto* noneRow = makeStreamRow("None", "", !anyOn, StreamBadge::None,
+        auto* noneRow = makeStreamRow("", "None", "Subtitles off", !anyOn, StreamBadge::None,
             [this, alive](brls::View*) {
                 brls::Application::popActivity();
                 int partId = m_partId;
@@ -4261,7 +4374,7 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
             int streamId  = s.id;
             bool selected = s.selected;
             StreamBadge badge = subtitleBadge(s);
-            listBox->addView(makeStreamRow(display, subtitleSubLine(s), selected, badge,
+            listBox->addView(makeStreamRow(langTile(s), display, subtitleSubLine(s), selected, badge,
                 [this, alive, streamId, display](brls::View*) {
                     brls::Application::popActivity();
                     int partId = m_partId;
@@ -4283,11 +4396,11 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
 
     // Search-results view inside the same scroll. Picking a result installs
     // it (selectSearchedSubtitle), then refetches streams. Verbatim flow.
-    *showResults = [this, alive, dlgAlive, listBox, searchBtn, setSearchBtnFor, buildInstalledList](
+    *showResults = [this, alive, dlgAlive, listBox, searchRow, setSearchBtnFor, buildInstalledList](
             const std::vector<PlexClient::SubtitleResult>& results) {
         if (!alive->load() || !*dlgAlive) return;
         setSearchBtnFor(/*resultsMode=*/true);
-        brls::Application::giveFocus(searchBtn);
+        brls::Application::giveFocus(searchRow);
         listBox->clearViews();
 
         auto* back = new brls::Button();
@@ -4322,7 +4435,7 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
             std::string provider  = r.provider;
             std::string key       = r.key;
             std::string ratingKey = m_item.ratingKey;
-            listBox->addView(makeStreamRow(display, provider, false, StreamBadge::None,
+            listBox->addView(makeStreamRow("", display, provider, false, StreamBadge::None,
                 [this, alive, key, ratingKey, display](brls::View*) {
                     brls::Application::popActivity();
                     int partId = m_partId;
@@ -4350,11 +4463,11 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     };
 
     // Loading-state + asyncRun + handoff glue. Verbatim from before.
-    *runSearch = [this, alive, dlgAlive, listBox, searchBtn, currentLang, showResults](std::string lang) {
+    *runSearch = [this, alive, dlgAlive, listBox, searchRow, currentLang, showResults](std::string lang) {
         if (!alive->load() || !*dlgAlive) return;
         if (lang.empty()) lang = "en";
         *currentLang = lang;
-        brls::Application::giveFocus(searchBtn);
+        brls::Application::giveFocus(searchRow);
         listBox->clearViews();
         auto* loading = new brls::Label();
         loading->setText("Searching " + lang + "\xE2\x80\xA6");
@@ -4387,15 +4500,15 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     };
 
     // Tab switch: restyle, toggle the search row, rebuild the list.
-    *selectTab = [alive, dlgAlive, activeTab, styleTabs, searchBtn, buildAudioList, buildInstalledList](int tab) {
+    *selectTab = [alive, dlgAlive, activeTab, styleTabs, searchRow, buildAudioList, buildInstalledList](int tab) {
         if (!alive->load() || !*dlgAlive) return;
         *activeTab = tab;
         styleTabs();
         if (tab == 0) {
-            searchBtn->setVisibility(brls::Visibility::GONE);
+            searchRow->setVisibility(brls::Visibility::GONE);
             (*buildAudioList)();
         } else {
-            searchBtn->setVisibility(brls::Visibility::VISIBLE);
+            searchRow->setVisibility(brls::Visibility::VISIBLE);
             (*buildInstalledList)();
         }
     };
@@ -4405,9 +4518,8 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     subsTab.box->registerClickAction([selectTab](brls::View*) { (*selectTab)(1); return true; });
     subsTab.box->addGestureRecognizer(new brls::TapGestureRecognizer(subsTab.box));
 
-    searchBtn->registerClickAction([currentLang, runSearch, promptLang, searchBtn](brls::View*) {
-        std::string label = searchBtn->getText();
-        if (label.rfind("Change language", 0) == 0) {
+    searchRow->registerClickAction([currentLang, runSearch, promptLang, resultsMode](brls::View*) {
+        if (*resultsMode) {
             (*promptLang)();
         } else {
             std::string lang = *currentLang;
@@ -4416,7 +4528,7 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
         }
         return true;
     });
-    searchBtn->addGestureRecognizer(new brls::TapGestureRecognizer(searchBtn));
+    searchRow->addGestureRecognizer(new brls::TapGestureRecognizer(searchRow));
 
     scrim->addView(panel);
     scrim->registerAction("Back", brls::ControllerButton::BUTTON_B,
