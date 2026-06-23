@@ -14,8 +14,13 @@
 #include <fstream>
 #include <cstring>
 #include <filesystem>
+#include <cmath>
+#include <memory>
+#include <atomic>
 #include "platform/paths.hpp"
 #include "platform/platform.hpp"
+#include "utils/image_loader.hpp"
+#include "view/home_user_picker.hpp"
 
 namespace vitaplex {
 
@@ -128,15 +133,6 @@ void Application::showHomeUserPicker(std::function<void()> onComplete) {
         return;
     }
 
-    std::vector<std::string> labels;
-    labels.reserve(users.size());
-    for (const auto& u : users) {
-        std::string label = u.title;
-        if (u.hasPin) label += "  (PIN)";
-        if (u.admin)  label += "  (admin)";
-        labels.push_back(label);
-    }
-
     int selected = 0;
     if (!m_currentHomeUserUuid.empty()) {
         for (size_t i = 0; i < users.size(); i++) {
@@ -147,61 +143,26 @@ void Application::showHomeUserPicker(std::function<void()> onComplete) {
         }
     }
 
-    auto* dropdown = new brls::Dropdown(
-        "Choose Plex Home User", labels,
-        [users, onComplete](int picked) {
-            // Dropdown::didSelectRowAt fires this callback synchronously
-            // and THEN calls popActivity to dismiss itself. If we push a
-            // new activity (the PIN IME, or an error Dialog from a failed
-            // switch) inline here, the dropdown's pop targets that new
-            // activity instead of itself — the IME flashes open and shut
-            // and the user sees nothing. Defer to next main-loop tick so
-            // the dropdown pops itself first, then we own the top of the
-            // activity stack.
-            brls::sync([users, onComplete, picked]() {
-                if (picked < 0 || picked >= (int)users.size()) {
-                    if (onComplete) onComplete();
-                    return;
-                }
-                const HomeUser& chosen = users[picked];
+    // The verbatim switch / token-store logic, lifted out of the old dropdown
+    // handler and returning success so the picker can flash the PIN dots on a
+    // wrong PIN. Plex Home /switch is a quick call; keep it synchronous as
+    // before. Presentation lives in view/home_user_picker.hpp.
+    auto trySwitch = [](const HomeUser& user, const std::string& pin) -> bool {
+        Application& app = Application::getInstance();
+        std::string newToken;
+        if (!PlexClient::getInstance().switchHomeUser(
+                app.getMasterAuthToken(), user.uuid, pin, newToken)) {
+            return false;
+        }
+        app.setAuthToken(newToken);
+        PlexClient::getInstance().setAuthToken(newToken);
+        app.setCurrentHomeUserUuid(user.uuid);
+        app.setCurrentHomeUserTitle(user.title);
+        app.saveSettings();
+        return true;
+    };
 
-                auto doSwitch = [chosen, onComplete](const std::string& pin) {
-                    Application& app = Application::getInstance();
-                    std::string newToken;
-                    if (!PlexClient::getInstance().switchHomeUser(
-                            app.getMasterAuthToken(), chosen.uuid, pin, newToken)) {
-                        brls::Dialog* d = new brls::Dialog(
-                            "Failed to switch to " + chosen.title +
-                            (pin.empty() ? "" : " — check the PIN."));
-                        d->addButton("OK", [onComplete]() {
-                            if (onComplete) onComplete();
-                        });
-                        d->open();
-                        return;
-                    }
-                    app.setAuthToken(newToken);
-                    PlexClient::getInstance().setAuthToken(newToken);
-                    app.setCurrentHomeUserUuid(chosen.uuid);
-                    app.setCurrentHomeUserTitle(chosen.title);
-                    app.saveSettings();
-                    if (onComplete) onComplete();
-                };
-
-                if (chosen.hasPin) {
-                    // Plex Home PINs are numeric, 4 digits. Use the standard
-                    // IME — keeps the UI consistent and works on Vita / Switch
-                    // / desktop without a custom keypad.
-                    brls::Application::getImeManager()->openForText(
-                        [doSwitch](std::string pin) { doSwitch(pin); },
-                        "Enter PIN for " + chosen.title,
-                        "4-digit PIN", 8, "", 0);
-                } else {
-                    doSwitch("");
-                }
-            });
-        },
-        selected);
-    brls::Application::pushActivity(new brls::Activity(dropdown));
+    homepicker::show(users, selected, trySwitch, onComplete);
 }
 
 void Application::pushMainActivity() {
