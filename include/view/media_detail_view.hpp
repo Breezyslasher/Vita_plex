@@ -8,9 +8,26 @@
 #include <borealis.hpp>
 #include <memory>
 #include <atomic>
+#include <string>
+#include <vector>
+#include <functional>
 #include "app/plex_client.hpp"
 
 namespace vitaplex {
+
+// One row in the anchored options popover (artboard "D4a"). Every menu that
+// used to build a centered brls::Dialog + vertical brls::Button stack now
+// translates each of its buttons into an OptionRow and feeds the whole vector
+// to MediaDetailView::showOptionsPopover(). Presentation only — the `action`
+// is the verbatim former button body (sans the leading dialog->dismiss()).
+struct OptionRow {
+    std::string icon;     // resources/icons asset key (e.g. "play.png")
+    std::string label;
+    std::string sub;      // optional trailing mono value ("", "from 12m", "00:00", "420 MB")
+    bool primary = false; // gold fill (exactly one: the play/resume action)
+    bool danger  = false; // muted (Cancel)
+    std::function<bool(brls::View*)> action;
+};
 
 class MediaDetailView : public brls::Box {
 public:
@@ -59,6 +76,18 @@ public:
     static void showArtistContextMenuStatic(const MediaItem& artist);
     static void showAlbumContextMenuStatic(const MediaItem& album);
     static void performTrackActionStatic(const MediaItem& track);
+
+    // Shared builder for the compact options popover (artboard "D4a"). Anchors a
+    // 320px panel to `anchor` (the focused cell, usually
+    // brls::Application::getCurrentFocus()); falls back to a centered bottom
+    // sheet when `anchor` is null or the screen is too narrow. Every show*
+    // context menu funnels its rows through here. Static because several callers
+    // are static members.
+    static void showOptionsPopover(brls::View* anchor,
+                                   const std::string& contextLine,
+                                   const std::string& title,
+                                   std::vector<OptionRow> rows);
+
     void performTrackAction(const MediaItem& track, size_t trackIndex);  // Handle track default action
     void showTrackActionDialog(const MediaItem& track, size_t trackIndex);  // Ask user what to do
 

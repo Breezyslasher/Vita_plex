@@ -1842,37 +1842,251 @@ void MediaDetailView::performTrackAction(const MediaItem& track, size_t trackInd
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+//  Options popover (artboard "D4a")
+//
+//  A compact panel anchored to the focused cell, replacing the old centered
+//  brls::Dialog + vertical brls::Button stack used by every show* context
+//  menu. Presentation only: each menu translates its former buttons into
+//  OptionRow entries and hands the vector to showOptionsPopover().
+// ─────────────────────────────────────────────────────────────────────────
+namespace {
+
+// Palette literals scoped to this component (matches artboard "D4a").
+namespace popcol {
+    inline NVGcolor panel()     { return nvgRGB(0x24, 0x22, 0x30); }
+    inline NVGcolor line()      { return nvgRGB(0x3A, 0x38, 0x45); }
+    inline NVGcolor text()      { return nvgRGB(255, 255, 255); }
+    inline NVGcolor muted()     { return nvgRGB(0xA8, 0xA6, 0xB4); }
+    inline NVGcolor dim()       { return nvgRGB(0x80, 0x7E, 0x8C); }
+    inline NVGcolor gold()      { return nvgRGB(0xE5, 0xA0, 0x0D); }
+    inline NVGcolor goldBright(){ return nvgRGB(0xFF, 0xC2, 0x3D); }
+    inline NVGcolor goldInk()   { return nvgRGB(0x24, 0x1C, 0x08); }
+    inline NVGcolor scrim()     { return nvgRGBA(10, 9, 14, 128); }
+    inline NVGcolor goldInkSub(){ return nvgRGBA(36, 28, 8, 168); }  // sub on gold (~.66)
+}
+
+// Translucent host so the underlying detail screen shows through the scrim.
+class PopoverActivity : public brls::Activity {
+public:
+    explicit PopoverActivity(brls::Box* content) : brls::Activity(content) {}
+    bool isTranslucent() override { return true; }
+};
+
+}  // namespace
+
+void MediaDetailView::showOptionsPopover(brls::View* anchor,
+                                         const std::string& contextLine,
+                                         const std::string& title,
+                                         std::vector<OptionRow> rows) {
+    namespace pc = popcol;
+
+    // The episode menu passes an "S{n} · E{n}" context line; every other menu
+    // passes an uppercase type word ("MOVIE", "SEASON 2", …) or "". The middot
+    // marks the episodic case, which gets a gold (rather than dim) context line.
+    const bool episodic = contextLine.find("\xC2\xB7") != std::string::npos;
+
+    // ── Geometry ────────────────────────────────────────────────────────
+    const float screenW = platform::viewportWidth();
+    const float screenH = platform::viewportHeight();
+    const float kPopoverW = 320.0f;
+    const float kMargin   = 40.0f;
+    const bool  bottomSheet =
+        platform::isPortrait() || (kPopoverW + 2.0f * kMargin) > screenW || anchor == nullptr;
+
+    // ── Scrim (full-screen) ─────────────────────────────────────────────
+    auto* scrim = new brls::Box();
+    scrim->setAxis(brls::Axis::COLUMN);
+    scrim->setWidthPercentage(100.0f);
+    scrim->setHeightPercentage(100.0f);
+    scrim->setBackgroundColor(pc::scrim());
+    // Bottom sheet docks to the bottom edge; anchored popover is positioned
+    // absolutely so the scrim itself just needs to fill the screen.
+    if (bottomSheet) {
+        scrim->setJustifyContent(brls::JustifyContent::FLEX_END);
+        scrim->setAlignItems(brls::AlignItems::STRETCH);
+    }
+    scrim->addGestureRecognizer(new brls::TapGestureRecognizer(scrim,
+        []() { brls::Application::popActivity(); }));
+
+    // ── Popover panel ───────────────────────────────────────────────────
+    auto* panel = new brls::Box();
+    panel->setAxis(brls::Axis::COLUMN);
+    panel->setBackgroundColor(pc::panel());
+    panel->setBorderColor(pc::line());
+    panel->setBorderThickness(1.0f);
+    panel->setShadowType(brls::ShadowType::GENERIC);
+    panel->setPadding(8.0f, 8.0f, 8.0f, 8.0f);
+
+    if (bottomSheet) {
+        panel->setCornerRadius(14.0f);
+        panel->setWidthPercentage(100.0f);
+    } else {
+        panel->setCornerRadius(14.0f);
+        panel->setWidth(kPopoverW);
+        panel->setPositionType(brls::PositionType::ABSOLUTE);
+
+        const float ax = anchor->getX();
+        const float ay = anchor->getY();
+        const float aw = anchor->getWidth();
+        const float ah = anchor->getHeight();
+
+        // Horizontal: centre on the cell, then clamp into the screen margins.
+        float x = ax + aw * 0.5f - kPopoverW * 0.5f;
+        if (x < kMargin) x = kMargin;
+        if (x + kPopoverW > screenW - kMargin) x = screenW - kMargin - kPopoverW;
+        panel->setPositionLeft(x);
+
+        // Vertical: cells in the lower ~45% open upward, otherwise downward.
+        // The panel height isn't known pre-layout, so estimate it (header +
+        // rows) to place the bottom edge when opening above the cell.
+        const float kRowH = 44.0f, kHeaderH = 56.0f, kGap = 8.0f, kPad = 16.0f;
+        const float estH = kHeaderH + kPad + static_cast<float>(rows.size()) * kRowH;
+        const bool above = (ay + ah * 0.5f) > screenH * 0.55f;
+        float y = above ? (ay - kGap - estH) : (ay + ah + kGap);
+        if (y < kMargin) y = kMargin;
+        if (y + estH > screenH - kMargin) y = screenH - kMargin - estH;
+        if (y < kMargin) y = kMargin;
+        panel->setPositionTop(y);
+    }
+
+    // ── Header (context line + title) ───────────────────────────────────
+    // borealis only supports a uniform border, so the bottom rule under the
+    // header is a separate 1px divider box rather than a per-side border.
+    auto* header = new brls::Box();
+    header->setAxis(brls::Axis::COLUMN);
+    header->setPadding(8.0f, 10.0f, 11.0f, 10.0f);
+
+    if (!contextLine.empty()) {
+        auto* ctx = new brls::Label();
+        ctx->setText(contextLine);
+        ctx->setFontSize(11.0f);
+        // Gold for episodic context ("S1 · E2"), dim otherwise.
+        ctx->setTextColor(episodic ? pc::gold() : pc::dim());
+        ctx->setSingleLine(true);
+        ctx->setMarginBottom(2.0f);
+        header->addView(ctx);
+    }
+    auto* titleLabel = new brls::Label();
+    titleLabel->setText(title);
+    titleLabel->setFontSize(16.0f);
+    titleLabel->setTextColor(pc::text());
+    titleLabel->setSingleLine(true);
+    header->addView(titleLabel);
+    panel->addView(header);
+
+    auto* divider = new brls::Box();
+    divider->setHeight(1.0f);
+    divider->setAlignSelf(brls::AlignSelf::STRETCH);
+    divider->setBackgroundColor(pc::line());
+    divider->setMarginBottom(6.0f);
+    panel->addView(divider);
+
+    // ── Rows ────────────────────────────────────────────────────────────
+    brls::View* defaultFocus = nullptr;
+    brls::View* firstRow      = nullptr;
+    for (auto& r : rows) {
+        OptionRow row = r;  // copy into the row closure
+
+        auto* rowBox = new brls::Box();
+        rowBox->setAxis(brls::Axis::ROW);
+        rowBox->setAlignItems(brls::AlignItems::CENTER);
+        rowBox->setHeight(44.0f);
+        rowBox->setPadding(0.0f, 12.0f, 0.0f, 12.0f);
+        rowBox->setCornerRadius(9.0f);
+        rowBox->setFocusable(true);
+        rowBox->setHighlightCornerRadius(9.0f);
+
+        if (row.primary) {
+            rowBox->setBackgroundColor(pc::gold());
+        }
+
+        // Leading icon.
+        auto* icon = new brls::Image();
+        if (!row.icon.empty()) icon->setImageFromRes("icons/" + row.icon);
+        icon->setScalingType(brls::ImageScalingType::FIT);
+        icon->setWidth(20.0f);
+        icon->setHeight(20.0f);
+        icon->setMarginRight(11.0f);
+        rowBox->addView(icon);
+
+        // Label.
+        auto* lbl = new brls::Label();
+        lbl->setText(row.label);
+        lbl->setFontSize(15.0f);
+        lbl->setSingleLine(true);
+        lbl->setGrow(1.0f);
+        if (row.primary)      lbl->setTextColor(pc::goldInk());
+        else if (row.danger)  lbl->setTextColor(pc::muted());
+        else                  lbl->setTextColor(pc::text());
+        rowBox->addView(lbl);
+
+        // Trailing mono sub-value.
+        if (!row.sub.empty()) {
+            auto* sub = new brls::Label();
+            sub->setText(row.sub);
+            sub->setFontSize(12.0f);
+            sub->setHorizontalAlign(brls::HorizontalAlign::RIGHT);
+            sub->setSingleLine(true);
+            sub->setMarginLeft(8.0f);
+            sub->setTextColor(row.primary ? pc::goldInkSub() : pc::dim());
+            rowBox->addView(sub);
+        }
+
+        // Activate: dismiss the popover first (preserving the old
+        // dialog->dismiss() ordering), then run the verbatim action body.
+        auto act = row.action;
+        auto onActivate = [act](brls::View* v) -> bool {
+            brls::Application::popActivity(brls::TransitionAnimation::FADE,
+                [act, v]() { if (act) act(v); });
+            return true;
+        };
+        rowBox->registerClickAction(onActivate);
+        rowBox->addGestureRecognizer(new brls::TapGestureRecognizer(rowBox));
+
+        // Brighten the gold fill on focus (nice-to-have); keep the warm halo.
+        if (row.primary) {
+            brls::Box* rb = rowBox;
+            rb->getFocusEvent()->subscribe(
+                [rb](brls::View*) { rb->setBackgroundColor(popcol::goldBright()); });
+            rb->getFocusLostEvent()->subscribe(
+                [rb](brls::View*) { rb->setBackgroundColor(popcol::gold()); });
+        }
+
+        panel->addView(rowBox);
+        if (!firstRow) firstRow = rowBox;
+        if (row.primary && !defaultFocus) defaultFocus = rowBox;
+    }
+    if (!defaultFocus) defaultFocus = firstRow;
+
+    scrim->addView(panel);
+
+    scrim->registerAction("Back", brls::ControllerButton::BUTTON_B,
+        [](brls::View*) { brls::Application::popActivity(); return true; });
+
+    brls::Application::pushActivity(new PopoverActivity(scrim));
+    if (defaultFocus) brls::Application::giveFocus(defaultFocus);
+}
+
 void MediaDetailView::showTrackActionDialog(const MediaItem& track, size_t trackIndex) {
-    auto* dialog = new brls::Dialog("Choose Action");
-
-    auto* optionsBox = new brls::Box();
-    optionsBox->setAxis(brls::Axis::COLUMN);
-    optionsBox->setPadding(20);
-
-    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
-        auto* btn = new brls::Button();
-        btn->setText(text);
-        btn->setHeight(44);
-        btn->setMarginBottom(10);
-        btn->registerClickAction(action);
-        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-        optionsBox->addView(btn);
-    };
+    brls::View* anchor = brls::Application::getCurrentFocus();
 
     MediaItem capturedTrack = track;
     size_t capturedIndex = trackIndex;
 
-    addDialogButton("Play Now (Clear Queue)", [this, capturedTrack, dialog](brls::View*) {
-        dialog->dismiss();
+    std::vector<OptionRow> rows;
+
+    rows.push_back({ "play.png", "Play Now (Clear Queue)", "", true, false,
+        [this, capturedTrack](brls::View*) {
         // Play only this single track
         std::vector<MediaItem> single = {capturedTrack};
         auto* playerActivity = PlayerActivity::createWithQueue(single, 0);
         brls::Application::pushActivity(playerActivity);
         return true;
-    });
+    }});
 
-    addDialogButton("Play Next", [this, capturedTrack, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "skip-next.png", "Play Next", "", false, false,
+        [this, capturedTrack](brls::View*) {
         MusicQueue& queue = MusicQueue::getInstance();
         if (queue.isEmpty()) {
             // Start new queue with just this track
@@ -1884,10 +2098,10 @@ void MediaDetailView::showTrackActionDialog(const MediaItem& track, size_t track
             brls::Application::notify("Playing next: " + capturedTrack.title);
         }
         return true;
-    });
+    }});
 
-    addDialogButton("Add to Bottom of Queue", [this, capturedTrack, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "format-list-group.png", "Add to Bottom of Queue", "", false, false,
+        [this, capturedTrack](brls::View*) {
         MusicQueue& queue = MusicQueue::getInstance();
         if (queue.isEmpty()) {
             std::vector<MediaItem> single = {capturedTrack};
@@ -1898,36 +2112,23 @@ void MediaDetailView::showTrackActionDialog(const MediaItem& track, size_t track
             brls::Application::notify("Added to queue: " + capturedTrack.title);
         }
         return true;
-    });
+    }});
 
-    addDialogButton("Add to Playlist", [this, capturedTrack, dialog](brls::View*) {
-        dialog->dismiss();
-        asyncRun([this, capturedTrack]() {
+    rows.push_back({ "book-multiple.png", "Add to Playlist", "", false, false,
+        [this, capturedTrack, anchor](brls::View*) {
+        asyncRun([this, capturedTrack, anchor]() {
             PlexClient& client = PlexClient::getInstance();
             std::vector<Playlist> playlists;
             client.fetchMusicPlaylists(playlists);
 
-            brls::sync([this, playlists, capturedTrack]() {
+            brls::sync([this, playlists, capturedTrack, anchor]() {
                 auto alive = m_alive;
                 if (!alive || !alive->load()) return;
 
-                auto* plDialog = new brls::Dialog("Add to Playlist");
-                auto* plBox = new brls::Box();
-                plBox->setAxis(brls::Axis::COLUMN);
-                plBox->setPadding(20);
+                std::vector<OptionRow> plRows;
 
-                auto addBtn = [&plBox](const std::string& text, std::function<bool(brls::View*)> action) {
-                    auto* btn = new brls::Button();
-                    btn->setText(text);
-                    btn->setHeight(44);
-                    btn->setMarginBottom(10);
-                    btn->registerClickAction(action);
-                    btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-                    plBox->addView(btn);
-                };
-
-                addBtn("+ New Playlist", [plDialog, capturedTrack](brls::View*) {
-                    plDialog->dismiss();
+                plRows.push_back({ "book-multiple.png", "+ New Playlist", "", false, false,
+                    [capturedTrack](brls::View*) {
                     brls::Application::getImeManager()->openForText([capturedTrack](std::string name) {
                         if (name.empty()) return;
                         asyncRun([name, capturedTrack]() {
@@ -1942,13 +2143,13 @@ void MediaDetailView::showTrackActionDialog(const MediaItem& track, size_t track
                         });
                     }, "New Playlist", "Enter playlist name", 128, "");
                     return true;
-                });
+                }});
 
                 for (const auto& pl : playlists) {
                     if (pl.smart) continue;
                     Playlist capturedPl = pl;
-                    addBtn(pl.title, [plDialog, capturedPl, capturedTrack](brls::View*) {
-                        plDialog->dismiss();
+                    plRows.push_back({ "format-list-group.png", pl.title, "", false, false,
+                        [capturedPl, capturedTrack](brls::View*) {
                         asyncRun([capturedPl, capturedTrack]() {
                             PlexClient& client = PlexClient::getInstance();
                             std::vector<std::string> keys = {capturedTrack.ratingKey};
@@ -1959,59 +2160,37 @@ void MediaDetailView::showTrackActionDialog(const MediaItem& track, size_t track
                             }
                         });
                         return true;
-                    });
+                    }});
                 }
 
-                addBtn("Cancel", [plDialog](brls::View*) {
-                    plDialog->dismiss();
+                plRows.push_back({ "cross.png", "Cancel", "", false, true,
+                    [](brls::View*) {
                     return true;
-                });
+                }});
 
-                plDialog->addView(plBox);
-                plDialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [plDialog](brls::View*) {
-                    plDialog->dismiss();
-                    return true;
-                });
-                brls::Application::pushActivity(new brls::Activity(plDialog));
+                MediaDetailView::showOptionsPopover(anchor, "TRACK", "Add to Playlist", std::move(plRows));
             });
         });
         return true;
-    });
+    }});
 
-    addDialogButton("Cancel", [dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "cross.png", "Cancel", "", false, true,
+        [](brls::View*) {
         return true;
-    });
+    }});
 
-    dialog->addView(optionsBox);
-    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
-        dialog->dismiss();
-        return true;
-    });
-    brls::Application::pushActivity(new brls::Activity(dialog));
+    showOptionsPopover(anchor, "TRACK", track.title, std::move(rows));
 }
 
 void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
-    auto* dialog = new brls::Dialog(album.title);
-
-    auto* optionsBox = new brls::Box();
-    optionsBox->setAxis(brls::Axis::COLUMN);
-    optionsBox->setPadding(20);
-
-    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
-        auto* btn = new brls::Button();
-        btn->setText(text);
-        btn->setHeight(44);
-        btn->setMarginBottom(10);
-        btn->registerClickAction(action);
-        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-        optionsBox->addView(btn);
-    };
+    brls::View* anchor = brls::Application::getCurrentFocus();
 
     MediaItem capturedAlbum = album;
 
-    addDialogButton("Play Now (Clear Queue)", [this, capturedAlbum, dialog](brls::View*) {
-        dialog->dismiss();
+    std::vector<OptionRow> rows;
+
+    rows.push_back({ "play.png", "Play Now (Clear Queue)", "", true, false,
+        [this, capturedAlbum](brls::View*) {
         // Fetch album tracks and play
         asyncRun([this, capturedAlbum]() {
             PlexClient& client = PlexClient::getInstance();
@@ -2024,10 +2203,10 @@ void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
             }
         });
         return true;
-    });
+    }});
 
-    addDialogButton("Play Next", [this, capturedAlbum, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "skip-next.png", "Play Next", "", false, false,
+        [this, capturedAlbum](brls::View*) {
         asyncRun([capturedAlbum]() {
             PlexClient& client = PlexClient::getInstance();
             std::vector<MediaItem> tracks;
@@ -2048,10 +2227,10 @@ void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
             }
         });
         return true;
-    });
+    }});
 
-    addDialogButton("Add to Bottom of Queue", [this, capturedAlbum, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "format-list-group.png", "Add to Bottom of Queue", "", false, false,
+        [this, capturedAlbum](brls::View*) {
         asyncRun([capturedAlbum]() {
             PlexClient& client = PlexClient::getInstance();
             std::vector<MediaItem> tracks;
@@ -2069,12 +2248,12 @@ void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
             }
         });
         return true;
-    });
+    }});
 
-    addDialogButton("Add to Playlist", [this, capturedAlbum, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "book-multiple.png", "Add to Playlist", "", false, false,
+        [this, capturedAlbum, anchor](brls::View*) {
         // Fetch audio playlists and let user pick one
-        asyncRun([this, capturedAlbum]() {
+        asyncRun([this, capturedAlbum, anchor]() {
             PlexClient& client = PlexClient::getInstance();
             std::vector<Playlist> playlists;
             client.fetchMusicPlaylists(playlists);
@@ -2083,7 +2262,7 @@ void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
             std::vector<MediaItem> tracks;
             client.fetchChildren(capturedAlbum.ratingKey, tracks);
 
-            brls::sync([this, playlists, tracks, capturedAlbum]() {
+            brls::sync([this, playlists, tracks, capturedAlbum, anchor]() {
                 auto alive = m_alive;
                 if (!alive || !alive->load()) return;
 
@@ -2092,24 +2271,11 @@ void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
                     return;
                 }
 
-                auto* plDialog = new brls::Dialog("Add to Playlist");
-                auto* plBox = new brls::Box();
-                plBox->setAxis(brls::Axis::COLUMN);
-                plBox->setPadding(20);
-
-                auto addBtn = [&plBox](const std::string& text, std::function<bool(brls::View*)> action) {
-                    auto* btn = new brls::Button();
-                    btn->setText(text);
-                    btn->setHeight(44);
-                    btn->setMarginBottom(10);
-                    btn->registerClickAction(action);
-                    btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-                    plBox->addView(btn);
-                };
+                std::vector<OptionRow> plRows;
 
                 // Option to create new playlist with this album
-                addBtn("+ New Playlist", [plDialog, tracks](brls::View*) {
-                    plDialog->dismiss();
+                plRows.push_back({ "book-multiple.png", "+ New Playlist", "", false, false,
+                    [tracks](brls::View*) {
                     brls::Application::getImeManager()->openForText([tracks](std::string name) {
                         if (name.empty()) return;
                         asyncRun([name, tracks]() {
@@ -2131,14 +2297,14 @@ void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
                         });
                     }, "New Playlist", "Enter playlist name", 128, "");
                     return true;
-                });
+                }});
 
                 // Existing playlists
                 for (const auto& pl : playlists) {
                     if (pl.smart) continue;  // Can't add to smart playlists
                     Playlist capturedPl = pl;
-                    addBtn(pl.title, [plDialog, capturedPl, tracks](brls::View*) {
-                        plDialog->dismiss();
+                    plRows.push_back({ "format-list-group.png", pl.title, "", false, false,
+                        [capturedPl, tracks](brls::View*) {
                         asyncRun([capturedPl, tracks]() {
                             PlexClient& client = PlexClient::getInstance();
                             std::vector<std::string> keys;
@@ -2156,44 +2322,34 @@ void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
                             }
                         });
                         return true;
-                    });
+                    }});
                 }
 
-                addBtn("Cancel", [plDialog](brls::View*) {
-                    plDialog->dismiss();
+                plRows.push_back({ "cross.png", "Cancel", "", false, true,
+                    [](brls::View*) {
                     return true;
-                });
+                }});
 
-                plDialog->addView(plBox);
-                plDialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [plDialog](brls::View*) {
-                    plDialog->dismiss();
-                    return true;
-                });
-                brls::Application::pushActivity(new brls::Activity(plDialog));
+                MediaDetailView::showOptionsPopover(anchor, "ALBUM", "Add to Playlist", std::move(plRows));
             });
         });
         return true;
-    });
+    }});
 
-    addDialogButton("Download Album", [this, capturedAlbum, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "download.png", "Download Album", "", false, false,
+        [this, capturedAlbum](brls::View*) {
         // Re-use existing download logic
         m_item = capturedAlbum;
         downloadAll();
         return true;
-    });
+    }});
 
-    addDialogButton("Cancel", [dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "cross.png", "Cancel", "", false, true,
+        [](brls::View*) {
         return true;
-    });
+    }});
 
-    dialog->addView(optionsBox);
-    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
-        dialog->dismiss();
-        return true;
-    });
-    brls::Application::pushActivity(new brls::Activity(dialog));
+    showOptionsPopover(anchor, "ALBUM", album.title, std::move(rows));
 }
 
 void MediaDetailView::showMovieContextMenu(const MediaItem& movie) {
@@ -2207,32 +2363,21 @@ void MediaDetailView::showShowContextMenu(const MediaItem& show) {
 
 void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
     brls::Logger::info("showEpisodeContextMenu called for {}", episode.title);
-    auto* dialog = new brls::Dialog(episode.title);
-
-    auto* optionsBox = new brls::Box();
-    optionsBox->setAxis(brls::Axis::COLUMN);
-    optionsBox->setPadding(20);
-
-    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
-        auto* btn = new brls::Button();
-        btn->setText(text);
-        btn->setHeight(44);
-        btn->setMarginBottom(10);
-        btn->registerClickAction(action);
-        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-        optionsBox->addView(btn);
-    };
+    brls::View* anchor = brls::Application::getCurrentFocus();
 
     MediaItem capturedEpisode = episode;
+    const bool hasResume = episode.viewOffset > 0;
 
-    // Restart button
-    addDialogButton("Restart", [capturedEpisode, dialog](brls::View*) {
-        dialog->dismiss();
+    std::vector<OptionRow> rows;
+
+    // Restart button (primary only when there's no Resume row)
+    rows.push_back({ "refresh.png", "Restart", "", !hasResume, false,
+        [capturedEpisode](brls::View*) {
         // Mark as unwatched first to reset progress, then play
         PlexClient::getInstance().markAsUnwatched(capturedEpisode.ratingKey);
         Application::getInstance().pushPlayerActivity(capturedEpisode.ratingKey);
         return true;
-    });
+    }});
 
     // Resume button (only if there's a view offset)
     if (episode.viewOffset > 0) {
@@ -2245,16 +2390,16 @@ void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
         } else {
             snprintf(resumeStr, sizeof(resumeStr), "Resume from %dm", minutes);
         }
-        addDialogButton(resumeStr, [capturedEpisode, dialog](brls::View*) {
-            dialog->dismiss();
+        rows.push_back({ "play.png", resumeStr, "", true, false,
+            [capturedEpisode](brls::View*) {
             Application::getInstance().pushPlayerActivity(capturedEpisode.ratingKey);
             return true;
-        });
+        }});
     }
 
     // Download
-    addDialogButton("Download", [capturedEpisode, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "download.png", "Download", "", false, false,
+        [capturedEpisode](brls::View*) {
         if (DownloadsManager::getInstance().isDownloaded(capturedEpisode.ratingKey)) {
             brls::Application::notify("Already downloaded");
             return true;
@@ -2283,12 +2428,12 @@ void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
             }
         });
         return true;
-    });
+    }});
 
     // Mark as watched/unwatched
     if (episode.watched) {
-        addDialogButton("Mark as Unwatched", [capturedEpisode, dialog](brls::View*) {
-            dialog->dismiss();
+        rows.push_back({ "hide.png", "Mark as Unwatched", "", false, false,
+            [capturedEpisode](brls::View*) {
             asyncRun([capturedEpisode]() {
                 PlexClient::getInstance().markAsUnwatched(capturedEpisode.ratingKey);
                 brls::sync([]() {
@@ -2296,10 +2441,10 @@ void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
                 });
             });
             return true;
-        });
+        }});
     } else {
-        addDialogButton("Mark as Watched", [capturedEpisode, dialog](brls::View*) {
-            dialog->dismiss();
+        rows.push_back({ "check-circle.png", "Mark as Watched", "", false, false,
+            [capturedEpisode](brls::View*) {
             asyncRun([capturedEpisode]() {
                 PlexClient::getInstance().markAsWatched(capturedEpisode.ratingKey);
                 brls::sync([]() {
@@ -2307,47 +2452,38 @@ void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
                 });
             });
             return true;
-        });
+        }});
     }
 
-    addDialogButton("Cancel", [dialog](brls::View*) {
-        dialog->dismiss(); return true;
-    });
-
-    dialog->addView(optionsBox);
-    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "cross.png", "Cancel", "", false, true,
+        [](brls::View*) {
         return true;
-    });
-    brls::Application::pushActivity(new brls::Activity(dialog));
+    }});
+
+    // Context line "S{season} · E{episode}" from the numbers already on the item.
+    std::string contextLine;
+    if (episode.parentIndex > 0 || episode.index > 0) {
+        contextLine = "S" + std::to_string(episode.parentIndex) +
+                      " \xC2\xB7 E" + std::to_string(episode.index);
+    }
+    showOptionsPopover(anchor, contextLine, episode.title, std::move(rows));
 }
 void MediaDetailView::showMovieContextMenuStatic(const MediaItem& movie) {
-    auto* dialog = new brls::Dialog(movie.title);
-
-    auto* optionsBox = new brls::Box();
-    optionsBox->setAxis(brls::Axis::COLUMN);
-    optionsBox->setPadding(20);
-
-    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
-        auto* btn = new brls::Button();
-        btn->setText(text);
-        btn->setHeight(44);
-        btn->setMarginBottom(10);
-        btn->registerClickAction(action);
-        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-        optionsBox->addView(btn);
-    };
+    brls::View* anchor = brls::Application::getCurrentFocus();
 
     MediaItem capturedMovie = movie;
+    const bool hasResume = movie.viewOffset > 0;
 
-    // Restart button
-    addDialogButton("Restart", [capturedMovie, dialog](brls::View*) {
-        dialog->dismiss();
+    std::vector<OptionRow> rows;
+
+    // Restart button (primary only when there's no Resume row)
+    rows.push_back({ "refresh.png", "Restart", "", !hasResume, false,
+        [capturedMovie](brls::View*) {
         // Mark as unwatched first to reset progress, then play
         PlexClient::getInstance().markAsUnwatched(capturedMovie.ratingKey);
         Application::getInstance().pushPlayerActivity(capturedMovie.ratingKey);
         return true;
-    });
+    }});
 
     // Resume button (only if there's a view offset)
     if (movie.viewOffset > 0) {
@@ -2360,16 +2496,16 @@ void MediaDetailView::showMovieContextMenuStatic(const MediaItem& movie) {
         } else {
             snprintf(resumeStr, sizeof(resumeStr), "Resume from %dm", minutes);
         }
-        addDialogButton(resumeStr, [capturedMovie, dialog](brls::View*) {
-            dialog->dismiss();
+        rows.push_back({ "play.png", resumeStr, "", true, false,
+            [capturedMovie](brls::View*) {
             Application::getInstance().pushPlayerActivity(capturedMovie.ratingKey);
             return true;
-        });
+        }});
     }
 
     // Download
-    addDialogButton("Download", [capturedMovie, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "download.png", "Download", "", false, false,
+        [capturedMovie](brls::View*) {
         if (DownloadsManager::getInstance().isDownloaded(capturedMovie.ratingKey)) {
             brls::Application::notify("Already downloaded");
             return true;
@@ -2398,12 +2534,12 @@ void MediaDetailView::showMovieContextMenuStatic(const MediaItem& movie) {
             }
         });
         return true;
-    });
+    }});
 
     // Mark as watched/unwatched
     if (movie.watched) {
-        addDialogButton("Mark as Unwatched", [capturedMovie, dialog](brls::View*) {
-            dialog->dismiss();
+        rows.push_back({ "hide.png", "Mark as Unwatched", "", false, false,
+            [capturedMovie](brls::View*) {
             asyncRun([capturedMovie]() {
                 PlexClient::getInstance().markAsUnwatched(capturedMovie.ratingKey);
                 brls::sync([]() {
@@ -2411,10 +2547,10 @@ void MediaDetailView::showMovieContextMenuStatic(const MediaItem& movie) {
                 });
             });
             return true;
-        });
+        }});
     } else {
-        addDialogButton("Mark as Watched", [capturedMovie, dialog](brls::View*) {
-            dialog->dismiss();
+        rows.push_back({ "check-circle.png", "Mark as Watched", "", false, false,
+            [capturedMovie](brls::View*) {
             asyncRun([capturedMovie]() {
                 PlexClient::getInstance().markAsWatched(capturedMovie.ratingKey);
                 brls::sync([]() {
@@ -2422,43 +2558,28 @@ void MediaDetailView::showMovieContextMenuStatic(const MediaItem& movie) {
                 });
             });
             return true;
-        });
+        }});
     }
 
-    addDialogButton("Cancel", [dialog](brls::View*) {
-        dialog->dismiss(); return true;
-    });
-
-    dialog->addView(optionsBox);
-    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "cross.png", "Cancel", "", false, true,
+        [](brls::View*) {
         return true;
-    });
-    brls::Application::pushActivity(new brls::Activity(dialog));
+    }});
+
+    showOptionsPopover(anchor, "MOVIE", movie.title, std::move(rows));
 }
 
 void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
-    auto* dialog = new brls::Dialog(show.title);
-
-    auto* optionsBox = new brls::Box();
-    optionsBox->setAxis(brls::Axis::COLUMN);
-    optionsBox->setPadding(20);
-
-    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
-        auto* btn = new brls::Button();
-        btn->setText(text);
-        btn->setHeight(44);
-        btn->setMarginBottom(10);
-        btn->registerClickAction(action);
-        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-        optionsBox->addView(btn);
-    };
+    brls::View* anchor = brls::Application::getCurrentFocus();
 
     MediaItem capturedShow = show;
+    const bool hasResume = (show.viewOffset > 0 || show.viewedLeafCount > 0);
 
-    // Restart (play first episode of first season)
-    addDialogButton("Restart (S01E01)", [capturedShow, dialog](brls::View*) {
-        dialog->dismiss();
+    std::vector<OptionRow> rows;
+
+    // Restart (play first episode of first season) — primary only when no Resume
+    rows.push_back({ "refresh.png", "Restart (S01E01)", "", !hasResume, false,
+        [capturedShow](brls::View*) {
         asyncRun([capturedShow]() {
             PlexClient& client = PlexClient::getInstance();
             std::vector<MediaItem> seasons;
@@ -2472,12 +2593,12 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
             }
         });
         return true;
-    });
+    }});
 
     // Resume (find the next unwatched/in-progress episode)
     if (show.viewOffset > 0 || show.viewedLeafCount > 0) {
-        addDialogButton("Resume", [capturedShow, dialog](brls::View*) {
-            dialog->dismiss();
+        rows.push_back({ "play.png", "Resume", "", true, false,
+            [capturedShow](brls::View*) {
             asyncRun([capturedShow]() {
                 PlexClient& client = PlexClient::getInstance();
                 std::vector<MediaItem> seasons;
@@ -2528,12 +2649,12 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
                 }
             });
             return true;
-        });
+        }});
     }
 
     // Download options
-    addDialogButton("Download Entire Show", [capturedShow, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "download.png", "Download Entire Show", "", false, false,
+        [capturedShow](brls::View*) {
         // Use the downloadAll pattern from existing code
         asyncRun([capturedShow]() {
             PlexClient& client = PlexClient::getInstance();
@@ -2575,10 +2696,10 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
             });
         });
         return true;
-    });
+    }});
 
-    addDialogButton("Download All Unwatched", [capturedShow, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "download.png", "Download All Unwatched", "", false, false,
+        [capturedShow](brls::View*) {
         asyncRun([capturedShow]() {
             PlexClient& client = PlexClient::getInstance();
             auto& mgr = DownloadsManager::getInstance();
@@ -2621,13 +2742,13 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
             });
         });
         return true;
-    });
+    }});
 
-    // Per-season download submenu
-    addDialogButton("Download by Season...", [capturedShow, dialog](brls::View*) {
-        dialog->dismiss();
-        // Show a second dialog with season options
-        asyncRun([capturedShow]() {
+    // Per-season download submenu (chevron → sub-popover)
+    rows.push_back({ "right.png", "Download by Season...", "", false, false,
+        [capturedShow, anchor](brls::View*) {
+        // Show a second popover with season options
+        asyncRun([capturedShow, anchor]() {
             PlexClient& client = PlexClient::getInstance();
             std::vector<MediaItem> seasons;
             if (!client.fetchChildren(capturedShow.ratingKey, seasons) || seasons.empty()) {
@@ -2637,23 +2758,16 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
                 return;
             }
 
-            brls::sync([capturedShow, seasons]() {
-                auto* seasonDialog = new brls::Dialog("Download Season");
-                auto* box = new brls::Box();
-                box->setAxis(brls::Axis::COLUMN);
-                box->setPadding(20);
+            brls::sync([capturedShow, seasons, anchor]() {
+                std::vector<OptionRow> seasonRows;
 
                 for (const auto& season : seasons) {
                     MediaItem capturedSeason = season;
                     std::string showTitle = capturedShow.title;
-                    auto* btn = new brls::Button();
-                    btn->setText(season.title);
-                    btn->setHeight(44);
-                    btn->setMarginBottom(10);
                     std::string showThumb = capturedShow.thumb;
                     std::string showKey = capturedShow.ratingKey;
-                    btn->registerClickAction([capturedSeason, showTitle, showThumb, showKey, seasonDialog](brls::View*) {
-                        seasonDialog->dismiss();
+                    seasonRows.push_back({ "download.png", season.title, "", false, false,
+                        [capturedSeason, showTitle, showThumb, showKey](brls::View*) {
                         asyncRun([capturedSeason, showTitle, showThumb, showKey]() {
                             PlexClient& client = PlexClient::getInstance();
                             auto& mgr = DownloadsManager::getInstance();
@@ -2690,36 +2804,24 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
                             });
                         });
                         return true;
-                    });
-                    btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-                    box->addView(btn);
+                    }});
                 }
 
-                auto* cancelBtn = new brls::Button();
-                cancelBtn->setText("Cancel");
-                cancelBtn->setHeight(44);
-                cancelBtn->setMarginBottom(10);
-                cancelBtn->registerClickAction([seasonDialog](brls::View*) {
-                    seasonDialog->dismiss(); return true;
-                });
-                cancelBtn->addGestureRecognizer(new brls::TapGestureRecognizer(cancelBtn));
-                box->addView(cancelBtn);
-
-                seasonDialog->addView(box);
-                seasonDialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [seasonDialog](brls::View*) {
-                    seasonDialog->dismiss();
+                seasonRows.push_back({ "cross.png", "Cancel", "", false, true,
+                    [](brls::View*) {
                     return true;
-                });
-                brls::Application::pushActivity(new brls::Activity(seasonDialog));
+                }});
+
+                MediaDetailView::showOptionsPopover(anchor, "SHOW", "Download Season", std::move(seasonRows));
             });
         });
         return true;
-    });
+    }});
 
     // Mark as watched/unwatched
     if (show.watched || (show.leafCount > 0 && show.viewedLeafCount == show.leafCount)) {
-        addDialogButton("Mark as Unwatched", [capturedShow, dialog](brls::View*) {
-            dialog->dismiss();
+        rows.push_back({ "hide.png", "Mark as Unwatched", "", false, false,
+            [capturedShow](brls::View*) {
             asyncRun([capturedShow]() {
                 PlexClient::getInstance().markAsUnwatched(capturedShow.ratingKey);
                 brls::sync([]() {
@@ -2727,10 +2829,10 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
                 });
             });
             return true;
-        });
+        }});
     } else {
-        addDialogButton("Mark as Watched", [capturedShow, dialog](brls::View*) {
-            dialog->dismiss();
+        rows.push_back({ "check-circle.png", "Mark as Watched", "", false, false,
+            [capturedShow](brls::View*) {
             asyncRun([capturedShow]() {
                 PlexClient::getInstance().markAsWatched(capturedShow.ratingKey);
                 brls::sync([]() {
@@ -2738,43 +2840,27 @@ void MediaDetailView::showShowContextMenuStatic(const MediaItem& show) {
                 });
             });
             return true;
-        });
+        }});
     }
 
-    addDialogButton("Cancel", [dialog](brls::View*) {
-        dialog->dismiss(); return true;
-    });
-
-    dialog->addView(optionsBox);
-    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "cross.png", "Cancel", "", false, true,
+        [](brls::View*) {
         return true;
-    });
-    brls::Application::pushActivity(new brls::Activity(dialog));
+    }});
+
+    showOptionsPopover(anchor, "SHOW", show.title, std::move(rows));
 }
 
 void MediaDetailView::showSeasonContextMenuStatic(const MediaItem& season) {
-    auto* dialog = new brls::Dialog(season.title);
-
-    auto* optionsBox = new brls::Box();
-    optionsBox->setAxis(brls::Axis::COLUMN);
-    optionsBox->setPadding(20);
-
-    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
-        auto* btn = new brls::Button();
-        btn->setText(text);
-        btn->setHeight(44);
-        btn->setMarginBottom(10);
-        btn->registerClickAction(action);
-        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-        optionsBox->addView(btn);
-    };
+    brls::View* anchor = brls::Application::getCurrentFocus();
 
     MediaItem capturedSeason = season;
 
+    std::vector<OptionRow> rows;
+
     // Resume (find next in-progress or unwatched episode)
-    addDialogButton("Resume", [capturedSeason, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "play.png", "Resume", "", true, false,
+        [capturedSeason](brls::View*) {
         asyncRun([capturedSeason]() {
             PlexClient& client = PlexClient::getInstance();
             std::vector<MediaItem> episodes;
@@ -2817,11 +2903,11 @@ void MediaDetailView::showSeasonContextMenuStatic(const MediaItem& season) {
             });
         });
         return true;
-    });
+    }});
 
     // Download whole season
-    addDialogButton("Download Whole Season", [capturedSeason, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "download.png", "Download Whole Season", "", false, false,
+        [capturedSeason](brls::View*) {
         asyncRun([capturedSeason]() {
             PlexClient& client = PlexClient::getInstance();
             auto& mgr = DownloadsManager::getInstance();
@@ -2858,11 +2944,11 @@ void MediaDetailView::showSeasonContextMenuStatic(const MediaItem& season) {
             });
         });
         return true;
-    });
+    }});
 
     // Download all unwatched
-    addDialogButton("Download All Unwatched", [capturedSeason, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "download.png", "Download All Unwatched", "", false, false,
+        [capturedSeason](brls::View*) {
         asyncRun([capturedSeason]() {
             PlexClient& client = PlexClient::getInstance();
             auto& mgr = DownloadsManager::getInstance();
@@ -2901,12 +2987,12 @@ void MediaDetailView::showSeasonContextMenuStatic(const MediaItem& season) {
             });
         });
         return true;
-    });
+    }});
 
     // Mark as watched/unwatched
     if (season.watched || (season.leafCount > 0 && season.viewedLeafCount == season.leafCount)) {
-        addDialogButton("Mark as Unwatched", [capturedSeason, dialog](brls::View*) {
-            dialog->dismiss();
+        rows.push_back({ "hide.png", "Mark as Unwatched", "", false, false,
+            [capturedSeason](brls::View*) {
             asyncRun([capturedSeason]() {
                 PlexClient::getInstance().markAsUnwatched(capturedSeason.ratingKey);
                 brls::sync([]() {
@@ -2914,10 +3000,10 @@ void MediaDetailView::showSeasonContextMenuStatic(const MediaItem& season) {
                 });
             });
             return true;
-        });
+        }});
     } else {
-        addDialogButton("Mark as Watched", [capturedSeason, dialog](brls::View*) {
-            dialog->dismiss();
+        rows.push_back({ "check-circle.png", "Mark as Watched", "", false, false,
+            [capturedSeason](brls::View*) {
             asyncRun([capturedSeason]() {
                 PlexClient::getInstance().markAsWatched(capturedSeason.ratingKey);
                 brls::sync([]() {
@@ -2925,43 +3011,28 @@ void MediaDetailView::showSeasonContextMenuStatic(const MediaItem& season) {
                 });
             });
             return true;
-        });
+        }});
     }
 
-    addDialogButton("Cancel", [dialog](brls::View*) {
-        dialog->dismiss(); return true;
-    });
-
-    dialog->addView(optionsBox);
-    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "cross.png", "Cancel", "", false, true,
+        [](brls::View*) {
         return true;
-    });
-    brls::Application::pushActivity(new brls::Activity(dialog));
+    }});
+
+    std::string contextLine = season.index > 0 ? ("SEASON " + std::to_string(season.index)) : "SEASON";
+    showOptionsPopover(anchor, contextLine, season.title, std::move(rows));
 }
 
 void MediaDetailView::showArtistContextMenuStatic(const MediaItem& artist) {
-    auto* dialog = new brls::Dialog(artist.title);
-
-    auto* optionsBox = new brls::Box();
-    optionsBox->setAxis(brls::Axis::COLUMN);
-    optionsBox->setPadding(20);
-
-    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
-        auto* btn = new brls::Button();
-        btn->setText(text);
-        btn->setHeight(44);
-        btn->setMarginBottom(10);
-        btn->registerClickAction(action);
-        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-        optionsBox->addView(btn);
-    };
+    brls::View* anchor = brls::Application::getCurrentFocus();
 
     MediaItem capturedArtist = artist;
 
+    std::vector<OptionRow> rows;
+
     // Shuffle Artist - add all tracks to queue in random order
-    addDialogButton("Shuffle Artist", [capturedArtist, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "shuffle-variant.png", "Shuffle Artist", "", false, false,
+        [capturedArtist](brls::View*) {
         asyncRun([capturedArtist]() {
             PlexClient& client = PlexClient::getInstance();
             std::vector<MediaItem> albums;
@@ -2996,11 +3067,11 @@ void MediaDetailView::showArtistContextMenuStatic(const MediaItem& artist) {
             });
         });
         return true;
-    });
+    }});
 
     // Play All (in order)
-    addDialogButton("Play All", [capturedArtist, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "play.png", "Play All", "", true, false,
+        [capturedArtist](brls::View*) {
         asyncRun([capturedArtist]() {
             PlexClient& client = PlexClient::getInstance();
             std::vector<MediaItem> albums;
@@ -3028,11 +3099,11 @@ void MediaDetailView::showArtistContextMenuStatic(const MediaItem& artist) {
             });
         });
         return true;
-    });
+    }});
 
     // Download Artist
-    addDialogButton("Download Artist", [capturedArtist, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "download.png", "Download Artist", "", false, false,
+        [capturedArtist](brls::View*) {
         asyncRun([capturedArtist]() {
             PlexClient& client = PlexClient::getInstance();
             auto& mgr = DownloadsManager::getInstance();
@@ -3076,41 +3147,25 @@ void MediaDetailView::showArtistContextMenuStatic(const MediaItem& artist) {
             });
         });
         return true;
-    });
+    }});
 
-    addDialogButton("Cancel", [dialog](brls::View*) {
-        dialog->dismiss(); return true;
-    });
-
-    dialog->addView(optionsBox);
-    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "cross.png", "Cancel", "", false, true,
+        [](brls::View*) {
         return true;
-    });
-    brls::Application::pushActivity(new brls::Activity(dialog));
+    }});
+
+    showOptionsPopover(anchor, "ARTIST", artist.title, std::move(rows));
 }
 
 void MediaDetailView::showAlbumContextMenuStatic(const MediaItem& album) {
-    auto* dialog = new brls::Dialog(album.title);
-
-    auto* optionsBox = new brls::Box();
-    optionsBox->setAxis(brls::Axis::COLUMN);
-    optionsBox->setPadding(20);
-
-    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
-        auto* btn = new brls::Button();
-        btn->setText(text);
-        btn->setHeight(44);
-        btn->setMarginBottom(10);
-        btn->registerClickAction(action);
-        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-        optionsBox->addView(btn);
-    };
+    brls::View* anchor = brls::Application::getCurrentFocus();
 
     MediaItem capturedAlbum = album;
 
-    addDialogButton("Play Now (Clear Queue)", [capturedAlbum, dialog](brls::View*) {
-        dialog->dismiss();
+    std::vector<OptionRow> rows;
+
+    rows.push_back({ "play.png", "Play Now (Clear Queue)", "", true, false,
+        [capturedAlbum](brls::View*) {
         asyncRun([capturedAlbum]() {
             PlexClient& client = PlexClient::getInstance();
             std::vector<MediaItem> tracks;
@@ -3122,10 +3177,10 @@ void MediaDetailView::showAlbumContextMenuStatic(const MediaItem& album) {
             }
         });
         return true;
-    });
+    }});
 
-    addDialogButton("Play Next", [capturedAlbum, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "skip-next.png", "Play Next", "", false, false,
+        [capturedAlbum](brls::View*) {
         asyncRun([capturedAlbum]() {
             PlexClient& client = PlexClient::getInstance();
             std::vector<MediaItem> tracks;
@@ -3145,10 +3200,10 @@ void MediaDetailView::showAlbumContextMenuStatic(const MediaItem& album) {
             }
         });
         return true;
-    });
+    }});
 
-    addDialogButton("Add to Bottom of Queue", [capturedAlbum, dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "format-list-group.png", "Add to Bottom of Queue", "", false, false,
+        [capturedAlbum](brls::View*) {
         asyncRun([capturedAlbum]() {
             PlexClient& client = PlexClient::getInstance();
             std::vector<MediaItem> tracks;
@@ -3166,19 +3221,14 @@ void MediaDetailView::showAlbumContextMenuStatic(const MediaItem& album) {
             }
         });
         return true;
-    });
+    }});
 
-    addDialogButton("Cancel", [dialog](brls::View*) {
-        dialog->dismiss();
+    rows.push_back({ "cross.png", "Cancel", "", false, true,
+        [](brls::View*) {
         return true;
-    });
+    }});
 
-    dialog->addView(optionsBox);
-    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
-        dialog->dismiss();
-        return true;
-    });
-    brls::Application::pushActivity(new brls::Activity(dialog));
+    showOptionsPopover(anchor, "ALBUM", album.title, std::move(rows));
 }
 
 void MediaDetailView::performTrackActionStatic(const MediaItem& track) {
