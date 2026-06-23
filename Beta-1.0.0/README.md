@@ -233,18 +233,5 @@
     <td><img src="../Screenshots/Beta-0.6.1/setting_tab_1.png" width="400"/></td>
     <td><img src="../Screenshots/Beta-1.0.0/setting_tab_1.png" width="400"/></td>
   </tr>
-  <tr>
-    <td></td>
-    <td><img src="../Screenshots/Beta-1.0.0/setting_2.png" width="400"/></td>
-  </tr>
-   <tr>
-    <td></td>
-    <td><img src="../Screenshots/Beta-1.0.0/setting_3.png" width="400"/></td>
-  </tr>
-    </tr>
-   <tr>
-    <td></td>
-    <td><img src="../Screenshots/Beta-1.0.0/setting_4.png" width="400"/></td>
-  </tr>
 </table>
 
