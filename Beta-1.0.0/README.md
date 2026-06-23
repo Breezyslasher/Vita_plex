@@ -9,7 +9,7 @@
 </div>
 ## 📊 Feature Comparison
 
-| Feature | Beta 0.6.1 | Beta 1.0.0 |
+| Feature | Beta 0.6.1 | Beta 1.1.3 |
 |---|---|---|
 | UI Framework | Borealis (NanoVG + GXM) | Borealis + full Plex theme (gold palette) |
 | Navigation | Sidebar tabs + activity stack | same |
@@ -40,7 +40,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/home_page_new.png" width="400"/></td>
@@ -54,7 +54,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/movies.png" width="400"/></td>
@@ -68,7 +68,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/movie_info_page.png" width="400"/></td>
@@ -83,7 +83,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/music_page.png" width="400"/></td>
@@ -99,7 +99,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/album_page.png" width="400"/></td>
@@ -114,7 +114,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/track_page.png" width="400"/></td>
@@ -129,7 +129,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/artist_downlaod.png" width="400"/></td>
@@ -143,7 +143,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1 </b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/music_palyer_ui.png" width="400"/></td>
@@ -157,7 +157,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/music_queue.png" width="400"/></td>
@@ -171,7 +171,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1 </b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/video_player_ui.png" width="400"/></td>
@@ -185,7 +185,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/search.png" width="400"/></td>
@@ -199,7 +199,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/downlaods_tab.png" width="400"/></td>
@@ -213,7 +213,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/live_tv.png" width="400"/></td>
@@ -227,7 +227,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/Login_Page.png" width="400"/></td>
@@ -245,7 +245,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/Server.png" width="400"/></td>
@@ -258,7 +258,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/Url_test.png" width="400"/></td>
@@ -272,7 +272,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1 Does not exist</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
    <td><img src="../Screenshots/Alpha-0.0.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
@@ -289,7 +289,7 @@
   </tr>
   <tr>
     <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
+    <td align="center"><b>Beta 1.1.3</b></td>
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/setting_tab_1.png" width="400"/></td>
