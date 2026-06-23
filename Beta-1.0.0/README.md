@@ -223,6 +223,37 @@
 
 <table>
   <tr>
+    <th colspan="2" align="center">Login</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Beta-0.6.1/search.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/search.png" width="400"/></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <th colspan="2" align="center">users</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1 Does not exist</b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
+  </tr>
+  <tr>
+   <td><img src="../Screenshots/Alpha-0.0.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
+   <td><img src="../Screenshots/Beta-1.0.0/users.png" width="400"/></td>
+  </tr>
+  <tr>
+    <td></td>
+    <td><img src="../Screenshots/Beta-1.0.0/pin.png" width="400"/></td>
+  </tr>
+</table>
+<table>
+  <tr>
     <th colspan="2" align="center">Settings</th>
   </tr>
   <tr>
