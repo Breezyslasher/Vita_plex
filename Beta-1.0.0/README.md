@@ -11,23 +11,23 @@
 
 | Feature | Beta 0.6.1 | Beta 1.0.0 |
 |---|---|---|
-| UI Framework | vita2d + custom text menus | Borealis (NanoVG + GXM) |
-| Navigation | Linear list menus | Sidebar tabs + activity stack |
-| Library Browse | Text list with `[M]/[T]/[A]` tags | Poster grid with All / Categories |
-| Cover Art | Music only | Movies, TV, Music, Music Videos |
-| Audio Playback | SceAvPlayer (basic) | MPV with `ao=vita` driver |
-| Video Playback | SceAvPlayer (basic) | MPV HLS/MPEG-TS pipeline |
-| Music Queue | ❌ | ✅ Drag / swipe / LB-RB reorder |
-| Offline Downloads | ❌ | ✅ Movies, Shows, Music |
-| Live TV | Empty-state only | Full program guide + DVR |
-| Search | Text list | Typed, grouped results with art |
-| Settings | Minimal | UI / Layout / Playback / Music / Transcoding / Downloads / Debug |
-| Auth | Credentials | PIN + Credentials + multi-server auto-detect |
-| Subtitles | ❌ | ✅ Toggle + size selection |
-| Controller Navigation | Manual wiring | Automatic D-pad / stick focus |
-| Touch Support | Limited | Full touchscreen |
-| Tv Remote Support | None | Full Media Buttons |
-| Supported Platforms| Vita | Linux, Mac, Windows, PS4, Vita, Switch, Andriod, Andriod TV |
+| UI Framework | Borealis (NanoVG + GXM) | Borealis + full Plex theme (gold palette) |
+| Navigation | Sidebar tabs + activity stack | same |
+| Library Browse | Poster grid with All / Categories | same |
+| Cover Art | Movies, TV, Music, Music Videos | same |
+| Audio Playback | MPV with `ao=vita` driver | same |
+| Video Playback | MPV HLS/MPEG-TS pipeline | same |
+| Music Queue | ✅ Drag / swipe / LB-RB reorder | same |
+| Offline Downloads | ✅ Movies, Shows, Music | same |
+| Live TV | Full program guide + DVR | same |
+| Search | Typed, grouped results with art | same |
+| Settings | UI / Layout / Playback / Music / Transcoding / Downloads / Debug | same |
+| Auth | PIN + Credentials + multi-server auto-detect | Redesigned multi-server picker (live probe) + Home-user profiles & PIN |
+| Subtitles | ✅ Toggle + size selection | same |
+| Controller Navigation | Automatic D-pad / stick focus | same |
+| Touch Support | Full touchscreen | same |
+| Tv Remote Support | Full Media Buttons | same |
+| Supported Platforms| Linux, Mac, Windows, PS4, Vita, Switch, Andriod, Andriod TV | same |
 
 ---
 
@@ -232,19 +232,6 @@
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/setting_tab_1.png" width="400"/></td>
     <td><img src="../Screenshots/Beta-1.0.0/setting_tab_1.png" width="400"/></td>
-  </tr>
-  <tr>
-    <td></td>
-    <td><img src="../Screenshots/Beta-1.0.0/setting_2.png" width="400"/></td>
-  </tr>
-   <tr>
-    <td></td>
-    <td><img src="../Screenshots/Beta-1.0.0/setting_3.png" width="400"/></td>
-  </tr>
-    </tr>
-   <tr>
-    <td></td>
-    <td><img src="../Screenshots/Beta-1.0.0/setting_4.png" width="400"/></td>
   </tr>
 </table>
 
