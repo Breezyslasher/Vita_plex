@@ -203,7 +203,7 @@
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/downlaods_tab.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/downlaods_tab.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/downlaods.png" width="400"/></td>
   </tr>
 </table>
 
