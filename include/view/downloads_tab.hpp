@@ -100,7 +100,6 @@ private:
     // List container
     brls::ScrollingFrame* m_scrollView = nullptr;
     brls::Box* m_listContainer = nullptr;
-    brls::Box* m_emptyView = nullptr;     // grow-filling placeholder shown when the list is empty
     brls::Label* m_emptyLabel = nullptr;
 
     // State tracking for smart refresh

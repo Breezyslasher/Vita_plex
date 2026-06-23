@@ -384,26 +384,6 @@ DownloadsTab::DownloadsTab()
     m_scrollView->setContentView(m_listContainer);
     this->addView(m_scrollView);
 
-    // Empty-state placeholder. Kept OUT of the scroll and given grow=1 as a
-    // direct child: a ScrollingFrame collapses to its content height when
-    // empty, which lets the whole column drift to the middle. A plain
-    // grow-filling Box always claims the space, anchoring the header at the
-    // top whether or not there are downloads. rebuildList toggles which of
-    // the two (scroll vs. placeholder) is visible.
-    m_emptyView = new brls::Box();
-    m_emptyView->setAxis(brls::Axis::COLUMN);
-    m_emptyView->setGrow(1.0f);
-    m_emptyView->setJustifyContent(brls::JustifyContent::CENTER);
-    m_emptyView->setAlignItems(brls::AlignItems::CENTER);
-    m_emptyView->setVisibility(brls::Visibility::GONE);
-
-    m_emptyLabel = new brls::Label();
-    m_emptyLabel->setText("No downloads yet.\nUse the download button on media details to save for offline viewing.");
-    m_emptyLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
-    m_emptyLabel->setTextColor(kMuted);
-    m_emptyView->addView(m_emptyLabel);
-    this->addView(m_emptyView);
-
     // ── Focus wiring: tabs <-> toolbar ──
     // Down from any tab drops into the toolbar; Up from any toolbar
     // button returns to the active tab (kept current in setTypeFilter).
@@ -843,21 +823,32 @@ void DownloadsTab::rebuildList() {
     }
 
     if (downloads.empty()) {
+        std::string msg;
         if (allDownloads.empty()) {
-            m_emptyLabel->setText("No downloads yet.\nUse the download button on media details to save for offline viewing.");
+            msg = "No downloads yet.\nUse the download button on media details to save for offline viewing.";
         } else {
             const char* tn = (m_activeType == Type::MOVIES) ? "Movies"
                            : (m_activeType == Type::SHOWS)  ? "Shows"
                            : (m_activeType == Type::MUSIC)  ? "Music" : "";
-            m_emptyLabel->setText(std::string("No ") + tn + " downloads");
+            msg = std::string("No ") + tn + " downloads";
         }
-        if (m_scrollView) m_scrollView->setVisibility(brls::Visibility::GONE);
-        if (m_emptyView)  m_emptyView->setVisibility(brls::Visibility::VISIBLE);
+        // Give the scroll a single non-focusable placeholder item. An empty
+        // ScrollingFrame collapses (the column then drifts to the middle);
+        // one real item makes it lay out exactly like the populated case,
+        // which is the only configuration we've seen render correctly.
+        auto* placeholder = new brls::Box();
+        placeholder->setAxis(brls::Axis::COLUMN);
+        placeholder->setJustifyContent(brls::JustifyContent::CENTER);
+        placeholder->setAlignItems(brls::AlignItems::CENTER);
+        placeholder->setHeight(220);
+        m_emptyLabel = new brls::Label();
+        m_emptyLabel->setText(msg);
+        m_emptyLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+        m_emptyLabel->setTextColor(kMuted);
+        placeholder->addView(m_emptyLabel);
+        m_listContainer->addView(placeholder);
         return;
     }
-
-    if (m_emptyView)  m_emptyView->setVisibility(brls::Visibility::GONE);
-    if (m_scrollView) m_scrollView->setVisibility(brls::Visibility::VISIBLE);
 
     // Group information
     struct GroupInfo {
@@ -926,7 +917,7 @@ void DownloadsTab::rebuildList() {
     auto& children = m_listContainer->getChildren();
     brls::View* firstListItem = nullptr;
     for (auto* child : children) {
-        if (child != m_emptyLabel && child->isFocusable()) {
+        if (child->isFocusable()) {
             firstListItem = child;
             break;
         }
@@ -941,7 +932,7 @@ void DownloadsTab::rebuildList() {
 
         // UP from each list item -> first action button (Start/Stop)
         for (auto* child : children) {
-            if (child != m_emptyLabel && child->isFocusable()) {
+            if (child->isFocusable()) {
                 child->setCustomNavigationRoute(brls::FocusDirection::UP, m_startStopBtn);
             }
         }
