@@ -1881,7 +1881,7 @@ public:
 // on whichever PNG is in resources/icons — crisp at any size and tintable.
 // nanovg fills with nonzero winding, so download's separate bar + arrow
 // sub-paths render correctly. Mirrors login_activity's drawStrokeGlyph.
-enum class MdiGlyph { Download, Restart, Close };
+enum class MdiGlyph { Download, Restart, Close, ClosedCaption };
 
 class MdiGlyphIcon : public brls::Box {
 public:
@@ -1937,6 +1937,80 @@ public:
                 nvgLineTo(vg, X(9), Y(19.4f));
                 nvgBezierTo(vg, X(8), Y(19),       X(7.1f), Y(18.4f), X(6.3f), Y(17.6f));
                 nvgClosePath(vg);
+                break;
+            case MdiGlyph::ClosedCaption:
+                // Outer rounded frame (solid).
+                nvgMoveTo(vg, X(5), Y(4));
+                nvgBezierTo(vg, X(4.45f), Y(4),     X(4),     Y(4.18f),  X(3.59f), Y(4.57f));
+                nvgBezierTo(vg, X(3.2f),  Y(4.96f),  X(3),     Y(5.44f),  X(3),     Y(6));
+                nvgLineTo(vg, X(3), Y(18));
+                nvgBezierTo(vg, X(3),     Y(18.56f), X(3.2f),  Y(19.04f), X(3.59f), Y(19.43f));
+                nvgBezierTo(vg, X(4),     Y(19.82f), X(4.45f), Y(20),     X(5),     Y(20));
+                nvgLineTo(vg, X(19), Y(20));
+                nvgBezierTo(vg, X(19.5f), Y(20),     X(20),    Y(19.81f), X(20.39f),Y(19.41f));
+                nvgBezierTo(vg, X(20.8f), Y(19),     X(21),    Y(18.53f), X(21),    Y(18));
+                nvgLineTo(vg, X(21), Y(6));
+                nvgBezierTo(vg, X(21),    Y(5.47f),  X(20.8f), Y(5),      X(20.39f),Y(4.59f));
+                nvgBezierTo(vg, X(20),    Y(4.19f),  X(19.5f), Y(4),      X(19),    Y(4));
+                nvgLineTo(vg, X(5), Y(4));
+                nvgClosePath(vg);
+                nvgPathWinding(vg, NVG_SOLID);
+                // Inner screen (hole).
+                nvgMoveTo(vg, X(4.5f), Y(5.5f));
+                nvgLineTo(vg, X(19.5f), Y(5.5f));
+                nvgLineTo(vg, X(19.5f), Y(18.5f));
+                nvgLineTo(vg, X(4.5f), Y(18.5f));
+                nvgLineTo(vg, X(4.5f), Y(5.5f));
+                nvgClosePath(vg);
+                nvgPathWinding(vg, NVG_HOLE);
+                // Left "C".
+                nvgMoveTo(vg, X(7), Y(9));
+                nvgBezierTo(vg, X(6.7f),  Y(9),      X(6.47f), Y(9.09f),  X(6.28f), Y(9.28f));
+                nvgBezierTo(vg, X(6.09f), Y(9.47f),  X(6),     Y(9.7f),   X(6),     Y(10));
+                nvgLineTo(vg, X(6), Y(14));
+                nvgBezierTo(vg, X(6),     Y(14.3f),  X(6.09f), Y(14.53f), X(6.28f), Y(14.72f));
+                nvgBezierTo(vg, X(6.47f), Y(14.91f), X(6.7f),  Y(15),     X(7),     Y(15));
+                nvgLineTo(vg, X(10), Y(15));
+                nvgBezierTo(vg, X(10.27f),Y(15),     X(10.5f), Y(14.91f), X(10.71f),Y(14.72f));
+                nvgBezierTo(vg, X(10.91f),Y(14.53f), X(11),    Y(14.3f),  X(11),    Y(14));
+                nvgLineTo(vg, X(11), Y(13));
+                nvgLineTo(vg, X(9.5f), Y(13));
+                nvgLineTo(vg, X(9.5f), Y(13.5f));
+                nvgLineTo(vg, X(7.5f), Y(13.5f));
+                nvgLineTo(vg, X(7.5f), Y(10.5f));
+                nvgLineTo(vg, X(9.5f), Y(10.5f));
+                nvgLineTo(vg, X(9.5f), Y(11));
+                nvgLineTo(vg, X(11), Y(11));
+                nvgLineTo(vg, X(11), Y(10));
+                nvgBezierTo(vg, X(11),    Y(9.7f),   X(10.91f),Y(9.47f),  X(10.71f),Y(9.28f));
+                nvgBezierTo(vg, X(10.5f), Y(9.09f),  X(10.27f),Y(9),      X(10),    Y(9));
+                nvgLineTo(vg, X(7), Y(9));
+                nvgClosePath(vg);
+                nvgPathWinding(vg, NVG_SOLID);
+                // Right "C".
+                nvgMoveTo(vg, X(14), Y(9));
+                nvgBezierTo(vg, X(13.73f),Y(9),      X(13.5f), Y(9.09f),  X(13.29f),Y(9.28f));
+                nvgBezierTo(vg, X(13.09f),Y(9.47f),  X(13),    Y(9.7f),   X(13),    Y(10));
+                nvgLineTo(vg, X(13), Y(14));
+                nvgBezierTo(vg, X(13),    Y(14.3f),  X(13.09f),Y(14.53f), X(13.29f),Y(14.72f));
+                nvgBezierTo(vg, X(13.5f), Y(14.91f), X(13.73f),Y(15),     X(14),    Y(15));
+                nvgLineTo(vg, X(17), Y(15));
+                nvgBezierTo(vg, X(17.3f), Y(15),     X(17.53f),Y(14.91f), X(17.72f),Y(14.72f));
+                nvgBezierTo(vg, X(17.91f),Y(14.53f), X(18),    Y(14.3f),  X(18),    Y(14));
+                nvgLineTo(vg, X(18), Y(13));
+                nvgLineTo(vg, X(16.5f), Y(13));
+                nvgLineTo(vg, X(16.5f), Y(13.5f));
+                nvgLineTo(vg, X(14.5f), Y(13.5f));
+                nvgLineTo(vg, X(14.5f), Y(10.5f));
+                nvgLineTo(vg, X(16.5f), Y(10.5f));
+                nvgLineTo(vg, X(16.5f), Y(11));
+                nvgLineTo(vg, X(18), Y(11));
+                nvgLineTo(vg, X(18), Y(10));
+                nvgBezierTo(vg, X(18),    Y(9.7f),   X(17.91f),Y(9.47f),  X(17.72f),Y(9.28f));
+                nvgBezierTo(vg, X(17.53f),Y(9.09f),  X(17.3f), Y(9),      X(17),    Y(9));
+                nvgLineTo(vg, X(14), Y(9));
+                nvgClosePath(vg);
+                nvgPathWinding(vg, NVG_SOLID);
                 break;
         }
         nvgFillColor(vg, m_color);
@@ -3979,10 +4053,9 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     iconTile->setJustifyContent(brls::JustifyContent::CENTER);
     iconTile->setAlignItems(brls::AlignItems::CENTER);
     iconTile->setMarginRight(12.0f);
-    auto* iconGlyph = new brls::Label();
-    iconGlyph->setText("CC");
-    iconGlyph->setFontSize(13.0f);
-    iconGlyph->setTextColor(pc::gold());
+    auto* iconGlyph = new MdiGlyphIcon(MdiGlyph::ClosedCaption, pc::gold());
+    iconGlyph->setWidth(22.0f);
+    iconGlyph->setHeight(22.0f);
     iconTile->addView(iconGlyph);
     header->addView(iconTile);
 
