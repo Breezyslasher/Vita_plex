@@ -30,7 +30,17 @@ namespace {
 // with D-pad UP/DOWN (NATURAL behaviour) to read in full.
 class DescriptionScroll : public brls::ScrollingFrame {
 public:
-    DescriptionScroll() { this->setFocusable(false); }
+    DescriptionScroll() {
+        this->setFocusable(false);
+        // ScrollingFrame hides its own highlight (it expects a focusable
+        // child to carry one). Our label is non-focusable, so show the
+        // frame's focus outline when *it* is focused — otherwise the user
+        // can't tell the description is selected and that UP/DOWN scrolls it
+        // (it just looks like it "moves on its own"). Keep the background
+        // hidden so the outline doesn't tint the text.
+        this->setHideHighlightBorder(false);
+        this->setHighlightCornerRadius(8.0f);
+    }
     void onLayout() override {
         brls::ScrollingFrame::onLayout();
         bool overflow = getContentHeight() > getHeight() + 1.0f;
