@@ -302,7 +302,12 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     m_summaryLabel = new brls::Label();
     m_summaryLabel->setFontSize(16);
     m_summaryLabel->setText(m_fullDescription);
-    m_summaryLabel->setFocusable(true);
+    // Movies put AUDIO/SUBTITLES buttons in this same column; a focusable
+    // description steals RIGHT-navigation from the poster/play button and
+    // lands on the text instead of AUDIO. Movies have no children that need
+    // the summary as an UP target, so only keep it focusable for the types
+    // that do (shows/seasons → children navigate UP onto the description).
+    m_summaryLabel->setFocusable(m_item.mediaType != MediaType::MOVIE);
 
     m_summaryScroll->setContentView(m_summaryLabel);
     if (m_fullDescription.empty()) {
@@ -1756,7 +1761,7 @@ void MediaDetailView::loadTrackList() {
             if (!m_trackListBox->getChildren().empty()) {
                 brls::View* firstTrack = m_trackListBox->getChildren().front();
 
-                if (m_summaryLabel && !m_fullDescription.empty()) {
+                if (m_summaryLabel && m_summaryLabel->isFocusable() && !m_fullDescription.empty()) {
                     // Description exists: DOWN from description goes to first track
                     m_summaryLabel->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstTrack);
                     // UP from the first track goes to description; tracks
@@ -3661,7 +3666,7 @@ void MediaDetailView::setupChildrenFocusTransfer() {
     //   button so the user lands on Mark Watched / Download / Resume /
     //   Play rather than jumping to the top of the column.
     brls::View* upTarget = nullptr;
-    if (m_summaryLabel && !m_fullDescription.empty()) {
+    if (m_summaryLabel && m_summaryLabel->isFocusable() && !m_fullDescription.empty()) {
         upTarget = m_summaryLabel;
     } else {
         upTarget = m_markWatchedButton
@@ -3675,7 +3680,7 @@ void MediaDetailView::setupChildrenFocusTransfer() {
     // Description exists → also bridge the last leftBox button down into
     // the description so the leftBox chain ends in the same place the
     // user would naturally read next.
-    if (m_summaryLabel && !m_fullDescription.empty() && m_markWatchedButton) {
+    if (m_summaryLabel && m_summaryLabel->isFocusable() && !m_fullDescription.empty() && m_markWatchedButton) {
         m_markWatchedButton->setCustomNavigationRoute(
             brls::FocusDirection::DOWN, m_summaryLabel);
     }
@@ -3687,7 +3692,7 @@ void MediaDetailView::setupChildrenFocusTransfer() {
     }
 
     // If description exists, set DOWN from description to first child (or extras if no children)
-    if (m_summaryLabel && !m_fullDescription.empty()) {
+    if (m_summaryLabel && m_summaryLabel->isFocusable() && !m_fullDescription.empty()) {
         brls::View* downFromDesc = nullptr;
         if (hasChildren) {
             downFromDesc = m_childrenBox->getChildren().front();
