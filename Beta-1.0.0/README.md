@@ -9,7 +9,7 @@
 </div>
 ## 📊 Feature Comparison
 
-| Feature | Alpha 0.0.1 | Beta 0.6.1 |
+| Feature | Beta 0.6.1 | Beta 1.0.0 |
 |---|---|---|
 | UI Framework | vita2d + custom text menus | Borealis (NanoVG + GXM) |
 | Navigation | Linear list menus | Sidebar tabs + activity stack |
@@ -39,12 +39,12 @@
     <th colspan="2" align="center"> Home Screen</th>
   </tr>
   <tr>
-    <td align="center"><b>Alpha 0.0.1</b></td>
     <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/home_screen_plex_alpha_old.png" width="400"/></td>
-    <td><img src="new/home_page_new.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/home_page_new.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/home_page_new.png" width="400"/></td>
   </tr>
 </table>
 
@@ -53,12 +53,12 @@
     <th colspan="2" align="center"> Movies Libary</th>
   </tr>
   <tr>
-    <td align="center"><b>Alpha 0.0.1</b></td>
     <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/movies_list_old.png" width="400"/></td>
-    <td><img src="new/movies.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/movies.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/movies.png" width="400"/></td>
   </tr>
 </table>
 
@@ -67,12 +67,12 @@
     <th colspan="2" align="center"> Movie Info</th>
   </tr>
   <tr>
-    <td align="center"><b>Alpha 0.0.1</b></td>
     <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/movie_info_old.png" width="400"/></td>
-    <td><img src="new/movie_info_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/movie_info_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/movie_info_page.png" width="400"/></td>
   </tr>
 </table>
 
@@ -82,12 +82,12 @@
     <th colspan="2" align="center"> Music Libary</th>
   </tr>
   <tr>
-    <td align="center"><b>Alpha 0.0.1</b></td>
     <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/music_old.png" width="400"/></td>
-    <td><img src="new/music_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/music_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/music_page.png" width="400"/></td>
   </tr>
 </table>
 
@@ -98,12 +98,12 @@
     <th colspan="2" align="center">Album Page</th>
   </tr>
   <tr>
-    <td align="center"><b>Alpha 0.0.1</b></td>
     <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/albums-page-old.png" width="400"/></td>
-    <td><img src="new/album_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/album_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/album_page.png" width="400"/></td>
   </tr>
 </table>
 
@@ -113,12 +113,12 @@
     <th colspan="2" align="center">Track List</th>
   </tr>
   <tr>
-    <td align="center"><b>Alpha 0.0.1</b></td>
     <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/track_page_old.png" width="400"/></td>
-    <td><img src="new/track_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/track_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/track_page.png" width="400"/></td>
   </tr>
 </table>
 
@@ -128,12 +128,12 @@
     <th colspan="2" align="center">Artist Download View</th>
   </tr>
   <tr>
-    <td align="center"><b>Alpha 0.0.1 does not exist</b></td>
     <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/Transparent_Square_Tiles_Texture.png" width="400"/></td>
-    <td><img src="new/artist_downlaod.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/artist_downlaod.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/artist_downlaod.png" width="400"/></td>
   </tr>
 </table>
 
@@ -142,12 +142,12 @@
     <th colspan="2" align="center">Music Player</th>
   </tr>
   <tr>
-    <td align="center"><b>Alpha 0.0.1 </b></td>
-    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 0.6.1 </b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/palyer_ui_old.png" width="400"/></td>
-    <td><img src="new/music_palyer_ui.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/music_palyer_ui.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/music_palyer_ui.png" width="400"/></td>
   </tr>
 </table>
 
@@ -156,12 +156,12 @@
     <th colspan="2" align="center">Music Queue</th>
   </tr>
   <tr>
-    <td align="center"><b>Alpha 0.0.1 does not exist</b></td>
     <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/Transparent_Square_Tiles_Texture.png" width="400"/></td>
-    <td><img src="new/music_queue.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/music_queue.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/music_queue.png" width="400"/></td>
   </tr>
 </table>
 
@@ -170,12 +170,12 @@
     <th colspan="2" align="center">Video Player</th>
   </tr>
   <tr>
-    <td align="center"><b>Alpha 0.0.1 </b></td>
-    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 0.6.1 </b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/palyer_ui_old.png" width="400"/></td>
-    <td><img src="new/video_player_ui.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/video_player_ui.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/video_player_ui.png" width="400"/></td>
   </tr>
 </table>
 
@@ -184,12 +184,12 @@
     <th colspan="2" align="center">Downloads Tab</th>
   </tr>
   <tr>
-    <td align="center"><b>Alpha 0.0.1 does not exist</b></td>
     <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/Transparent_Square_Tiles_Texture.png" width="400"/></td>
-    <td><img src="new/downlaods_tab.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/downlaods_tab.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/downlaods_tab.png" width="400"/></td>
   </tr>
 </table>
 
@@ -198,12 +198,12 @@
     <th colspan="2" align="center">Live TV / Program Guide</th>
   </tr>
   <tr>
-    <td align="center"><b>Alpha 0.0.1</b></td>
     <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/live_tv_old.png" width="400"/></td>
-    <td><img src="new/live_tv.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/live_tv.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/live_tv.png" width="400"/></td>
   </tr>
 </table>
 
@@ -212,12 +212,12 @@
     <th colspan="2" align="center">Search</th>
   </tr>
   <tr>
-    <td align="center"><b>Alpha 0.0.1</b></td>
     <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/search_old.png" width="400"/></td>
-    <td><img src="new/search.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/search.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/search.png" width="400"/></td>
   </tr>
 </table>
 
@@ -226,25 +226,25 @@
     <th colspan="2" align="center">Settings</th>
   </tr>
   <tr>
-    <td align="center"><b>Alpha 0.0.1</b></td>
     <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
   </tr>
   <tr>
-    <td><img src="old/setting_pages_old.png" width="400"/></td>
-    <td><img src="new/setting_tab_1.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-0.6.1/setting_tab_1.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/setting_tab_1.png" width="400"/></td>
   </tr>
   <tr>
     <td></td>
-    <td><img src="new/setting_2.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/setting_2.png" width="400"/></td>
   </tr>
    <tr>
     <td></td>
-    <td><img src="new/setting_3.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/setting_3.png" width="400"/></td>
   </tr>
     </tr>
    <tr>
     <td></td>
-    <td><img src="new/setting_4.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/setting_4.png" width="400"/></td>
   </tr>
 </table>
 
