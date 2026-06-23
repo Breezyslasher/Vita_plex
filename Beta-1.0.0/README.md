@@ -195,20 +195,6 @@
 
 <table>
   <tr>
-    <th colspan="2" align="center">Live TV / Program Guide</th>
-  </tr>
-  <tr>
-    <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.0.0</b></td>
-  </tr>
-  <tr>
-    <td><img src="../Screenshots/Beta-0.6.1/live_tv.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/live_tv.png" width="400"/></td>
-  </tr>
-</table>
-
-<table>
-  <tr>
     <th colspan="2" align="center">Search</th>
   </tr>
   <tr>
@@ -218,6 +204,20 @@
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/search.png" width="400"/></td>
     <td><img src="../Screenshots/Beta-1.0.0/search.png" width="400"/></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <th colspan="2" align="center">Live TV / Program Guide</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.0.0</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Beta-0.6.1/live_tv.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/live_tv.png" width="400"/></td>
   </tr>
 </table>
 
