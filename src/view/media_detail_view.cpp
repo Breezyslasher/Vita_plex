@@ -3517,6 +3517,38 @@ void MediaDetailView::showTrackContextMenuStatic(const MediaItem& track) {
         return true;
     }});
 
+    rows.push_back({ "download.png", "Download", "", false, false,
+        [capturedTrack](brls::View*) {
+        if (DownloadsManager::getInstance().isDownloaded(capturedTrack.ratingKey)) {
+            brls::Application::notify("Already downloaded");
+            return true;
+        }
+        asyncRun([capturedTrack]() {
+            PlexClient& client = PlexClient::getInstance();
+            MediaItem fullItem;
+            if (client.fetchMediaDetails(capturedTrack.ratingKey, fullItem) && !fullItem.partPath.empty()) {
+                bool queued = DownloadsManager::getInstance().queueDownload(
+                    fullItem.ratingKey, fullItem.title, fullItem.partPath,
+                    fullItem.duration, "track",
+                    fullItem.parentTitle, fullItem.parentIndex, fullItem.index,
+                    fullItem.thumb);
+                brls::sync([queued, fullItem]() {
+                    if (queued) {
+                        DownloadsManager::getInstance().startDownloads();
+                        brls::Application::notify("Downloading: " + fullItem.title);
+                    } else {
+                        brls::Application::notify("Failed to queue download");
+                    }
+                });
+            } else {
+                brls::sync([]() {
+                    brls::Application::notify("Could not get download info");
+                });
+            }
+        });
+        return true;
+    }});
+
     rows.push_back({ "cross.png", "Cancel", "", false, true,
         [](brls::View*) {
         return true;
