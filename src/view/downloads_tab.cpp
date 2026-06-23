@@ -241,11 +241,21 @@ DownloadsTab::DownloadsTab()
     m_storageBox = new brls::Box();
     m_storageBox->setAxis(brls::Axis::COLUMN);
     m_storageBox->setWidth(210);
+    // Pin the height + disable grow/shrink: when the list scroll collapses
+    // (empty), the freed vertical space was cascading into this box and
+    // ballooning the header to ~570px. An explicit size keeps it out of
+    // the flex distribution entirely.
+    m_storageBox->setHeight(40);
+    m_storageBox->setGrow(0.0f);
+    m_storageBox->setShrink(0.0f);
     m_storageBox->setAlignItems(brls::AlignItems::FLEX_END);
     m_storageBox->setJustifyContent(brls::JustifyContent::CENTER);
 
     auto* storageText = new brls::Box();
     storageText->setAxis(brls::Axis::ROW);
+    storageText->setHeight(22);
+    storageText->setGrow(0.0f);
+    storageText->setShrink(0.0f);
     storageText->setAlignItems(brls::AlignItems::CENTER);
     m_storageUsedLabel = new brls::Label();
     m_storageUsedLabel->setFontSize(15);
