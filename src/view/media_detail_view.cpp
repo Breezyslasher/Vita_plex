@@ -1881,7 +1881,7 @@ public:
 // on whichever PNG is in resources/icons — crisp at any size and tintable.
 // nanovg fills with nonzero winding, so download's separate bar + arrow
 // sub-paths render correctly. Mirrors login_activity's drawStrokeGlyph.
-enum class MdiGlyph { Download, Restart, Close };
+enum class MdiGlyph { Download, Restart, Close, ClosedCaption, Web };
 
 class MdiGlyphIcon : public brls::Box {
 public:
@@ -1895,6 +1895,21 @@ public:
         const float s  = side / 24.0f;
         auto X = [=](float v) { return gx + v * s; };
         auto Y = [=](float v) { return gy + v * s; };
+        if (m_glyph == MdiGlyph::Web) {
+            // Line-art globe: mdi-web's filled body uses elliptical arcs nanovg
+            // can't express directly, so stroke an equivalent globe (outer
+            // circle + meridian ellipse + parallels) tinted to m_color.
+            nvgBeginPath(vg);
+            nvgCircle(vg, X(12), Y(12), 10.0f * s);
+            nvgEllipse(vg, X(12), Y(12), 4.0f * s, 10.0f * s);
+            nvgMoveTo(vg, X(2.5f), Y(12));  nvgLineTo(vg, X(21.5f), Y(12));
+            nvgMoveTo(vg, X(4.5f), Y(8));   nvgLineTo(vg, X(19.5f), Y(8));
+            nvgMoveTo(vg, X(4.5f), Y(16));  nvgLineTo(vg, X(19.5f), Y(16));
+            nvgStrokeColor(vg, m_color);
+            nvgStrokeWidth(vg, 1.5f * s);
+            nvgStroke(vg);
+            return;
+        }
         nvgBeginPath(vg);
         switch (m_glyph) {
             case MdiGlyph::Close:
@@ -1937,6 +1952,80 @@ public:
                 nvgLineTo(vg, X(9), Y(19.4f));
                 nvgBezierTo(vg, X(8), Y(19),       X(7.1f), Y(18.4f), X(6.3f), Y(17.6f));
                 nvgClosePath(vg);
+                break;
+            case MdiGlyph::ClosedCaption:
+                // Outer rounded frame (solid).
+                nvgMoveTo(vg, X(5), Y(4));
+                nvgBezierTo(vg, X(4.45f), Y(4),     X(4),     Y(4.18f),  X(3.59f), Y(4.57f));
+                nvgBezierTo(vg, X(3.2f),  Y(4.96f),  X(3),     Y(5.44f),  X(3),     Y(6));
+                nvgLineTo(vg, X(3), Y(18));
+                nvgBezierTo(vg, X(3),     Y(18.56f), X(3.2f),  Y(19.04f), X(3.59f), Y(19.43f));
+                nvgBezierTo(vg, X(4),     Y(19.82f), X(4.45f), Y(20),     X(5),     Y(20));
+                nvgLineTo(vg, X(19), Y(20));
+                nvgBezierTo(vg, X(19.5f), Y(20),     X(20),    Y(19.81f), X(20.39f),Y(19.41f));
+                nvgBezierTo(vg, X(20.8f), Y(19),     X(21),    Y(18.53f), X(21),    Y(18));
+                nvgLineTo(vg, X(21), Y(6));
+                nvgBezierTo(vg, X(21),    Y(5.47f),  X(20.8f), Y(5),      X(20.39f),Y(4.59f));
+                nvgBezierTo(vg, X(20),    Y(4.19f),  X(19.5f), Y(4),      X(19),    Y(4));
+                nvgLineTo(vg, X(5), Y(4));
+                nvgClosePath(vg);
+                nvgPathWinding(vg, NVG_SOLID);
+                // Inner screen (hole).
+                nvgMoveTo(vg, X(4.5f), Y(5.5f));
+                nvgLineTo(vg, X(19.5f), Y(5.5f));
+                nvgLineTo(vg, X(19.5f), Y(18.5f));
+                nvgLineTo(vg, X(4.5f), Y(18.5f));
+                nvgLineTo(vg, X(4.5f), Y(5.5f));
+                nvgClosePath(vg);
+                nvgPathWinding(vg, NVG_HOLE);
+                // Left "C".
+                nvgMoveTo(vg, X(7), Y(9));
+                nvgBezierTo(vg, X(6.7f),  Y(9),      X(6.47f), Y(9.09f),  X(6.28f), Y(9.28f));
+                nvgBezierTo(vg, X(6.09f), Y(9.47f),  X(6),     Y(9.7f),   X(6),     Y(10));
+                nvgLineTo(vg, X(6), Y(14));
+                nvgBezierTo(vg, X(6),     Y(14.3f),  X(6.09f), Y(14.53f), X(6.28f), Y(14.72f));
+                nvgBezierTo(vg, X(6.47f), Y(14.91f), X(6.7f),  Y(15),     X(7),     Y(15));
+                nvgLineTo(vg, X(10), Y(15));
+                nvgBezierTo(vg, X(10.27f),Y(15),     X(10.5f), Y(14.91f), X(10.71f),Y(14.72f));
+                nvgBezierTo(vg, X(10.91f),Y(14.53f), X(11),    Y(14.3f),  X(11),    Y(14));
+                nvgLineTo(vg, X(11), Y(13));
+                nvgLineTo(vg, X(9.5f), Y(13));
+                nvgLineTo(vg, X(9.5f), Y(13.5f));
+                nvgLineTo(vg, X(7.5f), Y(13.5f));
+                nvgLineTo(vg, X(7.5f), Y(10.5f));
+                nvgLineTo(vg, X(9.5f), Y(10.5f));
+                nvgLineTo(vg, X(9.5f), Y(11));
+                nvgLineTo(vg, X(11), Y(11));
+                nvgLineTo(vg, X(11), Y(10));
+                nvgBezierTo(vg, X(11),    Y(9.7f),   X(10.91f),Y(9.47f),  X(10.71f),Y(9.28f));
+                nvgBezierTo(vg, X(10.5f), Y(9.09f),  X(10.27f),Y(9),      X(10),    Y(9));
+                nvgLineTo(vg, X(7), Y(9));
+                nvgClosePath(vg);
+                nvgPathWinding(vg, NVG_SOLID);
+                // Right "C".
+                nvgMoveTo(vg, X(14), Y(9));
+                nvgBezierTo(vg, X(13.73f),Y(9),      X(13.5f), Y(9.09f),  X(13.29f),Y(9.28f));
+                nvgBezierTo(vg, X(13.09f),Y(9.47f),  X(13),    Y(9.7f),   X(13),    Y(10));
+                nvgLineTo(vg, X(13), Y(14));
+                nvgBezierTo(vg, X(13),    Y(14.3f),  X(13.09f),Y(14.53f), X(13.29f),Y(14.72f));
+                nvgBezierTo(vg, X(13.5f), Y(14.91f), X(13.73f),Y(15),     X(14),    Y(15));
+                nvgLineTo(vg, X(17), Y(15));
+                nvgBezierTo(vg, X(17.3f), Y(15),     X(17.53f),Y(14.91f), X(17.72f),Y(14.72f));
+                nvgBezierTo(vg, X(17.91f),Y(14.53f), X(18),    Y(14.3f),  X(18),    Y(14));
+                nvgLineTo(vg, X(18), Y(13));
+                nvgLineTo(vg, X(16.5f), Y(13));
+                nvgLineTo(vg, X(16.5f), Y(13.5f));
+                nvgLineTo(vg, X(14.5f), Y(13.5f));
+                nvgLineTo(vg, X(14.5f), Y(10.5f));
+                nvgLineTo(vg, X(16.5f), Y(10.5f));
+                nvgLineTo(vg, X(16.5f), Y(11));
+                nvgLineTo(vg, X(18), Y(11));
+                nvgLineTo(vg, X(18), Y(10));
+                nvgBezierTo(vg, X(18),    Y(9.7f),   X(17.91f),Y(9.47f),  X(17.72f),Y(9.28f));
+                nvgBezierTo(vg, X(17.53f),Y(9.09f),  X(17.3f), Y(9),      X(17),    Y(9));
+                nvgLineTo(vg, X(14), Y(9));
+                nvgClosePath(vg);
+                nvgPathWinding(vg, NVG_SOLID);
                 break;
         }
         nvgFillColor(vg, m_color);
@@ -3769,250 +3858,558 @@ void MediaDetailView::updateStreamRowLabels() {
     }
 }
 
-// Shared helper: build a row-style button used inside the audio /
-// subtitle pickers. The check-mark prefix mirrors the screenshot's
-// "currently selected" affordance, the row height keeps the column
-// scannable, and left-alignment with padding lets long track names
-// hang off naturally instead of getting clipped at the centre.
-static brls::Button* makePickerRow(const std::string& text,
-                                   bool isSelected,
-                                   std::function<bool(brls::View*)> onClick) {
-    auto* btn = new brls::Button();
-    btn->setText(isSelected ? ("✓ " + text) : ("   " + text));
-    btn->setHeight(40);
-    btn->setMarginBottom(6);
-    btn->setPaddingLeft(14);
-    btn->registerClickAction(onClick);
-    btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-    return btn;
+// ── Audio & Subtitles picker (merged, tabbed) ───────────────────────
+// Palette literals for the picker dialog (artboard tokens). Kept local so
+// the dialog can read as its own neutral panel floating over the live page.
+namespace pickcol {
+    inline NVGcolor dialogBg()  { return nvgRGB(0x2B, 0x2B, 0x2B); }
+    inline NVGcolor surface()   { return nvgRGB(0x38, 0x38, 0x38); }
+    inline NVGcolor surface2()  { return nvgRGB(0x40, 0x40, 0x40); }
+    inline NVGcolor surface3()  { return nvgRGB(0x49, 0x49, 0x49); }
+    inline NVGcolor line()      { return nvgRGB(0x47, 0x47, 0x47); }
+    inline NVGcolor text()      { return nvgRGB(255, 255, 255); }
+    inline NVGcolor muted()     { return nvgRGB(0xB4, 0xB4, 0xBA); }
+    inline NVGcolor dim()       { return nvgRGB(0x8A, 0x8A, 0x90); }
+    inline NVGcolor gold()      { return nvgRGB(0xE5, 0xA0, 0x0D); }
+    inline NVGcolor goldBright(){ return nvgRGB(0xFF, 0xC2, 0x3D); }
+    inline NVGcolor goldInk()   { return nvgRGB(0x24, 0x1C, 0x08); }
+    inline NVGcolor goldTint()  { return nvgRGBA(229, 160, 13, 41); }  // 16%
+    inline NVGcolor scrim()     { return nvgRGBA(0, 0, 0, 115); }       // ~0.45
+    inline NVGcolor clear()     { return nvgRGBA(0, 0, 0, 0); }
 }
 
-void MediaDetailView::showAudioPicker() {
-    if (m_partId <= 0 || m_streams.empty()) return;
+enum class StreamBadge { None, Ext, Emb, Forced };
 
-    auto* dialog = new brls::Dialog("Select audio track");
-    auto* content = new brls::Box();
-    content->setAxis(brls::Axis::COLUMN);
-    content->setPadding(20);
-    content->setWidth(460);
+static std::string pkUpper(std::string s) {
+    for (auto& c : s) if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+    return s;
+}
+static std::string pkLower(std::string s) {
+    for (auto& c : s) if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+    return s;
+}
 
-    // Audio lists are typically short (a few tracks per release) so we
-    // intentionally skip the search box and just give the dialog a tall
-    // scroll area for the rare polyglot release.
+// Human label for a stream row: a named track (commentary etc.) wins,
+// then the language, then whatever displayTitle Plex handed us.
+static std::string streamName(const PlexStream& s) {
+    if (!s.title.empty())    return s.title;
+    if (!s.language.empty()) return s.language;
+    return s.displayTitle.empty() ? "Unknown" : s.displayTitle;
+}
+// Audio sub-line: "AC3 · 5.1" from codec + channel count.
+static std::string audioSubLine(const PlexStream& s) {
+    std::string codec = pkUpper(s.codec);
+    std::string ch;
+    switch (s.channels) {
+        case 1:  ch = "Mono";   break;
+        case 2:  ch = "Stereo"; break;
+        case 6:  ch = "5.1";    break;
+        case 8:  ch = "7.1";    break;
+        default: if (s.channels > 0) ch = std::to_string(s.channels) + " ch"; break;
+    }
+    if (codec.empty()) return ch;
+    if (ch.empty())    return codec;
+    return codec + "  \xC2\xB7  " + ch;
+}
+// 2-letter language tile text (EN, ES, FR…) from the Plex language code.
+static std::string langTile(const PlexStream& s) {
+    std::string c = pkLower(s.languageCode);
+    if (c.size() == 2) return pkUpper(c);
+    struct M { const char* k; const char* v; };
+    static const M kMap[] = {
+        {"eng","EN"},{"spa","ES"},{"fre","FR"},{"fra","FR"},{"ger","DE"},{"deu","DE"},
+        {"ita","IT"},{"por","PT"},{"rus","RU"},{"jpn","JA"},{"kor","KO"},{"chi","ZH"},
+        {"zho","ZH"},{"dut","NL"},{"nld","NL"},{"pol","PL"},{"swe","SV"},{"nor","NO"},
+        {"dan","DA"},{"fin","FI"},{"ara","AR"},{"heb","HE"},{"hin","HI"},{"tur","TR"},
+        {"ell","EL"},{"gre","EL"},{"ces","CS"},{"cze","CS"},{"hun","HU"},{"tha","TH"},
+        {"vie","VI"},{"ukr","UK"},{"ron","RO"},{"rum","RO"},{"ind","ID"},
+    };
+    for (const auto& m : kMap) if (c == m.k) return m.v;
+    if (c.size() >= 2)            return pkUpper(c.substr(0, 2));
+    if (s.language.size() >= 2)   return pkUpper(s.language.substr(0, 2));
+    return "";
+}
+// Subtitle sub-line ("SRT · Full") — codec plus a content descriptor that
+// complements the location badge (EXT/EMB) rather than duplicating it.
+static std::string subtitleDescriptor(const PlexStream& s) {
+    if (s.forced)          return "Forced";
+    if (s.hearingImpaired) return "SDH";
+    return "Full";
+}
+static std::string subtitleSubLine(const PlexStream& s) {
+    std::string codec = pkUpper(s.codec);
+    std::string desc  = subtitleDescriptor(s);
+    if (codec.empty()) return desc;
+    return codec + "  \xC2\xB7  " + desc;
+}
+// Forced wins the badge; otherwise show where the track lives (external
+// sidecar vs embedded in the container).
+static StreamBadge subtitleBadge(const PlexStream& s) {
+    if (s.forced) return StreamBadge::Forced;
+    return s.external ? StreamBadge::Ext : StreamBadge::Emb;
+}
+
+// One picker row: a 24px check (gold fill + ink tick when selected, else a
+// hollow ring), a name + optional codec sub-line, and an optional trailing
+// format badge. Focus uses the borealis-native highlight (left as-is); the
+// gold check is the *selected* state, kept visually separate from focus.
+static brls::Box* makeStreamRow(const std::string& langCode,
+                                const std::string& name,
+                                const std::string& sub,
+                                bool selected,
+                                StreamBadge badge,
+                                std::function<bool(brls::View*)> onClick) {
+    namespace pc = pickcol;
+    auto* row = new brls::Box();
+    row->setAxis(brls::Axis::ROW);
+    row->setAlignItems(brls::AlignItems::CENTER);
+    row->setHeight(48.0f);
+    row->setCornerRadius(11.0f);
+    row->setPaddingLeft(12.0f);
+    row->setPaddingRight(12.0f);
+    row->setMarginBottom(5.0f);
+    row->setFocusable(true);
+    row->setHighlightCornerRadius(11.0f);
+
+    // Selection check.
+    auto* check = new brls::Box();
+    check->setWidth(24.0f);
+    check->setHeight(24.0f);
+    check->setCornerRadius(12.0f);
+    check->setMarginRight(13.0f);
+    check->setJustifyContent(brls::JustifyContent::CENTER);
+    check->setAlignItems(brls::AlignItems::CENTER);
+    if (selected) {
+        check->setBackgroundColor(pc::gold());
+        auto* tick = new brls::Label();
+        tick->setText("\xE2\x9C\x93");  // ✓
+        tick->setFontSize(14.0f);
+        tick->setTextColor(pc::goldInk());
+        check->addView(tick);
+    } else {
+        check->setBorderColor(pc::surface3());
+        check->setBorderThickness(2.0f);
+    }
+    row->addView(check);
+
+    // Language code tile (EN / ES …).
+    if (!langCode.empty()) {
+        auto* lt = new brls::Box();
+        lt->setWidth(32.0f);
+        lt->setHeight(23.0f);
+        lt->setCornerRadius(6.0f);
+        lt->setBackgroundColor(pc::surface3());
+        lt->setJustifyContent(brls::JustifyContent::CENTER);
+        lt->setAlignItems(brls::AlignItems::CENTER);
+        lt->setMarginRight(12.0f);
+        auto* ltl = new brls::Label();
+        ltl->setText(langCode);
+        ltl->setFontSize(11.0f);
+        ltl->setTextColor(pc::muted());
+        lt->addView(ltl);
+        row->addView(lt);
+    }
+
+    // Name + sub-line.
+    auto* col = new brls::Box();
+    col->setAxis(brls::Axis::COLUMN);
+    col->setGrow(1.0f);
+    col->setJustifyContent(brls::JustifyContent::CENTER);
+    auto* nameLbl = new brls::Label();
+    nameLbl->setText(name);
+    nameLbl->setFontSize(15.0f);
+    nameLbl->setSingleLine(true);
+    nameLbl->setTextColor(selected ? pc::goldBright() : pc::text());
+    col->addView(nameLbl);
+    if (!sub.empty()) {
+        auto* subLbl = new brls::Label();
+        subLbl->setText(sub);
+        subLbl->setFontSize(12.0f);
+        subLbl->setSingleLine(true);
+        subLbl->setTextColor(pc::dim());
+        col->addView(subLbl);
+    }
+    row->addView(col);
+
+    // Format badge.
+    if (badge != StreamBadge::None) {
+        NVGcolor bbg = pc::goldTint(), btx = pc::gold();
+        std::string btext = "FORCED";
+        if (badge == StreamBadge::Ext) { bbg = nvgRGBA(137, 241, 242, 33); btx = nvgRGB(137, 241, 242); btext = "EXT"; }
+        else if (badge == StreamBadge::Emb) { bbg = nvgRGBA(62, 207, 142, 36); btx = nvgRGB(62, 207, 142); btext = "EMB"; }
+        auto* bdg = new brls::Box();
+        bdg->setCornerRadius(6.0f);
+        bdg->setBackgroundColor(bbg);
+        bdg->setPadding(3.0f, 7.0f, 3.0f, 7.0f);
+        bdg->setMarginLeft(8.0f);
+        auto* bl = new brls::Label();
+        bl->setText(btext);
+        bl->setFontSize(10.0f);
+        bl->setTextColor(btx);
+        bdg->addView(bl);
+        row->addView(bdg);
+    }
+
+    row->registerClickAction(onClick);
+    row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
+    return row;
+}
+
+// Merged audio + subtitle picker. One compact panel floating over the live
+// detail page (light scrim, page stays visible, no hint bar), with an
+// Audio | Subtitles segmented switch. Reuses the existing stream lists and
+// the exact selection / online-search handlers; only the shell changed.
+void MediaDetailView::showStreamDialog(int defaultTab) {
+    if (m_partId <= 0) return;
+    namespace pc = pickcol;
+
+    auto alive = m_alive;
+
+    // Scrim doubles as the dialog-lifetime sentinel: async closures below
+    // hold raw pointers to listBox / searchRow, so they capture dlgAlive
+    // and bail once the overlay is popped (same idea as the old
+    // SubtitleDialog destructor).
+    struct PickerScrim : public brls::Box {
+        std::shared_ptr<bool> dlgAlive = std::make_shared<bool>(true);
+        ~PickerScrim() override { if (dlgAlive) *dlgAlive = false; }
+    };
+    auto* scrim = new PickerScrim();
+    auto dlgAlive = scrim->dlgAlive;
+    scrim->setAxis(brls::Axis::COLUMN);
+    scrim->setWidthPercentage(100.0f);
+    scrim->setHeightPercentage(100.0f);
+    scrim->setJustifyContent(brls::JustifyContent::CENTER);
+    scrim->setAlignItems(brls::AlignItems::CENTER);
+    scrim->setBackgroundColor(pc::scrim());
+    scrim->addGestureRecognizer(new brls::TapGestureRecognizer(scrim,
+        []() { brls::Application::popActivity(); }));
+
+    // ── Panel shell ─────────────────────────────────────────────────────
+    auto* panel = new brls::Box();
+    panel->setAxis(brls::Axis::COLUMN);
+    panel->setWidth(460.0f);
+    panel->setBackgroundColor(pc::dialogBg());
+    panel->setBorderColor(pc::line());
+    panel->setBorderThickness(1.0f);
+    panel->setCornerRadius(18.0f);
+    panel->setShadowType(brls::ShadowType::GENERIC);
+    // Swallow taps landing on the panel's dead space (header, padding) so
+    // they don't bubble to the scrim's tap-to-dismiss. Interactive children
+    // (tabs, rows, close chip) keep their own taps.
+    panel->addGestureRecognizer(new brls::TapGestureRecognizer(panel, []() {}));
+
+    // ── Header: icon tile + title/sub + close chip ─────────────────────
+    auto* header = new brls::Box();
+    header->setAxis(brls::Axis::ROW);
+    header->setAlignItems(brls::AlignItems::CENTER);
+    header->setPadding(20.0f, 22.0f, 14.0f, 22.0f);
+    header->setLineColor(pc::line());
+    header->setLineBottom(1.0f);
+
+    auto* iconTile = new brls::Box();
+    iconTile->setWidth(38.0f);
+    iconTile->setHeight(38.0f);
+    iconTile->setCornerRadius(10.0f);
+    iconTile->setBackgroundColor(pc::goldTint());
+    iconTile->setJustifyContent(brls::JustifyContent::CENTER);
+    iconTile->setAlignItems(brls::AlignItems::CENTER);
+    iconTile->setMarginRight(12.0f);
+    auto* iconGlyph = new MdiGlyphIcon(MdiGlyph::ClosedCaption, pc::gold());
+    iconGlyph->setWidth(22.0f);
+    iconGlyph->setHeight(22.0f);
+    iconTile->addView(iconGlyph);
+    header->addView(iconTile);
+
+    auto* titleCol = new brls::Box();
+    titleCol->setAxis(brls::Axis::COLUMN);
+    titleCol->setGrow(1.0f);
+    titleCol->setJustifyContent(brls::JustifyContent::CENTER);
+    auto* titleLbl = new brls::Label();
+    titleLbl->setText("Audio & Subtitles");
+    titleLbl->setFontSize(21.0f);
+    titleLbl->setTextColor(pc::text());
+    titleLbl->setSingleLine(true);
+    titleCol->addView(titleLbl);
+    if (!m_item.title.empty()) {
+        auto* subLbl = new brls::Label();
+        subLbl->setText(m_item.title);
+        subLbl->setFontSize(12.0f);
+        subLbl->setTextColor(pc::dim());
+        subLbl->setSingleLine(true);
+        titleCol->addView(subLbl);
+    }
+    header->addView(titleCol);
+
+    auto* closeChip = new brls::Box();
+    closeChip->setWidth(32.0f);
+    closeChip->setHeight(32.0f);
+    closeChip->setCornerRadius(16.0f);
+    closeChip->setBackgroundColor(pc::surface3());
+    closeChip->setJustifyContent(brls::JustifyContent::CENTER);
+    closeChip->setAlignItems(brls::AlignItems::CENTER);
+    closeChip->setFocusable(true);
+    closeChip->setHighlightCornerRadius(16.0f);
+    auto* closeX = new brls::Label();
+    closeX->setText("\xE2\x9C\x95");  // ✕
+    closeX->setFontSize(13.0f);
+    closeX->setTextColor(pc::muted());
+    closeChip->addView(closeX);
+    closeChip->registerClickAction([](brls::View*) { brls::Application::popActivity(); return true; });
+    closeChip->addGestureRecognizer(new brls::TapGestureRecognizer(closeChip));
+    header->addView(closeChip);
+    panel->addView(header);
+
+    // ── Segmented tab switch ───────────────────────────────────────────
+    auto* tabTrack = new brls::Box();
+    tabTrack->setAxis(brls::Axis::ROW);
+    tabTrack->setBackgroundColor(pc::surface());
+    tabTrack->setCornerRadius(12.0f);
+    tabTrack->setPadding(6.0f, 6.0f, 6.0f, 6.0f);
+    tabTrack->setMarginTop(12.0f);
+    tabTrack->setMarginLeft(12.0f);
+    tabTrack->setMarginRight(12.0f);
+
+    struct TabHandle { brls::Box* box; brls::Label* label; };
+    auto makeTab = [](const std::string& text) -> TabHandle {
+        auto* t = new brls::Box();
+        t->setAxis(brls::Axis::ROW);
+        t->setHeight(38.0f);
+        t->setGrow(1.0f);
+        t->setCornerRadius(8.0f);
+        t->setJustifyContent(brls::JustifyContent::CENTER);
+        t->setAlignItems(brls::AlignItems::CENTER);
+        t->setFocusable(true);
+        t->setHighlightCornerRadius(8.0f);
+        auto* l = new brls::Label();
+        l->setText(text);
+        l->setFontSize(14.0f);
+        t->addView(l);
+        return { t, l };
+    };
+    TabHandle audioTab = makeTab("Audio");
+    TabHandle subsTab  = makeTab("Subtitles");
+    audioTab.box->setMarginRight(4.0f);
+    tabTrack->addView(audioTab.box);
+    tabTrack->addView(subsTab.box);
+    panel->addView(tabTrack);
+
+    auto activeTab = std::make_shared<int>(defaultTab);
+    auto styleTabs = [audioTab, subsTab, activeTab]() {
+        bool a = (*activeTab == 0);
+        audioTab.box->setBackgroundColor(a ? pickcol::gold() : pickcol::clear());
+        audioTab.label->setTextColor(a ? pickcol::goldInk() : pickcol::muted());
+        subsTab.box->setBackgroundColor(!a ? pickcol::gold() : pickcol::clear());
+        subsTab.label->setTextColor(!a ? pickcol::goldInk() : pickcol::muted());
+    };
+
+    // ── Body: scrolling list + persistent search row (subs only) ───────
+    auto* body = new brls::Box();
+    body->setAxis(brls::Axis::COLUMN);
+    body->setPadding(12.0f, 12.0f, 12.0f, 12.0f);
+
     auto* scroll = new brls::ScrollingFrame();
-    scroll->setHeight(360);
+    scroll->setHeight(320.0f);
     scroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
     auto* listBox = new brls::Box();
     listBox->setAxis(brls::Axis::COLUMN);
     scroll->setContentView(listBox);
+    body->addView(scroll);
 
-    bool any = false;
-    for (const auto& s : m_streams) {
-        if (s.streamType != 2) continue;
-        any = true;
-        int streamId = s.id;
-        std::string display = s.displayTitle.empty() ? s.language : s.displayTitle;
-        auto alive = m_alive;
-        listBox->addView(makePickerRow(display, s.selected,
-            [this, alive, dialog, streamId, display](brls::View*) {
-                dialog->dismiss();
-                int partId = m_partId;
-                asyncRun([this, alive, partId, streamId, display]() {
-                    PlexClient::getInstance().setStreamSelection(partId, streamId, -1);
-                    brls::sync([this, alive, streamId, display]() {
-                        if (!alive->load()) return;
-                        for (auto& s : m_streams) {
-                            if (s.streamType == 2) s.selected = (s.id == streamId);
-                        }
-                        updateStreamRowLabels();
-                    });
-                });
-                return true;
-            }));
-    }
-    if (!any) {
-        delete scroll;
-        delete content;
-        delete dialog;
-        return;
-    }
-    content->addView(scroll);
-    dialog->addView(content);
-    dialog->open();
-}
+    // Search row: globe tile + two-line label + chevron, with a gold-tint
+    // (dashed-style) border. Lives outside listBox so it survives rebuilds
+    // and stays a stable focus-park target; shown only on the Subtitles tab.
+    auto* searchRow = new brls::Box();
+    searchRow->setAxis(brls::Axis::ROW);
+    searchRow->setAlignItems(brls::AlignItems::CENTER);
+    searchRow->setHeight(56.0f);
+    searchRow->setCornerRadius(12.0f);
+    searchRow->setPadding(0.0f, 14.0f, 0.0f, 14.0f);
+    searchRow->setMarginTop(8.0f);
+    searchRow->setBorderColor(pc::goldTint());
+    searchRow->setBorderThickness(1.0f);
+    searchRow->setFocusable(true);
+    searchRow->setHighlightCornerRadius(12.0f);
 
-void MediaDetailView::showSubtitlePicker() {
-    if (m_partId <= 0) return;
+    auto* globeTile = new brls::Box();
+    globeTile->setWidth(34.0f);
+    globeTile->setHeight(34.0f);
+    globeTile->setCornerRadius(17.0f);
+    globeTile->setBackgroundColor(pc::goldTint());
+    globeTile->setJustifyContent(brls::JustifyContent::CENTER);
+    globeTile->setAlignItems(brls::AlignItems::CENTER);
+    globeTile->setMarginRight(12.0f);
+    auto* globe = new MdiGlyphIcon(MdiGlyph::Web, pc::gold());
+    globe->setWidth(20.0f);
+    globe->setHeight(20.0f);
+    globeTile->addView(globe);
+    searchRow->addView(globeTile);
 
-    // brls::Dialog dies when the user presses B / taps outside, but the
-    // closures we hand to the IME / brls::sync / asyncRun still hold raw
-    // pointers to listBox and the dialog. Subclass with a destructor
-    // that flips a shared_ptr<bool>; every closure captures the flag and
-    // bails if the dialog is already gone. Same pattern as m_alive but
-    // scoped to this dialog rather than the whole detail view.
-    struct SubtitleDialog : public brls::Dialog {
-        using brls::Dialog::Dialog;
-        std::shared_ptr<bool> dlgAlive = std::make_shared<bool>(true);
-        ~SubtitleDialog() override { if (dlgAlive) *dlgAlive = false; }
-    };
+    auto* searchCol = new brls::Box();
+    searchCol->setAxis(brls::Axis::COLUMN);
+    searchCol->setGrow(1.0f);
+    searchCol->setJustifyContent(brls::JustifyContent::CENTER);
+    auto* searchMainLbl = new brls::Label();
+    searchMainLbl->setText("Search online for subtitles\xE2\x80\xA6");
+    searchMainLbl->setFontSize(15.0f);
+    searchMainLbl->setSingleLine(true);
+    searchMainLbl->setTextColor(pc::gold());
+    searchCol->addView(searchMainLbl);
+    auto* searchSubLbl = new brls::Label();
+    searchSubLbl->setText("OpenSubtitles \xC2\xB7 enter a language");
+    searchSubLbl->setFontSize(12.0f);
+    searchSubLbl->setSingleLine(true);
+    searchSubLbl->setTextColor(pc::dim());
+    searchCol->addView(searchSubLbl);
+    searchRow->addView(searchCol);
 
-    auto* dialog = new SubtitleDialog("Subtitles");
-    auto dlgAlive = dialog->dlgAlive;
-    auto* content = new brls::Box();
-    content->setAxis(brls::Axis::COLUMN);
-    content->setPadding(20);
-    content->setWidth(460);
+    auto* chevron = new brls::Label();
+    chevron->setText("\xE2\x80\xBA");  // ›
+    chevron->setFontSize(20.0f);
+    chevron->setTextColor(pc::dim());
+    chevron->setMarginLeft(8.0f);
+    searchRow->addView(chevron);
 
-    // Track whether ANY subtitle is currently selected so we can render
-    // the leading "None" row with the correct check-mark state.
-    bool anySelected = false;
-    for (const auto& s : m_streams) {
-        if ((s.streamType == 3 || s.streamType == 4) && s.selected) {
-            anySelected = true; break;
-        }
-    }
+    body->addView(searchRow);
+    panel->addView(body);
 
-    // ── Search online row ───────────────────────────────────────────
-    // Mirrors the in-player flow: tap → IME prompts for a language
-    // code (defaults to "en") → PlexClient::searchSubtitles hits the
-    // server's subtitle providers (OpenSubtitles etc.) → results
-    // replace the list. Picking a result installs it via
-    // selectSearchedSubtitle and refreshes the installed list.
-    auto* searchBtn = new brls::Button();
-    searchBtn->setText("Search online for subtitles…");
-    searchBtn->setHeight(40);
-    searchBtn->setMarginBottom(12);
-    searchBtn->setPaddingLeft(14);
-    content->addView(searchBtn);
-
-    // Tracks the language currently driving the results view. Lives on
-    // the heap so the IME callback (where it's assigned) and the
-    // re-labelling helpers (where it's read) share the same value
-    // through their shared_ptr captures.
+    // Language driving the results view (shared by the IME callback and the
+    // re-labelling helper). resultsMode replaces the old button-text probe.
     auto currentLang = std::make_shared<std::string>(
         Application::getInstance().getSettings().defaultSubtitleLanguage);
     if (currentLang->empty()) *currentLang = "en";
-
-    // Re-label the search button to fit the current view: the
-    // installed-list mode just invites a fresh search, while the
-    // results mode shows the language in play and reads as "change
-    // language" so the user knows tapping it re-prompts.
-    auto setSearchBtnFor = [searchBtn, currentLang](bool resultsMode) {
-        if (resultsMode) {
-            searchBtn->setText("Change language: " + *currentLang);
+    auto resultsMode = std::make_shared<bool>(false);
+    auto setSearchBtnFor = [searchMainLbl, searchSubLbl, currentLang, resultsMode](bool inResults) {
+        *resultsMode = inResults;
+        if (inResults) {
+            searchMainLbl->setText("Change language");
+            searchSubLbl->setText("Currently: " + *currentLang);
         } else {
-            searchBtn->setText("Search online for subtitles…");
+            searchMainLbl->setText("Search online for subtitles\xE2\x80\xA6");
+            searchSubLbl->setText("OpenSubtitles \xC2\xB7 enter a language");
         }
     };
 
-    // ── Scrollable list ─────────────────────────────────────────────
-    auto* scroll = new brls::ScrollingFrame();
-    scroll->setHeight(360);
-    scroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
-    auto* listBox = new brls::Box();
-    listBox->setAxis(brls::Axis::COLUMN);
-    scroll->setContentView(listBox);
-    content->addView(scroll);
-
-    // Captured by closures so both the initial render and any later
-    // refresh (after installing a fresh subtitle) hit the same body.
-    auto alive    = m_alive;
+    // Closures declared up front so they can reference each other.
+    auto buildAudioList     = std::make_shared<std::function<void()>>();
     auto buildInstalledList = std::make_shared<std::function<void()>>();
-    *buildInstalledList = [this, alive, dlgAlive, dialog, listBox, searchBtn, setSearchBtnFor]() {
+    auto showResults        = std::make_shared<std::function<void(const std::vector<PlexClient::SubtitleResult>&)>>();
+    auto runSearch          = std::make_shared<std::function<void(std::string)>>();
+    auto promptLang         = std::make_shared<std::function<void()>>();
+    auto selectTab          = std::make_shared<std::function<void(int)>>();
+
+    // Audio tab: one row per audio stream; selecting applies it (same
+    // setStreamSelection path) and closes the dialog.
+    *buildAudioList = [this, alive, dlgAlive, listBox, audioTab]() {
         if (!alive->load() || !*dlgAlive) return;
-        // Reset the top button to "search" wording since we're no
-        // longer looking at a language-scoped results list.
+        brls::Application::giveFocus(audioTab.box);  // park before clearViews
+        listBox->clearViews();
+        brls::View* first = nullptr;
+        for (const auto& s : m_streams) {
+            if (s.streamType != 2) continue;
+            int streamId = s.id;
+            std::string display = streamName(s);
+            auto* rowv = makeStreamRow(langTile(s), display, audioSubLine(s), s.selected, StreamBadge::None,
+                [this, alive, streamId, display](brls::View*) {
+                    brls::Application::popActivity();
+                    int partId = m_partId;
+                    asyncRun([this, alive, partId, streamId, display]() {
+                        PlexClient::getInstance().setStreamSelection(partId, streamId, -1);
+                        brls::sync([this, alive, streamId, display]() {
+                            if (!alive->load()) return;
+                            for (auto& s2 : m_streams)
+                                if (s2.streamType == 2) s2.selected = (s2.id == streamId);
+                            updateStreamRowLabels();
+                        });
+                    });
+                    return true;
+                });
+            listBox->addView(rowv);
+            if (!first) first = rowv;
+        }
+        if (!first) {
+            auto* ph = new brls::Label();
+            ph->setText("No alternate audio tracks");
+            ph->setFontSize(14.0f);
+            ph->setTextColor(pickcol::dim());
+            ph->setMarginTop(8.0f);
+            ph->setMarginLeft(6.0f);
+            listBox->addView(ph);
+        }
+        if (first) brls::Application::giveFocus(first);
+    };
+
+    // Subtitles tab: "None" then each installed track. Verbatim selection
+    // handlers (setStreamSelection), now rendered as rich rows.
+    *buildInstalledList = [this, alive, dlgAlive, listBox, searchRow, setSearchBtnFor]() {
+        if (!alive->load() || !*dlgAlive) return;
         setSearchBtnFor(/*resultsMode=*/false);
-        // Borealis keeps a raw pointer to whatever view currently has
-        // focus. clearViews() below deletes every row in listBox —
-        // including the focused "Back to installed" button that
-        // triggered this rebuild. Park focus on searchBtn (which sits
-        // outside listBox and survives the rebuild) so the focus
-        // pointer can't dangle.
-        brls::Application::giveFocus(searchBtn);
+        brls::Application::giveFocus(searchRow);  // park before clearViews
         listBox->clearViews();
 
-        // Re-read selection state, since installing a new subtitle
-        // updates m_streams (we refetch after every install).
         bool anyOn = false;
-        for (const auto& s : m_streams) {
-            if ((s.streamType == 3 || s.streamType == 4) && s.selected) {
-                anyOn = true; break;
-            }
-        }
+        for (const auto& s : m_streams)
+            if ((s.streamType == 3 || s.streamType == 4) && s.selected) { anyOn = true; break; }
 
-        // "None" first — Plex uses subtitleStreamID=0 to mean off.
-        listBox->addView(makePickerRow("None", !anyOn,
-            [this, alive, dialog](brls::View*) {
-                dialog->dismiss();
+        auto* noneRow = makeStreamRow("", "None", "Subtitles off", !anyOn, StreamBadge::None,
+            [this, alive](brls::View*) {
+                brls::Application::popActivity();
                 int partId = m_partId;
                 asyncRun([this, alive, partId]() {
                     PlexClient::getInstance().setStreamSelection(partId, -1, 0);
                     brls::sync([this, alive]() {
                         if (!alive->load()) return;
-                        for (auto& s : m_streams) {
+                        for (auto& s : m_streams)
                             if (s.streamType == 3 || s.streamType == 4) s.selected = false;
-                        }
                         updateStreamRowLabels();
                     });
                 });
                 return true;
-            }));
+            });
+        listBox->addView(noneRow);
+        brls::View* first = noneRow;
 
         for (const auto& s : m_streams) {
             if (s.streamType != 3 && s.streamType != 4) continue;
-            std::string display = s.displayTitle.empty() ? s.language : s.displayTitle;
+            std::string display = streamName(s);
             int streamId  = s.id;
             bool selected = s.selected;
-            listBox->addView(makePickerRow(display, selected,
-                [this, alive, dialog, streamId, display](brls::View*) {
-                    dialog->dismiss();
+            StreamBadge badge = subtitleBadge(s);
+            listBox->addView(makeStreamRow(langTile(s), display, subtitleSubLine(s), selected, badge,
+                [this, alive, streamId, display](brls::View*) {
+                    brls::Application::popActivity();
                     int partId = m_partId;
                     asyncRun([this, alive, partId, streamId, display]() {
                         PlexClient::getInstance().setStreamSelection(partId, -1, streamId);
                         brls::sync([this, alive, streamId, display]() {
                             if (!alive->load()) return;
-                            for (auto& s : m_streams) {
-                                if (s.streamType == 3 || s.streamType == 4) {
+                            for (auto& s : m_streams)
+                                if (s.streamType == 3 || s.streamType == 4)
                                     s.selected = (s.id == streamId);
-                                }
-                            }
                             updateStreamRowLabels();
                         });
                     });
                     return true;
                 }));
         }
+        if (first) brls::Application::giveFocus(first);
     };
-    (*buildInstalledList)();
 
-    // Build the search-results view inside the same scroll area.
-    // Picking a result calls selectSearchedSubtitle (Plex downloads
-    // and attaches it server-side), then we refetch the stream list
-    // so the newly-installed subtitle shows up as an "installed" row.
-    auto showResults = std::make_shared<std::function<void(const std::vector<PlexClient::SubtitleResult>&)>>();
-    *showResults = [this, alive, dlgAlive, dialog, listBox, searchBtn, setSearchBtnFor, buildInstalledList](
+    // Search-results view inside the same scroll. Picking a result installs
+    // it (selectSearchedSubtitle), then refetches streams. Verbatim flow.
+    *showResults = [this, alive, dlgAlive, listBox, searchRow, setSearchBtnFor, buildInstalledList](
             const std::vector<PlexClient::SubtitleResult>& results) {
         if (!alive->load() || !*dlgAlive) return;
-        // Results mode: top button advertises a language change.
         setSearchBtnFor(/*resultsMode=*/true);
-        // Park focus on searchBtn before tearing down listBox's rows
-        // (the "Searching…" label this replaces is focusable on Vita
-        // because the IME callback giveFocus'd it).
-        brls::Application::giveFocus(searchBtn);
+        brls::Application::giveFocus(searchRow);
         listBox->clearViews();
 
         auto* back = new brls::Button();
-        back->setText("‹ Back to installed");
-        back->setHeight(36);
-        back->setMarginBottom(10);
-        back->setPaddingLeft(14);
-        // buildInstalledList calls listBox->clearViews(), which would
-        // delete this back button while we're still inside its click
-        // handler — a classic use-after-free that crashed the app. Defer
-        // the rebuild to the next main-loop iteration via brls::sync so
-        // the click handler returns first and the view tree is safe to
-        // tear down. dlgAlive guards against the dialog dying first.
+        back->setText("\xE2\x80\xB9 Back to installed");
+        back->setHeight(36.0f);
+        back->setMarginBottom(10.0f);
+        back->setPaddingLeft(14.0f);
+        // Defer the rebuild so this click handler returns before listBox
+        // (which holds this very button) is torn down.
         back->registerClickAction([dlgAlive, buildInstalledList](brls::View*) {
             brls::sync([dlgAlive, buildInstalledList]() {
                 if (!*dlgAlive) return;
@@ -4026,26 +4423,25 @@ void MediaDetailView::showSubtitlePicker() {
         if (results.empty()) {
             auto* none = new brls::Label();
             none->setText("No subtitles found");
-            none->setFontSize(14);
-            none->setMarginTop(8);
+            none->setFontSize(14.0f);
+            none->setMarginTop(8.0f);
+            none->setTextColor(pickcol::dim());
             listBox->addView(none);
             return;
         }
 
         for (const auto& r : results) {
-            std::string display = r.displayTitle.empty() ? r.language : r.displayTitle;
-            if (!r.provider.empty()) display += "  (" + r.provider + ")";
+            std::string display   = r.displayTitle.empty() ? r.language : r.displayTitle;
+            std::string provider  = r.provider;
             std::string key       = r.key;
             std::string ratingKey = m_item.ratingKey;
-            listBox->addView(makePickerRow(display, false,
-                [this, alive, dialog, key, ratingKey, display](brls::View*) {
-                    dialog->dismiss();
+            listBox->addView(makeStreamRow("", display, provider, false, StreamBadge::None,
+                [this, alive, key, ratingKey, display](brls::View*) {
+                    brls::Application::popActivity();
                     int partId = m_partId;
                     asyncRun([this, alive, ratingKey, partId, key, display]() {
                         bool ok = PlexClient::getInstance()
                             .selectSearchedSubtitle(ratingKey, partId, key);
-                        // Refresh the stream list so the newly-attached
-                        // subtitle shows up next time the picker opens.
                         std::vector<PlexStream> fresh;
                         int freshPart = partId;
                         PlexClient::getInstance().fetchStreams(ratingKey, fresh, freshPart);
@@ -4066,22 +4462,18 @@ void MediaDetailView::showSubtitlePicker() {
         }
     };
 
-    // Extracted so the search button, the "change language" path, the
-    // auto-trigger on empty installed list, and the post-IME callback
-    // can all share the loading-state + asyncRun + result handoff glue.
-    auto runSearch = std::make_shared<std::function<void(std::string)>>();
-    *runSearch = [this, alive, dlgAlive, listBox, searchBtn, currentLang, showResults](std::string lang) {
+    // Loading-state + asyncRun + handoff glue. Verbatim from before.
+    *runSearch = [this, alive, dlgAlive, listBox, searchRow, currentLang, showResults](std::string lang) {
         if (!alive->load() || !*dlgAlive) return;
         if (lang.empty()) lang = "en";
         *currentLang = lang;
-
-        // Park focus on searchBtn before tearing down listBox.
-        brls::Application::giveFocus(searchBtn);
+        brls::Application::giveFocus(searchRow);
         listBox->clearViews();
         auto* loading = new brls::Label();
-        loading->setText("Searching " + lang + "…");
-        loading->setFontSize(14);
-        loading->setMarginTop(8);
+        loading->setText("Searching " + lang + "\xE2\x80\xA6");
+        loading->setFontSize(14.0f);
+        loading->setMarginTop(8.0f);
+        loading->setTextColor(pickcol::dim());
         listBox->addView(loading);
 
         std::string ratingKey = m_item.ratingKey;
@@ -4095,12 +4487,7 @@ void MediaDetailView::showSubtitlePicker() {
         });
     };
 
-    // "Change language" path — IME-prompts for the language, then
-    // hands off to runSearch. Only used from the results-mode button
-    // press; the initial / auto search skips this and goes straight
-    // to runSearch with the saved default.
-    auto promptLanguageThenSearch = std::make_shared<std::function<void()>>();
-    *promptLanguageThenSearch = [alive, dlgAlive, currentLang, runSearch]() {
+    *promptLang = [alive, dlgAlive, currentLang, runSearch]() {
         if (!alive->load() || !*dlgAlive) return;
         auto* ime = brls::Application::getImeManager();
         if (!ime) return;
@@ -4112,44 +4499,51 @@ void MediaDetailView::showSubtitlePicker() {
         }, "Subtitle language (e.g. en, es, fr)", seed, 8, seed);
     };
 
-    searchBtn->registerClickAction([currentLang, runSearch, promptLanguageThenSearch, searchBtn](brls::View*) {
-        // Read the live button label so we don't need a separate flag
-        // for "which mode am I in" — setSearchBtnFor() is the only
-        // thing that updates the text, and there are exactly two
-        // possible captions.
-        std::string label = searchBtn->getText();
-        if (label.rfind("Change language", 0) == 0) {
-            (*promptLanguageThenSearch)();
+    // Tab switch: restyle, toggle the search row, rebuild the list.
+    *selectTab = [alive, dlgAlive, activeTab, styleTabs, searchRow, buildAudioList, buildInstalledList](int tab) {
+        if (!alive->load() || !*dlgAlive) return;
+        *activeTab = tab;
+        styleTabs();
+        if (tab == 0) {
+            searchRow->setVisibility(brls::Visibility::GONE);
+            (*buildAudioList)();
         } else {
-            // First search — use the saved default; the user can
-            // still switch via the relabelled button once results
-            // show up.
+            searchRow->setVisibility(brls::Visibility::VISIBLE);
+            (*buildInstalledList)();
+        }
+    };
+
+    audioTab.box->registerClickAction([selectTab](brls::View*) { (*selectTab)(0); return true; });
+    audioTab.box->addGestureRecognizer(new brls::TapGestureRecognizer(audioTab.box));
+    subsTab.box->registerClickAction([selectTab](brls::View*) { (*selectTab)(1); return true; });
+    subsTab.box->addGestureRecognizer(new brls::TapGestureRecognizer(subsTab.box));
+
+    searchRow->registerClickAction([currentLang, runSearch, promptLang, resultsMode](brls::View*) {
+        if (*resultsMode) {
+            (*promptLang)();
+        } else {
             std::string lang = *currentLang;
             if (lang.empty()) lang = "en";
             (*runSearch)(lang);
         }
         return true;
     });
-    searchBtn->addGestureRecognizer(new brls::TapGestureRecognizer(searchBtn));
+    searchRow->addGestureRecognizer(new brls::TapGestureRecognizer(searchRow));
 
-    dialog->addView(content);
-    dialog->open();
+    scrim->addView(panel);
+    scrim->registerAction("Back", brls::ControllerButton::BUTTON_B,
+        [](brls::View*) { brls::Application::popActivity(); return true; });
 
-    // If nothing is installed, jump straight to the online search using
-    // the saved default language. User can still change it from the
-    // "Change language" affordance once the results list is showing.
-    bool anyInstalled = false;
-    for (const auto& s : m_streams) {
-        if (s.streamType == 3 || s.streamType == 4) { anyInstalled = true; break; }
-    }
-    if (!anyInstalled) {
-        brls::sync([dlgAlive, currentLang, runSearch]() {
-            if (!*dlgAlive) return;
-            std::string lang = *currentLang;
-            if (lang.empty()) lang = "en";
-            (*runSearch)(lang);
-        });
-    }
+    brls::Application::pushActivity(new PopoverActivity(scrim));
+    (*selectTab)(defaultTab == 0 ? 0 : 1);
+}
+
+void MediaDetailView::showAudioPicker() {
+    showStreamDialog(/*defaultTab=*/0);
+}
+
+void MediaDetailView::showSubtitlePicker() {
+    showStreamDialog(/*defaultTab=*/1);
 }
 
 } // namespace vitaplex

@@ -255,6 +255,9 @@ struct PlexStream {
     bool selected = false;    // Currently selected stream
     int channels = 0;         // Audio channels
     std::string title;        // Track title if any
+    bool forced = false;          // Forced subtitle (signs/songs)
+    bool hearingImpaired = false; // SDH / hearing-impaired subtitle
+    bool external = false;        // Sidecar subtitle (has a key) vs embedded
 };
 
 /**

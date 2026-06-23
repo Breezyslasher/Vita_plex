@@ -66,6 +66,9 @@ private:
     void updateStreamRowLabels();
     void showAudioPicker();
     void showSubtitlePicker();
+    // Merged audio + subtitle picker (one dialog, two tabs). defaultTab:
+    // 0 = Audio, 1 = Subtitles. Both rows above open this same dialog.
+    void showStreamDialog(int defaultTab);
 
 public:
     // Static context menus callable from any view (home, search, library grid, etc.)
