@@ -951,11 +951,16 @@ void DownloadsTab::rebuildList() {
         if (m_syncBtn) m_syncBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstListItem);
         if (m_clearBtn) m_clearBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstListItem);
 
-        // UP from each list item -> first action button (Start/Stop);
-        // LEFT escapes to the sidebar (same Box-in-a-Box caveat as above).
+        // UP from the FIRST list item -> first action button (Start/Stop),
+        // because default nav can't cross from the scroll frame to the
+        // toolbar. Every other item keeps default UP nav (previous item),
+        // so UP only jumps to the toolbar from the top of the list.
+        firstListItem->setCustomNavigationRoute(brls::FocusDirection::UP, m_startStopBtn);
+
+        // LEFT escapes to the sidebar from every item (same Box-in-a-Box
+        // caveat as above).
         for (auto* child : children) {
             if (child->isFocusable()) {
-                child->setCustomNavigationRoute(brls::FocusDirection::UP, m_startStopBtn);
                 child->setCustomNavigationRoute(brls::FocusDirection::LEFT,
                                                 std::string("brls/tab_frame/sidebar"));
             }
