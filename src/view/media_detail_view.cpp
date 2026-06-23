@@ -22,6 +22,28 @@
 
 namespace vitaplex {
 
+namespace {
+// Scroll box for the summary. The wrapped, non-focusable description label
+// lives inside; the frame makes *itself* focusable only when the text
+// overflows the visible box. Short descriptions stay display-only (so they
+// can't steal RIGHT/UP focus), while long ones can be focused and scrolled
+// with D-pad UP/DOWN (NATURAL behaviour) to read in full.
+class DescriptionScroll : public brls::ScrollingFrame {
+public:
+    DescriptionScroll() { this->setFocusable(false); }
+    void onLayout() override {
+        brls::ScrollingFrame::onLayout();
+        bool overflow = getContentHeight() > getHeight() + 1.0f;
+        if (overflow != m_scrollable) {
+            m_scrollable = overflow;
+            this->setFocusable(overflow);
+        }
+    }
+private:
+    bool m_scrollable = false;
+};
+}  // namespace
+
 MediaDetailView::MediaDetailView(const MediaItem& item)
     : m_item(item), m_alive(std::make_shared<std::atomic<bool>>(true)) {
 
@@ -295,14 +317,14 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     // all, and the async update below flips it visible.
     m_fullDescription = m_item.summary;
 
-    m_summaryScroll = new brls::ScrollingFrame();
+    m_summaryScroll = new DescriptionScroll();
     m_summaryScroll->setHeight(200);
     m_summaryScroll->setMarginBottom(20);
-    // ScrollingFrame defaults to focusable; pressing RIGHT would land on the
-    // (often mostly-empty) 200px scroll box and look like focusing nothing.
-    // Keep the whole description area display-only, paired with the
-    // non-focusable label below.
-    m_summaryScroll->setFocusable(false);
+    // NATURAL lets the frame scroll on D-pad UP/DOWN once it's focused, and
+    // DescriptionScroll only makes itself focusable when the text overflows
+    // the 200px box — short descriptions stay display-only (no focus theft),
+    // long ones can be focused and scrolled to read in full.
+    m_summaryScroll->setScrollingBehavior(brls::ScrollingBehavior::NATURAL);
 
     m_summaryLabel = new brls::Label();
     m_summaryLabel->setFontSize(16);
@@ -945,9 +967,10 @@ void MediaDetailView::loadMusicCategories() {
                     }
                 }
 
-                // Focus setup: if no description, transfer focus to first category item
-                if (m_fullDescription.empty() && m_musicCategoriesBox &&
-                    !m_musicCategoriesBox->getChildren().empty()) {
+                // Land focus on the first category row once it's loaded. The
+                // description is display-only (non-focusable), so it can't
+                // hold focus — without this, focus would be stranded.
+                if (m_musicCategoriesBox && !m_musicCategoriesBox->getChildren().empty()) {
                     // Find first focusable view in the categories
                     for (auto* child : m_musicCategoriesBox->getChildren()) {
                         auto* hScroll = dynamic_cast<brls::HScrollingFrame*>(child);
@@ -1061,9 +1084,10 @@ void MediaDetailView::loadMusicCategories() {
                 }
             }
 
-            // Focus setup: if no description, transfer focus to first category item
-            if (m_fullDescription.empty() && m_musicCategoriesBox &&
-                !m_musicCategoriesBox->getChildren().empty()) {
+            // Land focus on the first category row once it's loaded. The
+            // description is display-only (non-focusable), so it can't hold
+            // focus — without this, focus would be stranded.
+            if (m_musicCategoriesBox && !m_musicCategoriesBox->getChildren().empty()) {
                 for (auto* child : m_musicCategoriesBox->getChildren()) {
                     auto* hScroll = dynamic_cast<brls::HScrollingFrame*>(child);
                     if (hScroll) {
@@ -3754,9 +3778,12 @@ void MediaDetailView::setupChildrenFocusTransfer() {
             lastLeftButton->setCustomNavigationRoute(
                 brls::FocusDirection::DOWN, firstFocusable);
         }
-        // Pull initial focus onto the first item only when there's no
-        // description to read (unchanged from before).
-        if (m_fullDescription.empty()) {
+        // Land focus on the first child/extra when there's no description to
+        // read OR no left-column button to hold the default focus. The
+        // description is display-only (non-focusable), so without this, a
+        // button-less layout (e.g. some artist/show headers) would strand
+        // focus on it. Layouts with a Play/etc. button keep their default.
+        if (m_fullDescription.empty() || !lastLeftButton) {
             brls::Application::giveFocus(firstFocusable);
         }
     }
