@@ -1359,6 +1359,20 @@ brls::Box* DownloadsTab::buildItemRow(const DownloadItem& item) {
     }
 
     row->addView(buttonsBox);
+
+    // The row and its action buttons are all focusable, but nothing connects
+    // them: RIGHT from the row found no sibling and did nothing, and LEFT
+    // from the first button escaped past the row straight to the sidebar.
+    // Wire RIGHT (row -> first action button) and LEFT (first button -> the
+    // row, i.e. its parent item) so the two move between each other.
+    for (auto* btn : buttonsBox->getChildren()) {
+        if (btn->isFocusable()) {
+            row->setCustomNavigationRoute(brls::FocusDirection::RIGHT, btn);
+            btn->setCustomNavigationRoute(brls::FocusDirection::LEFT, row);
+            break;
+        }
+    }
+
     return row;
 }
 
