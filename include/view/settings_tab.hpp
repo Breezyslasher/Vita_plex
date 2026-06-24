@@ -86,12 +86,8 @@ private:
 
     void onLogout();
     void onNetworkTest();
-    // SyncLounge connectivity spike: prompts for a server URL + room, then
-    // opens a debug dialog that joins the room over the Socket.IO long-poll
-    // transport and live-streams every protocol step. See SyncLoungeClient.
-    void onSyncLoungeTest();
     // Connect / disconnect the persistent SyncLounge session that an active
-    // player follows (receive-only). See SyncLoungeSession.
+    // player follows. See SyncLoungeSession.
     void onSyncLoungeConnect();
     void onTestLocalPlayback();
     void onThemeChanged(int index);

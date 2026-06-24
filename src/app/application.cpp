@@ -415,6 +415,11 @@ bool Application::loadSettings() {
         std::string lang = extractString("defaultSubtitleLanguage");
         if (!lang.empty()) m_settings.defaultSubtitleLanguage = lang;
     }
+    {
+        std::string sls = extractString("syncLoungeServer");
+        if (!sls.empty()) m_settings.syncLoungeServer = sls;
+        m_settings.syncLoungeRoom = extractString("syncLoungeRoom");
+    }
 
     m_settings.showMpvStats = extractBool("showMpvStats", false);
 
@@ -556,6 +561,8 @@ bool Application::saveSettings() {
     json += "  \"autoSkipIntro\": " + b(m_settings.autoSkipIntro) + ",\n";
     json += "  \"autoSkipCredits\": " + b(m_settings.autoSkipCredits) + ",\n";
     json += "  \"defaultSubtitleLanguage\": \"" + esc(m_settings.defaultSubtitleLanguage) + "\",\n";
+    json += "  \"syncLoungeServer\": \"" + esc(m_settings.syncLoungeServer) + "\",\n";
+    json += "  \"syncLoungeRoom\": \"" + esc(m_settings.syncLoungeRoom) + "\",\n";
     json += "  \"showMpvStats\": " + b(m_settings.showMpvStats) + ",\n";
     json += "  \"videoQuality\": " + std::to_string(static_cast<int>(m_settings.videoQuality)) + ",\n";
     json += "  \"forceTranscode\": " + b(m_settings.forceTranscode) + ",\n";
