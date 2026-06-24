@@ -1264,6 +1264,33 @@ void PlayerActivity::loadMedia() {
                 resumeOffset = item.viewOffset;
             }
         }
+
+        // SyncLounge: when following a watch party and we have a recent host
+        // position, open at the host's timecode (baked into the transcode
+        // offset) instead of our own resume point — so playback starts already
+        // in sync and there's no big corrective seek after load. Extrapolate a
+        // playing host forward by how long ago it reported. Same-content
+        // assumed; ignored if the host state is stale (> 60s) or out of range.
+        if (SyncLoungeSession::instance().isConnected()) {
+            auto rs = SyncLoungeSession::instance().remoteState();
+            if (rs.valid && (rs.state == "playing" || rs.state == "paused")) {
+                auto ageMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - rs.at).count();
+                if (ageMs >= 0 && ageMs < 60000) {
+                    double hostMs = rs.timeMs;
+                    if (rs.state == "playing") hostMs += static_cast<double>(ageMs);
+                    if (hostMs > 0 && (item.duration <= 0 || hostMs < item.duration)) {
+                        resumeOffset = static_cast<int>(hostMs);
+                        // Suppress an immediate redundant correction in the
+                        // follow loop now that we open in sync.
+                        m_lastSyncSeek = std::chrono::steady_clock::now();
+                        brls::Logger::info(
+                            "PlayerActivity: SyncLounge follow — starting at host offset {}ms (age {}ms)",
+                            resumeOffset, (long)ageMs);
+                    }
+                }
+            }
+        }
         m_transcodeBaseOffsetMs = resumeOffset;
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, resumeOffset)) {
@@ -1483,32 +1510,65 @@ void PlayerActivity::updateProgress() {
         }
     }
 
-    // ── SyncLounge: follow the watch party ────────────────────────────────
-    // When connected to a room, mirror the host's transport state onto the
-    // local player. Receive-only for now — we never claim host, so this only
-    // touches play / pause / seek, never which item is loaded. Same-content is
-    // assumed; cross-server media matching is a later step.
+    // ── SyncLounge: watch-party sync ──────────────────────────────────────
+    // When connected to a room: if we're the host, broadcast our transport
+    // state so the party follows us; otherwise mirror the host's state onto
+    // the local player. Same-content is assumed — cross-server media matching
+    // is a later step — so this only touches play / pause / seek, never which
+    // item is loaded.
     if (duration > 0 && SyncLoungeSession::instance().isConnected()) {
-        auto rs = SyncLoungeSession::instance().remoteState();
-        if (rs.valid && (rs.state == "playing" || rs.state == "paused")) {
-            const double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
-            const double localPosSec   = baseOffsetSec + position;
-            const double remotePosSec  = rs.timeMs / 1000.0;
+        SyncLoungeSession& sl = SyncLoungeSession::instance();
+        const bool localSane = position >= 0.0 && position <= duration + 30.0;
 
-            // Match transport state.
-            if (rs.state == "paused" && player.isPlaying()) {
-                player.pause();
-            } else if (rs.state == "playing" && player.isPaused()) {
-                player.play();
+        if (sl.isHost()) {
+            // Host: publish our absolute timecode (matches the /:/timeline
+            // basis: transcode base offset + mpv position). Throttled inside
+            // reportLocalState.
+            if (localSane) {
+                const char* st = player.isPlaying() ? "playing"
+                               : player.isPaused()  ? "paused"
+                                                    : nullptr;
+                if (st) {
+                    double timeMs = m_transcodeBaseOffsetMs + position * 1000.0;
+                    double durMs  = duration * 1000.0;
+                    sl.reportLocalState(st, timeMs, durMs, 1.0);
+                }
             }
+        } else {
+            auto rs = sl.remoteState();
+            // Ignore a transient bogus local position (e.g. mid HLS-seek
+            // restart), which would otherwise feed a runaway correction.
+            if (rs.valid && localSane &&
+                (rs.state == "playing" || rs.state == "paused")) {
+                const double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
+                const double localPosSec   = baseOffsetSec + position;
+                const double remotePosSec  = rs.timeMs / 1000.0;
 
-            // Correct large drift. SyncLounge's default syncFlexibility is 3s;
-            // stay at that threshold so the ~1s loop + network latency doesn't
-            // cause seek thrash.
-            double drift = localPosSec - remotePosSec;
-            if (drift < 0) drift = -drift;
-            if (drift > 3.0) {
-                player.seekTo(std::max(0.0, remotePosSec - baseOffsetSec));
+                // Match transport state (cheap + idempotent).
+                if (rs.state == "paused" && player.isPlaying()) {
+                    player.pause();
+                } else if (rs.state == "playing" && player.isPaused()) {
+                    player.play();
+                }
+
+                // Correct large drift, but rate-limit hard. Seeking an HLS
+                // transcode restarts it and the position takes several seconds
+                // to settle, so a per-second re-seek would thrash (the host
+                // also keeps advancing while we rebuffer). One seek, then an 8s
+                // cooldown so it can settle before we reconsider; a 10s
+                // threshold tolerates residual skew rather than chasing.
+                double drift = localPosSec - remotePosSec;
+                if (drift < 0) drift = -drift;
+                if (drift > 10.0) {
+                    auto now = std::chrono::steady_clock::now();
+                    if (now - m_lastSyncSeek > std::chrono::seconds(8)) {
+                        m_lastSyncSeek = now;
+                        player.seekTo(std::max(0.0, remotePosSec - baseOffsetSec));
+                        brls::Logger::info(
+                            "SyncLounge: seek to host {}s (local {}s, drift {}s)",
+                            (long)remotePosSec, (long)localPosSec, (long)drift);
+                    }
+                }
             }
         }
     }

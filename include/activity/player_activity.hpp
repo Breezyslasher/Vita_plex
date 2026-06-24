@@ -216,6 +216,13 @@ private:
     int m_timelineCounter = 0;           // Seconds since last timeline report
     std::string m_lastTimelineState;     // Last reported state to detect changes
 
+    // SyncLounge follow: last time we issued a drift-correcting seek to match
+    // the room host. Seeking an HLS transcode restarts it and the position
+    // takes several seconds to settle, so we rate-limit seeks to avoid a
+    // per-second re-seek storm. Default-constructed (epoch) lets the first
+    // correction fire immediately.
+    std::chrono::steady_clock::time_point m_lastSyncSeek{};
+
     // Diagnostic overlay panel — created lazily on first
     // updateMpvStatsOverlay() call when AppSettings::showMpvStats is on.
     // Lives at the top-left of playerContainer, refreshed once per

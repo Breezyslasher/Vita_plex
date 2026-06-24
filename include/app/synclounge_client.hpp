@@ -88,6 +88,12 @@ public:
     // thread — the actual POST runs on a short background task.
     bool sendChatMessage(const std::string& text);
 
+    // Emit an arbitrary Socket.IO event with a single, already-serialized JSON
+    // argument, e.g. emitEvent("playerStateUpdate", "{\"state\":\"playing\",...}").
+    // Used by SyncLoungeSession to broadcast our player state when we're host.
+    // Returns false if we haven't connected yet.
+    bool emitEvent(const std::string& name, const std::string& jsonArg);
+
 private:
     // Emit one raw Engine.IO/Socket.IO frame (e.g. `42["name",arg]`) on the
     // POST channel. Returns false if the session isn't connected yet.

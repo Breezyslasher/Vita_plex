@@ -390,6 +390,11 @@ bool SyncLoungeClient::sendChatMessage(const std::string& text) {
     return emitFrame("42[\"sendMessage\",\"" + jsonEscape(text) + "\"]");
 }
 
+bool SyncLoungeClient::emitEvent(const std::string& name, const std::string& jsonArg) {
+    // `name` is an internal, quote-free event name; jsonArg is pre-serialized.
+    return emitFrame("42[\"" + name + "\"," + jsonArg + "]");
+}
+
 bool SyncLoungeClient::emitFrame(const std::string& frame) {
     auto session = m_session;
     if (!session) return false;
