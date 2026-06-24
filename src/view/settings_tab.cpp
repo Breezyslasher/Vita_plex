@@ -15,6 +15,7 @@
 #include "app/plex_client.hpp"
 #include "app/plex_palette.hpp"
 #include "app/downloads_manager.hpp"
+#include "app/synclounge_client.hpp"
 #include "activity/player_activity.hpp"
 #include "utils/http_client.hpp"
 #include "utils/http_cache.hpp"
@@ -22,7 +23,9 @@
 #include "platform/paths.hpp"
 #include <set>
 #include <chrono>
+#include <deque>
 #include <fstream>
+#include <memory>
 
 #ifdef __vita__
 #include <psp2/net/netctl.h>
@@ -1011,6 +1014,20 @@ brls::Box* SettingsTab::createNetworkSection() {
         return true;
     });
     box->addView(networkTestCell);
+
+    // SyncLounge connectivity spike — opens a debug dialog that joins a
+    // SyncLounge room (https://github.com/synclounge/synclounge) over the
+    // Socket.IO long-poll transport and streams every protocol step. Proves
+    // the transport works on-device before the full watch-party feature is
+    // built. See SyncLoungeClient.
+    auto* syncLoungeCell = new brls::DetailCell();
+    syncLoungeCell->setText("SyncLounge Test");
+    syncLoungeCell->setDetailText("Join a room over long-poll and log events");
+    syncLoungeCell->registerClickAction([this](brls::View*) {
+        onSyncLoungeTest();
+        return true;
+    });
+    box->addView(syncLoungeCell);
 
     auto* infoLabel = new brls::Label();
     infoLabel->setText("Raise the timeout if you're on a slow or unstable link.");
@@ -2096,6 +2113,129 @@ void SettingsTab::onTestLocalPlayback() {
     brls::Logger::info("SettingsTab: Pushing player activity for: {}", testFile);
     PlayerActivity* activity = PlayerActivity::createForDirectFile(testFile);
     brls::Application::pushActivity(activity);
+}
+
+void SettingsTab::onSyncLoungeTest() {
+    auto* ime = brls::Application::getImeManager();
+    if (!ime) {
+        brls::Application::notify("No on-screen keyboard available");
+        return;
+    }
+
+    // Remembered between opens within this session so the user doesn't have
+    // to retype the server / room every time they re-run the spike.
+    static std::string lastServer = "https://server.synclounge.tv";
+    static std::string lastRoom;
+
+    auto trim = [](std::string s) {
+        while (!s.empty() && (s.back() == ' '  || s.back() == '\t' ||
+                              s.back() == '\r' || s.back() == '\n')) s.pop_back();
+        size_t i = 0;
+        while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) i++;
+        return s.substr(i);
+    };
+
+    // Prompt for the server URL, then the room, then launch the spike.
+    ime->openForText([this, ime, trim](std::string server) {
+        server = trim(server);
+        if (server.empty()) return;
+        lastServer = server;
+
+        ime->openForText([this, trim, server](std::string room) {
+            room = trim(room);
+            if (room.empty()) {
+                brls::Application::notify("Room name is required");
+                return;
+            }
+            lastRoom = room;
+
+            // ── Build the live log dialog ──────────────────────────────
+            // The worker streams protocol steps into this scrolling box,
+            // newest line on top so recent activity is always visible
+            // without scrolling. A shared "alive" flag stops the (UI-thread)
+            // log appends from touching the box once the dialog is gone.
+            struct Sink {
+                brls::Box* logBox = nullptr;
+                std::shared_ptr<std::atomic<bool>> alive;
+                std::deque<brls::Label*> labels;
+            };
+            auto sink   = std::make_shared<Sink>();
+            sink->alive = std::make_shared<std::atomic<bool>>(true);
+            auto client = std::make_shared<SyncLoungeClient>();
+
+            auto* content = new brls::Box();
+            content->setAxis(brls::Axis::COLUMN);
+            content->setWidth(780);
+            content->setHeight(470);
+            content->setPadding(22);
+
+            auto* titleLabel = new brls::Label();
+            titleLabel->setText("SyncLounge Connectivity Spike");
+            titleLabel->setFontSize(22);
+            titleLabel->setMarginBottom(4);
+            content->addView(titleLabel);
+
+            auto* subLabel = new brls::Label();
+            subLabel->setText(server + "   ·   room \"" + room + "\"");
+            subLabel->setFontSize(14);
+            subLabel->setTextColor(tok::muted());
+            subLabel->setMarginBottom(12);
+            content->addView(subLabel);
+
+            auto* scroll = new brls::ScrollingFrame();
+            scroll->setGrow(1.0f);
+            scroll->setFocusable(false);
+
+            auto* logBox = new brls::Box();
+            logBox->setAxis(brls::Axis::COLUMN);
+            logBox->setAlignItems(brls::AlignItems::STRETCH);
+            scroll->setContentView(logBox);
+            content->addView(scroll);
+            sink->logBox = logBox;
+
+            auto* dialog = new brls::Dialog(content);
+            // No Back-cancel: the only way out is Close, which is also where
+            // we tear the worker down + mark the sink dead. That keeps a
+            // queued log append from ever landing on a freed logBox.
+            dialog->setCancelable(false);
+            dialog->addButton("Close", [client, sink]() {
+                sink->alive->store(false);
+                client->stop();
+            });
+
+            // Append one line on the UI thread (newest on top, capped).
+            auto appendLine = [sink](const std::string& line) {
+                if (!sink->alive->load() || !sink->logBox) return;
+                auto* lbl = new brls::Label();
+                lbl->setText(line);
+                lbl->setFontSize(13);
+                lbl->setTextColor(nvgRGB(0xC8, 0xC8, 0xCE));
+                lbl->setMarginBottom(2);
+                sink->logBox->addView(lbl, 0);
+                sink->labels.push_front(lbl);
+                while (sink->labels.size() > 200) {
+                    brls::Label* old = sink->labels.back();
+                    sink->labels.pop_back();
+                    sink->logBox->removeView(old, true);
+                }
+            };
+
+            dialog->open();
+
+            // Worker logs from a background thread; marshal each line onto
+            // the UI thread. `appendLine` (and thus `sink`) outlives the
+            // worker because the worker's log callback owns a copy.
+            SyncLoungeClient::Config cfg;
+            cfg.server   = server;
+            cfg.room     = room;
+            cfg.username = Application::getInstance().getUsername().empty()
+                               ? std::string("VitaPlex")
+                               : Application::getInstance().getUsername();
+            client->start(cfg, [appendLine](const std::string& line) {
+                brls::sync([appendLine, line]() { appendLine(line); });
+            });
+        }, "SyncLounge room name / code", "", 64, lastRoom);
+    }, "SyncLounge server URL", "", 128, lastServer);
 }
 
 } // namespace vitaplex
