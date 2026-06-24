@@ -130,6 +130,106 @@ std::string nthQuoted(const std::string& s, int n) {
     return "";
 }
 
+// Last run of digits in a string as an int (e.g. "Season 12" -> 12). -1 if none.
+int parseLastNumber(const std::string& s) {
+    int end = -1;
+    for (int i = (int)s.size() - 1; i >= 0; i--)
+        if (std::isdigit((unsigned char)s[i])) { end = i; break; }
+    if (end < 0) return -1;
+    int start = end;
+    while (start > 0 && std::isdigit((unsigned char)s[start - 1])) start--;
+    try { return std::stoi(s.substr(start, end - start + 1)); }
+    catch (...) { return -1; }
+}
+
+// Resolve a movie (or other flat title) against our library by title/year.
+SyncLoungeSession::MatchResult resolveTitleMatch(const SyncLoungeSession::HostMedia& hm) {
+    SyncLoungeSession::MatchResult best;
+    best.resolved = true;
+    best.forTitle = hm.title;
+
+    std::vector<MediaItem> results;
+    if (!hm.title.empty()) PlexClient::getInstance().search(hm.title, results);
+
+    int  bestScore = 0;
+    bool bestExact = false;
+    for (const auto& it : results) {
+        if (!hm.type.empty() && !it.type.empty() && it.type != hm.type) continue;
+        bool exactTitle = iequals(it.title, hm.title);
+        int  score      = 1;
+        if (exactTitle) score += 4;
+        else if (icontains(it.title, hm.title) || icontains(hm.title, it.title)) score += 1;
+        else continue;  // needs some title overlap
+        if (hm.year > 0 && it.year == hm.year) score += 3;
+        if (score > bestScore) {
+            bestScore      = score;
+            bestExact      = exactTitle;
+            best.ratingKey = it.ratingKey;
+            best.title     = it.title;
+        }
+    }
+    if (bestScore < 2) { best.ratingKey.clear(); best.title.clear(); }
+    best.exact = bestExact && !best.ratingKey.empty();
+    return best;
+}
+
+// Resolve an episode cross-server by navigating show -> season -> episode. The
+// host's media only gives names (show=grandparentTitle, season=parentTitle as a
+// string, episode=title) — no numbers — so we match on those.
+SyncLoungeSession::MatchResult resolveEpisodeMatch(const SyncLoungeSession::HostMedia& hm) {
+    SyncLoungeSession::MatchResult best;
+    best.resolved = true;
+    best.forTitle = hm.title;
+    PlexClient& client = PlexClient::getInstance();
+
+    // 1. Find the show.
+    std::vector<MediaItem> shows;
+    if (!hm.grandparentTitle.empty()) client.search(hm.grandparentTitle, shows);
+    std::string showKey;
+    for (const auto& it : shows)
+        if (it.type == "show" && iequals(it.title, hm.grandparentTitle)) { showKey = it.ratingKey; break; }
+    if (showKey.empty())
+        for (const auto& it : shows)
+            if (it.type == "show" &&
+                (icontains(it.title, hm.grandparentTitle) || icontains(hm.grandparentTitle, it.title))) {
+                showKey = it.ratingKey; break;
+            }
+    if (showKey.empty()) return best;
+
+    // 2. Find the season — by title, else by parsed number, else single-season.
+    std::vector<MediaItem> seasons;
+    client.fetchChildren(showKey, seasons);
+    std::string seasonKey;
+    for (const auto& s : seasons)
+        if (s.mediaType == MediaType::SEASON && iequals(s.title, hm.parentTitle)) { seasonKey = s.ratingKey; break; }
+    if (seasonKey.empty()) {
+        const int want = parseLastNumber(hm.parentTitle);
+        if (want > 0)
+            for (const auto& s : seasons)
+                if (s.mediaType == MediaType::SEASON && s.index == want) { seasonKey = s.ratingKey; break; }
+    }
+    if (seasonKey.empty()) {
+        int count = 0; std::string only;
+        for (const auto& s : seasons) if (s.mediaType == MediaType::SEASON) { count++; only = s.ratingKey; }
+        if (count == 1) seasonKey = only;  // single-season shows skip the grouping
+    }
+    if (seasonKey.empty()) return best;
+
+    // 3. Find the episode by title.
+    std::vector<MediaItem> episodes;
+    client.fetchChildren(seasonKey, episodes);
+    for (const auto& e : episodes)
+        if (e.mediaType == MediaType::EPISODE && iequals(e.title, hm.title)) {
+            best.ratingKey = e.ratingKey; best.title = e.title; best.exact = true; return best;
+        }
+    for (const auto& e : episodes)
+        if (e.mediaType == MediaType::EPISODE &&
+            (icontains(e.title, hm.title) || icontains(hm.title, e.title))) {
+            best.ratingKey = e.ratingKey; best.title = e.title; best.exact = false; return best;
+        }
+    return best;
+}
+
 }  // namespace
 
 SyncLoungeSession& SyncLoungeSession::instance() {
@@ -244,6 +344,7 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
                 hm.title            = jsonStr(mediaObj, "title");
                 hm.year             = (int)jsonDouble(mediaObj, "year");
                 hm.grandparentTitle = jsonStr(mediaObj, "grandparentTitle");
+                hm.parentTitle      = jsonStr(mediaObj, "parentTitle");
                 hm.parentIndex      = (int)jsonDouble(mediaObj, "parentIndex");
                 hm.index            = (int)jsonDouble(mediaObj, "index");
                 hm.machineIdentifier= jsonStr(mediaObj, "machineIdentifier");
@@ -255,17 +356,17 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
                     std::lock_guard<std::mutex> lk(m_mtx);
                     m_hostMedia = hm;
                     // Debounce: only re-resolve when the media identity changes.
-                    const std::string key = hm.type + "|" + hm.grandparentTitle +
-                                            "|" + hm.title + "|" + std::to_string(hm.year);
+                    const std::string key = hm.type + "|" + hm.grandparentTitle + "|" +
+                                            hm.parentTitle + "|" + hm.title + "|" +
+                                            std::to_string(hm.year);
                     if (key != m_resolveKey) {
                         m_resolveKey = key;
                         kick = true;
                     }
                 }
                 brls::Logger::info(
-                    "SyncLounge: host media type={} title=\"{}\" year={} show=\"{}\" s{}e{} raw={}",
-                    hm.type, hm.title, hm.year, hm.grandparentTitle,
-                    hm.parentIndex, hm.index, hm.raw);
+                    "SyncLounge: host media type={} title=\"{}\" show=\"{}\" season=\"{}\" raw={}",
+                    hm.type, hm.title, hm.grandparentTitle, hm.parentTitle, hm.raw);
                 if (kick) resolveMatchAsync(hm);
             }
         }
@@ -308,73 +409,36 @@ SyncLoungeSession::MatchResult SyncLoungeSession::match() const {
 }
 
 void SyncLoungeSession::resolveMatchAsync(HostMedia hm) {
-    // `this` is a singleton — always valid. PlexClient::search is
-    // background-safe (uses its own HttpClient), so search off the worker
-    // thread rather than blocking it.
+    // `this` is a singleton — always valid. PlexClient calls are background-safe
+    // (each uses its own HttpClient), so resolve off the worker thread.
     asyncRun([this, hm]() {
         MatchResult best;
         best.resolved = true;
         best.forTitle = hm.title;
 
-        // Fast path: same Plex server (machineIdentifier matches ours) -> the
-        // host's ratingKey is exactly our item, no search needed.
         if (!hm.machineIdentifier.empty() && !hm.hostRatingKey.empty() &&
             hm.machineIdentifier == PlexClient::getInstance().getMachineIdentifier()) {
+            // Same Plex server -> the host's ratingKey is exactly our item.
             best.exact     = true;
             best.ratingKey = hm.hostRatingKey;
             best.title     = hm.title;
-            {
-                std::lock_guard<std::mutex> lk(m_mtx);
-                if (m_hostMedia.title == hm.title && m_hostMedia.type == hm.type)
-                    m_match = best;
-            }
-            brls::Logger::info("SyncLounge match: host \"{}\" ({}) -> same-server ratingKey={} (exact)",
-                               hm.title, hm.type, best.ratingKey);
-            return;
+        } else if (hm.type == "episode") {
+            // Cross-server episode: navigate show -> season -> episode by name.
+            best = resolveEpisodeMatch(hm);
+        } else {
+            // Cross-server movie / other: title (+ year) search.
+            best = resolveTitleMatch(hm);
         }
-
-        // Cross-server: search our library and score candidates. Wrong type is
-        // disqualifying; otherwise prefer an exact title, then year (movies) /
-        // show (episodes). Episodes search the show title (episode titles are
-        // often generic).
-        std::vector<MediaItem> results;
-        const std::string query = (hm.type == "episode" && !hm.grandparentTitle.empty())
-                                       ? hm.grandparentTitle
-                                       : hm.title;
-        if (!query.empty()) PlexClient::getInstance().search(query, results);
-
-        int  bestScore = 0;
-        bool bestExactTitle = false;
-        for (const auto& it : results) {
-            if (!hm.type.empty() && !it.type.empty() && it.type != hm.type) continue;
-            int  score = 1;
-            bool exactTitle = iequals(it.title, hm.title);
-            if (exactTitle) score += 4;
-            else if (icontains(it.title, hm.title) || icontains(hm.title, it.title)) score += 1;
-            else if (hm.type != "episode") continue;  // a movie needs some title overlap
-            if (hm.type == "movie" && hm.year > 0 && it.year == hm.year) score += 3;
-            if (hm.type == "episode" && !hm.grandparentTitle.empty() &&
-                iequals(it.grandparentTitle, hm.grandparentTitle)) score += 3;
-            if (score > bestScore) {
-                bestScore      = score;
-                bestExactTitle = exactTitle;
-                best.ratingKey = it.ratingKey;
-                best.title     = it.title;
-            }
-        }
-        if (bestScore < 2) { best.ratingKey.clear(); best.title.clear(); }
-        // Auto-switch only on a confident match: an exact title of the right
-        // type. Looser (substring) matches are stored but flagged inexact.
-        best.exact = bestExactTitle && !best.ratingKey.empty();
 
         {
             std::lock_guard<std::mutex> lk(m_mtx);
+            // Drop a result that arrived after the host moved to other media.
             if (m_hostMedia.title == hm.title && m_hostMedia.type == hm.type)
                 m_match = best;
         }
         if (best.ratingKey.empty())
-            brls::Logger::info("SyncLounge match: host \"{}\" ({}) -> no local match among {} results",
-                               hm.title, hm.type, results.size());
+            brls::Logger::info("SyncLounge match: host \"{}\" ({}) show=\"{}\" -> no local match",
+                               hm.title, hm.type, hm.grandparentTitle);
         else
             brls::Logger::info("SyncLounge match: host \"{}\" ({}) -> local ratingKey={} \"{}\" (exact={})",
                                hm.title, hm.type, best.ratingKey, best.title, best.exact);

@@ -91,8 +91,9 @@ public:
         std::string title;
         int         year = 0;
         std::string grandparentTitle; // show (episodes)
-        int         parentIndex = 0;  // season number
-        int         index = 0;        // episode number
+        std::string parentTitle;      // season name, e.g. "Season 1" (episodes)
+        int         parentIndex = 0;  // season number (host usually omits)
+        int         index = 0;        // episode number (host usually omits)
         std::string machineIdentifier;// host server id (== ours => same server)
         std::string hostRatingKey;    // host server ratingKey (exact when same server)
         std::string raw;              // raw media JSON (debug)
