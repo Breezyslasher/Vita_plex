@@ -61,6 +61,18 @@ public:
     void reportUserAction(const std::string& state, double timeMs,
                           double durationMs, double playbackRate);
 
+    // Tell the session what we're locally playing so our outbound mediaUpdates
+    // carry a real `media` object (title/type/ratingKey/our machineIdentifier)
+    // instead of null — otherwise the server/party shows us as "Nothing".
+    void setLocalMedia(const std::string& title, const std::string& type,
+                       const std::string& ratingKey);
+    void clearLocalMedia();
+
+    // Announce our current media to the room WITHOUT claiming host
+    // (userInitiated=false). Call once playback is established so the party
+    // sees what we're playing even before any pause/play.
+    void announceLocalMedia(const std::string& state, double timeMs, double durationMs);
+
     // Latest host state, mirrored from playerStateUpdate / mediaUpdate. Time
     // and duration are milliseconds (Plex / SyncLounge convention).
     struct RemoteState {
@@ -114,6 +126,10 @@ private:
     // Invoked by the client on its worker thread for each inbound event.
     void onEvent(const std::string& name, const std::string& payload);
 
+    // Build + emit a mediaUpdate carrying our current local media (or null).
+    void emitMediaUpdate(const std::string& state, double timeMs,
+                         double durationMs, double playbackRate, bool userInitiated);
+
     // Kick a background search of our library for the host's media, storing
     // the result in m_match. Debounced by m_resolveKey so the same media isn't
     // re-resolved repeatedly. Runs on its own thread (PlexClient::search is
@@ -134,6 +150,12 @@ private:
     std::string                           m_hostId;       // current room host id
     std::string                           m_lastSentState;
     std::chrono::steady_clock::time_point m_lastSentAt{};
+
+    // What we're locally playing, for outbound mediaUpdates.
+    std::string                           m_localTitle;
+    std::string                           m_localType;
+    std::string                           m_localRatingKey;
+    std::string                           m_localMachineId;
 };
 
 } // namespace vitaplex
