@@ -1207,9 +1207,10 @@ void PlayerActivity::loadMedia() {
         }
 
         // SyncLounge: report what we're playing so our outbound mediaUpdates
-        // carry real media (server/party show the title, not "Nothing"); and
-        // re-arm the announce-once for this item.
-        SyncLoungeSession::instance().setLocalMedia(item.title, item.type, m_mediaKey);
+        // carry real media (server/party show the title, with show+season for
+        // episodes); and re-arm the announce-once for this item.
+        SyncLoungeSession::instance().setLocalMedia(item.title, item.type, m_mediaKey,
+                                                    item.grandparentTitle, item.parentTitle);
         m_syncLoungeAnnounced = false;
 
         // Handle photos differently - display image instead of playing
@@ -1522,14 +1523,45 @@ void PlayerActivity::updateProgress() {
     }
 
     // ── SyncLounge: watch-party sync ──────────────────────────────────────
-    // When connected to a room: if we're the host, broadcast our transport
-    // state so the party follows us; otherwise mirror the host's state onto
-    // the local player. Same-content is assumed — cross-server media matching
-    // is a later step — so this only touches play / pause / seek, never which
-    // item is loaded.
+    // When connected to a room: if we're host, broadcast our transport state
+    // and announce our media so the party follows us; otherwise switch to the
+    // host's matched content (if different), announce ours, and mirror the
+    // host's play/pause/seek.
     if (duration > 0 && SyncLoungeSession::instance().isConnected()) {
         SyncLoungeSession& sl = SyncLoungeSession::instance();
         const bool localSane = position >= 0.0 && position <= duration + 30.0;
+
+        // Follower content-switch FIRST: if the host is on different media than
+        // we are, switch to the matched local item BEFORE announcing — so
+        // opening content that differs from the host doesn't briefly announce /
+        // claim the wrong item. Exact match + fresh host + remote Plex only;
+        // loadMedia() then opens it at the host's position (see #1 above).
+        if (!sl.isHost()) {
+            auto mr  = sl.match();
+            auto rsm = sl.remoteState();
+            bool remoteFresh = rsm.valid &&
+                std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::steady_clock::now() - rsm.at).count() < 60;
+            if (mr.resolved && mr.exact && !mr.ratingKey.empty() && remoteFresh &&
+                mr.ratingKey != m_mediaKey && mr.ratingKey != m_syncLoungeContentKey &&
+                !m_loadingMedia && !m_isQueueMode && !m_isLocalFile && !m_isDirectFile) {
+                brls::Logger::info("SyncLounge: switching to host content ratingKey={} \"{}\"",
+                                   mr.ratingKey, mr.title);
+                m_syncLoungeContentKey = mr.ratingKey;
+                m_syncLoungeClaimHostOnAnnounce = false;  // following — don't steal host
+                MpvPlayer::getInstance().stop();
+                m_mediaKey       = mr.ratingKey;
+                m_endHandled     = false;
+                m_introSkipped   = false;
+                m_creditsSkipped = false;
+                m_markers.clear();
+                m_activeMarkerType.clear();
+                m_skipButtonVisible = false;
+                if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
+                loadMedia();   // re-fetches by m_mediaKey, opens at host position
+                return;        // new content loading — skip the rest of this tick
+            }
+        }
 
         // Announce our media once per loaded item so the party/server shows
         // the right title even before any pause/play. Claims host only for a
@@ -1560,37 +1592,6 @@ void PlayerActivity::updateProgress() {
                 }
             }
         } else {
-            // Content match: if the host is on different media than we are,
-            // switch to the matched local item. Only for a confident (exact)
-            // match and a fresh host, on remote Plex playback — loadMedia()
-            // then opens it at the host's position (see the #1 block above).
-            auto mr  = sl.match();
-            auto rsm = sl.remoteState();
-            bool remoteFresh = rsm.valid &&
-                std::chrono::duration_cast<std::chrono::seconds>(
-                    std::chrono::steady_clock::now() - rsm.at).count() < 60;
-            if (mr.resolved && mr.exact && !mr.ratingKey.empty() && remoteFresh &&
-                mr.ratingKey != m_mediaKey && mr.ratingKey != m_syncLoungeContentKey &&
-                !m_loadingMedia && !m_isQueueMode && !m_isLocalFile && !m_isDirectFile) {
-                brls::Logger::info("SyncLounge: switching to host content ratingKey={} \"{}\"",
-                                   mr.ratingKey, mr.title);
-                m_syncLoungeContentKey = mr.ratingKey;
-                // We're switching to FOLLOW the host — announcing this content
-                // must not steal host back from them.
-                m_syncLoungeClaimHostOnAnnounce = false;
-                MpvPlayer::getInstance().stop();
-                m_mediaKey       = mr.ratingKey;
-                m_endHandled     = false;
-                m_introSkipped   = false;
-                m_creditsSkipped = false;
-                m_markers.clear();
-                m_activeMarkerType.clear();
-                m_skipButtonVisible = false;
-                if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
-                loadMedia();   // re-fetches by m_mediaKey, opens at host position
-                return;        // new content loading — skip the rest of this tick
-            }
-
             auto rs = sl.remoteState();
             // Ignore a transient bogus local position (e.g. mid HLS-seek
             // restart), which would otherwise feed a runaway correction.

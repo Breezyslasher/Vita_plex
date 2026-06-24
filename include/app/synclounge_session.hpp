@@ -54,10 +54,13 @@ public:
                           double durationMs, double playbackRate);
 
     // Tell the session what we're locally playing so our outbound mediaUpdates
-    // carry a real `media` object (title/type/ratingKey/our machineIdentifier)
-    // instead of null — otherwise the server/party shows us as "Nothing".
+    // carry a real `media` object (title/type/ratingKey/our machineIdentifier,
+    // plus show/season for episodes) instead of null — otherwise the
+    // server/party shows us as "Nothing" (or "undefined - <episode>").
     void setLocalMedia(const std::string& title, const std::string& type,
-                       const std::string& ratingKey);
+                       const std::string& ratingKey,
+                       const std::string& grandparentTitle = "",
+                       const std::string& parentTitle = "");
     void clearLocalMedia();
 
     // Announce our current media + transport state to the room as a
@@ -152,6 +155,8 @@ private:
     std::string                           m_localType;
     std::string                           m_localRatingKey;
     std::string                           m_localMachineId;
+    std::string                           m_localGrandparentTitle;  // show (episodes)
+    std::string                           m_localParentTitle;       // season (episodes)
 };
 
 } // namespace vitaplex

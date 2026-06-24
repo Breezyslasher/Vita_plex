@@ -488,9 +488,15 @@ void SyncLoungeSession::emitMediaUpdate(const std::string& state, double timeMs,
         client = m_client;
         if (!m_localRatingKey.empty()) {
             media = "{\"title\":\"" + jsonEscape(m_localTitle) +
-                    "\",\"type\":\"" + jsonEscape(m_localType) +
-                    "\",\"ratingKey\":\"" + jsonEscape(m_localRatingKey) +
-                    "\",\"machineIdentifier\":\"" + jsonEscape(m_localMachineId) + "\"}";
+                    "\",\"type\":\"" + jsonEscape(m_localType) + "\"";
+            // Episodes: include show + season so the server renders
+            // "Show - Episode" instead of "undefined - Episode".
+            if (!m_localGrandparentTitle.empty())
+                media += ",\"grandparentTitle\":\"" + jsonEscape(m_localGrandparentTitle) + "\"";
+            if (!m_localParentTitle.empty())
+                media += ",\"parentTitle\":\"" + jsonEscape(m_localParentTitle) + "\"";
+            media += ",\"ratingKey\":\"" + jsonEscape(m_localRatingKey) +
+                     "\",\"machineIdentifier\":\"" + jsonEscape(m_localMachineId) + "\"}";
         }
         // Count this as our latest broadcast so the periodic playerStateUpdate
         // throttle doesn't immediately duplicate it.
@@ -512,13 +518,17 @@ void SyncLoungeSession::emitMediaUpdate(const std::string& state, double timeMs,
 }
 
 void SyncLoungeSession::setLocalMedia(const std::string& title, const std::string& type,
-                                      const std::string& ratingKey) {
+                                      const std::string& ratingKey,
+                                      const std::string& grandparentTitle,
+                                      const std::string& parentTitle) {
     const std::string machineId = PlexClient::getInstance().getMachineIdentifier();
     std::lock_guard<std::mutex> lk(m_mtx);
-    m_localTitle     = title;
-    m_localType      = type;
-    m_localRatingKey = ratingKey;
-    m_localMachineId = machineId;
+    m_localTitle            = title;
+    m_localType             = type;
+    m_localRatingKey        = ratingKey;
+    m_localMachineId        = machineId;
+    m_localGrandparentTitle = grandparentTitle;
+    m_localParentTitle      = parentTitle;
 }
 
 void SyncLoungeSession::clearLocalMedia() {
@@ -527,6 +537,8 @@ void SyncLoungeSession::clearLocalMedia() {
     m_localType.clear();
     m_localRatingKey.clear();
     m_localMachineId.clear();
+    m_localGrandparentTitle.clear();
+    m_localParentTitle.clear();
 }
 
 }  // namespace vitaplex
