@@ -1053,28 +1053,10 @@ brls::Box* SettingsTab::createNetworkSection() {
         });
     box->addView(partyPauseCell);
 
-    // Auto Host: when on, starting new media here as a non-host claims host so
-    // the party follows us (SyncLounge "auto host"). Off by default — the device
-    // just follows the room. Purely local, so unlike Party Pause it doesn't need
-    // an active connection to toggle.
-    auto* autoHostCell = new brls::BooleanCell();
-    autoHostCell->init("Auto Host", settings.syncLoungeAutoHost,
-        [](bool value) {
-            Application& app = Application::getInstance();
-            app.getSettings().syncLoungeAutoHost = value;
-            app.saveSettings();
-            SyncLoungeSession::instance().setAutoHost(value);
-            brls::Application::notify(value
-                ? "Auto host on — playing new media here takes over the party"
-                : "Auto host off — this device just follows the room");
-        });
-    box->addView(autoHostCell);
-
     // Room Auto Host: the server-wide switch (host-only). When on, the server
-    // promotes ANY non-host who starts new media to host. Mirrors Party Pause —
+    // promotes ANY non-host who starts a new video to host. Mirrors Party Pause —
     // only the current host can change it; the server disconnects a non-host
-    // sender, so we gate to isHost() and otherwise notify. This is what makes
-    // the per-device "Auto Host" above actually take effect for non-hosts.
+    // sender, so we gate to isHost() and otherwise notify.
     auto* roomAutoHostCell = new brls::BooleanCell();
     roomAutoHostCell->init("Room Auto Host", SyncLoungeSession::instance().isRoomAutoHostEnabled(),
         [](bool value) {
@@ -2232,7 +2214,6 @@ void SettingsTab::onSyncLoungeConnect() {
             app.saveSettings();
 
             SyncLoungeSession::instance().connect(server, room, app.getUsername(), nullptr);
-            SyncLoungeSession::instance().setAutoHost(app.getSettings().syncLoungeAutoHost);
             if (m_syncLoungeSyncCell)
                 m_syncLoungeSyncCell->setDetailText("Connected: " + room);
             brls::Application::notify("SyncLounge: connecting to \"" + room + "\"");
