@@ -1535,6 +1535,34 @@ void PlayerActivity::updateProgress() {
                 }
             }
         } else {
+            // Content match: if the host is on different media than we are,
+            // switch to the matched local item. Only for a confident (exact)
+            // match and a fresh host, on remote Plex playback — loadMedia()
+            // then opens it at the host's position (see the #1 block above).
+            auto mr  = sl.match();
+            auto rsm = sl.remoteState();
+            bool remoteFresh = rsm.valid &&
+                std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::steady_clock::now() - rsm.at).count() < 60;
+            if (mr.resolved && mr.exact && !mr.ratingKey.empty() && remoteFresh &&
+                mr.ratingKey != m_mediaKey && mr.ratingKey != m_syncLoungeContentKey &&
+                !m_loadingMedia && !m_isQueueMode && !m_isLocalFile && !m_isDirectFile) {
+                brls::Logger::info("SyncLounge: switching to host content ratingKey={} \"{}\"",
+                                   mr.ratingKey, mr.title);
+                m_syncLoungeContentKey = mr.ratingKey;
+                MpvPlayer::getInstance().stop();
+                m_mediaKey       = mr.ratingKey;
+                m_endHandled     = false;
+                m_introSkipped   = false;
+                m_creditsSkipped = false;
+                m_markers.clear();
+                m_activeMarkerType.clear();
+                m_skipButtonVisible = false;
+                if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
+                loadMedia();   // re-fetches by m_mediaKey, opens at host position
+                return;        // new content loading — skip the rest of this tick
+            }
+
             auto rs = sl.remoteState();
             // Ignore a transient bogus local position (e.g. mid HLS-seek
             // restart), which would otherwise feed a runaway correction.

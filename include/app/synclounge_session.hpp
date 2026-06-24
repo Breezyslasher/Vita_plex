@@ -86,15 +86,20 @@ public:
         std::string grandparentTitle; // show (episodes)
         int         parentIndex = 0;  // season number
         int         index = 0;        // episode number
+        std::string machineIdentifier;// host server id (== ours => same server)
+        std::string hostRatingKey;    // host server ratingKey (exact when same server)
         std::string raw;              // raw media JSON (debug)
     };
     HostMedia hostMedia() const;
 
     // Result of resolving the host's media against our local library. ratingKey
-    // is empty when no confident match was found. `forTitle` records which host
-    // title this result is for, so a stale match isn't applied to new media.
+    // is empty when no confident match was found. `exact` marks a high-
+    // confidence match (same Plex server, or an exact title+type match) that's
+    // safe to auto-switch the player to. `forTitle` records which host title
+    // this is for, so a stale match isn't applied to new media.
     struct MatchResult {
         bool        resolved = false;
+        bool        exact    = false;
         std::string ratingKey;
         std::string title;
         std::string forTitle;
