@@ -42,6 +42,17 @@ public:
     bool        isConnected() const;
     std::string room() const;
 
+    // True once we've joined and the room's host is us (our socket id equals
+    // the host id). Tracked from joinResult + newHost events.
+    bool isHost() const;
+
+    // Broadcast our local player state to the room (only meaningful when we're
+    // host — the server relays playerStateUpdate to the other members). Called
+    // each second from the player loop; throttled internally to emit on state
+    // change and at most every few seconds otherwise. time/duration are ms.
+    void reportLocalState(const std::string& state, double timeMs,
+                          double durationMs, double playbackRate);
+
     // Latest host state, mirrored from playerStateUpdate / mediaUpdate. Time
     // and duration are milliseconds (Plex / SyncLounge convention).
     struct RemoteState {
@@ -69,6 +80,12 @@ private:
     std::string                       m_server;
     std::string                       m_room;
     RemoteState                       m_remote;
+
+    // Host tracking + outbound throttle (all guarded by m_mtx).
+    std::string                           m_selfId;       // our socket id (from joinResult)
+    std::string                           m_hostId;       // current room host id
+    std::string                           m_lastSentState;
+    std::chrono::steady_clock::time_point m_lastSentAt{};
 };
 
 } // namespace vitaplex

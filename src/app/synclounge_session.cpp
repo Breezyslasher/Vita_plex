@@ -8,6 +8,7 @@
 
 #include <cctype>
 #include <chrono>
+#include <cstdio>
 #include <string>
 
 namespace vitaplex {
@@ -47,6 +48,28 @@ double jsonDouble(const std::string& json, const std::string& key) {
     if (p == start) return 0.0;
     try { return std::stod(json.substr(start, p - start)); }
     catch (...) { return 0.0; }
+}
+
+// The n-th (1-based) double-quoted token, escapes unwrapped. For an event
+// array `["newHost","<id>"]`, token 2 is the host id.
+std::string nthQuoted(const std::string& s, int n) {
+    int count = 0;
+    size_t i = 0;
+    while (i < s.size()) {
+        if (s[i] == '"') {
+            size_t j = i + 1;
+            std::string out;
+            while (j < s.size() && s[j] != '"') {
+                if (s[j] == '\\' && j + 1 < s.size()) { out += s[j + 1]; j += 2; }
+                else { out += s[j]; j++; }
+            }
+            if (++count == n) return out;
+            i = j + 1;
+        } else {
+            i++;
+        }
+    }
+    return "";
 }
 
 }  // namespace
@@ -137,7 +160,56 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
         }
         brls::Logger::debug("SyncLounge: host {} state={} time={}ms",
                             name, rs.state, (long)rs.timeMs);
+    } else if (name == "joinResult") {
+        // payload: ["joinResult",{...,"hostId":"H","user":{"id":"SELF",...},...}]
+        // The first "id" key belongs to the user object (our socket id).
+        const std::string self = jsonStr(payload, "id");
+        const std::string host = jsonStr(payload, "hostId");
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            if (!self.empty()) m_selfId = self;
+            if (!host.empty()) m_hostId = host;
+        }
+        brls::Logger::info("SyncLounge: joined self={} host={} isHost={}",
+                           self, host, (!self.empty() && self == host));
+    } else if (name == "newHost") {
+        // payload: ["newHost","<hostId>"]
+        const std::string host = nthQuoted(payload, 2);
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            if (!host.empty()) m_hostId = host;
+        }
+        brls::Logger::info("SyncLounge: newHost={}", host);
     }
+}
+
+bool SyncLoungeSession::isHost() const {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    return !m_selfId.empty() && m_selfId == m_hostId;
+}
+
+void SyncLoungeSession::reportLocalState(const std::string& state, double timeMs,
+                                         double durationMs, double playbackRate) {
+    std::shared_ptr<SyncLoungeClient> client;
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        if (!m_client) return;
+        // Throttle: emit immediately on a state change, otherwise at most once
+        // every few seconds, so steady playback doesn't flood the POST channel.
+        const auto now = std::chrono::steady_clock::now();
+        const bool changed = (state != m_lastSentState);
+        const bool due     = (now - m_lastSentAt) >= std::chrono::seconds(3);
+        if (!changed && !due) return;
+        m_lastSentState = state;
+        m_lastSentAt    = now;
+        client          = m_client;
+    }
+
+    char buf[256];
+    std::snprintf(buf, sizeof(buf),
+                  "{\"state\":\"%s\",\"time\":%.0f,\"duration\":%.0f,\"playbackRate\":%.3f}",
+                  state.c_str(), timeMs, durationMs, playbackRate);
+    client->emitEvent("playerStateUpdate", buf);
 }
 
 }  // namespace vitaplex
