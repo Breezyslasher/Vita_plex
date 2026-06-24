@@ -83,6 +83,10 @@ private:
     void requestTranscodeSeek(double absMs);   // arm/refresh the debounce
     void commitTranscodeSeek();                 // fired by m_seekCommitTimer
     void showSeekPreview(double absMs, double totalMs);
+    // Authoritative full media length in ms: Plex's item.duration when known
+    // (stable across transcode restarts), else baseOffset + mpv duration. Used
+    // as the seek-bar scale and the clamp bound so seeks can't run past the end.
+    double knownDurationMs() const;
 
     // SyncLounge: announce a manual play/pause/seek (state + absolute ms) so
     // the watch party follows, claiming host under auto-host. No-op when not
@@ -231,6 +235,7 @@ private:
     bool m_loadingMedia = false;   // Flag to prevent rapid re-entry of loadMedia
     double m_pendingSeek = 0.0;    // Pending seek position (set when resuming)
     int m_transcodeBaseOffsetMs = 0;  // Base offset (ms) used to start current transcode
+    int m_mediaDurationMs = 0;        // Full media length (ms) from Plex metadata; 0 = unknown
     bool m_updatingSlider = false;  // Guard to prevent slider update from triggering seek
     brls::RepeatingTimer m_updateTimer;
     // Debounce for transcode seeks: each skip/scrub rewinds it, and its end

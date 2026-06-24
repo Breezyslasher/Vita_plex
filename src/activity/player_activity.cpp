@@ -219,17 +219,17 @@ void PlayerActivity::onContentAvailable() {
             }
             if (duration <= 0)
                 duration = player.getDuration();
-            // Slider represents full video duration (including resume offset).
-            double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
-            double absDuration = baseOffsetSec + duration;
             // Direct play / local / music seek locally & instantly (mpv has the
             // data). A transcoded video routes through the debounced, transcode-
             // aware path so a big scrub restarts the transcode at the target
-            // instead of stalling mpv on un-transcoded segments.
+            // instead of stalling mpv on un-transcoded segments. The slider maps
+            // [0,1] onto the real media length so it can't scrub past the end.
             if (m_isLocalFile || m_isDirectFile || m_isQueueMode) {
+                double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
+                double absDuration = baseOffsetSec + duration;
                 player.seekTo(std::max(0.0, absDuration * progress - baseOffsetSec));
             } else {
-                requestTranscodeSeek(absDuration * progress * 1000.0);
+                requestTranscodeSeek(progress * knownDurationMs());
             }
         });
     }
@@ -1042,9 +1042,12 @@ void PlayerActivity::loadMedia() {
     }
     m_loadingMedia = true;
 
-    // A content switch supersedes any pending debounced seek from the old item.
+    // A content switch supersedes any pending debounced seek from the old item;
+    // clear the cached duration so a stale value can't bleed into the next item
+    // (the video path re-sets it from Plex metadata below).
     m_seekCommitTimer.stop();
     m_seekTargetMs = -1.0;
+    m_mediaDurationMs = 0;
 
     // Handle direct file playback (debug/testing)
     if (m_isDirectFile) {
@@ -1339,6 +1342,10 @@ void PlayerActivity::loadMedia() {
             }
         }
         m_transcodeBaseOffsetMs = resumeOffset;
+        // Remember Plex's authoritative full length so the seek bar and seek
+        // clamps don't rely on mpv's duration, which reads stale right after a
+        // transcode reload and used to let the bar/offset run past the end.
+        m_mediaDurationMs = (item.duration > 0) ? (int)item.duration : 0;
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, resumeOffset)) {
             // Pause image loading and free cache memory before initializing MPV.
@@ -1505,9 +1512,13 @@ void PlayerActivity::updateProgress() {
         // for correct UI display.
         double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
         double absPosition = baseOffsetSec + position;
-        double absDuration = baseOffsetSec + duration;
+        // Prefer Plex's authoritative length; baseOffset + mpv duration reads
+        // stale right after a transcode reload and would inflate the bar.
+        double absDuration = (m_mediaDurationMs > 0) ? (m_mediaDurationMs / 1000.0)
+                                                     : (baseOffsetSec + duration);
+        if (absDuration > 0.0 && absPosition > absDuration) absPosition = absDuration;
 
-        if (progressSlider) {
+        if (progressSlider && absDuration > 0.0) {
             m_updatingSlider = true;
             progressSlider->setProgress((float)(absPosition / absDuration));
             m_updatingSlider = false;
@@ -1521,7 +1532,7 @@ void PlayerActivity::updateProgress() {
             int posMin = (posTotal % 3600) / 60;
             int posSec = posTotal % 60;
 
-            int remaining = std::max(0, (int)(duration - position));
+            int remaining = std::max(0, (int)(absDuration - absPosition));
             int remHr  = remaining / 3600;
             int remMin = (remaining % 3600) / 60;
             int remSec = remaining % 60;
@@ -2564,10 +2575,16 @@ void PlayerActivity::seek(int seconds) {
     requestTranscodeSeek(base + seconds * 1000.0);
 }
 
+double PlayerActivity::knownDurationMs() const {
+    if (m_mediaDurationMs > 0) return (double)m_mediaDurationMs;
+    double d = MpvPlayer::getInstance().getDuration();
+    return d > 0.0 ? (m_transcodeBaseOffsetMs + d * 1000.0) : 0.0;
+}
+
 void PlayerActivity::requestTranscodeSeek(double absMs) {
-    MpvPlayer& player = MpvPlayer::getInstance();
-    double durSec  = player.getDuration();
-    double totalMs = durSec > 0.0 ? (m_transcodeBaseOffsetMs + durSec * 1000.0) : 0.0;
+    // Clamp to the real media length so a stale mpv duration (right after a
+    // reload) can't push the target past the end.
+    double totalMs = knownDurationMs();
     if (absMs < 0.0) absMs = 0.0;
     if (totalMs > 0.0 && absMs > totalMs) absMs = totalMs;
     m_seekTargetMs = absMs;
@@ -2607,7 +2624,13 @@ void PlayerActivity::commitTranscodeSeek() {
         // Tell Plex to re-transcode from the target instead of making mpv crawl
         // across un-transcoded HLS. Mirrors the audio/subtitle reload path.
         PlexClient& client = PlexClient::getInstance();
-        const int offsetMs = (int)target;
+        // Never restart at/after the very end — leave a few seconds so Plex has
+        // something to transcode and can actually honor the offset.
+        const double total = knownDurationMs();
+        int offsetMs = (int)target;
+        if (total > 5000.0 && offsetMs > (int)total - 5000)
+            offsetMs = (int)total - 5000;
+        if (offsetMs < 0) offsetMs = 0;
         client.stopTranscode();
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, offsetMs)) {
