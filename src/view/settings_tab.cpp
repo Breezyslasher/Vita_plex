@@ -1046,6 +1046,26 @@ brls::Box* SettingsTab::createNetworkSection() {
     });
     box->addView(m_syncLoungeSyncCell);
 
+    // Party Pause: when on, ANY member can pause/resume the whole party. Only
+    // the room host can change this (the server gates it), so toggling here is
+    // effective only while connected as host; otherwise it's a no-op.
+    auto* partyPauseCell = new brls::BooleanCell();
+    partyPauseCell->init("Party Pause", SyncLoungeSession::instance().isPartyPauseEnabled(),
+        [](bool value) {
+            auto& sl = SyncLoungeSession::instance();
+            if (!sl.isConnected()) {
+                brls::Application::notify("Connect to SyncLounge first");
+                return;
+            }
+            if (!sl.isHost()) {
+                brls::Application::notify("Only the host can change party pause");
+                return;
+            }
+            sl.setPartyPauseEnabled(value);
+            brls::Application::notify(value ? "Party pause enabled" : "Party pause disabled");
+        });
+    box->addView(partyPauseCell);
+
     auto* infoLabel = new brls::Label();
     infoLabel->setText("Raise the timeout if you're on a slow or unstable link.");
     infoLabel->setFontSize(14);

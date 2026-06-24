@@ -243,6 +243,9 @@ private:
     // user-initiated new video; set false when we auto-load to follow the
     // host, so following never steals host). Default true = user opened it.
     bool m_syncLoungeClaimHostOnAnnounce = true;
+    // Last SyncLounge party-pause action sequence we applied, so each inbound
+    // partyPause pauses/resumes the local player exactly once.
+    int m_lastPartyPauseSeq = 0;
 
     // Diagnostic overlay panel — created lazily on first
     // updateMpvStatsOverlay() call when AppSettings::showMpvStats is on.

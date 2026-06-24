@@ -1544,6 +1544,17 @@ void PlayerActivity::updateProgress() {
         SyncLoungeSession& sl = SyncLoungeSession::instance();
         const bool localSane = position >= 0.0 && position <= duration + 30.0;
 
+        // Party pause: when enabled, ANY member can pause/resume the whole
+        // party. Apply the latest action once (independent of host/follower).
+        {
+            auto pp = sl.partyPauseState();
+            if (pp.seq != m_lastPartyPauseSeq) {
+                m_lastPartyPauseSeq = pp.seq;
+                if (pp.isPause && player.isPlaying())      player.pause();
+                else if (!pp.isPause && player.isPaused()) player.play();
+            }
+        }
+
         // Follower content-switch FIRST: if the host is on different media than
         // we are, switch to the matched local item BEFORE announcing — so
         // opening content that differs from the host doesn't briefly announce /
@@ -1865,6 +1876,13 @@ void PlayerActivity::togglePlayPause() {
     // under auto-host, claim host so the party follows the Vita).
     double absMs = m_transcodeBaseOffsetMs + player.getPosition() * 1000.0;
     syncLoungeReportUserAction(m_isPlaying ? "playing" : "paused", absMs);
+
+    // When party-pausing is enabled, a manual pause/resume drives the whole
+    // party (any member can). Gated inside sendPartyPause (only sent when
+    // enabled — the server disconnects an unsolicited sender).
+    SyncLoungeSession& slpp = SyncLoungeSession::instance();
+    if (slpp.isConnected() && slpp.isPartyPauseEnabled())
+        slpp.sendPartyPause(!m_isPlaying);
 }
 
 void PlayerActivity::syncLoungeReportUserAction(const std::string& state, double absTimeMs) {

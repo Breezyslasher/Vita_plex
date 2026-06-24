@@ -75,6 +75,24 @@ std::string extractJsonObject(const std::string& json, const std::string& key) {
     return "";
 }
 
+// Value of a `"key":true/false` pair. False if absent.
+bool jsonBool(const std::string& json, const std::string& key) {
+    const std::string needle = "\"" + key + "\"";
+    size_t k = json.find(needle);
+    if (k == std::string::npos) return false;
+    size_t colon = json.find(':', k + needle.size());
+    if (colon == std::string::npos) return false;
+    size_t p = colon + 1;
+    while (p < json.size() && (json[p] == ' ' || json[p] == '\t')) p++;
+    return p < json.size() && json[p] == 't';
+}
+
+// A bare-bool event array — `["name",true]` / `["name",false]`. Our bare-bool
+// event names contain no "true", so a plain scan is unambiguous.
+bool barePayloadTrue(const std::string& payload) {
+    return payload.find("true") != std::string::npos;
+}
+
 std::string jsonEscape(const std::string& s) {
     std::string o;
     o.reserve(s.size() + 2);
@@ -255,6 +273,9 @@ void SyncLoungeSession::connect(const std::string& server, const std::string& ro
         m_selfId.clear();
         m_hostId.clear();
         m_lastSentState.clear();
+        m_lastPromptKey.clear();
+        m_partyPauseEnabled = false;
+        m_partyPaused       = false;
     }
     if (old) old->stop();
 
@@ -289,6 +310,9 @@ void SyncLoungeSession::disconnect() {
         m_resolveKey.clear();
         m_selfId.clear();
         m_hostId.clear();
+        m_lastPromptKey.clear();
+        m_partyPauseEnabled = false;
+        m_partyPaused       = false;
     }
     if (old) old->stop();
 }
@@ -384,13 +408,15 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
         // The first "id" key belongs to the user object (our socket id).
         const std::string self = jsonStr(payload, "id");
         const std::string host = jsonStr(payload, "hostId");
+        const bool partyPausing = jsonBool(payload, "isPartyPausingEnabled");
         {
             std::lock_guard<std::mutex> lk(m_mtx);
             if (!self.empty()) m_selfId = self;
             if (!host.empty()) m_hostId = host;
+            m_partyPauseEnabled = partyPausing;
         }
-        brls::Logger::info("SyncLounge: joined self={} host={} isHost={}",
-                           self, host, (!self.empty() && self == host));
+        brls::Logger::info("SyncLounge: joined self={} host={} isHost={} partyPause={}",
+                           self, host, (!self.empty() && self == host), partyPausing);
     } else if (name == "newHost") {
         // payload: ["newHost","<hostId>"]
         const std::string host = nthQuoted(payload, 2);
@@ -399,12 +425,61 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
             if (!host.empty()) m_hostId = host;
         }
         brls::Logger::info("SyncLounge: newHost={}", host);
+    } else if (name == "setPartyPausingEnabled") {
+        // payload: ["setPartyPausingEnabled",true|false]
+        const bool enabled = barePayloadTrue(payload);
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            m_partyPauseEnabled = enabled;
+        }
+        brls::Logger::info("SyncLounge: partyPause {}", enabled ? "enabled" : "disabled");
+    } else if (name == "partyPause") {
+        // payload: ["partyPause",{"senderId":"...","isPause":true|false}]
+        const bool isPause = jsonBool(payload, "isPause");
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            m_partyPaused = isPause;
+            m_partyPauseSeq++;
+        }
+        brls::Logger::info("SyncLounge: partyPause -> {}", isPause ? "pause" : "play");
     }
 }
 
 bool SyncLoungeSession::isHost() const {
     std::lock_guard<std::mutex> lk(m_mtx);
     return !m_selfId.empty() && m_selfId == m_hostId;
+}
+
+bool SyncLoungeSession::isPartyPauseEnabled() const {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    return m_partyPauseEnabled;
+}
+
+SyncLoungeSession::PartyPause SyncLoungeSession::partyPauseState() const {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    return { m_partyPauseSeq, m_partyPaused };
+}
+
+void SyncLoungeSession::sendPartyPause(bool isPause) {
+    std::shared_ptr<SyncLoungeClient> client;
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        // The server disconnects a sender if party-pausing isn't enabled.
+        if (!m_client || !m_partyPauseEnabled) return;
+        client = m_client;
+    }
+    client->emitEvent("partyPause", isPause ? "true" : "false");
+}
+
+void SyncLoungeSession::setPartyPauseEnabled(bool enabled) {
+    std::shared_ptr<SyncLoungeClient> client;
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        // Server-gated to the host; sending as a non-host disconnects us.
+        if (!m_client || m_selfId.empty() || m_selfId != m_hostId) return;
+        client = m_client;
+    }
+    client->emitEvent("setPartyPausingEnabled", enabled ? "true" : "false");
 }
 
 SyncLoungeSession::HostMedia SyncLoungeSession::hostMedia() const {
