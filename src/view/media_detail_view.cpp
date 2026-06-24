@@ -4626,6 +4626,106 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     (*selectTab)(defaultTab == 0 ? 0 : 1);
 }
 
+void MediaDetailView::showCenteredChoice(const std::string& title,
+                                         const std::string& subtitle,
+                                         std::vector<OptionRow> rows) {
+    namespace pc = pickcol;
+
+    // Full-screen translucent scrim, centered panel — same shell as the
+    // audio/subtitle picker. Tap outside / Back dismisses.
+    auto* scrim = new brls::Box();
+    scrim->setAxis(brls::Axis::COLUMN);
+    scrim->setWidthPercentage(100.0f);
+    scrim->setHeightPercentage(100.0f);
+    scrim->setJustifyContent(brls::JustifyContent::CENTER);
+    scrim->setAlignItems(brls::AlignItems::CENTER);
+    scrim->setBackgroundColor(pc::scrim());
+    scrim->addGestureRecognizer(new brls::TapGestureRecognizer(scrim,
+        []() { brls::Application::popActivity(); }));
+
+    auto* panel = new brls::Box();
+    panel->setAxis(brls::Axis::COLUMN);
+    panel->setWidth(420.0f);
+    panel->setBackgroundColor(pc::dialogBg());
+    panel->setBorderColor(pc::line());
+    panel->setBorderThickness(1.0f);
+    panel->setCornerRadius(18.0f);
+    panel->setShadowType(brls::ShadowType::GENERIC);
+    panel->setPadding(22.0f, 22.0f, 16.0f, 22.0f);
+    // Swallow taps on the panel's dead space so they don't dismiss.
+    panel->addGestureRecognizer(new brls::TapGestureRecognizer(panel, []() {}));
+
+    auto* titleLbl = new brls::Label();
+    titleLbl->setText(title);
+    titleLbl->setFontSize(21.0f);
+    titleLbl->setTextColor(pc::text());
+    panel->addView(titleLbl);
+
+    if (!subtitle.empty()) {
+        auto* subLbl = new brls::Label();
+        subLbl->setText(subtitle);
+        subLbl->setFontSize(13.0f);
+        subLbl->setTextColor(pc::dim());
+        subLbl->setMarginTop(3.0f);
+        panel->addView(subLbl);
+    }
+
+    auto* hair = new brls::Box();
+    hair->setHeight(1.0f);
+    hair->setBackgroundColor(pc::line());
+    hair->setMarginTop(12.0f);
+    hair->setMarginBottom(12.0f);
+    panel->addView(hair);
+
+    for (auto& r : rows) {
+        const bool primary = r.primary;
+        auto* row = new brls::Box();
+        row->setAxis(brls::Axis::ROW);
+        row->setAlignItems(brls::AlignItems::CENTER);
+        row->setHeight(50.0f);
+        row->setCornerRadius(11.0f);
+        row->setPaddingLeft(14.0f);
+        row->setPaddingRight(14.0f);
+        row->setMarginBottom(8.0f);
+        row->setFocusable(true);
+        row->setHighlightCornerRadius(11.0f);
+        row->setBackgroundColor(primary ? pc::gold() : pc::surface());
+
+        if (!r.icon.empty()) {
+            auto* img = new brls::Image();
+            img->setWidth(22.0f);
+            img->setHeight(22.0f);
+            img->setScalingType(brls::ImageScalingType::FIT);
+            img->setMarginRight(12.0f);
+            img->setImageFromRes("icons/" + r.icon);
+            row->addView(img);
+        }
+
+        auto* lbl = new brls::Label();
+        lbl->setText(r.label);
+        lbl->setFontSize(16.0f);
+        lbl->setTextColor(primary ? pc::goldInk() : (r.danger ? pc::muted() : pc::text()));
+        lbl->setGrow(1.0f);
+        row->addView(lbl);
+
+        auto action = r.action;
+        row->registerClickAction([action](brls::View* v) {
+            // Dismiss the dialog FIRST so an action that pushes a new activity
+            // (e.g. opening the player) lands on a clean stack.
+            brls::Application::popActivity();
+            if (action) return action(v);
+            return true;
+        });
+        row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
+        panel->addView(row);
+    }
+
+    scrim->addView(panel);
+    scrim->registerAction("Back", brls::ControllerButton::BUTTON_B,
+        [](brls::View*) { brls::Application::popActivity(); return true; });
+    brls::Application::pushActivity(new PopoverActivity(scrim));
+}
+
 void MediaDetailView::showAudioPicker() {
     showStreamDialog(/*defaultTab=*/0);
 }

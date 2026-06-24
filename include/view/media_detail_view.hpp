@@ -92,6 +92,14 @@ public:
                                    const std::string& title,
                                    std::vector<OptionRow> rows);
 
+    // Centered translucent choice dialog styled like the audio/subtitle picker
+    // (dark panel, scrim, rounded rows). Each OptionRow becomes a row; clicking
+    // it dismisses the dialog then runs the row's action. Used for the
+    // SyncLounge auto-join prompt (and other party notices).
+    static void showCenteredChoice(const std::string& title,
+                                   const std::string& subtitle,
+                                   std::vector<OptionRow> rows);
+
     void performTrackAction(const MediaItem& track, size_t trackIndex);  // Handle track default action
     void showTrackActionDialog(const MediaItem& track, size_t trackIndex);  // Ask user what to do
 
