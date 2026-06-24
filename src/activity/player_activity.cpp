@@ -8,6 +8,7 @@
 #include "app/downloads_manager.hpp"
 #include "app/music_queue.hpp"
 #include "app/plex_palette.hpp"
+#include "app/synclounge_session.hpp"
 #include "player/mpv_player.hpp"
 #include "utils/async.hpp"
 #include "utils/image_loader.hpp"
@@ -1478,6 +1479,36 @@ void PlayerActivity::updateProgress() {
                              posMin, posSec, durMin, durSec);
                 }
                 timeLabel->setText(timeStr);
+            }
+        }
+    }
+
+    // ── SyncLounge: follow the watch party ────────────────────────────────
+    // When connected to a room, mirror the host's transport state onto the
+    // local player. Receive-only for now — we never claim host, so this only
+    // touches play / pause / seek, never which item is loaded. Same-content is
+    // assumed; cross-server media matching is a later step.
+    if (duration > 0 && SyncLoungeSession::instance().isConnected()) {
+        auto rs = SyncLoungeSession::instance().remoteState();
+        if (rs.valid && (rs.state == "playing" || rs.state == "paused")) {
+            const double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
+            const double localPosSec   = baseOffsetSec + position;
+            const double remotePosSec  = rs.timeMs / 1000.0;
+
+            // Match transport state.
+            if (rs.state == "paused" && player.isPlaying()) {
+                player.pause();
+            } else if (rs.state == "playing" && player.isPaused()) {
+                player.play();
+            }
+
+            // Correct large drift. SyncLounge's default syncFlexibility is 3s;
+            // stay at that threshold so the ~1s loop + network latency doesn't
+            // cause seek thrash.
+            double drift = localPosSec - remotePosSec;
+            if (drift < 0) drift = -drift;
+            if (drift > 3.0) {
+                player.seekTo(std::max(0.0, remotePosSec - baseOffsetSec));
             }
         }
     }

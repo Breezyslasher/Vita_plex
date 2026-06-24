@@ -90,6 +90,9 @@ private:
     // opens a debug dialog that joins the room over the Socket.IO long-poll
     // transport and live-streams every protocol step. See SyncLoungeClient.
     void onSyncLoungeTest();
+    // Connect / disconnect the persistent SyncLounge session that an active
+    // player follows (receive-only). See SyncLoungeSession.
+    void onSyncLoungeConnect();
     void onTestLocalPlayback();
     void onThemeChanged(int index);
     void onQualityChanged(int index);
@@ -167,6 +170,8 @@ private:
     // server-traffic settings in one place.
     brls::SelectorCell* m_cacheLifetimeSelector = nullptr;
     brls::DetailCell*   m_clearCacheCell        = nullptr;
+    // Persistent SyncLounge session connect/disconnect cell (shows status).
+    brls::DetailCell*   m_syncLoungeSyncCell    = nullptr;
 
     // Downloads section
     brls::BooleanCell* m_deleteAfterWatchToggle = nullptr;

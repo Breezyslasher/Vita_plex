@@ -139,8 +139,9 @@ std::string jsonEscape(const std::string& s) {
 // and log callback, so it is safe even if the SyncLoungeClient is destroyed
 // mid-run — `session->running` is the shared kill switch.
 void SyncLoungeClient::runWorker(std::shared_ptr<Session> session,
-                                 Config cfg,
-                                 LogFn  log) {
+                                 Config   cfg,
+                                 LogFn    log,
+                                 EventFn  eventCb) {
     auto alive = [&]() { return session->running.load(); };
     auto out   = [&](const std::string& s) {
         brls::Logger::info("SyncLounge: {}", s);
@@ -248,6 +249,9 @@ void SyncLoungeClient::runWorker(std::shared_ptr<Session> session,
                         sendPacket("42[\"slPong\",\"" + jsonEscape(secret) + "\"]", "slPong");
                     } else {
                         out("[event] " + name + "  " + rest.substr(0, 220));
+                        // Hand the parsed event to a higher-level consumer
+                        // (the session) for state-driven behaviour.
+                        if (eventCb) eventCb(name, rest);
                     }
                 } else if (st == '4') {  // CONNECT_ERROR
                     out("[sio] connect error " + rest);
@@ -327,12 +331,15 @@ void SyncLoungeClient::runWorker(std::shared_ptr<Session> session,
         session->sid = sid;
     }
 
-    // ── 4. Poll loop (bounded for the spike) ──────────────────────────────
+    // ── 4. Poll loop ──────────────────────────────────────────────────────
+    // Bounded when spikeSeconds > 0 (the connectivity spike caps itself);
+    // unbounded (run until stop()) for a persistent session.
+    const bool bounded  = cfg.spikeSeconds > 0;
     const auto deadline = std::chrono::steady_clock::now() +
-                          std::chrono::seconds(cfg.spikeSeconds > 0 ? cfg.spikeSeconds : 120);
+                          std::chrono::seconds(bounded ? cfg.spikeSeconds : 0);
     int consecutiveFails = 0;
     while (alive()) {
-        if (std::chrono::steady_clock::now() >= deadline) {
+        if (bounded && std::chrono::steady_clock::now() >= deadline) {
             out("[worker] spike time limit reached, stopping");
             break;
         }
@@ -361,12 +368,13 @@ void SyncLoungeClient::start(const Config& config, LogFn log) {
     auto session = std::make_shared<Session>();
     m_session = session;
 
-    Config cfg = config;
-    LogFn  cb  = std::move(log);
+    Config  cfg = config;
+    LogFn   cb  = std::move(log);
+    EventFn ev  = m_eventCb;
     // Larger stack: the mbedtls TLS handshake under HTTPS has a deep call
     // chain that overflows the default console thread stacks.
-    asyncRunLargeStack([session, cfg, cb]() {
-        SyncLoungeClient::runWorker(session, cfg, cb);
+    asyncRunLargeStack([session, cfg, cb, ev]() {
+        SyncLoungeClient::runWorker(session, cfg, cb, ev);
     });
 }
 
