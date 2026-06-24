@@ -23,6 +23,14 @@
  * freshly generated secret string; the client must echo that exact secret back
  * via `slPong` or the server disconnects it. We answer both that and the
  * transport-level 2/3 ping inline in the poll loop.
+ *
+ * Two HTTP channels, exactly like a browser XHR-polling client:
+ *   - the worker thread holds one long-poll GET open and POSTs its own
+ *     replies (pong / slPong / join) serially on a dedicated HttpClient;
+ *   - outbound app events (sendChatMessage, future player updates) go out on a
+ *     SEPARATE POST using a fresh HttpClient on a short background task, so a
+ *     send never has to wait for the in-flight poll to return. The server
+ *     flushes the held GET when the POST arrives — standard polling behaviour.
  */
 
 #include "app/synclounge_client.hpp"
@@ -31,10 +39,22 @@
 
 #include <borealis.hpp>
 
+#include <atomic>
 #include <chrono>
+#include <mutex>
+#include <string>
 #include <thread>
 
 namespace vitaplex {
+
+// Connection state shared between the poll worker and the send path.
+struct SyncLoungeClient::Session {
+    std::atomic<bool> running{true};
+    std::mutex        mtx;             // guards endpointPrefix + sid
+    std::string       endpointPrefix;  // "<base><path>", e.g. "https://host/socket.io/"
+    std::string       sid;             // empty until the handshake completes
+    std::atomic<long> sendTbust{1000000};  // send-channel cache-buster (distinct range)
+};
 
 namespace {
 
@@ -112,28 +132,35 @@ std::string jsonEscape(const std::string& s) {
     return o;
 }
 
+}  // namespace
+
 // The whole handshake -> connect -> join -> poll sequence. Runs on the worker
-// thread; touches nothing on the SyncLoungeClient instance (everything it
-// needs is passed by value), so it is safe even if the client is destroyed
-// mid-run — `running` is the shared kill switch.
-void runWorker(SyncLoungeClient::Config cfg,
-               SyncLoungeClient::LogFn  log,
-               std::shared_ptr<std::atomic<bool>> running) {
-    auto alive = [&]() { return running && running->load(); };
+// thread; everything it needs is in `session` (shared) + the by-value config
+// and log callback, so it is safe even if the SyncLoungeClient is destroyed
+// mid-run — `session->running` is the shared kill switch.
+void SyncLoungeClient::runWorker(std::shared_ptr<Session> session,
+                                 Config cfg,
+                                 LogFn  log) {
+    auto alive = [&]() { return session->running.load(); };
     auto out   = [&](const std::string& s) {
         brls::Logger::info("SyncLounge: {}", s);
         if (log) log(s);
     };
-    auto kill  = [&]() { if (running) running->store(false); };
+    auto kill  = [&]() { session->running.store(false); };
 
-    // Normalize the base URL + socket path.
+    // Normalize the base URL + socket path, then publish the prefix the send
+    // channel will reuse.
     std::string base = cfg.server;
     while (!base.empty() && base.back() == '/') base.pop_back();
     std::string path = cfg.socketPath.empty() ? std::string("/socket.io/") : cfg.socketPath;
     if (path.front() != '/') path = "/" + path;
     if (path.back()  != '/') path += "/";
+    {
+        std::lock_guard<std::mutex> lk(session->mtx);
+        session->endpointPrefix = base + path;
+    }
 
-    long tbust = 1;  // cache-buster, mirrors the JS client's &t= param
+    long tbust = 1;  // worker-channel cache-buster, mirrors the JS client's &t= param
     auto endpoint = [&](const std::string& sid) {
         std::string u = base + path + "?EIO=4&transport=polling&t=" + std::to_string(tbust++);
         if (!sid.empty()) u += "&sid=" + sid;
@@ -175,7 +202,7 @@ void runWorker(SyncLoungeClient::Config cfg,
             " pingTimeout="  + std::to_string(jsonNum(json, "pingTimeout")));
     }
 
-    // POST a single raw Engine.IO packet.
+    // POST a single raw Engine.IO packet on the worker channel.
     auto sendPacket = [&](const std::string& packet, const std::string& tag) -> bool {
         HttpResponse res = http.post(endpoint(sid), packet, "text/plain;charset=UTF-8");
         if (!res.success) {
@@ -293,6 +320,13 @@ void runWorker(SyncLoungeClient::Config cfg,
     out("[join] emit join room=\"" + cfg.room + "\" as \"" + cfg.username + "\"");
     if (!sendPacket(join, "join")) { kill(); return; }
 
+    // Publish the sid only now, so the outbound send channel can't fire an
+    // event before we've actually joined the room (the server would drop it).
+    {
+        std::lock_guard<std::mutex> lk(session->mtx);
+        session->sid = sid;
+    }
+
     // ── 4. Poll loop (bounded for the spike) ──────────────────────────────
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::seconds(cfg.spikeSeconds > 0 ? cfg.spikeSeconds : 120);
@@ -318,28 +352,56 @@ void runWorker(SyncLoungeClient::Config cfg,
     out("[worker] stopped");
 }
 
-}  // namespace
-
 SyncLoungeClient::~SyncLoungeClient() {
     stop();
 }
 
 void SyncLoungeClient::start(const Config& config, LogFn log) {
     if (running()) return;
-    m_running = std::make_shared<std::atomic<bool>>(true);
+    auto session = std::make_shared<Session>();
+    m_session = session;
 
-    Config cfg     = config;
-    LogFn  cb      = std::move(log);
-    auto   running = m_running;
+    Config cfg = config;
+    LogFn  cb  = std::move(log);
     // Larger stack: the mbedtls TLS handshake under HTTPS has a deep call
     // chain that overflows the default console thread stacks.
-    asyncRunLargeStack([cfg, cb, running]() {
-        runWorker(cfg, cb, running);
+    asyncRunLargeStack([session, cfg, cb]() {
+        SyncLoungeClient::runWorker(session, cfg, cb);
     });
 }
 
 void SyncLoungeClient::stop() {
-    if (m_running) m_running->store(false);
+    if (m_session) m_session->running.store(false);
+}
+
+bool SyncLoungeClient::running() const {
+    return m_session && m_session->running.load();
+}
+
+bool SyncLoungeClient::sendChatMessage(const std::string& text) {
+    return emitFrame("42[\"sendMessage\",\"" + jsonEscape(text) + "\"]");
+}
+
+bool SyncLoungeClient::emitFrame(const std::string& frame) {
+    auto session = m_session;
+    if (!session) return false;
+
+    std::string url;
+    {
+        std::lock_guard<std::mutex> lk(session->mtx);
+        if (session->sid.empty()) return false;  // not connected yet
+        url = session->endpointPrefix + "?EIO=4&transport=polling&t=" +
+              std::to_string(session->sendTbust++) + "&sid=" + session->sid;
+    }
+
+    // Fire-and-forget on a fresh handle so the held-open poll isn't disturbed.
+    std::string body = frame;
+    asyncRun([url, body]() {
+        HttpClient sender;
+        sender.setFollowRedirects(true);
+        sender.post(url, body, "text/plain;charset=UTF-8");
+    });
+    return true;
 }
 
 }  // namespace vitaplex

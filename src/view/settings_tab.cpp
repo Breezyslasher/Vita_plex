@@ -2159,9 +2159,28 @@ void SettingsTab::onSyncLoungeTest() {
                 std::shared_ptr<std::atomic<bool>> alive;
                 std::deque<brls::Label*> labels;
             };
-            auto sink   = std::make_shared<Sink>();
-            sink->alive = std::make_shared<std::atomic<bool>>(true);
-            auto client = std::make_shared<SyncLoungeClient>();
+            auto sink     = std::make_shared<Sink>();
+            sink->alive   = std::make_shared<std::atomic<bool>>(true);
+            auto client   = std::make_shared<SyncLoungeClient>();
+            auto msgCount = std::make_shared<int>(0);
+
+            // Append one line on the UI thread (newest on top, capped). Reads
+            // sink->logBox lazily, so it can be defined before the box exists.
+            auto appendLine = [sink](const std::string& line) {
+                if (!sink->alive->load() || !sink->logBox) return;
+                auto* lbl = new brls::Label();
+                lbl->setText(line);
+                lbl->setFontSize(13);
+                lbl->setTextColor(nvgRGB(0xC8, 0xC8, 0xCE));
+                lbl->setMarginBottom(2);
+                sink->logBox->addView(lbl, 0);
+                sink->labels.push_front(lbl);
+                while (sink->labels.size() > 200) {
+                    brls::Label* old = sink->labels.back();
+                    sink->labels.pop_back();
+                    sink->logBox->removeView(old, true);
+                }
+            };
 
             auto* content = new brls::Box();
             content->setAxis(brls::Axis::COLUMN);
@@ -2181,6 +2200,37 @@ void SettingsTab::onSyncLoungeTest() {
             subLabel->setTextColor(tok::muted());
             subLabel->setMarginBottom(12);
             content->addView(subLabel);
+
+            // Outbound proof: emit a `sendMessage`, which the server
+            // rebroadcasts as `newMessage` to every OTHER member of the room
+            // (the sender is excluded), so a second client confirms the round
+            // trip. The send rides its own POST channel — no waiting on the
+            // held-open poll.
+            auto* actionRow = new brls::Box();
+            actionRow->setAxis(brls::Axis::ROW);
+            actionRow->setJustifyContent(brls::JustifyContent::FLEX_START);
+            actionRow->setAlignItems(brls::AlignItems::CENTER);
+            actionRow->setMarginBottom(10);
+
+            auto* sendBtn = new brls::Button();
+            sendBtn->setText("Send test message");
+            sendBtn->setWidth(240);
+            sendBtn->setHeight(44);
+            sendBtn->registerClickAction([client, appendLine, msgCount](brls::View*) {
+                if (!client->running()) {
+                    appendLine("[me] not connected yet — try again in a moment");
+                    return true;
+                }
+                const std::string text =
+                    "Hello from VitaPlex (#" + std::to_string(++(*msgCount)) + ")";
+                if (client->sendChatMessage(text))
+                    appendLine("[me] sendMessage \"" + text + "\"");
+                else
+                    appendLine("[me] send failed (not connected)");
+                return true;
+            });
+            actionRow->addView(sendBtn);
+            content->addView(actionRow);
 
             auto* scroll = new brls::ScrollingFrame();
             scroll->setGrow(1.0f);
@@ -2202,23 +2252,6 @@ void SettingsTab::onSyncLoungeTest() {
                 sink->alive->store(false);
                 client->stop();
             });
-
-            // Append one line on the UI thread (newest on top, capped).
-            auto appendLine = [sink](const std::string& line) {
-                if (!sink->alive->load() || !sink->logBox) return;
-                auto* lbl = new brls::Label();
-                lbl->setText(line);
-                lbl->setFontSize(13);
-                lbl->setTextColor(nvgRGB(0xC8, 0xC8, 0xCE));
-                lbl->setMarginBottom(2);
-                sink->logBox->addView(lbl, 0);
-                sink->labels.push_front(lbl);
-                while (sink->labels.size() > 200) {
-                    brls::Label* old = sink->labels.back();
-                    sink->labels.pop_back();
-                    sink->logBox->removeView(old, true);
-                }
-            };
 
             dialog->open();
 
