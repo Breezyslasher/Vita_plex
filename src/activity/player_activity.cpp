@@ -207,6 +207,15 @@ void PlayerActivity::onContentAvailable() {
             // Skip if this is a programmatic update (not user interaction)
             if (m_updatingSlider) return;
             resetControlsIdleTimer();
+            // Watch party: only the host can scrub. Block a follower's drag (the
+            // 1s progress tick snaps the thumb back to the synced position).
+            {
+                auto& sl = SyncLoungeSession::instance();
+                if (sl.isConnected() && !sl.isHost()) {
+                    MpvPlayer::getInstance().showOSD("Only the host can seek", 1.5);
+                    return;
+                }
+            }
             // Seek to position
             MpvPlayer& player = MpvPlayer::getInstance();
             double duration = 0.0;
@@ -2601,6 +2610,17 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
 void PlayerActivity::seek(int seconds) {
     MpvPlayer& player = MpvPlayer::getInstance();
 
+    // In a watch party only the host drives playback — a follower's manual
+    // fast-forward/rewind would just desync and get pulled back to the host, so
+    // block it outright.
+    {
+        auto& sl = SyncLoungeSession::instance();
+        if (sl.isConnected() && !sl.isHost()) {
+            player.showOSD("Only the host can seek", 1.5);
+            return;
+        }
+    }
+
     // Direct play, local file, or music (mp3, not HLS): mpv has the data, so
     // seek locally and instantly — these never stall the way a forward seek on
     // an HLS transcode does.
@@ -4224,6 +4244,21 @@ void PlayerActivity::playFromQueue(int index) {
 // Controls visibility toggle (like Suwayomi reader settings show/hide)
 
 void PlayerActivity::updateSkipButton(double positionMs) {
+    // Watch party followers don't skip on their own — the host drives and the
+    // follower seeks to match. Suppress auto-skip and hide the manual skip
+    // button so a follower can't desync past the intro/credits independently.
+    {
+        auto& sl = SyncLoungeSession::instance();
+        if (sl.isConnected() && !sl.isHost()) {
+            if (m_skipButtonVisible || !m_activeMarkerType.empty()) {
+                m_skipButtonVisible = false;
+                m_activeMarkerType.clear();
+                if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
+            }
+            return;
+        }
+    }
+
     AppSettings& settings = Application::getInstance().getSettings();
 
     // Check if we're inside any marker region
@@ -4305,12 +4340,24 @@ void PlayerActivity::updateSkipButton(double positionMs) {
 }
 
 void PlayerActivity::skipToMarkerEnd() {
+    // Watch party: only the host skips; a follower follows the host's seek.
+    {
+        auto& sl = SyncLoungeSession::instance();
+        if (sl.isConnected() && !sl.isHost()) {
+            MpvPlayer::getInstance().showOSD("Only the host can seek", 1.5);
+            return;
+        }
+    }
     if (m_activeMarkerEndMs <= 0) return;
 
     double seekToSec = (m_activeMarkerEndMs - m_transcodeBaseOffsetMs) / 1000.0;
     if (seekToSec > 0) {
         MpvPlayer::getInstance().seekTo(seekToSec);
         brls::Logger::info("PlayerActivity: Manually skipped {} to {}ms", m_activeMarkerType, m_activeMarkerEndMs);
+        // Host: announce the skip so the party jumps with us right away instead
+        // of waiting for the periodic state broadcast.
+        syncLoungeReportUserAction(MpvPlayer::getInstance().isPaused() ? "paused" : "playing",
+                                   m_activeMarkerEndMs);
 
         // Mark as skipped to prevent auto-skip re-trigger
         if (m_activeMarkerType == "intro") m_introSkipped = true;
