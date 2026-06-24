@@ -65,12 +65,31 @@ public:
     // returns (<= poll timeout). Idempotent; also called by the destructor.
     void stop();
 
-    bool running() const { return m_running && m_running->load(); }
+    bool running() const;
+
+    // Emit a SyncLounge chat message (`sendMessage`). The server rebroadcasts
+    // it as `newMessage` to every other member of the room, so it's the
+    // simplest way to prove outbound events land. Sent on the separate POST
+    // channel (its own HttpClient) so it doesn't disturb the held-open poll;
+    // returns false if we haven't connected yet. Safe to call from the UI
+    // thread — the actual POST runs on a short background task.
+    bool sendChatMessage(const std::string& text);
 
 private:
-    // Shared so the detached worker keeps the flag alive after this object is
-    // destroyed, and so stop()/the worker observe the same atomic.
-    std::shared_ptr<std::atomic<bool>> m_running;
+    // Emit one raw Engine.IO/Socket.IO frame (e.g. `42["name",arg]`) on the
+    // POST channel. Returns false if the session isn't connected yet.
+    bool emitFrame(const std::string& frame);
+
+    // Connection state shared between the poll worker (which discovers the
+    // sid) and the send path (which needs it). Defined in the .cpp; held by
+    // shared_ptr so a detached worker keeps it alive past this object.
+    struct Session;
+    std::shared_ptr<Session> m_session;
+
+    // The handshake -> connect -> join -> poll loop. Static (takes the shared
+    // Session by value) so the detached worker touches no instance state and
+    // is safe even if the client is destroyed mid-run.
+    static void runWorker(std::shared_ptr<Session> session, Config cfg, LogFn log);
 };
 
 } // namespace vitaplex
