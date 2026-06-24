@@ -1790,6 +1790,18 @@ void PlayerActivity::togglePlayPause() {
         m_isPlaying = true;
     }
     updatePlayPauseLabel();
+
+    // SyncLounge: a manual play/pause is a user action — announce it (and,
+    // under auto-host, claim host so the party follows the Vita).
+    double absMs = m_transcodeBaseOffsetMs + player.getPosition() * 1000.0;
+    syncLoungeReportUserAction(m_isPlaying ? "playing" : "paused", absMs);
+}
+
+void PlayerActivity::syncLoungeReportUserAction(const std::string& state, double absTimeMs) {
+    SyncLoungeSession& sl = SyncLoungeSession::instance();
+    if (!sl.isConnected()) return;
+    double durMs = MpvPlayer::getInstance().getDuration() * 1000.0;
+    sl.reportUserAction(state, absTimeMs, durMs, 1.0);
 }
 
 void PlayerActivity::updatePlayPauseLabel() {
@@ -2409,7 +2421,16 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
 
 void PlayerActivity::seek(int seconds) {
     MpvPlayer& player = MpvPlayer::getInstance();
+    // Capture the target before the async seek so we announce where we're
+    // going, not the stale current position.
+    double targetSec = player.getPosition() + seconds;
+    if (targetSec < 0.0) targetSec = 0.0;
     player.seekRelative(seconds);
+
+    // SyncLounge: a manual seek is a user action — announce the target (and,
+    // under auto-host, claim host so the party follows the Vita).
+    double absMs = m_transcodeBaseOffsetMs + targetSec * 1000.0;
+    syncLoungeReportUserAction(player.isPaused() ? "paused" : "playing", absMs);
 }
 
 // Queue control methods

@@ -53,6 +53,14 @@ public:
     void reportLocalState(const std::string& state, double timeMs,
                           double durationMs, double playbackRate);
 
+    // Announce a manual play/pause/seek the user performed on our player, as a
+    // `mediaUpdate` with userInitiated=true. Under the room's auto-host mode
+    // this also claims host (the server makes the initiator host and emits
+    // newHost), so interacting with the Vita's player takes control of the
+    // party. Not throttled — user actions are infrequent. time/duration ms.
+    void reportUserAction(const std::string& state, double timeMs,
+                          double durationMs, double playbackRate);
+
     // Latest host state, mirrored from playerStateUpdate / mediaUpdate. Time
     // and duration are milliseconds (Plex / SyncLounge convention).
     struct RemoteState {
