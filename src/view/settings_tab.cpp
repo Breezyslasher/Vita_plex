@@ -1070,6 +1070,30 @@ brls::Box* SettingsTab::createNetworkSection() {
         });
     box->addView(autoHostCell);
 
+    // Room Auto Host: the server-wide switch (host-only). When on, the server
+    // promotes ANY non-host who starts new media to host. Mirrors Party Pause —
+    // only the current host can change it; the server disconnects a non-host
+    // sender, so we gate to isHost() and otherwise notify. This is what makes
+    // the per-device "Auto Host" above actually take effect for non-hosts.
+    auto* roomAutoHostCell = new brls::BooleanCell();
+    roomAutoHostCell->init("Room Auto Host", SyncLoungeSession::instance().isRoomAutoHostEnabled(),
+        [](bool value) {
+            auto& sl = SyncLoungeSession::instance();
+            if (!sl.isConnected()) {
+                brls::Application::notify("Connect to SyncLounge first");
+                return;
+            }
+            if (!sl.isHost()) {
+                brls::Application::notify("Only the host can change room auto-host");
+                return;
+            }
+            sl.setRoomAutoHostEnabled(value);
+            brls::Application::notify(value
+                ? "Room auto-host on — anyone who starts a video becomes host"
+                : "Room auto-host off");
+        });
+    box->addView(roomAutoHostCell);
+
     auto* infoLabel = new brls::Label();
     infoLabel->setText("Raise the timeout if you're on a slow or unstable link.");
     infoLabel->setFontSize(14);

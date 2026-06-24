@@ -62,6 +62,19 @@ public:
     // the host id). Tracked from joinResult + newHost events.
     bool isHost() const;
 
+    // ── Room auto-host ────────────────────────────────────────────────────
+    // Server-side, room-wide switch: when enabled, the server promotes ANY
+    // non-host member who starts new media (userInitiated) to host. Mirrors the
+    // party-pause control — host-only to change (the server disconnects a
+    // non-host sender) and the new value is broadcast to the whole room.
+    //
+    // This is the room switch the server checks in its makeHost rule; the
+    // per-device "Auto Host" preference (setAutoHost) decides whether THIS
+    // client actually sends userInitiated when allowed. Both must be on for a
+    // non-host to take over by playing.
+    bool isRoomAutoHostEnabled() const;
+    void setRoomAutoHostEnabled(bool enabled);
+
     // Broadcast our local player state to the room (only meaningful when we're
     // host — the server relays playerStateUpdate to the other members). Called
     // each second from the player loop; throttled internally to emit on state
@@ -201,6 +214,9 @@ private:
 
     // Party pause state (guarded by m_mtx).
     bool                                  m_partyPauseEnabled = false;
+    // Room-wide auto-host (server-side; guarded by m_mtx). Mirrored from
+    // joinResult.isAutoHostEnabled and the setAutoHostEnabled broadcast.
+    bool                                  m_roomAutoHostEnabled = false;
     int                                   m_partyPauseSeq = 0;
     bool                                  m_partyPaused = false;
 };
