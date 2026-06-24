@@ -75,6 +75,22 @@ std::string extractJsonObject(const std::string& json, const std::string& key) {
     return "";
 }
 
+std::string jsonEscape(const std::string& s) {
+    std::string o;
+    o.reserve(s.size() + 2);
+    for (char c : s) {
+        switch (c) {
+            case '"':  o += "\\\""; break;
+            case '\\': o += "\\\\"; break;
+            case '\n': o += "\\n";  break;
+            case '\r': o += "\\r";  break;
+            case '\t': o += "\\t";  break;
+            default:   o += c;      break;
+        }
+    }
+    return o;
+}
+
 bool iequals(const std::string& a, const std::string& b) {
     if (a.size() != b.size()) return false;
     for (size_t i = 0; i < a.size(); i++)
@@ -391,26 +407,69 @@ void SyncLoungeSession::reportLocalState(const std::string& state, double timeMs
 
 void SyncLoungeSession::reportUserAction(const std::string& state, double timeMs,
                                          double durationMs, double playbackRate) {
+    // A manual play/pause/seek: announce with userInitiated=true (claims host
+    // under auto-host) and our real media.
+    emitMediaUpdate(state, timeMs, durationMs, playbackRate, /*userInitiated=*/true);
+}
+
+void SyncLoungeSession::announceLocalMedia(const std::string& state, double timeMs,
+                                           double durationMs) {
+    // Tell the room what we're playing without claiming host.
+    emitMediaUpdate(state, timeMs, durationMs, 1.0, /*userInitiated=*/false);
+}
+
+void SyncLoungeSession::emitMediaUpdate(const std::string& state, double timeMs,
+                                        double durationMs, double playbackRate,
+                                        bool userInitiated) {
     std::shared_ptr<SyncLoungeClient> client;
+    std::string media = "null";
     {
         std::lock_guard<std::mutex> lk(m_mtx);
         if (!m_client) return;
         client = m_client;
-        // Count this as our latest broadcast so the periodic playerStateUpdate
-        // throttle doesn't immediately re-announce the same thing.
-        m_lastSentState = state;
-        m_lastSentAt    = std::chrono::steady_clock::now();
+        if (!m_localRatingKey.empty()) {
+            media = "{\"title\":\"" + jsonEscape(m_localTitle) +
+                    "\",\"type\":\"" + jsonEscape(m_localType) +
+                    "\",\"ratingKey\":\"" + jsonEscape(m_localRatingKey) +
+                    "\",\"machineIdentifier\":\"" + jsonEscape(m_localMachineId) + "\"}";
+        }
+        if (userInitiated) {
+            // Count this as our latest broadcast so the periodic
+            // playerStateUpdate throttle doesn't immediately duplicate it.
+            m_lastSentState = state;
+            m_lastSentAt    = std::chrono::steady_clock::now();
+        }
     }
 
-    // media:null for now — cross-server content matching is a later step, and
-    // the server's host-claim path (userInitiated && !isUserHost &&
-    // isAutoHostEnabled) doesn't depend on the media payload.
-    char buf[320];
-    std::snprintf(buf, sizeof(buf),
-                  "{\"state\":\"%s\",\"time\":%.0f,\"duration\":%.0f,"
-                  "\"playbackRate\":%.3f,\"media\":null,\"userInitiated\":true}",
-                  state.c_str(), timeMs, durationMs, playbackRate);
-    client->emitEvent("mediaUpdate", buf);
+    // time/duration are whole milliseconds; format as integers to avoid the
+    // server choking on a bad/NaN double (NaN:NaN). Callers must pass finite
+    // values — invalid readings are filtered upstream.
+    char nums[128];
+    std::snprintf(nums, sizeof(nums),
+                  "\"time\":%lld,\"duration\":%lld,\"playbackRate\":%.3f",
+                  (long long)timeMs, (long long)durationMs, playbackRate);
+    std::string frame = "{\"state\":\"" + jsonEscape(state) + "\"," + nums +
+                        ",\"media\":" + media +
+                        ",\"userInitiated\":" + (userInitiated ? "true" : "false") + "}";
+    client->emitEvent("mediaUpdate", frame);
+}
+
+void SyncLoungeSession::setLocalMedia(const std::string& title, const std::string& type,
+                                      const std::string& ratingKey) {
+    const std::string machineId = PlexClient::getInstance().getMachineIdentifier();
+    std::lock_guard<std::mutex> lk(m_mtx);
+    m_localTitle     = title;
+    m_localType      = type;
+    m_localRatingKey = ratingKey;
+    m_localMachineId = machineId;
+}
+
+void SyncLoungeSession::clearLocalMedia() {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    m_localTitle.clear();
+    m_localType.clear();
+    m_localRatingKey.clear();
+    m_localMachineId.clear();
 }
 
 }  // namespace vitaplex

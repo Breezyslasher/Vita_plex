@@ -17,6 +17,7 @@
 #include "view/video_view.hpp"
 #include "platform/platform.hpp"
 #include <algorithm>
+#include <cmath>
 #include <chrono>
 #include <fstream>
 #include <sys/stat.h>
@@ -719,6 +720,10 @@ void PlayerActivity::willDisappear(bool resetState) {
     // Re-enable background thumbnail loading now that playback is ending
     ImageLoader::setPaused(false);
 
+    // SyncLounge: we're leaving the player, so we're no longer playing this
+    // item — stop our outbound mediaUpdates from carrying stale media.
+    SyncLoungeSession::instance().clearLocalMedia();
+
 #ifdef __vita__
     // Restore reduced clock speeds for browsing (saves battery)
     scePowerSetArmClockFrequency(333);
@@ -1201,6 +1206,12 @@ void PlayerActivity::loadMedia() {
             titleLabel->setText(title);
         }
 
+        // SyncLounge: report what we're playing so our outbound mediaUpdates
+        // carry real media (server/party show the title, not "Nothing"); and
+        // re-arm the announce-once for this item.
+        SyncLoungeSession::instance().setLocalMedia(item.title, item.type, m_mediaKey);
+        m_syncLoungeAnnounced = false;
+
         // Handle photos differently - display image instead of playing
         if (item.mediaType == MediaType::PHOTO) {
             brls::Logger::info("Displaying photo: {}", item.title);
@@ -1520,6 +1531,19 @@ void PlayerActivity::updateProgress() {
         SyncLoungeSession& sl = SyncLoungeSession::instance();
         const bool localSane = position >= 0.0 && position <= duration + 30.0;
 
+        // Announce our media once per loaded item (userInitiated=false, no host
+        // claim) so the party/server shows the right title even before any
+        // pause/play. `duration` is already > 0 here, so the values are valid.
+        if (localSane && !m_syncLoungeAnnounced) {
+            const char* ast = player.isPlaying() ? "playing"
+                            : player.isPaused()  ? "paused" : nullptr;
+            if (ast) {
+                sl.announceLocalMedia(ast, m_transcodeBaseOffsetMs + position * 1000.0,
+                                      duration * 1000.0);
+                m_syncLoungeAnnounced = true;
+            }
+        }
+
         if (sl.isHost()) {
             // Host: publish our absolute timecode (matches the /:/timeline
             // basis: transcode base offset + mpv position). Throttled inside
@@ -1828,7 +1852,13 @@ void PlayerActivity::togglePlayPause() {
 void PlayerActivity::syncLoungeReportUserAction(const std::string& state, double absTimeMs) {
     SyncLoungeSession& sl = SyncLoungeSession::instance();
     if (!sl.isConnected()) return;
+    // mpv's position/duration can read NaN/0 for a moment right at a state
+    // change; never broadcast that (the server renders it as NaN:NaN). Skip
+    // the announce until the readings are valid — the periodic host broadcast
+    // (and the next action) cover the gap.
     double durMs = MpvPlayer::getInstance().getDuration() * 1000.0;
+    if (!std::isfinite(absTimeMs) || absTimeMs < 0.0) return;
+    if (!std::isfinite(durMs)    || durMs    <= 0.0) return;
     sl.reportUserAction(state, absTimeMs, durMs, 1.0);
 }
 

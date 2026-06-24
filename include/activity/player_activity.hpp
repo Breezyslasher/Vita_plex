@@ -231,6 +231,9 @@ private:
     // ratingKey we last auto-loaded to follow the host's content, so the
     // updateProgress loop doesn't re-trigger a reload while it's loading.
     std::string m_syncLoungeContentKey;
+    // Whether we've announced the current media to the SyncLounge room yet
+    // (reset on each loadMedia). Announce-once so the party shows our title.
+    bool m_syncLoungeAnnounced = false;
 
     // Diagnostic overlay panel — created lazily on first
     // updateMpvStatsOverlay() call when AppSettings::showMpvStats is on.
