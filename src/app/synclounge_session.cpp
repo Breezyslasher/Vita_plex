@@ -11,7 +11,6 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
-#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -616,10 +615,6 @@ void SyncLoungeSession::resolveMatchAsync(HostMedia hm) {
 
 void SyncLoungeSession::reportLocalState(const std::string& state, double timeMs,
                                          double durationMs, double playbackRate) {
-    // Never broadcast a non-finite time/duration: mpv can read NaN mid-HLS while
-    // playing, and "nan" in the JSON renders as NaN:NaN on the server.
-    if (!std::isfinite(timeMs) || timeMs < 0.0 ||
-        !std::isfinite(durationMs) || durationMs <= 0.0) return;
     std::shared_ptr<SyncLoungeClient> client;
     {
         std::lock_guard<std::mutex> lk(m_mtx);
