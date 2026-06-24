@@ -207,6 +207,15 @@ void PlayerActivity::onContentAvailable() {
             // Skip if this is a programmatic update (not user interaction)
             if (m_updatingSlider) return;
             resetControlsIdleTimer();
+            // Watch party: only the host can scrub. Block a follower's drag (the
+            // 1s progress tick snaps the thumb back to the synced position).
+            {
+                auto& sl = SyncLoungeSession::instance();
+                if (sl.isConnected() && !sl.isHost()) {
+                    MpvPlayer::getInstance().showOSD("Only the host can seek", 1.5);
+                    return;
+                }
+            }
             // Seek to position
             MpvPlayer& player = MpvPlayer::getInstance();
             double duration = 0.0;
@@ -2600,6 +2609,17 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
 
 void PlayerActivity::seek(int seconds) {
     MpvPlayer& player = MpvPlayer::getInstance();
+
+    // In a watch party only the host drives playback — a follower's manual
+    // fast-forward/rewind would just desync and get pulled back to the host, so
+    // block it outright.
+    {
+        auto& sl = SyncLoungeSession::instance();
+        if (sl.isConnected() && !sl.isHost()) {
+            player.showOSD("Only the host can seek", 1.5);
+            return;
+        }
+    }
 
     // Direct play, local file, or music (mp3, not HLS): mpv has the data, so
     // seek locally and instantly — these never stall the way a forward seek on
