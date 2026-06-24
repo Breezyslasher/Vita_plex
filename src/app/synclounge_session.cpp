@@ -274,8 +274,9 @@ void SyncLoungeSession::connect(const std::string& server, const std::string& ro
         m_hostId.clear();
         m_lastSentState.clear();
         m_lastPromptKey.clear();
-        m_partyPauseEnabled = false;
-        m_partyPaused       = false;
+        m_partyPauseEnabled   = false;
+        m_roomAutoHostEnabled = false;
+        m_partyPaused         = false;
     }
     if (old) old->stop();
 
@@ -311,8 +312,9 @@ void SyncLoungeSession::disconnect() {
         m_selfId.clear();
         m_hostId.clear();
         m_lastPromptKey.clear();
-        m_partyPauseEnabled = false;
-        m_partyPaused       = false;
+        m_partyPauseEnabled   = false;
+        m_roomAutoHostEnabled = false;
+        m_partyPaused         = false;
     }
     if (old) old->stop();
 }
@@ -374,14 +376,16 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
         const std::string self = jsonStr(payload, "id");
         const std::string host = jsonStr(payload, "hostId");
         const bool partyPausing = jsonBool(payload, "isPartyPausingEnabled");
+        const bool roomAutoHost = jsonBool(payload, "isAutoHostEnabled");
         {
             std::lock_guard<std::mutex> lk(m_mtx);
             if (!self.empty()) m_selfId = self;
             if (!host.empty()) m_hostId = host;
-            m_partyPauseEnabled = partyPausing;
+            m_partyPauseEnabled   = partyPausing;
+            m_roomAutoHostEnabled = roomAutoHost;
         }
-        brls::Logger::info("SyncLounge: joined self={} host={} isHost={} partyPause={}",
-                           self, host, (!self.empty() && self == host), partyPausing);
+        brls::Logger::info("SyncLounge: joined self={} host={} isHost={} partyPause={} roomAutoHost={}",
+                           self, host, (!self.empty() && self == host), partyPausing, roomAutoHost);
 
         // Seed the host's CURRENT media + position from joinResult.users[host]
         // so connecting mid-session can offer to join (and open at the right
@@ -422,6 +426,15 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
             m_partyPauseEnabled = enabled;
         }
         brls::Logger::info("SyncLounge: partyPause {}", enabled ? "enabled" : "disabled");
+    } else if (name == "setAutoHostEnabled") {
+        // payload: ["setAutoHostEnabled",true|false] — room-wide, host-controlled.
+        // When on, the server promotes any non-host who starts new media.
+        const bool enabled = barePayloadTrue(payload);
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            m_roomAutoHostEnabled = enabled;
+        }
+        brls::Logger::info("SyncLounge: roomAutoHost {}", enabled ? "enabled" : "disabled");
     } else if (name == "partyPause") {
         // payload: ["partyPause",{"senderId":"...","isPause":true|false}]
         const bool isPause = jsonBool(payload, "isPause");
@@ -504,6 +517,22 @@ void SyncLoungeSession::setPartyPauseEnabled(bool enabled) {
         client = m_client;
     }
     client->emitEvent("setPartyPausingEnabled", enabled ? "true" : "false");
+}
+
+bool SyncLoungeSession::isRoomAutoHostEnabled() const {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    return m_roomAutoHostEnabled;
+}
+
+void SyncLoungeSession::setRoomAutoHostEnabled(bool enabled) {
+    std::shared_ptr<SyncLoungeClient> client;
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        // Server-gated to the host; sending as a non-host disconnects us.
+        if (!m_client || m_selfId.empty() || m_selfId != m_hostId) return;
+        client = m_client;
+    }
+    client->emitEvent("setAutoHostEnabled", enabled ? "true" : "false");
 }
 
 SyncLoungeSession::HostMedia SyncLoungeSession::hostMedia() const {
