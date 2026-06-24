@@ -16,6 +16,7 @@
 #include "app/plex_palette.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/synclounge_session.hpp"
+#include "view/media_detail_view.hpp"
 #include "activity/player_activity.hpp"
 #include "utils/http_client.hpp"
 #include "utils/http_cache.hpp"
@@ -1075,6 +1076,18 @@ brls::Box* SettingsTab::createNetworkSection() {
                 : "Room auto-host off");
         });
     box->addView(roomAutoHostCell);
+
+    // Party Members: opens a dialog (styled like the join-session prompt)
+    // listing everyone currently in the room. When you're the host, tapping a
+    // member hands host to them.
+    auto* membersCell = new brls::DetailCell();
+    membersCell->setText("Party Members");
+    membersCell->setDetailText("See who's here · change host");
+    membersCell->registerClickAction([this](brls::View*) {
+        onSyncLoungeMembers();
+        return true;
+    });
+    box->addView(membersCell);
 
     auto* infoLabel = new brls::Label();
     infoLabel->setText("Raise the timeout if you're on a slow or unstable link.");
@@ -2219,6 +2232,54 @@ void SettingsTab::onSyncLoungeConnect() {
             brls::Application::notify("SyncLounge: connecting to \"" + room + "\"");
         }, "SyncLounge room name / code", "", 64, curRoom);
     }, "SyncLounge server URL", "", 128, curServer);
+}
+
+void SettingsTab::onSyncLoungeMembers() {
+    auto& sl = SyncLoungeSession::instance();
+    if (!sl.isConnected()) {
+        brls::Application::notify("Connect to SyncLounge first");
+        return;
+    }
+    const auto members = sl.members();
+    if (members.empty()) {
+        brls::Application::notify("No members in the room yet");
+        return;
+    }
+    const bool weAreHost = sl.isHost();
+
+    // One row per member, styled like the join-session prompt. The host row is
+    // gold (primary) with a check icon; everyone else is a plain person row.
+    // When we're host, tapping another member hands them host.
+    std::vector<OptionRow> rows;
+    for (const auto& m : members) {
+        const std::string id     = m.id;
+        const bool        isSelf = m.isSelf;
+        const bool        isHost = m.isHost;
+        std::string label = m.username + (isSelf ? " (you)" : "");
+        std::string sub   = isHost ? "Host" : (weAreHost && !isSelf ? "Make host" : "");
+        rows.push_back({
+            isHost ? "check-circle.png" : "account.png",
+            label, sub,
+            /*primary=*/isHost,
+            /*danger=*/false,
+            [id, isSelf, isHost, weAreHost](brls::View*) {
+                if (!weAreHost) {
+                    brls::Application::notify("Only the host can change host");
+                    return true;
+                }
+                if (isSelf || isHost) return true;  // it's us / already the host
+                SyncLoungeSession::instance().transferHost(id);
+                brls::Application::notify("Host transferred");
+                return true;
+            }});
+    }
+    rows.push_back({ "cross.png", "Close", "", false, true,
+                     [](brls::View*) { return true; }});
+
+    const std::string subtitle = weAreHost
+        ? "Tap a member to make them host"
+        : ("Room \"" + sl.room() + "\"");
+    MediaDetailView::showCenteredChoice("Party members", subtitle, std::move(rows));
 }
 
 } // namespace vitaplex

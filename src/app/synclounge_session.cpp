@@ -160,6 +160,37 @@ int parseLastNumber(const std::string& s) {
     catch (...) { return -1; }
 }
 
+// Parse a joinResult `users` object — {"<id>":{...,"username":"..."}, ...} —
+// into (id, username) pairs. Brace-counting handles nested objects (e.g. media).
+void parseUsersInto(const std::string& usersObj,
+                    std::vector<std::pair<std::string, std::string>>& out) {
+    size_t p = usersObj.find('{');
+    if (p == std::string::npos) return;
+    p++;
+    while (p < usersObj.size()) {
+        while (p < usersObj.size() &&
+               (usersObj[p] == ' ' || usersObj[p] == '\t' || usersObj[p] == '\n' ||
+                usersObj[p] == '\r' || usersObj[p] == ',')) p++;
+        if (p >= usersObj.size() || usersObj[p] == '}') break;
+        if (usersObj[p] != '"') break;
+        size_t q2 = usersObj.find('"', p + 1);
+        if (q2 == std::string::npos) break;
+        std::string id = usersObj.substr(p + 1, q2 - p - 1);
+        size_t colon = usersObj.find(':', q2 + 1);
+        if (colon == std::string::npos) break;
+        size_t v = colon + 1;
+        while (v < usersObj.size() && (usersObj[v] == ' ' || usersObj[v] == '\t')) v++;
+        if (v >= usersObj.size() || usersObj[v] != '{') break;
+        int depth = 0; size_t e = v;
+        for (; e < usersObj.size(); e++) {
+            if (usersObj[e] == '{') depth++;
+            else if (usersObj[e] == '}') { if (--depth == 0) { e++; break; } }
+        }
+        if (!id.empty()) out.push_back({ id, jsonStr(usersObj.substr(v, e - v), "username") });
+        p = e;
+    }
+}
+
 // Resolve a movie (or other flat title) against our library by title/year.
 SyncLoungeSession::MatchResult resolveTitleMatch(const SyncLoungeSession::HostMedia& hm) {
     SyncLoungeSession::MatchResult best;
@@ -272,6 +303,8 @@ void SyncLoungeSession::connect(const std::string& server, const std::string& ro
         m_resolveKey.clear();
         m_selfId.clear();
         m_hostId.clear();
+        m_members.clear();
+        m_selfUsername = username.empty() ? std::string("VitaPlex") : username;
         m_lastSentState.clear();
         m_lastPromptKey.clear();
         m_partyPauseEnabled   = false;
@@ -311,6 +344,8 @@ void SyncLoungeSession::disconnect() {
         m_resolveKey.clear();
         m_selfId.clear();
         m_hostId.clear();
+        m_members.clear();
+        m_selfUsername.clear();
         m_lastPromptKey.clear();
         m_partyPauseEnabled   = false;
         m_roomAutoHostEnabled = false;
@@ -345,6 +380,9 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
         // updates, so ignore anyone who isn't the current host (matters once
         // there are 3+ people). `id` is the sender's socket id.
         const std::string sender = jsonStr(payload, "id");
+        // Any member that sends state is in the room — track it so the members
+        // dialog stays current even for late joiners whose userJoined we missed.
+        if (!sender.empty()) noteMember(sender, "");
         {
             std::lock_guard<std::mutex> lk(m_mtx);
             if (!m_hostId.empty() && !sender.empty() && sender != m_hostId) return;
@@ -386,6 +424,21 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
         }
         brls::Logger::info("SyncLounge: joined self={} host={} isHost={} partyPause={} roomAutoHost={}",
                            self, host, (!self.empty() && self == host), partyPausing, roomAutoHost);
+
+        // Build the roster: self + everyone in users{} (for the members dialog).
+        {
+            const std::string userObj  = extractJsonObject(payload, "user");
+            const std::string selfUser  = jsonStr(userObj, "username");
+            const std::string usersObj2 = extractJsonObject(payload, "users");
+            std::vector<std::pair<std::string, std::string>> roster;
+            parseUsersInto(usersObj2, roster);
+            std::lock_guard<std::mutex> lk(m_mtx);
+            if (!selfUser.empty()) m_selfUsername = selfUser;
+            m_members.clear();
+            if (!m_selfId.empty()) m_members.push_back({ m_selfId, m_selfUsername });
+            for (auto& u : roster)
+                if (u.first != m_selfId) m_members.push_back(u);
+        }
 
         // Seed the host's CURRENT media + position from joinResult.users[host]
         // so connecting mid-session can offer to join (and open at the right
@@ -432,8 +485,19 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
                 m_hostId.clear();
                 m_remote.valid = false;
             }
+            // Drop them from the roster.
+            for (size_t i = 0; i < m_members.size(); i++)
+                if (m_members[i].first == who) { m_members.erase(m_members.begin() + i); break; }
         }
         brls::Logger::info("SyncLounge: userLeft {}", who);
+    } else if (name == "userJoined") {
+        // payload: ["userJoined",{...,"username":"...","id":"..."?}]. The id may
+        // be absent (the server omits it on this event); when it is, the member
+        // gets picked up later from their first state update (noteMember above).
+        const std::string id = jsonStr(payload, "id");
+        const std::string un = jsonStr(payload, "username");
+        if (!id.empty()) noteMember(id, un);
+        brls::Logger::info("SyncLounge: userJoined id={} user={}", id, un);
     } else if (name == "setPartyPausingEnabled") {
         // payload: ["setPartyPausingEnabled",true|false]
         const bool enabled = barePayloadTrue(payload);
@@ -501,6 +565,47 @@ void SyncLoungeSession::processHostMedia(const std::string& mediaObj) {
 bool SyncLoungeSession::isHost() const {
     std::lock_guard<std::mutex> lk(m_mtx);
     return !m_selfId.empty() && m_selfId == m_hostId;
+}
+
+void SyncLoungeSession::noteMember(const std::string& id, const std::string& username) {
+    if (id.empty()) return;
+    std::lock_guard<std::mutex> lk(m_mtx);
+    for (auto& m : m_members) {
+        if (m.first == id) {
+            if (!username.empty()) m.second = username;  // upgrade a placeholder name
+            return;
+        }
+    }
+    m_members.push_back({ id, username });
+}
+
+std::vector<SyncLoungeSession::Member> SyncLoungeSession::members() const {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    std::vector<Member> out;
+    out.reserve(m_members.size());
+    for (const auto& m : m_members) {
+        Member mem;
+        mem.id       = m.first;
+        mem.username = !m.second.empty() ? m.second
+                                         : ("User " + m.first.substr(0, std::min<size_t>(4, m.first.size())));
+        mem.isHost   = (!m_hostId.empty() && m.first == m_hostId);
+        mem.isSelf   = (!m_selfId.empty() && m.first == m_selfId);
+        out.push_back(std::move(mem));
+    }
+    return out;
+}
+
+void SyncLoungeSession::transferHost(const std::string& id) {
+    std::shared_ptr<SyncLoungeClient> client;
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        // Host-only; the server disconnects a non-host sender. No self-transfer.
+        if (!m_client || m_selfId.empty() || m_selfId != m_hostId) return;
+        if (id.empty() || id == m_selfId) return;
+        client = m_client;
+    }
+    client->emitEvent("transferHost", "\"" + jsonEscape(id) + "\"");
+    brls::Logger::info("SyncLounge: transferHost -> {}", id);
 }
 
 bool SyncLoungeSession::isPartyPauseEnabled() const {

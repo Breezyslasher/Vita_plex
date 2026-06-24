@@ -89,6 +89,8 @@ private:
     // Connect / disconnect the persistent SyncLounge session that an active
     // player follows. See SyncLoungeSession.
     void onSyncLoungeConnect();
+    // Open the party-members dialog (who's in the room; host can transfer host).
+    void onSyncLoungeMembers();
     void onTestLocalPlayback();
     void onThemeChanged(int index);
     void onQualityChanged(int index);
