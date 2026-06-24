@@ -74,6 +74,15 @@ private:
     void updateProgress();
     void togglePlayPause();
     void seek(int seconds);
+    // Transcode-aware seeking. On an HLS transcode, skips/scrubs are debounced
+    // into a single absolute target (m_seekTargetMs): a backward or small-forward
+    // jump that's already transcoded seeks locally, while a far-forward jump (or
+    // one before the current transcode start) restarts the transcode at the
+    // target so Plex re-encodes from there instead of mpv crawling across
+    // un-transcoded segments. Direct play / local / music seek locally as before.
+    void requestTranscodeSeek(double absMs);   // arm/refresh the debounce
+    void commitTranscodeSeek();                 // fired by m_seekCommitTimer
+    void showSeekPreview(double absMs, double totalMs);
 
     // SyncLounge: announce a manual play/pause/seek (state + absolute ms) so
     // the watch party follows, claiming host under auto-host. No-op when not
@@ -224,6 +233,11 @@ private:
     int m_transcodeBaseOffsetMs = 0;  // Base offset (ms) used to start current transcode
     bool m_updatingSlider = false;  // Guard to prevent slider update from triggering seek
     brls::RepeatingTimer m_updateTimer;
+    // Debounce for transcode seeks: each skip/scrub rewinds it, and its end
+    // callback commits one seek ~350 ms after the last input. m_seekTargetMs is
+    // the pending absolute position in ms (< 0 means no seek pending).
+    brls::Timer m_seekCommitTimer;
+    double m_seekTargetMs = -1.0;
     int m_timelineCounter = 0;           // Seconds since last timeline report
     std::string m_lastTimelineState;     // Last reported state to detect changes
 

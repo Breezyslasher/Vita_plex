@@ -220,11 +220,17 @@ void PlayerActivity::onContentAvailable() {
             if (duration <= 0)
                 duration = player.getDuration();
             // Slider represents full video duration (including resume offset).
-            // Convert slider position back to MPV-relative seek position.
             double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
             double absDuration = baseOffsetSec + duration;
-            double seekPos = std::max(0.0, absDuration * progress - baseOffsetSec);
-            player.seekTo(seekPos);
+            // Direct play / local / music seek locally & instantly (mpv has the
+            // data). A transcoded video routes through the debounced, transcode-
+            // aware path so a big scrub restarts the transcode at the target
+            // instead of stalling mpv on un-transcoded segments.
+            if (m_isLocalFile || m_isDirectFile || m_isQueueMode) {
+                player.seekTo(std::max(0.0, absDuration * progress - baseOffsetSec));
+            } else {
+                requestTranscodeSeek(absDuration * progress * 1000.0);
+            }
         });
     }
 
@@ -688,6 +694,13 @@ void PlayerActivity::onContentAvailable() {
     });
     m_updateTimer.start(1000); // Update every second
 
+    // Debounced transcode-seek commit (see seek() / requestTranscodeSeek). The
+    // `finished` flag is false when we stop() the timer early (teardown / content
+    // switch), so a cancelled debounce never commits a stale seek.
+    m_seekCommitTimer.setEndCallback([this](bool finished) {
+        if (finished && !m_destroying) commitTranscodeSeek();
+    });
+
     // Start with controls hidden if auto-hide is enabled
     int autoHide = Application::getInstance().getSettings().controlsAutoHideSeconds;
     if (autoHide > 0 && !m_isPhoto) {
@@ -716,6 +729,11 @@ void PlayerActivity::setBackgroundTransparent(bool transparent) {
 
 void PlayerActivity::willDisappear(bool resetState) {
     brls::Activity::willDisappear(resetState);
+
+    // Cancel any pending debounced seek so its commit can't fire after we leave
+    // (stop() passes finished=false, which the end callback ignores).
+    m_seekCommitTimer.stop();
+    m_seekTargetMs = -1.0;
 
     // Left the player — re-enable the SyncLounge auto-join prompt.
     s_active.store(false);
@@ -1023,6 +1041,10 @@ void PlayerActivity::loadMedia() {
         return;
     }
     m_loadingMedia = true;
+
+    // A content switch supersedes any pending debounced seek from the old item.
+    m_seekCommitTimer.stop();
+    m_seekTargetMs = -1.0;
 
     // Handle direct file playback (debug/testing)
     if (m_isDirectFile) {
@@ -1475,7 +1497,9 @@ void PlayerActivity::updateProgress() {
     if (duration <= 0)
         duration = player.getDuration();
 
-    if (duration > 0) {
+    // While a debounced seek is pending, showSeekPreview owns the slider + time
+    // labels (they point at the target, not the live position) — don't stomp it.
+    if (duration > 0 && m_seekTargetMs < 0.0) {
         // For transcoded streams with a resume offset, MPV position/duration are
         // relative to the stream start (offset point). Compute absolute values
         // for correct UI display.
@@ -2517,16 +2541,109 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
 
 void PlayerActivity::seek(int seconds) {
     MpvPlayer& player = MpvPlayer::getInstance();
-    // Capture the target before the async seek so we announce where we're
-    // going, not the stale current position.
-    double targetSec = player.getPosition() + seconds;
-    if (targetSec < 0.0) targetSec = 0.0;
-    player.seekRelative(seconds);
 
-    // SyncLounge: a manual seek is a user action — announce the target (and,
-    // under auto-host, claim host so the party follows the Vita).
-    double absMs = m_transcodeBaseOffsetMs + targetSec * 1000.0;
-    syncLoungeReportUserAction(player.isPaused() ? "paused" : "playing", absMs);
+    // Direct play, local file, or music (mp3, not HLS): mpv has the data, so
+    // seek locally and instantly — these never stall the way a forward seek on
+    // an HLS transcode does.
+    if (m_isLocalFile || m_isDirectFile || m_isQueueMode) {
+        double targetSec = std::max(0.0, player.getPosition() + seconds);
+        player.seekRelative(seconds);
+        // SyncLounge: a manual seek is a user action — announce where we're going.
+        syncLoungeReportUserAction(player.isPaused() ? "paused" : "playing",
+                                   m_transcodeBaseOffsetMs + targetSec * 1000.0);
+        return;
+    }
+
+    // Transcoded HLS video: fold this skip into the pending absolute target and
+    // debounce, so a burst of presses commits ONCE. commitTranscodeSeek() then
+    // decides local-seek vs transcode-restart. Accumulate from the pending
+    // target if one is in flight, else from the current absolute position.
+    double base = (m_seekTargetMs >= 0.0)
+                      ? m_seekTargetMs
+                      : (m_transcodeBaseOffsetMs + player.getPosition() * 1000.0);
+    requestTranscodeSeek(base + seconds * 1000.0);
+}
+
+void PlayerActivity::requestTranscodeSeek(double absMs) {
+    MpvPlayer& player = MpvPlayer::getInstance();
+    double durSec  = player.getDuration();
+    double totalMs = durSec > 0.0 ? (m_transcodeBaseOffsetMs + durSec * 1000.0) : 0.0;
+    if (absMs < 0.0) absMs = 0.0;
+    if (totalMs > 0.0 && absMs > totalMs) absMs = totalMs;
+    m_seekTargetMs = absMs;
+
+    // Show where we're heading while the debounce settles (otherwise the ~350 ms
+    // wait looks like a frozen UI).
+    showSeekPreview(absMs, totalMs);
+
+    // (Re)arm the debounce: rewind resets the countdown without firing, so the
+    // commit happens once, ~350 ms after the last press/scrub.
+    if (m_seekCommitTimer.isRunning())
+        m_seekCommitTimer.rewind();
+    else
+        m_seekCommitTimer.start(350);
+}
+
+void PlayerActivity::commitTranscodeSeek() {
+    if (m_seekTargetMs < 0.0) return;
+    const double target = m_seekTargetMs;
+    m_seekTargetMs = -1.0;
+
+    MpvPlayer& player = MpvPlayer::getInstance();
+    const double baseMs = m_transcodeBaseOffsetMs;
+    const double curAbs = baseMs + player.getPosition() * 1000.0;
+
+    // The current transcode's m3u8 covers [baseMs, total], so anything already
+    // behind the play head is on hand and cheap to seek locally. Only a jump
+    // before the transcode's start, or one far ahead of the play head (beyond
+    // what Plex has likely produced), is worth a restart.
+    static constexpr double kLocalForwardMaxMs = 60000.0;  // 60 s; tune to taste
+    bool mustRestart = (target < baseMs) ||
+                       ((target - curAbs) > kLocalForwardMaxMs);
+
+    if (!mustRestart) {
+        player.seekTo(std::max(0.0, (target - baseMs) / 1000.0));
+    } else {
+        // Tell Plex to re-transcode from the target instead of making mpv crawl
+        // across un-transcoded HLS. Mirrors the audio/subtitle reload path.
+        PlexClient& client = PlexClient::getInstance();
+        const int offsetMs = (int)target;
+        client.stopTranscode();
+        std::string url;
+        if (client.getTranscodeUrl(m_mediaKey, url, offsetMs)) {
+            brls::Logger::info("seek: restarting transcode at offset={}ms", offsetMs);
+            m_transcodeBaseOffsetMs = offsetMs;
+            player.showOSD("Seeking…", 1.5);  // "Seeking…"
+            player.loadUrl(url, "");
+        } else if (target >= baseMs) {
+            // Restart failed — fall back to a best-effort local seek.
+            player.seekTo(std::max(0.0, (target - baseMs) / 1000.0));
+        }
+    }
+
+    syncLoungeReportUserAction(player.isPaused() ? "paused" : "playing", target);
+}
+
+void PlayerActivity::showSeekPreview(double absMs, double totalMs) {
+    // Move the slider to the pending spot (guarded so it doesn't re-trigger the
+    // seek subscription) and reflect the target time in the labels + a short OSD.
+    if (progressSlider && totalMs > 0.0) {
+        m_updatingSlider = true;
+        progressSlider->setProgress((float)std::min(1.0, std::max(0.0, absMs / totalMs)));
+        m_updatingSlider = false;
+    }
+
+    auto fmt = [](double ms) {
+        int t = std::max(0, (int)(ms / 1000.0));
+        int h = t / 3600, m = (t % 3600) / 60, s = t % 60;
+        char b[24];
+        if (h > 0) snprintf(b, sizeof(b), "%d:%02d:%02d", h, m, s);
+        else       snprintf(b, sizeof(b), "%d:%02d", m, s);
+        return std::string(b);
+    };
+
+    if (timeElapsedLabel) timeElapsedLabel->setText(fmt(absMs));
+    MpvPlayer::getInstance().showOSD("Seek " + fmt(absMs), 1.0);
 }
 
 // Queue control methods
