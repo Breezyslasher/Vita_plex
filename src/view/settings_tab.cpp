@@ -16,6 +16,7 @@
 #include "app/plex_palette.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/synclounge_client.hpp"
+#include "app/synclounge_session.hpp"
 #include "activity/player_activity.hpp"
 #include "utils/http_client.hpp"
 #include "utils/http_cache.hpp"
@@ -1028,6 +1029,22 @@ brls::Box* SettingsTab::createNetworkSection() {
         return true;
     });
     box->addView(syncLoungeCell);
+
+    // Persistent SyncLounge session: while connected, an active player follows
+    // the room host's play / pause / seek (receive-only for now). Click to
+    // connect (prompts server + room) or, when already connected, disconnect.
+    m_syncLoungeSyncCell = new brls::DetailCell();
+    m_syncLoungeSyncCell->setText("SyncLounge Sync");
+    {
+        auto& sl = SyncLoungeSession::instance();
+        m_syncLoungeSyncCell->setDetailText(
+            sl.isConnected() ? ("Connected: " + sl.room()) : std::string("Disconnected"));
+    }
+    m_syncLoungeSyncCell->registerClickAction([this](brls::View*) {
+        onSyncLoungeConnect();
+        return true;
+    });
+    box->addView(m_syncLoungeSyncCell);
 
     auto* infoLabel = new brls::Label();
     infoLabel->setText("Raise the timeout if you're on a slow or unstable link.");
@@ -2267,6 +2284,58 @@ void SettingsTab::onSyncLoungeTest() {
             client->start(cfg, [appendLine](const std::string& line) {
                 brls::sync([appendLine, line]() { appendLine(line); });
             });
+        }, "SyncLounge room name / code", "", 64, lastRoom);
+    }, "SyncLounge server URL", "", 128, lastServer);
+}
+
+void SettingsTab::onSyncLoungeConnect() {
+    auto& sl = SyncLoungeSession::instance();
+
+    // Already connected -> this acts as a disconnect.
+    if (sl.isConnected()) {
+        sl.disconnect();
+        if (m_syncLoungeSyncCell) m_syncLoungeSyncCell->setDetailText("Disconnected");
+        brls::Application::notify("SyncLounge disconnected");
+        return;
+    }
+
+    auto* ime = brls::Application::getImeManager();
+    if (!ime) {
+        brls::Application::notify("No on-screen keyboard available");
+        return;
+    }
+
+    static std::string lastServer = "https://server.synclounge.tv";
+    static std::string lastRoom;
+
+    auto trim = [](std::string s) {
+        while (!s.empty() && (s.back() == ' '  || s.back() == '\t' ||
+                              s.back() == '\r' || s.back() == '\n')) s.pop_back();
+        size_t i = 0;
+        while (i < s.size() && (s[i] == ' ' || s[i] == '\t')) i++;
+        return s.substr(i);
+    };
+
+    // Prompt for the server URL, then the room, then connect the persistent
+    // session. Once connected, any active player follows the room host.
+    ime->openForText([this, ime, trim](std::string server) {
+        server = trim(server);
+        if (server.empty()) return;
+        lastServer = server;
+
+        ime->openForText([this, trim, server](std::string room) {
+            room = trim(room);
+            if (room.empty()) {
+                brls::Application::notify("Room name is required");
+                return;
+            }
+            lastRoom = room;
+
+            const std::string user = Application::getInstance().getUsername();
+            SyncLoungeSession::instance().connect(server, room, user, nullptr);
+            if (m_syncLoungeSyncCell)
+                m_syncLoungeSyncCell->setDetailText("Connected: " + room);
+            brls::Application::notify("SyncLounge: connecting to \"" + room + "\"");
         }, "SyncLounge room name / code", "", 64, lastRoom);
     }, "SyncLounge server URL", "", 128, lastServer);
 }

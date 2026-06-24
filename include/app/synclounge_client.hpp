@@ -41,6 +41,14 @@ public:
     // views — see SettingsTab::onSyncLoungeTest for the brls::sync wrapper.
     using LogFn = std::function<void(const std::string&)>;
 
+    // Invoked (on the worker thread) for every inbound Socket.IO event, with
+    // the event name and the raw `["name",payload...]` array text. The
+    // transport-level keepalives (slPing) are handled internally and are NOT
+    // delivered here. Consumers (e.g. SyncLoungeSession) parse the payload to
+    // drive higher-level state; keep handlers cheap and thread-safe.
+    using EventFn = std::function<void(const std::string& name,
+                                       const std::string& payload)>;
+
     struct Config {
         std::string server;                    // base URL, e.g. "https://server.synclounge.tv" or "http://host:8088"
         std::string socketPath = "/socket.io/"; // Socket.IO mount path (server default)
@@ -55,6 +63,11 @@ public:
 
     SyncLoungeClient(const SyncLoungeClient&)            = delete;
     SyncLoungeClient& operator=(const SyncLoungeClient&) = delete;
+
+    // Register a callback for parsed inbound events. Call BEFORE start(); the
+    // worker captures it at launch. Optional — the spike harness leaves it
+    // unset and just reads the log.
+    void setEventCallback(EventFn cb) { m_eventCb = std::move(cb); }
 
     // Kick off handshake -> connect -> join -> poll on a background thread and
     // return immediately. `log` receives every protocol step. No-op if a run
@@ -89,7 +102,10 @@ private:
     // The handshake -> connect -> join -> poll loop. Static (takes the shared
     // Session by value) so the detached worker touches no instance state and
     // is safe even if the client is destroyed mid-run.
-    static void runWorker(std::shared_ptr<Session> session, Config cfg, LogFn log);
+    static void runWorker(std::shared_ptr<Session> session, Config cfg,
+                          LogFn log, EventFn eventCb);
+
+    EventFn m_eventCb;  // set before start(), captured by the worker
 };
 
 } // namespace vitaplex

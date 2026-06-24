@@ -239,6 +239,7 @@ set(APP_SOURCES
     src/app/music_queue.cpp
     src/app/hint_icons.cpp
     src/app/synclounge_client.cpp
+    src/app/synclounge_session.cpp
 
     # Activities
     src/activity/main_activity.cpp
