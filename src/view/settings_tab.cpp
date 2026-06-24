@@ -1053,6 +1053,23 @@ brls::Box* SettingsTab::createNetworkSection() {
         });
     box->addView(partyPauseCell);
 
+    // Auto Host: when on, starting new media here as a non-host claims host so
+    // the party follows us (SyncLounge "auto host"). Off by default — the device
+    // just follows the room. Purely local, so unlike Party Pause it doesn't need
+    // an active connection to toggle.
+    auto* autoHostCell = new brls::BooleanCell();
+    autoHostCell->init("Auto Host", settings.syncLoungeAutoHost,
+        [](bool value) {
+            Application& app = Application::getInstance();
+            app.getSettings().syncLoungeAutoHost = value;
+            app.saveSettings();
+            SyncLoungeSession::instance().setAutoHost(value);
+            brls::Application::notify(value
+                ? "Auto host on — playing new media here takes over the party"
+                : "Auto host off — this device just follows the room");
+        });
+    box->addView(autoHostCell);
+
     auto* infoLabel = new brls::Label();
     infoLabel->setText("Raise the timeout if you're on a slow or unstable link.");
     infoLabel->setFontSize(14);
@@ -2191,6 +2208,7 @@ void SettingsTab::onSyncLoungeConnect() {
             app.saveSettings();
 
             SyncLoungeSession::instance().connect(server, room, app.getUsername(), nullptr);
+            SyncLoungeSession::instance().setAutoHost(app.getSettings().syncLoungeAutoHost);
             if (m_syncLoungeSyncCell)
                 m_syncLoungeSyncCell->setDetailText("Connected: " + room);
             brls::Application::notify("SyncLounge: connecting to \"" + room + "\"");
