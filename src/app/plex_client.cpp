@@ -2736,6 +2736,21 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
                              decisionResp.statusCode);
     }
 
+    // If the server chose DIRECT PLAY (the user enabled it and the file is
+    // compatible), stream the original file directly. start.m3u8 is the HLS
+    // transcode endpoint and 400s for a direct-play decision — you can't ask for
+    // an HLS playlist of a file that's meant to be played as-is. mpv seeks the
+    // file via HTTP range requests, so no offset goes in the URL; the player
+    // detects the direct URL and seeks to the resume point itself.
+    if (settings.directPlay && !settings.forceTranscode && !isAudio &&
+        decisionResp.statusCode == 200 &&
+        (decisionResp.body.find("\"decision\":\"directplay\"") != std::string::npos ||
+         decisionResp.body.find("Direct play OK") != std::string::npos)) {
+        url = m_serverUrl + partKey + "?X-Plex-Token=" + m_authToken;
+        brls::Logger::info("getTranscodeUrl: Direct play — original file {}", partKey);
+        return true;
+    }
+
     // Step 2: Build the /start URL for MPV to stream.
     // Include X-Plex-* as query params AND MPV sends them as headers too.
     std::string startQuery = queryParams;
