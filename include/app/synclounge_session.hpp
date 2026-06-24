@@ -21,6 +21,8 @@
 #include <mutex>
 #include <chrono>
 #include <functional>
+#include <vector>
+#include <utility>
 
 #include "app/synclounge_client.hpp"
 
@@ -70,6 +72,19 @@ public:
     // the switch the server checks in its makeHost rule.
     bool isRoomAutoHostEnabled() const;
     void setRoomAutoHostEnabled(bool enabled);
+
+    // ── Party members ─────────────────────────────────────────────────────
+    // The current room roster, for a "who's here" dialog and host transfer.
+    struct Member {
+        std::string id;
+        std::string username;
+        bool        isHost = false;
+        bool        isSelf = false;
+    };
+    std::vector<Member> members() const;
+    // Hand host to another member. Host-only — the server disconnects a non-host
+    // sender, so this no-ops unless isHost(). id is the target's socket id.
+    void transferHost(const std::string& id);
 
     // Broadcast our local player state to the room (only meaningful when we're
     // host — the server relays playerStateUpdate to the other members). Called
@@ -172,6 +187,10 @@ private:
     // background-safe — it uses its own HttpClient).
     void resolveMatchAsync(HostMedia hm);
 
+    // Add/refresh a roster entry (id -> username). An empty username keeps the
+    // existing one. Locks m_mtx internally.
+    void noteMember(const std::string& id, const std::string& username);
+
     mutable std::mutex                m_mtx;
     std::shared_ptr<SyncLoungeClient> m_client;
     std::string                       m_server;
@@ -184,6 +203,9 @@ private:
     // Host tracking + outbound throttle (all guarded by m_mtx).
     std::string                           m_selfId;       // our socket id (from joinResult)
     std::string                           m_hostId;       // current room host id
+    std::string                           m_selfUsername; // our display name
+    // Room roster (socket id -> username, includes self). Guarded by m_mtx.
+    std::vector<std::pair<std::string, std::string>> m_members;
     std::string                           m_lastSentState;
     std::chrono::steady_clock::time_point m_lastSentAt{};
 
