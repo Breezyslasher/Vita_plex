@@ -84,7 +84,7 @@ void Application::run() {
                 }});
             rows.push_back({ "cross.png", "Not now", "", false, true,
                 [](brls::View*) { return true; }});
-            MediaDetailView::showOptionsPopover(nullptr, "Watch party", title, std::move(rows));
+            MediaDetailView::showCenteredChoice("Watch party", title, std::move(rows));
         });
 
     // Check if we have saved login credentials

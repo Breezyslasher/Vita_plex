@@ -42,6 +42,22 @@ public:
     bool        isConnected() const;
     std::string room() const;
 
+    // ── Party pause ───────────────────────────────────────────────────────
+    // When the room has party-pausing enabled, ANY member can pause/resume the
+    // whole party. We mirror inbound partyPause onto the local player and, on a
+    // user pause/play, broadcast it.
+    bool isPartyPauseEnabled() const;
+    // Latest party pause/resume action. seq bumps on each inbound partyPause so
+    // the player applies it exactly once.
+    struct PartyPause { int seq = 0; bool isPause = false; };
+    PartyPause partyPauseState() const;
+    // Broadcast a pause/resume to the party. No-op (and never sent) unless
+    // party-pausing is enabled — the server disconnects a sender otherwise.
+    void sendPartyPause(bool isPause);
+    // Enable/disable party-pausing for the room. Server-gated to the host;
+    // sending as a non-host disconnects us, so this is a no-op unless isHost().
+    void setPartyPauseEnabled(bool enabled);
+
     // True once we've joined and the room's host is us (our socket id equals
     // the host id). Tracked from joinResult + newHost events.
     bool isHost() const;
@@ -169,6 +185,11 @@ private:
     // Auto-join prompt: callback + last host item offered (prompt once per item).
     MatchPromptFn                         m_promptCb;
     std::string                           m_lastPromptKey;
+
+    // Party pause state (guarded by m_mtx).
+    bool                                  m_partyPauseEnabled = false;
+    int                                   m_partyPauseSeq = 0;
+    bool                                  m_partyPaused = false;
 };
 
 } // namespace vitaplex
