@@ -224,7 +224,7 @@ void PlayerActivity::onContentAvailable() {
             // aware path so a big scrub restarts the transcode at the target
             // instead of stalling mpv on un-transcoded segments. The slider maps
             // [0,1] onto the real media length so it can't scrub past the end.
-            if (m_isLocalFile || m_isDirectFile || m_isQueueMode) {
+            if (m_isLocalFile || m_isDirectFile || m_isQueueMode || m_directPlay) {
                 double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
                 double absDuration = baseOffsetSec + duration;
                 player.seekTo(std::max(0.0, absDuration * progress - baseOffsetSec));
@@ -1049,6 +1049,7 @@ void PlayerActivity::loadMedia() {
     m_seekTargetMs = -1.0;
     m_mediaDurationMs = 0;
     m_syncRecoverAttempts = 0;
+    m_directPlay = false;
 
     // Handle direct file playback (debug/testing)
     if (m_isDirectFile) {
@@ -1349,6 +1350,17 @@ void PlayerActivity::loadMedia() {
         m_mediaDurationMs = (item.duration > 0) ? (int)item.duration : 0;
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, resumeOffset)) {
+            // Direct play: the server returned the original file (not an HLS
+            // transcode). mpv owns the timeline, so play from 0 and seek to the
+            // resume point; seeks become local/instant instead of transcode
+            // restarts. Detected from the URL (transcode URLs hit start.m3u8).
+            m_directPlay = (url.find("/transcode/universal/start") == std::string::npos);
+            if (m_directPlay) {
+                brls::Logger::info("PlayerActivity: direct play (original file), resume {}ms",
+                                   resumeOffset);
+                m_transcodeBaseOffsetMs = 0;
+                if (resumeOffset > 0) m_pendingSeek = resumeOffset / 1000.0;
+            }
             // Pause image loading and free cache memory before initializing MPV.
             // This stops background thumbnail fetches from competing with media
             // streaming, and frees memory (Vita only has 256MB).
@@ -2592,7 +2604,7 @@ void PlayerActivity::seek(int seconds) {
     // Direct play, local file, or music (mp3, not HLS): mpv has the data, so
     // seek locally and instantly — these never stall the way a forward seek on
     // an HLS transcode does.
-    if (m_isLocalFile || m_isDirectFile || m_isQueueMode) {
+    if (m_isLocalFile || m_isDirectFile || m_isQueueMode || m_directPlay) {
         double targetSec = std::max(0.0, player.getPosition() + seconds);
         player.seekRelative(seconds);
         // SyncLounge: a manual seek is a user action — announce where we're going.

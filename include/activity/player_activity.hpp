@@ -232,6 +232,11 @@ private:
     bool m_isPhoto = false;
     bool m_isLocalFile = false;    // Playing from local download
     bool m_isDirectFile = false;   // Playing direct file path (debug)
+    // True when the server chose direct play and we're streaming the original
+    // file (not an HLS transcode): mpv owns the timeline, so baseOffset is 0,
+    // resume is an mpv seek, and seeks are local/instant rather than transcode
+    // restarts. Set per-load from the URL getTranscodeUrl returns.
+    bool m_directPlay = false;
     bool m_isQueueMode = false;    // Playing from queue
     bool m_isResuming = false;     // Resuming existing playback (don't restart track)
     // lyrics support removed
