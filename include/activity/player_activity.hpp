@@ -87,6 +87,10 @@ private:
     // (stable across transcode restarts), else baseOffset + mpv duration. Used
     // as the seek-bar scale and the clamp bound so seeks can't run past the end.
     double knownDurationMs() const;
+    // Stop the current transcode and start a fresh one at offsetMs. Used for far
+    // seeks and to escape a corrupt stream that an mpv-local seek can't. Returns
+    // false if the new transcode URL couldn't be fetched.
+    bool restartTranscodeAtMs(int offsetMs);
 
     // SyncLounge: announce a manual play/pause/seek (state + absolute ms) so
     // the watch party follows, claiming host under auto-host. No-op when not
@@ -252,6 +256,10 @@ private:
     // per-second re-seek storm. Default-constructed (epoch) lets the first
     // correction fire immediately.
     std::chrono::steady_clock::time_point m_lastSyncSeek{};
+    // Consecutive transcode restarts triggered by an insane (corrupt-stream)
+    // local position while following. Capped so a stream that won't recover
+    // doesn't restart forever; reset once the position reads sane again.
+    int m_syncRecoverAttempts = 0;
     // ratingKey we last auto-loaded to follow the host's content, so the
     // updateProgress loop doesn't re-trigger a reload while it's loading.
     std::string m_syncLoungeContentKey;

@@ -1048,6 +1048,7 @@ void PlayerActivity::loadMedia() {
     m_seekCommitTimer.stop();
     m_seekTargetMs = -1.0;
     m_mediaDurationMs = 0;
+    m_syncRecoverAttempts = 0;
 
     // Handle direct file playback (debug/testing)
     if (m_isDirectFile) {
@@ -1577,7 +1578,16 @@ void PlayerActivity::updateProgress() {
     // host's play/pause/seek.
     if (duration > 0 && SyncLoungeSession::instance().isConnected()) {
         SyncLoungeSession& sl = SyncLoungeSession::instance();
-        const bool localSane = position >= 0.0 && position <= duration + 30.0;
+        // Sanity-check the local position against Plex's REAL duration, not mpv's:
+        // a corrupt transcode can spike mpv's PTS so both position and duration
+        // read as a bogus huge value (~25h), which the old position<=duration
+        // check happily passed — then the host-follow re-seeks forever. Compare
+        // the absolute position to the authoritative length instead.
+        const double baseSec0   = m_transcodeBaseOffsetMs / 1000.0;
+        const double absPosSec0  = baseSec0 + position;
+        const double realDurSec = (m_mediaDurationMs > 0) ? (m_mediaDurationMs / 1000.0)
+                                                          : (baseSec0 + duration);
+        const bool localSane = position >= 0.0 && absPosSec0 <= realDurSec + 30.0;
 
         // Party pause: when enabled, ANY member can pause/resume the whole
         // party. Apply the latest action once (independent of host/follower).
@@ -1652,37 +1662,57 @@ void PlayerActivity::updateProgress() {
             }
         } else {
             auto rs = sl.remoteState();
-            // Ignore a transient bogus local position (e.g. mid HLS-seek
-            // restart), which would otherwise feed a runaway correction.
-            if (rs.valid && localSane &&
-                (rs.state == "playing" || rs.state == "paused")) {
-                const double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
-                const double localPosSec   = baseOffsetSec + position;
-                const double remotePosSec  = rs.timeMs / 1000.0;
-
-                // Match transport state (cheap + idempotent).
-                if (rs.state == "paused" && player.isPlaying()) {
-                    player.pause();
-                } else if (rs.state == "playing" && player.isPaused()) {
-                    player.play();
-                }
-
-                // Correct large drift, but rate-limit hard. Seeking an HLS
-                // transcode restarts it and the position takes several seconds
-                // to settle, so a per-second re-seek would thrash (the host
-                // also keeps advancing while we rebuffer). One seek, then an 8s
-                // cooldown so it can settle before we reconsider; a 10s
-                // threshold tolerates residual skew rather than chasing.
-                double drift = localPosSec - remotePosSec;
-                if (drift < 0) drift = -drift;
-                if (drift > 10.0) {
+            if (rs.valid && (rs.state == "playing" || rs.state == "paused")) {
+                if (!localSane) {
+                    // mpv's position is garbage — a corrupt transcode PTS spiked
+                    // it past the real end. An mpv-local seek can't escape it (it
+                    // lands right back in the bad segments and the host-follow
+                    // re-seeks forever), so restart the transcode at the host
+                    // offset for fresh segments. Hard rate-limit + a small cap so
+                    // a stream that won't recover doesn't loop indefinitely.
                     auto now = std::chrono::steady_clock::now();
-                    if (now - m_lastSyncSeek > std::chrono::seconds(8)) {
+                    if (now - m_lastSyncSeek > std::chrono::seconds(8) &&
+                        m_syncRecoverAttempts < 3) {
                         m_lastSyncSeek = now;
-                        player.seekTo(std::max(0.0, remotePosSec - baseOffsetSec));
-                        brls::Logger::info(
-                            "SyncLounge: seek to host {}s (local {}s, drift {}s)",
-                            (long)remotePosSec, (long)localPosSec, (long)drift);
+                        m_syncRecoverAttempts++;
+                        brls::Logger::warning(
+                            "SyncLounge: local position insane (corrupt stream) — "
+                            "restarting transcode at host {}ms (attempt {}/3)",
+                            (long)rs.timeMs, m_syncRecoverAttempts);
+                        player.showOSD("Re-syncing…", 1.5);
+                        restartTranscodeAtMs((int)rs.timeMs);
+                    }
+                } else {
+                    // Position reads sane — clear the recovery counter.
+                    m_syncRecoverAttempts = 0;
+                    const double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
+                    const double localPosSec   = baseOffsetSec + position;
+                    const double remotePosSec  = rs.timeMs / 1000.0;
+
+                    // Match transport state (cheap + idempotent).
+                    if (rs.state == "paused" && player.isPlaying()) {
+                        player.pause();
+                    } else if (rs.state == "playing" && player.isPaused()) {
+                        player.play();
+                    }
+
+                    // Correct large drift, but rate-limit hard. Seeking an HLS
+                    // transcode restarts it and the position takes several
+                    // seconds to settle, so a per-second re-seek would thrash
+                    // (the host also keeps advancing while we rebuffer). One
+                    // seek, then an 8s cooldown so it can settle before we
+                    // reconsider; a 10s threshold tolerates residual skew.
+                    double drift = localPosSec - remotePosSec;
+                    if (drift < 0) drift = -drift;
+                    if (drift > 10.0) {
+                        auto now = std::chrono::steady_clock::now();
+                        if (now - m_lastSyncSeek > std::chrono::seconds(8)) {
+                            m_lastSyncSeek = now;
+                            player.seekTo(std::max(0.0, remotePosSec - baseOffsetSec));
+                            brls::Logger::info(
+                                "SyncLounge: seek to host {}s (local {}s, drift {}s)",
+                                (long)remotePosSec, (long)localPosSec, (long)drift);
+                        }
                     }
                 }
             }
@@ -1735,23 +1765,29 @@ void PlayerActivity::updateProgress() {
             m_lastTimelineState = currentState;
 
             int timeMs = m_transcodeBaseOffsetMs + (int)(position * 1000);
-            int durationMs = (int)(duration * 1000);
+            int durationMs = (m_mediaDurationMs > 0) ? m_mediaDurationMs : (int)(duration * 1000);
 
-            std::string ratingKey = m_mediaKey;
-            int pqItemID = 0;
-            // In queue mode, use the current track's ratingKey and playQueueItemID
-            if (m_isQueueMode) {
-                MusicQueue& queue = MusicQueue::getInstance();
-                const QueueItem* track = queue.getCurrentTrack();
-                if (track) {
-                    ratingKey = track->ratingKey;
-                    pqItemID = track->playQueueItemID;
+            // A corrupt transcode can spike mpv's position past the real end.
+            // Posting that 400s on Plex and would poison the saved resume point
+            // (next open would try to resume hours in), so skip until it's sane.
+            bool posInsane = (m_mediaDurationMs > 0 && timeMs > m_mediaDurationMs + 30000);
+            if (!posInsane) {
+                std::string ratingKey = m_mediaKey;
+                int pqItemID = 0;
+                // In queue mode, use the current track's ratingKey and playQueueItemID
+                if (m_isQueueMode) {
+                    MusicQueue& queue = MusicQueue::getInstance();
+                    const QueueItem* track = queue.getCurrentTrack();
+                    if (track) {
+                        ratingKey = track->ratingKey;
+                        pqItemID = track->playQueueItemID;
+                    }
                 }
-            }
 
-            std::string key = "/library/metadata/" + ratingKey;
-            PlexClient::getInstance().reportTimeline(
-                ratingKey, key, currentState, timeMs, durationMs, pqItemID);
+                std::string key = "/library/metadata/" + ratingKey;
+                PlexClient::getInstance().reportTimeline(
+                    ratingKey, key, currentState, timeMs, durationMs, pqItemID);
+            }
         }
     }
 
@@ -2581,6 +2617,23 @@ double PlayerActivity::knownDurationMs() const {
     return d > 0.0 ? (m_transcodeBaseOffsetMs + d * 1000.0) : 0.0;
 }
 
+bool PlayerActivity::restartTranscodeAtMs(int offsetMs) {
+    // Stop the current transcode and start a fresh one at offsetMs so Plex
+    // re-encodes from there. Used for far seeks and to escape a corrupt stream
+    // (bad-PTS / un-transcoded segments) that an mpv-local seek can't get out of.
+    double total = knownDurationMs();
+    if (total > 5000.0 && offsetMs > (int)total - 5000) offsetMs = (int)total - 5000;
+    if (offsetMs < 0) offsetMs = 0;
+    PlexClient& client = PlexClient::getInstance();
+    client.stopTranscode();
+    std::string url;
+    if (!client.getTranscodeUrl(m_mediaKey, url, offsetMs)) return false;
+    brls::Logger::info("Player: restarting transcode at offset={}ms", offsetMs);
+    m_transcodeBaseOffsetMs = offsetMs;
+    MpvPlayer::getInstance().loadUrl(url, "");
+    return true;
+}
+
 void PlayerActivity::requestTranscodeSeek(double absMs) {
     // Clamp to the real media length so a stale mpv duration (right after a
     // reload) can't push the target past the end.
@@ -2623,22 +2676,8 @@ void PlayerActivity::commitTranscodeSeek() {
     } else {
         // Tell Plex to re-transcode from the target instead of making mpv crawl
         // across un-transcoded HLS. Mirrors the audio/subtitle reload path.
-        PlexClient& client = PlexClient::getInstance();
-        // Never restart at/after the very end — leave a few seconds so Plex has
-        // something to transcode and can actually honor the offset.
-        const double total = knownDurationMs();
-        int offsetMs = (int)target;
-        if (total > 5000.0 && offsetMs > (int)total - 5000)
-            offsetMs = (int)total - 5000;
-        if (offsetMs < 0) offsetMs = 0;
-        client.stopTranscode();
-        std::string url;
-        if (client.getTranscodeUrl(m_mediaKey, url, offsetMs)) {
-            brls::Logger::info("seek: restarting transcode at offset={}ms", offsetMs);
-            m_transcodeBaseOffsetMs = offsetMs;
-            player.showOSD("Seeking…", 1.5);  // "Seeking…"
-            player.loadUrl(url, "");
-        } else if (target >= baseMs) {
+        player.showOSD("Seeking…", 1.5);  // "Seeking…"
+        if (!restartTranscodeAtMs((int)target) && target >= baseMs) {
             // Restart failed — fall back to a best-effort local seek.
             player.seekTo(std::max(0.0, (target - baseMs) / 1000.0));
         }
