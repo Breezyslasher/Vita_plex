@@ -228,6 +228,9 @@ private:
     // per-second re-seek storm. Default-constructed (epoch) lets the first
     // correction fire immediately.
     std::chrono::steady_clock::time_point m_lastSyncSeek{};
+    // ratingKey we last auto-loaded to follow the host's content, so the
+    // updateProgress loop doesn't re-trigger a reload while it's loading.
+    std::string m_syncLoungeContentKey;
 
     // Diagnostic overlay panel — created lazily on first
     // updateMpvStatsOverlay() call when AppSettings::showMpvStats is on.
