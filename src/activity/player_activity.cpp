@@ -1531,15 +1531,16 @@ void PlayerActivity::updateProgress() {
         SyncLoungeSession& sl = SyncLoungeSession::instance();
         const bool localSane = position >= 0.0 && position <= duration + 30.0;
 
-        // Announce our media once per loaded item (userInitiated=false, no host
-        // claim) so the party/server shows the right title even before any
-        // pause/play. `duration` is already > 0 here, so the values are valid.
+        // Announce our media once per loaded item so the party/server shows
+        // the right title even before any pause/play. Claims host only for a
+        // user-initiated new video (auto-loaded follows pass claimHost=false).
+        // `duration` is already > 0 here, so the values are valid.
         if (localSane && !m_syncLoungeAnnounced) {
             const char* ast = player.isPlaying() ? "playing"
                             : player.isPaused()  ? "paused" : nullptr;
             if (ast) {
                 sl.announceLocalMedia(ast, m_transcodeBaseOffsetMs + position * 1000.0,
-                                      duration * 1000.0);
+                                      duration * 1000.0, m_syncLoungeClaimHostOnAnnounce);
                 m_syncLoungeAnnounced = true;
             }
         }
@@ -1574,6 +1575,9 @@ void PlayerActivity::updateProgress() {
                 brls::Logger::info("SyncLounge: switching to host content ratingKey={} \"{}\"",
                                    mr.ratingKey, mr.title);
                 m_syncLoungeContentKey = mr.ratingKey;
+                // We're switching to FOLLOW the host — announcing this content
+                // must not steal host back from them.
+                m_syncLoungeClaimHostOnAnnounce = false;
                 MpvPlayer::getInstance().stop();
                 m_mediaKey       = mr.ratingKey;
                 m_endHandled     = false;
@@ -1859,7 +1863,9 @@ void PlayerActivity::syncLoungeReportUserAction(const std::string& state, double
     double durMs = MpvPlayer::getInstance().getDuration() * 1000.0;
     if (!std::isfinite(absTimeMs) || absTimeMs < 0.0) return;
     if (!std::isfinite(durMs)    || durMs    <= 0.0) return;
-    sl.reportUserAction(state, absTimeMs, durMs, 1.0);
+    // Pause/play/seek announce state but never claim host — only starting a
+    // new video does (the announce-on-load above).
+    sl.announceLocalMedia(state, absTimeMs, durMs, /*claimHost=*/false);
 }
 
 void PlayerActivity::updatePlayPauseLabel() {

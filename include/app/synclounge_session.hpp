@@ -53,14 +53,6 @@ public:
     void reportLocalState(const std::string& state, double timeMs,
                           double durationMs, double playbackRate);
 
-    // Announce a manual play/pause/seek the user performed on our player, as a
-    // `mediaUpdate` with userInitiated=true. Under the room's auto-host mode
-    // this also claims host (the server makes the initiator host and emits
-    // newHost), so interacting with the Vita's player takes control of the
-    // party. Not throttled — user actions are infrequent. time/duration ms.
-    void reportUserAction(const std::string& state, double timeMs,
-                          double durationMs, double playbackRate);
-
     // Tell the session what we're locally playing so our outbound mediaUpdates
     // carry a real `media` object (title/type/ratingKey/our machineIdentifier)
     // instead of null — otherwise the server/party shows us as "Nothing".
@@ -68,10 +60,13 @@ public:
                        const std::string& ratingKey);
     void clearLocalMedia();
 
-    // Announce our current media to the room WITHOUT claiming host
-    // (userInitiated=false). Call once playback is established so the party
-    // sees what we're playing even before any pause/play.
-    void announceLocalMedia(const std::string& state, double timeMs, double durationMs);
+    // Announce our current media + transport state to the room as a
+    // mediaUpdate. claimHost maps to the server's userInitiated flag: pass true
+    // ONLY when the user starts a new video (under auto-host that takes host so
+    // the party follows us). Pass false for pause/play/seek and for content we
+    // auto-loaded to FOLLOW the host — those must never steal host.
+    void announceLocalMedia(const std::string& state, double timeMs,
+                            double durationMs, bool claimHost);
 
     // Latest host state, mirrored from playerStateUpdate / mediaUpdate. Time
     // and duration are milliseconds (Plex / SyncLounge convention).

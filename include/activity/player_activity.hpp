@@ -234,6 +234,10 @@ private:
     // Whether we've announced the current media to the SyncLounge room yet
     // (reset on each loadMedia). Announce-once so the party shows our title.
     bool m_syncLoungeAnnounced = false;
+    // Whether announcing the current item should claim host (true only for a
+    // user-initiated new video; set false when we auto-load to follow the
+    // host, so following never steals host). Default true = user opened it.
+    bool m_syncLoungeClaimHostOnAnnounce = true;
 
     // Diagnostic overlay panel — created lazily on first
     // updateMpvStatsOverlay() call when AppSettings::showMpvStats is on.

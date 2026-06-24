@@ -405,17 +405,12 @@ void SyncLoungeSession::reportLocalState(const std::string& state, double timeMs
     client->emitEvent("playerStateUpdate", buf);
 }
 
-void SyncLoungeSession::reportUserAction(const std::string& state, double timeMs,
-                                         double durationMs, double playbackRate) {
-    // A manual play/pause/seek: announce with userInitiated=true (claims host
-    // under auto-host) and our real media.
-    emitMediaUpdate(state, timeMs, durationMs, playbackRate, /*userInitiated=*/true);
-}
-
 void SyncLoungeSession::announceLocalMedia(const std::string& state, double timeMs,
-                                           double durationMs) {
-    // Tell the room what we're playing without claiming host.
-    emitMediaUpdate(state, timeMs, durationMs, 1.0, /*userInitiated=*/false);
+                                           double durationMs, bool claimHost) {
+    // claimHost == the server's userInitiated flag. Only true on a
+    // user-initiated NEW video; pause/play/seek and follow-loads pass false so
+    // they never steal host.
+    emitMediaUpdate(state, timeMs, durationMs, 1.0, /*userInitiated=*/claimHost);
 }
 
 void SyncLoungeSession::emitMediaUpdate(const std::string& state, double timeMs,
@@ -433,12 +428,10 @@ void SyncLoungeSession::emitMediaUpdate(const std::string& state, double timeMs,
                     "\",\"ratingKey\":\"" + jsonEscape(m_localRatingKey) +
                     "\",\"machineIdentifier\":\"" + jsonEscape(m_localMachineId) + "\"}";
         }
-        if (userInitiated) {
-            // Count this as our latest broadcast so the periodic
-            // playerStateUpdate throttle doesn't immediately duplicate it.
-            m_lastSentState = state;
-            m_lastSentAt    = std::chrono::steady_clock::now();
-        }
+        // Count this as our latest broadcast so the periodic playerStateUpdate
+        // throttle doesn't immediately duplicate it.
+        m_lastSentState = state;
+        m_lastSentAt    = std::chrono::steady_clock::now();
     }
 
     // time/duration are whole milliseconds; format as integers to avoid the
