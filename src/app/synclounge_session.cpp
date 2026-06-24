@@ -3,13 +3,17 @@
  */
 
 #include "app/synclounge_session.hpp"
+#include "app/plex_client.hpp"
+#include "utils/async.hpp"
 
 #include <borealis.hpp>
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace vitaplex {
 
@@ -50,6 +54,44 @@ double jsonDouble(const std::string& json, const std::string& key) {
     catch (...) { return 0.0; }
 }
 
+// The balanced `{...}` object value of `"key":{...}` (or "" if the value is
+// null / not an object). Brace-counting only — fine for the flat media object,
+// whose string values don't contain braces.
+std::string extractJsonObject(const std::string& json, const std::string& key) {
+    const std::string needle = "\"" + key + "\"";
+    size_t k = json.find(needle);
+    if (k == std::string::npos) return "";
+    size_t colon = json.find(':', k + needle.size());
+    if (colon == std::string::npos) return "";
+    size_t p = colon + 1;
+    while (p < json.size() && (json[p] == ' ' || json[p] == '\t')) p++;
+    if (p >= json.size() || json[p] != '{') return "";  // null or non-object
+    int depth = 0;
+    const size_t start = p;
+    for (; p < json.size(); p++) {
+        if (json[p] == '{') depth++;
+        else if (json[p] == '}') { if (--depth == 0) return json.substr(start, p - start + 1); }
+    }
+    return "";
+}
+
+bool iequals(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); i++)
+        if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i])) return false;
+    return true;
+}
+
+std::string lower(std::string s) {
+    for (char& c : s) c = (char)std::tolower((unsigned char)c);
+    return s;
+}
+
+bool icontains(const std::string& hay, const std::string& needle) {
+    if (needle.empty()) return false;
+    return lower(hay).find(lower(needle)) != std::string::npos;
+}
+
 // The n-th (1-based) double-quoted token, escapes unwrapped. For an event
 // array `["newHost","<id>"]`, token 2 is the host id.
 std::string nthQuoted(const std::string& s, int n) {
@@ -86,11 +128,17 @@ void SyncLoungeSession::connect(const std::string& server, const std::string& ro
     std::shared_ptr<SyncLoungeClient> old;
     {
         std::lock_guard<std::mutex> lk(m_mtx);
-        old      = m_client;
-        m_client = nullptr;
-        m_server = server;
-        m_room   = room;
-        m_remote = RemoteState{};
+        old          = m_client;
+        m_client     = nullptr;
+        m_server     = server;
+        m_room       = room;
+        m_remote     = RemoteState{};
+        m_hostMedia  = HostMedia{};
+        m_match      = MatchResult{};
+        m_resolveKey.clear();
+        m_selfId.clear();
+        m_hostId.clear();
+        m_lastSentState.clear();
     }
     if (old) old->stop();
 
@@ -117,9 +165,14 @@ void SyncLoungeSession::disconnect() {
     std::shared_ptr<SyncLoungeClient> old;
     {
         std::lock_guard<std::mutex> lk(m_mtx);
-        old      = m_client;
-        m_client = nullptr;
-        m_remote = RemoteState{};
+        old          = m_client;
+        m_client     = nullptr;
+        m_remote     = RemoteState{};
+        m_hostMedia  = HostMedia{};
+        m_match      = MatchResult{};
+        m_resolveKey.clear();
+        m_selfId.clear();
+        m_hostId.clear();
     }
     if (old) old->stop();
 }
@@ -160,6 +213,45 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
         }
         brls::Logger::debug("SyncLounge: host {} state={} time={}ms",
                             name, rs.state, (long)rs.timeMs);
+
+        // mediaUpdate also carries the host's `media` object. Parse it and
+        // resolve a local match (background) so a follower can line up content.
+        if (name == "mediaUpdate") {
+            const std::string mediaObj = extractJsonObject(payload, "media");
+            HostMedia hm;
+            if (!mediaObj.empty()) {
+                hm.valid            = true;
+                hm.type             = jsonStr(mediaObj, "type");
+                hm.title            = jsonStr(mediaObj, "title");
+                hm.year             = (int)jsonDouble(mediaObj, "year");
+                hm.grandparentTitle = jsonStr(mediaObj, "grandparentTitle");
+                hm.parentIndex      = (int)jsonDouble(mediaObj, "parentIndex");
+                hm.index            = (int)jsonDouble(mediaObj, "index");
+                hm.raw              = mediaObj.substr(0, 500);
+            }
+
+            bool kick = false;
+            {
+                std::lock_guard<std::mutex> lk(m_mtx);
+                m_hostMedia = hm;
+                // Debounce: only re-resolve when the media identity changes.
+                const std::string key =
+                    hm.valid ? (hm.type + "|" + hm.grandparentTitle + "|" + hm.title +
+                                "|" + std::to_string(hm.year))
+                             : "";
+                if (hm.valid && key != m_resolveKey) {
+                    m_resolveKey = key;
+                    kick = true;
+                }
+            }
+            if (hm.valid) {
+                brls::Logger::info(
+                    "SyncLounge: host media type={} title=\"{}\" year={} show=\"{}\" s{}e{} raw={}",
+                    hm.type, hm.title, hm.year, hm.grandparentTitle,
+                    hm.parentIndex, hm.index, hm.raw);
+            }
+            if (kick) resolveMatchAsync(hm);
+        }
     } else if (name == "joinResult") {
         // payload: ["joinResult",{...,"hostId":"H","user":{"id":"SELF",...},...}]
         // The first "id" key belongs to the user object (our socket id).
@@ -186,6 +278,67 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
 bool SyncLoungeSession::isHost() const {
     std::lock_guard<std::mutex> lk(m_mtx);
     return !m_selfId.empty() && m_selfId == m_hostId;
+}
+
+SyncLoungeSession::HostMedia SyncLoungeSession::hostMedia() const {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    return m_hostMedia;
+}
+
+SyncLoungeSession::MatchResult SyncLoungeSession::match() const {
+    std::lock_guard<std::mutex> lk(m_mtx);
+    return m_match;
+}
+
+void SyncLoungeSession::resolveMatchAsync(HostMedia hm) {
+    // `this` is a singleton — always valid. PlexClient::search is
+    // background-safe (uses its own HttpClient), so search off the worker
+    // thread rather than blocking it.
+    asyncRun([this, hm]() {
+        std::vector<MediaItem> results;
+        // Episodes: the show title is a stronger search signal than the
+        // (often generic) episode title. Movies: search the title.
+        const std::string query = (hm.type == "episode" && !hm.grandparentTitle.empty())
+                                       ? hm.grandparentTitle
+                                       : hm.title;
+        if (!query.empty()) PlexClient::getInstance().search(query, results);
+
+        // Score candidates: a wrong type is disqualifying; otherwise prefer an
+        // exact title, then matching year (movies) / show (episodes).
+        MatchResult best;
+        best.resolved = true;
+        best.forTitle = hm.title;
+        int bestScore = 0;
+        for (const auto& it : results) {
+            if (!hm.type.empty() && !it.type.empty() && it.type != hm.type) continue;
+            int score = 1;
+            if (iequals(it.title, hm.title)) score += 4;
+            else if (icontains(it.title, hm.title) || icontains(hm.title, it.title)) score += 1;
+            else if (hm.type != "episode") continue;  // a movie needs some title overlap
+            if (hm.type == "movie" && hm.year > 0 && it.year == hm.year) score += 3;
+            if (hm.type == "episode" && !hm.grandparentTitle.empty() &&
+                iequals(it.grandparentTitle, hm.grandparentTitle)) score += 3;
+            if (score > bestScore) {
+                bestScore      = score;
+                best.ratingKey = it.ratingKey;
+                best.title     = it.title;
+            }
+        }
+        if (bestScore < 2) { best.ratingKey.clear(); best.title.clear(); }
+
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            // Drop a result that arrived after the host moved to other media.
+            if (m_hostMedia.title == hm.title && m_hostMedia.type == hm.type)
+                m_match = best;
+        }
+        if (best.ratingKey.empty())
+            brls::Logger::info("SyncLounge match: host \"{}\" ({}) -> no local match among {} results",
+                               hm.title, hm.type, results.size());
+        else
+            brls::Logger::info("SyncLounge match: host \"{}\" ({}) -> local ratingKey={} \"{}\"",
+                               hm.title, hm.type, best.ratingKey, best.title);
+    });
 }
 
 void SyncLoungeSession::reportLocalState(const std::string& state, double timeMs,

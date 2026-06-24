@@ -75,6 +75,32 @@ public:
     };
     RemoteState remoteState() const;
 
+    // What the host is playing, parsed from the mediaUpdate `media` object.
+    // Cross-server: ratingKey/key are the HOST's and useless to us, so we
+    // match on title/year/show/season/episode against our own library.
+    struct HostMedia {
+        bool        valid = false;
+        std::string type;             // "movie" / "episode" / ...
+        std::string title;
+        int         year = 0;
+        std::string grandparentTitle; // show (episodes)
+        int         parentIndex = 0;  // season number
+        int         index = 0;        // episode number
+        std::string raw;              // raw media JSON (debug)
+    };
+    HostMedia hostMedia() const;
+
+    // Result of resolving the host's media against our local library. ratingKey
+    // is empty when no confident match was found. `forTitle` records which host
+    // title this result is for, so a stale match isn't applied to new media.
+    struct MatchResult {
+        bool        resolved = false;
+        std::string ratingKey;
+        std::string title;
+        std::string forTitle;
+    };
+    MatchResult match() const;
+
 private:
     SyncLoungeSession() = default;
     SyncLoungeSession(const SyncLoungeSession&)            = delete;
@@ -83,11 +109,20 @@ private:
     // Invoked by the client on its worker thread for each inbound event.
     void onEvent(const std::string& name, const std::string& payload);
 
+    // Kick a background search of our library for the host's media, storing
+    // the result in m_match. Debounced by m_resolveKey so the same media isn't
+    // re-resolved repeatedly. Runs on its own thread (PlexClient::search is
+    // background-safe — it uses its own HttpClient).
+    void resolveMatchAsync(HostMedia hm);
+
     mutable std::mutex                m_mtx;
     std::shared_ptr<SyncLoungeClient> m_client;
     std::string                       m_server;
     std::string                       m_room;
     RemoteState                       m_remote;
+    HostMedia                         m_hostMedia;
+    MatchResult                       m_match;
+    std::string                       m_resolveKey;   // identity of the media last resolved
 
     // Host tracking + outbound throttle (all guarded by m_mtx).
     std::string                           m_selfId;       // our socket id (from joinResult)
