@@ -625,23 +625,9 @@ void SyncLoungeSession::announceLocalMedia(const std::string& state, double time
                                            double durationMs, bool claimHost) {
     // claimHost == the server's userInitiated flag. Only true on a
     // user-initiated NEW video; pause/play/seek and follow-loads pass false so
-    // they never steal host. The local "Auto Host" preference gates it further:
-    // with auto-host off (the default) we never claim, so a non-host client
-    // won't take over the party even when the user starts something new here.
-    bool autoHost;
-    { std::lock_guard<std::mutex> lk(m_mtx); autoHost = m_autoHost; }
-    emitMediaUpdate(state, timeMs, durationMs, 1.0,
-                    /*userInitiated=*/claimHost && autoHost);
-}
-
-void SyncLoungeSession::setAutoHost(bool enabled) {
-    std::lock_guard<std::mutex> lk(m_mtx);
-    m_autoHost = enabled;
-}
-
-bool SyncLoungeSession::autoHost() const {
-    std::lock_guard<std::mutex> lk(m_mtx);
-    return m_autoHost;
+    // they never steal host. The server only acts on it when the room's
+    // auto-host (Room Auto Host) is enabled — that's the gate.
+    emitMediaUpdate(state, timeMs, durationMs, 1.0, /*userInitiated=*/claimHost);
 }
 
 void SyncLoungeSession::emitMediaUpdate(const std::string& state, double timeMs,

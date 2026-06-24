@@ -64,14 +64,10 @@ public:
 
     // ── Room auto-host ────────────────────────────────────────────────────
     // Server-side, room-wide switch: when enabled, the server promotes ANY
-    // non-host member who starts new media (userInitiated) to host. Mirrors the
-    // party-pause control — host-only to change (the server disconnects a
-    // non-host sender) and the new value is broadcast to the whole room.
-    //
-    // This is the room switch the server checks in its makeHost rule; the
-    // per-device "Auto Host" preference (setAutoHost) decides whether THIS
-    // client actually sends userInitiated when allowed. Both must be on for a
-    // non-host to take over by playing.
+    // non-host member who starts a new video (userInitiated) to host. Mirrors
+    // the party-pause control — host-only to change (the server disconnects a
+    // non-host sender) and the new value is broadcast to the whole room. This is
+    // the switch the server checks in its makeHost rule.
     bool isRoomAutoHostEnabled() const;
     void setRoomAutoHostEnabled(bool enabled);
 
@@ -99,14 +95,6 @@ public:
     // auto-loaded to FOLLOW the host — those must never steal host.
     void announceLocalMedia(const std::string& state, double timeMs,
                             double durationMs, bool claimHost);
-
-    // Local "auto host" opt-in (default off). When off, announceLocalMedia never
-    // sets userInitiated even for a user-started new video, so a non-host client
-    // never takes over the party. When on, starting new media here claims host
-    // (under the room's auto-host). Persisted in settings; pushed here at startup,
-    // on connect, and when the user toggles it.
-    void setAutoHost(bool enabled);
-    bool autoHost() const;
 
     // Latest host state, mirrored from playerStateUpdate / mediaUpdate. Time
     // and duration are milliseconds (Plex / SyncLounge convention).
@@ -196,7 +184,6 @@ private:
     // Host tracking + outbound throttle (all guarded by m_mtx).
     std::string                           m_selfId;       // our socket id (from joinResult)
     std::string                           m_hostId;       // current room host id
-    bool                                  m_autoHost = false;  // local claim-host opt-in (default off)
     std::string                           m_lastSentState;
     std::chrono::steady_clock::time_point m_lastSentAt{};
 
