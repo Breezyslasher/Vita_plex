@@ -4689,7 +4689,10 @@ void MediaDetailView::showCenteredChoice(const std::string& title,
         row->setMarginBottom(8.0f);
         row->setFocusable(true);
         row->setHighlightCornerRadius(11.0f);
-        row->setBackgroundColor(primary ? pc::gold() : pc::surface());
+        // Uniform neutral rows — no filled "primary" row, which reads as
+        // pre-selected at rest. The accent lives in the label colour; focus is
+        // the only selection cue.
+        row->setBackgroundColor(pc::surface());
 
         if (!r.icon.empty()) {
             auto* img = new brls::Image();
@@ -4704,7 +4707,7 @@ void MediaDetailView::showCenteredChoice(const std::string& title,
         auto* lbl = new brls::Label();
         lbl->setText(r.label);
         lbl->setFontSize(16.0f);
-        lbl->setTextColor(primary ? pc::goldInk() : (r.danger ? pc::muted() : pc::text()));
+        lbl->setTextColor(primary ? pc::gold() : (r.danger ? pc::muted() : pc::text()));
         lbl->setGrow(1.0f);
         row->addView(lbl);
 

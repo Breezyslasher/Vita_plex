@@ -149,6 +149,10 @@ private:
     // Invoked by the client on its worker thread for each inbound event.
     void onEvent(const std::string& name, const std::string& payload);
 
+    // Parse a host `media` object (from mediaUpdate or joinResult.users[host]),
+    // store it, and kick a background resolve. No-op for an empty/null object.
+    void processHostMedia(const std::string& mediaObj);
+
     // Build + emit a mediaUpdate carrying our current local media (or null).
     void emitMediaUpdate(const std::string& state, double timeMs,
                          double durationMs, double playbackRate, bool userInitiated);

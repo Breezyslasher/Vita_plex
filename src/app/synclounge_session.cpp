@@ -363,46 +363,11 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
         brls::Logger::debug("SyncLounge: host {} state={} time={}ms",
                             name, rs.state, (long)rs.timeMs);
 
-        // mediaUpdate may also carry the host's `media` object. But the client
-        // sends mediaUpdate with media:null on plain state changes (pause/play)
-        // too — those are state-only (handled above) and must NOT wipe the last
-        // known media/match, or an in-flight resolve gets dropped by the
-        // staleness check. Only (re)parse a real media object.
-        if (name == "mediaUpdate") {
-            const std::string mediaObj = extractJsonObject(payload, "media");
-            if (!mediaObj.empty()) {
-                HostMedia hm;
-                hm.valid            = true;
-                hm.type             = jsonStr(mediaObj, "type");
-                hm.title            = jsonStr(mediaObj, "title");
-                hm.year             = (int)jsonDouble(mediaObj, "year");
-                hm.grandparentTitle = jsonStr(mediaObj, "grandparentTitle");
-                hm.parentTitle      = jsonStr(mediaObj, "parentTitle");
-                hm.parentIndex      = (int)jsonDouble(mediaObj, "parentIndex");
-                hm.index            = (int)jsonDouble(mediaObj, "index");
-                hm.machineIdentifier= jsonStr(mediaObj, "machineIdentifier");
-                hm.hostRatingKey    = jsonStr(mediaObj, "ratingKey");
-                hm.raw              = mediaObj.substr(0, 500);
-
-                bool kick = false;
-                {
-                    std::lock_guard<std::mutex> lk(m_mtx);
-                    m_hostMedia = hm;
-                    // Debounce: only re-resolve when the media identity changes.
-                    const std::string key = hm.type + "|" + hm.grandparentTitle + "|" +
-                                            hm.parentTitle + "|" + hm.title + "|" +
-                                            std::to_string(hm.year);
-                    if (key != m_resolveKey) {
-                        m_resolveKey = key;
-                        kick = true;
-                    }
-                }
-                brls::Logger::info(
-                    "SyncLounge: host media type={} title=\"{}\" show=\"{}\" season=\"{}\" raw={}",
-                    hm.type, hm.title, hm.grandparentTitle, hm.parentTitle, hm.raw);
-                if (kick) resolveMatchAsync(hm);
-            }
-        }
+        // mediaUpdate may also carry the host's `media` object (the client
+        // sends media:null on plain pause/play — those are state-only, handled
+        // above, and processHostMedia ignores them so the last match stands).
+        if (name == "mediaUpdate")
+            processHostMedia(extractJsonObject(payload, "media"));
     } else if (name == "joinResult") {
         // payload: ["joinResult",{...,"hostId":"H","user":{"id":"SELF",...},...}]
         // The first "id" key belongs to the user object (our socket id).
@@ -417,6 +382,30 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
         }
         brls::Logger::info("SyncLounge: joined self={} host={} isHost={} partyPause={}",
                            self, host, (!self.empty() && self == host), partyPausing);
+
+        // Seed the host's CURRENT media + position from joinResult.users[host]
+        // so connecting mid-session can offer to join (and open at the right
+        // spot) what's already playing — not just future content changes.
+        if (!host.empty()) {
+            const std::string usersObj  = extractJsonObject(payload, "users");
+            const std::string hostEntry = extractJsonObject(usersObj, host);
+            if (!hostEntry.empty()) {
+                const std::string st = jsonStr(hostEntry, "state");
+                if (!st.empty()) {
+                    RemoteState rs;
+                    rs.valid        = true;
+                    rs.state        = st;
+                    rs.timeMs       = jsonDouble(hostEntry, "time");
+                    rs.durationMs   = jsonDouble(hostEntry, "duration");
+                    double pr       = jsonDouble(hostEntry, "playbackRate");
+                    rs.playbackRate = pr > 0.0 ? pr : 1.0;
+                    rs.at           = std::chrono::steady_clock::now();
+                    std::lock_guard<std::mutex> lk(m_mtx);
+                    m_remote = rs;
+                }
+                processHostMedia(extractJsonObject(hostEntry, "media"));
+            }
+        }
     } else if (name == "newHost") {
         // payload: ["newHost","<hostId>"]
         const std::string host = nthQuoted(payload, 2);
@@ -443,6 +432,41 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
         }
         brls::Logger::info("SyncLounge: partyPause -> {}", isPause ? "pause" : "play");
     }
+}
+
+void SyncLoungeSession::processHostMedia(const std::string& mediaObj) {
+    if (mediaObj.empty()) return;  // media:null (state-only) — keep the last match
+
+    HostMedia hm;
+    hm.valid            = true;
+    hm.type             = jsonStr(mediaObj, "type");
+    hm.title            = jsonStr(mediaObj, "title");
+    hm.year             = (int)jsonDouble(mediaObj, "year");
+    hm.grandparentTitle = jsonStr(mediaObj, "grandparentTitle");
+    hm.parentTitle      = jsonStr(mediaObj, "parentTitle");
+    hm.parentIndex      = (int)jsonDouble(mediaObj, "parentIndex");
+    hm.index            = (int)jsonDouble(mediaObj, "index");
+    hm.machineIdentifier= jsonStr(mediaObj, "machineIdentifier");
+    hm.hostRatingKey    = jsonStr(mediaObj, "ratingKey");
+    hm.raw              = mediaObj.substr(0, 500);
+
+    bool kick = false;
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        m_hostMedia = hm;
+        // Debounce: only re-resolve when the media identity changes.
+        const std::string key = hm.type + "|" + hm.grandparentTitle + "|" +
+                                hm.parentTitle + "|" + hm.title + "|" +
+                                std::to_string(hm.year);
+        if (key != m_resolveKey) {
+            m_resolveKey = key;
+            kick = true;
+        }
+    }
+    brls::Logger::info(
+        "SyncLounge: host media type={} title=\"{}\" show=\"{}\" season=\"{}\" raw={}",
+        hm.type, hm.title, hm.grandparentTitle, hm.parentTitle, hm.raw);
+    if (kick) resolveMatchAsync(hm);
 }
 
 bool SyncLoungeSession::isHost() const {
