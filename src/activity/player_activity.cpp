@@ -1683,7 +1683,13 @@ void PlayerActivity::updateProgress() {
             }
         } else {
             auto rs = sl.remoteState();
-            if (rs.valid && (rs.state == "playing" || rs.state == "paused")) {
+            // Only follow a RECENT host state. If the host's updates stop (they
+            // left or their connection dropped) the last state freezes; without
+            // this we'd keep seeking back to that stale frozen position forever.
+            bool hostFresh = rs.valid &&
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - rs.at).count() < 12000;
+            if (hostFresh && (rs.state == "playing" || rs.state == "paused")) {
                 if (!localSane) {
                     // mpv's position is garbage — a corrupt transcode PTS spiked
                     // it past the real end. An mpv-local seek can't escape it (it

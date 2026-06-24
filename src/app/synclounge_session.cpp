@@ -418,6 +418,22 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
             if (!host.empty()) m_hostId = host;
         }
         brls::Logger::info("SyncLounge: newHost={}", host);
+    } else if (name == "userLeft") {
+        // payload: ["userLeft",{"id":"<socketId>"}]
+        // If the HOST left, stop following their now-frozen state — otherwise the
+        // follower keeps seeking back to wherever the host was when they left.
+        // Drop the host id and invalidate the remote state; the server promotes a
+        // new host via newHost (possibly us), and we resume following that fresh
+        // state. A non-host leaving doesn't affect us.
+        const std::string who = jsonStr(payload, "id");
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            if (!who.empty() && who == m_hostId) {
+                m_hostId.clear();
+                m_remote.valid = false;
+            }
+        }
+        brls::Logger::info("SyncLounge: userLeft {}", who);
     } else if (name == "setPartyPausingEnabled") {
         // payload: ["setPartyPausingEnabled",true|false]
         const bool enabled = barePayloadTrue(payload);
