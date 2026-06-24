@@ -1655,14 +1655,24 @@ void PlayerActivity::updateProgress() {
 
         // Announce our media once per loaded item so the party/server shows
         // the right title even before any pause/play. Claims host only for a
-        // user-initiated new video (auto-loaded follows pass claimHost=false).
+        // user-initiated NEW video (auto-loaded follows pass claimHost=false).
         // `duration` is already > 0 here, so the values are valid.
         if (localSane && !m_syncLoungeAnnounced) {
             const char* ast = player.isPlaying() ? "playing"
                             : player.isPaused()  ? "paused" : nullptr;
             if (ast) {
+                // Only claim host for genuinely NEW content. If we're opening the
+                // same item the host is already playing — e.g. clicking "Join"
+                // on the auto-join prompt — we're joining to follow, not taking
+                // over, so never claim host (even with room auto-host on).
+                bool claimHost = m_syncLoungeClaimHostOnAnnounce;
+                if (claimHost) {
+                    auto mr = sl.match();
+                    if (mr.resolved && !mr.ratingKey.empty() && mr.ratingKey == m_mediaKey)
+                        claimHost = false;
+                }
                 sl.announceLocalMedia(ast, m_transcodeBaseOffsetMs + position * 1000.0,
-                                      duration * 1000.0, m_syncLoungeClaimHostOnAnnounce);
+                                      duration * 1000.0, claimHost);
                 m_syncLoungeAnnounced = true;
             }
         }
