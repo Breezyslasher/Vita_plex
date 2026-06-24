@@ -123,6 +123,11 @@ struct AppSettings {
     int connectionTimeout = 180; // seconds (3 minutes for slow connections)
     bool directPlay = false;     // Try direct play first
 
+    // SyncLounge (watch party) — remembered so the user doesn't retype them
+    // each session. Server defaults to the public instance.
+    std::string syncLoungeServer = "https://server.synclounge.tv";
+    std::string syncLoungeRoom;
+
     // Download Settings
     bool deleteAfterWatch = false;     // Auto-delete after fully watched
 
