@@ -315,6 +315,15 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
     // so a left-to-right key scan picks them up even though media may carry
     // its own "duration".
     if (name == "playerStateUpdate" || name == "mediaUpdate") {
+        // Only the room HOST drives us — the server relays every member's
+        // updates, so ignore anyone who isn't the current host (matters once
+        // there are 3+ people). `id` is the sender's socket id.
+        const std::string sender = jsonStr(payload, "id");
+        {
+            std::lock_guard<std::mutex> lk(m_mtx);
+            if (!m_hostId.empty() && !sender.empty() && sender != m_hostId) return;
+        }
+
         RemoteState rs;
         rs.valid        = true;
         rs.state        = jsonStr(payload, "state");
@@ -430,12 +439,27 @@ void SyncLoungeSession::resolveMatchAsync(HostMedia hm) {
             best = resolveTitleMatch(hm);
         }
 
+        MatchPromptFn promptCb;
+        std::string   promptTitle;
+        std::string   promptKey;
         {
             std::lock_guard<std::mutex> lk(m_mtx);
             // Drop a result that arrived after the host moved to other media.
             if (m_hostMedia.title == hm.title && m_hostMedia.type == hm.type)
                 m_match = best;
+            // Offer to join once per distinct, confidently-matched host item.
+            if (best.exact && !best.ratingKey.empty() && best.ratingKey != m_lastPromptKey) {
+                m_lastPromptKey = best.ratingKey;
+                promptCb        = m_promptCb;
+                promptKey       = best.ratingKey;
+                promptTitle     = (hm.type == "episode" && !hm.grandparentTitle.empty())
+                                      ? (hm.grandparentTitle + " - " + hm.title)
+                                      : hm.title;
+            }
         }
+        if (promptCb)
+            brls::sync([promptCb, promptKey, promptTitle]() { promptCb(promptKey, promptTitle); });
+
         if (best.ratingKey.empty())
             brls::Logger::info("SyncLounge match: host \"{}\" ({}) show=\"{}\" -> no local match",
                                hm.title, hm.type, hm.grandparentTitle);
