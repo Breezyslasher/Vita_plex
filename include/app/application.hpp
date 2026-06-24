@@ -127,6 +127,10 @@ struct AppSettings {
     // each session. Server defaults to the public instance.
     std::string syncLoungeServer = "https://server.synclounge.tv";
     std::string syncLoungeRoom;
+    // SyncLounge "auto host": when on, a non-host client that starts new media
+    // here claims host so the party follows us. Off by default — the device
+    // normally just follows the room and never takes over on its own.
+    bool syncLoungeAutoHost = false;
 
     // Download Settings
     bool deleteAfterWatch = false;     // Auto-delete after fully watched

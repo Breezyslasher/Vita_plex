@@ -87,6 +87,10 @@ void Application::run() {
             MediaDetailView::showCenteredChoice("Watch party", title, std::move(rows));
         });
 
+    // Apply the saved "auto host" preference to the session (off by default, so
+    // playing here never takes over the party unless the user opted in).
+    SyncLoungeSession::instance().setAutoHost(m_settings.syncLoungeAutoHost);
+
     // Check if we have saved login credentials
     if (isLoggedIn() && !m_serverUrl.empty()) {
         brls::Logger::info("Restoring saved session...");
@@ -419,6 +423,7 @@ bool Application::loadSettings() {
         std::string sls = extractString("syncLoungeServer");
         if (!sls.empty()) m_settings.syncLoungeServer = sls;
         m_settings.syncLoungeRoom = extractString("syncLoungeRoom");
+        m_settings.syncLoungeAutoHost = extractBool("syncLoungeAutoHost", false);
     }
 
     m_settings.showMpvStats = extractBool("showMpvStats", false);
@@ -563,6 +568,7 @@ bool Application::saveSettings() {
     json += "  \"defaultSubtitleLanguage\": \"" + esc(m_settings.defaultSubtitleLanguage) + "\",\n";
     json += "  \"syncLoungeServer\": \"" + esc(m_settings.syncLoungeServer) + "\",\n";
     json += "  \"syncLoungeRoom\": \"" + esc(m_settings.syncLoungeRoom) + "\",\n";
+    json += "  \"syncLoungeAutoHost\": " + b(m_settings.syncLoungeAutoHost) + ",\n";
     json += "  \"showMpvStats\": " + b(m_settings.showMpvStats) + ",\n";
     json += "  \"videoQuality\": " + std::to_string(static_cast<int>(m_settings.videoQuality)) + ",\n";
     json += "  \"forceTranscode\": " + b(m_settings.forceTranscode) + ",\n";

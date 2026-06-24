@@ -87,6 +87,14 @@ public:
     void announceLocalMedia(const std::string& state, double timeMs,
                             double durationMs, bool claimHost);
 
+    // Local "auto host" opt-in (default off). When off, announceLocalMedia never
+    // sets userInitiated even for a user-started new video, so a non-host client
+    // never takes over the party. When on, starting new media here claims host
+    // (under the room's auto-host). Persisted in settings; pushed here at startup,
+    // on connect, and when the user toggles it.
+    void setAutoHost(bool enabled);
+    bool autoHost() const;
+
     // Latest host state, mirrored from playerStateUpdate / mediaUpdate. Time
     // and duration are milliseconds (Plex / SyncLounge convention).
     struct RemoteState {
@@ -175,6 +183,7 @@ private:
     // Host tracking + outbound throttle (all guarded by m_mtx).
     std::string                           m_selfId;       // our socket id (from joinResult)
     std::string                           m_hostId;       // current room host id
+    bool                                  m_autoHost = false;  // local claim-host opt-in (default off)
     std::string                           m_lastSentState;
     std::chrono::steady_clock::time_point m_lastSentAt{};
 
