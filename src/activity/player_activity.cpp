@@ -1671,10 +1671,8 @@ void PlayerActivity::updateProgress() {
                     if (mr.resolved && !mr.ratingKey.empty() && mr.ratingKey == m_mediaKey)
                         claimHost = false;
                 }
-                double durMs = (m_mediaDurationMs > 0) ? (double)m_mediaDurationMs
-                                                       : duration * 1000.0;
                 sl.announceLocalMedia(ast, m_transcodeBaseOffsetMs + position * 1000.0,
-                                      durMs, claimHost);
+                                      duration * 1000.0, claimHost);
                 m_syncLoungeAnnounced = true;
             }
         }
@@ -1689,10 +1687,7 @@ void PlayerActivity::updateProgress() {
                                                     : nullptr;
                 if (st) {
                     double timeMs = m_transcodeBaseOffsetMs + position * 1000.0;
-                    // Use Plex's authoritative duration — mpv's reads NaN mid-HLS
-                    // while playing, which the server renders as NaN:NaN.
-                    double durMs  = (m_mediaDurationMs > 0) ? (double)m_mediaDurationMs
-                                                            : duration * 1000.0;
+                    double durMs  = duration * 1000.0;
                     sl.reportLocalState(st, timeMs, durMs, 1.0);
                 }
             }
@@ -2005,8 +2000,7 @@ void PlayerActivity::syncLoungeReportUserAction(const std::string& state, double
     // change; never broadcast that (the server renders it as NaN:NaN). Skip
     // the announce until the readings are valid — the periodic host broadcast
     // (and the next action) cover the gap.
-    double durMs = (m_mediaDurationMs > 0) ? (double)m_mediaDurationMs
-                                           : MpvPlayer::getInstance().getDuration() * 1000.0;
+    double durMs = MpvPlayer::getInstance().getDuration() * 1000.0;
     if (!std::isfinite(absTimeMs) || absTimeMs < 0.0) return;
     if (!std::isfinite(durMs)    || durMs    <= 0.0) return;
     // Pause/play/seek announce state but never claim host — only starting a
