@@ -50,6 +50,11 @@ public:
     // Resume existing queue (return to player without resetting queue)
     static PlayerActivity* createResumeQueue();
 
+    // True while a player activity is on screen. Used by the SyncLounge
+    // auto-join prompt to skip prompting when we're already watching (the
+    // in-player auto-load handles content changes instead).
+    static bool isActive();
+
     brls::View* createContentView() override;
 
     void onContentAvailable() override;
@@ -257,6 +262,9 @@ private:
 
     // Alive flag for async image loads - prevents use-after-free when activity is destroyed
     std::shared_ptr<std::atomic<bool>> m_alive = std::make_shared<std::atomic<bool>>(true);
+
+    // Set while a player activity is on screen (see isActive()).
+    static std::atomic<bool> s_active;
 
     // Track cycling
     void cycleAudioTrack();

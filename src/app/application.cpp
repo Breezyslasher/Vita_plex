@@ -9,6 +9,8 @@
 #include "activity/login_activity.hpp"
 #include "activity/main_activity.hpp"
 #include "activity/player_activity.hpp"
+#include "app/synclounge_session.hpp"
+#include "view/media_detail_view.hpp"
 
 #include <borealis.hpp>
 #include <fstream>
@@ -65,6 +67,25 @@ bool Application::init() {
 void Application::run() {
     brls::Logger::info("Application::run - isLoggedIn={}, serverUrl={}",
                        isLoggedIn(), m_serverUrl.empty() ? "(empty)" : m_serverUrl);
+
+    // SyncLounge auto-join prompt: when the room host starts new content that
+    // resolves to a confident local match and we're NOT already in a player,
+    // offer to join via the same options popover the START menu uses. Fires
+    // on the UI thread (the session marshals it).
+    SyncLoungeSession::instance().setMatchPromptCallback(
+        [](const std::string& ratingKey, const std::string& title) {
+            if (PlayerActivity::isActive()) return;          // already watching — auto-load handles it
+            if (SyncLoungeSession::instance().isHost()) return;  // we're driving the party
+            std::vector<OptionRow> rows;
+            rows.push_back({ "play.png", "Join the watch party", "", true, false,
+                [ratingKey](brls::View*) {
+                    Application::getInstance().pushPlayerActivity(ratingKey);
+                    return true;
+                }});
+            rows.push_back({ "cross.png", "Not now", "", false, true,
+                [](brls::View*) { return true; }});
+            MediaDetailView::showOptionsPopover(nullptr, "Watch party", title, std::move(rows));
+        });
 
     // Check if we have saved login credentials
     if (isLoggedIn() && !m_serverUrl.empty()) {

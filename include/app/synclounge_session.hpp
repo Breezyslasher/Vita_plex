@@ -117,6 +117,14 @@ public:
     };
     MatchResult match() const;
 
+    // Invoked (on the UI thread) when the host starts NEW content that resolves
+    // to a confident local match, so a coordinator can offer to join. Fires
+    // once per distinct host item; the handler decides whether to actually
+    // prompt (e.g. skip when already in a player). Set once at startup.
+    using MatchPromptFn = std::function<void(const std::string& ratingKey,
+                                             const std::string& title)>;
+    void setMatchPromptCallback(MatchPromptFn cb) { m_promptCb = std::move(cb); }
+
 private:
     SyncLoungeSession() = default;
     SyncLoungeSession(const SyncLoungeSession&)            = delete;
@@ -157,6 +165,10 @@ private:
     std::string                           m_localMachineId;
     std::string                           m_localGrandparentTitle;  // show (episodes)
     std::string                           m_localParentTitle;       // season (episodes)
+
+    // Auto-join prompt: callback + last host item offered (prompt once per item).
+    MatchPromptFn                         m_promptCb;
+    std::string                           m_lastPromptKey;
 };
 
 } // namespace vitaplex

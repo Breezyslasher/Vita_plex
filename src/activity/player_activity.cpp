@@ -32,6 +32,12 @@ namespace vitaplex {
 // Extension will be added dynamically based on the actual file type
 
 
+std::atomic<bool> PlayerActivity::s_active{false};
+
+bool PlayerActivity::isActive() {
+    return s_active.load();
+}
+
 PlayerActivity::PlayerActivity(const std::string& mediaKey)
     : m_mediaKey(mediaKey), m_isLocalFile(false) {
     brls::Logger::debug("PlayerActivity created for media: {}", mediaKey);
@@ -145,6 +151,10 @@ brls::View* PlayerActivity::createContentView() {
 
 void PlayerActivity::onContentAvailable() {
     brls::Logger::debug("PlayerActivity content available");
+
+    // We're on screen now — suppress the SyncLounge auto-join prompt (the
+    // in-player auto-load follows content changes instead).
+    s_active.store(true);
 
 #ifdef __vita__
     // Boost CPU/GPU clocks to max for smooth media playback
@@ -706,6 +716,9 @@ void PlayerActivity::setBackgroundTransparent(bool transparent) {
 
 void PlayerActivity::willDisappear(bool resetState) {
     brls::Activity::willDisappear(resetState);
+
+    // Left the player — re-enable the SyncLounge auto-join prompt.
+    s_active.store(false);
 
     // Always restore the opaque clear when leaving the player so the
     // rest of the app (library, settings, etc.) renders with its normal
