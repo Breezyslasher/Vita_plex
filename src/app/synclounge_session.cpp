@@ -212,4 +212,28 @@ void SyncLoungeSession::reportLocalState(const std::string& state, double timeMs
     client->emitEvent("playerStateUpdate", buf);
 }
 
+void SyncLoungeSession::reportUserAction(const std::string& state, double timeMs,
+                                         double durationMs, double playbackRate) {
+    std::shared_ptr<SyncLoungeClient> client;
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        if (!m_client) return;
+        client = m_client;
+        // Count this as our latest broadcast so the periodic playerStateUpdate
+        // throttle doesn't immediately re-announce the same thing.
+        m_lastSentState = state;
+        m_lastSentAt    = std::chrono::steady_clock::now();
+    }
+
+    // media:null for now — cross-server content matching is a later step, and
+    // the server's host-claim path (userInitiated && !isUserHost &&
+    // isAutoHostEnabled) doesn't depend on the media payload.
+    char buf[320];
+    std::snprintf(buf, sizeof(buf),
+                  "{\"state\":\"%s\",\"time\":%.0f,\"duration\":%.0f,"
+                  "\"playbackRate\":%.3f,\"media\":null,\"userInitiated\":true}",
+                  state.c_str(), timeMs, durationMs, playbackRate);
+    client->emitEvent("mediaUpdate", buf);
+}
+
 }  // namespace vitaplex

@@ -70,6 +70,12 @@ private:
     void togglePlayPause();
     void seek(int seconds);
 
+    // SyncLounge: announce a manual play/pause/seek (state + absolute ms) so
+    // the watch party follows, claiming host under auto-host. No-op when not
+    // connected. Called from the user-driven control paths only — the follow
+    // loop drives MpvPlayer directly, so this never fires for synced changes.
+    void syncLoungeReportUserAction(const std::string& state, double absTimeMs);
+
     // Controls visibility toggle (like Suwayomi reader settings)
     void toggleControls();
     void showControls();
