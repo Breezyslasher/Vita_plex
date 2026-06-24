@@ -19,6 +19,7 @@
 #include <string>
 #include <memory>
 #include <mutex>
+#include <chrono>
 #include <functional>
 
 #include "app/synclounge_client.hpp"
@@ -49,6 +50,9 @@ public:
         double      timeMs       = 0.0;
         double      durationMs   = 0.0;
         double      playbackRate = 1.0;
+        // When this state was received (steady clock). Used to judge freshness
+        // and extrapolate a playing host forward at playback-start.
+        std::chrono::steady_clock::time_point at{};
     };
     RemoteState remoteState() const;
 

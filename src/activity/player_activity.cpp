@@ -1264,6 +1264,33 @@ void PlayerActivity::loadMedia() {
                 resumeOffset = item.viewOffset;
             }
         }
+
+        // SyncLounge: when following a watch party and we have a recent host
+        // position, open at the host's timecode (baked into the transcode
+        // offset) instead of our own resume point — so playback starts already
+        // in sync and there's no big corrective seek after load. Extrapolate a
+        // playing host forward by how long ago it reported. Same-content
+        // assumed; ignored if the host state is stale (> 60s) or out of range.
+        if (SyncLoungeSession::instance().isConnected()) {
+            auto rs = SyncLoungeSession::instance().remoteState();
+            if (rs.valid && (rs.state == "playing" || rs.state == "paused")) {
+                auto ageMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 std::chrono::steady_clock::now() - rs.at).count();
+                if (ageMs >= 0 && ageMs < 60000) {
+                    double hostMs = rs.timeMs;
+                    if (rs.state == "playing") hostMs += static_cast<double>(ageMs);
+                    if (hostMs > 0 && (item.duration <= 0 || hostMs < item.duration)) {
+                        resumeOffset = static_cast<int>(hostMs);
+                        // Suppress an immediate redundant correction in the
+                        // follow loop now that we open in sync.
+                        m_lastSyncSeek = std::chrono::steady_clock::now();
+                        brls::Logger::info(
+                            "PlayerActivity: SyncLounge follow — starting at host offset {}ms (age {}ms)",
+                            resumeOffset, (long)ageMs);
+                    }
+                }
+            }
+        }
         m_transcodeBaseOffsetMs = resumeOffset;
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, resumeOffset)) {

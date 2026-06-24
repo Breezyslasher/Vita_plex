@@ -7,6 +7,7 @@
 #include <borealis.hpp>
 
 #include <cctype>
+#include <chrono>
 #include <string>
 
 namespace vitaplex {
@@ -129,6 +130,7 @@ void SyncLoungeSession::onEvent(const std::string& name, const std::string& payl
         rs.durationMs   = jsonDouble(payload, "duration");
         double pr       = jsonDouble(payload, "playbackRate");
         rs.playbackRate = pr > 0.0 ? pr : 1.0;
+        rs.at           = std::chrono::steady_clock::now();
         {
             std::lock_guard<std::mutex> lk(m_mtx);
             m_remote = rs;
