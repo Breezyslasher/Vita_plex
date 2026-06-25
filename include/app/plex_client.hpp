@@ -46,6 +46,7 @@ struct MediaItem {
     std::string contentRating;
     std::string studio;
     bool watched = false;
+    std::string librarySectionKey;  // numeric library section id (detail view; for "more by this person")
 
     // For episodes
     std::string grandparentTitle;
@@ -88,10 +89,10 @@ struct MediaItem {
     // Cast & crew — populated by fetchMediaDetails for the detail view only
     // (left empty for grid/list items; cleared by trimForGrid).
     struct Person {
-        std::string id;      // Plex tag id
         std::string tag;     // person's name
         std::string role;    // character (actors) or job ("Director" / "Writer")
         std::string thumb;   // headshot url / path
+        std::string filter;  // library-section filter, e.g. "actor=12345"
     };
     std::vector<Person> cast;
 
@@ -320,6 +321,10 @@ public:
     // Related / recommended items — the server's "Related" hubs, flattened
     // into a single de-duplicated list of playable movies/shows.
     bool fetchRelated(const std::string& ratingKey, std::vector<MediaItem>& items);
+    // All titles in a library section matching a person filter (e.g.
+    // "actor=12345") — used to browse a cast member's other titles.
+    bool fetchByPersonFilter(const std::string& sectionKey, const std::string& filter,
+                             std::vector<MediaItem>& items);
 
     // Home screen
     bool fetchHubs(std::vector<Hub>& hubs);

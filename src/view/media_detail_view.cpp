@@ -4,6 +4,7 @@
 
 #include "view/media_detail_view.hpp"
 #include "view/media_item_cell.hpp"
+#include "view/recycling_grid.hpp"
 #include "view/long_press_gesture.hpp"
 #include "view/progress_dialog.hpp"
 #include "activity/player_activity.hpp"
@@ -428,6 +429,12 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             m_mediaContentBox->addView(m_extrasScroll);
         }
 
+        // Shows also get Cast & Crew + Recommended rows (seasons keep just
+        // their episode list).
+        if (m_item.mediaType == MediaType::SHOW) {
+            buildPeopleAndRecommendedRows(m_mediaContentBox);
+        }
+
         m_mediaContentScroll->setContentView(m_mediaContentBox);
         m_mainContent->addView(m_mediaContentScroll);
     }
@@ -458,43 +465,8 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_extrasScroll->setContentView(m_extrasBox);
         m_mainContent->addView(m_extrasScroll);
 
-        // Cast & crew
-        m_peopleLabel = new brls::Label();
-        m_peopleLabel->setText("Cast & Crew");
-        m_peopleLabel->setFontSize(20);
-        m_peopleLabel->setMarginBottom(10);
-        m_peopleLabel->setMarginTop(15);
-        m_peopleLabel->setVisibility(brls::Visibility::GONE);
-        m_mainContent->addView(m_peopleLabel);
-
-        m_peopleScroll = new brls::HScrollingFrame();
-        m_peopleScroll->setHeight(ic.squareRowHeight);
-        m_peopleScroll->setMarginBottom(20);
-        m_peopleScroll->setVisibility(brls::Visibility::GONE);
-        m_peopleBox = new brls::Box();
-        m_peopleBox->setAxis(brls::Axis::ROW);
-        m_peopleBox->setJustifyContent(brls::JustifyContent::FLEX_START);
-        m_peopleScroll->setContentView(m_peopleBox);
-        m_mainContent->addView(m_peopleScroll);
-
-        // Recommended / related
-        m_recommendationsLabel = new brls::Label();
-        m_recommendationsLabel->setText("Recommended");
-        m_recommendationsLabel->setFontSize(20);
-        m_recommendationsLabel->setMarginBottom(10);
-        m_recommendationsLabel->setMarginTop(15);
-        m_recommendationsLabel->setVisibility(brls::Visibility::GONE);
-        m_mainContent->addView(m_recommendationsLabel);
-
-        m_recommendationsScroll = new brls::HScrollingFrame();
-        m_recommendationsScroll->setHeight(ic.homeRowHeight);
-        m_recommendationsScroll->setMarginBottom(20);
-        m_recommendationsScroll->setVisibility(brls::Visibility::GONE);
-        m_recommendationsBox = new brls::Box();
-        m_recommendationsBox->setAxis(brls::Axis::ROW);
-        m_recommendationsBox->setJustifyContent(brls::JustifyContent::FLEX_START);
-        m_recommendationsScroll->setContentView(m_recommendationsBox);
-        m_mainContent->addView(m_recommendationsScroll);
+        // Cast & Crew + Recommended (shared builder; same rows as TV shows)
+        buildPeopleAndRecommendedRows(m_mainContent);
     }
 
     // Track list for albums (vertical list with nested scrolling)
@@ -687,8 +659,9 @@ void MediaDetailView::loadDetails() {
                     m_item.mediaType == MediaType::SHOW) {
                     loadExtras();
                 }
-                // Movies also get a cast & crew row and a recommended row.
-                if (m_item.mediaType == MediaType::MOVIE) {
+                // Movies and shows also get cast & crew + recommended rows.
+                if (m_item.mediaType == MediaType::MOVIE ||
+                    m_item.mediaType == MediaType::SHOW) {
                     loadPeople();
                     loadRecommendations();
                 }
@@ -871,6 +844,49 @@ void MediaDetailView::loadExtras() {
     });
 }
 
+void MediaDetailView::buildPeopleAndRecommendedRows(brls::Box* parent) {
+    if (!parent) return;
+    const auto& ic = platform::getImageConstraints();
+
+    // Cast & crew
+    m_peopleLabel = new brls::Label();
+    m_peopleLabel->setText("Cast & Crew");
+    m_peopleLabel->setFontSize(20);
+    m_peopleLabel->setMarginBottom(10);
+    m_peopleLabel->setMarginTop(15);
+    m_peopleLabel->setVisibility(brls::Visibility::GONE);
+    parent->addView(m_peopleLabel);
+
+    m_peopleScroll = new brls::HScrollingFrame();
+    m_peopleScroll->setHeight(ic.squareRowHeight);
+    m_peopleScroll->setMarginBottom(20);
+    m_peopleScroll->setVisibility(brls::Visibility::GONE);
+    m_peopleBox = new brls::Box();
+    m_peopleBox->setAxis(brls::Axis::ROW);
+    m_peopleBox->setJustifyContent(brls::JustifyContent::FLEX_START);
+    m_peopleScroll->setContentView(m_peopleBox);
+    parent->addView(m_peopleScroll);
+
+    // Recommended / related
+    m_recommendationsLabel = new brls::Label();
+    m_recommendationsLabel->setText("Recommended");
+    m_recommendationsLabel->setFontSize(20);
+    m_recommendationsLabel->setMarginBottom(10);
+    m_recommendationsLabel->setMarginTop(15);
+    m_recommendationsLabel->setVisibility(brls::Visibility::GONE);
+    parent->addView(m_recommendationsLabel);
+
+    m_recommendationsScroll = new brls::HScrollingFrame();
+    m_recommendationsScroll->setHeight(ic.homeRowHeight);
+    m_recommendationsScroll->setMarginBottom(20);
+    m_recommendationsScroll->setVisibility(brls::Visibility::GONE);
+    m_recommendationsBox = new brls::Box();
+    m_recommendationsBox->setAxis(brls::Axis::ROW);
+    m_recommendationsBox->setJustifyContent(brls::JustifyContent::FLEX_START);
+    m_recommendationsScroll->setContentView(m_recommendationsBox);
+    parent->addView(m_recommendationsScroll);
+}
+
 void MediaDetailView::loadPeople() {
     // Cast & crew come straight off the already-fetched detail metadata
     // (m_item.cast was populated by fetchMediaDetails), so just build the row.
@@ -932,6 +948,18 @@ void MediaDetailView::loadPeople() {
             }, photo, m_alive);
         }
 
+        // Tapping a cast/crew member browses their other titles in this library.
+        if (!person.filter.empty() && !m_item.librarySectionKey.empty()) {
+            std::string pname = person.tag;
+            std::string sect  = m_item.librarySectionKey;
+            std::string filt  = person.filter;
+            cell->registerClickAction([pname, sect, filt](brls::View*) {
+                showPersonResults(pname, sect, filt);
+                return true;
+            });
+            cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+        }
+
         m_peopleBox->addView(cell);
     }
 
@@ -977,6 +1005,57 @@ void MediaDetailView::loadRecommendations() {
 
             brls::Logger::info("Loaded {} recommendations into UI", related.size());
             setupChildrenFocusTransfer();
+        });
+    });
+}
+
+void MediaDetailView::showPersonResults(const std::string& personName,
+                                        const std::string& sectionKey,
+                                        const std::string& filter) {
+    if (sectionKey.empty() || filter.empty()) {
+        brls::Application::notify("No filmography available");
+        return;
+    }
+    brls::Application::notify("Finding titles for " + personName);
+
+    // Fetch first, then build + push the populated screen. Keeping the fetch
+    // ahead of the view means no async callback ever touches a view that might
+    // already be gone — fully lifetime-safe without an extra alive flag.
+    asyncRun([personName, sectionKey, filter]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> items;
+        client.fetchByPersonFilter(sectionKey, filter, items);
+
+        brls::sync([personName, items]() {
+            if (items.empty()) {
+                brls::Application::notify("No other titles found for " + personName);
+                return;
+            }
+
+            auto* container = new brls::Box();
+            container->setAxis(brls::Axis::COLUMN);
+            container->setPadding(30);
+            container->setGrow(1.0f);
+            container->registerAction("Back", brls::ControllerButton::BUTTON_B,
+                [](brls::View*) { brls::Application::popActivity(); return true; },
+                false, false, brls::Sound::SOUND_BACK);
+
+            auto* header = new brls::Label();
+            header->setText(personName);
+            header->setFontSize(26);
+            header->setMarginBottom(16);
+            container->addView(header);
+
+            auto* grid = new RecyclingGrid();
+            grid->setGrow(1.0f);
+            grid->setOnItemSelected([](const MediaItem& sel) {
+                auto* detailView = new MediaDetailView(sel);
+                brls::Application::pushActivity(new brls::Activity(detailView));
+            });
+            container->addView(grid);
+            grid->setDataSource(items);
+
+            brls::Application::pushActivity(new brls::Activity(container));
         });
     });
 }

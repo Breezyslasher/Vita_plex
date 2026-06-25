@@ -42,8 +42,15 @@ private:
     void loadMusicCategories();
     void loadTrackList();              // Load tracks in vertical list (like Suwayomi chapters)
     void loadExtras();                 // Load extras (trailers, featurettes, etc.)
-    void loadRecommendations();        // Load related / recommended movies (movies)
-    void loadPeople();                 // Load cast & crew row (movies)
+    void loadRecommendations();        // Load related / recommended titles (movies + shows)
+    void loadPeople();                 // Load cast & crew row (movies + shows)
+    // Build the (initially hidden) Cast & Crew + Recommended rows into `parent`.
+    // Shared by movies (page scroll) and shows (inner scroll).
+    void buildPeopleAndRecommendedRows(brls::Box* parent);
+    // Push a grid screen of a person's other titles in the same library.
+    static void showPersonResults(const std::string& personName,
+                                  const std::string& sectionKey,
+                                  const std::string& filter);
     void onPlay(bool resume = false);
     void onDownload();
     void showDownloadOptions();
