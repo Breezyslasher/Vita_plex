@@ -43,10 +43,12 @@ struct MediaItem {
     int duration = 0;
     int viewOffset = 0;
     float rating = 0.0f;
+    float audienceRating = 0.0f;   // Plex audienceRating (RT popcorn / audience score, 0-10)
     std::string contentRating;
     std::string studio;
     bool watched = false;
     std::string librarySectionKey;  // numeric library section id (detail view; for "more by this person")
+    std::string character;          // poster role badge text ("as Luke Skywalker" / "Director"); set for person-results only
 
     // For episodes
     std::string grandparentTitle;

@@ -921,6 +921,7 @@ bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<
         item.duration = extractJsonIntRange(resp.body, objStart, objEnd, "duration");
         item.viewOffset = extractJsonIntRange(resp.body, objStart, objEnd, "viewOffset");
         item.rating = extractJsonFloatRange(resp.body, objStart, objEnd, "rating");
+        item.audienceRating = extractJsonFloatRange(resp.body, objStart, objEnd, "audienceRating");
         item.contentRating = extractJsonValueRange(resp.body, objStart, objEnd, "contentRating");
         item.subtype = extractJsonValueRange(resp.body, objStart, objEnd, "subtype");
         // Skip summary and art for grid display - saves ~200-500 bytes per item
@@ -1067,6 +1068,7 @@ bool PlexClient::fetchChildren(const std::string& ratingKey, std::vector<MediaIt
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
         item.rating = extractJsonFloat(obj, "rating");
+        item.audienceRating = extractJsonFloat(obj, "audienceRating");
         item.contentRating = extractJsonValue(obj, "contentRating");
         item.index = extractJsonInt(obj, "index");
         item.parentIndex = extractJsonInt(obj, "parentIndex");
@@ -1305,6 +1307,11 @@ bool PlexClient::fetchByPersonFilter(const std::string& sectionKey, const std::s
         item.year = extractJsonInt(obj, "year");
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
+        item.rating = extractJsonFloat(obj, "rating");
+        item.audienceRating = extractJsonFloat(obj, "audienceRating");
+        // Per-title role for the cast member, when the server includes it in the
+        // filtered listing (often absent for actors; present for some credits).
+        item.character = extractJsonValue(obj, "role");
 
         bool playable = (item.mediaType == MediaType::MOVIE ||
                          item.mediaType == MediaType::SHOW);
@@ -1371,6 +1378,8 @@ bool PlexClient::fetchRelated(const std::string& ratingKey, std::vector<MediaIte
         item.year = extractJsonInt(obj, "year");
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
+        item.rating = extractJsonFloat(obj, "rating");
+        item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         bool playable = (item.mediaType == MediaType::MOVIE ||
                          item.mediaType == MediaType::SHOW);
@@ -1714,6 +1723,8 @@ bool PlexClient::fetchHubs(std::vector<Hub>& hubs) {
             item.mediaType = parseMediaType(item.type);
             item.year = extractJsonInt(itemObj, "year");
             item.viewOffset = extractJsonInt(itemObj, "viewOffset");
+            item.rating = extractJsonFloat(itemObj, "rating");
+            item.audienceRating = extractJsonFloat(itemObj, "audienceRating");
 
             if (!item.ratingKey.empty() && !item.title.empty()) {
                 hub.items.push_back(item);
@@ -1795,6 +1806,8 @@ bool PlexClient::fetchContinueWatching(std::vector<MediaItem>& items) {
         item.parentThumb = extractJsonValue(obj, "parentThumb");
         item.index = extractJsonInt(obj, "index");
         item.parentIndex = extractJsonInt(obj, "parentIndex");
+        item.rating = extractJsonFloat(obj, "rating");
+        item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
             items.push_back(item);
@@ -1863,6 +1876,8 @@ bool PlexClient::fetchRecentlyAdded(std::vector<MediaItem>& items) {
         item.year = extractJsonInt(obj, "year");
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
+        item.rating = extractJsonFloat(obj, "rating");
+        item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
             items.push_back(item);
@@ -1956,6 +1971,8 @@ bool PlexClient::fetchRecentlyAddedByType(MediaType type, std::vector<MediaItem>
         item.year = extractJsonInt(obj, "year");
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
+        item.rating = extractJsonFloat(obj, "rating");
+        item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
             items.push_back(item);
@@ -2027,6 +2044,8 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
         item.parentTitle = extractJsonValue(obj, "parentTitle");
         item.parentThumb = extractJsonValue(obj, "parentThumb");
         item.grandparentThumb = extractJsonValue(obj, "grandparentThumb");
+        item.rating = extractJsonFloat(obj, "rating");
+        item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
             results.push_back(item);
@@ -2336,6 +2355,7 @@ bool PlexClient::fetchByGenre(const std::string& sectionKey, const std::string& 
         item.year = extractJsonInt(obj, "year");
         item.duration = extractJsonInt(obj, "duration");
         item.rating = extractJsonFloat(obj, "rating");
+        item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
             items.push_back(item);
@@ -2403,6 +2423,7 @@ bool PlexClient::fetchByGenreKey(const std::string& sectionKey, const std::strin
         item.year = extractJsonInt(obj, "year");
         item.duration = extractJsonInt(obj, "duration");
         item.rating = extractJsonFloat(obj, "rating");
+        item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
             items.push_back(item);
