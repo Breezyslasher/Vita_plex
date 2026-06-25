@@ -1305,6 +1305,10 @@ bool PlexClient::fetchByPersonFilter(const std::string& sectionKey, const std::s
         item.year = extractJsonInt(obj, "year");
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
+        item.rating = extractJsonFloat(obj, "rating");
+        // Per-title role for the cast member, when the server includes it in the
+        // filtered listing (often absent for actors; present for some credits).
+        item.character = extractJsonValue(obj, "role");
 
         bool playable = (item.mediaType == MediaType::MOVIE ||
                          item.mediaType == MediaType::SHOW);

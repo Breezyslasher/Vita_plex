@@ -47,6 +47,7 @@ struct MediaItem {
     std::string studio;
     bool watched = false;
     std::string librarySectionKey;  // numeric library section id (detail view; for "more by this person")
+    std::string character;          // poster role badge text ("as Luke Skywalker" / "Director"); set for person-results only
 
     // For episodes
     std::string grandparentTitle;

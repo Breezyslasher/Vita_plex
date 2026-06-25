@@ -10,6 +10,7 @@
 #include "utils/image_loader.hpp"
 #include "platform/platform.hpp"
 #include <algorithm>
+#include <cmath>
 
 namespace vitaplex {
 
@@ -346,6 +347,75 @@ void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float he
                 nvgRoundedRect(vg, cx, cy, cw, ch, 4.0f);
                 nvgFillColor(vg, nvgRGB(40, 40, 48));
                 nvgFill(vg);
+            }
+
+            // ----- overlay badges on the cover -----
+            // ★ rating (top-right): shown anywhere a rating is known, so movie /
+            // show poster grids get it too — not only the person-results screen.
+            if (m_item.rating > 0.0f) {
+                char rbuf[16];
+                snprintf(rbuf, sizeof(rbuf), "%.1f", m_item.rating);
+
+                nvgFontFace(vg, "regular");
+                nvgFontSize(vg, 12.0f);
+                nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+                float tb[4];
+                float numW = nvgTextBounds(vg, 0, 0, rbuf, nullptr, tb);
+
+                const float bh = 20.0f, starR = 6.0f, padH = 6.0f, gap = 4.0f;
+                float bw = padH + starR * 2.0f + gap + numW + padH;
+                float bx = cx + cw - bw - 6.0f;
+                float by = cy + 6.0f;
+
+                nvgBeginPath(vg);
+                nvgRoundedRect(vg, bx, by, bw, bh, 6.0f);
+                nvgFillColor(vg, nvgRGBA(0, 0, 0, 170));
+                nvgFill(vg);
+
+                // Gold star drawn as a path so it never depends on a font glyph.
+                float scx = bx + padH + starR, scy = by + bh * 0.5f;
+                nvgBeginPath(vg);
+                for (int i = 0; i < 10; i++) {
+                    float ang = -1.5707963f + (float)i * 0.6283185f;  // -90° step 36°
+                    float rad = (i % 2 == 0) ? starR : starR * 0.42f;
+                    float px = scx + cosf(ang) * rad;
+                    float py = scy + sinf(ang) * rad;
+                    if (i == 0) nvgMoveTo(vg, px, py);
+                    else        nvgLineTo(vg, px, py);
+                }
+                nvgClosePath(vg);
+                nvgFillColor(vg, nvgRGB(229, 160, 13));
+                nvgFill(vg);
+
+                nvgFillColor(vg, nvgRGB(255, 255, 255));
+                nvgText(vg, bx + padH + starR * 2.0f + gap, scy, rbuf, nullptr);
+            }
+
+            // Role badge (top-left): "as {character}" / "Director" / "Writer".
+            // Only set on person-results posters, so it stays scoped there.
+            if (!m_item.character.empty()) {
+                nvgFontFace(vg, "regular");
+                nvgFontSize(vg, 11.0f);
+                nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+                float tb[4];
+                float tw = nvgTextBounds(vg, 0, 0, m_item.character.c_str(), nullptr, tb);
+
+                const float bh = 18.0f, padH = 7.0f;
+                float bw = tw + padH * 2.0f;
+                float maxW = cw - 12.0f;
+                if (bw > maxW) bw = maxW;
+                float bx = cx + 6.0f, by = cy + 6.0f;
+
+                nvgBeginPath(vg);
+                nvgRoundedRect(vg, bx, by, bw, bh, 5.0f);
+                nvgFillColor(vg, nvgRGBA(0, 0, 0, 153));  // ~.6
+                nvgFill(vg);
+
+                nvgSave(vg);
+                nvgScissor(vg, bx, by, bw, bh);
+                nvgFillColor(vg, nvgRGB(232, 232, 236));  // #E8E8EC
+                nvgText(vg, bx + padH, by + bh * 0.5f, m_item.character.c_str(), nullptr);
+                nvgRestore(vg);
             }
         }
     }

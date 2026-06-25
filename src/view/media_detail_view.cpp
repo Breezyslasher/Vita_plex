@@ -1127,6 +1127,17 @@ void MediaDetailView::showPersonResults(const std::string& personName,
             items.swap(others);
         }
 
+        // Decorate each result with its role-badge text. The section listing
+        // rarely carries a per-title character for actors, so we prefix the
+        // ones it does ("as {character}") and otherwise fall back to the
+        // (constant, correct) crew role for director / writer credits.
+        for (auto& m : items) {
+            if (!m.character.empty())
+                m.character = "as " + m.character;
+            else if (creditKind == "Director" || creditKind == "Writer")
+                m.character = creditKind;
+        }
+
         int nMovies = 0, nShows = 0;
         for (const auto& m : items) {
             if (m.mediaType == MediaType::MOVIE)      nMovies++;
@@ -1158,16 +1169,18 @@ void MediaDetailView::showPersonResults(const std::string& personName,
             auto* backChip = new brls::Box();
             backChip->setAxis(brls::Axis::ROW);
             backChip->setAlignItems(brls::AlignItems::CENTER);
-            backChip->setHeight(36);
-            backChip->setCornerRadius(18);
-            backChip->setPadding(0, 14, 0, 12);
+            backChip->setHeight(38);
+            backChip->setCornerRadius(12);
+            backChip->setPadding(0, 16, 0, 13);
             backChip->setBackgroundColor(personui::surface());
+            backChip->setBorderThickness(1.0f);
+            backChip->setBorderColor(nvgRGB(71, 71, 71));
             backChip->setFocusable(true);
             auto* backArrow = new brls::Label();
-            backArrow->setText("←");
-            backArrow->setFontSize(18);
+            backArrow->setText("‹");          // chevron, matching the reference
+            backArrow->setFontSize(22);
             backArrow->setTextColor(personui::muted());
-            backArrow->setMarginRight(6);
+            backArrow->setMarginRight(7);
             backChip->addView(backArrow);
             auto* backTxt = new brls::Label();
             backTxt->setText("Back");
