@@ -40,6 +40,12 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     // Create scrollable content
     m_scrollView = new brls::ScrollingFrame();
     m_scrollView->setGrow(1.0f);
+    // CENTERED so focus can move to a view that's currently off-screen — e.g.
+    // the Mark Watched button up in the header while focus is down among the
+    // rows. With the default NATURAL behaviour borealis refuses to focus a view
+    // that isn't already fully on-screen and just scrolls the frame instead,
+    // which is why focus wouldn't hand off to an off-screen Mark Watched.
+    m_scrollView->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
 
     m_mainContent = new brls::Box();
     m_mainContent->setAxis(brls::Axis::COLUMN);
