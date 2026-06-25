@@ -793,10 +793,15 @@ void SyncLoungeSession::emitMediaUpdate(const std::string& state, double timeMs,
     std::snprintf(nums, sizeof(nums),
                   "\"time\":%lld,\"duration\":%lld,\"playbackRate\":%.3f",
                   (long long)timeMs, (long long)durationMs, playbackRate);
+    const std::string stateJson = "{\"state\":\"" + jsonEscape(state) + "\"," + nums + "}";
     std::string frame = "{\"state\":\"" + jsonEscape(state) + "\"," + nums +
                         ",\"media\":" + media +
                         ",\"userInitiated\":" + (userInitiated ? "true" : "false") + "}";
-    client->emitEvent("mediaUpdate", frame);
+    // SyncLounge's web client historically applies playbackRate from
+    // playerStateUpdate but not from mediaUpdate. Send the matching state packet
+    // in the same polling POST so a playing mediaUpdate cannot render as
+    // NaN:NaN until the next throttled host heartbeat.
+    client->emitEventPair("mediaUpdate", frame, "playerStateUpdate", stateJson);
 }
 
 void SyncLoungeSession::setLocalMedia(const std::string& title, const std::string& type,

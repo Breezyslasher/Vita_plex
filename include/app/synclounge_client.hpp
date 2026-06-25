@@ -94,6 +94,11 @@ public:
     // Returns false if we haven't connected yet.
     bool emitEvent(const std::string& name, const std::string& jsonArg);
 
+    // Emit two Socket.IO events in one Engine.IO polling POST. This preserves
+    // event order and avoids overlapping POSTs on the polling transport.
+    bool emitEventPair(const std::string& firstName, const std::string& firstJsonArg,
+                       const std::string& secondName, const std::string& secondJsonArg);
+
 private:
     // Emit one raw Engine.IO/Socket.IO frame (e.g. `42["name",arg]`) on the
     // POST channel. Returns false if the session isn't connected yet.

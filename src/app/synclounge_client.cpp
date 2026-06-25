@@ -410,6 +410,15 @@ bool SyncLoungeClient::emitEvent(const std::string& name, const std::string& jso
     return emitFrame("42[\"" + name + "\"," + jsonArg + "]");
 }
 
+bool SyncLoungeClient::emitEventPair(const std::string& firstName, const std::string& firstJsonArg,
+                                     const std::string& secondName, const std::string& secondJsonArg) {
+    // Engine.IO polling payloads may carry multiple packets separated by the
+    // record-separator byte. Keep paired events in a single POST so Socket.IO
+    // receives them in order on transports that reject overlapping POSTs.
+    return emitFrame("42[\"" + firstName + "\"," + firstJsonArg + "]\x1e"
+                     "42[\"" + secondName + "\"," + secondJsonArg + "]");
+}
+
 bool SyncLoungeClient::emitFrame(const std::string& frame) {
     auto session = m_session;
     if (!session) return false;
