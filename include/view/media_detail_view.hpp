@@ -48,9 +48,13 @@ private:
     // Shared by movies (page scroll) and shows (inner scroll).
     void buildPeopleAndRecommendedRows(brls::Box* parent);
     // Push a grid screen of a person's other titles in the same library.
+    // excludeRatingKey is the title we came from, dropped from the results so a
+    // person credited only on the current title shows a notification instead of
+    // a one-item grid of that same title.
     static void showPersonResults(const std::string& personName,
                                   const std::string& sectionKey,
-                                  const std::string& filter);
+                                  const std::string& filter,
+                                  const std::string& excludeRatingKey);
     void onPlay(bool resume = false);
     void onDownload();
     void showDownloadOptions();
