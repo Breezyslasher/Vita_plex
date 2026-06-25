@@ -350,45 +350,82 @@ void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float he
             }
 
             // ----- overlay badges on the cover -----
-            // ★ rating (top-right): shown anywhere a rating is known, so movie /
-            // show poster grids get it too — not only the person-results screen.
-            if (m_item.rating > 0.0f) {
-                char rbuf[16];
-                snprintf(rbuf, sizeof(rbuf), "%.1f", m_item.rating);
-
-                nvgFontFace(vg, "regular");
-                nvgFontSize(vg, 12.0f);
-                nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-                float tb[4];
-                float numW = nvgTextBounds(vg, 0, 0, rbuf, nullptr, tb);
-
-                const float bh = 20.0f, starR = 6.0f, padH = 6.0f, gap = 4.0f;
-                float bw = padH + starR * 2.0f + gap + numW + padH;
-                float bx = cx + cw - bw - 6.0f;
-                float by = cy + 6.0f;
-
-                nvgBeginPath(vg);
-                nvgRoundedRect(vg, bx, by, bw, bh, 6.0f);
-                nvgFillColor(vg, nvgRGBA(0, 0, 0, 170));
-                nvgFill(vg);
-
-                // Gold star drawn as a path so it never depends on a font glyph.
-                float scx = bx + padH + starR, scy = by + bh * 0.5f;
-                nvgBeginPath(vg);
-                for (int i = 0; i < 10; i++) {
-                    float ang = -1.5707963f + (float)i * 0.6283185f;  // -90° step 36°
-                    float rad = (i % 2 == 0) ? starR : starR * 0.42f;
-                    float px = scx + cosf(ang) * rad;
-                    float py = scy + sinf(ang) * rad;
-                    if (i == 0) nvgMoveTo(vg, px, py);
-                    else        nvgLineTo(vg, px, py);
+            // Rating (top-right), shown anywhere a rating is known so movie /
+            // show / home / search poster grids all get it. Movies use a
+            // Rotten-Tomatoes-style popcorn percentage (audience score preferred,
+            // else the critic rating scaled to %); everything else keeps the
+            // ★ out-of-ten.
+            {
+                const bool isMovie = (m_item.mediaType == MediaType::MOVIE);
+                bool showPct = false, showStar = false;
+                float pct = 0.0f;
+                if (isMovie) {
+                    float src = (m_item.audienceRating > 0.0f) ? m_item.audienceRating
+                                                              : m_item.rating;
+                    if (src > 0.0f) { pct = src * 10.0f; showPct = true; }
+                } else if (m_item.rating > 0.0f) {
+                    showStar = true;
                 }
-                nvgClosePath(vg);
-                nvgFillColor(vg, nvgRGB(229, 160, 13));
-                nvgFill(vg);
 
-                nvgFillColor(vg, nvgRGB(255, 255, 255));
-                nvgText(vg, bx + padH + starR * 2.0f + gap, scy, rbuf, nullptr);
+                if (showPct || showStar) {
+                    char rbuf[16];
+                    if (showPct) snprintf(rbuf, sizeof(rbuf), "%d%%", (int)(pct + 0.5f));
+                    else         snprintf(rbuf, sizeof(rbuf), "%.1f", m_item.rating);
+
+                    nvgFontFace(vg, "regular");
+                    nvgFontSize(vg, 12.0f);
+                    nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
+                    float tb[4];
+                    float numW = nvgTextBounds(vg, 0, 0, rbuf, nullptr, tb);
+
+                    const float bh = 20.0f, iconR = 6.0f, padH = 6.0f, gap = 4.0f;
+                    float bw = padH + iconR * 2.0f + gap + numW + padH;
+                    float bx = cx + cw - bw - 6.0f;
+                    float by = cy + 6.0f;
+
+                    nvgBeginPath(vg);
+                    nvgRoundedRect(vg, bx, by, bw, bh, 6.0f);
+                    nvgFillColor(vg, nvgRGBA(0, 0, 0, 170));
+                    nvgFill(vg);
+
+                    float icx = bx + padH + iconR, icy = by + bh * 0.5f;
+                    if (showPct) {
+                        // Popcorn: a red bucket with buttery kernels (all paths,
+                        // so it never depends on an emoji / font glyph).
+                        float s = iconR * 2.0f;
+                        float bkW = s * 0.80f, bkH = s * 0.62f;
+                        float bkx = icx - bkW * 0.5f, bky = icy + s * 0.5f - bkH;
+                        nvgBeginPath(vg);
+                        nvgMoveTo(vg, bkx + bkW * 0.14f, bky);
+                        nvgLineTo(vg, bkx + bkW * 0.86f, bky);
+                        nvgLineTo(vg, bkx + bkW, bky + bkH);
+                        nvgLineTo(vg, bkx, bky + bkH);
+                        nvgClosePath(vg);
+                        nvgFillColor(vg, nvgRGB(225, 60, 45));
+                        nvgFill(vg);
+                        nvgFillColor(vg, nvgRGB(245, 214, 130));
+                        nvgBeginPath(vg); nvgCircle(vg, icx - s * 0.22f, bky - s * 0.02f, s * 0.16f); nvgFill(vg);
+                        nvgBeginPath(vg); nvgCircle(vg, icx + s * 0.02f, bky - s * 0.12f, s * 0.18f); nvgFill(vg);
+                        nvgBeginPath(vg); nvgCircle(vg, icx + s * 0.24f, bky - s * 0.02f, s * 0.15f); nvgFill(vg);
+                    } else {
+                        // Gold star path.
+                        nvgBeginPath(vg);
+                        for (int i = 0; i < 10; i++) {
+                            float ang = -1.5707963f + (float)i * 0.6283185f;  // -90° step 36°
+                            float rad = (i % 2 == 0) ? iconR : iconR * 0.42f;
+                            float px = icx + cosf(ang) * rad;
+                            float py = icy + sinf(ang) * rad;
+                            if (i == 0) nvgMoveTo(vg, px, py);
+                            else        nvgLineTo(vg, px, py);
+                        }
+                        nvgClosePath(vg);
+                        nvgFillColor(vg, nvgRGB(229, 160, 13));
+                        nvgFill(vg);
+                    }
+
+                    nvgFillColor(vg, nvgRGB(255, 255, 255));
+                    nvgText(vg, bx + padH + iconR * 2.0f + gap, icy, rbuf, nullptr);
+                }
             }
 
             // Role badge (top-left): "as {character}" / "Director" / "Writer".
@@ -448,12 +485,11 @@ void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float he
         if (s_startHintNvg != 0 && s_startHintW > 0 && s_startHintH > 0) {
             float fcx = m_coverSlot->getX();
             float fcy = m_coverSlot->getY();
-            float fcw = m_coverSlot->getWidth();
             float hintW = (float)s_startHintW;
             float hintH = (float)s_startHintH;
-            // Top-right corner of the cover with a small inset, matching
-            // the position the prior brls::Box overlay used.
-            float hx = fcx + fcw - hintW - 7.0f;
+            // Top-LEFT corner of the cover with a small inset, so the focus hint
+            // no longer sits on top of the top-right rating badge.
+            float hx = fcx + 7.0f;
             float hy = fcy + 7.0f;
             NVGpaint hp = nvgImagePattern(
                 vg, hx, hy, hintW, hintH, 0, s_startHintNvg, 1.0f);

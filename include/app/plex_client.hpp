@@ -43,6 +43,7 @@ struct MediaItem {
     int duration = 0;
     int viewOffset = 0;
     float rating = 0.0f;
+    float audienceRating = 0.0f;   // Plex audienceRating (RT popcorn / audience score, 0-10)
     std::string contentRating;
     std::string studio;
     bool watched = false;
