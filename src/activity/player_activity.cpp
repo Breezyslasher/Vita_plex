@@ -1722,6 +1722,7 @@ void PlayerActivity::updateProgress() {
                 } else {
                     // Position reads sane — clear the recovery counter.
                     m_syncRecoverAttempts = 0;
+                    const double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
                     const double localPosSec   = syncPositionMs / 1000.0;
                     const double remotePosSec  = rs.timeMs / 1000.0;
 
