@@ -214,6 +214,8 @@ void SyncLoungeClient::runWorker(std::shared_ptr<Session> session,
         return true;
     };
 
+    bool sawSyncLoungePing = false;
+
     // Handle one Engine.IO packet pulled out of a poll body.
     auto handlePacket = [&](const std::string& pkt) {
         if (pkt.empty()) return;
@@ -246,7 +248,8 @@ void SyncLoungeClient::runWorker(std::shared_ptr<Session> session,
                     if (name == "slPing") {
                         const std::string secret = nthQuoted(rest, 2);
                         out("[sl] slPing secret=" + secret + " -> slPong");
-                        sendPacket("42[\"slPong\",\"" + jsonEscape(secret) + "\"]", "slPong");
+                        if (sendPacket("42[\"slPong\",\"" + jsonEscape(secret) + "\"]", "slPong"))
+                            sawSyncLoungePing = true;
                     } else {
                         out("[event] " + name + "  " + rest.substr(0, 220));
                         // Hand the parsed event to a higher-level consumer
@@ -302,8 +305,20 @@ void SyncLoungeClient::runWorker(std::shared_ptr<Session> session,
     // ── 2. Open the default Socket.IO namespace ───────────────────────────
     out("[connect] POST 40 (open default namespace)");
     if (!sendPacket("40", "connect")) { kill(); return; }
-    // Drain the connect ack (and any keepalive the server fires immediately).
-    if (alive()) pollOnce();
+    // Drain the connect ack and wait for SyncLounge's application ping before
+    // joining. The server intentionally rejects `join` from clients that have
+    // not completed this slPing/slPong RTT measurement yet.
+    const auto joinReadyDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(45);
+    while (alive() && !sawSyncLoungePing &&
+           std::chrono::steady_clock::now() < joinReadyDeadline) {
+        if (!pollOnce())
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+    if (!sawSyncLoungePing) {
+        out("[join] FAILED: SyncLounge slPing was not received before join timeout");
+        kill();
+        return;
+    }
 
     // ── 3. Join the room ──────────────────────────────────────────────────
     const std::string join =
