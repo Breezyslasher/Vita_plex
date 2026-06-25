@@ -355,10 +355,10 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     m_mainContent->addView(topRow);
 
     // Combined scrolling container for seasons/episodes + extras
-    // This keeps the header/description fixed while only the media rows scroll
+    // This keeps the header/description fixed while only the media rows scroll.
+    // Movies are handled separately below (whole page scrolls).
     if (m_item.mediaType == MediaType::SHOW ||
-        m_item.mediaType == MediaType::SEASON ||
-        m_item.mediaType == MediaType::MOVIE) {
+        m_item.mediaType == MediaType::SEASON) {
 
         m_mediaContentScroll = new brls::ScrollingFrame();
         m_mediaContentScroll->setGrow(1.0f);
@@ -403,9 +403,9 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             m_mediaContentBox->addView(m_childrenScroll);
         }
 
-        // Extras container (trailers, featurettes, etc.) for movies and shows
-        if (m_item.mediaType == MediaType::MOVIE ||
-            m_item.mediaType == MediaType::SHOW) {
+        // Extras container (trailers, featurettes, etc.) for shows. Movies
+        // build their own extras row below (whole-page scroll, not nested).
+        if (m_item.mediaType == MediaType::SHOW) {
 
             m_extrasLabel = new brls::Label();
             m_extrasLabel->setText("Extras");
@@ -430,6 +430,71 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
 
         m_mediaContentScroll->setContentView(m_mediaContentBox);
         m_mainContent->addView(m_mediaContentScroll);
+    }
+
+    // Movies: scroll the whole page (header + extras + cast + recommended) so
+    // these supplementary rows aren't crammed into a squeezed inner scroll and
+    // clipped. Built straight into m_mainContent; the page is routed through
+    // m_scrollView at the bottom of the constructor.
+    if (m_item.mediaType == MediaType::MOVIE) {
+        const auto& ic = platform::getImageConstraints();
+
+        // Extras (trailers, featurettes, deleted scenes)
+        m_extrasLabel = new brls::Label();
+        m_extrasLabel->setText("Extras");
+        m_extrasLabel->setFontSize(20);
+        m_extrasLabel->setMarginBottom(10);
+        m_extrasLabel->setMarginTop(15);
+        m_extrasLabel->setVisibility(brls::Visibility::GONE);
+        m_mainContent->addView(m_extrasLabel);
+
+        m_extrasScroll = new brls::HScrollingFrame();
+        m_extrasScroll->setHeight(ic.landscapeRowHeight);
+        m_extrasScroll->setMarginBottom(20);
+        m_extrasScroll->setVisibility(brls::Visibility::GONE);
+        m_extrasBox = new brls::Box();
+        m_extrasBox->setAxis(brls::Axis::ROW);
+        m_extrasBox->setJustifyContent(brls::JustifyContent::FLEX_START);
+        m_extrasScroll->setContentView(m_extrasBox);
+        m_mainContent->addView(m_extrasScroll);
+
+        // Cast & crew
+        m_peopleLabel = new brls::Label();
+        m_peopleLabel->setText("Cast & Crew");
+        m_peopleLabel->setFontSize(20);
+        m_peopleLabel->setMarginBottom(10);
+        m_peopleLabel->setMarginTop(15);
+        m_peopleLabel->setVisibility(brls::Visibility::GONE);
+        m_mainContent->addView(m_peopleLabel);
+
+        m_peopleScroll = new brls::HScrollingFrame();
+        m_peopleScroll->setHeight(ic.squareRowHeight);
+        m_peopleScroll->setMarginBottom(20);
+        m_peopleScroll->setVisibility(brls::Visibility::GONE);
+        m_peopleBox = new brls::Box();
+        m_peopleBox->setAxis(brls::Axis::ROW);
+        m_peopleBox->setJustifyContent(brls::JustifyContent::FLEX_START);
+        m_peopleScroll->setContentView(m_peopleBox);
+        m_mainContent->addView(m_peopleScroll);
+
+        // Recommended / related
+        m_recommendationsLabel = new brls::Label();
+        m_recommendationsLabel->setText("Recommended");
+        m_recommendationsLabel->setFontSize(20);
+        m_recommendationsLabel->setMarginBottom(10);
+        m_recommendationsLabel->setMarginTop(15);
+        m_recommendationsLabel->setVisibility(brls::Visibility::GONE);
+        m_mainContent->addView(m_recommendationsLabel);
+
+        m_recommendationsScroll = new brls::HScrollingFrame();
+        m_recommendationsScroll->setHeight(ic.homeRowHeight);
+        m_recommendationsScroll->setMarginBottom(20);
+        m_recommendationsScroll->setVisibility(brls::Visibility::GONE);
+        m_recommendationsBox = new brls::Box();
+        m_recommendationsBox->setAxis(brls::Axis::ROW);
+        m_recommendationsBox->setJustifyContent(brls::JustifyContent::FLEX_START);
+        m_recommendationsScroll->setContentView(m_recommendationsBox);
+        m_mainContent->addView(m_recommendationsScroll);
     }
 
     // Track list for albums (vertical list with nested scrolling)
@@ -469,8 +534,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     if (m_item.mediaType == MediaType::MUSIC_ALBUM ||
         m_item.mediaType == MediaType::MUSIC_ARTIST ||
         m_item.mediaType == MediaType::SHOW ||
-        m_item.mediaType == MediaType::SEASON ||
-        m_item.mediaType == MediaType::MOVIE) {
+        m_item.mediaType == MediaType::SEASON) {
         // Top info is fixed, only media content below scrolls in its own container
         m_mainContent->setGrow(1.0f);
         this->addView(m_mainContent);
@@ -622,6 +686,11 @@ void MediaDetailView::loadDetails() {
                 if (m_item.mediaType == MediaType::MOVIE ||
                     m_item.mediaType == MediaType::SHOW) {
                     loadExtras();
+                }
+                // Movies also get a cast & crew row and a recommended row.
+                if (m_item.mediaType == MediaType::MOVIE) {
+                    loadPeople();
+                    loadRecommendations();
                 }
             }
 
@@ -797,6 +866,116 @@ void MediaDetailView::loadExtras() {
             brls::Logger::info("Loaded {} extras into UI", extras.size());
 
             // Re-run focus setup so extras get proper UP/DOWN navigation
+            setupChildrenFocusTransfer();
+        });
+    });
+}
+
+void MediaDetailView::loadPeople() {
+    // Cast & crew come straight off the already-fetched detail metadata
+    // (m_item.cast was populated by fetchMediaDetails), so just build the row.
+    if (!m_peopleBox || !m_alive || !m_alive->load()) return;
+
+    const std::vector<MediaItem::Person>& cast = m_item.cast;
+    if (cast.empty()) return;
+
+    m_peopleBox->clearViews();
+    if (m_peopleLabel) {
+        m_peopleLabel->setText("Cast & Crew");
+        m_peopleLabel->setVisibility(brls::Visibility::VISIBLE);
+    }
+    if (m_peopleScroll) m_peopleScroll->setVisibility(brls::Visibility::VISIBLE);
+
+    PlexClient& client = PlexClient::getInstance();
+
+    for (const auto& person : cast) {
+        // A simple non-recycled cell: headshot + name + character/job.
+        auto* cell = new brls::Box();
+        cell->setAxis(brls::Axis::COLUMN);
+        cell->setAlignItems(brls::AlignItems::CENTER);
+        cell->setJustifyContent(brls::JustifyContent::FLEX_START);
+        cell->setWidth(130);
+        cell->setMarginRight(12);
+        cell->setPadding(5);
+        // Focusable (no action) so D-pad users can move onto the cast row and
+        // it scrolls into view; touch users just scroll past it.
+        cell->setFocusable(true);
+        cell->setCornerRadius(8);
+
+        auto* photo = new brls::Image();
+        photo->setWidth(110);
+        photo->setHeight(140);
+        photo->setCornerRadius(8);
+        photo->setScalingType(brls::ImageScalingType::FILL);
+        cell->addView(photo);
+
+        auto* name = new brls::Label();
+        name->setText(person.tag);
+        name->setFontSize(14);
+        name->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+        name->setMarginTop(6);
+        cell->addView(name);
+
+        if (!person.role.empty()) {
+            auto* role = new brls::Label();
+            role->setText(person.role);
+            role->setFontSize(12);
+            role->setTextColor(nvgRGB(0xA8, 0xA6, 0xB4));
+            role->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+            cell->addView(role);
+        }
+
+        if (!person.thumb.empty()) {
+            std::string url = client.getThumbnailUrl(person.thumb, 220, 280);
+            ImageLoader::loadAsync(url, [](brls::Image* img) {
+                img->setVisibility(brls::Visibility::VISIBLE);
+            }, photo, m_alive);
+        }
+
+        m_peopleBox->addView(cell);
+    }
+
+    brls::Logger::info("Loaded {} cast/crew into UI", cast.size());
+}
+
+void MediaDetailView::loadRecommendations() {
+    if (!m_recommendationsBox) return;
+
+    std::string ratingKey = m_item.ratingKey;
+
+    asyncRun([this, ratingKey]() {
+        PlexClient& client = PlexClient::getInstance();
+
+        std::vector<MediaItem> related;
+        bool ok = client.fetchRelated(ratingKey, related);
+
+        brls::sync([this, ok, related]() {
+            if (!m_alive || !m_alive->load()) return;
+            if (!ok || related.empty()) return;
+
+            m_recommendationsBox->clearViews();
+            if (m_recommendationsLabel) {
+                m_recommendationsLabel->setText("Recommended");
+                m_recommendationsLabel->setVisibility(brls::Visibility::VISIBLE);
+            }
+            if (m_recommendationsScroll)
+                m_recommendationsScroll->setVisibility(brls::Visibility::VISIBLE);
+
+            for (const auto& rec : related) {
+                auto* cell = new MediaItemCell();
+                cell->setItem(rec);
+                cell->setMarginRight(10);
+                // Tapping a recommendation opens its own detail page.
+                cell->registerClickAction([rec](brls::View* view) {
+                    auto* detailView = new MediaDetailView(rec);
+                    brls::Application::pushActivity(new brls::Activity(detailView));
+                    return true;
+                });
+                cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+                m_recommendationsBox->addView(cell);
+            }
+
+            brls::Logger::info("Loaded {} recommendations into UI", related.size());
             setupChildrenFocusTransfer();
         });
     });
