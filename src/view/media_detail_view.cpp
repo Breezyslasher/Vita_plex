@@ -950,11 +950,12 @@ void MediaDetailView::loadPeople() {
 
         // Tapping a cast/crew member browses their other titles in this library.
         if (!person.filter.empty() && !m_item.librarySectionKey.empty()) {
-            std::string pname = person.tag;
-            std::string sect  = m_item.librarySectionKey;
-            std::string filt  = person.filter;
-            cell->registerClickAction([pname, sect, filt](brls::View*) {
-                showPersonResults(pname, sect, filt);
+            std::string pname  = person.tag;
+            std::string sect   = m_item.librarySectionKey;
+            std::string filt   = person.filter;
+            std::string curKey = m_item.ratingKey;
+            cell->registerClickAction([pname, sect, filt, curKey](brls::View*) {
+                showPersonResults(pname, sect, filt, curKey);
                 return true;
             });
             cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
@@ -1011,7 +1012,8 @@ void MediaDetailView::loadRecommendations() {
 
 void MediaDetailView::showPersonResults(const std::string& personName,
                                         const std::string& sectionKey,
-                                        const std::string& filter) {
+                                        const std::string& filter,
+                                        const std::string& excludeRatingKey) {
     if (sectionKey.empty() || filter.empty()) {
         brls::Application::notify("No filmography available");
         return;
@@ -1021,14 +1023,26 @@ void MediaDetailView::showPersonResults(const std::string& personName,
     // Fetch first, then build + push the populated screen. Keeping the fetch
     // ahead of the view means no async callback ever touches a view that might
     // already be gone — fully lifetime-safe without an extra alive flag.
-    asyncRun([personName, sectionKey, filter]() {
+    asyncRun([personName, sectionKey, filter, excludeRatingKey]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
         client.fetchByPersonFilter(sectionKey, filter, items);
 
+        // Drop the title we came from so "other" really means other. If the
+        // person is only credited on this one title, the list goes empty and we
+        // just notify instead of opening a grid of the same thing.
+        if (!excludeRatingKey.empty()) {
+            std::vector<MediaItem> others;
+            others.reserve(items.size());
+            for (const auto& m : items) {
+                if (m.ratingKey != excludeRatingKey) others.push_back(m);
+            }
+            items.swap(others);
+        }
+
         brls::sync([personName, items]() {
             if (items.empty()) {
-                brls::Application::notify("No other titles found for " + personName);
+                brls::Application::notify("No other titles for " + personName);
                 return;
             }
 
