@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -720,6 +721,10 @@ void SyncLoungeSession::resolveMatchAsync(HostMedia hm) {
 
 void SyncLoungeSession::reportLocalState(const std::string& state, double timeMs,
                                          double durationMs, double playbackRate) {
+    if (!std::isfinite(timeMs) || timeMs < 0.0) return;
+    if (!std::isfinite(durationMs) || durationMs <= 0.0) return;
+    if (!std::isfinite(playbackRate) || playbackRate <= 0.0) playbackRate = 1.0;
+
     std::shared_ptr<SyncLoungeClient> client;
     {
         std::lock_guard<std::mutex> lk(m_mtx);
@@ -754,6 +759,10 @@ void SyncLoungeSession::announceLocalMedia(const std::string& state, double time
 void SyncLoungeSession::emitMediaUpdate(const std::string& state, double timeMs,
                                         double durationMs, double playbackRate,
                                         bool userInitiated) {
+    if (!std::isfinite(timeMs) || timeMs < 0.0) return;
+    if (!std::isfinite(durationMs) || durationMs <= 0.0) return;
+    if (!std::isfinite(playbackRate) || playbackRate <= 0.0) playbackRate = 1.0;
+
     std::shared_ptr<SyncLoungeClient> client;
     std::string media = "null";
     {
@@ -778,9 +787,8 @@ void SyncLoungeSession::emitMediaUpdate(const std::string& state, double timeMs,
         m_lastSentAt    = std::chrono::steady_clock::now();
     }
 
-    // time/duration are whole milliseconds; format as integers to avoid the
-    // server choking on a bad/NaN double (NaN:NaN). Callers must pass finite
-    // values — invalid readings are filtered upstream.
+    // time/duration are whole milliseconds; format as integers after the
+    // finite-value guards above so the server never receives JSON NaN/Inf.
     char nums[128];
     std::snprintf(nums, sizeof(nums),
                   "\"time\":%lld,\"duration\":%lld,\"playbackRate\":%.3f",

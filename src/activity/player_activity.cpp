@@ -1597,18 +1597,20 @@ void PlayerActivity::updateProgress() {
     // and announce our media so the party follows us; otherwise switch to the
     // host's matched content (if different), announce ours, and mirror the
     // host's play/pause/seek.
-    if (duration > 0 && SyncLoungeSession::instance().isConnected()) {
+    const double syncDurationMs = knownDurationMs();
+    const bool syncTimingValid = std::isfinite(position) && position >= 0.0 &&
+                                 std::isfinite(syncDurationMs) && syncDurationMs > 0.0;
+    if (syncTimingValid && SyncLoungeSession::instance().isConnected()) {
         SyncLoungeSession& sl = SyncLoungeSession::instance();
         // Sanity-check the local position against Plex's REAL duration, not mpv's:
         // a corrupt transcode can spike mpv's PTS so both position and duration
         // read as a bogus huge value (~25h), which the old position<=duration
         // check happily passed — then the host-follow re-seeks forever. Compare
         // the absolute position to the authoritative length instead.
-        const double baseSec0   = m_transcodeBaseOffsetMs / 1000.0;
-        const double absPosSec0  = baseSec0 + position;
-        const double realDurSec = (m_mediaDurationMs > 0) ? (m_mediaDurationMs / 1000.0)
-                                                          : (baseSec0 + duration);
-        const bool localSane = position >= 0.0 && absPosSec0 <= realDurSec + 30.0;
+        const double syncPositionMs = m_transcodeBaseOffsetMs + position * 1000.0;
+        const double absPosSec0     = syncPositionMs / 1000.0;
+        const double realDurSec     = syncDurationMs / 1000.0;
+        const bool localSane        = syncPositionMs <= syncDurationMs + 30000.0;
 
         // Party pause: when enabled, ANY member can pause/resume the whole
         // party. Apply the latest action once (independent of host/follower).
@@ -1656,7 +1658,8 @@ void PlayerActivity::updateProgress() {
         // Announce our media once per loaded item so the party/server shows
         // the right title even before any pause/play. Claims host only for a
         // user-initiated NEW video (auto-loaded follows pass claimHost=false).
-        // `duration` is already > 0 here, so the values are valid.
+        // SyncLounge timing uses Plex/knownDurationMs so HLS playback does not
+        // publish NaN duration while mpv is still resolving stream metadata.
         if (localSane && !m_syncLoungeAnnounced) {
             const char* ast = player.isPlaying() ? "playing"
                             : player.isPaused()  ? "paused" : nullptr;
@@ -1671,8 +1674,7 @@ void PlayerActivity::updateProgress() {
                     if (mr.resolved && !mr.ratingKey.empty() && mr.ratingKey == m_mediaKey)
                         claimHost = false;
                 }
-                sl.announceLocalMedia(ast, m_transcodeBaseOffsetMs + position * 1000.0,
-                                      duration * 1000.0, claimHost);
+                sl.announceLocalMedia(ast, syncPositionMs, syncDurationMs, claimHost);
                 m_syncLoungeAnnounced = true;
             }
         }
@@ -1686,9 +1688,7 @@ void PlayerActivity::updateProgress() {
                                : player.isPaused()  ? "paused"
                                                     : nullptr;
                 if (st) {
-                    double timeMs = m_transcodeBaseOffsetMs + position * 1000.0;
-                    double durMs  = duration * 1000.0;
-                    sl.reportLocalState(st, timeMs, durMs, 1.0);
+                    sl.reportLocalState(st, syncPositionMs, syncDurationMs, 1.0);
                 }
             }
         } else {
@@ -1722,8 +1722,7 @@ void PlayerActivity::updateProgress() {
                 } else {
                     // Position reads sane — clear the recovery counter.
                     m_syncRecoverAttempts = 0;
-                    const double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
-                    const double localPosSec   = baseOffsetSec + position;
+                    const double localPosSec   = syncPositionMs / 1000.0;
                     const double remotePosSec  = rs.timeMs / 1000.0;
 
                     // Match transport state (cheap + idempotent).
@@ -2662,7 +2661,7 @@ void PlayerActivity::seek(int seconds) {
 double PlayerActivity::knownDurationMs() const {
     if (m_mediaDurationMs > 0) return (double)m_mediaDurationMs;
     double d = MpvPlayer::getInstance().getDuration();
-    return d > 0.0 ? (m_transcodeBaseOffsetMs + d * 1000.0) : 0.0;
+    return (std::isfinite(d) && d > 0.0) ? (m_transcodeBaseOffsetMs + d * 1000.0) : 0.0;
 }
 
 bool PlayerActivity::restartTranscodeAtMs(int offsetMs) {
