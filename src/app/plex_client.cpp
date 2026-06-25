@@ -1194,11 +1194,19 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
         }
     }
 
+    // Library section id, so the detail view can browse a person's other
+    // titles within the same section ("more by this person").
+    {
+        int sid = extractJsonInt(resp.body, "librarySectionID");
+        if (sid > 0) item.librarySectionKey = std::to_string(sid);
+    }
+
     // Parse cast & crew. The full metadata response carries "Role" (actors,
     // each with a character "role" and a headshot "thumb"), plus "Director"
     // and "Writer" tag arrays. Flatten them into item.cast for the detail view.
     {
-        auto parsePeople = [&](const char* arrayKey, const std::string& jobLabel) {
+        auto parsePeople = [&](const char* arrayKey, const std::string& jobLabel,
+                               const char* filterField) {
             std::string needle = std::string("\"") + arrayKey + "\":";
             size_t keyPos = resp.body.find(needle);
             if (keyPos == std::string::npos) return;
@@ -1225,20 +1233,93 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
                 }
                 std::string obj = arr.substr(p, e - p);
                 MediaItem::Person person;
-                person.id = extractJsonValue(obj, "id");
                 person.tag = extractJsonValue(obj, "tag");
                 person.role = jobLabel.empty() ? extractJsonValue(obj, "role") : jobLabel;
                 person.thumb = extractJsonValue(obj, "thumb");
+                // Prefer the server-provided filter ("actor=12345"); otherwise
+                // build it from the numeric tag id.
+                person.filter = extractJsonValue(obj, "filter");
+                if (person.filter.empty()) {
+                    int tagId = extractJsonInt(obj, "id");
+                    if (tagId > 0)
+                        person.filter = std::string(filterField) + "=" + std::to_string(tagId);
+                }
                 if (!person.tag.empty()) item.cast.push_back(person);
                 p = e;
             }
         };
-        parsePeople("Role", "");              // actors: role = character
-        parsePeople("Director", "Director");
-        parsePeople("Writer", "Writer");
+        parsePeople("Role", "", "actor");          // actors: role = character
+        parsePeople("Director", "Director", "director");
+        parsePeople("Writer", "Writer", "writer");
         if (item.cast.size() > 30) item.cast.resize(30);
     }
 
+    return true;
+}
+
+bool PlexClient::fetchByPersonFilter(const std::string& sectionKey, const std::string& filter,
+                                     std::vector<MediaItem>& items) {
+    items.clear();
+    if (sectionKey.empty() || filter.empty()) return false;
+
+    HttpClient client;
+    // e.g. /library/sections/2/all?actor=12345 — every title in this section
+    // the person is credited on.
+    std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all?" + filter);
+
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+
+    if (resp.statusCode != 200) {
+        brls::Logger::warning("fetchByPersonFilter: status {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
+        return false;
+    }
+
+    size_t pos = 0;
+    while ((pos = resp.body.find("\"ratingKey\"", pos)) != std::string::npos) {
+        size_t objStart = resp.body.rfind('{', pos);
+        if (objStart == std::string::npos) { pos++; continue; }
+
+        int braceCount = 1;
+        size_t objEnd = objStart + 1;
+        while (braceCount > 0 && objEnd < resp.body.length()) {
+            if (resp.body[objEnd] == '{') braceCount++;
+            else if (resp.body[objEnd] == '}') braceCount--;
+            objEnd++;
+        }
+
+        std::string obj = resp.body.substr(objStart, objEnd - objStart);
+
+        MediaItem item;
+        item.ratingKey = extractJsonValue(obj, "ratingKey");
+        item.key = extractJsonValue(obj, "key");
+        item.title = extractJsonValue(obj, "title");
+        item.thumb = extractJsonValue(obj, "thumb");
+        item.art = extractJsonValue(obj, "art");
+        item.type = extractJsonValue(obj, "type");
+        item.mediaType = parseMediaType(item.type);
+        item.year = extractJsonInt(obj, "year");
+        item.duration = extractJsonInt(obj, "duration");
+        item.viewOffset = extractJsonInt(obj, "viewOffset");
+
+        bool playable = (item.mediaType == MediaType::MOVIE ||
+                         item.mediaType == MediaType::SHOW);
+        if (!item.ratingKey.empty() && !item.title.empty() && playable) {
+            bool dup = false;
+            for (const auto& e : items) {
+                if (e.ratingKey == item.ratingKey) { dup = true; break; }
+            }
+            if (!dup) items.push_back(item);
+        }
+
+        pos = objEnd;
+    }
+
+    brls::Logger::info("fetchByPersonFilter: {} items for {}", items.size(), filter);
     return true;
 }
 
