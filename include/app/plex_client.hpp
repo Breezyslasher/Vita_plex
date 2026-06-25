@@ -85,6 +85,16 @@ struct MediaItem {
     };
     std::vector<Marker> markers;
 
+    // Cast & crew — populated by fetchMediaDetails for the detail view only
+    // (left empty for grid/list items; cleared by trimForGrid).
+    struct Person {
+        std::string id;      // Plex tag id
+        std::string tag;     // person's name
+        std::string role;    // character (actors) or job ("Director" / "Writer")
+        std::string thumb;   // headshot url / path
+    };
+    std::vector<Person> cast;
+
     // Trim heavy fields not needed for grid/list display.
     // Call this on items stored in bulk lists to reduce memory.
     void trimForGrid() {
@@ -108,6 +118,9 @@ struct MediaItem {
         // Markers not needed for grid
         markers.clear();
         markers.shrink_to_fit();
+        // Cast/crew only used by the detail view
+        cast.clear();
+        cast.shrink_to_fit();
     }
 };
 
@@ -304,6 +317,9 @@ public:
 
     // Extras (trailers, deleted scenes, featurettes, etc.)
     bool fetchExtras(const std::string& ratingKey, std::vector<MediaItem>& items);
+    // Related / recommended items — the server's "Related" hubs, flattened
+    // into a single de-duplicated list of playable movies/shows.
+    bool fetchRelated(const std::string& ratingKey, std::vector<MediaItem>& items);
 
     // Home screen
     bool fetchHubs(std::vector<Hub>& hubs);

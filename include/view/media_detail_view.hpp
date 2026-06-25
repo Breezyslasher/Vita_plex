@@ -42,6 +42,8 @@ private:
     void loadMusicCategories();
     void loadTrackList();              // Load tracks in vertical list (like Suwayomi chapters)
     void loadExtras();                 // Load extras (trailers, featurettes, etc.)
+    void loadRecommendations();        // Load related / recommended movies (movies)
+    void loadPeople();                 // Load cast & crew row (movies)
     void onPlay(bool resume = false);
     void onDownload();
     void showDownloadOptions();
@@ -163,6 +165,16 @@ public:
     brls::Label* m_extrasLabel = nullptr;
     brls::HScrollingFrame* m_extrasScroll = nullptr;
     brls::Box* m_extrasBox = nullptr;
+
+    // Cast & crew row (movies)
+    brls::Label* m_peopleLabel = nullptr;
+    brls::HScrollingFrame* m_peopleScroll = nullptr;
+    brls::Box* m_peopleBox = nullptr;
+
+    // Recommended / related row (movies)
+    brls::Label* m_recommendationsLabel = nullptr;
+    brls::HScrollingFrame* m_recommendationsScroll = nullptr;
+    brls::Box* m_recommendationsBox = nullptr;
 
     // Music videos row for artists
     brls::Box* m_musicVideosContent = nullptr;

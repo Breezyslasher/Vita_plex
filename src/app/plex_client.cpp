@@ -1194,6 +1194,120 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
         }
     }
 
+    // Parse cast & crew. The full metadata response carries "Role" (actors,
+    // each with a character "role" and a headshot "thumb"), plus "Director"
+    // and "Writer" tag arrays. Flatten them into item.cast for the detail view.
+    {
+        auto parsePeople = [&](const char* arrayKey, const std::string& jobLabel) {
+            std::string needle = std::string("\"") + arrayKey + "\":";
+            size_t keyPos = resp.body.find(needle);
+            if (keyPos == std::string::npos) return;
+            size_t arrStart = resp.body.find('[', keyPos);
+            if (arrStart == std::string::npos) return;
+            // Walk to the matching close bracket for this array.
+            int depth = 1;
+            size_t i = arrStart + 1;
+            while (i < resp.body.size() && depth > 0) {
+                char c = resp.body[i];
+                if (c == '[') depth++;
+                else if (c == ']') depth--;
+                i++;
+            }
+            std::string arr = resp.body.substr(arrStart, i - arrStart);
+            size_t p = 0;
+            while ((p = arr.find('{', p)) != std::string::npos) {
+                int d = 1;
+                size_t e = p + 1;
+                while (e < arr.size() && d > 0) {
+                    if (arr[e] == '{') d++;
+                    else if (arr[e] == '}') d--;
+                    e++;
+                }
+                std::string obj = arr.substr(p, e - p);
+                MediaItem::Person person;
+                person.id = extractJsonValue(obj, "id");
+                person.tag = extractJsonValue(obj, "tag");
+                person.role = jobLabel.empty() ? extractJsonValue(obj, "role") : jobLabel;
+                person.thumb = extractJsonValue(obj, "thumb");
+                if (!person.tag.empty()) item.cast.push_back(person);
+                p = e;
+            }
+        };
+        parsePeople("Role", "");              // actors: role = character
+        parsePeople("Director", "Director");
+        parsePeople("Writer", "Writer");
+        if (item.cast.size() > 30) item.cast.resize(30);
+    }
+
+    return true;
+}
+
+bool PlexClient::fetchRelated(const std::string& ratingKey, std::vector<MediaItem>& items) {
+    brls::Logger::debug("fetchRelated: ratingKey={}", ratingKey);
+    items.clear();
+
+    HttpClient client;
+    // The server's "related" hubs (e.g. "Related Movies", "From the director").
+    std::string url = buildApiUrl("/hubs/metadata/" + ratingKey + "/related?excludeFields=summary");
+
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+
+    if (resp.statusCode != 200) {
+        brls::Logger::warning("fetchRelated: status {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
+        return false;
+    }
+
+    // Flatten every Metadata item across the related hubs, de-duplicated and
+    // excluding the item itself. Each item is an object carrying "ratingKey".
+    size_t pos = 0;
+    while ((pos = resp.body.find("\"ratingKey\"", pos)) != std::string::npos) {
+        size_t objStart = resp.body.rfind('{', pos);
+        if (objStart == std::string::npos) { pos++; continue; }
+
+        int braceCount = 1;
+        size_t objEnd = objStart + 1;
+        while (braceCount > 0 && objEnd < resp.body.length()) {
+            if (resp.body[objEnd] == '{') braceCount++;
+            else if (resp.body[objEnd] == '}') braceCount--;
+            objEnd++;
+        }
+
+        std::string obj = resp.body.substr(objStart, objEnd - objStart);
+
+        MediaItem item;
+        item.ratingKey = extractJsonValue(obj, "ratingKey");
+        item.key = extractJsonValue(obj, "key");
+        item.title = extractJsonValue(obj, "title");
+        item.thumb = extractJsonValue(obj, "thumb");
+        item.art = extractJsonValue(obj, "art");
+        item.type = extractJsonValue(obj, "type");
+        item.mediaType = parseMediaType(item.type);
+        item.year = extractJsonInt(obj, "year");
+        item.duration = extractJsonInt(obj, "duration");
+        item.viewOffset = extractJsonInt(obj, "viewOffset");
+
+        bool playable = (item.mediaType == MediaType::MOVIE ||
+                         item.mediaType == MediaType::SHOW);
+        if (!item.ratingKey.empty() && !item.title.empty() &&
+            item.ratingKey != ratingKey && playable) {
+            bool dup = false;
+            for (const auto& e : items) {
+                if (e.ratingKey == item.ratingKey) { dup = true; break; }
+            }
+            if (!dup) items.push_back(item);
+        }
+
+        pos = objEnd;
+    }
+
+    // Keep the carousel light.
+    if (items.size() > 24) items.resize(24);
+    brls::Logger::info("fetchRelated: {} related items", items.size());
     return true;
 }
 
