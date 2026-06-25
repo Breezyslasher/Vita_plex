@@ -954,8 +954,9 @@ void MediaDetailView::loadPeople() {
             std::string sect   = m_item.librarySectionKey;
             std::string filt   = person.filter;
             std::string curKey = m_item.ratingKey;
-            cell->registerClickAction([pname, sect, filt, curKey](brls::View*) {
-                showPersonResults(pname, sect, filt, curKey);
+            std::string pthumb = person.thumb;
+            cell->registerClickAction([pname, sect, filt, curKey, pthumb](brls::View*) {
+                showPersonResults(pname, sect, filt, curKey, pthumb);
                 return true;
             });
             cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
@@ -1010,20 +1011,106 @@ void MediaDetailView::loadRecommendations() {
     });
 }
 
+namespace {
+
+// Person-results palette (the app's neutral surfaces + gold accent). Defined
+// locally because the file's other palette namespaces live further down.
+namespace personui {
+    inline NVGcolor bg()         { return nvgRGB(45, 45, 45); }
+    inline NVGcolor surface()    { return nvgRGB(56, 56, 56); }
+    inline NVGcolor surface3()   { return nvgRGB(73, 73, 73); }
+    inline NVGcolor text()       { return nvgRGB(255, 255, 255); }
+    inline NVGcolor muted()      { return nvgRGB(180, 180, 186); }
+    inline NVGcolor dim()        { return nvgRGB(138, 138, 144); }
+    inline NVGcolor gold()       { return nvgRGB(229, 160, 13); }
+    inline NVGcolor goldBright() { return nvgRGB(255, 194, 61); }
+    inline NVGcolor goldInk()    { return nvgRGB(36, 28, 8); }
+}
+
+// Hero banner background: a soft diagonal accent wash fading to the page bg,
+// plus bottom + left scrims so the avatar / name read clearly. Children (back
+// chip, avatar, labels) are drawn on top by the base Box::draw.
+class PersonHeroBg : public brls::Box {
+  public:
+    void draw(NVGcontext* vg, float x, float y, float w, float h,
+              brls::Style style, brls::FrameContext* ctx) override {
+        NVGpaint wash = nvgLinearGradient(vg, x, y, x + w, y + h,
+                                          nvgRGB(74, 60, 30), nvgRGB(34, 34, 34));
+        nvgBeginPath(vg);
+        nvgRect(vg, x, y, w, h);
+        nvgFillPaint(vg, wash);
+        nvgFill(vg);
+
+        NVGpaint bottom = nvgLinearGradient(vg, x, y + h * 0.35f, x, y + h,
+                                            nvgRGBA(45, 45, 45, 0), nvgRGBA(45, 45, 45, 235));
+        nvgBeginPath(vg);
+        nvgRect(vg, x, y, w, h);
+        nvgFillPaint(vg, bottom);
+        nvgFill(vg);
+
+        NVGpaint left = nvgLinearGradient(vg, x, y, x + w * 0.6f, y,
+                                          nvgRGBA(45, 45, 45, 170), nvgRGBA(45, 45, 45, 0));
+        nvgBeginPath(vg);
+        nvgRect(vg, x, y, w, h);
+        nvgFillPaint(vg, left);
+        nvgFill(vg);
+
+        brls::Box::draw(vg, x, y, w, h, style, ctx);
+    }
+};
+
+// Root container owning an alive flag, so the async avatar image load and the
+// orientation listener can no-op once the screen is dismissed.
+class PersonResultsScreen : public brls::Box {
+  public:
+    std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>>(true);
+    ~PersonResultsScreen() override { if (alive) alive->store(false); }
+};
+
+// Credit kind label from a Plex section filter ("actor=123" -> "Actor").
+std::string creditKindFromFilter(const std::string& filter) {
+    size_t eq = filter.find('=');
+    std::string t = (eq == std::string::npos) ? filter : filter.substr(0, eq);
+    if (t == "actor")    return "Actor";
+    if (t == "director") return "Director";
+    if (t == "writer")   return "Writer";
+    if (!t.empty()) { t[0] = (t[0] >= 'a' && t[0] <= 'z') ? (char)(t[0] - 32) : t[0]; return t; }
+    return "";
+}
+
+std::string initialsOf(const std::string& name) {
+    std::string out;
+    bool prevSpace = true;
+    for (char c : name) {
+        if (c == ' ' || c == '\t') { prevSpace = true; continue; }
+        if (prevSpace && out.size() < 2)
+            out += (c >= 'a' && c <= 'z') ? (char)(c - 32) : c;
+        prevSpace = false;
+    }
+    if (out.empty() && !name.empty())
+        out = std::string(1, (name[0] >= 'a' && name[0] <= 'z') ? (char)(name[0] - 32) : name[0]);
+    return out;
+}
+
+} // namespace
+
 void MediaDetailView::showPersonResults(const std::string& personName,
                                         const std::string& sectionKey,
                                         const std::string& filter,
-                                        const std::string& excludeRatingKey) {
+                                        const std::string& excludeRatingKey,
+                                        const std::string& personThumb) {
     if (sectionKey.empty() || filter.empty()) {
         brls::Application::notify("No filmography available");
         return;
     }
     brls::Application::notify("Finding titles for " + personName);
 
+    const std::string creditKind = creditKindFromFilter(filter);
+
     // Fetch first, then build + push the populated screen. Keeping the fetch
-    // ahead of the view means no async callback ever touches a view that might
-    // already be gone — fully lifetime-safe without an extra alive flag.
-    asyncRun([personName, sectionKey, filter, excludeRatingKey]() {
+    // ahead of the view means the only async-after-view work is the avatar load,
+    // which is guarded by the screen's alive flag.
+    asyncRun([personName, sectionKey, filter, excludeRatingKey, personThumb, creditKind]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
         client.fetchByPersonFilter(sectionKey, filter, items);
@@ -1040,25 +1127,165 @@ void MediaDetailView::showPersonResults(const std::string& personName,
             items.swap(others);
         }
 
-        brls::sync([personName, items]() {
+        int nMovies = 0, nShows = 0;
+        for (const auto& m : items) {
+            if (m.mediaType == MediaType::MOVIE)      nMovies++;
+            else if (m.mediaType == MediaType::SHOW)  nShows++;
+        }
+
+        brls::sync([personName, personThumb, creditKind, items, nMovies, nShows]() {
             if (items.empty()) {
                 brls::Application::notify("No other titles for " + personName);
                 return;
             }
+            const int total = (int)items.size();
 
-            auto* container = new brls::Box();
-            container->setAxis(brls::Axis::COLUMN);
-            container->setPadding(30);
-            container->setGrow(1.0f);
-            container->registerAction("Back", brls::ControllerButton::BUTTON_B,
+            auto* root = new PersonResultsScreen();
+            root->setAxis(brls::Axis::COLUMN);
+            root->setGrow(1.0f);
+            root->setBackgroundColor(personui::bg());
+            root->registerAction("Back", brls::ControllerButton::BUTTON_B,
                 [](brls::View*) { brls::Application::popActivity(); return true; },
                 false, false, brls::Sound::SOUND_BACK);
 
-            auto* header = new brls::Label();
-            header->setText(personName);
-            header->setFontSize(26);
-            header->setMarginBottom(16);
-            container->addView(header);
+            // ---------------- Hero header ----------------
+            auto* hero = new PersonHeroBg();
+            hero->setAxis(brls::Axis::COLUMN);
+            hero->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
+            hero->setPadding(18, 30, 16, 30);
+
+            // Back chip (top-left)
+            auto* backChip = new brls::Box();
+            backChip->setAxis(brls::Axis::ROW);
+            backChip->setAlignItems(brls::AlignItems::CENTER);
+            backChip->setHeight(36);
+            backChip->setCornerRadius(18);
+            backChip->setPadding(0, 14, 0, 12);
+            backChip->setBackgroundColor(personui::surface());
+            backChip->setFocusable(true);
+            auto* backArrow = new brls::Label();
+            backArrow->setText("←");
+            backArrow->setFontSize(18);
+            backArrow->setTextColor(personui::muted());
+            backArrow->setMarginRight(6);
+            backChip->addView(backArrow);
+            auto* backTxt = new brls::Label();
+            backTxt->setText("Back");
+            backTxt->setFontSize(15);
+            backTxt->setTextColor(personui::muted());
+            backChip->addView(backTxt);
+            backChip->registerClickAction(
+                [](brls::View*) { brls::Application::popActivity(); return true; });
+            backChip->addGestureRecognizer(new brls::TapGestureRecognizer(backChip));
+            hero->addView(backChip);
+
+            // Identity row: avatar + info (alignment/axis set by applyResponsive)
+            auto* idRow = new brls::Box();
+
+            brls::View* avatar = nullptr;
+            if (!personThumb.empty()) {
+                auto* img = new brls::Image();
+                img->setScalingType(brls::ImageScalingType::FILL);
+                std::string url =
+                    PlexClient::getInstance().getThumbnailUrl(personThumb, 240, 240);
+                ImageLoader::loadAsync(url, [](brls::Image* im) {
+                    im->setVisibility(brls::Visibility::VISIBLE);
+                }, img, root->alive);
+                avatar = img;
+            } else {
+                auto* circle = new brls::Box();
+                circle->setJustifyContent(brls::JustifyContent::CENTER);
+                circle->setAlignItems(brls::AlignItems::CENTER);
+                circle->setBackgroundColor(personui::surface3());
+                auto* initialsLbl = new brls::Label();
+                initialsLbl->setText(initialsOf(personName));
+                initialsLbl->setFontSize(40);
+                initialsLbl->setTextColor(personui::goldBright());
+                circle->addView(initialsLbl);
+                avatar = circle;
+            }
+            idRow->addView(avatar);
+
+            auto* info = new brls::Box();
+            info->setAxis(brls::Axis::COLUMN);
+
+            auto* eyebrow = new brls::Label();
+            eyebrow->setText("APPEARS IN YOUR LIBRARY");
+            eyebrow->setFontSize(12);
+            eyebrow->setTextColor(personui::goldBright());
+            info->addView(eyebrow);
+
+            auto* nameLbl = new brls::Label();
+            nameLbl->setText(personName);
+            nameLbl->setTextColor(personui::text());
+            nameLbl->setMarginTop(2);
+            info->addView(nameLbl);
+
+            std::string sub = creditKind;
+            if (!sub.empty()) sub += "   ·   ";
+            sub += std::to_string(total) + (total == 1 ? " title" : " titles");
+            auto* subLbl = new brls::Label();
+            subLbl->setText(sub);
+            subLbl->setFontSize(14);
+            subLbl->setTextColor(personui::muted());
+            subLbl->setMarginTop(6);
+            info->addView(subLbl);
+
+            idRow->addView(info);
+            hero->addView(idRow);
+            root->addView(hero);
+
+            // Responsive hero layout (applied now + on orientation change).
+            auto applyResponsive = [hero, idRow, avatar, info, nameLbl](bool p) {
+                // Portrait stacks avatar over the info column, so it needs more
+                // height than the side-by-side landscape hero.
+                hero->setHeight(p ? 300.0f : 200.0f);
+                idRow->setAxis(p ? brls::Axis::COLUMN : brls::Axis::ROW);
+                idRow->setAlignItems(p ? brls::AlignItems::CENTER : brls::AlignItems::FLEX_END);
+                avatar->setWidth(p ? 96.0f : 120.0f);
+                avatar->setHeight(p ? 96.0f : 120.0f);
+                avatar->setCornerRadius(p ? 48.0f : 60.0f);
+                info->setMarginLeft(p ? 0.0f : 24.0f);
+                info->setMarginTop(p ? 10.0f : 0.0f);
+                info->setAlignItems(p ? brls::AlignItems::CENTER : brls::AlignItems::FLEX_START);
+                nameLbl->setFontSize(p ? 30.0f : 38.0f);
+            };
+            applyResponsive(platform::isPortrait());
+
+            std::weak_ptr<std::atomic<bool>> aliveWeak = root->alive;
+            platform::onOrientationChanged([aliveWeak, applyResponsive]() {
+                auto a = aliveWeak.lock();
+                if (!a || !a->load()) return;
+                applyResponsive(platform::isPortrait());
+            });
+
+            // ---------------- Body: section row + poster grid ----------------
+            auto* body = new brls::Box();
+            body->setAxis(brls::Axis::COLUMN);
+            body->setGrow(1.0f);
+            body->setPadding(18, 30, 0, 30);
+
+            auto* sectionRow = new brls::Box();
+            sectionRow->setAxis(brls::Axis::ROW);
+            sectionRow->setAlignItems(brls::AlignItems::CENTER);
+            sectionRow->setMarginBottom(14);
+
+            auto* sectionTitle = new brls::Label();
+            sectionTitle->setText((nMovies > 0 && nShows > 0) ? "Movies & Shows"
+                                  : (nShows > 0 ? "Shows" : "Movies"));
+            sectionTitle->setFontSize(18);
+            sectionTitle->setTextColor(personui::text());
+            sectionRow->addView(sectionTitle);
+
+            auto* sectionCount = new brls::Label();
+            sectionCount->setText("   " + std::to_string(total));
+            sectionCount->setFontSize(18);
+            sectionCount->setTextColor(personui::dim());
+            sectionRow->addView(sectionCount);
+
+            auto* spacer = new brls::Box();
+            spacer->setGrow(1.0f);
+            sectionRow->addView(spacer);
 
             auto* grid = new RecyclingGrid();
             grid->setGrow(1.0f);
@@ -1066,10 +1293,81 @@ void MediaDetailView::showPersonResults(const std::string& personName,
                 auto* detailView = new MediaDetailView(sel);
                 brls::Application::pushActivity(new brls::Activity(detailView));
             });
-            container->addView(grid);
-            grid->setDataSource(items);
 
-            brls::Application::pushActivity(new brls::Activity(container));
+            // Filter chips only make sense when the results mix movies + shows.
+            if (nMovies > 0 && nShows > 0) {
+                auto* chipRow = new brls::Box();
+                chipRow->setAxis(brls::Axis::ROW);
+                chipRow->setAlignItems(brls::AlignItems::CENTER);
+
+                auto chipBoxes  = std::make_shared<std::vector<brls::Box*>>();
+                auto chipLabels = std::make_shared<std::vector<brls::Label*>>();
+                auto chipTypes  = std::make_shared<std::vector<int>>();
+
+                auto makeChip = [&](const std::string& label, int count, int type) {
+                    auto* chip = new brls::Box();
+                    chip->setAxis(brls::Axis::ROW);
+                    chip->setAlignItems(brls::AlignItems::CENTER);
+                    chip->setHeight(34);
+                    chip->setCornerRadius(17);
+                    chip->setPadding(0, 14, 0, 14);
+                    chip->setMarginLeft(8);
+                    chip->setFocusable(true);
+                    chip->setBackgroundColor(personui::surface3());
+                    auto* lbl = new brls::Label();
+                    lbl->setText(label + "  " + std::to_string(count));
+                    lbl->setFontSize(14);
+                    lbl->setTextColor(personui::muted());
+                    chip->addView(lbl);
+                    chipRow->addView(chip);
+                    chipBoxes->push_back(chip);
+                    chipLabels->push_back(lbl);
+                    chipTypes->push_back(type);
+                };
+                makeChip("All", total, 0);
+                makeChip("Movies", nMovies, 1);
+                makeChip("Shows", nShows, 2);
+
+                // Narrow the already-fetched list (no new request) + restyle chips:
+                // gold fill + ink text on the active one, neutral on the rest.
+                auto applyFilter = [grid, items, chipBoxes, chipLabels, chipTypes](int type) {
+                    for (size_t i = 0; i < chipBoxes->size(); i++) {
+                        bool active = ((*chipTypes)[i] == type);
+                        (*chipBoxes)[i]->setBackgroundColor(active ? personui::gold()
+                                                                   : personui::surface3());
+                        (*chipLabels)[i]->setTextColor(active ? personui::goldInk()
+                                                              : personui::muted());
+                    }
+                    if (type == 0) { grid->setDataSource(items); return; }
+                    std::vector<MediaItem> filtered;
+                    for (const auto& m : items) {
+                        if ((type == 1 && m.mediaType == MediaType::MOVIE) ||
+                            (type == 2 && m.mediaType == MediaType::SHOW))
+                            filtered.push_back(m);
+                    }
+                    grid->setDataSource(filtered);
+                };
+
+                for (size_t i = 0; i < chipBoxes->size(); i++) {
+                    int t = (*chipTypes)[i];
+                    brls::Box* cb = (*chipBoxes)[i];
+                    cb->registerClickAction(
+                        [applyFilter, t](brls::View*) { applyFilter(t); return true; });
+                    cb->addGestureRecognizer(new brls::TapGestureRecognizer(cb));
+                }
+
+                sectionRow->addView(chipRow);
+                applyFilter(0);  // default to "All" (active chip + full grid)
+            } else {
+                grid->setDataSource(items);
+            }
+
+            body->addView(sectionRow);
+            body->addView(grid);
+            root->addView(body);
+
+            brls::Application::pushActivity(new brls::Activity(root));
+            brls::Application::giveFocus(grid);
         });
     });
 }
