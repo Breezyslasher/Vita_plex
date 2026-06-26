@@ -51,6 +51,15 @@ private:
     // path. Creates the poster, stream rows, title/meta/actions/summary and the
     // cast / recommended rows, reusing every existing handler and async loader.
     void buildMovieLayout();
+    // Direction A artist layout: fixed header (square art + star, ARTIST eyebrow,
+    // name, genre/album/track meta, Play/Shuffle/Download/Add action row, bio)
+    // above the type-grouped category rails (Albums, Singles & EPs, …). Reuses
+    // loadDetails / loadMusicCategories and the existing member widgets.
+    void buildArtistLayout();
+    // Rebuild the artist meta line ("Anime · J-Pop · 12 albums · 140 tracks")
+    // from m_item.genres + the cached album / track counts. Called as each piece
+    // of data arrives (genres from loadDetails, counts from loadMusicCategories).
+    void refreshArtistMeta();
     // Push a hero-header + poster-grid screen of a person's other titles in the
     // same library. excludeRatingKey is the title we came from, dropped from the
     // results so a person credited only on the current title shows a notification
@@ -123,7 +132,10 @@ public:
     void performTrackAction(const MediaItem& track, size_t trackIndex);  // Handle track default action
     void showTrackActionDialog(const MediaItem& track, size_t trackIndex);  // Ask user what to do
 
-    brls::HScrollingFrame* createMediaRow(const std::string& title, brls::Box** contentOut);
+    // Build a labeled square-cover rail into m_musicCategoriesBox (artist detail).
+    // count >= 0 renders a muted "(count)" beside the title; pass -1 to omit it.
+    brls::HScrollingFrame* createMediaRow(const std::string& title, int count,
+                                          brls::Box** contentOut);
 
     MediaItem m_item;
     std::vector<MediaItem> m_children;
@@ -170,6 +182,11 @@ public:
     // Description
     std::string m_fullDescription;
     brls::ScrollingFrame* m_summaryScroll = nullptr;   // Scroll frame for description
+
+    // Artist detail meta line + cached counts (Direction A header).
+    brls::Label* m_artistMetaLabel = nullptr;
+    int m_artistAlbumCount = 0;
+    int m_artistTrackCount = 0;
 
     // Music category rows for artists
     brls::Box* m_musicCategoriesBox = nullptr;

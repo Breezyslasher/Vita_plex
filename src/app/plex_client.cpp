@@ -1124,6 +1124,30 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
     item.rating = extractJsonFloat(resp.body, "rating");
     item.contentRating = extractJsonValue(resp.body, "contentRating");
     item.studio = extractJsonValue(resp.body, "studio");
+    // leafCount = track count for artists, episode count for shows/seasons.
+    item.leafCount = extractJsonInt(resp.body, "leafCount");
+
+    // Genres: Plex returns "Genre":[{"tag":"Anime"},{"tag":"J-Pop"}]. Pull the
+    // tag of each entry (used by the artist detail meta row). Bounded scan over
+    // the Genre array only, so it never picks up "tag" fields from other arrays.
+    {
+        size_t gPos = resp.body.find("\"Genre\":");
+        if (gPos != std::string::npos) {
+            size_t arrStart = resp.body.find('[', gPos);
+            size_t arrEnd   = resp.body.find(']', arrStart == std::string::npos ? gPos : arrStart);
+            if (arrStart != std::string::npos && arrEnd != std::string::npos && arrEnd > arrStart) {
+                std::string arr = resp.body.substr(arrStart, arrEnd - arrStart + 1);
+                size_t oPos = 0;
+                while ((oPos = arr.find('{', oPos)) != std::string::npos) {
+                    size_t oEnd = arr.find('}', oPos);
+                    if (oEnd == std::string::npos) break;
+                    std::string tag = extractJsonValue(arr.substr(oPos, oEnd - oPos + 1), "tag");
+                    if (!tag.empty()) item.genres.push_back(tag);
+                    oPos = oEnd + 1;
+                }
+            }
+        }
+    }
 
     // Episode info
     item.grandparentTitle = extractJsonValue(resp.body, "grandparentTitle");

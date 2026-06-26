@@ -814,6 +814,7 @@ if(PLATFORM_PSV)
         FILE resources/icons/backspace-outline.png        resources/icons/backspace-outline.png
         FILE resources/icons/keyboard-space.png           resources/icons/keyboard-space.png
         FILE resources/icons/search-check.png             resources/icons/search-check.png
+        FILE resources/icons/plus.png                     resources/icons/plus.png
         FILE resources/icons/video-image.png              resources/icons/video-image.png
         FILE resources/icons/web.png                      resources/icons/web.png
         FILE resources/icons/filter-menu-outline.png      resources/icons/filter-menu-outline.png
