@@ -406,6 +406,13 @@ void MediaDetailView::buildMovieLayout() {
     // Audio icon starts on the generic 2.0 glyph; updateStreamRowLabels swaps it
     // to the selected track's surround-sound layout when the stream list loads.
     m_audioRow = makeStreamBtn("Audio", "icons/surround-sound-2-0.png", &m_audioIcon);
+    // The surround-sound glyph carries channel digits, so size it a touch larger
+    // than the plain action-button icons for legibility (re-centred in the 44px button).
+    if (m_audioIcon) {
+        m_audioIcon->setWidth(24);
+        m_audioIcon->setHeight(24);
+        m_audioIcon->setPositionTop(10);
+    }
     m_audioRow->setVisibility(brls::Visibility::GONE);   // revealed by loadStreams
     m_audioRow->registerClickAction([this](brls::View*) { showAudioPicker(); return true; });
     m_audioRow->addGestureRecognizer(new brls::TapGestureRecognizer(m_audioRow));
