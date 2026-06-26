@@ -67,6 +67,13 @@ private:
     void reloadAllItems();
     void showSortMenu();
 
+    // A-Z jump rail (right edge): build it, jump the grid to the first title in
+    // a letter bucket, and refresh its visibility (sort-dependent) + highlight.
+    void buildAzRail();
+    void jumpToLetter(char letter);
+    void refreshAzRail();
+    void updateCountLabel();   // "312 titles" beside the page title
+
     // Check if this tab is still valid (not destroyed)
     bool isValid() const { return m_alive && *m_alive; }
 
@@ -75,6 +82,13 @@ private:
     std::string m_sectionType;  // "movie", "show", "artist"
 
     brls::Label* m_titleLabel = nullptr;
+    brls::Label* m_countLabel = nullptr;   // total-count text beside the title
+
+    // A-Z jump rail (shown only when sorted Title A-Z). m_azLetters is parallel
+    // to the rail's letter string; m_currentAzLetter is the highlighted bucket.
+    brls::Box* m_azRail = nullptr;
+    std::vector<brls::Label*> m_azLetters;
+    char m_currentAzLetter = 0;
 
     // View mode selector buttons
     brls::Box* m_viewModeBox = nullptr;

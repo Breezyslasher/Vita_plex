@@ -35,6 +35,11 @@ public:
     // Tell the grid whether more items are available on the server
     void setHasMore(bool hasMore);
 
+    // Jump the scroll so the row holding item `index` sits at the top of the
+    // viewport (clamped to the scrollable range). Backs the A-Z jump rail.
+    void scrollToItemIndex(size_t index, bool animated = true);
+    size_t itemCount() const { return m_items.size(); }
+
     // Override to detect when user tries to scroll past the bottom
     brls::View* getNextFocus(brls::FocusDirection direction, brls::View* currentView) override;
 

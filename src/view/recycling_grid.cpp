@@ -126,6 +126,27 @@ void RecyclingGrid::setHasMore(bool hasMore) {
     m_loading = false;
 }
 
+void RecyclingGrid::scrollToItemIndex(size_t index, bool animated) {
+    if (m_columns <= 0 || m_rows.empty()) return;
+
+    size_t rowIdx = index / (size_t)m_columns;
+    if (rowIdx >= m_rows.size()) rowIdx = m_rows.size() - 1;
+    brls::Box* row = m_rows[rowIdx];
+    if (!row) return;
+
+    // Row's content-relative Y = its on-screen Y minus the frame's on-screen Y
+    // plus however far we're already scrolled.
+    float target = row->getY() - this->getY() + this->getContentOffsetY();
+
+    // Clamp to the scrollable range so we never over- or under-scroll.
+    float maxOff = getContentHeight() - getScrollingAreaHeight();
+    if (maxOff < 0.0f) maxOff = 0.0f;
+    if (target < 0.0f) target = 0.0f;
+    if (target > maxOff) target = maxOff;
+
+    setContentOffsetY(target, animated);
+}
+
 brls::View* RecyclingGrid::getNextFocus(brls::FocusDirection direction, brls::View* currentView) {
     brls::View* next = brls::ScrollingFrame::getNextFocus(direction, currentView);
 

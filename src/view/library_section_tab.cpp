@@ -14,8 +14,13 @@
 #include "app/music_queue.hpp"
 #include "app/downloads_manager.hpp"
 #include "platform/platform.hpp"
+#include <cctype>
 
 namespace vitaplex {
+
+// A-Z jump-rail buckets. Parallel to m_azLetters; '#' collects digits/symbols
+// (which Plex titleSort places before 'A').
+static const char* kAzLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ#";
 
 size_t LibrarySectionTab::libraryPageSize() {
     int v = platform::getImageConstraints().libraryPageSize;
@@ -39,12 +44,28 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     this->setPadding(20);
     this->setGrow(1.0f);
 
-    // Title
+    // Title row — page title on the left, total-count on the right.
+    auto* titleRow = new brls::Box();
+    titleRow->setAxis(brls::Axis::ROW);
+    titleRow->setAlignItems(brls::AlignItems::FLEX_END);
+    titleRow->setMarginBottom(15);
+
     m_titleLabel = new brls::Label();
     m_titleLabel->setText(title);
     m_titleLabel->setFontSize(28);
-    m_titleLabel->setMarginBottom(15);
-    this->addView(m_titleLabel);
+    titleRow->addView(m_titleLabel);
+
+    auto* titleSpacer = new brls::Box();
+    titleSpacer->setGrow(1.0f);
+    titleRow->addView(titleSpacer);
+
+    m_countLabel = new brls::Label();
+    m_countLabel->setFontSize(13);
+    m_countLabel->setTextColor(nvgRGB(0x8a, 0x8a, 0x90));
+    m_countLabel->setMarginBottom(5);   // sit roughly on the title's baseline
+    titleRow->addView(m_countLabel);
+
+    this->addView(titleRow);
 
     const auto& settings = Application::getInstance().getSettings();
 
@@ -244,6 +265,10 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     m_contentGrid->registerAction("Back", brls::ControllerButton::BUTTON_B, backHandler);
     m_trackListScroll->registerAction("Back", brls::ControllerButton::BUTTON_B, backHandler);
 
+    // A-Z jump rail (absolute, right edge) — starts hidden; refreshAzRail shows
+    // it only while the all-items grid is sorted Title A-Z.
+    buildAzRail();
+
     // Load content immediately
     brls::Logger::debug("LibrarySectionTab: Created for section {} ({}) type={}", m_sectionKey, m_title, m_sectionType);
     loadContent();
@@ -319,6 +344,8 @@ void LibrarySectionTab::loadContent() {
                     m_contentGrid->setDataSource(m_items);
                     m_contentGrid->setHasMore(m_pageOffset < (size_t)m_totalItemCount);
                 }
+                updateCountLabel();
+                refreshAzRail();
                 m_loaded = true;
             });
         } else {
@@ -504,6 +531,9 @@ void LibrarySectionTab::reloadAllItems() {
                     m_contentGrid->setDataSource(m_items);
                     m_contentGrid->setHasMore(m_pageOffset < (size_t)m_totalItemCount);
                 }
+                m_currentAzLetter = 0;   // fresh result set — clear the rail highlight
+                updateCountLabel();
+                refreshAzRail();
             });
         }
     });
@@ -537,6 +567,94 @@ void LibrarySectionTab::showSortMenu() {
             }});
     }
     MediaDetailView::showOptionsPopover(anchor, "SORT", "Sort by", std::move(rows));
+}
+
+void LibrarySectionTab::updateCountLabel() {
+    if (!m_countLabel) return;
+    m_countLabel->setText(m_totalItemCount > 0
+                              ? std::to_string(m_totalItemCount) + " titles"
+                              : "");
+}
+
+void LibrarySectionTab::buildAzRail() {
+    m_azRail = new brls::Box();
+    m_azRail->setAxis(brls::Axis::COLUMN);
+    m_azRail->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
+    m_azRail->setAlignItems(brls::AlignItems::CENTER);
+    m_azRail->setPositionType(brls::PositionType::ABSOLUTE);
+    m_azRail->setPositionRight(4);
+    m_azRail->setPositionTop(118);    // below the title + toolbar
+    m_azRail->setPositionBottom(34);
+    m_azRail->setWidth(18);
+    m_azRail->setVisibility(brls::Visibility::GONE);
+
+    for (const char* c = kAzLetters; *c; ++c) {
+        char ch = *c;
+        auto* lbl = new brls::Label();
+        lbl->setText(std::string(1, ch));
+        lbl->setFontSize(9.5f);
+        lbl->setTextColor(nvgRGB(0x8a, 0x8a, 0x90));
+        lbl->setFocusable(true);
+        lbl->registerClickAction([this, ch](brls::View*) { jumpToLetter(ch); return true; });
+        lbl->addGestureRecognizer(new brls::TapGestureRecognizer(lbl));
+        m_azRail->addView(lbl);
+        m_azLetters.push_back(lbl);
+    }
+    this->addView(m_azRail);
+}
+
+// First letter of a title with a leading article dropped, to approximate Plex's
+// titleSort bucketing; digits / symbols collapse to '#'.
+static char azBucket(const std::string& t) {
+    auto lc = [](char c) { return (char)tolower((unsigned char)c); };
+    auto startsCI = [&](const char* p) {
+        size_t n = 0; while (p[n]) n++;
+        if (t.size() < n) return false;
+        for (size_t k = 0; k < n; k++) if (lc(t[k]) != lc(p[k])) return false;
+        return true;
+    };
+    size_t i = 0;
+    if (startsCI("the ")) i = 4;
+    else if (startsCI("an ")) i = 3;
+    else if (startsCI("a ")) i = 2;
+    while (i < t.size() && t[i] == ' ') i++;
+    if (i >= t.size()) return '#';
+    char c = (char)toupper((unsigned char)t[i]);
+    return (c >= 'A' && c <= 'Z') ? c : '#';
+}
+
+void LibrarySectionTab::jumpToLetter(char letter) {
+    if (m_items.empty() || !m_contentGrid) return;
+
+    char target = (char)toupper((unsigned char)letter);
+    auto rank = [](char b) { return b == '#' ? 0 : (int)b; };   // '#' sorts first
+
+    // m_items is sorted by titleSort asc → first item whose bucket reaches target.
+    size_t found = m_items.size();
+    for (size_t i = 0; i < m_items.size(); i++) {
+        if (rank(azBucket(m_items[i].title)) >= rank(target)) { found = i; break; }
+    }
+    if (found >= m_items.size()) found = m_items.size() - 1;   // letter beyond loaded range
+
+    m_contentGrid->scrollToItemIndex(found, true);
+    m_currentAzLetter = target;
+    refreshAzRail();
+}
+
+void LibrarySectionTab::refreshAzRail() {
+    if (!m_azRail) return;
+    bool active = (m_viewMode == LibraryViewMode::ALL_ITEMS &&
+                   m_sortParam == "titleSort:asc");
+    m_azRail->setVisibility(active ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
+    if (!active) return;
+
+    for (size_t i = 0; i < m_azLetters.size(); i++) {
+        if (!m_azLetters[i]) continue;
+        bool cur = (kAzLetters[i] == m_currentAzLetter);
+        m_azLetters[i]->setTextColor(cur ? vitaplex::palette::gold
+                                         : nvgRGB(0x8a, 0x8a, 0x90));
+        m_azLetters[i]->setFontSize(cur ? 11.0f : 9.5f);
+    }
 }
 
 bool LibrarySectionTab::navigateBack() {
@@ -754,6 +872,9 @@ void LibrarySectionTab::updateViewModeButtons() {
             m_backBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, downTarget);
         }
     }
+
+    // The A-Z rail rides the all-items grid; hide it in any sub-view.
+    refreshAzRail();
 }
 
 void LibrarySectionTab::onItemSelected(const MediaItem& item) {
