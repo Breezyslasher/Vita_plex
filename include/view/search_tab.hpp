@@ -59,6 +59,12 @@ private:
     int m_loadGeneration = 0;
     // ImageLoader needs an atomic flag; recycled per result rebuild.
     std::shared_ptr<std::atomic<bool>> m_imgAlive;
+
+    // Physical-keyboard typing (desktop / USB keyboards). Subscribed to the
+    // raw key event for this tab's lifetime; unsubscribed in the destructor.
+    brls::InputManager* m_inputManager = nullptr;
+    brls::Event<brls::KeyState>::Subscription m_kbSub;
+    bool m_kbSubscribed = false;
 };
 
 } // namespace vitaplex
