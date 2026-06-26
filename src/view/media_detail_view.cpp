@@ -380,7 +380,8 @@ void MediaDetailView::buildMovieLayout() {
     // Compact secondary buttons that live on the action row beside Download. The
     // leading icon conveys the type, so the label is just the selected track
     // (filled in by updateStreamRowLabels); the full list opens in the picker.
-    auto makeStreamBtn = [](const std::string& label, const std::string& iconRes) -> brls::Button* {
+    auto makeStreamBtn = [](const std::string& label, const std::string& iconRes,
+                            brls::Image** iconOut = nullptr) -> brls::Button* {
         auto* b = new brls::Button();
         b->setText(label);
         b->setHeight(44);
@@ -398,10 +399,13 @@ void MediaDetailView::buildMovieLayout() {
         icn->setPositionLeft(13);
         icn->setPositionTop(12);
         b->addView(icn);
+        if (iconOut) *iconOut = icn;   // keep a handle so the glyph can be swapped later
         return b;
     };
 
-    m_audioRow = makeStreamBtn("Audio", "icons/translate.png");
+    // Audio icon starts on the generic 2.0 glyph; updateStreamRowLabels swaps it
+    // to the selected track's surround-sound layout when the stream list loads.
+    m_audioRow = makeStreamBtn("Audio", "icons/surround-sound-2-0.png", &m_audioIcon);
     m_audioRow->setVisibility(brls::Visibility::GONE);   // revealed by loadStreams
     m_audioRow->registerClickAction([this](brls::View*) { showAudioPicker(); return true; });
     m_audioRow->addGestureRecognizer(new brls::TapGestureRecognizer(m_audioRow));
@@ -4577,6 +4581,25 @@ void MediaDetailView::loadStreams() {
     });
 }
 
+// Pick the MDI surround-sound channel-layout glyph for an audio track. The
+// channel count fixes the layout (2.0 / 3.1 / 5.1 / 7.1); an 8-channel track
+// whose name reads "Atmos" or "5.1.2" gets the height-channel (5.1.2) glyph
+// instead of 7.1. Mono / unknown fall back to the generic 2.0 glyph.
+static std::string audioChannelIcon(int channels, const std::string& displayTitle) {
+    std::string t = displayTitle;
+    for (auto& c : t) if (c >= 'A' && c <= 'Z') c = (char)(c + 32);   // lowercase
+    const bool height = t.find("atmos") != std::string::npos ||
+                        t.find("5.1.2") != std::string::npos;
+    switch (channels) {
+        case 2:  return "icons/surround-sound-2-0.png";
+        case 4:  return "icons/surround-sound-3-1.png";
+        case 6:  return "icons/surround-sound-5-1.png";
+        case 8:  return height ? "icons/surround-sound-5-1-2.png"
+                               : "icons/surround-sound-7-1.png";
+        default: return "icons/surround-sound-2-0.png";
+    }
+}
+
 void MediaDetailView::updateStreamRowLabels() {
     // Direction B action-row buttons: a leading icon conveys the type, so the
     // label is just the selected track — no "AUDIO:" / "SUBTITLES:" prefix and
@@ -4585,12 +4608,17 @@ void MediaDetailView::updateStreamRowLabels() {
     std::string audioLabel    = "Audio";
     std::string subtitleLabel = "Off";
     bool hasAudio = false;
+    int  audioChannels = 0;          // selected audio track → surround icon
+    std::string audioDisplay;        // selected audio displayTitle (Atmos check)
     for (const auto& s : m_streams) {
         if (s.streamType == 2) {
             hasAudio = true;
-            if (s.selected)
+            if (s.selected) {
                 audioLabel = !s.language.empty() ? s.language
                            : (s.displayTitle.empty() ? "Audio" : s.displayTitle);
+                audioChannels = s.channels;
+                audioDisplay  = s.displayTitle;
+            }
         } else if (s.streamType == 3 || s.streamType == 4) {
             if (s.selected)
                 subtitleLabel = !s.language.empty() ? s.language
@@ -4600,6 +4628,8 @@ void MediaDetailView::updateStreamRowLabels() {
 
     if (m_audioRow) {
         m_audioRow->setText(audioLabel);
+        if (m_audioIcon)
+            m_audioIcon->setImageFromRes(audioChannelIcon(audioChannels, audioDisplay));
         m_audioRow->setVisibility(hasAudio ? brls::Visibility::VISIBLE
                                            : brls::Visibility::GONE);
     }

@@ -150,6 +150,10 @@ public:
     // can flip the watched glyph (filled / outline) on click.
     brls::Image* m_downloadIcon = nullptr;
     brls::Image* m_markWatchedIcon = nullptr;
+    // Audio button's leading icon — swapped to the surround-sound channel-layout
+    // glyph (2.0 / 3.1 / 5.1 / 5.1.2 / 7.1) matching the selected audio track so
+    // the user can see the format at a glance.
+    brls::Image* m_audioIcon = nullptr;
     // AUDIO / SUBTITLES pickers, only created for playable items
     // (movies / episodes / extras). Hidden until loadStreams() resolves.
     brls::Button* m_audioRow = nullptr;
