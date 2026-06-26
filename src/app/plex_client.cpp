@@ -2059,7 +2059,9 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
     brls::Logger::debug("Searching for: {}", query);
 
     HttpClient client;
-    std::string url = buildApiUrl("/hubs/search?query=" + HttpClient::urlEncode(query));
+    // /hubs/search caps each hub (Movies, Episodes, …) at a small default (~3),
+    // so pass an explicit limit to return the full result set per type.
+    std::string url = buildApiUrl("/hubs/search?query=" + HttpClient::urlEncode(query) + "&limit=100");
 
     // Request JSON format
     HttpRequest req;
