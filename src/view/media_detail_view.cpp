@@ -629,37 +629,47 @@ void MediaDetailView::buildMovieLayout() {
 
     // ---------------- Assemble ----------------
     if (!portrait) {
-        // Two columns: fixed left (poster only), scrolling right (everything else).
+        // Two columns: fixed left (poster) and a right column whose header
+        // (title / meta / actions / summary) is fixed while only the Extras /
+        // Cast & Crew / Recommended rows scroll.
         auto* leftCol = new brls::Box();
         leftCol->setAxis(brls::Axis::COLUMN);
         leftCol->setWidth(344);             // 300 poster + 44 left padding
         leftCol->setPadding(46, 0, 46, 44);
         leftCol->addView(posterContainer);   // poster only; streams moved to the action row
 
-        auto* rightContent = new brls::Box();
-        rightContent->setAxis(brls::Axis::COLUMN);
-        rightContent->setPadding(46, 44, 46, 44);
-        rightContent->addView(m_titleLabel);
-        rightContent->addView(metaBox);
-        rightContent->addView(actionRow);
-        rightContent->addView(m_summaryLabel);
-        rightContent->addView(m_extrasLabel);
-        rightContent->addView(m_extrasScroll);
-        rightContent->addView(m_peopleLabel);
-        rightContent->addView(m_peopleScroll);
-        rightContent->addView(m_recommendationsLabel);
-        rightContent->addView(m_recommendationsScroll);
+        // Fixed header — stays put while the rows below scroll.
+        auto* rightCol = new brls::Box();
+        rightCol->setAxis(brls::Axis::COLUMN);
+        rightCol->setGrow(1.0f);
+        rightCol->setPadding(46, 44, 46, 44);
+        rightCol->addView(m_titleLabel);
+        rightCol->addView(metaBox);
+        rightCol->addView(actionRow);
+        rightCol->addView(m_summaryLabel);
 
-        auto* rightScroll = new brls::ScrollingFrame();
-        rightScroll->setGrow(1.0f);
-        rightScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
-        rightScroll->setContentView(rightContent);
+        // Only these three rows scroll (vertically). Each row is itself an
+        // HScrollingFrame, so they keep scrolling horizontally within this box.
+        auto* rowsBox = new brls::Box();
+        rowsBox->setAxis(brls::Axis::COLUMN);
+        rowsBox->addView(m_extrasLabel);
+        rowsBox->addView(m_extrasScroll);
+        rowsBox->addView(m_peopleLabel);
+        rowsBox->addView(m_peopleScroll);
+        rowsBox->addView(m_recommendationsLabel);
+        rowsBox->addView(m_recommendationsScroll);
+
+        auto* rowsScroll = new brls::ScrollingFrame();
+        rowsScroll->setGrow(1.0f);            // fills the height left under the header
+        rowsScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
+        rowsScroll->setContentView(rowsBox);
+        rightCol->addView(rowsScroll);
 
         auto* rootRow = new brls::Box();
         rootRow->setAxis(brls::Axis::ROW);
         rootRow->setGrow(1.0f);
         rootRow->addView(leftCol);
-        rootRow->addView(rightScroll);
+        rootRow->addView(rightCol);
         rootRow->setDefaultFocusedIndex(1);   // default focus into the right column → Play
         this->addView(rootRow);
     } else {
