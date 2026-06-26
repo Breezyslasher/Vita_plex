@@ -47,6 +47,14 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         return;
     }
 
+    // Music artists use the Direction-A layout (square art + action row +
+    // type-grouped rails), built and wired entirely in buildArtistLayout().
+    if (m_item.mediaType == MediaType::MUSIC_ARTIST) {
+        buildArtistLayout();
+        loadDetails();
+        return;
+    }
+
     // Create scrollable content
     m_scrollView = new brls::ScrollingFrame();
     m_scrollView->setGrow(1.0f);
@@ -301,24 +309,9 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_mainContent->addView(trackScroll);
     }
 
-    // Music categories container for artists - scrollable below fixed header
-    if (m_item.mediaType == MediaType::MUSIC_ARTIST) {
-        auto* categoriesScroll = new brls::ScrollingFrame();
-        categoriesScroll->setGrow(1.0f);
-        // CENTERED so vertical focus reaches off-screen category rows and scrolls
-        // them into view — same as the movie detail view's Extras / Cast & Crew /
-        // Recommended scroll. Default NATURAL refuses to focus off-screen rows.
-        categoriesScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
-
-        m_musicCategoriesBox = new brls::Box();
-        m_musicCategoriesBox->setAxis(brls::Axis::COLUMN);
-
-        categoriesScroll->setContentView(m_musicCategoriesBox);
-        m_mainContent->addView(categoriesScroll);
-    }
+    // (Music artists use buildArtistLayout() and return early above.)
 
     if (m_item.mediaType == MediaType::MUSIC_ALBUM ||
-        m_item.mediaType == MediaType::MUSIC_ARTIST ||
         m_item.mediaType == MediaType::SHOW ||
         m_item.mediaType == MediaType::SEASON) {
         // Top info is fixed, only media content below scrolls in its own container
@@ -349,10 +342,126 @@ namespace dbpal {
     inline NVGcolor line()       { return nvgRGB(71, 71, 71); }
     inline NVGcolor text()       { return nvgRGB(255, 255, 255); }
     inline NVGcolor muted()      { return nvgRGB(180, 180, 186); }
+    inline NVGcolor muted2()     { return nvgRGB(138, 138, 144); }   // section-count / sub
     inline NVGcolor summaryFg()  { return nvgRGB(220, 220, 224); }
     inline NVGcolor gold()       { return nvgRGB(229, 160, 13); }
     inline NVGcolor goldBright() { return nvgRGB(255, 194, 61); }
     inline NVGcolor goldInk()    { return nvgRGB(36, 28, 8); }
+}
+
+// Artist bio preview: clamp to ~3 lines of chars and pin the label to a height
+// comfortably above that so borealis keeps the label in WRAPPING mode (where it
+// honours the fixed width). If the clamped text were taller than the box, the
+// label would drop to single-line mode and run off the right edge instead.
+constexpr size_t kBioPreviewChars  = 150;
+constexpr float  kBioPreviewHeight = 80.0f;
+
+// Clamp a long blurb to roughly `maxChars`, cutting on a word boundary and
+// appending an ellipsis. Used for the artist bio so it fits a fixed-height,
+// 3-line block instead of pushing the rails off-screen.
+std::string clampText(const std::string& s, size_t maxChars) {
+    if (s.size() <= maxChars) return s;
+    size_t cut = s.rfind(' ', maxChars);
+    if (cut == std::string::npos || cut < maxChars / 2) cut = maxChars;
+    std::string out = s.substr(0, cut);
+    while (!out.empty() && (out.back() == ' ' || out.back() == ',' || out.back() == '.'))
+        out.pop_back();
+    return out + "\xE2\x80\xA6";   // … (UTF-8)
+}
+
+// Collect every track across an artist's albums and start playback. Shared by
+// the artist detail Play / Shuffle buttons and the artist context menu. Runs on
+// a background thread; captures only a copy of the artist (never `this`).
+void playAllArtistTracks(const MediaItem& artist, bool shuffle) {
+    asyncRun([artist, shuffle]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> albums, allTracks;
+        if (client.fetchChildren(artist.ratingKey, albums)) {
+            for (const auto& album : albums) {
+                std::vector<MediaItem> tracks;
+                if (client.fetchChildren(album.ratingKey, tracks))
+                    allTracks.insert(allTracks.end(), tracks.begin(), tracks.end());
+            }
+        }
+        if (allTracks.empty()) {
+            brls::sync([]() { brls::Application::notify("No tracks found"); });
+            return;
+        }
+        if (shuffle) {
+            srand((unsigned)time(nullptr));
+            for (size_t i = allTracks.size() - 1; i > 0; i--)
+                std::swap(allTracks[i], allTracks[rand() % (i + 1)]);
+        }
+        brls::sync([allTracks]() {
+            brls::Application::pushActivity(PlayerActivity::createWithQueue(allTracks, 0));
+        });
+    });
+}
+
+// Queue every track of every album for offline download (grouped under the
+// artist). Shared by the artist detail Download button and the context menu.
+void downloadArtistTracks(const MediaItem& artist) {
+    asyncRun([artist]() {
+        PlexClient& client = PlexClient::getInstance();
+        auto& mgr = DownloadsManager::getInstance();
+        std::vector<MediaItem> albums;
+        int queued = 0, skipped = 0;
+        if (client.fetchChildren(artist.ratingKey, albums)) {
+            for (const auto& album : albums) {
+                std::vector<MediaItem> tracks;
+                if (client.fetchChildren(album.ratingKey, tracks)) {
+                    for (const auto& track : tracks) {
+                        if (mgr.isDownloaded(track.ratingKey) ||
+                            mgr.getDownload(track.ratingKey) != nullptr) { skipped++; continue; }
+                        MediaItem full;
+                        if (client.fetchMediaDetails(track.ratingKey, full) && !full.partPath.empty()) {
+                            if (mgr.queueDownload(
+                                    full.ratingKey, full.title, full.partPath,
+                                    full.duration, "track", artist.title, 0, full.index,
+                                    full.thumb, DownloadGroupType::ARTIST, artist.ratingKey,
+                                    artist.title, artist.thumb, album.title))
+                                queued++;
+                        }
+                    }
+                }
+            }
+        }
+        mgr.startDownloads();
+        brls::sync([queued, skipped]() {
+            std::string msg = "Queued " + std::to_string(queued) + " tracks";
+            if (skipped > 0) msg += " (" + std::to_string(skipped) + " already downloaded)";
+            brls::Application::notify(msg);
+        });
+    });
+}
+
+// Append every artist track to the bottom of the play queue (starts the player
+// if the queue is empty). Backs the artist detail "+" action.
+void enqueueArtistTracks(const MediaItem& artist) {
+    asyncRun([artist]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> albums, allTracks;
+        if (client.fetchChildren(artist.ratingKey, albums)) {
+            for (const auto& album : albums) {
+                std::vector<MediaItem> tracks;
+                if (client.fetchChildren(album.ratingKey, tracks))
+                    allTracks.insert(allTracks.end(), tracks.begin(), tracks.end());
+            }
+        }
+        if (allTracks.empty()) {
+            brls::sync([]() { brls::Application::notify("No tracks found"); });
+            return;
+        }
+        brls::sync([allTracks]() {
+            MusicQueue& queue = MusicQueue::getInstance();
+            if (queue.isEmpty()) {
+                brls::Application::pushActivity(PlayerActivity::createWithQueue(allTracks, 0));
+            } else {
+                queue.addTracks(allTracks);
+                brls::Application::notify("Artist added to queue");
+            }
+        });
+    });
 }
 } // namespace
 
@@ -715,13 +824,273 @@ void MediaDetailView::buildMovieLayout() {
     }
 }
 
-brls::HScrollingFrame* MediaDetailView::createMediaRow(const std::string& title, brls::Box** contentOut) {
-    auto* label = new brls::Label();
-    label->setText(title);
-    label->setFontSize(20);
-    label->setMarginBottom(10);
-    label->setMarginTop(15);
-    m_musicCategoriesBox->addView(label);
+// Direction A — square-art artist detail. Fixed header (art + star, ARTIST
+// eyebrow, name, genre/album/track meta, Play / Shuffle / Download / Add) above
+// the type-grouped category rails (built by loadMusicCategories). Reuses the
+// existing member widgets (m_posterImage / m_titleLabel / m_summaryLabel /
+// m_musicCategoriesBox) so loadDetails / loadMusicCategories drive it unchanged.
+void MediaDetailView::buildArtistLayout() {
+    const bool portrait = platform::isPortrait();
+
+    // ---------------- Artist art (square + star badge) ----------------
+    auto* artContainer = new brls::Box();
+    artContainer->setAxis(brls::Axis::COLUMN);
+    artContainer->setWidth(168);
+    artContainer->setHeight(168);
+    artContainer->setCornerRadius(12);
+    artContainer->setBackgroundColor(dbpal::surface3());   // placeholder until art loads
+
+    m_posterImage = new brls::Image();
+    m_posterImage->setWidth(168);
+    m_posterImage->setHeight(168);
+    m_posterImage->setCornerRadius(12);
+    m_posterImage->setScalingType(brls::ImageScalingType::FILL);
+    m_posterImage->setVisibility(brls::Visibility::INVISIBLE);
+    artContainer->addView(m_posterImage);
+
+    // Star badge — rounded square scrim + gold star, only when the artist is rated.
+    if (m_item.rating > 0.0f) {
+        auto* badge = new brls::Box();
+        badge->setWidth(24);
+        badge->setHeight(24);
+        badge->setCornerRadius(6);
+        badge->setBackgroundColor(nvgRGBA(0, 0, 0, 128));
+        badge->setJustifyContent(brls::JustifyContent::CENTER);
+        badge->setAlignItems(brls::AlignItems::CENTER);
+        badge->setPositionType(brls::PositionType::ABSOLUTE);
+        badge->setPositionTop(8);
+        badge->setPositionRight(8);
+        auto* star = new brls::Image();
+        star->setImageFromRes("icons/star.png");
+        star->setWidth(14);
+        star->setHeight(14);
+        star->setScalingType(brls::ImageScalingType::FIT);
+        badge->addView(star);
+        artContainer->addView(badge);
+    }
+
+    auto* artWrap = new brls::Box();
+    artWrap->setAxis(brls::Axis::COLUMN);
+    artWrap->setMarginRight(22);
+    artWrap->addView(artContainer);
+
+    // ---------------- Info column ----------------
+    auto* eyebrow = new brls::Label();
+    eyebrow->setText("ARTIST");
+    eyebrow->setFontSize(11);
+    eyebrow->setTextColor(dbpal::gold());
+    eyebrow->setMarginBottom(6);
+
+    m_titleLabel = new brls::Label();
+    m_titleLabel->setText(m_item.title);
+    m_titleLabel->setFontSize(32);
+    m_titleLabel->setTextColor(dbpal::text());
+    m_titleLabel->setMarginBottom(9);
+
+    // Meta line — populated by refreshArtistMeta as genres / counts arrive.
+    m_artistMetaLabel = new brls::Label();
+    m_artistMetaLabel->setFontSize(14);
+    m_artistMetaLabel->setTextColor(dbpal::muted());
+    m_artistMetaLabel->setMarginBottom(14);
+    refreshArtistMeta();
+
+    // ---------------- Action row ----------------
+    auto* actionRow = new brls::Box();
+    actionRow->setAxis(brls::Axis::ROW);
+    actionRow->setAlignItems(brls::AlignItems::CENTER);
+    actionRow->setMarginBottom(14);
+
+    const MediaItem artist = m_item;   // captured by the async handlers (no `this`)
+
+    // Leading icon overlaid on a pill (matches the movie action buttons).
+    auto addLeadingIcon = [](brls::Button* b, const std::string& iconRes,
+                             int size, int left, int top) {
+        auto* icn = new brls::Image();
+        icn->setImageFromRes(iconRes);
+        icn->setWidth(size);
+        icn->setHeight(size);
+        icn->setScalingType(brls::ImageScalingType::FIT);
+        icn->setPositionType(brls::PositionType::ABSOLUTE);
+        icn->setPositionLeft(left);
+        icn->setPositionTop(top);
+        b->addView(icn);
+    };
+
+    // Play (gold) — all tracks in order.
+    m_playButton = new brls::Button();
+    m_playButton->setText("Play");
+    m_playButton->setHeight(40);
+    m_playButton->setPadding(0, 20, 0, 40);
+    m_playButton->setCornerRadius(8);
+    m_playButton->setTextColor(dbpal::goldInk());
+    m_playButton->setBackgroundColor(dbpal::gold());
+    m_playButton->setMarginRight(10);
+    m_playButton->registerClickAction([artist](brls::View*) {
+        playAllArtistTracks(artist, false); return true;
+    });
+    m_playButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_playButton));
+    addLeadingIcon(m_playButton, "icons/play.png", 17, 14, 12);
+    actionRow->addView(m_playButton);
+
+    // Shuffle (secondary).
+    auto* shuffleBtn = new brls::Button();
+    shuffleBtn->setText("Shuffle");
+    shuffleBtn->setHeight(40);
+    shuffleBtn->setPadding(0, 18, 0, 40);
+    shuffleBtn->setCornerRadius(8);
+    shuffleBtn->setTextColor(dbpal::text());
+    shuffleBtn->setBackgroundColor(dbpal::surface2());
+    shuffleBtn->setMarginRight(10);
+    shuffleBtn->registerClickAction([artist](brls::View*) {
+        playAllArtistTracks(artist, true); return true;
+    });
+    shuffleBtn->addGestureRecognizer(new brls::TapGestureRecognizer(shuffleBtn));
+    addLeadingIcon(shuffleBtn, "icons/shuffle-variant.png", 17, 14, 12);
+    actionRow->addView(shuffleBtn);
+
+    // Icon-only secondary squares (Download / Add).
+    auto makeIconButton = [&](const std::string& iconRes) -> brls::Button* {
+        auto* b = new brls::Button();
+        b->setText("");
+        b->setWidth(40);
+        b->setHeight(40);
+        b->setPadding(0);
+        b->setCornerRadius(8);
+        b->setTextColor(dbpal::text());
+        b->setBackgroundColor(dbpal::surface2());
+        b->setMarginRight(10);
+        addLeadingIcon(b, iconRes, 18, 11, 11);
+        return b;
+    };
+
+    auto* downloadBtn = makeIconButton("icons/download.png");
+    downloadBtn->registerClickAction([artist](brls::View*) {
+        brls::Application::notify("Queuing artist download...");
+        downloadArtistTracks(artist); return true;
+    });
+    downloadBtn->addGestureRecognizer(new brls::TapGestureRecognizer(downloadBtn));
+    actionRow->addView(downloadBtn);
+
+    auto* addBtn = makeIconButton("icons/playlist-plus.png");
+    addBtn->registerClickAction([artist](brls::View*) {
+        enqueueArtistTracks(artist); return true;   // add all tracks to the queue
+    });
+    addBtn->addGestureRecognizer(new brls::TapGestureRecognizer(addBtn));
+    actionRow->addView(addBtn);
+
+    // ---------------- Bio ----------------
+    // Fixed-height, ~3-line preview so a long blurb can't shove the rails off
+    // the bottom of the screen. The text is clamped to roughly three lines and
+    // the box height is pinned (borealis wraps the clamped text within the exact
+    // height, so nothing overflows). m_summaryScroll stays null.
+    m_truncateSummary = true;
+    m_summaryScroll = nullptr;
+    m_fullDescription = m_item.summary;
+    m_summaryLabel = new brls::Label();
+    m_summaryLabel->setText(clampText(m_fullDescription, kBioPreviewChars));
+    m_summaryLabel->setFontSize(13);
+    m_summaryLabel->setLineHeight(1.65f);
+    m_summaryLabel->setTextColor(dbpal::summaryFg());
+    m_summaryLabel->setWidth(portrait ? 520.0f : 560.0f);
+    m_summaryLabel->setHeight(kBioPreviewHeight);   // stays in wrapping mode (~3 lines)
+    m_summaryLabel->setMarginBottom(2);
+    m_summaryLabel->setFocusable(false);
+
+    auto* info = new brls::Box();
+    info->setAxis(brls::Axis::COLUMN);
+    info->setGrow(1.0f);
+    info->addView(eyebrow);
+    info->addView(m_titleLabel);
+    info->addView(m_artistMetaLabel);
+    info->addView(actionRow);
+    info->addView(m_summaryLabel);
+
+    auto* header = new brls::Box();
+    header->setAxis(brls::Axis::ROW);
+    header->setAlignItems(brls::AlignItems::FLEX_START);
+    header->addView(artWrap);
+    header->addView(info);
+
+    // ---------------- Category rails (fill remaining height, scroll) ----------------
+    m_musicCategoriesBox = new brls::Box();
+    m_musicCategoriesBox->setAxis(brls::Axis::COLUMN);
+
+    auto* railsScroll = new brls::ScrollingFrame();
+    railsScroll->setGrow(1.0f);
+    // CENTERED so vertical focus reaches off-screen rails and scrolls them in.
+    railsScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
+    railsScroll->setContentView(m_musicCategoriesBox);
+
+    auto* railsWrap = new brls::Box();
+    railsWrap->setAxis(brls::Axis::COLUMN);
+    railsWrap->setGrow(1.0f);
+    railsWrap->setMarginTop(22);
+    railsWrap->addView(railsScroll);
+
+    auto* root = new brls::Box();
+    root->setAxis(brls::Axis::COLUMN);
+    root->setPadding(26, 28, 0, 28);
+    root->setGrow(1.0f);
+    root->addView(header);
+    root->addView(railsWrap);
+    this->addView(root);
+    // Play is the first focusable view, so it takes default focus on open —
+    // loadMusicCategories no longer steals it to the first rail.
+}
+
+// Rebuild the meta line from m_item.genres + cached album / track counts. Each
+// segment is omitted when its data is missing (per the Direction A spec).
+void MediaDetailView::refreshArtistMeta() {
+    if (!m_artistMetaLabel) return;
+    std::vector<std::string> segs;
+    for (const auto& g : m_item.genres) {
+        segs.push_back(g);
+        if (segs.size() >= 2) break;    // cap genres so the line stays one row
+    }
+    if (m_artistAlbumCount > 0)
+        segs.push_back(std::to_string(m_artistAlbumCount) +
+                       (m_artistAlbumCount == 1 ? " album" : " albums"));
+    if (m_artistTrackCount > 0)
+        segs.push_back(std::to_string(m_artistTrackCount) +
+                       (m_artistTrackCount == 1 ? " track" : " tracks"));
+
+    std::string text;
+    for (size_t i = 0; i < segs.size(); i++) {
+        if (i) text += "  \xC2\xB7  ";   // middle dot (U+00B7) with side spacing
+        text += segs[i];
+    }
+    m_artistMetaLabel->setText(text);
+    m_artistMetaLabel->setVisibility(text.empty() ? brls::Visibility::GONE
+                                                  : brls::Visibility::VISIBLE);
+}
+
+brls::HScrollingFrame* MediaDetailView::createMediaRow(const std::string& title, int count,
+                                                       brls::Box** contentOut) {
+    // Direction A section header: 17px white title + a muted (count). First row
+    // hugs the top of the rails region; later rows get 20px of separation.
+    const bool first = m_musicCategoriesBox->getChildren().empty();
+
+    auto* labelRow = new brls::Box();
+    labelRow->setAxis(brls::Axis::ROW);
+    labelRow->setAlignItems(brls::AlignItems::CENTER);
+    labelRow->setMarginTop(first ? 0 : 20);
+    labelRow->setMarginBottom(10);
+
+    auto* titleLabel = new brls::Label();
+    titleLabel->setText(title);
+    titleLabel->setFontSize(17);
+    titleLabel->setTextColor(dbpal::text());
+    labelRow->addView(titleLabel);
+
+    if (count >= 0) {
+        auto* countLabel = new brls::Label();
+        countLabel->setText("(" + std::to_string(count) + ")");
+        countLabel->setFontSize(17);
+        countLabel->setTextColor(dbpal::muted2());
+        countLabel->setMarginLeft(6);
+        labelRow->addView(countLabel);
+    }
+    m_musicCategoriesBox->addView(labelRow);
 
     auto* scrollFrame = new brls::HScrollingFrame();
     // Music artist detail page: "Albums", "Related Artists", etc. rows of
@@ -772,7 +1141,8 @@ void MediaDetailView::loadDetails() {
 
                 if (m_summaryLabel && !m_item.summary.empty()) {
                     m_fullDescription = m_item.summary;
-                    m_summaryLabel->setText(m_fullDescription);
+                    m_summaryLabel->setText(m_truncateSummary ? clampText(m_fullDescription, kBioPreviewChars)
+                                                              : m_fullDescription);
                     if (m_summaryScroll) {
                         m_summaryScroll->setVisibility(brls::Visibility::VISIBLE);
                     }
@@ -830,7 +1200,8 @@ void MediaDetailView::loadDetails() {
             // Update description if full details loaded
             if (!m_item.summary.empty() && m_summaryLabel) {
                 m_fullDescription = m_item.summary;
-                m_summaryLabel->setText(m_fullDescription);
+                m_summaryLabel->setText(m_truncateSummary ? clampText(m_fullDescription, kBioPreviewChars)
+                                                          : m_fullDescription);
                 if (m_summaryScroll) {
                     m_summaryScroll->setVisibility(brls::Visibility::VISIBLE);
                 }
@@ -838,6 +1209,7 @@ void MediaDetailView::loadDetails() {
 
             // Load children if applicable
             if (m_item.mediaType == MediaType::MUSIC_ARTIST) {
+                refreshArtistMeta();   // genres now available from full details
                 loadMusicCategories();
             } else if (m_item.mediaType == MediaType::MUSIC_ALBUM) {
                 loadTrackList();
@@ -1664,11 +2036,30 @@ void MediaDetailView::loadMusicCategories() {
         brls::sync([this, albums, cats, musicVideos]() {
             m_musicCategoriesBox->clearViews();
 
-            auto addCategory = [this](const std::string& title, const std::vector<MediaItem>& items) {
+            // Refresh the header meta now that release data is in: album count is
+            // the main Albums rail; track count prefers the artist's own leafCount
+            // and falls back to summing every release's track count.
+            m_artistAlbumCount = (int)albums.size();
+            int trackSum = 0;
+            for (const auto& a : albums) trackSum += a.leafCount;
+            for (const auto& c : cats)
+                for (const auto& a : c.items) trackSum += a.leafCount;
+            m_artistTrackCount = (m_item.leafCount > 0) ? m_item.leafCount : trackSum;
+            refreshArtistMeta();
+
+            // First rail's cells get an explicit UP route to Play (below): the
+            // rails live in a separate CENTERED scroll region, and when that
+            // region is scrolled the frame would otherwise swallow UP to scroll
+            // itself instead of handing focus back to the action row.
+            brls::Box* firstRailContent = nullptr;
+
+            auto addCategory = [this, &firstRailContent](const std::string& title,
+                                                         const std::vector<MediaItem>& items) {
                 if (items.empty()) return;
 
                 brls::Box* content = nullptr;
-                createMediaRow(title + " (" + std::to_string(items.size()) + ")", &content);
+                createMediaRow(title, (int)items.size(), &content);
+                if (!firstRailContent) firstRailContent = content;
 
                 for (const auto& item : items) {
                     auto* cell = new MediaItemCell();
@@ -1706,7 +2097,7 @@ void MediaDetailView::loadMusicCategories() {
             // Add music videos row
             if (!musicVideos.empty()) {
                 brls::Box* mvContent = nullptr;
-                createMediaRow("Music Videos (" + std::to_string(musicVideos.size()) + ")", &mvContent);
+                createMediaRow("Music Videos", (int)musicVideos.size(), &mvContent);
 
                 for (const auto& mv : musicVideos) {
                     auto* cell = new MediaItemCell();
@@ -1722,19 +2113,15 @@ void MediaDetailView::loadMusicCategories() {
 
                     mvContent->addView(cell);
                 }
+                if (!firstRailContent) firstRailContent = mvContent;
             }
 
-            // Land focus on the first category row once it's loaded. The
-            // description is display-only (non-focusable), so it can't hold
-            // focus — without this, focus would be stranded.
-            if (m_musicCategoriesBox && !m_musicCategoriesBox->getChildren().empty()) {
-                for (auto* child : m_musicCategoriesBox->getChildren()) {
-                    auto* hScroll = dynamic_cast<brls::HScrollingFrame*>(child);
-                    if (hScroll) {
-                        brls::Application::giveFocus(hScroll);
-                        break;
-                    }
-                }
+            // Wire UP from every cell of the first rail straight to Play so focus
+            // can always return to the action row. Focus itself stays on Play
+            // (the first focusable view) when the screen opens.
+            if (m_playButton && firstRailContent) {
+                for (auto* cell : firstRailContent->getChildren())
+                    cell->setCustomNavigationRoute(brls::FocusDirection::UP, m_playButton);
             }
         });
     });
@@ -3866,122 +4253,18 @@ void MediaDetailView::showArtistContextMenuStatic(const MediaItem& artist) {
 
     std::vector<OptionRow> rows;
 
-    // Shuffle Artist - add all tracks to queue in random order
+    // Shuffle / Play All / Download all share the artist detail helpers so the
+    // two entry points can never drift apart.
     rows.push_back({ "shuffle-variant.png", "Shuffle Artist", "", false, false,
-        [capturedArtist](brls::View*) {
-        asyncRun([capturedArtist]() {
-            PlexClient& client = PlexClient::getInstance();
-            std::vector<MediaItem> albums;
-            std::vector<MediaItem> allTracks;
+        [capturedArtist](brls::View*) { playAllArtistTracks(capturedArtist, true); return true; }});
 
-            if (client.fetchChildren(capturedArtist.ratingKey, albums)) {
-                for (const auto& album : albums) {
-                    std::vector<MediaItem> tracks;
-                    if (client.fetchChildren(album.ratingKey, tracks)) {
-                        for (auto& track : tracks) {
-                            allTracks.push_back(track);
-                        }
-                    }
-                }
-            }
-
-            if (allTracks.empty()) {
-                brls::sync([]() { brls::Application::notify("No tracks found"); });
-                return;
-            }
-
-            // Shuffle
-            srand((unsigned)time(nullptr));
-            for (size_t i = allTracks.size() - 1; i > 0; i--) {
-                size_t j = rand() % (i + 1);
-                std::swap(allTracks[i], allTracks[j]);
-            }
-
-            brls::sync([allTracks]() {
-                auto* playerActivity = PlayerActivity::createWithQueue(allTracks, 0);
-                brls::Application::pushActivity(playerActivity);
-            });
-        });
-        return true;
-    }});
-
-    // Play All (in order)
     rows.push_back({ "play.png", "Play All", "", true, false,
-        [capturedArtist](brls::View*) {
-        asyncRun([capturedArtist]() {
-            PlexClient& client = PlexClient::getInstance();
-            std::vector<MediaItem> albums;
-            std::vector<MediaItem> allTracks;
+        [capturedArtist](brls::View*) { playAllArtistTracks(capturedArtist, false); return true; }});
 
-            if (client.fetchChildren(capturedArtist.ratingKey, albums)) {
-                for (const auto& album : albums) {
-                    std::vector<MediaItem> tracks;
-                    if (client.fetchChildren(album.ratingKey, tracks)) {
-                        for (auto& track : tracks) {
-                            allTracks.push_back(track);
-                        }
-                    }
-                }
-            }
-
-            if (allTracks.empty()) {
-                brls::sync([]() { brls::Application::notify("No tracks found"); });
-                return;
-            }
-
-            brls::sync([allTracks]() {
-                auto* playerActivity = PlayerActivity::createWithQueue(allTracks, 0);
-                brls::Application::pushActivity(playerActivity);
-            });
-        });
-        return true;
-    }});
-
-    // Download Artist
     rows.push_back({ "download.png", "Download Artist", "", false, false,
         [capturedArtist](brls::View*) {
-        asyncRun([capturedArtist]() {
-            PlexClient& client = PlexClient::getInstance();
-            auto& mgr = DownloadsManager::getInstance();
-            std::vector<MediaItem> albums;
-            int queued = 0;
-            int skipped = 0;
-
-            if (client.fetchChildren(capturedArtist.ratingKey, albums)) {
-                for (const auto& album : albums) {
-                    std::vector<MediaItem> tracks;
-                    if (client.fetchChildren(album.ratingKey, tracks)) {
-                        for (const auto& track : tracks) {
-                            if (mgr.isDownloaded(track.ratingKey) ||
-                                mgr.getDownload(track.ratingKey) != nullptr) {
-                                skipped++;
-                                continue;
-                            }
-                            MediaItem fullItem;
-                            if (client.fetchMediaDetails(track.ratingKey, fullItem) && !fullItem.partPath.empty()) {
-                                if (mgr.queueDownload(
-                                    fullItem.ratingKey, fullItem.title, fullItem.partPath,
-                                    fullItem.duration, "track",
-                                    capturedArtist.title, 0, fullItem.index,
-                                    fullItem.thumb,
-                                    DownloadGroupType::ARTIST, capturedArtist.ratingKey,
-                                    capturedArtist.title, capturedArtist.thumb,
-                                    album.title)) {
-                                    queued++;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            mgr.startDownloads();
-            brls::sync([queued, skipped]() {
-                std::string msg = "Queued " + std::to_string(queued) + " tracks";
-                if (skipped > 0) msg += " (" + std::to_string(skipped) + " already downloaded)";
-                brls::Application::notify(msg);
-            });
-        });
+        brls::Application::notify("Queuing artist download...");
+        downloadArtistTracks(capturedArtist);
         return true;
     }});
 
