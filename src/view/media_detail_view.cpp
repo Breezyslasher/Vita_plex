@@ -349,6 +349,13 @@ namespace dbpal {
     inline NVGcolor goldInk()    { return nvgRGB(36, 28, 8); }
 }
 
+// Artist bio preview: clamp to ~3 lines of chars and pin the label to a height
+// comfortably above that so borealis keeps the label in WRAPPING mode (where it
+// honours the fixed width). If the clamped text were taller than the box, the
+// label would drop to single-line mode and run off the right edge instead.
+constexpr size_t kBioPreviewChars  = 150;
+constexpr float  kBioPreviewHeight = 80.0f;
+
 // Clamp a long blurb to roughly `maxChars`, cutting on a word boundary and
 // appending an ellipsis. Used for the artist bio so it fits a fixed-height,
 // 3-line block instead of pushing the rails off-screen.
@@ -964,7 +971,7 @@ void MediaDetailView::buildArtistLayout() {
     downloadBtn->addGestureRecognizer(new brls::TapGestureRecognizer(downloadBtn));
     actionRow->addView(downloadBtn);
 
-    auto* addBtn = makeIconButton("icons/plus.png");
+    auto* addBtn = makeIconButton("icons/playlist-plus.png");
     addBtn->registerClickAction([artist](brls::View*) {
         enqueueArtistTracks(artist); return true;   // add all tracks to the queue
     });
@@ -980,12 +987,12 @@ void MediaDetailView::buildArtistLayout() {
     m_summaryScroll = nullptr;
     m_fullDescription = m_item.summary;
     m_summaryLabel = new brls::Label();
-    m_summaryLabel->setText(clampText(m_fullDescription, 230));
+    m_summaryLabel->setText(clampText(m_fullDescription, kBioPreviewChars));
     m_summaryLabel->setFontSize(13);
     m_summaryLabel->setLineHeight(1.65f);
     m_summaryLabel->setTextColor(dbpal::summaryFg());
     m_summaryLabel->setWidth(portrait ? 520.0f : 560.0f);
-    m_summaryLabel->setHeight(70);             // ~3 lines at 13px · 1.65 line-height
+    m_summaryLabel->setHeight(kBioPreviewHeight);   // stays in wrapping mode (~3 lines)
     m_summaryLabel->setMarginBottom(2);
     m_summaryLabel->setFocusable(false);
 
@@ -1134,7 +1141,7 @@ void MediaDetailView::loadDetails() {
 
                 if (m_summaryLabel && !m_item.summary.empty()) {
                     m_fullDescription = m_item.summary;
-                    m_summaryLabel->setText(m_truncateSummary ? clampText(m_fullDescription, 230)
+                    m_summaryLabel->setText(m_truncateSummary ? clampText(m_fullDescription, kBioPreviewChars)
                                                               : m_fullDescription);
                     if (m_summaryScroll) {
                         m_summaryScroll->setVisibility(brls::Visibility::VISIBLE);
@@ -1193,7 +1200,7 @@ void MediaDetailView::loadDetails() {
             // Update description if full details loaded
             if (!m_item.summary.empty() && m_summaryLabel) {
                 m_fullDescription = m_item.summary;
-                m_summaryLabel->setText(m_truncateSummary ? clampText(m_fullDescription, 230)
+                m_summaryLabel->setText(m_truncateSummary ? clampText(m_fullDescription, kBioPreviewChars)
                                                           : m_fullDescription);
                 if (m_summaryScroll) {
                     m_summaryScroll->setVisibility(brls::Visibility::VISIBLE);
