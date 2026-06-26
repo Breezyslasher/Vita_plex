@@ -34,10 +34,7 @@ private:
 
     void performSearch();
     void rebuildResults();
-    // Appends the section's card rows to `rows` (used to wire column-aligned
-    // UP/DOWN navigation across the whole results area, sections included).
-    void addSection(const std::string& title, const std::vector<MediaItem>& items,
-                    std::vector<std::vector<brls::Box*>>& rows);
+    void addSection(const std::string& title, const std::vector<MediaItem>& items);
     brls::Box* makeCard(const MediaItem& item);
     void onItemSelected(const MediaItem& item);
 

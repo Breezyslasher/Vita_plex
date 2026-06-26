@@ -5,6 +5,7 @@
 
 #include "view/search_tab.hpp"
 #include "view/media_detail_view.hpp"
+#include "view/horizontal_scroll_row.hpp"
 #include "view/long_press_gesture.hpp"
 #include "app/application.hpp"
 #include "utils/image_loader.hpp"
@@ -178,7 +179,7 @@ SearchTab::SearchTab() {
 
     m_resultsContent = new brls::Box();
     m_resultsContent->setAxis(brls::Axis::COLUMN);
-    m_resultsContent->setAlignItems(brls::AlignItems::FLEX_START);
+    m_resultsContent->setAlignItems(brls::AlignItems::STRETCH);   // rows fill width + scroll
     m_resultsContent->setPadding(24, 18, 0, 8);
 
     m_resultsScroll->setContentView(m_resultsContent);
@@ -350,32 +351,12 @@ void SearchTab::rebuildResults() {
     if (m_imgAlive) *m_imgAlive = false;
     m_imgAlive = std::make_shared<std::atomic<bool>>(true);
 
-    std::vector<std::vector<brls::Box*>> rows;   // every card row, in display order
-    addSection("Movies",   m_movies,   rows);
-    addSection("Episodes", m_episodes, rows);
-    addSection("TV Shows", m_shows,    rows);
-    addSection("Artists",  m_artists,  rows);
-    addSection("Albums",   m_albums,   rows);
-    addSection("Tracks",   m_tracks,   rows);
-
-    // Column-aligned UP/DOWN across the whole results area (sections included);
-    // LEFT/RIGHT stay box navigation within a row, and LEFT off the first card
-    // returns to the keyboard.
-    for (size_t r = 0; r < rows.size(); r++) {
-        for (size_t c = 0; c < rows[r].size(); c++) {
-            brls::Box* card = rows[r][c];
-            if (r + 1 < rows.size()) {
-                auto& below = rows[r + 1];
-                card->setCustomNavigationRoute(brls::FocusDirection::DOWN,
-                                               below[mapCol(c, rows[r].size(), below.size())]);
-            }
-            if (r > 0) {
-                auto& above = rows[r - 1];
-                card->setCustomNavigationRoute(brls::FocusDirection::UP,
-                                               above[mapCol(c, rows[r].size(), above.size())]);
-            }
-        }
-    }
+    addSection("Movies",   m_movies);
+    addSection("Episodes", m_episodes);
+    addSection("TV Shows", m_shows);
+    addSection("Artists",  m_artists);
+    addSection("Albums",   m_albums);
+    addSection("Tracks",   m_tracks);
 
     if (m_resultsContent->getChildren().empty()) {
         auto* empty = new brls::Label();
@@ -387,13 +368,12 @@ void SearchTab::rebuildResults() {
     }
 }
 
-void SearchTab::addSection(const std::string& title, const std::vector<MediaItem>& items,
-                           std::vector<std::vector<brls::Box*>>& rows) {
+void SearchTab::addSection(const std::string& title, const std::vector<MediaItem>& items) {
     if (items.empty()) return;
 
     auto* section = new brls::Box();
     section->setAxis(brls::Axis::COLUMN);
-    section->setAlignItems(brls::AlignItems::FLEX_START);
+    section->setAlignItems(brls::AlignItems::STRETCH);   // header + row fill the width
     section->setMarginBottom(18);
 
     // Header: title + count.
@@ -414,30 +394,26 @@ void SearchTab::addSection(const std::string& title, const std::vector<MediaItem
     head->addView(ct);
     section->addView(head);
 
-    // Grid: 5 columns, column-gap 16, row-gap 14. Built as a column of rows so
-    // borealis' box navigation handles LEFT/RIGHT within a row and UP/DOWN
-    // between rows / sections.
-    auto* grid = new brls::Box();
-    grid->setAxis(brls::Axis::COLUMN);
-    grid->setAlignItems(brls::AlignItems::FLEX_START);
-    const int COLS = 5;
-    brls::Box* row = nullptr;
-    std::vector<brls::Box*> cur;
-    for (size_t i = 0; i < items.size(); i++) {
-        if (i % COLS == 0) {
-            if (row) { rows.push_back(cur); cur.clear(); }
-            row = new brls::Box();
-            row->setAxis(brls::Axis::ROW);
-            if (i > 0) row->setMarginTop(14);
-            grid->addView(row);
-        }
-        auto* card = makeCard(items[i]);
-        if (i % COLS != 0) card->setMarginLeft(16);
-        row->addView(card);
-        cur.push_back(card);
+    // One horizontal scrolling carousel of cards, like the home screen. The row
+    // height fits this type's poster + labels; HorizontalScrollRow handles
+    // LEFT/RIGHT + hands focus back to the keyboard / next section at its edges.
+    int posterH = 140;                       // portrait (movies / shows)
+    switch (items[0].mediaType) {
+        case MediaType::EPISODE:
+        case MediaType::CLIP:          posterH = 84; break;   // 16:9
+        case MediaType::MUSIC_ALBUM:
+        case MediaType::MUSIC_TRACK:
+        case MediaType::MUSIC_ARTIST:  posterH = 96; break;   // square
+        default: break;
     }
-    if (row) rows.push_back(cur);
-    section->addView(grid);
+    auto* row = new HorizontalScrollRow();
+    row->setHeight((float)(posterH + 44));
+    for (const auto& it : items) {
+        auto* card = makeCard(it);
+        card->setMarginRight(14);
+        row->addView(card);
+    }
+    section->addView(row);
     m_resultsContent->addView(section);
 }
 
