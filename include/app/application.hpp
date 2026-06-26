@@ -87,6 +87,7 @@ struct AppSettings {
     // Layout Settings
     bool showLibrariesInSidebar = false;  // Show libraries in sidebar instead of Library tab
     bool collapseSidebar = false;         // Collapse sidebar to icons only
+    bool showFeaturedBanner = true;       // Large featured hero at the top of Home
     std::string hiddenLibraries;          // Comma-separated list of library keys to hide
     std::string sidebarOrder;             // Custom sidebar order (comma-separated: home,library,search,livetv,settings)
 

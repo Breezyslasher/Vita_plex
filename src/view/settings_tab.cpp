@@ -652,6 +652,17 @@ brls::Box* SettingsTab::createUISection() {
     });
     box->addView(mpvStatsToggle);
 
+    // Featured hero banner on the Home tab. Toggles the large highlight at the
+    // top of Home; HomeTab re-reads this on focus so it applies without a
+    // restart. Off falls back to the plain "Home" title + rails.
+    auto* featuredBannerToggle = new brls::BooleanCell();
+    featuredBannerToggle->init("Show featured banner", settings.showFeaturedBanner,
+                               [&settings](bool value) {
+        settings.showFeaturedBanner = value;
+        Application::getInstance().saveSettings();
+    });
+    box->addView(featuredBannerToggle);
+
     return box;
 }
 
