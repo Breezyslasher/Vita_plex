@@ -1632,25 +1632,26 @@ bool PlexClient::fetchArtistHubs(const std::string& ratingKey, std::vector<Hub>&
     return true;
 }
 
-bool PlexClient::fetchArtistAlbumsBySubformat(const std::string& sectionKey,
-                                              const std::string& artistRatingKey,
-                                              const std::string& subformatCsv,
-                                              std::vector<MediaItem>& items) {
+bool PlexClient::fetchArtistAlbumsByFilter(const std::string& sectionKey,
+                                          const std::string& artistRatingKey,
+                                          const std::string& filter,
+                                          std::vector<MediaItem>& items) {
     items.clear();
-    if (sectionKey.empty() || artistRatingKey.empty() || subformatCsv.empty()) return false;
+    if (sectionKey.empty() || artistRatingKey.empty() || filter.empty()) return false;
 
-    brls::Logger::debug("fetchArtistAlbumsBySubformat: section={} artist={} subformat={}",
-                        sectionKey, artistRatingKey, subformatCsv);
+    brls::Logger::debug("fetchArtistAlbumsByFilter: section={} artist={} filter={}",
+                        sectionKey, artistRatingKey, filter);
 
     HttpClient client;
     // Mirror the official client: a section query scoped to the artist (type=9
-    // = album) filtered by album.subformat — the field Plex uses to categorize
-    // releases. No group=title here: an artist can have several distinct
-    // same-titled releases (e.g. multiple "Total Coverage" compilations) and
-    // grouping would collapse them into one.
+    // = album) filtered by a release-type token (album.format=... for primary
+    // types like Single/EP, album.subformat=... for secondary types). No
+    // group=title here: an artist can have several distinct same-titled releases
+    // (e.g. multiple "Total Coverage" compilations) and grouping would collapse
+    // them into one.
     std::string url = buildApiUrl("/library/sections/" + sectionKey +
         "/all?type=9&artist.id=" + artistRatingKey +
-        "&album.subformat=" + subformatCsv +
+        "&" + filter +
         "&sort=year:desc");
 
     HttpRequest req;
@@ -1660,7 +1661,7 @@ bool PlexClient::fetchArtistAlbumsBySubformat(const std::string& sectionKey,
     HttpResponse resp = client.request(req);
 
     if (resp.statusCode != 200) {
-        brls::Logger::error("fetchArtistAlbumsBySubformat failed: {}", resp.statusCode);
+        brls::Logger::error("fetchArtistAlbumsByFilter failed: {}", resp.statusCode);
         if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
     }
@@ -1697,7 +1698,7 @@ bool PlexClient::fetchArtistAlbumsBySubformat(const std::string& sectionKey,
         pos = objEnd;
     }
 
-    brls::Logger::info("fetchArtistAlbumsBySubformat [{}]: {} albums", subformatCsv, items.size());
+    brls::Logger::info("fetchArtistAlbumsByFilter [{}]: {} albums", filter, items.size());
     return true;
 }
 

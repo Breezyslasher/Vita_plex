@@ -1615,38 +1615,49 @@ void MediaDetailView::loadMusicCategories() {
         std::vector<MediaItem> children;
         client.fetchChildren(m_item.ratingKey, children);
 
-        // Typed releases via album.subformat. ONE query per value: Plex's
-        // comma/IN form is unreliable (a combined "Single,EP" returns nothing
-        // while single values work), so query each value and combine Singles +
-        // EPs into one row like the official client.
-        std::vector<MediaItem> singles, eps, compilations, soundtracks, live;
+        // Typed releases, the way the official client splits them. Plex follows
+        // MusicBrainz: Single / EP are primary types (album.format); everything
+        // else is a secondary type (album.subformat). One query per value —
+        // Plex's comma/IN form is unreliable. Empty categories hide themselves.
+        struct AlbumCat {
+            std::string label;
+            std::vector<std::string> filters;   // OR'd together (e.g. Single + EP)
+            std::vector<MediaItem> items;
+        };
+        std::vector<AlbumCat> cats = {
+            {"Singles & EPs", {"album.format=Single", "album.format=EP"}, {}},
+            {"Compilations",  {"album.subformat=Compilation"},            {}},
+            {"Soundtracks",   {"album.subformat=Soundtrack"},             {}},
+            {"Live",          {"album.subformat=Live"},                   {}},
+            {"Remixes",       {"album.subformat=Remix"},                  {}},
+            {"Demos",         {"album.subformat=Demo"},                   {}},
+            {"DJ Mixes",      {"album.subformat=DJ-mix"},                 {}},
+            {"Mixtapes",      {"album.subformat=Mixtape/Street"},         {}},
+            {"Spoken Word",   {"album.subformat=Spokenword"},             {}},
+            {"Interviews",    {"album.subformat=Interview"},              {}},
+            {"Audiobooks",    {"album.subformat=Audiobook"},              {}},
+        };
         if (!sectionKey.empty()) {
-            client.fetchArtistAlbumsBySubformat(sectionKey, m_item.ratingKey, "Single", singles);
-            client.fetchArtistAlbumsBySubformat(sectionKey, m_item.ratingKey, "EP", eps);
-            client.fetchArtistAlbumsBySubformat(sectionKey, m_item.ratingKey, "Compilation", compilations);
-            client.fetchArtistAlbumsBySubformat(sectionKey, m_item.ratingKey, "Soundtrack", soundtracks);
-            client.fetchArtistAlbumsBySubformat(sectionKey, m_item.ratingKey, "Live", live);
+            for (auto& c : cats) {
+                for (const auto& f : c.filters) {
+                    std::vector<MediaItem> part;
+                    client.fetchArtistAlbumsByFilter(sectionKey, m_item.ratingKey, f, part);
+                    c.items.insert(c.items.end(), part.begin(), part.end());
+                }
+            }
         }
-
-        std::vector<MediaItem> singlesEps = singles;
-        singlesEps.insert(singlesEps.end(), eps.begin(), eps.end());
 
         // /children can also include the typed releases, so drop anything already
         // shown in a typed row to avoid duplicates in Albums.
         std::unordered_set<std::string> typed;
-        auto markTyped = [&typed](const std::vector<MediaItem>& v) {
-            for (const auto& a : v) typed.insert(a.ratingKey);
-        };
-        markTyped(singlesEps);
-        markTyped(compilations);
-        markTyped(soundtracks);
-        markTyped(live);
+        for (const auto& c : cats)
+            for (const auto& a : c.items) typed.insert(a.ratingKey);
         std::vector<MediaItem> albums;
         for (const auto& a : children)
             if (a.mediaType == MediaType::MUSIC_ALBUM && !typed.count(a.ratingKey))
                 albums.push_back(a);
 
-        brls::sync([this, albums, singlesEps, compilations, soundtracks, live, musicVideos]() {
+        brls::sync([this, albums, cats, musicVideos]() {
             m_musicCategoriesBox->clearViews();
 
             auto addCategory = [this](const std::string& title, const std::vector<MediaItem>& items) {
@@ -1683,12 +1694,10 @@ void MediaDetailView::loadMusicCategories() {
                 }
             };
 
-            // Order mirrors the official client.
+            // Albums first, then every non-empty typed category in order.
             addCategory("Albums", albums);
-            addCategory("Singles & EPs", singlesEps);
-            addCategory("Compilations", compilations);
-            addCategory("Soundtracks", soundtracks);
-            addCategory("Live", live);
+            for (const auto& c : cats)
+                addCategory(c.label, c.items);
 
             // Add music videos row
             if (!musicVideos.empty()) {
