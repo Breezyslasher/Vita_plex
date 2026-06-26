@@ -1632,6 +1632,76 @@ bool PlexClient::fetchArtistHubs(const std::string& ratingKey, std::vector<Hub>&
     return true;
 }
 
+bool PlexClient::fetchArtistAlbumsByFilter(const std::string& sectionKey,
+                                          const std::string& artistRatingKey,
+                                          const std::string& filter,
+                                          std::vector<MediaItem>& items) {
+    items.clear();
+    if (sectionKey.empty() || artistRatingKey.empty() || filter.empty()) return false;
+
+    brls::Logger::debug("fetchArtistAlbumsByFilter: section={} artist={} filter={}",
+                        sectionKey, artistRatingKey, filter);
+
+    HttpClient client;
+    // Mirror the official client: a section query scoped to the artist (type=9
+    // = album) filtered by a release-type token (album.format=... for primary
+    // types like Single/EP, album.subformat=... for secondary types). No
+    // group=title here: an artist can have several distinct same-titled releases
+    // (e.g. multiple "Total Coverage" compilations) and grouping would collapse
+    // them into one.
+    std::string url = buildApiUrl("/library/sections/" + sectionKey +
+        "/all?type=9&artist.id=" + artistRatingKey +
+        "&" + filter +
+        "&sort=year:desc");
+
+    HttpRequest req;
+    req.url = url;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    HttpResponse resp = client.request(req);
+
+    if (resp.statusCode != 200) {
+        brls::Logger::error("fetchArtistAlbumsByFilter failed: {}", resp.statusCode);
+        if (isAuthError(resp.statusCode)) handleUnauthorized();
+        return false;
+    }
+
+    size_t pos = 0;
+    while ((pos = resp.body.find("\"ratingKey\"", pos)) != std::string::npos) {
+        size_t objStart = resp.body.rfind('{', pos);
+        if (objStart == std::string::npos) { pos++; continue; }
+        int braceCount = 1;
+        size_t objEnd = objStart + 1;
+        while (braceCount > 0 && objEnd < resp.body.length()) {
+            if (resp.body[objEnd] == '{') braceCount++;
+            else if (resp.body[objEnd] == '}') braceCount--;
+            objEnd++;
+        }
+        std::string obj = resp.body.substr(objStart, objEnd - objStart);
+
+        MediaItem item;
+        item.ratingKey   = extractJsonValue(obj, "ratingKey");
+        item.key         = extractJsonValue(obj, "key");
+        item.title       = extractJsonValue(obj, "title");
+        item.thumb       = extractJsonValue(obj, "thumb");
+        item.art         = extractJsonValue(obj, "art");
+        item.type        = extractJsonValue(obj, "type");
+        item.mediaType   = parseMediaType(item.type);
+        item.year        = extractJsonInt(obj, "year");
+        item.parentTitle = extractJsonValue(obj, "parentTitle");
+        item.leafCount   = extractJsonInt(obj, "leafCount");
+
+        if (!item.ratingKey.empty() && !item.title.empty() &&
+            item.mediaType == MediaType::MUSIC_ALBUM) {
+            items.push_back(item);
+        }
+        pos = objEnd;
+    }
+
+    brls::Logger::info("fetchArtistAlbumsByFilter [{}]: {} albums", filter, items.size());
+    return true;
+}
+
 bool PlexClient::fetchHubs(std::vector<Hub>& hubs) {
     brls::Logger::debug("fetchHubs: serverUrl={}", m_serverUrl);
 

@@ -318,6 +318,17 @@ public:
     // Music artist hubs (albums grouped by type: Albums, Singles, EPs, etc.)
     bool fetchArtistHubs(const std::string& ratingKey, std::vector<Hub>& hubs);
 
+    // Fetch an artist's albums matching a Plex release-type filter, the way the
+    // official client splits releases. `filter` is a single field=value token,
+    // e.g. "album.format=Single" / "album.format=EP" (MusicBrainz primary types)
+    // or "album.subformat=Compilation" / "album.subformat=Live" (secondary
+    // types). One value per call — Plex's comma/IN form is unreliable. Needs the
+    // artist's library section id and numeric id (the artist ratingKey).
+    bool fetchArtistAlbumsByFilter(const std::string& sectionKey,
+                                   const std::string& artistRatingKey,
+                                   const std::string& filter,
+                                   std::vector<MediaItem>& items);
+
     // Extras (trailers, deleted scenes, featurettes, etc.)
     bool fetchExtras(const std::string& ratingKey, std::vector<MediaItem>& items);
     // Related / recommended items — the server's "Related" hubs, flattened
