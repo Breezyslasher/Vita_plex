@@ -350,12 +350,32 @@ void SearchTab::rebuildResults() {
     if (m_imgAlive) *m_imgAlive = false;
     m_imgAlive = std::make_shared<std::atomic<bool>>(true);
 
-    addSection("Movies",   m_movies);
-    addSection("Episodes", m_episodes);
-    addSection("TV Shows", m_shows);
-    addSection("Artists",  m_artists);
-    addSection("Albums",   m_albums);
-    addSection("Tracks",   m_tracks);
+    std::vector<std::vector<brls::Box*>> rows;   // every card row, in display order
+    addSection("Movies",   m_movies,   rows);
+    addSection("Episodes", m_episodes, rows);
+    addSection("TV Shows", m_shows,    rows);
+    addSection("Artists",  m_artists,  rows);
+    addSection("Albums",   m_albums,   rows);
+    addSection("Tracks",   m_tracks,   rows);
+
+    // Column-aligned UP/DOWN across the whole results area (sections included);
+    // LEFT/RIGHT stay box navigation within a row, and LEFT off the first card
+    // returns to the keyboard.
+    for (size_t r = 0; r < rows.size(); r++) {
+        for (size_t c = 0; c < rows[r].size(); c++) {
+            brls::Box* card = rows[r][c];
+            if (r + 1 < rows.size()) {
+                auto& below = rows[r + 1];
+                card->setCustomNavigationRoute(brls::FocusDirection::DOWN,
+                                               below[mapCol(c, rows[r].size(), below.size())]);
+            }
+            if (r > 0) {
+                auto& above = rows[r - 1];
+                card->setCustomNavigationRoute(brls::FocusDirection::UP,
+                                               above[mapCol(c, rows[r].size(), above.size())]);
+            }
+        }
+    }
 
     if (m_resultsContent->getChildren().empty()) {
         auto* empty = new brls::Label();
@@ -367,7 +387,8 @@ void SearchTab::rebuildResults() {
     }
 }
 
-void SearchTab::addSection(const std::string& title, const std::vector<MediaItem>& items) {
+void SearchTab::addSection(const std::string& title, const std::vector<MediaItem>& items,
+                           std::vector<std::vector<brls::Box*>>& rows) {
     if (items.empty()) return;
 
     auto* section = new brls::Box();
@@ -401,8 +422,10 @@ void SearchTab::addSection(const std::string& title, const std::vector<MediaItem
     grid->setAlignItems(brls::AlignItems::FLEX_START);
     const int COLS = 5;
     brls::Box* row = nullptr;
+    std::vector<brls::Box*> cur;
     for (size_t i = 0; i < items.size(); i++) {
         if (i % COLS == 0) {
+            if (row) { rows.push_back(cur); cur.clear(); }
             row = new brls::Box();
             row->setAxis(brls::Axis::ROW);
             if (i > 0) row->setMarginTop(14);
@@ -411,7 +434,9 @@ void SearchTab::addSection(const std::string& title, const std::vector<MediaItem
         auto* card = makeCard(items[i]);
         if (i % COLS != 0) card->setMarginLeft(16);
         row->addView(card);
+        cur.push_back(card);
     }
+    if (row) rows.push_back(cur);
     section->addView(grid);
     m_resultsContent->addView(section);
 }
@@ -419,31 +444,30 @@ void SearchTab::addSection(const std::string& title, const std::vector<MediaItem
 brls::Box* SearchTab::makeCard(const MediaItem& item) {
     auto* card = new brls::Box();
     card->setAxis(brls::Axis::COLUMN);
-    card->setWidth(96);
     card->setCornerRadius(6);
     card->setFocusable(true);
 
-    // Poster aspect matches the media type so square covers and landscape
-    // stills aren't cropped into a portrait frame. Card width stays 96 so the
-    // 5-column grid is preserved; only the height (and the requested art)
-    // changes per type.
-    int ph = 140, rw = 192, rh = 280;          // portrait default (movies / shows)
+    // Poster aspect (and width) match the media type so square covers and
+    // landscape stills aren't cropped into a portrait frame. Episodes get a
+    // larger 16:9 card; movies/shows portrait, albums/tracks/artists square.
+    int cw = 96, ph = 140, rw = 192, rh = 280;     // portrait default (movies / shows)
     switch (item.mediaType) {
         case MediaType::EPISODE:
         case MediaType::CLIP:
-            ph = 54;  rw = 192; rh = 108;       // 16:9 still
+            cw = 150; ph = 84;  rw = 300; rh = 168; // bigger 16:9 still
             break;
         case MediaType::MUSIC_ALBUM:
         case MediaType::MUSIC_TRACK:
         case MediaType::MUSIC_ARTIST:
-            ph = 96;  rw = 192; rh = 192;       // square cover
+            cw = 96;  ph = 96;  rw = 192; rh = 192; // square cover
             break;
         default:
             break;
     }
+    card->setWidth((float)cw);
 
     auto* poster = new brls::Box();
-    poster->setWidth(96);
+    poster->setWidth((float)cw);
     poster->setHeight((float)ph);
     poster->setCornerRadius(6);
     poster->setBackgroundColor(spal::poster());
@@ -494,7 +518,7 @@ brls::Box* SearchTab::makeCard(const MediaItem& item) {
     cap->setFontSize(12);
     cap->setTextColor(spal::cap());
     cap->setSingleLine(true);
-    cap->setWidth(96);
+    cap->setWidth((float)cw);
     cap->setMarginTop(6);
     card->addView(cap);
 
@@ -505,7 +529,7 @@ brls::Box* SearchTab::makeCard(const MediaItem& item) {
         s->setFontSize(11);
         s->setTextColor(spal::muted());
         s->setSingleLine(true);
-        s->setWidth(96);
+        s->setWidth((float)cw);
         card->addView(s);
     }
 
