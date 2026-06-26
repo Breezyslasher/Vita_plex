@@ -1349,27 +1349,33 @@ void MediaDetailView::showPersonResults(const std::string& personName,
             hero->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
             hero->setPadding(18, 30, 16, 30);
 
-            // Back chip (top-left)
+            // Back chip (top-left) — a glassy translucent pill with a faint
+            // hairline edge, matching the reference: "‹ Back" in light grey over
+            // a semi-transparent dark fill that lets the hero show through.
+            const NVGcolor backFg = nvgRGB(208, 210, 216);   // light grey label
             auto* backChip = new brls::Box();
             backChip->setAxis(brls::Axis::ROW);
             backChip->setAlignItems(brls::AlignItems::CENTER);
-            backChip->setHeight(38);
-            backChip->setCornerRadius(12);
-            backChip->setPadding(0, 16, 0, 13);
-            backChip->setBackgroundColor(personui::surface());
+            // Hug the content — the hero is a STRETCH column, which otherwise
+            // makes the chip span the full width like a toolbar.
+            backChip->setAlignSelf(brls::AlignSelf::FLEX_START);
+            backChip->setHeight(36);
+            backChip->setCornerRadius(13);
+            backChip->setPadding(0, 17, 0, 14);
+            backChip->setBackgroundColor(nvgRGBA(26, 28, 34, 160));   // glassy dark
             backChip->setBorderThickness(1.0f);
-            backChip->setBorderColor(nvgRGB(71, 71, 71));
+            backChip->setBorderColor(nvgRGBA(255, 255, 255, 48));     // hairline edge
             backChip->setFocusable(true);
             auto* backArrow = new brls::Label();
             backArrow->setText("‹");          // chevron, matching the reference
-            backArrow->setFontSize(22);
-            backArrow->setTextColor(personui::muted());
-            backArrow->setMarginRight(7);
+            backArrow->setFontSize(20);
+            backArrow->setTextColor(backFg);
+            backArrow->setMarginRight(8);
             backChip->addView(backArrow);
             auto* backTxt = new brls::Label();
             backTxt->setText("Back");
             backTxt->setFontSize(15);
-            backTxt->setTextColor(personui::muted());
+            backTxt->setTextColor(backFg);
             backChip->addView(backTxt);
             backChip->registerClickAction(
                 [](brls::View*) { brls::Application::popActivity(); return true; });
