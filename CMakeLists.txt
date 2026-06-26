@@ -809,6 +809,11 @@ if(PLATFORM_PSV)
         FILE resources/icons/surround-sound-5-1.png       resources/icons/surround-sound-5-1.png
         FILE resources/icons/surround-sound-5-1-2.png     resources/icons/surround-sound-5-1-2.png
         FILE resources/icons/surround-sound-7-1.png       resources/icons/surround-sound-7-1.png
+        FILE resources/icons/magnify.png                  resources/icons/magnify.png
+        FILE resources/icons/delete-outline.png           resources/icons/delete-outline.png
+        FILE resources/icons/backspace-outline.png        resources/icons/backspace-outline.png
+        FILE resources/icons/keyboard-space.png           resources/icons/keyboard-space.png
+        FILE resources/icons/search-check.png             resources/icons/search-check.png
         FILE resources/icons/video-image.png              resources/icons/video-image.png
         FILE resources/icons/web.png                      resources/icons/web.png
         FILE resources/icons/filter-menu-outline.png      resources/icons/filter-menu-outline.png
