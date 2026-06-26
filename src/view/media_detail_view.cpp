@@ -366,12 +366,7 @@ void MediaDetailView::buildMovieLayout() {
     posterContainer->setHeight(450);
     posterContainer->setCornerRadius(13);
     posterContainer->setBackgroundColor(dbpal::surface3());   // placeholder until art loads
-    posterContainer->setFocusable(true);
-    posterContainer->registerClickAction([this](brls::View*) {
-        onPlay(m_item.viewOffset > 0);
-        return true;
-    });
-    posterContainer->addGestureRecognizer(new brls::TapGestureRecognizer(posterContainer));
+    // Poster is purely decorative — not a focus target. Play is the entry point.
 
     m_posterImage = new brls::Image();
     m_posterImage->setWidth(300);
@@ -381,28 +376,38 @@ void MediaDetailView::buildMovieLayout() {
     m_posterImage->setVisibility(brls::Visibility::INVISIBLE);
     posterContainer->addView(m_posterImage);
 
-    // ---------------- Stream rows (reuse existing audio/subtitle selectors) ----------------
-    auto styleStreamRow = [](brls::Button* b) {
+    // ---------------- Stream selector buttons (audio / subtitles) ----------------
+    // Compact secondary buttons that live on the action row beside Download. The
+    // leading icon conveys the type, so the label is just the selected track
+    // (filled in by updateStreamRowLabels); the full list opens in the picker.
+    auto makeStreamBtn = [](const std::string& label, const std::string& iconRes) -> brls::Button* {
+        auto* b = new brls::Button();
+        b->setText(label);
         b->setHeight(44);
-        b->setMarginTop(8);
-        b->setCornerRadius(10);
-        b->setTextColor(dbpal::muted());
-        b->setBackgroundColor(dbpal::surface());
-        b->setBorderColor(dbpal::line());
-        b->setBorderThickness(1.0f);
+        b->setPadding(0, 16, 0, 40);
+        b->setCornerRadius(8);
+        b->setTextColor(dbpal::text());
+        b->setBackgroundColor(dbpal::surface2());
+        b->setMarginRight(12);
+        auto* icn = new brls::Image();
+        icn->setImageFromRes(iconRes);
+        icn->setWidth(20);
+        icn->setHeight(20);
+        icn->setScalingType(brls::ImageScalingType::FIT);
+        icn->setPositionType(brls::PositionType::ABSOLUTE);
+        icn->setPositionLeft(13);
+        icn->setPositionTop(12);
+        b->addView(icn);
+        return b;
     };
 
-    m_audioRow = new brls::Button();
-    m_audioRow->setText("AUDIO: Loading\xE2\x80\xA6");
-    styleStreamRow(m_audioRow);
-    m_audioRow->setVisibility(brls::Visibility::GONE);
+    m_audioRow = makeStreamBtn("Audio", "icons/translate.png");
+    m_audioRow->setVisibility(brls::Visibility::GONE);   // revealed by loadStreams
     m_audioRow->registerClickAction([this](brls::View*) { showAudioPicker(); return true; });
     m_audioRow->addGestureRecognizer(new brls::TapGestureRecognizer(m_audioRow));
 
-    m_subtitleRow = new brls::Button();
-    m_subtitleRow->setText("SUBTITLES: Loading\xE2\x80\xA6");
-    styleStreamRow(m_subtitleRow);
-    m_subtitleRow->setVisibility(brls::Visibility::GONE);
+    m_subtitleRow = makeStreamBtn("Subtitles", "icons/subtitles.png");
+    m_subtitleRow->setVisibility(brls::Visibility::GONE);   // revealed by loadStreams
     m_subtitleRow->registerClickAction([this](brls::View*) { showSubtitlePicker(); return true; });
     m_subtitleRow->addGestureRecognizer(new brls::TapGestureRecognizer(m_subtitleRow));
 
@@ -500,28 +505,6 @@ void MediaDetailView::buildMovieLayout() {
     actionRow->addView(m_playButton);
     m_resumeButton = nullptr;  // single gold button handles both play and resume
 
-    // Round secondary button helper.
-    auto makeRound = [](const std::string& iconRes) -> brls::Button* {
-        auto* b = new brls::Button();
-        b->setText("");
-        b->setWidth(44);
-        b->setHeight(44);
-        b->setCornerRadius(22);
-        b->setTextColor(dbpal::text());
-        b->setBackgroundColor(dbpal::surface3());
-        b->setMarginRight(12);
-        auto* icn = new brls::Image();
-        icn->setImageFromRes(iconRes);
-        icn->setWidth(20);
-        icn->setHeight(20);
-        icn->setScalingType(brls::ImageScalingType::FIT);
-        icn->setPositionType(brls::PositionType::ABSOLUTE);
-        icn->setPositionLeft(12);
-        icn->setPositionTop(12);
-        b->addView(icn);
-        return b;
-    };
-
     // Mark-watched (secondary, labelled). onToggleWatched updates both the text
     // and the check icon, so it stays a labelled button (not round) and we keep
     // m_markWatchedIcon directly so the toggle can swap filled / outline.
@@ -584,11 +567,11 @@ void MediaDetailView::buildMovieLayout() {
     m_downloadButton->addView(m_downloadIcon);
     actionRow->addView(m_downloadButton);
 
-    // More (round → existing movie context menu).
-    auto* moreBtn = makeRound("icons/options.png");
-    moreBtn->registerClickAction([this](brls::View*) { showMovieContextMenu(m_item); return true; });
-    moreBtn->addGestureRecognizer(new brls::TapGestureRecognizer(moreBtn));
-    actionRow->addView(moreBtn);
+    // Audio + Subtitles selectors now live on the action row (the round
+    // settings / More button was removed). They reveal themselves once
+    // loadStreams() resolves the track list.
+    actionRow->addView(m_audioRow);
+    actionRow->addView(m_subtitleRow);
 
     // ---------------- Summary ----------------
     // The right column scrolls, so the summary is a plain wrapping paragraph (no
@@ -642,14 +625,12 @@ void MediaDetailView::buildMovieLayout() {
 
     // ---------------- Assemble ----------------
     if (!portrait) {
-        // Two columns: fixed left (poster + streams), scrolling right.
+        // Two columns: fixed left (poster only), scrolling right (everything else).
         auto* leftCol = new brls::Box();
         leftCol->setAxis(brls::Axis::COLUMN);
         leftCol->setWidth(344);             // 300 poster + 44 left padding
         leftCol->setPadding(46, 0, 46, 44);
-        leftCol->addView(posterContainer);
-        leftCol->addView(m_audioRow);
-        leftCol->addView(m_subtitleRow);
+        leftCol->addView(posterContainer);   // poster only; streams moved to the action row
 
         auto* rightContent = new brls::Box();
         rightContent->setAxis(brls::Axis::COLUMN);
@@ -678,7 +659,7 @@ void MediaDetailView::buildMovieLayout() {
         rootRow->setDefaultFocusedIndex(1);   // default focus into the right column → Play
         this->addView(rootRow);
     } else {
-        // Single column: poster on top, then info, streams under the actions.
+        // Single column: poster on top, then the info block (actions carry the streams).
         auto* col = new brls::Box();
         col->setAxis(brls::Axis::COLUMN);
         col->setAlignItems(brls::AlignItems::CENTER);
@@ -690,9 +671,7 @@ void MediaDetailView::buildMovieLayout() {
         block->setMarginTop(20);
         block->addView(m_titleLabel);
         block->addView(metaBox);
-        block->addView(actionRow);
-        block->addView(m_audioRow);
-        block->addView(m_subtitleRow);
+        block->addView(actionRow);   // actionRow already carries audio + subtitles
         block->addView(m_summaryLabel);
         block->addView(m_extrasLabel);
         block->addView(m_extrasScroll);
@@ -4599,46 +4578,35 @@ void MediaDetailView::loadStreams() {
 }
 
 void MediaDetailView::updateStreamRowLabels() {
-    // Find the currently-selected audio + subtitle streams. Plex marks
-    // exactly one of each as selected on the server side, so we just
-    // read the bool the API gave us — no second round-trip needed.
-    std::string audioLabel = "(default)";
-    std::string subtitleLabel = "None";
+    // Direction B action-row buttons: a leading icon conveys the type, so the
+    // label is just the selected track — no "AUDIO:" / "SUBTITLES:" prefix and
+    // no search hint. Prefer the bare language (bounded width) over Plex's
+    // longer displayTitle so the four-button row never overflows.
+    std::string audioLabel    = "Audio";
+    std::string subtitleLabel = "Off";
     bool hasAudio = false;
-    bool hasSubs  = false;
     for (const auto& s : m_streams) {
         if (s.streamType == 2) {
             hasAudio = true;
-            if (s.selected) {
-                audioLabel = s.displayTitle.empty() ? s.language : s.displayTitle;
-            }
+            if (s.selected)
+                audioLabel = !s.language.empty() ? s.language
+                           : (s.displayTitle.empty() ? "Audio" : s.displayTitle);
         } else if (s.streamType == 3 || s.streamType == 4) {
-            hasSubs = true;
-            if (s.selected) {
-                subtitleLabel = s.displayTitle.empty() ? s.language : s.displayTitle;
-            }
+            if (s.selected)
+                subtitleLabel = !s.language.empty() ? s.language
+                              : (s.displayTitle.empty() ? "On" : s.displayTitle);
         }
     }
 
     if (m_audioRow) {
-        if (hasAudio) {
-            m_audioRow->setText("AUDIO: " + audioLabel);
-            m_audioRow->setVisibility(brls::Visibility::VISIBLE);
-        } else {
-            m_audioRow->setVisibility(brls::Visibility::GONE);
-        }
+        m_audioRow->setText(audioLabel);
+        m_audioRow->setVisibility(hasAudio ? brls::Visibility::VISIBLE
+                                           : brls::Visibility::GONE);
     }
     if (m_subtitleRow) {
-        // Always keep the subtitle row visible — even when nothing is
-        // installed, the user needs the tap target to open the dialog
-        // and run the online subtitle search. Label reads "None" when
-        // nothing is on; "Add subtitles" hint when the list is empty
-        // entirely.
-        if (hasSubs) {
-            m_subtitleRow->setText("SUBTITLES: " + subtitleLabel);
-        } else {
-            m_subtitleRow->setText("SUBTITLES: None  ·  Tap to search online");
-        }
+        // Stays visible even with no tracks — it's also the entry point to the
+        // online subtitle search inside the picker.
+        m_subtitleRow->setText(subtitleLabel);
         m_subtitleRow->setVisibility(brls::Visibility::VISIBLE);
     }
 }
