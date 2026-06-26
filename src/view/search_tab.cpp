@@ -183,6 +183,34 @@ SearchTab::SearchTab() {
 
     m_resultsScroll->setContentView(m_resultsContent);
     this->addView(m_resultsScroll);
+
+    // ---------------- Physical keyboard typing ----------------
+    // The raw key event fires app-wide, so only act while focus is inside this
+    // tab. A-Z / 0-9 / space / backspace aren't mapped to controller buttons,
+    // so there's no conflict with navigation (Enter still clicks the on-screen
+    // key, Escape still goes back).
+    m_inputManager = brls::Application::getPlatform()
+                         ? brls::Application::getPlatform()->getInputManager() : nullptr;
+    if (m_inputManager) {
+        m_kbSub = m_inputManager->getKeyboardKeyStateChanged()->subscribe(
+            [this](brls::KeyState ks) {
+                if (!ks.pressed) return;
+                brls::View* f = brls::Application::getCurrentFocus();
+                bool inSearch = false;
+                for (brls::View* v = f; v != nullptr; v = v->getParent())
+                    if (v == this) { inSearch = true; break; }
+                if (!inSearch) return;
+
+                int k = (int)ks.key;
+                if (k >= brls::BRLS_KBD_KEY_A && k <= brls::BRLS_KBD_KEY_Z)
+                    appendChar(std::string(1, (char)('A' + (k - brls::BRLS_KBD_KEY_A))));
+                else if (k >= brls::BRLS_KBD_KEY_0 && k <= brls::BRLS_KBD_KEY_9)
+                    appendChar(std::string(1, (char)('0' + (k - brls::BRLS_KBD_KEY_0))));
+                else if (k == brls::BRLS_KBD_KEY_SPACE)     appendChar(" ");
+                else if (k == brls::BRLS_KBD_KEY_BACKSPACE) backspace();
+            });
+        m_kbSubscribed = true;
+    }
 }
 
 void SearchTab::buildKeyboard(brls::Box* parent) {
@@ -395,10 +423,28 @@ brls::Box* SearchTab::makeCard(const MediaItem& item) {
     card->setCornerRadius(6);
     card->setFocusable(true);
 
-    // Poster (96x140), placeholder behind the async image.
+    // Poster aspect matches the media type so square covers and landscape
+    // stills aren't cropped into a portrait frame. Card width stays 96 so the
+    // 5-column grid is preserved; only the height (and the requested art)
+    // changes per type.
+    int ph = 140, rw = 192, rh = 280;          // portrait default (movies / shows)
+    switch (item.mediaType) {
+        case MediaType::EPISODE:
+        case MediaType::CLIP:
+            ph = 54;  rw = 192; rh = 108;       // 16:9 still
+            break;
+        case MediaType::MUSIC_ALBUM:
+        case MediaType::MUSIC_TRACK:
+        case MediaType::MUSIC_ARTIST:
+            ph = 96;  rw = 192; rh = 192;       // square cover
+            break;
+        default:
+            break;
+    }
+
     auto* poster = new brls::Box();
     poster->setWidth(96);
-    poster->setHeight(140);
+    poster->setHeight((float)ph);
     poster->setCornerRadius(6);
     poster->setBackgroundColor(spal::poster());
 
@@ -407,18 +453,14 @@ brls::Box* SearchTab::makeCard(const MediaItem& item) {
     img->setPositionTop(0);
     img->setPositionLeft(0);
     img->setPositionRight(0);
-    img->setHeight(140);
+    img->setHeight((float)ph);
     img->setCornerRadius(6);
     img->setScalingType(brls::ImageScalingType::FILL);
     img->setVisibility(brls::Visibility::INVISIBLE);
     poster->addView(img);
 
-    // Episodes use the show poster (portrait) rather than the landscape still.
-    std::string thumb = item.thumb;
-    if (item.mediaType == MediaType::EPISODE && !item.grandparentThumb.empty())
-        thumb = item.grandparentThumb;
-    if (!thumb.empty()) {
-        std::string url = PlexClient::getInstance().getThumbnailUrl(thumb, 192, 280);
+    if (!item.thumb.empty()) {
+        std::string url = PlexClient::getInstance().getThumbnailUrl(item.thumb, rw, rh);
         ImageLoader::loadAsync(url, [](brls::Image* im) {
             if (im) im->setVisibility(brls::Visibility::VISIBLE);
         }, img, m_imgAlive);
@@ -488,6 +530,8 @@ void SearchTab::onItemSelected(const MediaItem& item) {
 SearchTab::~SearchTab() {
     if (m_alive) *m_alive = false;
     if (m_imgAlive) *m_imgAlive = false;
+    if (m_inputManager && m_kbSubscribed)
+        m_inputManager->getKeyboardKeyStateChanged()->unsubscribe(m_kbSub);
 }
 
 void SearchTab::willDisappear(bool resetState) {
