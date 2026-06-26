@@ -37,6 +37,15 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         return true;
     }, false, false, brls::Sound::SOUND_BACK);
 
+    // Movies / standalone items use the Direction-B (poster-left) two-column
+    // layout, built and wired entirely in buildMovieLayout(). Everything below
+    // is the layout for shows / seasons / music / etc.
+    if (m_item.mediaType == MediaType::MOVIE) {
+        buildMovieLayout();
+        loadDetails();
+        return;
+    }
+
     // Create scrollable content
     m_scrollView = new brls::ScrollingFrame();
     m_scrollView->setGrow(1.0f);
@@ -103,151 +112,6 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     }
 
     leftBox->addView(posterContainer);
-
-    // Play/resume/download buttons (movies only)
-    if (m_item.mediaType == MediaType::MOVIE) {
-        m_playButton = new brls::Button();
-        m_playButton->setText("Play");
-        m_playButton->setWidth(200);
-        m_playButton->setHeight(44);
-        m_playButton->setMarginTop(20);
-        m_playButton->registerClickAction([this](brls::View* view) {
-            onPlay(false);
-            return true;
-        });
-        m_playButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_playButton));
-        leftBox->addView(m_playButton);
-
-        if (m_item.viewOffset > 0) {
-            m_resumeButton = new brls::Button();
-            m_resumeButton->setText("Resume");
-            m_resumeButton->setWidth(200);
-            m_resumeButton->setHeight(44);
-            m_resumeButton->setMarginTop(10);
-            m_resumeButton->registerClickAction([this](brls::View* view) {
-                onPlay(true);
-                return true;
-            });
-            m_resumeButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_resumeButton));
-            leftBox->addView(m_resumeButton);
-        }
-
-        m_downloadButton = new brls::Button();
-
-        // Check current download state
-        {
-            DownloadItem dlCheck;
-            if (DownloadsManager::getInstance().getDownloadCopy(m_item.ratingKey, dlCheck)) {
-                switch (dlCheck.state) {
-                    case DownloadState::COMPLETED:
-                        m_downloadButton->setText("Downloaded");
-                        break;
-                    case DownloadState::TRANSCODING:
-                        m_downloadButton->setText("Transcoding...");
-                        break;
-                    case DownloadState::DOWNLOADING:
-                        m_downloadButton->setText("Downloading...");
-                        break;
-                    case DownloadState::QUEUED:
-                        m_downloadButton->setText("Queued");
-                        break;
-                    case DownloadState::PAUSED:
-                        m_downloadButton->setText("Paused");
-                        break;
-                    case DownloadState::FAILED:
-                        m_downloadButton->setText("Retry Download");
-                        break;
-                    default:
-                        m_downloadButton->setText("Download");
-                        break;
-                }
-            } else {
-                m_downloadButton->setText("Download");
-            }
-        }
-
-        m_downloadButton->setWidth(200);
-        m_downloadButton->setHeight(44);
-        m_downloadButton->setMarginTop(10);
-        // Padding pushes the centred label rightward so it clears the
-        // absolutely-positioned icon overlay below. brls::Button doesn't
-        // expose its internal label's alignment, so we lean on the
-        // centring + asymmetric padding to get the icon-on-left look.
-        m_downloadButton->setPaddingLeft(40);
-        m_downloadButton->registerClickAction([this](brls::View* view) {
-            onDownload();
-            return true;
-        });
-        m_downloadButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_downloadButton));
-        leftBox->addView(m_downloadButton);
-
-        // MDI download icon overlayed on the left of the button.
-        // (resources/icons/download.png already shipped with the repo.)
-        m_downloadIcon = new brls::Image();
-        m_downloadIcon->setImageFromRes("icons/download.png");
-        m_downloadIcon->setWidth(20);
-        m_downloadIcon->setHeight(20);
-        m_downloadIcon->setScalingType(brls::ImageScalingType::FIT);
-        m_downloadIcon->setPositionType(brls::PositionType::ABSOLUTE);
-        m_downloadIcon->setPositionLeft(12);
-        m_downloadIcon->setPositionTop(12);
-        m_downloadButton->addView(m_downloadIcon);
-
-        // Watched-state toggle. Label is the action the press will
-        // perform — i.e. "Mark Watched" when the item is currently
-        // unwatched, and vice versa. The button is wired straight to
-        // PlexClient::markAsWatched/markAsUnwatched in onToggleWatched.
-        m_markWatchedButton = new brls::Button();
-        m_markWatchedButton->setText(m_item.watched ? "Mark Unwatched" : "Mark Watched");
-        m_markWatchedButton->setWidth(200);
-        m_markWatchedButton->setHeight(44);
-        m_markWatchedButton->setMarginTop(10);
-        m_markWatchedButton->setPaddingLeft(40);
-        m_markWatchedButton->registerClickAction([this](brls::View*) {
-            onToggleWatched();
-            return true;
-        });
-        m_markWatchedButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_markWatchedButton));
-        leftBox->addView(m_markWatchedButton);
-
-        // MDI check-circle icon: filled when item is already watched,
-        // outline when unwatched. onToggleWatched() swaps the resource
-        // each press to mirror the new state.
-        m_markWatchedIcon = new brls::Image();
-        m_markWatchedIcon->setImageFromRes(m_item.watched
-            ? "icons/check-circle.png"
-            : "icons/check-circle-outline.png");
-        m_markWatchedIcon->setWidth(20);
-        m_markWatchedIcon->setHeight(20);
-        m_markWatchedIcon->setScalingType(brls::ImageScalingType::FIT);
-        m_markWatchedIcon->setPositionType(brls::PositionType::ABSOLUTE);
-        m_markWatchedIcon->setPositionLeft(12);
-        m_markWatchedIcon->setPositionTop(12);
-        m_markWatchedButton->addView(m_markWatchedIcon);
-
-        // Explicit DOWN / UP routes between the leftBox buttons. Borealis's
-        // default spatial focus search jumps over Resume / Download /
-        // Mark Watched from Play and lands on whatever sits in rightBox /
-        // below, presumably because the leftBox is shorter than the right
-        // column and the scan picks the first focusable outside the row.
-        // Wiring the chain manually fixes Play→Resume→Download→Watched.
-        brls::View* nextDown = m_markWatchedButton;
-        m_downloadButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, nextDown);
-        m_markWatchedButton->setCustomNavigationRoute(brls::FocusDirection::UP, m_downloadButton);
-
-        nextDown = m_downloadButton;
-        if (m_resumeButton) {
-            m_resumeButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, nextDown);
-            m_downloadButton->setCustomNavigationRoute(brls::FocusDirection::UP, m_resumeButton);
-            nextDown = m_resumeButton;
-        } else {
-            m_downloadButton->setCustomNavigationRoute(brls::FocusDirection::UP, m_playButton);
-        }
-        m_playButton->setCustomNavigationRoute(brls::FocusDirection::DOWN, nextDown);
-        if (m_resumeButton) {
-            m_resumeButton->setCustomNavigationRoute(brls::FocusDirection::UP, m_playButton);
-        }
-    }
 
     topRow->addView(leftBox);
 
@@ -326,37 +190,6 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_summaryScroll->setVisibility(brls::Visibility::GONE);
     }
     rightBox->addView(m_summaryScroll);
-
-    // AUDIO / SUBTITLES picker rows. Movies are the only type with a
-    // single Part (and therefore a stable selection) at this layer;
-    // episodes have their own Part per cell so the picker belongs on
-    // the episode row, not this header. The rows start hidden — they
-    // appear once loadStreams() populates the list asynchronously.
-    if (m_item.mediaType == MediaType::MOVIE) {
-        m_audioRow = new brls::Button();
-        m_audioRow->setText("AUDIO: Loading…");
-        m_audioRow->setHeight(36);
-        m_audioRow->setMarginBottom(8);
-        m_audioRow->setVisibility(brls::Visibility::GONE);
-        m_audioRow->registerClickAction([this](brls::View*) {
-            showAudioPicker();
-            return true;
-        });
-        m_audioRow->addGestureRecognizer(new brls::TapGestureRecognizer(m_audioRow));
-        rightBox->addView(m_audioRow);
-
-        m_subtitleRow = new brls::Button();
-        m_subtitleRow->setText("SUBTITLES: Loading…");
-        m_subtitleRow->setHeight(36);
-        m_subtitleRow->setMarginBottom(8);
-        m_subtitleRow->setVisibility(brls::Visibility::GONE);
-        m_subtitleRow->registerClickAction([this](brls::View*) {
-            showSubtitlePicker();
-            return true;
-        });
-        m_subtitleRow->addGestureRecognizer(new brls::TapGestureRecognizer(m_subtitleRow));
-        rightBox->addView(m_subtitleRow);
-    }
 
     topRow->addView(rightBox);
     m_mainContent->addView(topRow);
@@ -445,36 +278,6 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
         m_mainContent->addView(m_mediaContentScroll);
     }
 
-    // Movies: scroll the whole page (header + extras + cast + recommended) so
-    // these supplementary rows aren't crammed into a squeezed inner scroll and
-    // clipped. Built straight into m_mainContent; the page is routed through
-    // m_scrollView at the bottom of the constructor.
-    if (m_item.mediaType == MediaType::MOVIE) {
-        const auto& ic = platform::getImageConstraints();
-
-        // Extras (trailers, featurettes, deleted scenes)
-        m_extrasLabel = new brls::Label();
-        m_extrasLabel->setText("Extras");
-        m_extrasLabel->setFontSize(20);
-        m_extrasLabel->setMarginBottom(10);
-        m_extrasLabel->setMarginTop(15);
-        m_extrasLabel->setVisibility(brls::Visibility::GONE);
-        m_mainContent->addView(m_extrasLabel);
-
-        m_extrasScroll = new brls::HScrollingFrame();
-        m_extrasScroll->setHeight(ic.landscapeRowHeight);
-        m_extrasScroll->setMarginBottom(20);
-        m_extrasScroll->setVisibility(brls::Visibility::GONE);
-        m_extrasBox = new brls::Box();
-        m_extrasBox->setAxis(brls::Axis::ROW);
-        m_extrasBox->setJustifyContent(brls::JustifyContent::FLEX_START);
-        m_extrasScroll->setContentView(m_extrasBox);
-        m_mainContent->addView(m_extrasScroll);
-
-        // Cast & Crew + Recommended (shared builder; same rows as TV shows)
-        buildPeopleAndRecommendedRows(m_mainContent);
-    }
-
     // Track list for albums (vertical list with nested scrolling)
     if (m_item.mediaType == MediaType::MUSIC_ALBUM) {
         auto* tracksLabel = new brls::Label();
@@ -530,6 +333,381 @@ MediaDetailView::~MediaDetailView() {
         m_alive->store(false);
     }
     brls::Logger::debug("MediaDetailView: Destroyed");
+}
+
+namespace {
+// Direction-B movie-detail palette (the app's neutral surfaces + gold accent).
+namespace dbpal {
+    inline NVGcolor surface()    { return nvgRGB(56, 56, 56); }
+    inline NVGcolor surface2()   { return nvgRGB(64, 64, 64); }
+    inline NVGcolor surface3()   { return nvgRGB(73, 73, 73); }
+    inline NVGcolor line()       { return nvgRGB(71, 71, 71); }
+    inline NVGcolor text()       { return nvgRGB(255, 255, 255); }
+    inline NVGcolor muted()      { return nvgRGB(180, 180, 186); }
+    inline NVGcolor summaryFg()  { return nvgRGB(220, 220, 224); }
+    inline NVGcolor gold()       { return nvgRGB(229, 160, 13); }
+    inline NVGcolor goldBright() { return nvgRGB(255, 194, 61); }
+    inline NVGcolor goldInk()    { return nvgRGB(36, 28, 8); }
+}
+} // namespace
+
+// Direction B — poster-left classic. A fixed left column (poster + audio/subs)
+// and a scrolling right column (title, meta, actions, summary, cast, recommended).
+// Reuses every existing widget, handler and the async loaders unchanged; this is
+// purely layout + styling for the movie / standalone-item path.
+void MediaDetailView::buildMovieLayout() {
+    const bool portrait = platform::isPortrait();
+    const auto& ic = platform::getImageConstraints();
+
+    // ---------------- Poster ----------------
+    auto* posterContainer = new brls::Box();
+    posterContainer->setAxis(brls::Axis::COLUMN);
+    posterContainer->setWidth(300);
+    posterContainer->setHeight(450);
+    posterContainer->setCornerRadius(13);
+    posterContainer->setBackgroundColor(dbpal::surface3());   // placeholder until art loads
+    posterContainer->setFocusable(true);
+    posterContainer->registerClickAction([this](brls::View*) {
+        onPlay(m_item.viewOffset > 0);
+        return true;
+    });
+    posterContainer->addGestureRecognizer(new brls::TapGestureRecognizer(posterContainer));
+
+    m_posterImage = new brls::Image();
+    m_posterImage->setWidth(300);
+    m_posterImage->setHeight(450);
+    m_posterImage->setCornerRadius(13);
+    m_posterImage->setScalingType(brls::ImageScalingType::FILL);
+    m_posterImage->setVisibility(brls::Visibility::INVISIBLE);
+    posterContainer->addView(m_posterImage);
+
+    // ---------------- Stream rows (reuse existing audio/subtitle selectors) ----------------
+    auto styleStreamRow = [](brls::Button* b) {
+        b->setHeight(44);
+        b->setMarginTop(8);
+        b->setCornerRadius(10);
+        b->setTextColor(dbpal::muted());
+        b->setBackgroundColor(dbpal::surface());
+        b->setBorderColor(dbpal::line());
+        b->setBorderThickness(1.0f);
+    };
+
+    m_audioRow = new brls::Button();
+    m_audioRow->setText("AUDIO: Loading\xE2\x80\xA6");
+    styleStreamRow(m_audioRow);
+    m_audioRow->setVisibility(brls::Visibility::GONE);
+    m_audioRow->registerClickAction([this](brls::View*) { showAudioPicker(); return true; });
+    m_audioRow->addGestureRecognizer(new brls::TapGestureRecognizer(m_audioRow));
+
+    m_subtitleRow = new brls::Button();
+    m_subtitleRow->setText("SUBTITLES: Loading\xE2\x80\xA6");
+    styleStreamRow(m_subtitleRow);
+    m_subtitleRow->setVisibility(brls::Visibility::GONE);
+    m_subtitleRow->registerClickAction([this](brls::View*) { showSubtitlePicker(); return true; });
+    m_subtitleRow->addGestureRecognizer(new brls::TapGestureRecognizer(m_subtitleRow));
+
+    // ---------------- Title ----------------
+    m_titleLabel = new brls::Label();
+    m_titleLabel->setText(m_item.title);
+    m_titleLabel->setFontSize(34);
+    m_titleLabel->setTextColor(dbpal::text());
+    m_titleLabel->setMarginBottom(10);
+
+    // ---------------- Metadata row ----------------
+    auto* metaBox = new brls::Box();
+    metaBox->setAxis(brls::Axis::ROW);
+    metaBox->setAlignItems(brls::AlignItems::CENTER);
+    metaBox->setMarginBottom(16);
+
+    if (m_item.rating > 0.0f) {
+        auto* starImg = new brls::Image();
+        starImg->setImageFromRes("icons/mini_star.png");
+        starImg->setWidth(16);
+        starImg->setHeight(16);
+        starImg->setMarginRight(5);
+        metaBox->addView(starImg);
+        auto* rl = new brls::Label();
+        char rb[16];
+        snprintf(rb, sizeof(rb), "%.1f", m_item.rating);
+        rl->setText(rb);
+        rl->setFontSize(15);
+        rl->setTextColor(dbpal::goldBright());
+        rl->setMarginRight(16);
+        metaBox->addView(rl);
+    }
+    if (m_item.year > 0) {
+        m_yearLabel = new brls::Label();
+        m_yearLabel->setText(std::to_string(m_item.year));
+        m_yearLabel->setFontSize(15);
+        m_yearLabel->setTextColor(dbpal::muted());
+        m_yearLabel->setMarginRight(16);
+        metaBox->addView(m_yearLabel);
+    }
+    if (!m_item.contentRating.empty()) {
+        auto* pill = new brls::Box();
+        pill->setHeight(24);
+        pill->setCornerRadius(5);
+        pill->setPadding(0, 9, 0, 9);
+        pill->setJustifyContent(brls::JustifyContent::CENTER);
+        pill->setAlignItems(brls::AlignItems::CENTER);
+        pill->setBackgroundColor(dbpal::surface3());
+        pill->setMarginRight(16);
+        m_ratingLabel = new brls::Label();
+        m_ratingLabel->setText(m_item.contentRating);
+        m_ratingLabel->setFontSize(13);
+        m_ratingLabel->setTextColor(dbpal::muted());
+        pill->addView(m_ratingLabel);
+        metaBox->addView(pill);
+    }
+    if (m_item.duration > 0) {
+        m_durationLabel = new brls::Label();
+        int minutes = m_item.duration / 60000;
+        m_durationLabel->setText(std::to_string(minutes) + " min");
+        m_durationLabel->setFontSize(15);
+        m_durationLabel->setTextColor(dbpal::muted());
+        metaBox->addView(m_durationLabel);
+    }
+
+    // ---------------- Action row ----------------
+    auto* actionRow = new brls::Box();
+    actionRow->setAxis(brls::Axis::ROW);
+    actionRow->setAlignItems(brls::AlignItems::CENTER);
+    actionRow->setMarginBottom(18);
+
+    // Play / Resume (gold fill, ink text) — Resume label when there's a saved position.
+    const bool resume = m_item.viewOffset > 0;
+    m_playButton = new brls::Button();
+    m_playButton->setText(resume ? "Resume" : "Play");
+    m_playButton->setHeight(44);
+    m_playButton->setPadding(0, 22, 0, 42);
+    m_playButton->setCornerRadius(8);
+    m_playButton->setTextColor(dbpal::goldInk());        // label first; applyStyle() resets bg
+    m_playButton->setBackgroundColor(dbpal::gold());
+    m_playButton->setMarginRight(12);
+    m_playButton->registerClickAction([this, resume](brls::View*) { onPlay(resume); return true; });
+    m_playButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_playButton));
+    {
+        auto* pIcon = new brls::Image();
+        pIcon->setImageFromRes("icons/play.png");
+        pIcon->setWidth(18);
+        pIcon->setHeight(18);
+        pIcon->setScalingType(brls::ImageScalingType::FIT);
+        pIcon->setPositionType(brls::PositionType::ABSOLUTE);
+        pIcon->setPositionLeft(15);
+        pIcon->setPositionTop(13);
+        m_playButton->addView(pIcon);
+    }
+    actionRow->addView(m_playButton);
+    m_resumeButton = nullptr;  // single gold button handles both play and resume
+
+    // Round secondary button helper.
+    auto makeRound = [](const std::string& iconRes) -> brls::Button* {
+        auto* b = new brls::Button();
+        b->setText("");
+        b->setWidth(44);
+        b->setHeight(44);
+        b->setCornerRadius(22);
+        b->setTextColor(dbpal::text());
+        b->setBackgroundColor(dbpal::surface3());
+        b->setMarginRight(12);
+        auto* icn = new brls::Image();
+        icn->setImageFromRes(iconRes);
+        icn->setWidth(20);
+        icn->setHeight(20);
+        icn->setScalingType(brls::ImageScalingType::FIT);
+        icn->setPositionType(brls::PositionType::ABSOLUTE);
+        icn->setPositionLeft(12);
+        icn->setPositionTop(12);
+        b->addView(icn);
+        return b;
+    };
+
+    // Mark-watched (secondary, labelled). onToggleWatched updates both the text
+    // and the check icon, so it stays a labelled button (not round) and we keep
+    // m_markWatchedIcon directly so the toggle can swap filled / outline.
+    m_markWatchedButton = new brls::Button();
+    m_markWatchedButton->setText(m_item.watched ? "Mark Unwatched" : "Mark Watched");
+    m_markWatchedButton->setHeight(44);
+    m_markWatchedButton->setPadding(0, 16, 0, 40);
+    m_markWatchedButton->setCornerRadius(8);
+    m_markWatchedButton->setTextColor(dbpal::text());
+    m_markWatchedButton->setBackgroundColor(dbpal::surface2());
+    m_markWatchedButton->setMarginRight(12);
+    m_markWatchedButton->registerClickAction([this](brls::View*) { onToggleWatched(); return true; });
+    m_markWatchedButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_markWatchedButton));
+    m_markWatchedIcon = new brls::Image();
+    m_markWatchedIcon->setImageFromRes(m_item.watched ? "icons/check-circle.png"
+                                                       : "icons/check-circle-outline.png");
+    m_markWatchedIcon->setWidth(20);
+    m_markWatchedIcon->setHeight(20);
+    m_markWatchedIcon->setScalingType(brls::ImageScalingType::FIT);
+    m_markWatchedIcon->setPositionType(brls::PositionType::ABSOLUTE);
+    m_markWatchedIcon->setPositionLeft(13);
+    m_markWatchedIcon->setPositionTop(12);
+    m_markWatchedButton->addView(m_markWatchedIcon);
+    actionRow->addView(m_markWatchedButton);
+
+    // Download (secondary, labelled — keeps the granular download-state text).
+    m_downloadButton = new brls::Button();
+    {
+        DownloadItem dlCheck;
+        if (DownloadsManager::getInstance().getDownloadCopy(m_item.ratingKey, dlCheck)) {
+            switch (dlCheck.state) {
+                case DownloadState::COMPLETED:   m_downloadButton->setText("Downloaded");      break;
+                case DownloadState::TRANSCODING: m_downloadButton->setText("Transcoding...");  break;
+                case DownloadState::DOWNLOADING: m_downloadButton->setText("Downloading...");  break;
+                case DownloadState::QUEUED:      m_downloadButton->setText("Queued");          break;
+                case DownloadState::PAUSED:      m_downloadButton->setText("Paused");          break;
+                case DownloadState::FAILED:      m_downloadButton->setText("Retry Download");  break;
+                default:                         m_downloadButton->setText("Download");        break;
+            }
+        } else {
+            m_downloadButton->setText("Download");
+        }
+    }
+    m_downloadButton->setHeight(44);
+    m_downloadButton->setPadding(0, 16, 0, 40);
+    m_downloadButton->setCornerRadius(8);
+    m_downloadButton->setTextColor(dbpal::text());
+    m_downloadButton->setBackgroundColor(dbpal::surface2());
+    m_downloadButton->setMarginRight(12);
+    m_downloadButton->registerClickAction([this](brls::View*) { onDownload(); return true; });
+    m_downloadButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_downloadButton));
+    m_downloadIcon = new brls::Image();
+    m_downloadIcon->setImageFromRes("icons/download.png");
+    m_downloadIcon->setWidth(20);
+    m_downloadIcon->setHeight(20);
+    m_downloadIcon->setScalingType(brls::ImageScalingType::FIT);
+    m_downloadIcon->setPositionType(brls::PositionType::ABSOLUTE);
+    m_downloadIcon->setPositionLeft(13);
+    m_downloadIcon->setPositionTop(12);
+    m_downloadButton->addView(m_downloadIcon);
+    actionRow->addView(m_downloadButton);
+
+    // More (round → existing movie context menu).
+    auto* moreBtn = makeRound("icons/options.png");
+    moreBtn->registerClickAction([this](brls::View*) { showMovieContextMenu(m_item); return true; });
+    moreBtn->addGestureRecognizer(new brls::TapGestureRecognizer(moreBtn));
+    actionRow->addView(moreBtn);
+
+    // ---------------- Summary ----------------
+    // The right column scrolls, so the summary is a plain wrapping paragraph (no
+    // inner scroll / clip). m_summaryScroll stays null — loadDetails guards on it.
+    m_summaryScroll = nullptr;
+    m_fullDescription = m_item.summary;
+    m_summaryLabel = new brls::Label();
+    m_summaryLabel->setText(m_fullDescription);
+    m_summaryLabel->setFontSize(15);
+    m_summaryLabel->setTextColor(dbpal::summaryFg());
+    m_summaryLabel->setWidth(portrait ? 560.0f : 620.0f);
+    m_summaryLabel->setMarginBottom(22);
+    m_summaryLabel->setFocusable(false);
+
+    // ---------------- Extras / Cast / Recommended rows (populated async) ----------------
+    auto sectionLabel = [](const std::string& fallback) -> brls::Label* {
+        auto* l = new brls::Label();
+        l->setText(fallback);
+        l->setFontSize(19);
+        l->setTextColor(dbpal::text());
+        l->setMarginTop(6);
+        l->setMarginBottom(10);
+        l->setVisibility(brls::Visibility::GONE);  // load* makes it visible when populated
+        return l;
+    };
+    auto rowScroll = [](int height) -> brls::HScrollingFrame* {
+        auto* s = new brls::HScrollingFrame();
+        s->setHeight(height);
+        s->setMarginBottom(16);
+        s->setVisibility(brls::Visibility::GONE);
+        return s;
+    };
+
+    m_extrasLabel  = sectionLabel("Extras");
+    m_extrasScroll = rowScroll(ic.landscapeRowHeight);
+    m_extrasBox    = new brls::Box();
+    m_extrasBox->setAxis(brls::Axis::ROW);
+    m_extrasScroll->setContentView(m_extrasBox);
+
+    m_peopleLabel  = sectionLabel("Cast & Crew");
+    m_peopleScroll = rowScroll(ic.squareRowHeight);
+    m_peopleBox    = new brls::Box();
+    m_peopleBox->setAxis(brls::Axis::ROW);
+    m_peopleScroll->setContentView(m_peopleBox);
+
+    m_recommendationsLabel  = sectionLabel("More Like This");
+    m_recommendationsScroll = rowScroll(ic.homeRowHeight);
+    m_recommendationsBox    = new brls::Box();
+    m_recommendationsBox->setAxis(brls::Axis::ROW);
+    m_recommendationsScroll->setContentView(m_recommendationsBox);
+
+    // ---------------- Assemble ----------------
+    if (!portrait) {
+        // Two columns: fixed left (poster + streams), scrolling right.
+        auto* leftCol = new brls::Box();
+        leftCol->setAxis(brls::Axis::COLUMN);
+        leftCol->setWidth(344);             // 300 poster + 44 left padding
+        leftCol->setPadding(46, 0, 46, 44);
+        leftCol->addView(posterContainer);
+        leftCol->addView(m_audioRow);
+        leftCol->addView(m_subtitleRow);
+
+        auto* rightContent = new brls::Box();
+        rightContent->setAxis(brls::Axis::COLUMN);
+        rightContent->setPadding(46, 44, 46, 44);
+        rightContent->addView(m_titleLabel);
+        rightContent->addView(metaBox);
+        rightContent->addView(actionRow);
+        rightContent->addView(m_summaryLabel);
+        rightContent->addView(m_extrasLabel);
+        rightContent->addView(m_extrasScroll);
+        rightContent->addView(m_peopleLabel);
+        rightContent->addView(m_peopleScroll);
+        rightContent->addView(m_recommendationsLabel);
+        rightContent->addView(m_recommendationsScroll);
+
+        auto* rightScroll = new brls::ScrollingFrame();
+        rightScroll->setGrow(1.0f);
+        rightScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
+        rightScroll->setContentView(rightContent);
+
+        auto* rootRow = new brls::Box();
+        rootRow->setAxis(brls::Axis::ROW);
+        rootRow->setGrow(1.0f);
+        rootRow->addView(leftCol);
+        rootRow->addView(rightScroll);
+        rootRow->setDefaultFocusedIndex(1);   // default focus into the right column → Play
+        this->addView(rootRow);
+    } else {
+        // Single column: poster on top, then info, streams under the actions.
+        auto* col = new brls::Box();
+        col->setAxis(brls::Axis::COLUMN);
+        col->setAlignItems(brls::AlignItems::CENTER);
+        col->setPadding(28, 24, 28, 24);
+        col->addView(posterContainer);
+
+        auto* block = new brls::Box();
+        block->setAxis(brls::Axis::COLUMN);
+        block->setMarginTop(20);
+        block->addView(m_titleLabel);
+        block->addView(metaBox);
+        block->addView(actionRow);
+        block->addView(m_audioRow);
+        block->addView(m_subtitleRow);
+        block->addView(m_summaryLabel);
+        block->addView(m_extrasLabel);
+        block->addView(m_extrasScroll);
+        block->addView(m_peopleLabel);
+        block->addView(m_peopleScroll);
+        block->addView(m_recommendationsLabel);
+        block->addView(m_recommendationsScroll);
+        col->addView(block);
+
+        auto* scroll = new brls::ScrollingFrame();
+        scroll->setGrow(1.0f);
+        scroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
+        scroll->setContentView(col);
+        this->addView(scroll);
+    }
 }
 
 brls::HScrollingFrame* MediaDetailView::createMediaRow(const std::string& title, brls::Box** contentOut) {
