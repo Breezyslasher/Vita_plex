@@ -349,6 +349,19 @@ namespace dbpal {
     inline NVGcolor goldInk()    { return nvgRGB(36, 28, 8); }
 }
 
+// Clamp a long blurb to roughly `maxChars`, cutting on a word boundary and
+// appending an ellipsis. Used for the artist bio so it fits a fixed-height,
+// 3-line block instead of pushing the rails off-screen.
+std::string clampText(const std::string& s, size_t maxChars) {
+    if (s.size() <= maxChars) return s;
+    size_t cut = s.rfind(' ', maxChars);
+    if (cut == std::string::npos || cut < maxChars / 2) cut = maxChars;
+    std::string out = s.substr(0, cut);
+    while (!out.empty() && (out.back() == ' ' || out.back() == ',' || out.back() == '.'))
+        out.pop_back();
+    return out + "\xE2\x80\xA6";   // … (UTF-8)
+}
+
 // Collect every track across an artist's albums and start playback. Shared by
 // the artist detail Play / Shuffle buttons and the artist context menu. Runs on
 // a background thread; captures only a copy of the artist (never `this`).
@@ -959,15 +972,21 @@ void MediaDetailView::buildArtistLayout() {
     actionRow->addView(addBtn);
 
     // ---------------- Bio ----------------
-    // The rails below scroll, so the bio is a plain wrapping paragraph. Width is
-    // capped so it reads as a tidy block; m_summaryScroll stays null.
+    // Fixed-height, ~3-line preview so a long blurb can't shove the rails off
+    // the bottom of the screen. The text is clamped to roughly three lines and
+    // the box height is pinned (borealis wraps the clamped text within the exact
+    // height, so nothing overflows). m_summaryScroll stays null.
+    m_truncateSummary = true;
     m_summaryScroll = nullptr;
     m_fullDescription = m_item.summary;
     m_summaryLabel = new brls::Label();
-    m_summaryLabel->setText(m_fullDescription);
+    m_summaryLabel->setText(clampText(m_fullDescription, 230));
     m_summaryLabel->setFontSize(13);
+    m_summaryLabel->setLineHeight(1.65f);
     m_summaryLabel->setTextColor(dbpal::summaryFg());
     m_summaryLabel->setWidth(portrait ? 520.0f : 560.0f);
+    m_summaryLabel->setHeight(70);             // ~3 lines at 13px · 1.65 line-height
+    m_summaryLabel->setMarginBottom(2);
     m_summaryLabel->setFocusable(false);
 
     auto* info = new brls::Box();
@@ -1115,7 +1134,8 @@ void MediaDetailView::loadDetails() {
 
                 if (m_summaryLabel && !m_item.summary.empty()) {
                     m_fullDescription = m_item.summary;
-                    m_summaryLabel->setText(m_fullDescription);
+                    m_summaryLabel->setText(m_truncateSummary ? clampText(m_fullDescription, 230)
+                                                              : m_fullDescription);
                     if (m_summaryScroll) {
                         m_summaryScroll->setVisibility(brls::Visibility::VISIBLE);
                     }
@@ -1173,7 +1193,8 @@ void MediaDetailView::loadDetails() {
             // Update description if full details loaded
             if (!m_item.summary.empty() && m_summaryLabel) {
                 m_fullDescription = m_item.summary;
-                m_summaryLabel->setText(m_fullDescription);
+                m_summaryLabel->setText(m_truncateSummary ? clampText(m_fullDescription, 230)
+                                                          : m_fullDescription);
                 if (m_summaryScroll) {
                     m_summaryScroll->setVisibility(brls::Visibility::VISIBLE);
                 }
@@ -2019,11 +2040,19 @@ void MediaDetailView::loadMusicCategories() {
             m_artistTrackCount = (m_item.leafCount > 0) ? m_item.leafCount : trackSum;
             refreshArtistMeta();
 
-            auto addCategory = [this](const std::string& title, const std::vector<MediaItem>& items) {
+            // First rail's cells get an explicit UP route to Play (below): the
+            // rails live in a separate CENTERED scroll region, and when that
+            // region is scrolled the frame would otherwise swallow UP to scroll
+            // itself instead of handing focus back to the action row.
+            brls::Box* firstRailContent = nullptr;
+
+            auto addCategory = [this, &firstRailContent](const std::string& title,
+                                                         const std::vector<MediaItem>& items) {
                 if (items.empty()) return;
 
                 brls::Box* content = nullptr;
                 createMediaRow(title, (int)items.size(), &content);
+                if (!firstRailContent) firstRailContent = content;
 
                 for (const auto& item : items) {
                     auto* cell = new MediaItemCell();
@@ -2077,10 +2106,16 @@ void MediaDetailView::loadMusicCategories() {
 
                     mvContent->addView(cell);
                 }
+                if (!firstRailContent) firstRailContent = mvContent;
             }
 
-            // Focus stays on the Play button (the first focusable view in the
-            // Direction A header) — no longer pulled down to the first rail.
+            // Wire UP from every cell of the first rail straight to Play so focus
+            // can always return to the action row. Focus itself stays on Play
+            // (the first focusable view) when the screen opens.
+            if (m_playButton && firstRailContent) {
+                for (auto* cell : firstRailContent->getChildren())
+                    cell->setCustomNavigationRoute(brls::FocusDirection::UP, m_playButton);
+            }
         });
     });
 }

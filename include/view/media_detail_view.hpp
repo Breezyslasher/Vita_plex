@@ -187,6 +187,10 @@ public:
     brls::Label* m_artistMetaLabel = nullptr;
     int m_artistAlbumCount = 0;
     int m_artistTrackCount = 0;
+    // Clamp the summary to a fixed-height preview (artist detail bio) so a long
+    // blurb can't push the rails off-screen; loadDetails honours this when the
+    // full summary arrives.
+    bool m_truncateSummary = false;
 
     // Music category rows for artists
     brls::Box* m_musicCategoriesBox = nullptr;
