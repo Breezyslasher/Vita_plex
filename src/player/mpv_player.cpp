@@ -135,6 +135,21 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "ytdl", "no");  // Disable youtube-dl (like switchfin)
     mpv_set_option_string(m_mpv, "reset-on-next-file", "speed,pause");  // Reset state between files
 
+#ifdef __SWITCH__
+    // libmpv resolves its config / cache / watch-later / font directories from
+    // $HOME / $XDG_* during mpv_initialize. On Switch (libnx) those env vars are
+    // unset, and mpv's path code dereferences the null result *inside*
+    // mpv_initialize — the deterministic "crash the instant a video or track
+    // starts" seen only on Switch (Vita's mpv platform-path provider tolerates a
+    // missing HOME; Switch's does not). switchfin sidesteps this by pointing
+    // every writable dir at an explicit path before init; mirror that, rooted at
+    // the sdmc folder we already own (settings.json / downloads live there).
+    mpv_set_option_string(m_mpv, "config-dir", "sdmc:/VitaPlex");
+    mpv_set_option_string(m_mpv, "sub-fonts-dir", "sdmc:/VitaPlex");
+    mpv_set_option_string(m_mpv, "watch-later-dir", "sdmc:/VitaPlex/watch-later");
+    mpv_set_option_string(m_mpv, "gpu-shader-cache-dir", "sdmc:/VitaPlex/cache");
+#endif
+
     // ========================================
     // Video output configuration
     // ========================================
