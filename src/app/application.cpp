@@ -390,7 +390,6 @@ bool Application::loadSettings() {
     // Layout settings
     m_settings.showLibrariesInSidebar = extractBool("showLibrariesInSidebar", false);
     m_settings.collapseSidebar = extractBool("collapseSidebar", false);
-    m_settings.showFeaturedBanner = extractBool("showFeaturedBanner", true);
     m_settings.hiddenLibraries = extractString("hiddenLibraries");
     m_settings.sidebarOrder    = extractString("sidebarOrder");
 
@@ -546,7 +545,6 @@ bool Application::saveSettings() {
     json += "  \"debugLogging\": " + b(m_settings.debugLogging) + ",\n";
     json += "  \"showLibrariesInSidebar\": " + b(m_settings.showLibrariesInSidebar) + ",\n";
     json += "  \"collapseSidebar\": " + b(m_settings.collapseSidebar) + ",\n";
-    json += "  \"showFeaturedBanner\": " + b(m_settings.showFeaturedBanner) + ",\n";
     json += "  \"hiddenLibraries\": \"" + esc(m_settings.hiddenLibraries) + "\",\n";
     json += "  \"sidebarOrder\": \"" + esc(m_settings.sidebarOrder) + "\",\n";
     json += "  \"showCollections\": " + b(m_settings.showCollections) + ",\n";
