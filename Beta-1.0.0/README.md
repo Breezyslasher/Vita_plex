@@ -34,6 +34,20 @@
 ---
 <table>
   <tr>
+    <th colspan="2" align="center"> Home Screen</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.1.5</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Beta-0.6.1/home_page_new.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/home_page_new.png" width="400"/></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
     <th colspan="2" align="center"> Movie Info</th>
   </tr>
   <tr>
@@ -228,19 +242,7 @@
   </tr>
 </table>
 
-<table>
-  <tr>
-    <th colspan="2" align="center"> Home Screen</th>
-  </tr>
-  <tr>
-    <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.1.5</b></td>
-  </tr>
-  <tr>
-    <td><img src="../Screenshots/Beta-0.6.1/home_page_new.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/home_page_new.png" width="400"/></td>
-  </tr>
-</table>
+
 
 <table>
   <tr>
