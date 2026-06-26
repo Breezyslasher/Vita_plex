@@ -2112,6 +2112,8 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
         item.mediaType = parseMediaType(item.type);
         item.year = extractJsonInt(obj, "year");
         item.duration = extractJsonInt(obj, "duration");
+        item.index = extractJsonInt(obj, "index");             // episode / track number
+        item.parentIndex = extractJsonInt(obj, "parentIndex"); // season number
         item.grandparentTitle = extractJsonValue(obj, "grandparentTitle");
         item.parentTitle = extractJsonValue(obj, "parentTitle");
         item.parentThumb = extractJsonValue(obj, "parentThumb");

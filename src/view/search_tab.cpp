@@ -13,6 +13,7 @@
 #include "platform/platform.hpp"
 
 #include <atomic>
+#include <cctype>
 
 namespace vitaplex {
 
@@ -75,6 +76,16 @@ size_t mapCol(size_t c, size_t fromN, size_t toN) {
     if (fromN == 0 || toN == 0) return 0;
     size_t tc = (c * toN) / fromN;
     return tc >= toN ? toN - 1 : tc;
+}
+
+// Case-insensitive substring test.
+bool icontains(const std::string& hay, const std::string& needle) {
+    if (needle.empty()) return true;
+    auto lower = [](std::string s) {
+        for (char& ch : s) ch = (char)tolower((unsigned char)ch);
+        return s;
+    };
+    return lower(hay).find(lower(needle)) != std::string::npos;
 }
 
 std::string cardTitle(const MediaItem& it) {
@@ -317,7 +328,7 @@ void SearchTab::performSearch() {
         std::vector<MediaItem> results;
         bool ok = client.search(q, results);
 
-        brls::sync([this, ok, results, gen, aliveWeak]() {
+        brls::sync([this, q, ok, results, gen, aliveWeak]() {
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
             if (gen != m_loadGeneration) return;   // stale
@@ -328,7 +339,13 @@ void SearchTab::performSearch() {
                 for (const auto& it : results) {
                     switch (it.mediaType) {
                         case MediaType::MOVIE:        m_movies.push_back(it);   break;
-                        case MediaType::EPISODE:      m_episodes.push_back(it); break;
+                        case MediaType::EPISODE:
+                            // Plex returns every episode of a show whose NAME
+                            // matches (all of "One Piece" for "one"); keep only
+                            // episodes whose own title contains the query — the
+                            // show itself is already in the TV Shows row.
+                            if (icontains(it.title, q)) m_episodes.push_back(it);
+                            break;
                         case MediaType::SHOW:
                         case MediaType::SEASON:       m_shows.push_back(it);    break;
                         case MediaType::MUSIC_ARTIST: m_artists.push_back(it);  break;
