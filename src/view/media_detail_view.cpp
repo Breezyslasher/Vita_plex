@@ -16,6 +16,7 @@
 #include "utils/async.hpp"
 #include "platform/platform.hpp"
 #include <thread>
+#include <unordered_set>
 
 #ifdef __vita__
 #include <psp2/kernel/threadmgr.h>
@@ -1596,180 +1597,41 @@ void MediaDetailView::loadMusicCategories() {
             brls::Logger::info("Artist: Found {} music videos from {} extras", musicVideos.size(), allExtras.size());
         }
 
-        // Use the hubs API which returns albums pre-grouped by type
-        // (Albums, Singles & EPs, Compilations, Appears On, etc.)
-        std::vector<Hub> hubs;
-        bool useHubs = client.fetchArtistHubs(m_item.ratingKey, hubs);
-
-        if (useHubs && !hubs.empty()) {
-            brls::Logger::info("Artist hubs: {} categories", hubs.size());
-
-            // Filter hubs to only album hubs (skip track hubs like "Most Popular Tracks")
-            std::vector<Hub> albumHubs;
-            for (const auto& hub : hubs) {
-                bool hasAlbums = false;
-                for (const auto& item : hub.items) {
-                    if (item.mediaType == MediaType::MUSIC_ALBUM) {
-                        hasAlbums = true;
-                        break;
-                    }
-                }
-                if (hasAlbums) {
-                    albumHubs.push_back(hub);
-                }
-            }
-
-            brls::Logger::info("Artist hubs: {} album categories from {} total hubs", albumHubs.size(), hubs.size());
-
-            // Collect all album items from all album hubs, then group by subtype
-            std::vector<MediaItem> allAlbumItems;
-            for (const auto& hub : albumHubs) {
-                for (const auto& item : hub.items) {
-                    if (item.mediaType == MediaType::MUSIC_ALBUM) {
-                        allAlbumItems.push_back(item);
-                    }
-                }
-            }
-
-            brls::sync([this, allAlbumItems, musicVideos]() {
-                m_musicCategoriesBox->clearViews();
-
-                // Group albums by subtype
-                std::vector<MediaItem> albums, singles, eps, compilations, soundtracks, other;
-                for (const auto& item : allAlbumItems) {
-                    std::string subtype = item.subtype;
-                    for (char& c : subtype) c = tolower(c);
-
-                    if (subtype == "single") {
-                        singles.push_back(item);
-                    } else if (subtype == "ep") {
-                        eps.push_back(item);
-                    } else if (subtype == "compilation") {
-                        compilations.push_back(item);
-                    } else if (subtype == "soundtrack") {
-                        soundtracks.push_back(item);
-                    } else if (subtype == "album" || subtype.empty()) {
-                        albums.push_back(item);
-                    } else {
-                        other.push_back(item);
-                    }
-                }
-
-                auto addCategory = [this](const std::string& title, const std::vector<MediaItem>& items) {
-                    if (items.empty()) return;
-
-                    brls::Box* content = nullptr;
-                    createMediaRow(title + " (" + std::to_string(items.size()) + ")", &content);
-
-                    for (const auto& item : items) {
-                        auto* cell = new MediaItemCell();
-                        cell->setItem(item);
-                        cell->setMarginRight(10);
-
-                        MediaItem capturedItem = item;
-                        cell->registerClickAction([this, capturedItem](brls::View* view) {
-                            auto* detailView = new MediaDetailView(capturedItem);
-                            brls::Application::pushActivity(new brls::Activity(detailView));
-                            return true;
-                        });
-                        cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
-
-                        cell->registerAction("Options", brls::ControllerButton::BUTTON_START, [this, capturedItem](brls::View* view) {
-                            showAlbumContextMenu(capturedItem);
-                            return true;
-                        });
-                        cell->addGestureRecognizer(new LongPressGestureRecognizer(
-                            cell, [this, capturedItem](LongPressGestureStatus status) {
-                                if (status.state == brls::GestureState::START) {
-                                    showAlbumContextMenu(capturedItem);
-                                }
-                            }));
-
-                        content->addView(cell);
-                    }
-                };
-
-                addCategory("Albums", albums);
-                addCategory("Singles", singles);
-                addCategory("EPs", eps);
-                addCategory("Compilations", compilations);
-                addCategory("Soundtracks", soundtracks);
-                addCategory("Other", other);
-
-                // Add music videos row
-                if (!musicVideos.empty()) {
-                    brls::Box* mvContent = nullptr;
-                    createMediaRow("Music Videos (" + std::to_string(musicVideos.size()) + ")", &mvContent);
-
-                    for (const auto& mv : musicVideos) {
-                        auto* cell = new MediaItemCell();
-                        cell->setItem(mv);
-                        cell->setMarginRight(10);
-
-                        MediaItem capturedMv = mv;
-                        cell->registerClickAction([capturedMv](brls::View* view) {
-                            Application::getInstance().pushPlayerActivity(capturedMv.ratingKey);
-                            return true;
-                        });
-                        cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
-
-                        mvContent->addView(cell);
-                    }
-                }
-
-                // Land focus on the first category row once it's loaded. The
-                // description is display-only (non-focusable), so it can't
-                // hold focus — without this, focus would be stranded.
-                if (m_musicCategoriesBox && !m_musicCategoriesBox->getChildren().empty()) {
-                    // Find first focusable view in the categories
-                    for (auto* child : m_musicCategoriesBox->getChildren()) {
-                        auto* hScroll = dynamic_cast<brls::HScrollingFrame*>(child);
-                        if (hScroll) {
-                            brls::Application::giveFocus(hScroll);
-                            break;
-                        }
-                    }
-                }
-            });
-            return;
+        // Resolve the artist's library section id — needed for the album.subformat
+        // queries below. Usually already on the item; fall back to the artist
+        // metadata if not.
+        std::string sectionKey = m_item.librarySectionKey;
+        if (sectionKey.empty()) {
+            MediaItem full;
+            if (client.fetchMediaDetails(m_item.ratingKey, full))
+                sectionKey = full.librarySectionKey;
         }
 
-        // Fallback: use children endpoint and group by subtype
-        brls::Logger::info("Artist hubs unavailable, falling back to children grouping");
+        // Albums come straight from the artist's /children (the base releases) —
+        // the same endpoint the rest of the music uses. Singles & EPs and
+        // Compilations aren't in /children; they're pulled by album.subformat,
+        // the field the official Plex client uses to split releases (Plex does
+        // not return it inline, only as a queryable filter).
+        std::vector<MediaItem> children;
+        client.fetchChildren(m_item.ratingKey, children);
 
-        std::vector<MediaItem> allAlbums;
-        if (!client.fetchChildren(m_item.ratingKey, allAlbums)) {
-            brls::Logger::error("Failed to fetch albums for artist");
-            return;
+        std::vector<MediaItem> singlesEps, compilations;
+        if (!sectionKey.empty()) {
+            client.fetchArtistAlbumsBySubformat(sectionKey, m_item.ratingKey, "Single,EP", singlesEps);
+            client.fetchArtistAlbumsBySubformat(sectionKey, m_item.ratingKey, "Compilation", compilations);
         }
 
+        // /children can also include the typed releases, so drop anything already
+        // shown under Singles & EPs / Compilations to avoid duplicates.
+        std::unordered_set<std::string> typed;
+        for (const auto& a : singlesEps)   typed.insert(a.ratingKey);
+        for (const auto& a : compilations) typed.insert(a.ratingKey);
         std::vector<MediaItem> albums;
-        std::vector<MediaItem> singles;
-        std::vector<MediaItem> eps;
-        std::vector<MediaItem> compilations;
-        std::vector<MediaItem> soundtracks;
-        std::vector<MediaItem> other;
+        for (const auto& a : children)
+            if (a.mediaType == MediaType::MUSIC_ALBUM && !typed.count(a.ratingKey))
+                albums.push_back(a);
 
-        for (const auto& album : allAlbums) {
-            std::string subtype = album.subtype;
-            for (char& c : subtype) c = tolower(c);
-
-            if (subtype == "single") {
-                singles.push_back(album);
-            } else if (subtype == "ep") {
-                eps.push_back(album);
-            } else if (subtype == "compilation") {
-                compilations.push_back(album);
-            } else if (subtype == "soundtrack") {
-                soundtracks.push_back(album);
-            } else if (subtype == "album" || subtype.empty()) {
-                albums.push_back(album);
-            } else {
-                other.push_back(album);
-            }
-        }
-
-        brls::sync([this, albums, singles, eps, compilations, soundtracks, other, musicVideos]() {
+        brls::sync([this, albums, singlesEps, compilations, musicVideos]() {
             m_musicCategoriesBox->clearViews();
 
             auto addCategory = [this](const std::string& title, const std::vector<MediaItem>& items) {
@@ -1806,12 +1668,10 @@ void MediaDetailView::loadMusicCategories() {
                 }
             };
 
+            // Order mirrors the official client: Albums, Singles & EPs, Compilations.
             addCategory("Albums", albums);
-            addCategory("Singles", singles);
-            addCategory("EPs", eps);
+            addCategory("Singles & EPs", singlesEps);
             addCategory("Compilations", compilations);
-            addCategory("Soundtracks", soundtracks);
-            addCategory("Other", other);
 
             // Add music videos row
             if (!musicVideos.empty()) {

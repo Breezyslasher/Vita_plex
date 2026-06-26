@@ -318,6 +318,16 @@ public:
     // Music artist hubs (albums grouped by type: Albums, Singles, EPs, etc.)
     bool fetchArtistHubs(const std::string& ratingKey, std::vector<Hub>& hubs);
 
+    // Fetch an artist's albums filtered by Plex's album.subformat (the field the
+    // official client uses to split releases into Singles & EPs, Compilations,
+    // etc.). subformatCsv is one or more comma-separated values, e.g. "Single,EP"
+    // or "Compilation". Needs the artist's library section id and numeric id
+    // (the artist ratingKey). Queries /library/sections/{key}/all?artist.id=...
+    bool fetchArtistAlbumsBySubformat(const std::string& sectionKey,
+                                      const std::string& artistRatingKey,
+                                      const std::string& subformatCsv,
+                                      std::vector<MediaItem>& items);
+
     // Extras (trailers, deleted scenes, featurettes, etc.)
     bool fetchExtras(const std::string& ratingKey, std::vector<MediaItem>& items);
     // Related / recommended items — the server's "Related" hubs, flattened
