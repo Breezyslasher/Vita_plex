@@ -845,13 +845,17 @@ bool PlexClient::fetchLibrarySections(std::vector<LibrarySection>& sections) {
     return !sections.empty();
 }
 
-bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items, int metadataType, int limit, int offset, int* totalCount) {
-    brls::Logger::debug("fetchLibraryContent: section={} type={} limit={} offset={}", sectionKey, metadataType, limit, offset);
+bool PlexClient::fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items, int metadataType, int limit, int offset, int* totalCount, const std::string& extraParams) {
+    brls::Logger::debug("fetchLibraryContent: section={} type={} limit={} offset={} extra={}", sectionKey, metadataType, limit, offset, extraParams);
 
     HttpClient client;
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all");
     if (metadataType > 0) {
         url += "&type=" + std::to_string(metadataType);
+    }
+    // Caller-supplied sort / filter fragment (each token already '&'-prefixed).
+    if (!extraParams.empty()) {
+        url += extraParams;
     }
 
     // Server-side pagination: only fetch what we need to reduce response size.

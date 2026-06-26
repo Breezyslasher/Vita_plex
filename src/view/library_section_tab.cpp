@@ -14,8 +14,13 @@
 #include "app/music_queue.hpp"
 #include "app/downloads_manager.hpp"
 #include "platform/platform.hpp"
+#include <cctype>
 
 namespace vitaplex {
+
+// A-Z jump-rail buckets. Parallel to m_azLetters; '#' collects digits/symbols
+// (which Plex titleSort places before 'A').
+static const char* kAzLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ#";
 
 size_t LibrarySectionTab::libraryPageSize() {
     int v = platform::getImageConstraints().libraryPageSize;
@@ -39,12 +44,28 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     this->setPadding(20);
     this->setGrow(1.0f);
 
-    // Title
+    // Title row — page title on the left, total-count on the right.
+    auto* titleRow = new brls::Box();
+    titleRow->setAxis(brls::Axis::ROW);
+    titleRow->setAlignItems(brls::AlignItems::FLEX_END);
+    titleRow->setMarginBottom(15);
+
     m_titleLabel = new brls::Label();
     m_titleLabel->setText(title);
     m_titleLabel->setFontSize(28);
-    m_titleLabel->setMarginBottom(15);
-    this->addView(m_titleLabel);
+    titleRow->addView(m_titleLabel);
+
+    auto* titleSpacer = new brls::Box();
+    titleSpacer->setGrow(1.0f);
+    titleRow->addView(titleSpacer);
+
+    m_countLabel = new brls::Label();
+    m_countLabel->setFontSize(13);
+    m_countLabel->setTextColor(nvgRGB(0x8a, 0x8a, 0x90));
+    m_countLabel->setMarginBottom(5);   // sit roughly on the title's baseline
+    titleRow->addView(m_countLabel);
+
+    this->addView(titleRow);
 
     const auto& settings = Application::getInstance().getSettings();
 
@@ -104,6 +125,38 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
         });
         m_viewModeBox->addView(m_playlistsBtn);
     }
+
+    // ── Direction-A discovery controls ──
+    // Unwatched quick-filter chip (watchable video sections only). Toggles the
+    // gold "picked" style and re-queries the grid with Plex's unwatched=1.
+    if (sectionType == "movie" || sectionType == "show") {
+        m_unwatchedBtn = new vitaplex::FilterChip();
+        m_unwatchedBtn->setText("Unwatched");
+        m_unwatchedBtn->setMarginRight(10);
+        styleButton(m_unwatchedBtn, false);
+        m_unwatchedBtn->registerClickAction([this](brls::View*) {
+            m_unwatchedOnly = !m_unwatchedOnly;
+            styleButton(m_unwatchedBtn, m_unwatchedOnly);
+            reloadAllItems();
+            return true;
+        });
+        m_viewModeBox->addView(m_unwatchedBtn);
+    }
+
+    // Flex spacer pushes the Sort chip to the right edge of the toolbar.
+    m_toolbarSpacer = new brls::Box();
+    m_toolbarSpacer->setGrow(1.0f);
+    m_viewModeBox->addView(m_toolbarSpacer);
+
+    // Sort chip — neutral (never "picked"); opens the sort menu.
+    m_sortBtn = new vitaplex::FilterChip();
+    m_sortBtn->setText("Sort: " + m_sortLabel);
+    styleButton(m_sortBtn, false);
+    m_sortBtn->registerClickAction([this](brls::View*) {
+        showSortMenu();
+        return true;
+    });
+    m_viewModeBox->addView(m_sortBtn);
 
     // Back button (hidden by default, shown in filtered view)
     m_backBtn = new brls::Button();
@@ -212,6 +265,10 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     m_contentGrid->registerAction("Back", brls::ControllerButton::BUTTON_B, backHandler);
     m_trackListScroll->registerAction("Back", brls::ControllerButton::BUTTON_B, backHandler);
 
+    // A-Z jump rail (absolute, right edge) — starts hidden; refreshAzRail shows
+    // it only while the all-items grid is sorted Title A-Z.
+    buildAzRail();
+
     // Load content immediately
     brls::Logger::debug("LibrarySectionTab: Created for section {} ({}) type={}", m_sectionKey, m_title, m_sectionType);
     loadContent();
@@ -252,7 +309,8 @@ void LibrarySectionTab::loadContent() {
     m_totalItemCount = 0;
 
     std::string sectionType = m_sectionType;
-    asyncRun([this, key, sectionType, aliveWeak]() {
+    std::string params = buildListParams();   // current sort + filter fragment
+    asyncRun([this, key, sectionType, params, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
         int totalCount = 0;
@@ -263,7 +321,7 @@ void LibrarySectionTab::loadContent() {
         else if (sectionType == "show") metadataType = 2;
         else if (sectionType == "artist") metadataType = 8;
 
-        if (client.fetchLibraryContent(key, items, metadataType, libraryPageSize(), 0, &totalCount)) {
+        if (client.fetchLibraryContent(key, items, metadataType, libraryPageSize(), 0, &totalCount, params)) {
             brls::Logger::info("LibrarySectionTab: Got {} of {} items for section {}", items.size(), totalCount, key);
 
             // Trim heavy fields to reduce per-item memory in large libraries
@@ -286,6 +344,8 @@ void LibrarySectionTab::loadContent() {
                     m_contentGrid->setDataSource(m_items);
                     m_contentGrid->setHasMore(m_pageOffset < (size_t)m_totalItemCount);
                 }
+                updateCountLabel();
+                refreshAzRail();
                 m_loaded = true;
             });
         } else {
@@ -391,9 +451,10 @@ void LibrarySectionTab::loadNextPage() {
     std::string key = m_sectionKey;
     std::string sectionType = m_sectionType;
     size_t offset = m_pageOffset;
+    std::string params = buildListParams();   // keep pages consistent with the current sort/filter
     std::weak_ptr<bool> aliveWeak = m_alive;
 
-    asyncRun([this, key, sectionType, offset, aliveWeak]() {
+    asyncRun([this, key, sectionType, offset, params, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> items;
 
@@ -402,7 +463,7 @@ void LibrarySectionTab::loadNextPage() {
         else if (sectionType == "show") metadataType = 2;
         else if (sectionType == "artist") metadataType = 8;
 
-        if (client.fetchLibraryContent(key, items, metadataType, libraryPageSize(), (int)offset)) {
+        if (client.fetchLibraryContent(key, items, metadataType, libraryPageSize(), (int)offset, nullptr, params)) {
             for (auto& item : items) {
                 item.trimForGrid();
             }
@@ -425,6 +486,175 @@ void LibrarySectionTab::loadNextPage() {
             });
         }
     });
+}
+
+std::string LibrarySectionTab::buildListParams() const {
+    std::string p = "&sort=" + m_sortParam;
+    if (m_unwatchedOnly) p += "&unwatched=1";
+    return p;
+}
+
+// Re-query the all-items grid from offset 0 with the current sort + filter.
+// Mirrors loadContent's item fetch but skips re-preloading collections/genres.
+void LibrarySectionTab::reloadAllItems() {
+    m_viewMode = LibraryViewMode::ALL_ITEMS;
+    m_titleLabel->setText(m_title);
+    if (m_trackListScroll) m_trackListScroll->setVisibility(brls::Visibility::GONE);
+    if (m_contentGrid) m_contentGrid->setVisibility(brls::Visibility::VISIBLE);
+    updateViewModeButtons();
+
+    m_pageOffset = 0;
+    m_totalItemCount = 0;
+
+    std::string key = m_sectionKey;
+    std::string sectionType = m_sectionType;
+    std::string params = buildListParams();
+    std::weak_ptr<bool> aliveWeak = m_alive;
+    asyncRun([this, key, sectionType, params, aliveWeak]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::vector<MediaItem> items;
+        int totalCount = 0;
+        int metadataType = 0;
+        if (sectionType == "movie") metadataType = 1;
+        else if (sectionType == "show") metadataType = 2;
+        else if (sectionType == "artist") metadataType = 8;
+
+        if (client.fetchLibraryContent(key, items, metadataType, libraryPageSize(), 0, &totalCount, params)) {
+            for (auto& item : items) item.trimForGrid();
+            brls::sync([this, items, totalCount, aliveWeak]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+                m_items = items;
+                m_pageOffset = items.size();
+                m_totalItemCount = totalCount;
+                if (m_viewMode == LibraryViewMode::ALL_ITEMS) {
+                    m_contentGrid->setDataSource(m_items);
+                    m_contentGrid->setHasMore(m_pageOffset < (size_t)m_totalItemCount);
+                }
+                m_currentAzLetter = 0;   // fresh result set — clear the rail highlight
+                updateCountLabel();
+                refreshAzRail();
+            });
+        }
+    });
+}
+
+void LibrarySectionTab::showSortMenu() {
+    brls::View* anchor = m_sortBtn ? m_sortBtn : brls::Application::getCurrentFocus();
+
+    struct SortOpt { const char* label; const char* param; };
+    static const SortOpt kOpts[] = {
+        {"Recently Added",    "addedAt:desc"},
+        {"Title A-Z",         "titleSort:asc"},
+        {"Release Date",      "year:desc"},
+        {"Rating",            "rating:desc"},
+        {"Recently Released", "originallyAvailableAt:desc"},
+    };
+
+    std::vector<OptionRow> rows;
+    for (const auto& o : kOpts) {
+        std::string label = o.label;
+        std::string param = o.param;
+        bool current = (m_sortParam == param);
+        rows.push_back({ current ? "check-circle.png" : "",
+                         label, "", current, false,
+            [this, label, param](brls::View*) {
+                m_sortParam = param;
+                m_sortLabel = label;
+                if (m_sortBtn) m_sortBtn->setText("Sort: " + label);
+                reloadAllItems();
+                return true;
+            }});
+    }
+    MediaDetailView::showOptionsPopover(anchor, "SORT", "Sort by", std::move(rows));
+}
+
+void LibrarySectionTab::updateCountLabel() {
+    if (!m_countLabel) return;
+    m_countLabel->setText(m_totalItemCount > 0
+                              ? std::to_string(m_totalItemCount) + " titles"
+                              : "");
+}
+
+void LibrarySectionTab::buildAzRail() {
+    m_azRail = new brls::Box();
+    m_azRail->setAxis(brls::Axis::COLUMN);
+    m_azRail->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
+    m_azRail->setAlignItems(brls::AlignItems::CENTER);
+    m_azRail->setPositionType(brls::PositionType::ABSOLUTE);
+    m_azRail->setPositionRight(4);
+    m_azRail->setPositionTop(118);    // below the title + toolbar
+    m_azRail->setPositionBottom(34);
+    m_azRail->setWidth(18);
+    m_azRail->setVisibility(brls::Visibility::GONE);
+
+    for (const char* c = kAzLetters; *c; ++c) {
+        char ch = *c;
+        auto* lbl = new brls::Label();
+        lbl->setText(std::string(1, ch));
+        lbl->setFontSize(9.5f);
+        lbl->setTextColor(nvgRGB(0x8a, 0x8a, 0x90));
+        lbl->setFocusable(true);
+        lbl->registerClickAction([this, ch](brls::View*) { jumpToLetter(ch); return true; });
+        lbl->addGestureRecognizer(new brls::TapGestureRecognizer(lbl));
+        m_azRail->addView(lbl);
+        m_azLetters.push_back(lbl);
+    }
+    this->addView(m_azRail);
+}
+
+// First letter of a title with a leading article dropped, to approximate Plex's
+// titleSort bucketing; digits / symbols collapse to '#'.
+static char azBucket(const std::string& t) {
+    auto lc = [](char c) { return (char)tolower((unsigned char)c); };
+    auto startsCI = [&](const char* p) {
+        size_t n = 0; while (p[n]) n++;
+        if (t.size() < n) return false;
+        for (size_t k = 0; k < n; k++) if (lc(t[k]) != lc(p[k])) return false;
+        return true;
+    };
+    size_t i = 0;
+    if (startsCI("the ")) i = 4;
+    else if (startsCI("an ")) i = 3;
+    else if (startsCI("a ")) i = 2;
+    while (i < t.size() && t[i] == ' ') i++;
+    if (i >= t.size()) return '#';
+    char c = (char)toupper((unsigned char)t[i]);
+    return (c >= 'A' && c <= 'Z') ? c : '#';
+}
+
+void LibrarySectionTab::jumpToLetter(char letter) {
+    if (m_items.empty() || !m_contentGrid) return;
+
+    char target = (char)toupper((unsigned char)letter);
+    auto rank = [](char b) { return b == '#' ? 0 : (int)b; };   // '#' sorts first
+
+    // m_items is sorted by titleSort asc → first item whose bucket reaches target.
+    size_t found = m_items.size();
+    for (size_t i = 0; i < m_items.size(); i++) {
+        if (rank(azBucket(m_items[i].title)) >= rank(target)) { found = i; break; }
+    }
+    if (found >= m_items.size()) found = m_items.size() - 1;   // letter beyond loaded range
+
+    m_contentGrid->scrollToItemIndex(found, true);
+    m_currentAzLetter = target;
+    refreshAzRail();
+}
+
+void LibrarySectionTab::refreshAzRail() {
+    if (!m_azRail) return;
+    bool active = (m_viewMode == LibraryViewMode::ALL_ITEMS &&
+                   m_sortParam == "titleSort:asc");
+    m_azRail->setVisibility(active ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
+    if (!active) return;
+
+    for (size_t i = 0; i < m_azLetters.size(); i++) {
+        if (!m_azLetters[i]) continue;
+        bool cur = (kAzLetters[i] == m_currentAzLetter);
+        m_azLetters[i]->setTextColor(cur ? vitaplex::palette::gold
+                                         : nvgRGB(0x8a, 0x8a, 0x90));
+        m_azLetters[i]->setFontSize(cur ? 11.0f : 9.5f);
+    }
 }
 
 bool LibrarySectionTab::navigateBack() {
@@ -554,6 +784,8 @@ void LibrarySectionTab::updateViewModeButtons() {
     brls::View* focused = brls::Application::getCurrentFocus();
     bool inFilteredView = (m_viewMode == LibraryViewMode::FILTERED);
     bool showModeButtons = !inFilteredView;
+    // Sort / Unwatched / spacer only apply to the all-items grid.
+    bool allItems = (m_viewMode == LibraryViewMode::ALL_ITEMS);
     auto wouldHide = [&](brls::Button* btn, bool willBeVisible) {
         return btn && focused == btn && !willBeVisible;
     };
@@ -562,7 +794,9 @@ void LibrarySectionTab::updateViewModeButtons() {
         wouldHide(m_allBtn, showModeButtons) ||
         wouldHide(m_collectionsBtn, showModeButtons && !m_collections.empty()) ||
         wouldHide(m_categoriesBtn, showModeButtons && !m_genres.empty()) ||
-        wouldHide(m_playlistsBtn, showModeButtons && !m_playlists.empty());
+        wouldHide(m_playlistsBtn, showModeButtons && !m_playlists.empty()) ||
+        wouldHide(m_sortBtn, allItems) ||
+        wouldHide(m_unwatchedBtn, allItems);
 
     // Walk up from the focused view; if any ancestor is currently
     // Visibility::GONE the focus is sitting in a hidden subtree.
@@ -604,6 +838,13 @@ void LibrarySectionTab::updateViewModeButtons() {
         m_playlistsBtn->setVisibility(showModeButtons && !m_playlists.empty() ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
     }
 
+    // Sort chip + Unwatched filter + their pushing spacer ride the all-items
+    // grid only (sorting a genre/collection list makes no sense).
+    auto vis = [](bool on) { return on ? brls::Visibility::VISIBLE : brls::Visibility::GONE; };
+    if (m_toolbarSpacer) m_toolbarSpacer->setVisibility(vis(allItems));
+    if (m_sortBtn)       m_sortBtn->setVisibility(vis(allItems));
+    if (m_unwatchedBtn)  m_unwatchedBtn->setVisibility(vis(allItems));
+
     // Update active styling on mode buttons
     if (showModeButtons) {
         styleButton(m_allBtn, m_viewMode == LibraryViewMode::ALL_ITEMS);
@@ -631,6 +872,9 @@ void LibrarySectionTab::updateViewModeButtons() {
             m_backBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, downTarget);
         }
     }
+
+    // The A-Z rail rides the all-items grid; hide it in any sub-view.
+    refreshAzRail();
 }
 
 void LibrarySectionTab::onItemSelected(const MediaItem& item) {

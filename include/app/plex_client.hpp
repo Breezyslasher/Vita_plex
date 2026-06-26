@@ -311,7 +311,11 @@ public:
 
     // Library operations
     bool fetchLibrarySections(std::vector<LibrarySection>& sections);
-    bool fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items, int metadataType = 0, int limit = 0, int offset = 0, int* totalCount = nullptr);
+    // extraParams: optional pre-encoded query fragment appended verbatim, each
+    // token starting with '&' (e.g. "&sort=titleSort:asc&unwatched=1"). Lets the
+    // library grid thread Plex sort/filter params through without a wide
+    // positional signature.
+    bool fetchLibraryContent(const std::string& sectionKey, std::vector<MediaItem>& items, int metadataType = 0, int limit = 0, int offset = 0, int* totalCount = nullptr, const std::string& extraParams = "");
     bool fetchSectionRecentlyAdded(const std::string& sectionKey, std::vector<MediaItem>& items);
     bool fetchChildren(const std::string& ratingKey, std::vector<MediaItem>& items);
     bool fetchMediaDetails(const std::string& ratingKey, MediaItem& item);

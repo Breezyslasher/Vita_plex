@@ -59,6 +59,21 @@ private:
     void updateViewModeButtons();
     void styleButton(brls::Button* btn, bool active);
 
+    // Direction-A discovery controls (Movies-style sort + filter toolbar).
+    // Build the "&sort=…&unwatched=1" fragment from the current sort/filter
+    // state; re-query the ALL_ITEMS grid from offset 0 with it; open the sort
+    // menu anchored to the Sort chip.
+    std::string buildListParams() const;
+    void reloadAllItems();
+    void showSortMenu();
+
+    // A-Z jump rail (right edge): build it, jump the grid to the first title in
+    // a letter bucket, and refresh its visibility (sort-dependent) + highlight.
+    void buildAzRail();
+    void jumpToLetter(char letter);
+    void refreshAzRail();
+    void updateCountLabel();   // "312 titles" beside the page title
+
     // Check if this tab is still valid (not destroyed)
     bool isValid() const { return m_alive && *m_alive; }
 
@@ -67,6 +82,13 @@ private:
     std::string m_sectionType;  // "movie", "show", "artist"
 
     brls::Label* m_titleLabel = nullptr;
+    brls::Label* m_countLabel = nullptr;   // total-count text beside the title
+
+    // A-Z jump rail (shown only when sorted Title A-Z). m_azLetters is parallel
+    // to the rail's letter string; m_currentAzLetter is the highlighted bucket.
+    brls::Box* m_azRail = nullptr;
+    std::vector<brls::Label*> m_azLetters;
+    char m_currentAzLetter = 0;
 
     // View mode selector buttons
     brls::Box* m_viewModeBox = nullptr;
@@ -75,6 +97,17 @@ private:
     brls::Button* m_categoriesBtn = nullptr;
     brls::Button* m_playlistsBtn = nullptr;
     brls::Button* m_backBtn = nullptr;  // Back button when in filtered view
+
+    // Direction-A toolbar: a flex spacer pushes the Sort chip to the right;
+    // the Unwatched chip is a quick filter (movie / show sections only).
+    brls::Box*    m_toolbarSpacer = nullptr;
+    brls::Button* m_unwatchedBtn = nullptr;
+    brls::Button* m_sortBtn = nullptr;
+
+    // Current ALL_ITEMS sort + filter. Default = Recently Added (Plex addedAt).
+    std::string m_sortParam = "addedAt:desc";
+    std::string m_sortLabel = "Recently Added";
+    bool m_unwatchedOnly = false;
 
     // Main content grid
     RecyclingGrid* m_contentGrid = nullptr;
