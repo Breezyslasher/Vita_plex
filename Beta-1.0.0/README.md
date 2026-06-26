@@ -34,6 +34,20 @@
 ---
 <table>
   <tr>
+    <th colspan="2" align="center">Album Page</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.1.9</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Beta-0.6.1/album_page.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/album_page.png" width="400"/></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
     <th colspan="2" align="center">Search</th>
   </tr>
   <tr>
@@ -289,19 +303,7 @@
 
 
 
-<table>
-  <tr>
-    <th colspan="2" align="center">Album Page</th>
-  </tr>
-  <tr>
-    <td align="center"><b>Beta 0.6.1</b></td>
-    <td align="center"><b>Beta 1.1.9</b></td>
-  </tr>
-  <tr>
-    <td><img src="../Screenshots/Beta-0.6.1/album_page.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/album_page.png" width="400"/></td>
-  </tr>
-</table>
+
 
 
 <table>
