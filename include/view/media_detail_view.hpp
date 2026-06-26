@@ -47,6 +47,10 @@ private:
     // Build the (initially hidden) Cast & Crew + Recommended rows into `parent`.
     // Shared by movies (page scroll) and shows (inner scroll).
     void buildPeopleAndRecommendedRows(brls::Box* parent);
+    // Direction B (poster-left) two-column layout for the movie / standalone-item
+    // path. Creates the poster, stream rows, title/meta/actions/summary and the
+    // cast / recommended rows, reusing every existing handler and async loader.
+    void buildMovieLayout();
     // Push a hero-header + poster-grid screen of a person's other titles in the
     // same library. excludeRatingKey is the title we came from, dropped from the
     // results so a person credited only on the current title shows a notification
