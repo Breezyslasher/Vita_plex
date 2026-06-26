@@ -305,6 +305,10 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
     if (m_item.mediaType == MediaType::MUSIC_ARTIST) {
         auto* categoriesScroll = new brls::ScrollingFrame();
         categoriesScroll->setGrow(1.0f);
+        // CENTERED so vertical focus reaches off-screen category rows and scrolls
+        // them into view — same as the movie detail view's Extras / Cast & Crew /
+        // Recommended scroll. Default NATURAL refuses to focus off-screen rows.
+        categoriesScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
 
         m_musicCategoriesBox = new brls::Box();
         m_musicCategoriesBox->setAxis(brls::Axis::COLUMN);
