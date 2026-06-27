@@ -5720,6 +5720,187 @@ void MediaDetailView::showCenteredChoice(const std::string& title,
     if (firstRow) brls::Application::giveFocus(firstRow);
 }
 
+void MediaDetailView::showMultiSelectFilter(
+    const std::string& title,
+    bool andMode,
+    std::vector<MultiSelectItem> items,
+    std::function<void(const std::vector<std::pair<std::string, std::string>>&, bool)> onApply) {
+    namespace pc = pickcol;
+
+    // Working state, mutated by row/mode toggles and read on commit.
+    struct State {
+        std::vector<std::pair<std::string, std::string>> selected;
+        bool andMode = false;
+    };
+    auto state = std::make_shared<State>();
+    state->andMode = andMode;
+    for (const auto& it : items)
+        if (it.selected) state->selected.push_back({ it.key, it.label });
+
+    const float screenH = platform::viewportHeight();
+
+    auto* scrim = new brls::Box();
+    scrim->setAxis(brls::Axis::COLUMN);
+    scrim->setWidthPercentage(100.0f);
+    scrim->setHeightPercentage(100.0f);
+    scrim->setJustifyContent(brls::JustifyContent::CENTER);
+    scrim->setAlignItems(brls::AlignItems::CENTER);
+    scrim->setBackgroundColor(pc::scrim());
+
+    auto* panel = new brls::Box();
+    panel->setAxis(brls::Axis::COLUMN);
+    panel->setWidth(420.0f);
+    panel->setBackgroundColor(pc::dialogBg());
+    panel->setBorderColor(pc::line());
+    panel->setBorderThickness(1.0f);
+    panel->setCornerRadius(18.0f);
+    panel->setShadowType(brls::ShadowType::GENERIC);
+    panel->setPadding(22.0f, 22.0f, 16.0f, 22.0f);
+    panel->addGestureRecognizer(new brls::TapGestureRecognizer(panel, []() {}));
+
+    // Any close path (Apply / Back / tap-outside) commits the selection. Pop
+    // first, then run onApply — popActivity is deferred, so this matches the
+    // other dialogs and avoids touching the dialog after it starts dismissing.
+    auto commit = [state, onApply]() {
+        brls::Application::popActivity();
+        if (onApply) onApply(state->selected, state->andMode);
+    };
+    scrim->addGestureRecognizer(new brls::TapGestureRecognizer(scrim,
+        [commit]() { commit(); }));
+
+    auto* titleLbl = new brls::Label();
+    titleLbl->setText(title);
+    titleLbl->setFontSize(21.0f);
+    titleLbl->setTextColor(pc::text());
+    panel->addView(titleLbl);
+
+    // Match-mode toggle (OR vs AND). Flips in place; no close.
+    auto* modeRow = new brls::Box();
+    modeRow->setAxis(brls::Axis::ROW);
+    modeRow->setAlignItems(brls::AlignItems::CENTER);
+    modeRow->setHeight(40.0f);
+    modeRow->setMarginTop(10.0f);
+    modeRow->setCornerRadius(9.0f);
+    modeRow->setPaddingLeft(14.0f);
+    modeRow->setPaddingRight(14.0f);
+    modeRow->setFocusable(true);
+    modeRow->setHighlightCornerRadius(9.0f);
+    modeRow->setBackgroundColor(pc::surface());
+    auto* modeLbl = new brls::Label();
+    modeLbl->setText(state->andMode ? "Match all (AND)" : "Match any (OR)");
+    modeLbl->setFontSize(14.0f);
+    modeLbl->setTextColor(pc::gold());
+    modeLbl->setGrow(1.0f);
+    modeRow->addView(modeLbl);
+    modeRow->registerClickAction([state, modeLbl](brls::View*) {
+        state->andMode = !state->andMode;
+        modeLbl->setText(state->andMode ? "Match all (AND)" : "Match any (OR)");
+        return true;
+    });
+    modeRow->addGestureRecognizer(new brls::TapGestureRecognizer(modeRow));
+    panel->addView(modeRow);
+
+    auto* hair = new brls::Box();
+    hair->setHeight(1.0f);
+    hair->setBackgroundColor(pc::line());
+    hair->setMarginTop(10.0f);
+    hair->setMarginBottom(10.0f);
+    panel->addView(hair);
+
+    // Scrollable, height-capped value list.
+    auto* listBox = new brls::Box();
+    listBox->setAxis(brls::Axis::COLUMN);
+    auto* scroll = new brls::ScrollingFrame();
+    scroll->setContentView(listBox);
+    float maxH = screenH * 0.5f;
+    if (maxH < 180.0f) maxH = 180.0f;
+    const float wantH = static_cast<float>(items.size()) * 52.0f;
+    scroll->setHeight(wantH < maxH ? wantH : maxH);
+    panel->addView(scroll);
+
+    brls::View* firstRow = nullptr;
+    for (const auto& it : items) {
+        const std::string key = it.key;
+        const std::string label = it.label;
+        const bool sel = it.selected;
+
+        auto* row = new brls::Box();
+        row->setAxis(brls::Axis::ROW);
+        row->setAlignItems(brls::AlignItems::CENTER);
+        row->setHeight(44.0f);
+        row->setCornerRadius(9.0f);
+        row->setPaddingLeft(14.0f);
+        row->setPaddingRight(14.0f);
+        row->setMarginBottom(8.0f);
+        row->setFocusable(true);
+        row->setHighlightCornerRadius(9.0f);
+        row->setBackgroundColor(sel ? pc::goldTint() : pc::surface());
+
+        // Leading check, INVISIBLE (not GONE) when unselected so labels align.
+        auto* check = new brls::Image();
+        check->setImageFromRes("icons/check-circle.png");
+        check->setWidth(20.0f);
+        check->setHeight(20.0f);
+        check->setMarginRight(12.0f);
+        check->setScalingType(brls::ImageScalingType::FIT);
+        check->setVisibility(sel ? brls::Visibility::VISIBLE : brls::Visibility::INVISIBLE);
+        row->addView(check);
+
+        auto* lbl = new brls::Label();
+        lbl->setText(label);
+        lbl->setFontSize(16.0f);
+        lbl->setTextColor(pc::text());
+        lbl->setGrow(1.0f);
+        row->addView(lbl);
+
+        row->registerClickAction([state, key, label, check, row](brls::View*) {
+            auto& sel = state->selected;
+            bool found = false;
+            for (size_t i = 0; i < sel.size(); i++) {
+                if (sel[i].first == key) { sel.erase(sel.begin() + i); found = true; break; }
+            }
+            if (found) {
+                check->setVisibility(brls::Visibility::INVISIBLE);
+                row->setBackgroundColor(pc::surface());
+            } else {
+                sel.push_back({ key, label });
+                check->setVisibility(brls::Visibility::VISIBLE);
+                row->setBackgroundColor(pc::goldTint());
+            }
+            return true;  // stay open
+        });
+        row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
+        listBox->addView(row);
+        if (!firstRow) firstRow = row;
+    }
+
+    // Apply button.
+    auto* apply = new brls::Box();
+    apply->setAxis(brls::Axis::ROW);
+    apply->setJustifyContent(brls::JustifyContent::CENTER);
+    apply->setAlignItems(brls::AlignItems::CENTER);
+    apply->setHeight(46.0f);
+    apply->setCornerRadius(10.0f);
+    apply->setMarginTop(10.0f);
+    apply->setFocusable(true);
+    apply->setHighlightCornerRadius(10.0f);
+    apply->setBackgroundColor(pc::gold());
+    auto* applyLbl = new brls::Label();
+    applyLbl->setText("Apply");
+    applyLbl->setFontSize(16.0f);
+    applyLbl->setTextColor(pc::goldInk());
+    apply->addView(applyLbl);
+    apply->registerClickAction([commit](brls::View*) { commit(); return true; });
+    apply->addGestureRecognizer(new brls::TapGestureRecognizer(apply));
+    panel->addView(apply);
+
+    scrim->addView(panel);
+    scrim->registerAction("Back", brls::ControllerButton::BUTTON_B,
+        [commit](brls::View*) { commit(); return true; });
+    brls::Application::pushActivity(new PopoverActivity(scrim));
+    if (firstRow) brls::Application::giveFocus(firstRow);
+}
+
 void MediaDetailView::showAudioPicker() {
     showStreamDialog(/*defaultTab=*/0);
 }

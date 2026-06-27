@@ -29,6 +29,13 @@ struct OptionRow {
     std::function<bool(brls::View*)> action;
 };
 
+// One toggleable choice in a multi-select filter dialog (genre, studio, …).
+struct MultiSelectItem {
+    std::string key;            // filter value (id/code) used in the query
+    std::string label;          // display name
+    bool        selected = false;
+};
+
 class MediaDetailView : public brls::Box {
 public:
     MediaDetailView(const MediaItem& item);
@@ -132,6 +139,17 @@ public:
                                    const std::string& subtitle,
                                    std::vector<OptionRow> rows,
                                    bool scrollable = false);
+
+    // Centered multi-select dialog (filters that accept several values). Each
+    // item toggles in place; an "Any/All" row flips the match mode (OR/AND).
+    // onApply receives the final (key,label) selection + andMode when the
+    // dialog closes (Apply, Back, or tap-outside all commit). For long lists
+    // the rows scroll.
+    static void showMultiSelectFilter(
+        const std::string& title,
+        bool andMode,
+        std::vector<MultiSelectItem> items,
+        std::function<void(const std::vector<std::pair<std::string, std::string>>&, bool)> onApply);
 
     void performTrackAction(const MediaItem& track, size_t trackIndex);  // Handle track default action
     void showTrackActionDialog(const MediaItem& track, size_t trackIndex);  // Ask user what to do
