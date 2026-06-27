@@ -571,13 +571,18 @@ void LibrarySectionTab::reloadAllItems() {
 }
 
 void LibrarySectionTab::showSortMenu() {
+    // Each sort field offered in both directions (ascending + descending), so
+    // the direction is an explicit, one-tap choice.
     struct SortOpt { const char* label; const char* param; };
     static const SortOpt kOpts[] = {
-        {"Recently Added",    "addedAt:desc"},
-        {"Title A-Z",         "titleSort:asc"},
-        {"Release Date",      "year:desc"},
-        {"Rating",            "rating:desc"},
-        {"Recently Released", "originallyAvailableAt:desc"},
+        {"Title A-Z",       "titleSort:asc"},
+        {"Title Z-A",       "titleSort:desc"},
+        {"Newest Added",    "addedAt:desc"},
+        {"Oldest Added",    "addedAt:asc"},
+        {"Newest Release",  "originallyAvailableAt:desc"},
+        {"Oldest Release",  "originallyAvailableAt:asc"},
+        {"Highest Rated",   "rating:desc"},
+        {"Lowest Rated",    "rating:asc"},
     };
 
     std::vector<OptionRow> rows;
@@ -599,7 +604,7 @@ void LibrarySectionTab::showSortMenu() {
     }
     // Centered, audio-picker style — matches the Filters dialog (global toolbar
     // actions center; item context menus stay anchored to their item).
-    MediaDetailView::showCenteredChoice("Sort by", "", std::move(rows), /*scrollable=*/false);
+    MediaDetailView::showCenteredChoice("Sort by", "", std::move(rows), /*scrollable=*/true);
 }
 
 int LibrarySectionTab::activeFilterCount() const {
@@ -629,6 +634,54 @@ static const std::vector<std::pair<std::string, std::string>>& filterFieldsFor(
         {"studio", "Studio"}, {"country", "Country"},
     };
     return sectionType == "show" ? kShow : kMovie;
+}
+
+// Plex returns language names in their native script ("日本語", "中文", "العربية").
+// The UI font covers Latin / Cyrillic / Greek but not CJK / Arabic / Thai /
+// Indic, so those would render as tofu boxes. For languages in a non-renderable
+// script we substitute the English name (keyed off the Plex language code);
+// everything else keeps Plex's nice native name. Bundling full CJK fonts would
+// be the only way to show the native names, but that's many MB per script.
+static std::string languageDisplayName(const std::string& code,
+                                       const std::string& nativeTitle) {
+    static const std::map<std::string, std::string> kEnglish = {
+        {"zh", "Chinese"}, {"zho", "Chinese"}, {"chi", "Chinese"}, {"cmn", "Chinese"},
+        {"yue", "Cantonese"},
+        {"ja", "Japanese"}, {"jpn", "Japanese"},
+        {"ko", "Korean"}, {"kor", "Korean"},
+        {"ar", "Arabic"}, {"ara", "Arabic"},
+        {"he", "Hebrew"}, {"heb", "Hebrew"}, {"iw", "Hebrew"},
+        {"th", "Thai"}, {"tha", "Thai"},
+        {"hi", "Hindi"}, {"hin", "Hindi"},
+        {"bn", "Bengali"}, {"ben", "Bengali"},
+        {"ta", "Tamil"}, {"tam", "Tamil"},
+        {"te", "Telugu"}, {"tel", "Telugu"},
+        {"kn", "Kannada"}, {"kan", "Kannada"},
+        {"ml", "Malayalam"}, {"mal", "Malayalam"},
+        {"fa", "Persian"}, {"fas", "Persian"}, {"per", "Persian"},
+        {"ur", "Urdu"}, {"urd", "Urdu"},
+        {"pa", "Punjabi"}, {"pan", "Punjabi"},
+        {"gu", "Gujarati"}, {"guj", "Gujarati"},
+        {"mr", "Marathi"}, {"mar", "Marathi"},
+        {"am", "Amharic"}, {"amh", "Amharic"},
+        {"my", "Burmese"}, {"mya", "Burmese"}, {"bur", "Burmese"},
+        {"km", "Khmer"}, {"khm", "Khmer"},
+        {"lo", "Lao"}, {"lao", "Lao"},
+        {"si", "Sinhala"}, {"sin", "Sinhala"},
+        {"ka", "Georgian"}, {"kat", "Georgian"}, {"geo", "Georgian"},
+        {"hy", "Armenian"}, {"hye", "Armenian"}, {"arm", "Armenian"},
+        {"bo", "Tibetan"}, {"bod", "Tibetan"}, {"tib", "Tibetan"},
+        {"ne", "Nepali"}, {"nep", "Nepali"},
+        {"ps", "Pashto"}, {"pus", "Pashto"},
+        {"ug", "Uyghur"}, {"uig", "Uyghur"},
+    };
+    // Normalize: lowercase and strip any region/script suffix ("zh-Hans" → "zh").
+    std::string c = code;
+    for (auto& ch : c) ch = (char)std::tolower((unsigned char)ch);
+    size_t dash = c.find('-');
+    if (dash != std::string::npos) c = c.substr(0, dash);
+    auto it = kEnglish.find(c);
+    return it != kEnglish.end() ? it->second : nativeTitle;
 }
 
 // Top-level Filters chooser — a centered dialog (audio-picker style) listing
@@ -711,6 +764,10 @@ void LibrarySectionTab::showFilterValues(const std::string& field,
     auto it = m_activeFilters.find(field);
     const std::string currentKey = (it != m_activeFilters.end()) ? it->second.first : "";
 
+    // Language names come from Plex in their native script; swap non-renderable
+    // scripts (CJK, Arabic, …) for the English name so they don't show as boxes.
+    const bool isLanguage = (field == "audioLanguage" || field == "subtitleLanguage");
+
     std::vector<OptionRow> rows;
     rows.push_back({ currentKey.empty() ? "check-circle.png" : "",
                      "Any " + fieldLabel, "", false, false,
@@ -722,7 +779,7 @@ void LibrarySectionTab::showFilterValues(const std::string& field,
 
     for (const auto& v : values) {
         std::string vkey   = v.key;
-        std::string vtitle = v.title;
+        std::string vtitle = isLanguage ? languageDisplayName(v.key, v.title) : v.title;
         const bool current = (vkey == currentKey);
         rows.push_back({ current ? "check-circle.png" : "", vtitle, "", false, false,
             [this, field, vkey, vtitle](brls::View*) {

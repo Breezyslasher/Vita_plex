@@ -129,7 +129,7 @@ private:
 
     // Current ALL_ITEMS sort + filter. Default = Recently Added (Plex addedAt).
     std::string m_sortParam = "addedAt:desc";
-    std::string m_sortLabel = "Recently Added";
+    std::string m_sortLabel = "Newest Added";
 
     // Inline filter state (video sections): active filters keyed by Plex filter
     // field ("genre", "year", "decade", "contentRating", "resolution", "studio",
