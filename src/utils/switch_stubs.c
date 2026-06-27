@@ -12,15 +12,17 @@
  * Switch (Atmosphère report: garbage registers + return into unmapped code,
  * the classic stack-overflow signature).
  *
- * The Vita build already fixes the same class of bug (src/utils/vita_stubs.c,
- * 512 KB floor for Vita's tiny 32 KB default). Switch needs the same wrap with
- * a larger floor since it decodes higher-resolution video. Enabled by
- * -Wl,--wrap=pthread_create in the Switch link options.
+ * The Vita build already fixes the same class of bug (src/utils/vita_stubs.c).
+ * Use the SAME 512 KB floor here: it's proven large enough for every mpv /
+ * ffmpeg thread (Vita runs the identical decode code at 512 KB) while staying
+ * small enough to leave the heap free for H.264 frame buffers — a 1 MB floor
+ * across mpv's ~dozen threads starved 720p decode and OOM-crashed it. Enabled
+ * by -Wl,--wrap=pthread_create in the Switch link options.
  */
 
 #include <pthread.h>
 
-#define VITAPLEX_SWITCH_MIN_THREAD_STACK (1024 * 1024)
+#define VITAPLEX_SWITCH_MIN_THREAD_STACK (512 * 1024)
 
 extern int __real_pthread_create(pthread_t *thread, const pthread_attr_t *attr,
                                  void *(*start_routine)(void *), void *arg);

@@ -256,7 +256,14 @@ bool MpvPlayer::init() {
         // vd-lavc-fast trims some spec-compliance corners that also keep
         // decode stack depth shallower. Leave the loop filter ON (Switch
         // is far more capable than Vita) so picture quality isn't hurt.
-        mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
+        // Memory-lean software decode, matching switchfin's Switch tuning.
+        // 720p H.264 frame-threaded decode OOM-crashed with 4 threads and no
+        // direct rendering (mpv log: "h264: thread_get_buffer() failed",
+        // "lavf: Not enough space", then a null-deref). vd-lavc-dr lets the
+        // decoder render straight into the VO's buffers instead of a second
+        // private pool, and 3 threads keeps the per-thread frame pool smaller.
+        mpv_set_option_string(m_mpv, "vd-lavc-threads", "3");
+        mpv_set_option_string(m_mpv, "vd-lavc-dr", "yes");
         mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
         mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
 #else
