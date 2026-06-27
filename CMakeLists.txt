@@ -524,6 +524,19 @@ else()
     )
     if(APPLE OR PLATFORM_PS4)
         set(APP_FFMPEG_LINK_BLOCK ${APP_FFMPEG_LIBS})
+    elseif(PLATFORM_SWITCH)
+        # switchfin's switch-ffmpeg is built WITH the mbedtls (rtmp/tls) and
+        # libssh2 (sftp) protocols, so libavformat.a pulls in mbedtls_* /
+        # psa_crypto_init / libssh2_* symbols that devkitPro's lighter ffmpeg
+        # didn't. Put ssh2 + mbedtls inside the SAME --start-group as ffmpeg so
+        # the one-pass static linker resolves the cross-references (ffmpeg ↔
+        # libssh2 ↔ mbedtls); listing mbedtls only in APP_NETWORK_LIBS (before
+        # ffmpeg) left those refs undefined.
+        set(APP_FFMPEG_LINK_BLOCK
+            -Wl,--start-group
+            ${APP_FFMPEG_LIBS}
+            ssh2 mbedtls mbedx509 mbedcrypto z
+            -Wl,--end-group)
     else()
         set(APP_FFMPEG_LINK_BLOCK -Wl,--start-group ${APP_FFMPEG_LIBS} -Wl,--end-group)
     endif()
@@ -597,8 +610,11 @@ endif()
 
 # mbedtls is curl's TLS backend on the consoles / desktop Homebrew builds.
 # iOS / tvOS use Secure Transport instead, so mbedtls isn't in the link
-# list there.
-if(NOT WIN32 AND NOT PLATFORM_IOS AND NOT PLATFORM_TVOS)
+# list there. Switch is also excluded HERE on purpose: its ffmpeg ALSO needs
+# mbedtls, so mbedtls is placed inside the ffmpeg --start-group (after curl)
+# instead — listing it here too would let CMake de-duplicate the in-group copy
+# and re-break the static link order (ffmpeg's mbedtls refs going undefined).
+if(NOT WIN32 AND NOT PLATFORM_IOS AND NOT PLATFORM_TVOS AND NOT PLATFORM_SWITCH)
     list(APPEND APP_NETWORK_LIBS
         mbedtls
         mbedx509
