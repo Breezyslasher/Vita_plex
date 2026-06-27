@@ -148,6 +148,15 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "sub-fonts-dir", "sdmc:/VitaPlex");
     mpv_set_option_string(m_mpv, "watch-later-dir", "sdmc:/VitaPlex/watch-later");
     mpv_set_option_string(m_mpv, "gpu-shader-cache-dir", "sdmc:/VitaPlex/cache");
+
+    // Diagnostic (Switch playback bring-up): have mpv write its OWN verbose log
+    // straight to a file. A crash inside mpv_initialize / early playback often
+    // lands on an mpv worker thread, and our client log callback is only drained
+    // on the main thread — so it would miss the last thing mpv did. The file log
+    // is written from mpv's own threads and survives the crash, pinpointing the
+    // failing subsystem (ao / demuxer / decoder / …). Remove once stable.
+    mpv_set_option_string(m_mpv, "log-file", "sdmc:/VitaPlex/mpv.log");
+    mpv_set_option_string(m_mpv, "msg-level", "all=v");
 #endif
 
     // ========================================
