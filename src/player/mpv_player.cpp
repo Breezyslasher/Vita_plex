@@ -148,15 +148,6 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "sub-fonts-dir", "sdmc:/VitaPlex");
     mpv_set_option_string(m_mpv, "watch-later-dir", "sdmc:/VitaPlex/watch-later");
     mpv_set_option_string(m_mpv, "gpu-shader-cache-dir", "sdmc:/VitaPlex/cache");
-
-    // Diagnostic (Switch playback bring-up): have mpv write its OWN verbose log
-    // straight to a file. A crash inside mpv_initialize / early playback often
-    // lands on an mpv worker thread, and our client log callback is only drained
-    // on the main thread — so it would miss the last thing mpv did. The file log
-    // is written from mpv's own threads and survives the crash, pinpointing the
-    // failing subsystem (ao / demuxer / decoder / …). Remove once stable.
-    mpv_set_option_string(m_mpv, "log-file", "sdmc:/VitaPlex/mpv.log");
-    mpv_set_option_string(m_mpv, "msg-level", "all=v");
 #endif
 
     // ========================================
@@ -1669,6 +1660,18 @@ bool MpvPlayer::initRenderContext() {
         const auto& vc = platform::getVideoConstraints();
         m_videoWidth  = vc.maxVideoWidth;
         m_videoHeight = vc.maxVideoHeight;
+#ifdef __SWITCH__
+        // Switch uses mpv's SOFTWARE render API: every frame mpv scales the
+        // decoded picture into a CPU RGBA buffer that we then upload to a GL
+        // texture. A 1080p target means upscaling the (usually 720p) transcode
+        // on the CPU and pushing an ~8 MB texture per frame — a big chunk of the
+        // choppiness. Cap the render target at 720p: native for the handheld
+        // screen (no upscale), cheaply GPU-upscaled when docked, and roughly
+        // half the per-frame CPU + upload cost. (The real cure is a GPU mpv
+        // render path; this keeps the software path smooth meanwhile.)
+        if (m_videoWidth  > 1280) m_videoWidth  = 1280;
+        if (m_videoHeight > 720)  m_videoHeight = 720;
+#endif
     }
     m_videoBuffer.assign((size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
 
