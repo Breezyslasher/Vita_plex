@@ -607,10 +607,24 @@ jobs:
           BASE_URL="https://github.com/dragonflylee/switchfin/releases/download/switch-portlibs"
           dkp-pacman --noconfirm -Rdd switch-libmpv || true
           dkp-pacman --noconfirm -Rdd switch-libmpv-deko3d || true
+          # CRITICAL: install switchfin's ffmpeg too. switch-libmpv-0.36.0-5 was
+          # built against switch-ffmpeg-7.1.5-5; devkitPro's pacman ships a
+          # DIFFERENT FFmpeg 7.1 point release (libavcodec 61.19.100 vs the
+          # 61.19.101 mpv expects). Linking mpv against the mismatched FFmpeg
+          # crashed playback the instant mpv started using libav* (null-deref
+          # right after mpv's FFmpeg version banner). Pull the matching FFmpeg so
+          # mpv and libav* are ABI-consistent — the same rule the iOS job spells
+          # out for its MPVKit frameworks.
+          # switch-ffmpeg-7.1.5-5 is built with the mbedtls + libssh2 protocols,
+          # so it needs those exact libs to link. Pull switchfin's matching
+          # mbedtls / libssh2 so the whole mpv→ffmpeg→tls stack is ABI-consistent.
           dkp-pacman --noconfirm -U \
             $BASE_URL/hacBrewPack-3.05-1-x86_64.pkg.tar.zst \
             $BASE_URL/libuam-master-1-any.pkg.tar.zst \
             $BASE_URL/switch-dav1d-1.5.3-1-any.pkg.tar.zst \
+            $BASE_URL/switch-mbedtls-3.6.5-1-any.pkg.tar.zst \
+            $BASE_URL/switch-libssh2-1.11.1-1-any.pkg.tar.zst \
+            $BASE_URL/switch-ffmpeg-7.1.5-5-any.pkg.tar.zst \
             $BASE_URL/${{ matrix.mpv_pkg }}
       - name: Build
         run: |
