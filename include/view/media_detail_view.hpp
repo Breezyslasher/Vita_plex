@@ -116,10 +116,15 @@ public:
     // sheet when `anchor` is null or the screen is too narrow. Every show*
     // context menu funnels its rows through here. Static because several callers
     // are static members.
+    // `scrollable` caps the panel to the screen height and puts the rows in a
+    // ScrollingFrame — for long lists (e.g. the genre filter) that would
+    // otherwise run off-screen. Default off, so every existing caller is
+    // byte-for-byte unchanged.
     static void showOptionsPopover(brls::View* anchor,
                                    const std::string& contextLine,
                                    const std::string& title,
-                                   std::vector<OptionRow> rows);
+                                   std::vector<OptionRow> rows,
+                                   bool scrollable = false);
 
     // Centered translucent choice dialog styled like the audio/subtitle picker
     // (dark panel, scrim, rounded rows). Each OptionRow becomes a row; clicking

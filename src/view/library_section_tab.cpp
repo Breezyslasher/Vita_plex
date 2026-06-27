@@ -100,8 +100,10 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
         m_viewModeBox->addView(m_collectionsBtn);
     }
 
-    // Categories button (only show if enabled)
-    if (settings.showGenres) {
+    // Categories button (genre browse). Video sections (movie / show) instead
+    // get the inline Filters menu below, which filters the grid by genre in
+    // place rather than opening a separate genre-cards browse mode.
+    if (settings.showGenres && sectionType != "movie" && sectionType != "show") {
         m_categoriesBtn = new vitaplex::FilterChip();
         m_categoriesBtn->setText("Categories");
         m_categoriesBtn->setMarginRight(10);
@@ -127,6 +129,54 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     }
 
     // ── Direction-A discovery controls ──
+    // Filters chip (video sections): opens an inline genre + decade filter
+    // menu. Active filters turn the chip gold, bump a count badge, and appear
+    // as removable chips to its right (matching the Movies reference toolbar).
+    if (sectionType == "movie" || sectionType == "show") {
+        m_filtersBtn = new vitaplex::FilterChip();
+        m_filtersBtn->setText("Filters");
+        m_filtersBtn->setMarginRight(10);
+        styleButton(m_filtersBtn, false);
+        m_filtersBtn->registerClickAction([this](brls::View*) {
+            showFilterMenu();
+            return true;
+        });
+
+        // Count badge pinned to the chip's top-right corner. Absolute position
+        // keeps it out of the button's flex flow (so it doesn't widen the
+        // chip); hidden until at least one filter is active. Dark fill + gold
+        // text so it reads against the gold "active" chip beneath it.
+        m_filtersBadge = new brls::Box();
+        m_filtersBadge->setAxis(brls::Axis::ROW);
+        m_filtersBadge->setJustifyContent(brls::JustifyContent::CENTER);
+        m_filtersBadge->setAlignItems(brls::AlignItems::CENTER);
+        m_filtersBadge->setHeight(18);
+        m_filtersBadge->setMinWidth(18);
+        m_filtersBadge->setCornerRadius(9);
+        m_filtersBadge->setPaddingLeft(5);
+        m_filtersBadge->setPaddingRight(5);
+        m_filtersBadge->setBackgroundColor(vitaplex::palette::goldInk);
+        m_filtersBadge->setPositionType(brls::PositionType::ABSOLUTE);
+        m_filtersBadge->setPositionTop(-7);
+        m_filtersBadge->setPositionRight(-7);
+        m_filtersBadge->setVisibility(brls::Visibility::GONE);
+        m_filtersBadgeLabel = new brls::Label();
+        m_filtersBadgeLabel->setText("0");
+        m_filtersBadgeLabel->setFontSize(12);
+        m_filtersBadgeLabel->setTextColor(vitaplex::palette::gold);
+        m_filtersBadge->addView(m_filtersBadgeLabel);
+        m_filtersBtn->addView(m_filtersBadge);
+
+        m_viewModeBox->addView(m_filtersBtn);
+
+        // Removable applied-filter chips ("Action", "2010s", …) live in their
+        // own row box immediately to the right of the Filters chip.
+        m_appliedFiltersBox = new brls::Box();
+        m_appliedFiltersBox->setAxis(brls::Axis::ROW);
+        m_appliedFiltersBox->setAlignItems(brls::AlignItems::CENTER);
+        m_viewModeBox->addView(m_appliedFiltersBox);
+    }
+
     // Unwatched quick-filter chip (watchable video sections only). Toggles the
     // gold "picked" style and re-queries the grid with Plex's unwatched=1.
     if (sectionType == "movie" || sectionType == "show") {
@@ -363,7 +413,10 @@ void LibrarySectionTab::loadContent() {
     if (settings.showCollections) {
         loadCollections();
     }
-    if (settings.showGenres) {
+    // Video sections load genres for the inline Filters menu even when the
+    // Categories browse chip (settings.showGenres) is turned off.
+    bool isVideoSection = (m_sectionType == "movie" || m_sectionType == "show");
+    if (settings.showGenres || isVideoSection) {
         loadGenres();
     }
     if (settings.showPlaylists && m_sectionType == "artist") {
@@ -491,6 +544,8 @@ void LibrarySectionTab::loadNextPage() {
 std::string LibrarySectionTab::buildListParams() const {
     std::string p = "&sort=" + m_sortParam;
     if (m_unwatchedOnly) p += "&unwatched=1";
+    if (!m_filterGenreKey.empty()) p += "&genre=" + m_filterGenreKey;
+    if (!m_filterDecade.empty())   p += "&decade=" + m_filterDecade;
     return p;
 }
 
@@ -567,6 +622,187 @@ void LibrarySectionTab::showSortMenu() {
             }});
     }
     MediaDetailView::showOptionsPopover(anchor, "SORT", "Sort by", std::move(rows));
+}
+
+int LibrarySectionTab::activeFilterCount() const {
+    int n = 0;
+    if (!m_filterGenreKey.empty()) n++;
+    if (!m_filterDecade.empty())   n++;
+    return n;
+}
+
+// Top-level Filters chooser: pick a genre, pick a decade, or clear. Each row
+// opens a styled sub-popover — the same design as the Sort menu (the genre one
+// scrolls, since genre lists can be long). showOptionsPopover pops itself
+// before running a row action, so opening the sub-popover from a row is safe
+// (no stacked modals).
+void LibrarySectionTab::showFilterMenu() {
+    brls::View* anchor = m_filtersBtn ? m_filtersBtn : brls::Application::getCurrentFocus();
+
+    std::vector<OptionRow> rows;
+
+    // Genre row — only when this section actually has genres loaded.
+    if (!m_genres.empty()) {
+        rows.push_back({ "", "Genre",
+                         m_filterGenreLabel.empty() ? "Any" : m_filterGenreLabel,
+                         false, false,
+            [this](brls::View*) { showGenreFilterPicker(); return true; }});
+    }
+
+    // Decade row — always available (computed client-side, no fetch).
+    rows.push_back({ "", "Decade",
+                     m_filterDecadeLabel.empty() ? "Any" : m_filterDecadeLabel,
+                     false, false,
+        [this](brls::View*) { showDecadeFilterPicker(); return true; }});
+
+    // Clear row — only when something is active.
+    if (activeFilterCount() > 0) {
+        rows.push_back({ "cross.png", "Clear filters", "", false, true,
+            [this](brls::View*) {
+                m_filterGenreKey.clear();
+                m_filterGenreLabel.clear();
+                m_filterDecade.clear();
+                m_filterDecadeLabel.clear();
+                applyFilters();
+                return true;
+            }});
+    }
+
+    MediaDetailView::showOptionsPopover(anchor, "FILTERS", "Filter by", std::move(rows));
+}
+
+// Genre picker — same styled popover as the Sort menu, in scrollable mode
+// (genre lists run long). A leading check marks the active genre, exactly like
+// the sort rows.
+void LibrarySectionTab::showGenreFilterPicker() {
+    brls::View* anchor = m_filtersBtn ? m_filtersBtn : brls::Application::getCurrentFocus();
+
+    std::vector<OptionRow> rows;
+
+    bool anyCurrent = m_filterGenreKey.empty();
+    rows.push_back({ anyCurrent ? "check-circle.png" : "", "Any genre", "",
+                     false, false,
+        [this](brls::View*) {
+            m_filterGenreKey.clear();
+            m_filterGenreLabel.clear();
+            applyFilters();
+            return true;
+        }});
+
+    for (const auto& g : m_genres) {
+        std::string key   = g.key;
+        std::string title = g.title;
+        bool current = (key == m_filterGenreKey);
+        rows.push_back({ current ? "check-circle.png" : "", title, "",
+                         false, false,
+            [this, key, title](brls::View*) {
+                m_filterGenreKey   = key;
+                m_filterGenreLabel = title;
+                applyFilters();
+                return true;
+            }});
+    }
+
+    MediaDetailView::showOptionsPopover(anchor, "FILTERS", "Genre", std::move(rows), true);
+}
+
+// Decade picker — same styled popover. Short fixed list, so no scrolling.
+void LibrarySectionTab::showDecadeFilterPicker() {
+    brls::View* anchor = m_filtersBtn ? m_filtersBtn : brls::Application::getCurrentFocus();
+
+    // label / Plex &decade= start year.
+    struct Dec { const char* label; const char* value; };
+    static const Dec kDecades[] = {
+        {"2020s", "2020"}, {"2010s", "2010"}, {"2000s", "2000"}, {"1990s", "1990"},
+        {"1980s", "1980"}, {"1970s", "1970"}, {"1960s", "1960"}, {"1950s", "1950"},
+        {"1940s", "1940"}, {"Older", "1930"},
+    };
+
+    std::vector<OptionRow> rows;
+
+    bool anyCurrent = m_filterDecade.empty();
+    rows.push_back({ anyCurrent ? "check-circle.png" : "", "Any decade", "",
+                     false, false,
+        [this](brls::View*) {
+            m_filterDecade.clear();
+            m_filterDecadeLabel.clear();
+            applyFilters();
+            return true;
+        }});
+
+    for (const auto& d : kDecades) {
+        std::string label = d.label;
+        std::string value = d.value;
+        bool current = (value == m_filterDecade);
+        rows.push_back({ current ? "check-circle.png" : "", label, "",
+                         false, false,
+            [this, label, value](brls::View*) {
+                m_filterDecade      = value;
+                m_filterDecadeLabel = label;
+                applyFilters();
+                return true;
+            }});
+    }
+
+    MediaDetailView::showOptionsPopover(anchor, "FILTERS", "Decade", std::move(rows), false);
+}
+
+// Push the current filter state into the UI (chip styling, count badge, applied
+// chips) and re-query the grid.
+void LibrarySectionTab::applyFilters() {
+    const int n = activeFilterCount();
+
+    if (m_filtersBtn) {
+        styleButton(m_filtersBtn, n > 0);   // gold when any filter is active
+    }
+    if (m_filtersBadge && m_filtersBadgeLabel) {
+        if (n > 0) {
+            m_filtersBadgeLabel->setText(std::to_string(n));
+            m_filtersBadge->setVisibility(brls::Visibility::VISIBLE);
+        } else {
+            m_filtersBadge->setVisibility(brls::Visibility::GONE);
+        }
+    }
+
+    rebuildAppliedFilterChips();
+    reloadAllItems();
+}
+
+void LibrarySectionTab::rebuildAppliedFilterChips() {
+    if (!m_appliedFiltersBox) return;
+    m_appliedFiltersBox->clearViews();   // frees the old chips
+
+    auto addChip = [this](const std::string& label, std::function<void()> onRemove) {
+        auto* chip = new vitaplex::FilterChip();
+        chip->setText(label);
+        chip->setMarginRight(10);
+        chip->setPicked(false);   // neutral fill, like the reference's applied chips
+        chip->registerClickAction([this, onRemove](brls::View*) {
+            // Removing rebuilds (and frees) this very chip. Park focus on the
+            // Filters chip and defer a frame so the click dispatch finishes
+            // before the chip is destroyed (same hazard the < Back button
+            // guards against).
+            if (m_filtersBtn) brls::Application::giveFocus(m_filtersBtn);
+            brls::sync([onRemove]() { onRemove(); });
+            return true;
+        });
+        m_appliedFiltersBox->addView(chip);
+    };
+
+    if (!m_filterGenreLabel.empty()) {
+        addChip(m_filterGenreLabel, [this]() {
+            m_filterGenreKey.clear();
+            m_filterGenreLabel.clear();
+            applyFilters();
+        });
+    }
+    if (!m_filterDecadeLabel.empty()) {
+        addChip(m_filterDecadeLabel, [this]() {
+            m_filterDecade.clear();
+            m_filterDecadeLabel.clear();
+            applyFilters();
+        });
+    }
 }
 
 void LibrarySectionTab::updateCountLabel() {
@@ -796,7 +1032,8 @@ void LibrarySectionTab::updateViewModeButtons() {
         wouldHide(m_categoriesBtn, showModeButtons && !m_genres.empty()) ||
         wouldHide(m_playlistsBtn, showModeButtons && !m_playlists.empty()) ||
         wouldHide(m_sortBtn, allItems) ||
-        wouldHide(m_unwatchedBtn, allItems);
+        wouldHide(m_unwatchedBtn, allItems) ||
+        wouldHide(m_filtersBtn, allItems);
 
     // Walk up from the focused view; if any ancestor is currently
     // Visibility::GONE the focus is sitting in a hidden subtree.
@@ -844,6 +1081,8 @@ void LibrarySectionTab::updateViewModeButtons() {
     if (m_toolbarSpacer) m_toolbarSpacer->setVisibility(vis(allItems));
     if (m_sortBtn)       m_sortBtn->setVisibility(vis(allItems));
     if (m_unwatchedBtn)  m_unwatchedBtn->setVisibility(vis(allItems));
+    if (m_filtersBtn)        m_filtersBtn->setVisibility(vis(allItems));
+    if (m_appliedFiltersBox) m_appliedFiltersBox->setVisibility(vis(allItems));
 
     // Update active styling on mode buttons
     if (showModeButtons) {

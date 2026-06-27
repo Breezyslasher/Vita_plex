@@ -67,6 +67,18 @@ private:
     void reloadAllItems();
     void showSortMenu();
 
+    // Movies-style Filters menu (video sections): an inline genre/decade
+    // filter that replaces the Categories browse chip. showFilterMenu opens the
+    // chooser popover; the genre/decade pickers reuse the same styled popover as
+    // the Sort menu (genre in scrollable mode); apply rebuilds the applied-filter
+    // chips + count badge and re-queries the grid.
+    void showFilterMenu();
+    void showGenreFilterPicker();
+    void showDecadeFilterPicker();
+    void applyFilters();
+    void rebuildAppliedFilterChips();
+    int  activeFilterCount() const;
+
     // A-Z jump rail (right edge): build it, jump the grid to the first title in
     // a letter bucket, and refresh its visibility (sort-dependent) + highlight.
     void buildAzRail();
@@ -104,10 +116,23 @@ private:
     brls::Button* m_unwatchedBtn = nullptr;
     brls::Button* m_sortBtn = nullptr;
 
+    // Filters chip (video sections) + its active-count badge + the row of
+    // removable applied-filter chips that sits to its right.
+    brls::Button* m_filtersBtn = nullptr;
+    brls::Box*    m_filtersBadge = nullptr;
+    brls::Label*  m_filtersBadgeLabel = nullptr;
+    brls::Box*    m_appliedFiltersBox = nullptr;
+
     // Current ALL_ITEMS sort + filter. Default = Recently Added (Plex addedAt).
     std::string m_sortParam = "addedAt:desc";
     std::string m_sortLabel = "Recently Added";
     bool m_unwatchedOnly = false;
+
+    // Inline filter state (video sections). Empty string = "any".
+    std::string m_filterGenreKey;     // Plex genre id, used as &genre=
+    std::string m_filterGenreLabel;   // display name, e.g. "Action"
+    std::string m_filterDecade;       // decade start year, used as &decade= ("2010")
+    std::string m_filterDecadeLabel;  // display name, e.g. "2010s"
 
     // Main content grid
     RecyclingGrid* m_contentGrid = nullptr;
