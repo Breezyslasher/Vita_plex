@@ -11,6 +11,7 @@
 #include "app/plex_palette.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
+#include "utils/http_client.hpp"
 #include "app/music_queue.hpp"
 #include "app/downloads_manager.hpp"
 #include "platform/platform.hpp"
@@ -100,8 +101,10 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
         m_viewModeBox->addView(m_collectionsBtn);
     }
 
-    // Categories button (only show if enabled)
-    if (settings.showGenres) {
+    // Categories button (genre browse). Video sections (movie / show) instead
+    // get the inline Filters menu below, which filters the grid by genre in
+    // place rather than opening a separate genre-cards browse mode.
+    if (settings.showGenres && sectionType != "movie" && sectionType != "show") {
         m_categoriesBtn = new vitaplex::FilterChip();
         m_categoriesBtn->setText("Categories");
         m_categoriesBtn->setMarginRight(10);
@@ -127,6 +130,54 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     }
 
     // ── Direction-A discovery controls ──
+    // Filters chip (video sections): opens an inline genre + decade filter
+    // menu. Active filters turn the chip gold, bump a count badge, and appear
+    // as removable chips to its right (matching the Movies reference toolbar).
+    if (sectionType == "movie" || sectionType == "show") {
+        m_filtersBtn = new vitaplex::FilterChip();
+        m_filtersBtn->setText("Filters");
+        m_filtersBtn->setMarginRight(10);
+        styleButton(m_filtersBtn, false);
+        m_filtersBtn->registerClickAction([this](brls::View*) {
+            showFilterMenu();
+            return true;
+        });
+
+        // Count badge pinned to the chip's top-right corner. Absolute position
+        // keeps it out of the button's flex flow (so it doesn't widen the
+        // chip); hidden until at least one filter is active. Dark fill + gold
+        // text so it reads against the gold "active" chip beneath it.
+        m_filtersBadge = new brls::Box();
+        m_filtersBadge->setAxis(brls::Axis::ROW);
+        m_filtersBadge->setJustifyContent(brls::JustifyContent::CENTER);
+        m_filtersBadge->setAlignItems(brls::AlignItems::CENTER);
+        m_filtersBadge->setHeight(18);
+        m_filtersBadge->setMinWidth(18);
+        m_filtersBadge->setCornerRadius(9);
+        m_filtersBadge->setPaddingLeft(5);
+        m_filtersBadge->setPaddingRight(5);
+        m_filtersBadge->setBackgroundColor(vitaplex::palette::goldInk);
+        m_filtersBadge->setPositionType(brls::PositionType::ABSOLUTE);
+        m_filtersBadge->setPositionTop(-7);
+        m_filtersBadge->setPositionRight(-7);
+        m_filtersBadge->setVisibility(brls::Visibility::GONE);
+        m_filtersBadgeLabel = new brls::Label();
+        m_filtersBadgeLabel->setText("0");
+        m_filtersBadgeLabel->setFontSize(12);
+        m_filtersBadgeLabel->setTextColor(vitaplex::palette::gold);
+        m_filtersBadge->addView(m_filtersBadgeLabel);
+        m_filtersBtn->addView(m_filtersBadge);
+
+        m_viewModeBox->addView(m_filtersBtn);
+
+        // Removable applied-filter chips ("Action", "2010s", …) live in their
+        // own row box immediately to the right of the Filters chip.
+        m_appliedFiltersBox = new brls::Box();
+        m_appliedFiltersBox->setAxis(brls::Axis::ROW);
+        m_appliedFiltersBox->setAlignItems(brls::AlignItems::CENTER);
+        m_viewModeBox->addView(m_appliedFiltersBox);
+    }
+
     // Unwatched quick-filter chip (watchable video sections only). Toggles the
     // gold "picked" style and re-queries the grid with Plex's unwatched=1.
     if (sectionType == "movie" || sectionType == "show") {
@@ -491,6 +542,11 @@ void LibrarySectionTab::loadNextPage() {
 std::string LibrarySectionTab::buildListParams() const {
     std::string p = "&sort=" + m_sortParam;
     if (m_unwatchedOnly) p += "&unwatched=1";
+    // Each active filter becomes "&<field>=<value>" (value URL-encoded — content
+    // ratings and the like can contain spaces).
+    for (const auto& kv : m_activeFilters) {
+        p += "&" + kv.first + "=" + HttpClient::urlEncode(kv.second.first);
+    }
     return p;
 }
 
@@ -540,8 +596,6 @@ void LibrarySectionTab::reloadAllItems() {
 }
 
 void LibrarySectionTab::showSortMenu() {
-    brls::View* anchor = m_sortBtn ? m_sortBtn : brls::Application::getCurrentFocus();
-
     struct SortOpt { const char* label; const char* param; };
     static const SortOpt kOpts[] = {
         {"Recently Added",    "addedAt:desc"},
@@ -556,8 +610,10 @@ void LibrarySectionTab::showSortMenu() {
         std::string label = o.label;
         std::string param = o.param;
         bool current = (m_sortParam == param);
+        // check-circle marks the active sort, neutral label — same selection
+        // cue as the Filters dialog.
         rows.push_back({ current ? "check-circle.png" : "",
-                         label, "", current, false,
+                         label, "", false, false,
             [this, label, param](brls::View*) {
                 m_sortParam = param;
                 m_sortLabel = label;
@@ -566,7 +622,174 @@ void LibrarySectionTab::showSortMenu() {
                 return true;
             }});
     }
-    MediaDetailView::showOptionsPopover(anchor, "SORT", "Sort by", std::move(rows));
+    // Centered, audio-picker style — matches the Filters dialog (global toolbar
+    // actions center; item context menus stay anchored to their item).
+    MediaDetailView::showCenteredChoice("Sort by", "", std::move(rows), /*scrollable=*/false);
+}
+
+int LibrarySectionTab::activeFilterCount() const {
+    return static_cast<int>(m_activeFilters.size());
+}
+
+// The filter fields offered per section type — every standard Plex library
+// filter except the people fields (director/actor/writer), whose value lists
+// run to thousands and the picker has no search yet. {Plex field, display name}.
+static const std::vector<std::pair<std::string, std::string>>& filterFieldsFor(
+    const std::string& sectionType) {
+    static const std::vector<std::pair<std::string, std::string>> kMovie = {
+        {"genre", "Genre"}, {"year", "Year"}, {"decade", "Decade"},
+        {"contentRating", "Content Rating"}, {"resolution", "Resolution"},
+        {"studio", "Studio"}, {"country", "Country"},
+    };
+    static const std::vector<std::pair<std::string, std::string>> kShow = {
+        {"genre", "Genre"}, {"year", "Year"}, {"decade", "Decade"},
+        {"contentRating", "Content Rating"}, {"studio", "Studio"}, {"country", "Country"},
+    };
+    return sectionType == "show" ? kShow : kMovie;
+}
+
+// Top-level Filters chooser — a centered dialog (audio-picker style) listing
+// every filter field with its current value, plus "Clear all". Picking a field
+// opens its value picker. showCenteredChoice dismisses itself before running a
+// row action, so opening the value picker from a row is safe (no stacked modals).
+void LibrarySectionTab::showFilterMenu() {
+    const auto& fields = filterFieldsFor(m_sectionType);
+
+    std::vector<OptionRow> rows;
+    for (const auto& f : fields) {
+        const std::string field = f.first;
+        const std::string label = f.second;
+        auto it = m_activeFilters.find(field);
+        const bool active = (it != m_activeFilters.end());
+        std::string sub = active ? it->second.second : "Any";
+        rows.push_back({ active ? "check-circle.png" : "", label, sub, false, false,
+            [this, field, label](brls::View*) {
+                openFilterValuePicker(field, label);
+                return true;
+            }});
+    }
+
+    if (activeFilterCount() > 0) {
+        rows.push_back({ "cross.png", "Clear all filters", "", false, true,
+            [this](brls::View*) {
+                m_activeFilters.clear();
+                applyFilters();
+                return true;
+            }});
+    }
+
+    // Field list is short and bounded — no scrolling needed here (the long
+    // lists are the per-field value pickers).
+    MediaDetailView::showCenteredChoice("Filters", "Narrow this library",
+                                        std::move(rows), /*scrollable=*/false);
+}
+
+// Fetch a field's available values (cached after the first time) and then show
+// the value picker. The fetch is async; the dialog appears once it returns.
+void LibrarySectionTab::openFilterValuePicker(const std::string& field,
+                                              const std::string& fieldLabel) {
+    auto cached = m_filterValueCache.find(field);
+    if (cached != m_filterValueCache.end()) {
+        showFilterValues(field, fieldLabel, cached->second);
+        return;
+    }
+
+    std::string key = m_sectionKey;
+    std::weak_ptr<bool> aliveWeak = m_alive;
+    asyncRun([this, key, field, fieldLabel, aliveWeak]() {
+        std::vector<GenreItem> values;
+        PlexClient::getInstance().fetchFilterValues(key, field, values);
+        brls::sync([this, field, fieldLabel, values, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+            m_filterValueCache[field] = values;
+            showFilterValues(field, fieldLabel, values);
+        });
+    });
+}
+
+// Centered, scrollable value picker for one filter field. "Any <field>" clears
+// it; a leading check marks the active value.
+void LibrarySectionTab::showFilterValues(const std::string& field,
+                                         const std::string& fieldLabel,
+                                         const std::vector<GenreItem>& values) {
+    auto it = m_activeFilters.find(field);
+    const std::string currentKey = (it != m_activeFilters.end()) ? it->second.first : "";
+
+    std::vector<OptionRow> rows;
+    rows.push_back({ currentKey.empty() ? "check-circle.png" : "",
+                     "Any " + fieldLabel, "", false, false,
+        [this, field](brls::View*) {
+            m_activeFilters.erase(field);
+            applyFilters();
+            return true;
+        }});
+
+    for (const auto& v : values) {
+        std::string vkey   = v.key;
+        std::string vtitle = v.title;
+        const bool current = (vkey == currentKey);
+        rows.push_back({ current ? "check-circle.png" : "", vtitle, "", false, false,
+            [this, field, vkey, vtitle](brls::View*) {
+                m_activeFilters[field] = { vkey, vtitle };
+                applyFilters();
+                return true;
+            }});
+    }
+
+    MediaDetailView::showCenteredChoice(fieldLabel, "", std::move(rows), /*scrollable=*/true);
+}
+
+// Push the current filter state into the UI (chip styling, count badge, applied
+// chips) and re-query the grid.
+void LibrarySectionTab::applyFilters() {
+    const int n = activeFilterCount();
+
+    if (m_filtersBtn) {
+        styleButton(m_filtersBtn, n > 0);   // gold when any filter is active
+    }
+    if (m_filtersBadge && m_filtersBadgeLabel) {
+        if (n > 0) {
+            m_filtersBadgeLabel->setText(std::to_string(n));
+            m_filtersBadge->setVisibility(brls::Visibility::VISIBLE);
+        } else {
+            m_filtersBadge->setVisibility(brls::Visibility::GONE);
+        }
+    }
+
+    rebuildAppliedFilterChips();
+    reloadAllItems();
+}
+
+void LibrarySectionTab::rebuildAppliedFilterChips() {
+    if (!m_appliedFiltersBox) return;
+    m_appliedFiltersBox->clearViews();   // frees the old chips
+
+    auto addChip = [this](const std::string& label, std::function<void()> onRemove) {
+        auto* chip = new vitaplex::FilterChip();
+        chip->setText(label);
+        chip->setMarginRight(10);
+        chip->setPicked(false);   // neutral fill, like the reference's applied chips
+        chip->registerClickAction([this, onRemove](brls::View*) {
+            // Removing rebuilds (and frees) this very chip. Park focus on the
+            // Filters chip and defer a frame so the click dispatch finishes
+            // before the chip is destroyed (same hazard the < Back button
+            // guards against).
+            if (m_filtersBtn) brls::Application::giveFocus(m_filtersBtn);
+            brls::sync([onRemove]() { onRemove(); });
+            return true;
+        });
+        m_appliedFiltersBox->addView(chip);
+    };
+
+    // One removable chip per active filter, showing its value label.
+    for (const auto& kv : m_activeFilters) {
+        const std::string field = kv.first;
+        addChip(kv.second.second, [this, field]() {
+            m_activeFilters.erase(field);
+            applyFilters();
+        });
+    }
 }
 
 void LibrarySectionTab::updateCountLabel() {
@@ -796,7 +1019,8 @@ void LibrarySectionTab::updateViewModeButtons() {
         wouldHide(m_categoriesBtn, showModeButtons && !m_genres.empty()) ||
         wouldHide(m_playlistsBtn, showModeButtons && !m_playlists.empty()) ||
         wouldHide(m_sortBtn, allItems) ||
-        wouldHide(m_unwatchedBtn, allItems);
+        wouldHide(m_unwatchedBtn, allItems) ||
+        wouldHide(m_filtersBtn, allItems);
 
     // Walk up from the focused view; if any ancestor is currently
     // Visibility::GONE the focus is sitting in a hidden subtree.
@@ -844,6 +1068,8 @@ void LibrarySectionTab::updateViewModeButtons() {
     if (m_toolbarSpacer) m_toolbarSpacer->setVisibility(vis(allItems));
     if (m_sortBtn)       m_sortBtn->setVisibility(vis(allItems));
     if (m_unwatchedBtn)  m_unwatchedBtn->setVisibility(vis(allItems));
+    if (m_filtersBtn)        m_filtersBtn->setVisibility(vis(allItems));
+    if (m_appliedFiltersBox) m_appliedFiltersBox->setVisibility(vis(allItems));
 
     // Update active styling on mode buttons
     if (showModeButtons) {

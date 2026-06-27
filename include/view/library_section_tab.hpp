@@ -9,6 +9,9 @@
 #include <borealis.hpp>
 #include <memory>
 #include <vector>
+#include <map>
+#include <string>
+#include <utility>
 #include "app/plex_client.hpp"
 #include "view/recycling_grid.hpp"
 
@@ -67,6 +70,20 @@ private:
     void reloadAllItems();
     void showSortMenu();
 
+    // Movies-style Filters menu (video sections): inline filtering across all of
+    // Plex's library filters (genre, year, decade, content rating, resolution,
+    // studio, country). showFilterMenu lists the fields in a centered dialog
+    // (audio-picker style); picking a field fetches its values (cached) and
+    // opens a scrollable value picker; apply rebuilds the applied-filter chips +
+    // count badge and re-queries the grid.
+    void showFilterMenu();
+    void openFilterValuePicker(const std::string& field, const std::string& fieldLabel);
+    void showFilterValues(const std::string& field, const std::string& fieldLabel,
+                          const std::vector<GenreItem>& values);
+    void applyFilters();
+    void rebuildAppliedFilterChips();
+    int  activeFilterCount() const;
+
     // A-Z jump rail (right edge): build it, jump the grid to the first title in
     // a letter bucket, and refresh its visibility (sort-dependent) + highlight.
     void buildAzRail();
@@ -104,10 +121,24 @@ private:
     brls::Button* m_unwatchedBtn = nullptr;
     brls::Button* m_sortBtn = nullptr;
 
+    // Filters chip (video sections) + its active-count badge + the row of
+    // removable applied-filter chips that sits to its right.
+    brls::Button* m_filtersBtn = nullptr;
+    brls::Box*    m_filtersBadge = nullptr;
+    brls::Label*  m_filtersBadgeLabel = nullptr;
+    brls::Box*    m_appliedFiltersBox = nullptr;
+
     // Current ALL_ITEMS sort + filter. Default = Recently Added (Plex addedAt).
     std::string m_sortParam = "addedAt:desc";
     std::string m_sortLabel = "Recently Added";
     bool m_unwatchedOnly = false;
+
+    // Inline filter state (video sections): active filters keyed by Plex filter
+    // field ("genre", "year", "decade", "contentRating", "resolution", "studio",
+    // "country"). Mapped value = {filter value/key, display label}. Empty = none.
+    std::map<std::string, std::pair<std::string, std::string>> m_activeFilters;
+    // Per-field cache of fetched filter values, so reopening a picker is instant.
+    std::map<std::string, std::vector<GenreItem>> m_filterValueCache;
 
     // Main content grid
     RecyclingGrid* m_contentGrid = nullptr;

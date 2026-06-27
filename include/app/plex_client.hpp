@@ -357,6 +357,11 @@ public:
     bool fetchCollections(const std::string& sectionKey, std::vector<MediaItem>& collections);
     bool fetchGenres(const std::string& sectionKey, std::vector<std::string>& genres);
     bool fetchGenreItems(const std::string& sectionKey, std::vector<GenreItem>& genres);
+    // Generic filter-choice fetch: returns the available values for any Plex
+    // library filter field (genre, year, decade, contentRating, resolution,
+    // studio, country, …) as title/key pairs. Each key feeds the matching
+    // ?{field}={key} query. fetchGenreItems is just this with field="genre".
+    bool fetchFilterValues(const std::string& sectionKey, const std::string& field, std::vector<GenreItem>& values);
     bool fetchByGenre(const std::string& sectionKey, const std::string& genre, std::vector<MediaItem>& items, int metadataType = 0);
     bool fetchByGenreKey(const std::string& sectionKey, const std::string& genreKey, std::vector<MediaItem>& items, int metadataType = 0);
 
