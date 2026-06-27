@@ -596,8 +596,6 @@ void LibrarySectionTab::reloadAllItems() {
 }
 
 void LibrarySectionTab::showSortMenu() {
-    brls::View* anchor = m_sortBtn ? m_sortBtn : brls::Application::getCurrentFocus();
-
     struct SortOpt { const char* label; const char* param; };
     static const SortOpt kOpts[] = {
         {"Recently Added",    "addedAt:desc"},
@@ -612,8 +610,10 @@ void LibrarySectionTab::showSortMenu() {
         std::string label = o.label;
         std::string param = o.param;
         bool current = (m_sortParam == param);
+        // check-circle marks the active sort, neutral label — same selection
+        // cue as the Filters dialog.
         rows.push_back({ current ? "check-circle.png" : "",
-                         label, "", current, false,
+                         label, "", false, false,
             [this, label, param](brls::View*) {
                 m_sortParam = param;
                 m_sortLabel = label;
@@ -622,7 +622,9 @@ void LibrarySectionTab::showSortMenu() {
                 return true;
             }});
     }
-    MediaDetailView::showOptionsPopover(anchor, "SORT", "Sort by", std::move(rows));
+    // Centered, audio-picker style — matches the Filters dialog (global toolbar
+    // actions center; item context menus stay anchored to their item).
+    MediaDetailView::showCenteredChoice("Sort by", "", std::move(rows), /*scrollable=*/false);
 }
 
 int LibrarySectionTab::activeFilterCount() const {
