@@ -311,9 +311,12 @@ if(PLATFORM_PSV)
     list(APPEND APP_SOURCES src/utils/vita_stubs.c)
 endif()
 
-# Switch: userAppInit/userAppExit (romfs, sockets, system services init)
+# Switch: userAppInit/userAppExit (romfs, sockets, system services init) +
+# pthread_create wrapper (1 MB stack floor for libmpv/ffmpeg threads — libnx's
+# 128 KB default overflows them, crashing at playback start).
 if(PLATFORM_SWITCH)
     list(APPEND APP_SOURCES ${BOREALIS_LIBRARY}/lib/platforms/switch/switch_wrapper.c)
+    list(APPEND APP_SOURCES src/utils/switch_stubs.c)
 endif()
 
 # Android asset extraction helper (used by platform_android.cpp)
@@ -648,6 +651,11 @@ if(PLATFORM_PSV)
         SceVshBridge_stub
     )
 elseif(PLATFORM_SWITCH)
+    # Required for __wrap_pthread_create in src/utils/switch_stubs.c — floors
+    # libmpv/ffmpeg thread stacks above libnx's 128 KB default so they stop
+    # overflowing the moment playback starts.
+    target_link_options(${PROJECT_NAME} PRIVATE "-Wl,--wrap=pthread_create")
+
     target_link_libraries(${PROJECT_NAME}
         nx
         dav1d
