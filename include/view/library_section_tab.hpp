@@ -107,18 +107,17 @@ private:
     std::vector<brls::Label*> m_azLetters;
     char m_currentAzLetter = 0;
 
-    // View mode selector buttons
+    // View mode selector buttons. (No "All" chip — the grid shows all items by
+    // default and the Filters menu narrows it; Back returns from a sub-mode.)
     brls::Box* m_viewModeBox = nullptr;
-    brls::Button* m_allBtn = nullptr;
     brls::Button* m_collectionsBtn = nullptr;
     brls::Button* m_categoriesBtn = nullptr;
     brls::Button* m_playlistsBtn = nullptr;
     brls::Button* m_backBtn = nullptr;  // Back button when in filtered view
 
-    // Direction-A toolbar: a flex spacer pushes the Sort chip to the right;
-    // the Unwatched chip is a quick filter (movie / show sections only).
+    // Direction-A toolbar: a flex spacer pushes the Sort chip to the right.
+    // (Unwatched is now a "Watch Status" entry inside the Filters menu.)
     brls::Box*    m_toolbarSpacer = nullptr;
-    brls::Button* m_unwatchedBtn = nullptr;
     brls::Button* m_sortBtn = nullptr;
 
     // Filters chip (video sections) + its active-count badge + the row of
@@ -131,7 +130,6 @@ private:
     // Current ALL_ITEMS sort + filter. Default = Recently Added (Plex addedAt).
     std::string m_sortParam = "addedAt:desc";
     std::string m_sortLabel = "Recently Added";
-    bool m_unwatchedOnly = false;
 
     // Inline filter state (video sections): active filters keyed by Plex filter
     // field ("genre", "year", "decade", "contentRating", "resolution", "studio",

@@ -70,23 +70,12 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
 
     const auto& settings = Application::getInstance().getSettings();
 
-    // View mode selector (All / Collections / Categories)
+    // View mode selector (Collections / Categories / Filters / Sort)
     m_viewModeBox = new brls::Box();
     m_viewModeBox->setAxis(brls::Axis::ROW);
     m_viewModeBox->setJustifyContent(brls::JustifyContent::FLEX_START);
     m_viewModeBox->setAlignItems(brls::AlignItems::CENTER);
     m_viewModeBox->setMarginBottom(15);
-
-    // All Items button
-    m_allBtn = new vitaplex::FilterChip();
-    m_allBtn->setText("All");
-    m_allBtn->setMarginRight(10);
-    styleButton(m_allBtn, true);  // Active by default
-    m_allBtn->registerClickAction([this](brls::View* view) {
-        showAllItems();
-        return true;
-    });
-    m_viewModeBox->addView(m_allBtn);
 
     // Collections button (only show if enabled)
     if (settings.showCollections) {
@@ -178,21 +167,7 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
         m_viewModeBox->addView(m_appliedFiltersBox);
     }
 
-    // Unwatched quick-filter chip (watchable video sections only). Toggles the
-    // gold "picked" style and re-queries the grid with Plex's unwatched=1.
-    if (sectionType == "movie" || sectionType == "show") {
-        m_unwatchedBtn = new vitaplex::FilterChip();
-        m_unwatchedBtn->setText("Unwatched");
-        m_unwatchedBtn->setMarginRight(10);
-        styleButton(m_unwatchedBtn, false);
-        m_unwatchedBtn->registerClickAction([this](brls::View*) {
-            m_unwatchedOnly = !m_unwatchedOnly;
-            styleButton(m_unwatchedBtn, m_unwatchedOnly);
-            reloadAllItems();
-            return true;
-        });
-        m_viewModeBox->addView(m_unwatchedBtn);
-    }
+    // (Unwatched moved into the Filters menu as a "Watch Status" entry.)
 
     // Flex spacer pushes the Sort chip to the right edge of the toolbar.
     m_toolbarSpacer = new brls::Box();
@@ -541,9 +516,9 @@ void LibrarySectionTab::loadNextPage() {
 
 std::string LibrarySectionTab::buildListParams() const {
     std::string p = "&sort=" + m_sortParam;
-    if (m_unwatchedOnly) p += "&unwatched=1";
     // Each active filter becomes "&<field>=<value>" (value URL-encoded — content
-    // ratings and the like can contain spaces).
+    // ratings and the like can contain spaces). Watch Status rides in here too,
+    // as field "unwatched" with value "1"/"0".
     for (const auto& kv : m_activeFilters) {
         p += "&" + kv.first + "=" + HttpClient::urlEncode(kv.second.first);
     }
@@ -636,14 +611,22 @@ int LibrarySectionTab::activeFilterCount() const {
 // run to thousands and the picker has no search yet. {Plex field, display name}.
 static const std::vector<std::pair<std::string, std::string>>& filterFieldsFor(
     const std::string& sectionType) {
+    // "unwatched" is the Watch Status filter (handled specially — fixed values,
+    // no value endpoint). Resolution is movie-only (shows have no section-level
+    // resolution filter on Plex).
     static const std::vector<std::pair<std::string, std::string>> kMovie = {
+        {"unwatched", "Watch Status"},
         {"genre", "Genre"}, {"year", "Year"}, {"decade", "Decade"},
         {"contentRating", "Content Rating"}, {"resolution", "Resolution"},
+        {"audioLanguage", "Audio Language"}, {"subtitleLanguage", "Subtitle Language"},
         {"studio", "Studio"}, {"country", "Country"},
     };
     static const std::vector<std::pair<std::string, std::string>> kShow = {
+        {"unwatched", "Watch Status"},
         {"genre", "Genre"}, {"year", "Year"}, {"decade", "Decade"},
-        {"contentRating", "Content Rating"}, {"studio", "Studio"}, {"country", "Country"},
+        {"contentRating", "Content Rating"},
+        {"audioLanguage", "Audio Language"}, {"subtitleLanguage", "Subtitle Language"},
+        {"studio", "Studio"}, {"country", "Country"},
     };
     return sectionType == "show" ? kShow : kMovie;
 }
@@ -688,6 +671,18 @@ void LibrarySectionTab::showFilterMenu() {
 // the value picker. The fetch is async; the dialog appears once it returns.
 void LibrarySectionTab::openFilterValuePicker(const std::string& field,
                                               const std::string& fieldLabel) {
+    // Watch Status is a boolean Plex filter (no /unwatched value endpoint), so
+    // its values are fixed rather than fetched: unwatched=1 unplayed, =0 played.
+    if (field == "unwatched") {
+        std::vector<GenreItem> vals;
+        GenreItem unplayed; unplayed.title = "Unplayed"; unplayed.key = "1";
+        GenreItem played;   played.title   = "Played";   played.key   = "0";
+        vals.push_back(unplayed);
+        vals.push_back(played);
+        showFilterValues(field, fieldLabel, vals);
+        return;
+    }
+
     auto cached = m_filterValueCache.find(field);
     if (cached != m_filterValueCache.end()) {
         showFilterValues(field, fieldLabel, cached->second);
@@ -1014,12 +1009,10 @@ void LibrarySectionTab::updateViewModeButtons() {
     };
     bool focusedAboutToHide =
         wouldHide(m_backBtn, inFilteredView) ||
-        wouldHide(m_allBtn, showModeButtons) ||
         wouldHide(m_collectionsBtn, showModeButtons && !m_collections.empty()) ||
         wouldHide(m_categoriesBtn, showModeButtons && !m_genres.empty()) ||
         wouldHide(m_playlistsBtn, showModeButtons && !m_playlists.empty()) ||
         wouldHide(m_sortBtn, allItems) ||
-        wouldHide(m_unwatchedBtn, allItems) ||
         wouldHide(m_filtersBtn, allItems);
 
     // Walk up from the focused view; if any ancestor is currently
@@ -1051,7 +1044,6 @@ void LibrarySectionTab::updateViewModeButtons() {
 
     m_backBtn->setVisibility(inFilteredView ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
 
-    m_allBtn->setVisibility(showModeButtons ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
     if (m_collectionsBtn) {
         m_collectionsBtn->setVisibility(showModeButtons && !m_collections.empty() ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
     }
@@ -1062,18 +1054,16 @@ void LibrarySectionTab::updateViewModeButtons() {
         m_playlistsBtn->setVisibility(showModeButtons && !m_playlists.empty() ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
     }
 
-    // Sort chip + Unwatched filter + their pushing spacer ride the all-items
-    // grid only (sorting a genre/collection list makes no sense).
+    // Sort + Filters chips and their pushing spacer ride the all-items grid
+    // only (sorting/filtering a genre/collection list makes no sense).
     auto vis = [](bool on) { return on ? brls::Visibility::VISIBLE : brls::Visibility::GONE; };
     if (m_toolbarSpacer) m_toolbarSpacer->setVisibility(vis(allItems));
     if (m_sortBtn)       m_sortBtn->setVisibility(vis(allItems));
-    if (m_unwatchedBtn)  m_unwatchedBtn->setVisibility(vis(allItems));
     if (m_filtersBtn)        m_filtersBtn->setVisibility(vis(allItems));
     if (m_appliedFiltersBox) m_appliedFiltersBox->setVisibility(vis(allItems));
 
     // Update active styling on mode buttons
     if (showModeButtons) {
-        styleButton(m_allBtn, m_viewMode == LibraryViewMode::ALL_ITEMS);
         if (m_collectionsBtn) styleButton(m_collectionsBtn, m_viewMode == LibraryViewMode::COLLECTIONS);
         if (m_categoriesBtn) styleButton(m_categoriesBtn, m_viewMode == LibraryViewMode::CATEGORIES);
         if (m_playlistsBtn) styleButton(m_playlistsBtn, m_viewMode == LibraryViewMode::PLAYLISTS);
