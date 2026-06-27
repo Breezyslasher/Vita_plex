@@ -516,11 +516,25 @@ void LibrarySectionTab::loadNextPage() {
 
 std::string LibrarySectionTab::buildListParams() const {
     std::string p = "&sort=" + m_sortParam;
-    // Each active filter becomes "&<field>=<value>" (value URL-encoded — content
-    // ratings and the like can contain spaces). Watch Status rides in here too,
-    // as field "unwatched" with value "1"/"0".
+    // Each active filter contributes its selected values. Plex semantics:
+    //   OR  -> one param, comma-joined:   &genre=1,2,3   (match any)
+    //   AND -> the param repeated:        &genre=1&genre=2  (match all)
+    // Values are URL-encoded (content ratings etc. can contain spaces); the
+    // comma separators stay literal. Watch Status rides in as field "unwatched".
     for (const auto& kv : m_activeFilters) {
-        p += "&" + kv.first + "=" + HttpClient::urlEncode(kv.second.first);
+        const std::string& field = kv.first;
+        const ActiveFilter& af = kv.second;
+        if (af.values.empty()) continue;
+        if (af.andMode) {
+            for (const auto& v : af.values)
+                p += "&" + field + "=" + HttpClient::urlEncode(v.first);
+        } else {
+            p += "&" + field + "=";
+            for (size_t i = 0; i < af.values.size(); i++) {
+                if (i) p += ",";
+                p += HttpClient::urlEncode(af.values[i].first);
+            }
+        }
     }
     return p;
 }
@@ -608,7 +622,10 @@ void LibrarySectionTab::showSortMenu() {
 }
 
 int LibrarySectionTab::activeFilterCount() const {
-    return static_cast<int>(m_activeFilters.size());
+    // Count every selected value (one applied chip each), not just the fields.
+    int n = 0;
+    for (const auto& kv : m_activeFilters) n += static_cast<int>(kv.second.values.size());
+    return n;
 }
 
 // The filter fields offered per section type — every standard Plex library
@@ -696,8 +713,16 @@ void LibrarySectionTab::showFilterMenu() {
         const std::string field = f.first;
         const std::string label = f.second;
         auto it = m_activeFilters.find(field);
-        const bool active = (it != m_activeFilters.end());
-        std::string sub = active ? it->second.second : "Any";
+        const bool active = (it != m_activeFilters.end() && !it->second.values.empty());
+        // Show the selected value(s) joined; the row's trailing label truncates.
+        std::string sub = "Any";
+        if (active) {
+            sub.clear();
+            for (size_t i = 0; i < it->second.values.size(); i++) {
+                if (i) sub += ", ";
+                sub += it->second.values[i].second;
+            }
+        }
         rows.push_back({ active ? "check-circle.png" : "", label, sub, false, false,
             [this, field, label](brls::View*) {
                 openFilterValuePicker(field, label);
@@ -738,7 +763,7 @@ void LibrarySectionTab::openFilterValuePicker(const std::string& field,
 
     auto cached = m_filterValueCache.find(field);
     if (cached != m_filterValueCache.end()) {
-        showFilterValues(field, fieldLabel, cached->second);
+        showMultiSelect(field, fieldLabel, cached->second);
         return;
     }
 
@@ -751,9 +776,53 @@ void LibrarySectionTab::openFilterValuePicker(const std::string& field,
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
             m_filterValueCache[field] = values;
-            showFilterValues(field, fieldLabel, values);
+            showMultiSelect(field, fieldLabel, values);
         });
     });
+}
+
+// Multi-value picker for a filter field (genre, studio, country, languages, …):
+// toggle several values and choose OR/AND matching. Commits the whole set at
+// once via the dialog's apply-on-close callback.
+void LibrarySectionTab::showMultiSelect(const std::string& field,
+                                        const std::string& fieldLabel,
+                                        const std::vector<GenreItem>& values) {
+    const bool isLanguage = (field == "audioLanguage" || field == "subtitleLanguage");
+
+    std::vector<std::pair<std::string, std::string>> current;
+    bool andMode = false;
+    auto it = m_activeFilters.find(field);
+    if (it != m_activeFilters.end()) {
+        current = it->second.values;
+        andMode = it->second.andMode;
+    }
+    auto isSelected = [&current](const std::string& key) {
+        for (const auto& v : current) if (v.first == key) return true;
+        return false;
+    };
+
+    std::vector<MultiSelectItem> items;
+    items.reserve(values.size());
+    for (const auto& v : values) {
+        std::string disp = isLanguage ? languageDisplayName(v.key, v.title) : v.title;
+        items.push_back({ v.key, disp, isSelected(v.key) });
+    }
+
+    std::string fieldCopy = field;
+    MediaDetailView::showMultiSelectFilter(
+        fieldLabel, andMode, std::move(items),
+        [this, fieldCopy](const std::vector<std::pair<std::string, std::string>>& selected,
+                          bool andMode) {
+            if (selected.empty()) {
+                m_activeFilters.erase(fieldCopy);
+            } else {
+                ActiveFilter af;
+                af.values = selected;
+                af.andMode = andMode;
+                m_activeFilters[fieldCopy] = af;
+            }
+            applyFilters();
+        });
 }
 
 // Centered, scrollable value picker for one filter field. "Any <field>" clears
@@ -761,12 +830,11 @@ void LibrarySectionTab::openFilterValuePicker(const std::string& field,
 void LibrarySectionTab::showFilterValues(const std::string& field,
                                          const std::string& fieldLabel,
                                          const std::vector<GenreItem>& values) {
+    // Single-select path (Watch Status). Sets a one-value ActiveFilter.
     auto it = m_activeFilters.find(field);
-    const std::string currentKey = (it != m_activeFilters.end()) ? it->second.first : "";
-
-    // Language names come from Plex in their native script; swap non-renderable
-    // scripts (CJK, Arabic, …) for the English name so they don't show as boxes.
-    const bool isLanguage = (field == "audioLanguage" || field == "subtitleLanguage");
+    std::string currentKey;
+    if (it != m_activeFilters.end() && !it->second.values.empty())
+        currentKey = it->second.values[0].first;
 
     std::vector<OptionRow> rows;
     rows.push_back({ currentKey.empty() ? "check-circle.png" : "",
@@ -779,17 +847,19 @@ void LibrarySectionTab::showFilterValues(const std::string& field,
 
     for (const auto& v : values) {
         std::string vkey   = v.key;
-        std::string vtitle = isLanguage ? languageDisplayName(v.key, v.title) : v.title;
+        std::string vtitle = v.title;
         const bool current = (vkey == currentKey);
         rows.push_back({ current ? "check-circle.png" : "", vtitle, "", false, false,
             [this, field, vkey, vtitle](brls::View*) {
-                m_activeFilters[field] = { vkey, vtitle };
+                ActiveFilter af;
+                af.values.push_back({ vkey, vtitle });
+                m_activeFilters[field] = af;
                 applyFilters();
                 return true;
             }});
     }
 
-    MediaDetailView::showCenteredChoice(fieldLabel, "", std::move(rows), /*scrollable=*/true);
+    MediaDetailView::showCenteredChoice(fieldLabel, "", std::move(rows), /*scrollable=*/false);
 }
 
 // Push the current filter state into the UI (chip styling, count badge, applied
@@ -834,13 +904,23 @@ void LibrarySectionTab::rebuildAppliedFilterChips() {
         m_appliedFiltersBox->addView(chip);
     };
 
-    // One removable chip per active filter, showing its value label.
+    // One removable chip per selected value (across all fields).
     for (const auto& kv : m_activeFilters) {
         const std::string field = kv.first;
-        addChip(kv.second.second, [this, field]() {
-            m_activeFilters.erase(field);
-            applyFilters();
-        });
+        for (const auto& v : kv.second.values) {
+            const std::string key = v.first;
+            addChip(v.second, [this, field, key]() {
+                auto it = m_activeFilters.find(field);
+                if (it != m_activeFilters.end()) {
+                    auto& vals = it->second.values;
+                    for (size_t i = 0; i < vals.size(); i++) {
+                        if (vals[i].first == key) { vals.erase(vals.begin() + i); break; }
+                    }
+                    if (vals.empty()) m_activeFilters.erase(it);
+                }
+                applyFilters();
+            });
+        }
     }
 }
 

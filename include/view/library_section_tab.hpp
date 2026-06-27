@@ -79,7 +79,9 @@ private:
     void showFilterMenu();
     void openFilterValuePicker(const std::string& field, const std::string& fieldLabel);
     void showFilterValues(const std::string& field, const std::string& fieldLabel,
-                          const std::vector<GenreItem>& values);
+                          const std::vector<GenreItem>& values);   // single-select (Watch Status)
+    void showMultiSelect(const std::string& field, const std::string& fieldLabel,
+                         const std::vector<GenreItem>& values);    // multi-value + AND/OR
     void applyFilters();
     void rebuildAppliedFilterChips();
     int  activeFilterCount() const;
@@ -132,9 +134,15 @@ private:
     std::string m_sortLabel = "Newest Added";
 
     // Inline filter state (video sections): active filters keyed by Plex filter
-    // field ("genre", "year", "decade", "contentRating", "resolution", "studio",
-    // "country"). Mapped value = {filter value/key, display label}. Empty = none.
-    std::map<std::string, std::pair<std::string, std::string>> m_activeFilters;
+    // field. Each holds one or more selected (value,label) pairs plus the match
+    // mode — false = OR (comma-joined: genre=1,2), true = AND (repeated param:
+    // genre=1&genre=2). Watch Status ("unwatched") stays single-value. Empty
+    // map = no filters.
+    struct ActiveFilter {
+        std::vector<std::pair<std::string, std::string>> values;  // (key, label)
+        bool andMode = false;
+    };
+    std::map<std::string, ActiveFilter> m_activeFilters;
     // Per-field cache of fetched filter values, so reopening a picker is instant.
     std::map<std::string, std::vector<GenreItem>> m_filterValueCache;
 
