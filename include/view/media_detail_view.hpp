@@ -116,23 +116,22 @@ public:
     // sheet when `anchor` is null or the screen is too narrow. Every show*
     // context menu funnels its rows through here. Static because several callers
     // are static members.
-    // `scrollable` caps the panel to the screen height and puts the rows in a
-    // ScrollingFrame — for long lists (e.g. the genre filter) that would
-    // otherwise run off-screen. Default off, so every existing caller is
-    // byte-for-byte unchanged.
     static void showOptionsPopover(brls::View* anchor,
                                    const std::string& contextLine,
                                    const std::string& title,
-                                   std::vector<OptionRow> rows,
-                                   bool scrollable = false);
+                                   std::vector<OptionRow> rows);
 
     // Centered translucent choice dialog styled like the audio/subtitle picker
     // (dark panel, scrim, rounded rows). Each OptionRow becomes a row; clicking
     // it dismisses the dialog then runs the row's action. Used for the
     // SyncLounge auto-join prompt (and other party notices).
+    // `scrollable` caps the panel height and scrolls the rows — for long lists
+    // such as the Movies genre/year/studio filters. Default off keeps the
+    // existing short-list callers unchanged.
     static void showCenteredChoice(const std::string& title,
                                    const std::string& subtitle,
-                                   std::vector<OptionRow> rows);
+                                   std::vector<OptionRow> rows,
+                                   bool scrollable = false);
 
     void performTrackAction(const MediaItem& track, size_t trackIndex);  // Handle track default action
     void showTrackActionDialog(const MediaItem& track, size_t trackIndex);  // Ask user what to do

@@ -2337,12 +2337,17 @@ bool PlexClient::fetchGenres(const std::string& sectionKey, std::vector<std::str
     return true;
 }
 
-bool PlexClient::fetchGenreItems(const std::string& sectionKey, std::vector<GenreItem>& genres) {
-    brls::Logger::debug("Fetching genre items for section: {}", sectionKey);
+bool PlexClient::fetchFilterValues(const std::string& sectionKey,
+                                   const std::string& field,
+                                   std::vector<GenreItem>& values) {
+    brls::Logger::debug("Fetching filter '{}' values for section: {}", field, sectionKey);
 
     HttpClient client;
-    // Plex API: /library/sections/{key}/genre returns genres with keys for filtering
-    std::string url = buildApiUrl("/library/sections/" + sectionKey + "/genre");
+    // Plex exposes each filter's choices at /library/sections/{key}/{field}
+    // (genre, year, decade, contentRating, resolution, studio, country, …),
+    // each a Directory with a title and a key. The key is what feeds the
+    // matching ?{field}={key} query when filtering /all.
+    std::string url = buildApiUrl("/library/sections/" + sectionKey + "/" + field);
 
     HttpRequest req;
     req.url = url;
@@ -2351,13 +2356,13 @@ bool PlexClient::fetchGenreItems(const std::string& sectionKey, std::vector<Genr
     HttpResponse resp = client.request(req);
 
     if (resp.statusCode != 200) {
-        brls::Logger::error("Failed to fetch genre items: {}", resp.statusCode);
+        brls::Logger::error("Failed to fetch filter '{}' values: {}", field, resp.statusCode);
         return false;
     }
 
-    genres.clear();
+    values.clear();
 
-    // Parse genres - look for Directory entries with "title", "key", and "fastKey"
+    // Parse Directory entries with "title", "key", and "fastKey"
     size_t pos = 0;
     while ((pos = resp.body.find("\"key\"", pos)) != std::string::npos) {
         // Go back to find start of this object
@@ -2383,24 +2388,28 @@ bool PlexClient::fetchGenreItems(const std::string& sectionKey, std::vector<Genr
         item.key = extractJsonValue(obj, "key");
         item.fastKey = extractJsonValue(obj, "fastKey");
 
-        // Skip container/meta entries
+        // Skip container/meta entries (the wrapper's title is the field name)
         if (!item.title.empty() && !item.key.empty() &&
-            item.title != "genre" && item.title.find("MediaContainer") == std::string::npos) {
+            item.title != field && item.title.find("MediaContainer") == std::string::npos) {
             // Avoid duplicates
             bool found = false;
-            for (const auto& g : genres) {
+            for (const auto& g : values) {
                 if (g.title == item.title) { found = true; break; }
             }
             if (!found) {
-                genres.push_back(item);
+                values.push_back(item);
             }
         }
 
         pos = objEnd;
     }
 
-    brls::Logger::info("Found {} genre items for section {}", genres.size(), sectionKey);
+    brls::Logger::info("Found {} '{}' filter values for section {}", values.size(), field, sectionKey);
     return true;
+}
+
+bool PlexClient::fetchGenreItems(const std::string& sectionKey, std::vector<GenreItem>& genres) {
+    return fetchFilterValues(sectionKey, "genre", genres);
 }
 
 bool PlexClient::fetchByGenre(const std::string& sectionKey, const std::string& genre, std::vector<MediaItem>& items, int metadataType) {

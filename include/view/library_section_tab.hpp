@@ -9,6 +9,9 @@
 #include <borealis.hpp>
 #include <memory>
 #include <vector>
+#include <map>
+#include <string>
+#include <utility>
 #include "app/plex_client.hpp"
 #include "view/recycling_grid.hpp"
 
@@ -67,14 +70,16 @@ private:
     void reloadAllItems();
     void showSortMenu();
 
-    // Movies-style Filters menu (video sections): an inline genre/decade
-    // filter that replaces the Categories browse chip. showFilterMenu opens the
-    // chooser popover; the genre/decade pickers reuse the same styled popover as
-    // the Sort menu (genre in scrollable mode); apply rebuilds the applied-filter
-    // chips + count badge and re-queries the grid.
+    // Movies-style Filters menu (video sections): inline filtering across all of
+    // Plex's library filters (genre, year, decade, content rating, resolution,
+    // studio, country). showFilterMenu lists the fields in a centered dialog
+    // (audio-picker style); picking a field fetches its values (cached) and
+    // opens a scrollable value picker; apply rebuilds the applied-filter chips +
+    // count badge and re-queries the grid.
     void showFilterMenu();
-    void showGenreFilterPicker();
-    void showDecadeFilterPicker();
+    void openFilterValuePicker(const std::string& field, const std::string& fieldLabel);
+    void showFilterValues(const std::string& field, const std::string& fieldLabel,
+                          const std::vector<GenreItem>& values);
     void applyFilters();
     void rebuildAppliedFilterChips();
     int  activeFilterCount() const;
@@ -128,11 +133,12 @@ private:
     std::string m_sortLabel = "Recently Added";
     bool m_unwatchedOnly = false;
 
-    // Inline filter state (video sections). Empty string = "any".
-    std::string m_filterGenreKey;     // Plex genre id, used as &genre=
-    std::string m_filterGenreLabel;   // display name, e.g. "Action"
-    std::string m_filterDecade;       // decade start year, used as &decade= ("2010")
-    std::string m_filterDecadeLabel;  // display name, e.g. "2010s"
+    // Inline filter state (video sections): active filters keyed by Plex filter
+    // field ("genre", "year", "decade", "contentRating", "resolution", "studio",
+    // "country"). Mapped value = {filter value/key, display label}. Empty = none.
+    std::map<std::string, std::pair<std::string, std::string>> m_activeFilters;
+    // Per-field cache of fetched filter values, so reopening a picker is instant.
+    std::map<std::string, std::vector<GenreItem>> m_filterValueCache;
 
     // Main content grid
     RecyclingGrid* m_contentGrid = nullptr;

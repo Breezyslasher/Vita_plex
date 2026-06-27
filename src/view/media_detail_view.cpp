@@ -3103,8 +3103,7 @@ private:
 void MediaDetailView::showOptionsPopover(brls::View* anchor,
                                          const std::string& contextLine,
                                          const std::string& title,
-                                         std::vector<OptionRow> rows,
-                                         bool scrollable) {
+                                         std::vector<OptionRow> rows) {
     namespace pc = popcol;
 
     // The episode menu passes an "S{n} · E{n}" context line; every other menu
@@ -3167,11 +3166,7 @@ void MediaDetailView::showOptionsPopover(brls::View* anchor,
         // The panel height isn't known pre-layout, so estimate it (header +
         // rows) to place the bottom edge when opening above the cell.
         const float kRowH = 44.0f, kHeaderH = 56.0f, kGap = 8.0f, kPad = 16.0f;
-        float estH = kHeaderH + kPad + static_cast<float>(rows.size()) * kRowH;
-        // Scrollable popovers cap to the screen so a long list (e.g. genres)
-        // doesn't run off the bottom edge; rows live in a ScrollingFrame below.
-        const float maxPanelH = screenH - 2.0f * kMargin;
-        if (scrollable && estH > maxPanelH) estH = maxPanelH;
+        const float estH = kHeaderH + kPad + static_cast<float>(rows.size()) * kRowH;
         const bool above = (ay + ah * 0.5f) > screenH * 0.55f;
         float y = above ? (ay - kGap - estH) : (ay + ah + kGap);
         if (y < kMargin) y = kMargin;
@@ -3213,24 +3208,6 @@ void MediaDetailView::showOptionsPopover(brls::View* anchor,
     panel->addView(divider);
 
     // ── Rows ────────────────────────────────────────────────────────────
-    // Scrollable popovers host their rows in a ScrollingFrame so a long list
-    // (e.g. the genre filter) stays on-screen; otherwise rows go straight into
-    // the panel — unchanged layout for every existing menu.
-    brls::Box* rowsParent = panel;
-    if (scrollable) {
-        auto* rowsBox = new brls::Box();
-        rowsBox->setAxis(brls::Axis::COLUMN);
-        auto* scrollFrame = new brls::ScrollingFrame();
-        scrollFrame->setContentView(rowsBox);
-        const float kHeaderBlock = 72.0f;   // header + divider + padding
-        float availRows = (screenH - 2.0f * kMargin) - kHeaderBlock;
-        if (availRows < 132.0f) availRows = 132.0f;
-        const float wantRows = static_cast<float>(rows.size()) * 44.0f;
-        scrollFrame->setHeight(wantRows < availRows ? wantRows : availRows);
-        panel->addView(scrollFrame);
-        rowsParent = rowsBox;
-    }
-
     brls::View* defaultFocus = nullptr;
     brls::View* firstRow      = nullptr;
     for (auto& r : rows) {
@@ -3299,7 +3276,7 @@ void MediaDetailView::showOptionsPopover(brls::View* anchor,
         rowBox->registerClickAction(onActivate);
         rowBox->addGestureRecognizer(new brls::TapGestureRecognizer(rowBox));
 
-        rowsParent->addView(rowBox);
+        panel->addView(rowBox);
         if (!firstRow) firstRow = rowBox;
         if (row.primary && !defaultFocus) defaultFocus = rowBox;
     }
@@ -5612,7 +5589,8 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
 
 void MediaDetailView::showCenteredChoice(const std::string& title,
                                          const std::string& subtitle,
-                                         std::vector<OptionRow> rows) {
+                                         std::vector<OptionRow> rows,
+                                         bool scrollable) {
     namespace pc = pickcol;
 
     // Full-screen translucent scrim, centered panel — same shell as the
@@ -5661,6 +5639,25 @@ void MediaDetailView::showCenteredChoice(const std::string& title,
     hair->setMarginBottom(12.0f);
     panel->addView(hair);
 
+    // Scrollable choice lists (long filter value sets — genres, years, studios)
+    // live in a height-capped ScrollingFrame; short dialogs add rows straight to
+    // the panel, unchanged.
+    brls::Box* rowsParent = panel;
+    if (scrollable) {
+        auto* rowsBox = new brls::Box();
+        rowsBox->setAxis(brls::Axis::COLUMN);
+        auto* scrollFrame = new brls::ScrollingFrame();
+        scrollFrame->setContentView(rowsBox);
+        const float screenH = platform::viewportHeight();
+        float maxRows = screenH * 0.62f;   // leave room for title + margins
+        if (maxRows < 180.0f) maxRows = 180.0f;
+        const float wantRows = static_cast<float>(rows.size()) * 58.0f;  // 50 row + 8 margin
+        scrollFrame->setHeight(wantRows < maxRows ? wantRows : maxRows);
+        panel->addView(scrollFrame);
+        rowsParent = rowsBox;
+    }
+
+    brls::View* firstRow = nullptr;
     for (auto& r : rows) {
         const bool primary = r.primary;
         auto* row = new brls::Box();
@@ -5678,6 +5675,8 @@ void MediaDetailView::showCenteredChoice(const std::string& title,
         // the only selection cue.
         row->setBackgroundColor(pc::surface());
 
+        // Reserve the leading icon slot even with no icon, so labels stay
+        // aligned when only some rows carry a check (e.g. the selected value).
         if (!r.icon.empty()) {
             auto* img = new brls::Image();
             img->setWidth(22.0f);
@@ -5686,6 +5685,12 @@ void MediaDetailView::showCenteredChoice(const std::string& title,
             img->setMarginRight(12.0f);
             img->setImageFromRes("icons/" + r.icon);
             row->addView(img);
+        } else {
+            auto* spacer = new brls::Box();
+            spacer->setWidth(22.0f);
+            spacer->setHeight(22.0f);
+            spacer->setMarginRight(12.0f);
+            row->addView(spacer);
         }
 
         auto* lbl = new brls::Label();
@@ -5694,6 +5699,18 @@ void MediaDetailView::showCenteredChoice(const std::string& title,
         lbl->setTextColor(primary ? pc::gold() : (r.danger ? pc::muted() : pc::text()));
         lbl->setGrow(1.0f);
         row->addView(lbl);
+
+        // Optional trailing value (e.g. the current pick shown on a filter row).
+        if (!r.sub.empty()) {
+            auto* sub = new brls::Label();
+            sub->setText(r.sub);
+            sub->setFontSize(13.0f);
+            sub->setHorizontalAlign(brls::HorizontalAlign::RIGHT);
+            sub->setSingleLine(true);
+            sub->setMarginLeft(10.0f);
+            sub->setTextColor(pc::dim());
+            row->addView(sub);
+        }
 
         auto action = r.action;
         row->registerClickAction([action](brls::View* v) {
@@ -5704,13 +5721,15 @@ void MediaDetailView::showCenteredChoice(const std::string& title,
             return true;
         });
         row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
-        panel->addView(row);
+        rowsParent->addView(row);
+        if (!firstRow) firstRow = row;
     }
 
     scrim->addView(panel);
     scrim->registerAction("Back", brls::ControllerButton::BUTTON_B,
         [](brls::View*) { brls::Application::popActivity(); return true; });
     brls::Application::pushActivity(new PopoverActivity(scrim));
+    if (firstRow) brls::Application::giveFocus(firstRow);
 }
 
 void MediaDetailView::showAudioPicker() {

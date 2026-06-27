@@ -11,6 +11,7 @@
 #include "app/plex_palette.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
+#include "utils/http_client.hpp"
 #include "app/music_queue.hpp"
 #include "app/downloads_manager.hpp"
 #include "platform/platform.hpp"
@@ -413,10 +414,7 @@ void LibrarySectionTab::loadContent() {
     if (settings.showCollections) {
         loadCollections();
     }
-    // Video sections load genres for the inline Filters menu even when the
-    // Categories browse chip (settings.showGenres) is turned off.
-    bool isVideoSection = (m_sectionType == "movie" || m_sectionType == "show");
-    if (settings.showGenres || isVideoSection) {
+    if (settings.showGenres) {
         loadGenres();
     }
     if (settings.showPlaylists && m_sectionType == "artist") {
@@ -544,8 +542,11 @@ void LibrarySectionTab::loadNextPage() {
 std::string LibrarySectionTab::buildListParams() const {
     std::string p = "&sort=" + m_sortParam;
     if (m_unwatchedOnly) p += "&unwatched=1";
-    if (!m_filterGenreKey.empty()) p += "&genre=" + m_filterGenreKey;
-    if (!m_filterDecade.empty())   p += "&decade=" + m_filterDecade;
+    // Each active filter becomes "&<field>=<value>" (value URL-encoded — content
+    // ratings and the like can contain spaces).
+    for (const auto& kv : m_activeFilters) {
+        p += "&" + kv.first + "=" + HttpClient::urlEncode(kv.second.first);
+    }
     return p;
 }
 
@@ -625,126 +626,116 @@ void LibrarySectionTab::showSortMenu() {
 }
 
 int LibrarySectionTab::activeFilterCount() const {
-    int n = 0;
-    if (!m_filterGenreKey.empty()) n++;
-    if (!m_filterDecade.empty())   n++;
-    return n;
+    return static_cast<int>(m_activeFilters.size());
 }
 
-// Top-level Filters chooser: pick a genre, pick a decade, or clear. Each row
-// opens a styled sub-popover — the same design as the Sort menu (the genre one
-// scrolls, since genre lists can be long). showOptionsPopover pops itself
-// before running a row action, so opening the sub-popover from a row is safe
-// (no stacked modals).
-void LibrarySectionTab::showFilterMenu() {
-    brls::View* anchor = m_filtersBtn ? m_filtersBtn : brls::Application::getCurrentFocus();
-
-    std::vector<OptionRow> rows;
-
-    // Genre row — only when this section actually has genres loaded.
-    if (!m_genres.empty()) {
-        rows.push_back({ "", "Genre",
-                         m_filterGenreLabel.empty() ? "Any" : m_filterGenreLabel,
-                         false, false,
-            [this](brls::View*) { showGenreFilterPicker(); return true; }});
-    }
-
-    // Decade row — always available (computed client-side, no fetch).
-    rows.push_back({ "", "Decade",
-                     m_filterDecadeLabel.empty() ? "Any" : m_filterDecadeLabel,
-                     false, false,
-        [this](brls::View*) { showDecadeFilterPicker(); return true; }});
-
-    // Clear row — only when something is active.
-    if (activeFilterCount() > 0) {
-        rows.push_back({ "cross.png", "Clear filters", "", false, true,
-            [this](brls::View*) {
-                m_filterGenreKey.clear();
-                m_filterGenreLabel.clear();
-                m_filterDecade.clear();
-                m_filterDecadeLabel.clear();
-                applyFilters();
-                return true;
-            }});
-    }
-
-    MediaDetailView::showOptionsPopover(anchor, "FILTERS", "Filter by", std::move(rows));
-}
-
-// Genre picker — same styled popover as the Sort menu, in scrollable mode
-// (genre lists run long). A leading check marks the active genre, exactly like
-// the sort rows.
-void LibrarySectionTab::showGenreFilterPicker() {
-    brls::View* anchor = m_filtersBtn ? m_filtersBtn : brls::Application::getCurrentFocus();
-
-    std::vector<OptionRow> rows;
-
-    bool anyCurrent = m_filterGenreKey.empty();
-    rows.push_back({ anyCurrent ? "check-circle.png" : "", "Any genre", "",
-                     false, false,
-        [this](brls::View*) {
-            m_filterGenreKey.clear();
-            m_filterGenreLabel.clear();
-            applyFilters();
-            return true;
-        }});
-
-    for (const auto& g : m_genres) {
-        std::string key   = g.key;
-        std::string title = g.title;
-        bool current = (key == m_filterGenreKey);
-        rows.push_back({ current ? "check-circle.png" : "", title, "",
-                         false, false,
-            [this, key, title](brls::View*) {
-                m_filterGenreKey   = key;
-                m_filterGenreLabel = title;
-                applyFilters();
-                return true;
-            }});
-    }
-
-    MediaDetailView::showOptionsPopover(anchor, "FILTERS", "Genre", std::move(rows), true);
-}
-
-// Decade picker — same styled popover. Short fixed list, so no scrolling.
-void LibrarySectionTab::showDecadeFilterPicker() {
-    brls::View* anchor = m_filtersBtn ? m_filtersBtn : brls::Application::getCurrentFocus();
-
-    // label / Plex &decade= start year.
-    struct Dec { const char* label; const char* value; };
-    static const Dec kDecades[] = {
-        {"2020s", "2020"}, {"2010s", "2010"}, {"2000s", "2000"}, {"1990s", "1990"},
-        {"1980s", "1980"}, {"1970s", "1970"}, {"1960s", "1960"}, {"1950s", "1950"},
-        {"1940s", "1940"}, {"Older", "1930"},
+// The filter fields offered per section type — every standard Plex library
+// filter except the people fields (director/actor/writer), whose value lists
+// run to thousands and the picker has no search yet. {Plex field, display name}.
+static const std::vector<std::pair<std::string, std::string>>& filterFieldsFor(
+    const std::string& sectionType) {
+    static const std::vector<std::pair<std::string, std::string>> kMovie = {
+        {"genre", "Genre"}, {"year", "Year"}, {"decade", "Decade"},
+        {"contentRating", "Content Rating"}, {"resolution", "Resolution"},
+        {"studio", "Studio"}, {"country", "Country"},
     };
+    static const std::vector<std::pair<std::string, std::string>> kShow = {
+        {"genre", "Genre"}, {"year", "Year"}, {"decade", "Decade"},
+        {"contentRating", "Content Rating"}, {"studio", "Studio"}, {"country", "Country"},
+    };
+    return sectionType == "show" ? kShow : kMovie;
+}
+
+// Top-level Filters chooser — a centered dialog (audio-picker style) listing
+// every filter field with its current value, plus "Clear all". Picking a field
+// opens its value picker. showCenteredChoice dismisses itself before running a
+// row action, so opening the value picker from a row is safe (no stacked modals).
+void LibrarySectionTab::showFilterMenu() {
+    const auto& fields = filterFieldsFor(m_sectionType);
 
     std::vector<OptionRow> rows;
+    for (const auto& f : fields) {
+        const std::string field = f.first;
+        const std::string label = f.second;
+        auto it = m_activeFilters.find(field);
+        const bool active = (it != m_activeFilters.end());
+        std::string sub = active ? it->second.second : "Any";
+        rows.push_back({ active ? "check-circle.png" : "", label, sub, false, false,
+            [this, field, label](brls::View*) {
+                openFilterValuePicker(field, label);
+                return true;
+            }});
+    }
 
-    bool anyCurrent = m_filterDecade.empty();
-    rows.push_back({ anyCurrent ? "check-circle.png" : "", "Any decade", "",
-                     false, false,
-        [this](brls::View*) {
-            m_filterDecade.clear();
-            m_filterDecadeLabel.clear();
-            applyFilters();
-            return true;
-        }});
-
-    for (const auto& d : kDecades) {
-        std::string label = d.label;
-        std::string value = d.value;
-        bool current = (value == m_filterDecade);
-        rows.push_back({ current ? "check-circle.png" : "", label, "",
-                         false, false,
-            [this, label, value](brls::View*) {
-                m_filterDecade      = value;
-                m_filterDecadeLabel = label;
+    if (activeFilterCount() > 0) {
+        rows.push_back({ "cross.png", "Clear all filters", "", false, true,
+            [this](brls::View*) {
+                m_activeFilters.clear();
                 applyFilters();
                 return true;
             }});
     }
 
-    MediaDetailView::showOptionsPopover(anchor, "FILTERS", "Decade", std::move(rows), false);
+    // Field list is short and bounded — no scrolling needed here (the long
+    // lists are the per-field value pickers).
+    MediaDetailView::showCenteredChoice("Filters", "Narrow this library",
+                                        std::move(rows), /*scrollable=*/false);
+}
+
+// Fetch a field's available values (cached after the first time) and then show
+// the value picker. The fetch is async; the dialog appears once it returns.
+void LibrarySectionTab::openFilterValuePicker(const std::string& field,
+                                              const std::string& fieldLabel) {
+    auto cached = m_filterValueCache.find(field);
+    if (cached != m_filterValueCache.end()) {
+        showFilterValues(field, fieldLabel, cached->second);
+        return;
+    }
+
+    std::string key = m_sectionKey;
+    std::weak_ptr<bool> aliveWeak = m_alive;
+    asyncRun([this, key, field, fieldLabel, aliveWeak]() {
+        std::vector<GenreItem> values;
+        PlexClient::getInstance().fetchFilterValues(key, field, values);
+        brls::sync([this, field, fieldLabel, values, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+            m_filterValueCache[field] = values;
+            showFilterValues(field, fieldLabel, values);
+        });
+    });
+}
+
+// Centered, scrollable value picker for one filter field. "Any <field>" clears
+// it; a leading check marks the active value.
+void LibrarySectionTab::showFilterValues(const std::string& field,
+                                         const std::string& fieldLabel,
+                                         const std::vector<GenreItem>& values) {
+    auto it = m_activeFilters.find(field);
+    const std::string currentKey = (it != m_activeFilters.end()) ? it->second.first : "";
+
+    std::vector<OptionRow> rows;
+    rows.push_back({ currentKey.empty() ? "check-circle.png" : "",
+                     "Any " + fieldLabel, "", false, false,
+        [this, field](brls::View*) {
+            m_activeFilters.erase(field);
+            applyFilters();
+            return true;
+        }});
+
+    for (const auto& v : values) {
+        std::string vkey   = v.key;
+        std::string vtitle = v.title;
+        const bool current = (vkey == currentKey);
+        rows.push_back({ current ? "check-circle.png" : "", vtitle, "", false, false,
+            [this, field, vkey, vtitle](brls::View*) {
+                m_activeFilters[field] = { vkey, vtitle };
+                applyFilters();
+                return true;
+            }});
+    }
+
+    MediaDetailView::showCenteredChoice(fieldLabel, "", std::move(rows), /*scrollable=*/true);
 }
 
 // Push the current filter state into the UI (chip styling, count badge, applied
@@ -789,17 +780,11 @@ void LibrarySectionTab::rebuildAppliedFilterChips() {
         m_appliedFiltersBox->addView(chip);
     };
 
-    if (!m_filterGenreLabel.empty()) {
-        addChip(m_filterGenreLabel, [this]() {
-            m_filterGenreKey.clear();
-            m_filterGenreLabel.clear();
-            applyFilters();
-        });
-    }
-    if (!m_filterDecadeLabel.empty()) {
-        addChip(m_filterDecadeLabel, [this]() {
-            m_filterDecade.clear();
-            m_filterDecadeLabel.clear();
+    // One removable chip per active filter, showing its value label.
+    for (const auto& kv : m_activeFilters) {
+        const std::string field = kv.first;
+        addChip(kv.second.second, [this, field]() {
+            m_activeFilters.erase(field);
             applyFilters();
         });
     }
