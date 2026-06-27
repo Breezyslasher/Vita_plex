@@ -23,6 +23,11 @@
 #else
 #include <mpv/client.h>
 #include <mpv/render.h>
+#if defined(__SWITCH__) && defined(BOREALIS_USE_OPENGL)
+// Switch OpenGL build (Mesa/nouveau + GLFW): use mpv's OpenGL render API so
+// mpv renders straight into a GPU texture instead of a CPU framebuffer.
+#include <mpv/render_gl.h>
+#endif
 #endif
 
 namespace vitaplex {
@@ -228,6 +233,24 @@ private:
     unsigned int m_glFbo = 0;
     mpv_opengl_fbo m_mpvOpenGLFbo = {};
     mpv_render_param m_mpvParams[2] = {};
+#endif
+
+#if defined(__SWITCH__) && defined(BOREALIS_USE_OPENGL)
+    // Switch OpenGL (Mesa/nouveau + GLFW) zero-copy GPU render path, mirroring
+    // the Android one above. mpv renders into m_glFbo, whose color attachment
+    // is a NanoVG-managed GL texture, so there's no per-frame CPU upload — the
+    // big difference from the software path and the main cure for choppy Switch
+    // video. switchfin uses deko3d for the same effect, but VitaPlex's borealis
+    // has no deko3d/NanoVG interop helper, whereas the OpenGL build exposes
+    // nvglImageHandleGL3 and fits the existing offscreen-composite model.
+    //
+    // If the prebuilt switch-libmpv was built without GL render support,
+    // initRenderContext() falls back to the software path (m_videoBuffer, still
+    // compiled in below) and leaves m_useGlRender false. onRenderUpdate() and
+    // cleanupRenderContext() branch on m_useGlRender to pick the active path.
+    unsigned int m_glFbo = 0;
+    mpv_opengl_fbo m_mpvOpenGLFbo = {};
+    bool m_useGlRender = false;
 #endif
 
     int m_nvgImage = 0;

@@ -43,6 +43,30 @@ static void* mpvGlGetProcAddress(void* ctx, const char* name) {
 }
 #endif
 
+#if defined(__SWITCH__) && defined(BOREALIS_USE_OPENGL)
+#include <glad/glad.h>
+#include <nanovg.h>
+// Same rationale as the Android forward-declaration above: pull only the symbol,
+// not nanovg_gl.h's whole GL3 implementation chain. It's compiled into borealis
+// via lib/platforms/glfw/glfw_video.cpp (NANOVG_GL3_IMPLEMENTATION).
+extern "C" GLuint nvglImageHandleGL3(NVGcontext* ctx, int image);
+
+// Forward-declare GLFW's proc loader instead of including <GLFW/glfw3.h>, which
+// would drag in GL headers with their own ordering constraints relative to
+// glad. GLFW is C; GLFWglproc is void(*)(void). glad's GL function pointers are
+// already loaded by borealis (gladLoadGLLoader) before any video plays, and mpv
+// loads its own copies through this callback.
+extern "C" {
+typedef void (*VitaplexGLFWproc)(void);
+VitaplexGLFWproc glfwGetProcAddress(const char* procname);
+}
+
+static void* mpvSwitchGlGetProcAddress(void* ctx, const char* name) {
+    (void)ctx;
+    return reinterpret_cast<void*>(glfwGetProcAddress(name));
+}
+#endif
+
 #include <cstring>
 #include <cstdlib>
 #include <clocale>
@@ -148,15 +172,6 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "sub-fonts-dir", "sdmc:/VitaPlex");
     mpv_set_option_string(m_mpv, "watch-later-dir", "sdmc:/VitaPlex/watch-later");
     mpv_set_option_string(m_mpv, "gpu-shader-cache-dir", "sdmc:/VitaPlex/cache");
-
-    // Diagnostic (Switch playback bring-up): have mpv write its OWN verbose log
-    // straight to a file. A crash inside mpv_initialize / early playback often
-    // lands on an mpv worker thread, and our client log callback is only drained
-    // on the main thread — so it would miss the last thing mpv did. The file log
-    // is written from mpv's own threads and survives the crash, pinpointing the
-    // failing subsystem (ao / demuxer / decoder / …). Remove once stable.
-    mpv_set_option_string(m_mpv, "log-file", "sdmc:/VitaPlex/mpv.log");
-    mpv_set_option_string(m_mpv, "msg-level", "all=v");
 #endif
 
     // ========================================
@@ -256,7 +271,14 @@ bool MpvPlayer::init() {
         // vd-lavc-fast trims some spec-compliance corners that also keep
         // decode stack depth shallower. Leave the loop filter ON (Switch
         // is far more capable than Vita) so picture quality isn't hurt.
-        mpv_set_option_string(m_mpv, "vd-lavc-threads", "4");
+        // Memory-lean software decode, matching switchfin's Switch tuning.
+        // 720p H.264 frame-threaded decode OOM-crashed with 4 threads and no
+        // direct rendering (mpv log: "h264: thread_get_buffer() failed",
+        // "lavf: Not enough space", then a null-deref). vd-lavc-dr lets the
+        // decoder render straight into the VO's buffers instead of a second
+        // private pool, and 3 threads keeps the per-thread frame pool smaller.
+        mpv_set_option_string(m_mpv, "vd-lavc-threads", "3");
+        mpv_set_option_string(m_mpv, "vd-lavc-dr", "yes");
         mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
         mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
 #else
@@ -1355,6 +1377,40 @@ void MpvPlayer::onRenderUpdate(void* ctx) {
                        prevViewport[2], prevViewport[3]);
 #else
             std::lock_guard<std::mutex> lock(player->m_renderMutex);
+#if defined(__SWITCH__) && defined(BOREALIS_USE_OPENGL)
+            if (player->m_useGlRender) {
+                if (!player->m_mpvRenderCtx || player->m_glFbo == 0) {
+                    return;
+                }
+                // mpv renders straight into our FBO (backed by the NanoVG GL
+                // texture) — no CPU copy, no nvgUpdateImage. Save the GL state
+                // mpv clobbers and bind our FBO + a full-FBO viewport first: by
+                // the time this brls::sync callback runs, NanoVG has left the
+                // viewport on its last (small) draw rect, and mpv's GL backend
+                // inherits the active viewport. Without this the video lands in
+                // a tiny sub-rect surrounded by mpv's clear color.
+                GLint prevFbo = 0;
+                GLint prevViewport[4] = {0, 0, 0, 0};
+                glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &prevFbo);
+                glGetIntegerv(GL_VIEWPORT, prevViewport);
+
+                glBindFramebuffer(GL_FRAMEBUFFER, player->m_glFbo);
+                glViewport(0, 0, player->m_videoWidth, player->m_videoHeight);
+
+                mpv_opengl_fbo* glFbo = &player->m_mpvOpenGLFbo;
+                mpv_render_param glParams[] = {
+                    {MPV_RENDER_PARAM_OPENGL_FBO, glFbo},
+                    {MPV_RENDER_PARAM_INVALID, nullptr},
+                };
+                mpv_render_context_render(player->m_mpvRenderCtx, glParams);
+                mpv_render_context_report_swap(player->m_mpvRenderCtx);
+
+                glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
+                glViewport(prevViewport[0], prevViewport[1],
+                           prevViewport[2], prevViewport[3]);
+                return;
+            }
+#endif
             if (player->m_videoBuffer.empty() || player->m_videoWidth <= 0 || player->m_videoHeight <= 0) {
                 return;
             }
@@ -1652,6 +1708,101 @@ bool MpvPlayer::initRenderContext() {
         return false;
     }
 
+#if defined(__SWITCH__) && defined(BOREALIS_USE_OPENGL)
+    // Try the OpenGL GPU render path first (mirrors the Android path, but GL3 +
+    // GLFW instead of GLES3 + SDL). mpv renders into a GPU texture, so there's
+    // no per-frame CPU framebuffer upload — the main fix for choppy Switch
+    // video. If the prebuilt switch-libmpv lacks GL render support this fails
+    // cleanly and we fall through to the software path below, so the worst case
+    // is exactly today's working behavior, never a regression to audio-only.
+    {
+        NVGcontext* glVg = brls::Application::getNVGContext();
+        if (glVg) {
+            // 720p target: native for the handheld screen (no upscale),
+            // cheaply GPU-upscaled when docked, half the texture memory of
+            // 1080p. GPU scaling is cheap here, unlike the software path.
+            m_videoWidth  = 1280;
+            m_videoHeight = 720;
+
+            std::vector<unsigned char> blackPixels(
+                (size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
+            int nvgImage = nvgCreateImageRGBA(glVg, m_videoWidth, m_videoHeight,
+                                              0, blackPixels.data());
+            GLuint glTexture = nvgImage ? nvglImageHandleGL3(glVg, nvgImage) : 0;
+
+            GLuint glFbo = 0;
+            GLenum status = GL_FRAMEBUFFER_UNSUPPORTED;
+            if (glTexture != 0) {
+                glGenFramebuffers(1, &glFbo);
+                glBindFramebuffer(GL_FRAMEBUFFER, glFbo);
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                       GL_TEXTURE_2D, glTexture, 0);
+                status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+                glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            }
+
+            if (glTexture != 0 && status == GL_FRAMEBUFFER_COMPLETE) {
+                mpv_opengl_init_params glInit = {};
+                glInit.get_proc_address = mpvSwitchGlGetProcAddress;
+                glInit.get_proc_address_ctx = nullptr;
+
+                mpv_render_param params[] = {
+                    {MPV_RENDER_PARAM_API_TYPE,
+                     const_cast<char*>(MPV_RENDER_API_TYPE_OPENGL)},
+                    {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &glInit},
+                    {MPV_RENDER_PARAM_INVALID, nullptr},
+                };
+
+                int result = mpv_render_context_create(&m_mpvRenderCtx, m_mpv,
+                                                       params);
+                if (result >= 0) {
+                    m_nvgImage = nvgImage;
+                    m_glFbo = glFbo;
+                    // Orientation: mpv's GL backend writes top-down into the FBO
+                    // the same way NanoVG expects its uploaded images, so no flip
+                    // on either side — matching the Android path, which shares
+                    // mpv's GL renderer. If video comes out upside down, this is
+                    // the one knob to flip (NVG_IMAGE_FLIPY or FLIP_Y param).
+                    m_mpvOpenGLFbo.fbo = (int)m_glFbo;
+                    m_mpvOpenGLFbo.w = m_videoWidth;
+                    m_mpvOpenGLFbo.h = m_videoHeight;
+                    m_mpvOpenGLFbo.internal_format = GL_RGBA8;
+                    m_useGlRender = true;
+
+                    mpv_render_context_set_update_callback(m_mpvRenderCtx,
+                                                           onRenderUpdate, this);
+                    m_renderReady.store(true);
+                    brls::Logger::info(
+                        "MpvPlayer: Switch OpenGL render context initialized "
+                        "({}x{})", m_videoWidth, m_videoHeight);
+                    return true;
+                }
+                brls::Logger::warning(
+                    "MpvPlayer: OpenGL render context create failed ({}), "
+                    "falling back to software", mpv_error_string(result));
+            } else {
+                brls::Logger::warning(
+                    "MpvPlayer: OpenGL FBO setup failed (tex={}, status=0x{:x}),"
+                    " falling back to software",
+                    (unsigned)glTexture, (unsigned)status);
+            }
+
+            // GL path failed — tear down partial resources so the software path
+            // below recreates its own image/buffer from a clean slate.
+            m_mpvRenderCtx = nullptr;
+            if (glFbo != 0) {
+                glDeleteFramebuffers(1, &glFbo);
+            }
+            if (nvgImage != 0) {
+                nvgDeleteImage(glVg, nvgImage);
+            }
+            m_glFbo = 0;
+            m_nvgImage = 0;
+            m_useGlRender = false;
+        }
+    }
+#endif
+
     NVGcontext* vg = brls::Application::getNVGContext();
     if (!vg) {
         brls::Logger::error("MpvPlayer: Failed to get NanoVG context for non-Vita render");
@@ -1662,6 +1813,18 @@ bool MpvPlayer::initRenderContext() {
         const auto& vc = platform::getVideoConstraints();
         m_videoWidth  = vc.maxVideoWidth;
         m_videoHeight = vc.maxVideoHeight;
+#ifdef __SWITCH__
+        // Switch uses mpv's SOFTWARE render API: every frame mpv scales the
+        // decoded picture into a CPU RGBA buffer that we then upload to a GL
+        // texture. A 1080p target means upscaling the (usually 720p) transcode
+        // on the CPU and pushing an ~8 MB texture per frame — a big chunk of the
+        // choppiness. Cap the render target at 720p: native for the handheld
+        // screen (no upscale), cheaply GPU-upscaled when docked, and roughly
+        // half the per-frame CPU + upload cost. (The real cure is a GPU mpv
+        // render path; this keeps the software path smooth meanwhile.)
+        if (m_videoWidth  > 1280) m_videoWidth  = 1280;
+        if (m_videoHeight > 720)  m_videoHeight = 720;
+#endif
     }
     m_videoBuffer.assign((size_t)m_videoWidth * (size_t)m_videoHeight * 4, 0);
 
@@ -1761,6 +1924,16 @@ void MpvPlayer::cleanupRenderContext() {
         mpv_render_context_free(m_mpvRenderCtx);
         m_mpvRenderCtx = nullptr;
     }
+#if defined(__SWITCH__) && defined(BOREALIS_USE_OPENGL)
+    // GL path: free the FBO (no-op when the software fallback was active, since
+    // m_glFbo stays 0). The NanoVG image is freed below — shared with SW.
+    if (m_glFbo) {
+        glDeleteFramebuffers(1, &m_glFbo);
+        m_glFbo = 0;
+    }
+    m_mpvOpenGLFbo = {};
+    m_useGlRender = false;
+#endif
     NVGcontext* vg = brls::Application::getNVGContext();
     if (m_nvgImage && vg) {
         nvgDeleteImage(vg, m_nvgImage);
