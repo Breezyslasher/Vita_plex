@@ -3112,25 +3112,22 @@ void MediaDetailView::showOptionsPopover(brls::View* anchor,
     const bool episodic = contextLine.find("\xC2\xB7") != std::string::npos;
 
     // ── Geometry ────────────────────────────────────────────────────────
+    // Centered, audio-picker style (matches the Sort / Filters dialogs). The
+    // anchor is no longer used for positioning — every menu opens centered.
     const float screenW = platform::viewportWidth();
     const float screenH = platform::viewportHeight();
     const float kPopoverW = 320.0f;
     const float kMargin   = 40.0f;
-    const bool  bottomSheet =
-        platform::isPortrait() || (kPopoverW + 2.0f * kMargin) > screenW || anchor == nullptr;
+    (void)anchor;
 
-    // ── Scrim (full-screen) ─────────────────────────────────────────────
+    // ── Scrim (full-screen, centers the panel) ──────────────────────────
     auto* scrim = new brls::Box();
     scrim->setAxis(brls::Axis::COLUMN);
     scrim->setWidthPercentage(100.0f);
     scrim->setHeightPercentage(100.0f);
+    scrim->setJustifyContent(brls::JustifyContent::CENTER);
+    scrim->setAlignItems(brls::AlignItems::CENTER);
     scrim->setBackgroundColor(pc::scrim());
-    // Bottom sheet docks to the bottom edge; anchored popover is positioned
-    // absolutely so the scrim itself just needs to fill the screen.
-    if (bottomSheet) {
-        scrim->setJustifyContent(brls::JustifyContent::FLEX_END);
-        scrim->setAlignItems(brls::AlignItems::STRETCH);
-    }
     scrim->addGestureRecognizer(new brls::TapGestureRecognizer(scrim,
         []() { brls::Application::popActivity(); }));
 
@@ -3142,38 +3139,11 @@ void MediaDetailView::showOptionsPopover(brls::View* anchor,
     panel->setBorderThickness(1.0f);
     panel->setShadowType(brls::ShadowType::GENERIC);
     panel->setPadding(8.0f, 8.0f, 8.0f, 8.0f);
-
-    if (bottomSheet) {
-        panel->setCornerRadius(14.0f);
-        panel->setWidthPercentage(100.0f);
-    } else {
-        panel->setCornerRadius(14.0f);
-        panel->setWidth(kPopoverW);
-        panel->setPositionType(brls::PositionType::ABSOLUTE);
-
-        const float ax = anchor->getX();
-        const float ay = anchor->getY();
-        const float aw = anchor->getWidth();
-        const float ah = anchor->getHeight();
-
-        // Horizontal: centre on the cell, then clamp into the screen margins.
-        float x = ax + aw * 0.5f - kPopoverW * 0.5f;
-        if (x < kMargin) x = kMargin;
-        if (x + kPopoverW > screenW - kMargin) x = screenW - kMargin - kPopoverW;
-        panel->setPositionLeft(x);
-
-        // Vertical: cells in the lower ~45% open upward, otherwise downward.
-        // The panel height isn't known pre-layout, so estimate it (header +
-        // rows) to place the bottom edge when opening above the cell.
-        const float kRowH = 44.0f, kHeaderH = 56.0f, kGap = 8.0f, kPad = 16.0f;
-        const float estH = kHeaderH + kPad + static_cast<float>(rows.size()) * kRowH;
-        const bool above = (ay + ah * 0.5f) > screenH * 0.55f;
-        float y = above ? (ay - kGap - estH) : (ay + ah + kGap);
-        if (y < kMargin) y = kMargin;
-        if (y + estH > screenH - kMargin) y = screenH - kMargin - estH;
-        if (y < kMargin) y = kMargin;
-        panel->setPositionTop(y);
-    }
+    panel->setCornerRadius(14.0f);
+    // Fixed 320px, clamped on screens too narrow to hold it with margins.
+    float panelW = kPopoverW;
+    if (panelW + 2.0f * kMargin > screenW) panelW = screenW - 2.0f * kMargin;
+    panel->setWidth(panelW);
 
     // ── Header (context line + title) ───────────────────────────────────
     // borealis only supports a uniform border, so the bottom rule under the
@@ -3206,6 +3176,24 @@ void MediaDetailView::showOptionsPopover(brls::View* anchor,
     divider->setBackgroundColor(pc::line());
     divider->setMarginBottom(6.0f);
     panel->addView(divider);
+
+    // Only a genuinely long menu (e.g. Add to Playlist with many playlists)
+    // scrolls; the common short context menus add their rows straight to the
+    // panel and render centered, exactly as before.
+    brls::Box* rowsParent = panel;
+    {
+        const float availForRows = screenH - 2.0f * kMargin - 90.0f;  // minus header/divider/padding
+        const float wantRows = static_cast<float>(rows.size()) * 44.0f;
+        if (wantRows > availForRows && availForRows > 132.0f) {
+            auto* rowsBox = new brls::Box();
+            rowsBox->setAxis(brls::Axis::COLUMN);
+            auto* scrollFrame = new brls::ScrollingFrame();
+            scrollFrame->setContentView(rowsBox);
+            scrollFrame->setHeight(availForRows);
+            panel->addView(scrollFrame);
+            rowsParent = rowsBox;
+        }
+    }
 
     // ── Rows ────────────────────────────────────────────────────────────
     brls::View* defaultFocus = nullptr;
@@ -3276,7 +3264,7 @@ void MediaDetailView::showOptionsPopover(brls::View* anchor,
         rowBox->registerClickAction(onActivate);
         rowBox->addGestureRecognizer(new brls::TapGestureRecognizer(rowBox));
 
-        panel->addView(rowBox);
+        rowsParent->addView(rowBox);
         if (!firstRow) firstRow = rowBox;
         if (row.primary && !defaultFocus) defaultFocus = rowBox;
     }
