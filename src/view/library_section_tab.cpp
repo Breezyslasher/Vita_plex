@@ -1032,12 +1032,19 @@ void LibrarySectionTab::buildAzRail() {
         lbl->setFontSize(9.5f);
         lbl->setTextColor(nvgRGB(0x8a, 0x8a, 0x90));
         lbl->setFocusable(true);
+        // LEFT off a rail letter returns to the grid (round-trips with the
+        // grid's RIGHT-edge escape below).
+        if (m_contentGrid)
+            lbl->setCustomNavigationRoute(brls::FocusDirection::LEFT, m_contentGrid);
         lbl->registerClickAction([this, ch](brls::View*) { jumpToLetter(ch); return true; });
         lbl->addGestureRecognizer(new brls::TapGestureRecognizer(lbl));
         m_azRail->addView(lbl);
         m_azLetters.push_back(lbl);
     }
     this->addView(m_azRail);
+
+    // RIGHT off the grid's right edge hops onto the rail (when it's visible).
+    if (m_contentGrid) m_contentGrid->setRightFocusEscape(m_azRail);
 }
 
 // First letter of a title with a leading article dropped, to approximate Plex's

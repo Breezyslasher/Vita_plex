@@ -40,6 +40,11 @@ public:
     void scrollToItemIndex(size_t index, bool animated = true);
     size_t itemCount() const { return m_items.size(); }
 
+    // Opt-in: where focus goes when RIGHT is pressed at the grid's right edge
+    // (e.g. the A-Z jump rail). Default null = standard navigation; only used
+    // when the target is visible.
+    void setRightFocusEscape(brls::View* target) { m_rightFocusEscape = target; }
+
     // Override to detect when user tries to scroll past the bottom
     brls::View* getNextFocus(brls::FocusDirection direction, brls::View* currentView) override;
 
@@ -77,6 +82,9 @@ private:
 
     bool m_hasMore = false;
     bool m_loading = false;  // Prevents duplicate fetch requests
+
+    // Opt-in RIGHT-edge focus escape (e.g. the A-Z jump rail). See setter.
+    brls::View* m_rightFocusEscape = nullptr;
 
     // Lifetime guard for the orientation-change listener — the listener
     // is global and lives forever, but the grid can be destroyed while
