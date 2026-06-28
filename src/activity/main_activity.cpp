@@ -128,15 +128,21 @@ void MainActivity::onContentAvailable() {
         // Focus first tab
         tabFrame->focusTab(0);
 
-        // Press Y while a sidebar tab is focused to open the inline editor in
-        // place — no trip through Settings. Registered on the sidebar view (the
-        // ancestor of every tab), so the hint + action only apply while the
-        // sidebar has focus. The view persists across rebuildSidebar(), so this
-        // is wired once. Offline the sidebar is just Downloads + Settings, so
-        // there's nothing to reorder — skip it there.
+        // Open the inline editor with START while a sidebar tab is focused —
+        // the same button every media cell uses for its Options/context menu.
+        // Reusing START (rather than Y) means the editor inherits the app's
+        // existing context-menu plumbing for free, including Android TV's
+        // hold-Enter helper: SDL_IsAndroidTV() enables setHoldAToOpenMenu, so a
+        // held OK fires a synthetic GUIDE that the rootBox handler below
+        // re-dispatches to the focused view's START action — which now walks up
+        // to this one. Registered on the sidebar view (the ancestor of every
+        // tab) so it only applies while the sidebar has focus, and it persists
+        // across rebuildSidebar(), so it's wired once. Touch users get the same
+        // via long-press (attachSidebarLongPress). Offline the sidebar is just
+        // Downloads + Settings, so there's nothing to reorder — skip it there.
         if (!Application::getInstance().isOfflineMode()) {
             if (brls::View* sidebar = tabFrame->getView("brls/tab_frame/sidebar")) {
-                sidebar->registerAction("Edit Sidebar", brls::ControllerButton::BUTTON_Y,
+                sidebar->registerAction("Edit Sidebar", brls::ControllerButton::BUTTON_START,
                     [](brls::View*) { SidebarEditor::open(); return true; });
             }
         }
