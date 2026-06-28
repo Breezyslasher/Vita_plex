@@ -3,14 +3,17 @@
  *
  * Resolves abstract button names (A/B/X/Y/Start/Select/L/R/dpad) to the
  * platform-specific PNG path under resources/images/<Platform>/. The icon
- * set is fixed per platform at compile time — there is no runtime input
- * swapping. Each platform shows exactly one set:
+ * set is fixed per platform — there is no runtime input swapping. Each
+ * platform shows exactly one set:
  *
  *   PSV       -> resources/images/PSV/                  (controller)
  *   PS4       -> resources/images/Ps4/                  (outline-* line-art)
  *   Switch    -> resources/images/Nintendo Switch/Default/   (controller)
  *   Desktop   -> resources/images/Keyboard & Mouse/Default/  (keyboard keys)
  *   Android   -> resources/images/Touch/Default/        (touch hints)
+ *   Android TV-> resources/images/Steam Deck/Default/   (generic controller)
+ *
+ * Android TV is distinguished from a handheld at startup via SDL_IsAndroidTV().
  */
 
 #pragma once
