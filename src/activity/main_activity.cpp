@@ -10,6 +10,7 @@
 #include "view/livetv_tab.hpp"
 #include "view/downloads_tab.hpp"
 #include "view/sidebar_editor.hpp"
+#include "view/long_press_gesture.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
@@ -219,6 +220,24 @@ static bool sidebarCsvHas(const std::string& csv, const std::string& id) {
     return false;
 }
 
+// Attach a long-press (hold) recognizer to every sidebar item under `v` so that
+// holding a tab opens the inline editor — the touch equivalent of the Y
+// shortcut. Per-item (like the grid's long-press menus), so a quick tap still
+// selects the tab normally.
+static void attachSidebarLongPress(brls::View* v) {
+    if (auto* item = dynamic_cast<brls::SidebarItem*>(v)) {
+        item->addGestureRecognizer(new LongPressGestureRecognizer(
+            item, [](LongPressGestureStatus s) {
+                if (s.state == brls::GestureState::START) SidebarEditor::open();
+            }));
+        return;
+    }
+    if (auto* box = dynamic_cast<brls::Box*>(v)) {
+        for (brls::View* child : box->getChildren())
+            attachSidebarLongPress(child);
+    }
+}
+
 void MainActivity::buildSidebarTabs() {
     if (!tabFrame) return;
     AppSettings& settings = Application::getInstance().getSettings();
@@ -294,6 +313,10 @@ void MainActivity::buildSidebarTabs() {
     // Settings is always pinned to the bottom.
     tabFrame->addSeparator();
     tabFrame->addTab("Settings", []() { return new SettingsTab(); });
+
+    // Hold any sidebar item to open the editor (touch equivalent of Y).
+    if (brls::View* sb = tabFrame->getView("brls/tab_frame/sidebar"))
+        attachSidebarLongPress(sb);
 }
 
 void MainActivity::rebuildSidebar() {

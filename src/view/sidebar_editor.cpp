@@ -108,15 +108,6 @@ public:
         eyebrow->setFontSize(11.0f);
         eyebrow->setTextColor(pal::muted);
         head->addView(eyebrow);
-        auto* done = new brls::Label();
-        done->setText("✓ Done");
-        done->setFontSize(13.0f);
-        done->setTextColor(pal::gold);
-        head->addView(done);
-        head->addGestureRecognizer(new brls::TapGestureRecognizer(
-            [this](brls::TapGestureStatus s, brls::Sound*) {
-                if (s.state == brls::GestureState::END) commit();
-            }));
         panel->addView(head);
 
         auto* hr = new brls::Box();
@@ -129,6 +120,9 @@ public:
 
         auto* scroll = new brls::ScrollingFrame();
         scroll->setGrow(1.0f);
+        // CENTERED so D-pad / arrow focus changes scroll the focused row into
+        // view (the default NATURAL behavior only scrolls on touch).
+        scroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
         m_listBox = new brls::Box();
         m_listBox->setAxis(brls::Axis::COLUMN);
         scroll->setContentView(m_listBox);
