@@ -90,10 +90,11 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
         m_viewModeBox->addView(m_collectionsBtn);
     }
 
-    // Categories button (genre browse). Video sections (movie / show) instead
+    // Categories button (genre browse). Movie / show / music sections instead
     // get the inline Filters menu below, which filters the grid by genre in
     // place rather than opening a separate genre-cards browse mode.
-    if (settings.showGenres && sectionType != "movie" && sectionType != "show") {
+    if (settings.showGenres && sectionType != "movie" && sectionType != "show" &&
+        sectionType != "artist") {
         m_categoriesBtn = new vitaplex::FilterChip();
         m_categoriesBtn->setText("Categories");
         m_categoriesBtn->setMarginRight(10);
@@ -119,10 +120,11 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     }
 
     // ── Direction-A discovery controls ──
-    // Filters chip (video sections): opens an inline genre + decade filter
-    // menu. Active filters turn the chip gold, bump a count badge, and appear
-    // as removable chips to its right (matching the Movies reference toolbar).
-    if (sectionType == "movie" || sectionType == "show") {
+    // Filters chip (movie / show / music): opens an inline filter menu. Active
+    // filters turn the chip gold, bump a count badge, and appear as removable
+    // chips to its right (matching the Movies reference toolbar). The available
+    // fields differ by section type (see filterFieldsFor).
+    if (sectionType == "movie" || sectionType == "show" || sectionType == "artist") {
         m_filtersBtn = new vitaplex::FilterChip();
         m_filtersBtn->setText("Filters");
         m_filtersBtn->setMarginRight(10);
@@ -650,7 +652,17 @@ static const std::vector<std::pair<std::string, std::string>>& filterFieldsFor(
         {"audioLanguage", "Audio Language"}, {"subtitleLanguage", "Subtitle Language"},
         {"studio", "Studio"}, {"country", "Country"},
     };
-    return sectionType == "show" ? kShow : kMovie;
+    // Music (artist) has its own set — Mood / Style are music-only; no video
+    // concepts (resolution, content rating, languages) and no Watch Status.
+    // "studio" is the record label here.
+    static const std::vector<std::pair<std::string, std::string>> kMusic = {
+        {"genre", "Genre"}, {"mood", "Mood"}, {"style", "Style"},
+        {"country", "Country"}, {"studio", "Record Label"},
+        {"decade", "Decade"}, {"year", "Year"},
+    };
+    if (sectionType == "show")   return kShow;
+    if (sectionType == "artist") return kMusic;
+    return kMovie;
 }
 
 // Plex returns language names in their native script ("日本語", "中文", "العربية").
