@@ -6006,7 +6006,9 @@ void MediaDetailView::showMultiToggleDialog(
         row->setMarginBottom(8.0f);
         row->setFocusable(true);
         row->setHighlightCornerRadius(9.0f);
-        row->setBackgroundColor(startOn ? pc::goldTint() : pc::surface());
+        // Highlight the OFF state (visible libraries) in gold; the ON state
+        // (hidden) reads as de-emphasised, so "lit up" means "shown".
+        row->setBackgroundColor(startOn ? pc::surface() : pc::goldTint());
 
         // Leading eye icon — hidden (eye-off) when ON, visible (eye) when OFF.
         auto* icon = new brls::Image();
@@ -6024,14 +6026,14 @@ void MediaDetailView::showMultiToggleDialog(
         lbl->setGrow(1.0f);
         row->addView(lbl);
 
-        // Trailing state word: gold "Hidden" when ON, dim "Visible" when OFF.
+        // Trailing state word: gold "Visible" when OFF, dim "Hidden" when ON.
         auto* stateLbl = new brls::Label();
         stateLbl->setText(startOn ? onStateLabel : offStateLabel);
         stateLbl->setFontSize(13.0f);
         stateLbl->setHorizontalAlign(brls::HorizontalAlign::RIGHT);
         stateLbl->setSingleLine(true);
         stateLbl->setMarginLeft(10.0f);
-        stateLbl->setTextColor(startOn ? pc::gold() : pc::dim());
+        stateLbl->setTextColor(startOn ? pc::dim() : pc::gold());
         row->addView(stateLbl);
 
         row->registerClickAction(
@@ -6043,8 +6045,8 @@ void MediaDetailView::showMultiToggleDialog(
                 else { on.push_back(key); nowOn = true; }
                 icon->setImageFromRes(nowOn ? "icons/hide.png" : "icons/show.png");
                 stateLbl->setText(nowOn ? onStateLabel : offStateLabel);
-                stateLbl->setTextColor(nowOn ? pc::gold() : pc::dim());
-                row->setBackgroundColor(nowOn ? pc::goldTint() : pc::surface());
+                stateLbl->setTextColor(nowOn ? pc::dim() : pc::gold());
+                row->setBackgroundColor(nowOn ? pc::surface() : pc::goldTint());
                 return true;  // stay open
             });
         row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
