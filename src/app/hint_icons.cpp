@@ -9,12 +9,14 @@
  *                buttons, which is a unified set covering PS3-5)
  *   Switch      (Switch build)
  *   Keyboard    (Desktop build)
- *   Touch       (Android build)
+ *   Touch       (Android handheld)
+ *   SteamDeck   (generic controller — used for Android TV)
  *
  * The source is fixed per platform — there is no runtime swapping. PSV/PS4/
  * Switch show controller glyphs, Desktop always shows keyboard keys, and
- * Android always shows touch hints. (SteamDeck controller art is retained
- * in the table but no platform selects it by default.)
+ * Android shows touch hints — except Android TV, which is controller/remote-
+ * driven and uses the generic controller (SteamDeck) art, decided once in
+ * init() via SDL_IsAndroidTV().
  */
 
 #include "app/hint_icons.hpp"
@@ -24,6 +26,11 @@
 #include <atomic>
 #include <vector>
 #include <mutex>
+
+#if defined(__ANDROID__)
+// For SDL_IsAndroidTV() — Android TV is controller/remote-driven, not touch.
+#include <SDL2/SDL_system.h>
+#endif
 
 namespace vitaplex {
 
@@ -156,7 +163,9 @@ constexpr InputSource kDefaultSource = InputSource::Controller;
 constexpr bool kSourceIsDynamic = false;
 constexpr InputSource kDefaultSource = InputSource::Controller;
 #elif defined(__ANDROID__)
-// Android is treated as a pure touch device — always show touch hints.
+// Android handhelds are touch devices (the default below); Android TV is
+// controller / remote-driven, so init() switches it to controller glyphs via
+// SDL_IsAndroidTV(). Dynamic so resolveDynamic picks the set from g_source.
 constexpr bool kSourceIsDynamic = true;
 constexpr InputSource kDefaultSource = InputSource::Touch;
 #else
@@ -214,9 +223,15 @@ void HintIcons::onSourceChanged(std::function<void()> cb) {
 }
 
 void HintIcons::init() {
-    // The input source is now fixed per platform (no runtime swapping):
+    // The input source is fixed per platform (no runtime swapping):
     // PSV/PS4/Switch -> Controller glyphs, Android -> Touch, Desktop -> Keyboard.
-    // Nothing to watch; the default source set above is final.
+    // The one runtime distinction is Android TV: it's controller/remote-driven,
+    // not touch, so show controller glyphs there. Checked once here (SDL is up
+    // by now) and then fixed, like every other platform.
+#if defined(__ANDROID__)
+    if (SDL_IsAndroidTV())
+        g_source.store(InputSource::Controller);
+#endif
     g_initialized = true;
 }
 
