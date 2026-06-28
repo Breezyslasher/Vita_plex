@@ -143,6 +143,14 @@ private:
     void toggleQueueGrab();         // pick up the focused track / drop it
     void setQueueGrab(bool on);     // enter/leave move mode + update the row cue
     void linkFirstRowToClear();     // route UP off the first up-next row to the Clear button
+    // After an in-place reorder swaps rows around index `lo` (and lo+1), keep
+    // the UP-escape routes correct: row 0 -> Clear, others -> the row above.
+    // borealis has no route-erase, so we re-point explicitly rather than clear.
+    void refixQueueUpRoutes(int lo);
+    // Scroll the up-next list so the row at child index `idx` is visible. Used
+    // after an in-place move, where giveFocus is a no-op (the row never lost
+    // focus) and so wouldn't scroll the moved row into view on its own.
+    void scrollQueueToChild(int idx);
     bool m_queueOverlayVisible = false;
     bool m_queueGrabActive = false;     // a track is "picked up" for Up/Down reorder
     bool m_queuePopulating = false;     // Guard against re-entrant populateQueueList

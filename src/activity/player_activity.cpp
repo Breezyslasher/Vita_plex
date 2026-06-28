@@ -3672,40 +3672,69 @@ void PlayerActivity::moveFocusedQueueTrack(int direction) {
     // the queue itself otherwise.
     queue.moveInPlayOrder(playFrom, playTo);
 
-    // Fast path: a mid-list adjacent move (neither endpoint is the first up-next
-    // row) is just a swap of two adjacent row views — do it in place instead of
-    // rebuilding the whole list. This skips the cover-reload flicker and focus
-    // churn of populateQueueList and keeps the (possibly grabbed) row focused,
-    // since the row view itself isn't destroyed.
-    //
-    // The first row is excluded because it carries the UP->Clear escape route
-    // (see linkFirstRowToClear); moving it would need to move that route, and
-    // borealis has no route-erase (a null route traps UP rather than falling
-    // through). Mid-list rows have no custom routes, so swapping them needs no
-    // route handling.
-    if (childIdx >= 1 && targetChild >= 1) {
-        brls::View* rowFrom = children[childIdx];
-        queueList->removeView(rowFrom, /*free=*/false);  // detach, don't destroy
-        queueList->addView(rowFrom, targetChild);        // re-insert at new slot
-        // Non-shuffled: moveInPlayOrder swapped the two tracks' absolute indices,
-        // so swap the rows' stored trackIdx to match. Shuffled: only the shuffle
-        // order changed; m_queue (and each row's absolute trackIdx) is unchanged,
-        // so the rows keep their trackIdx as-is.
-        if (!shuffled) std::swap(itFrom->second.trackIdx, itTo->second.trackIdx);
-        brls::Application::giveFocus(rowFrom);  // keep focus on the moved row
-        // moveInPlayOrder bumped the queue version; sync our cache so the
-        // periodic refresh (which rebuilds on a version change) doesn't tear
-        // down and rebuild the list we just hand-edited.
-        m_cachedQueueVersion = queue.getVersion();
-        m_lastRenderedCurrentIndex = queue.getCurrentIndex();
-        return;
-    }
+    // Swap the two adjacent row views in place — never a full rebuild. This
+    // covers every adjacent reorder (mid-list, first row, shuffled), so moving a
+    // track (including to the very top) doesn't tear down and rebuild the list:
+    // no cover-reload flicker, and the row keeps focus since its view isn't
+    // destroyed.
+    brls::View* rowFrom = children[childIdx];
+    queueList->removeView(rowFrom, /*free=*/false);  // detach, don't destroy
+    queueList->addView(rowFrom, targetChild);        // re-insert at new slot
+    // Non-shuffled: moveInPlayOrder swapped the two tracks' absolute indices, so
+    // swap the rows' stored trackIdx to match. Shuffled: m_queue (and each row's
+    // absolute trackIdx) is unchanged, so the rows keep their trackIdx as-is.
+    if (!shuffled) std::swap(itFrom->second.trackIdx, itTo->second.trackIdx);
+    // Row order (and possibly the first row) changed — keep the UP->Clear escape
+    // routes correct around the swap.
+    refixQueueUpRoutes(std::min(childIdx, targetChild));
+    // The row never lost focus, so giveFocus is a no-op and won't scroll; scroll
+    // the moved row into view explicitly so grab-mode hold-to-move follows it.
+    brls::Application::giveFocus(rowFrom);
+    scrollQueueToChild(targetChild);
+    // moveInPlayOrder bumped the queue version; sync our cache so the periodic
+    // refresh (which rebuilds on a version change) doesn't tear down and rebuild
+    // the list we just hand-edited.
+    m_cachedQueueVersion = queue.getVersion();
+    m_lastRenderedCurrentIndex = queue.getCurrentIndex();
+}
 
-    // Otherwise rebuild — land focus on the moved track's new slot. populateQueueList
-    // honors this in both its synchronous and batched paths, which is what keeps
-    // large queues (built asynchronously) from re-focusing the top row.
-    m_queueFocusTargetChild = targetChild;
-    populateQueueList();
+void PlayerActivity::refixQueueUpRoutes(int lo) {
+    if (!queueList || !queueClearBtn) return;
+    auto& ch = queueList->getChildren();
+    // Re-point the rows whose correct upward neighbour could have changed: the
+    // two swapped rows (lo, lo+1) and the one just below (lo+2), whose neighbour
+    // is now a different object. Row 0 escapes to Clear; the rest point at the
+    // row above. Rows outside this window keep their existing (still-correct)
+    // routes. Only track rows are focusable / routable — skip the "+N more"
+    // label.
+    for (int i = std::max(0, lo); i <= lo + 2 && i < (int)ch.size(); i++) {
+        if (m_queueRowData.find(ch[i]) == m_queueRowData.end()) continue;
+        if (i == 0) {
+            ch[0]->setCustomNavigationRoute(brls::FocusDirection::UP, queueClearBtn);
+        } else {
+            ch[i]->setCustomNavigationRoute(brls::FocusDirection::UP, ch[i - 1]);
+        }
+    }
+}
+
+void PlayerActivity::scrollQueueToChild(int idx) {
+    if (!queueScroll || !queueList || idx < 0) return;
+    constexpr float rowH = 54.0f;  // 52 height + 2 margin (matches the rows)
+    float viewH = queueScroll->getHeight();
+    if (viewH <= 0.0f) return;
+    int n = (int)queueList->getChildren().size();
+    float maxScroll = std::max(0.0f, n * rowH + 8.0f - viewH);
+    float offset = queueScroll->getContentOffsetY();
+    float rowTop = idx * rowH;
+    float rowBottom = rowTop + rowH;
+    float newOffset = offset;
+    if (rowTop < offset)
+        newOffset = rowTop;                         // above the viewport -> scroll up
+    else if (rowBottom > offset + viewH)
+        newOffset = rowBottom - viewH;              // below the viewport -> scroll down
+    newOffset = std::min(std::max(newOffset, 0.0f), maxScroll);
+    if (std::abs(newOffset - offset) > 0.5f)
+        queueScroll->setContentOffsetY(newOffset, false);
 }
 
 void PlayerActivity::toggleQueueGrab() {
