@@ -9,6 +9,7 @@
 #include "view/settings_tab.hpp"
 #include "view/livetv_tab.hpp"
 #include "view/downloads_tab.hpp"
+#include "view/sidebar_editor.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
@@ -132,6 +133,19 @@ void MainActivity::onContentAvailable() {
 
         // Focus first tab
         tabFrame->focusTab(0);
+
+        // Press Y while a sidebar tab is focused to open the inline editor in
+        // place — no trip through Settings. Registered on the sidebar view (the
+        // ancestor of every tab), so the hint + action only apply while the
+        // sidebar has focus. The view persists across rebuildSidebar(), so this
+        // is wired once. Offline the sidebar is just Downloads + Settings, so
+        // there's nothing to reorder — skip it there.
+        if (!Application::getInstance().isOfflineMode()) {
+            if (brls::View* sidebar = tabFrame->getView("brls/tab_frame/sidebar")) {
+                sidebar->registerAction("Edit Sidebar", brls::ControllerButton::BUTTON_Y,
+                    [](brls::View*) { SidebarEditor::open(); return true; });
+            }
+        }
 
         // Register BUTTON_B on the root content view (parent of tabFrame) so it
         // intercepts back/circle regardless of which child has focus. When a
