@@ -27,10 +27,10 @@ public:
     void rebuildSidebar();
 
 private:
-    // Add Home, then the ordered + visible movable items (individual libraries
-    // or the premade tabs, depending on showLibrariesInSidebar), then Settings,
-    // honoring sidebarOrder + hiddenLibraries + hiddenSidebarItems. Shared by
-    // the first build (onContentAvailable) and rebuildSidebar().
+    // Add Home, then the ordered + visible movable items (each library, then
+    // Search / Live TV / Downloads), then Settings, honoring sidebarOrder +
+    // hiddenLibraries + hiddenSidebarItems. Shared by the first build
+    // (onContentAvailable) and rebuildSidebar().
     void buildSidebarTabs();
     // Re-apply the sidebar width / collapse decision based on the
     // current viewport's image constraints. Hoisted out of

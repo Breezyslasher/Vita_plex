@@ -4,13 +4,11 @@
 
 #include "activity/main_activity.hpp"
 #include "view/home_tab.hpp"
-#include "view/library_tab.hpp"
 #include "view/library_section_tab.hpp"
 #include "view/search_tab.hpp"
 #include "view/settings_tab.hpp"
 #include "view/livetv_tab.hpp"
 #include "view/downloads_tab.hpp"
-#include "view/music_tab.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
@@ -74,7 +72,7 @@ void MainActivity::applySidebarSizingForViewport() {
         sidebarWidth = std::max(sidebarWidth, calculateTextWidth(tab));
     }
 
-    if (settings.showLibrariesInSidebar && !Application::getInstance().isOfflineMode()) {
+    if (!Application::getInstance().isOfflineMode()) {
         // Reuse the section cache populated on the first pass — no point
         // refetching from Plex just because the user rotated.
         for (const auto& section : s_cachedSections) {
@@ -113,11 +111,9 @@ void MainActivity::onContentAvailable() {
 #endif
 
     if (tabFrame) {
-        AppSettings& settings = Application::getInstance().getSettings();
-
         // First pass populates s_cachedSections from Plex; afterwards
         // applySidebarSizingForViewport() reuses the cache.
-        if (settings.showLibrariesInSidebar && !Application::getInstance().isOfflineMode()) {
+        if (!Application::getInstance().isOfflineMode()) {
             PlexClient& client = PlexClient::getInstance();
             std::vector<LibrarySection> sections;
             if (client.fetchLibrarySections(sections)) {
@@ -221,30 +217,24 @@ void MainActivity::buildSidebarTabs() {
         return;
     }
 
-    const bool libsMode  = settings.showLibrariesInSidebar;
     const bool hasLiveTV = PlexClient::getInstance().hasLiveTV();
 
     // Home is always pinned to the top.
     tabFrame->addTab("Home", []() { return new HomeTab(); });
 
-    // Library sections (sidebar mode) — fetch synchronously + cache.
+    // Library sections — fetch synchronously + cache (libraries always live in
+    // the sidebar now; there is no premade Library/Music tab mode).
     std::vector<LibrarySection> sections;
-    if (libsMode) {
-        if (PlexClient::getInstance().fetchLibrarySections(sections)) {
-            s_cachedSections = sections;
-        } else {
-            sections = s_cachedSections;  // fall back to whatever we last saw
-        }
+    if (PlexClient::getInstance().fetchLibrarySections(sections)) {
+        s_cachedSections = sections;
+    } else {
+        sections = s_cachedSections;  // fall back to whatever we last saw
     }
 
-    // Movable item universe for this mode, in DEFAULT order.
+    // Movable item universe, in DEFAULT order: each library, then Search /
+    // Live TV / Downloads.
     std::vector<std::string> defaultOrder;
-    if (libsMode) {
-        for (const auto& sec : sections) defaultOrder.push_back("lib:" + sec.key);
-    } else {
-        defaultOrder.push_back("library");
-        defaultOrder.push_back("music");
-    }
+    for (const auto& sec : sections) defaultOrder.push_back("lib:" + sec.key);
     defaultOrder.push_back("search");
     if (hasLiveTV) defaultOrder.push_back("livetv");
     defaultOrder.push_back("downloads");
@@ -253,9 +243,9 @@ void MainActivity::buildSidebarTabs() {
         return std::find(defaultOrder.begin(), defaultOrder.end(), id) != defaultOrder.end();
     };
 
-    // Final order: the saved order (filtered to ids valid in this mode), then
-    // any missing valid ids appended in their default position — so newly
-    // discovered libraries land sensibly without clobbering the user's order.
+    // Final order: the saved order (filtered to valid ids), then any missing
+    // valid ids appended in their default position — so newly discovered
+    // libraries land sensibly without clobbering the user's order.
     std::vector<std::string> order;
     auto isPlaced = [&](const std::string& id) {
         return std::find(order.begin(), order.end(), id) != order.end();
@@ -281,9 +271,7 @@ void MainActivity::buildSidebarTabs() {
             tabFrame->addTab(t, [k, t, ty]() { return new LibrarySectionTab(k, t, ty); });
         } else {
             if (sidebarCsvHas(settings.hiddenSidebarItems, id)) continue;
-            if (id == "library")        tabFrame->addTab("Library",   []() { return new LibraryTab(); });
-            else if (id == "music")     tabFrame->addTab("Music",     []() { return new MusicTab(); });
-            else if (id == "search")    tabFrame->addTab("Search",    []() { return new SearchTab(); });
+            if (id == "search")         tabFrame->addTab("Search",    []() { return new SearchTab(); });
             else if (id == "livetv")    tabFrame->addTab("Live TV",   []() { return new LiveTVTab(); });
             else if (id == "downloads") tabFrame->addTab("Downloads", []() { return new DownloadsTab(); });
         }
