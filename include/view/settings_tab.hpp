@@ -41,7 +41,6 @@ private:
     enum SectionId : int {
         SEC_ACCOUNT = 0,
         SEC_INTERFACE,
-        SEC_LAYOUT,
         SEC_CONTENT,
         SEC_PLAYBACK,
         SEC_TRANSCODING,
@@ -59,7 +58,6 @@ private:
     // m_sectionBoxes and hides every one except the active section.
     brls::Box* createAccountSection();
     brls::Box* createUISection();
-    brls::Box* createLayoutSection();
     brls::Box* createContentDisplaySection();
     brls::Box* createPlaybackSection();
     brls::Box* createTranscodeSection();
@@ -128,14 +126,11 @@ private:
     brls::BooleanCell* m_autoLoginToggle = nullptr;
     brls::DetailCell*  m_switchUserCell  = nullptr;
 
-    // UI section
+    // Interface section
     brls::SelectorCell* m_themeSelector = nullptr;
     brls::BooleanCell* m_debugLogToggle = nullptr;
-
-    // Layout section
-    brls::BooleanCell* m_collapseSidebarToggle = nullptr;
+    // Manage Hidden Libraries lives here now (was the old Layout section).
     brls::DetailCell* m_hiddenLibrariesCell = nullptr;
-    brls::DetailCell* m_sidebarOrderCell = nullptr;
 
     // Content display section
     brls::BooleanCell* m_collectionsToggle = nullptr;

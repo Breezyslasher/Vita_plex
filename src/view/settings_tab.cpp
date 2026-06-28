@@ -17,7 +17,6 @@
 #include "app/downloads_manager.hpp"
 #include "app/synclounge_session.hpp"
 #include "view/media_detail_view.hpp"
-#include "view/sidebar_editor.hpp"
 #include "activity/player_activity.hpp"
 #include "utils/http_client.hpp"
 #include "utils/http_cache.hpp"
@@ -107,9 +106,7 @@ static const SectionMeta kSections[] = {
     /* SEC_ACCOUNT     */ { "Account",         "account.png",
                             "Sign-in, switch user, and auto-login." },
     /* SEC_INTERFACE   */ { "Interface",       "theme-light-dark.png",
-                            "Theme and logging." },
-    /* SEC_LAYOUT      */ { "Layout",          "menu.png",
-                            "Sidebar contents, order, and hidden libraries." },
+                            "Logging, diagnostics, and hidden libraries." },
     /* SEC_CONTENT     */ { "Content Display", "show.png",
                             "What appears in grids and library hubs." },
     /* SEC_PLAYBACK    */ { "Playback",        "play.png",
@@ -150,8 +147,6 @@ static int railWidthForViewport() {
 SettingsTab::SettingsTab() {
     static_assert(sizeof(kSections) / sizeof(kSections[0]) == SEC_COUNT,
                   "kSections / SectionId out of sync");
-
-    AppSettings& settings = Application::getInstance().getSettings();
 
     this->setAxis(brls::Axis::ROW);
     this->setJustifyContent(brls::JustifyContent::FLEX_START);
@@ -286,7 +281,6 @@ SettingsTab::SettingsTab() {
     m_sectionBoxes.resize(SEC_COUNT, nullptr);
     m_sectionBoxes[SEC_ACCOUNT]     = createAccountSection();
     m_sectionBoxes[SEC_INTERFACE]   = createUISection();
-    m_sectionBoxes[SEC_LAYOUT]      = createLayoutSection();
     m_sectionBoxes[SEC_CONTENT]     = createContentDisplaySection();
     m_sectionBoxes[SEC_PLAYBACK]    = createPlaybackSection();
     m_sectionBoxes[SEC_TRANSCODING] = createTranscodeSection();
@@ -653,24 +647,8 @@ brls::Box* SettingsTab::createUISection() {
     });
     box->addView(mpvStatsToggle);
 
-    return box;
-}
-
-brls::Box* SettingsTab::createLayoutSection() {
-    Application& app = Application::getInstance();
-    AppSettings& settings = app.getSettings();
-    brls::Box* box = makeSectionBox();
-
-    // Collapse sidebar toggle
-    m_collapseSidebarToggle = new brls::BooleanCell();
-    m_collapseSidebarToggle->init("Collapse Sidebar", settings.collapseSidebar, [&settings](bool value) {
-        settings.collapseSidebar = value;
-        Application::getInstance().saveSettings();
-        // Note: Requires app restart to take effect
-    });
-    box->addView(m_collapseSidebarToggle);
-
-    // Manage hidden libraries
+    // Manage hidden libraries. Hidden libraries are kept out of the sidebar
+    // (and the sidebar reorder editor); this is the one place to toggle them.
     m_hiddenLibrariesCell = new brls::DetailCell();
     m_hiddenLibrariesCell->setText("Manage Hidden Libraries");
     int hiddenCount = 0;
@@ -687,24 +665,6 @@ brls::Box* SettingsTab::createLayoutSection() {
         return true;
     });
     box->addView(m_hiddenLibrariesCell);
-
-    // Edit sidebar (inline reorder + show/hide editor)
-    m_sidebarOrderCell = new brls::DetailCell();
-    m_sidebarOrderCell->setText("Edit Sidebar");
-    m_sidebarOrderCell->setDetailText(settings.sidebarOrder.empty() ? "Default" : "Custom");
-    m_sidebarOrderCell->registerClickAction([](brls::View* view) {
-        SidebarEditor::open();
-        return true;
-    });
-    box->addView(m_sidebarOrderCell);
-
-    // Info label
-    auto* infoLabel = new brls::Label();
-    infoLabel->setText("Layout changes require app restart");
-    infoLabel->setFontSize(14);
-    infoLabel->setMarginLeft(16);
-    infoLabel->setMarginTop(8);
-    box->addView(infoLabel);
 
     return box;
 }
