@@ -3638,46 +3638,66 @@ void PlayerActivity::moveFocusedQueueTrack(int direction) {
     auto itTo   = m_queueRowData.find(children[targetChild]);
     if (itFrom == m_queueRowData.end() || itTo == m_queueRowData.end()) return;
 
-    int fromTrack = itFrom->second.trackIdx;
-    int toTrack   = itTo->second.trackIdx;
-
     MusicQueue& queue = MusicQueue::getInstance();
+    const bool shuffled = queue.isShuffleEnabled();
+
+    // Work in PLAY order. A row's position in the rendered window is its play
+    // position (window child index + window start); when shuffled that's a
+    // shuffle-order index, otherwise an absolute queue index. The track each row
+    // shows is its stored (absolute) trackIdx.
+    const int playFrom = m_queueWindowStart + childIdx;
+    const int playTo   = m_queueWindowStart + targetChild;
+    const int absFrom  = itFrom->second.trackIdx;
+
+    // Server sync: move the item after its new play-order predecessor (the track
+    // that will sit just before it). Resolve neighbours through the shuffle order
+    // when shuffled so the anchor is the right track, not an absolute neighbour.
     if (queue.isServerSynced()) {
-        const auto& q = queue.getQueue();
-        int pqItemID = (fromTrack >= 0 && fromTrack < (int)q.size()) ? q[fromTrack].playQueueItemID : 0;
-        int precedeTrack = (direction > 0) ? toTrack : toTrack - 1;
-        int afterPQItemID = (precedeTrack >= 0 && precedeTrack < (int)q.size())
-                                ? q[precedeTrack].playQueueItemID : 0;
+        const auto& q  = queue.getQueue();
+        const auto& so = queue.getShuffleOrder();
+        auto absAt = [&](int playPos) -> int {
+            if (!shuffled) return playPos;
+            return (playPos >= 0 && playPos < (int)so.size()) ? so[playPos] : -1;
+        };
+        int pqItemID = (absFrom >= 0 && absFrom < (int)q.size()) ? q[absFrom].playQueueItemID : 0;
+        int anchorAbs = absAt((direction > 0) ? playTo : playTo - 1);
+        int afterPQItemID = (anchorAbs >= 0 && anchorAbs < (int)q.size())
+                                ? q[anchorAbs].playQueueItemID : 0;
         if (pqItemID > 0) {
             PlexClient::getInstance().movePlayQueueItem(queue.getPlayQueueID(), pqItemID, afterPQItemID);
         }
     }
 
-    queue.moveTrack(fromTrack, toTrack);
+    // Reorder play order: the shuffle order when shuffled (m_queue untouched),
+    // the queue itself otherwise.
+    queue.moveInPlayOrder(playFrom, playTo);
 
-    // Fast path: a non-shuffled, mid-list adjacent move (neither endpoint is the
-    // first up-next row) is just a swap of two adjacent row views — do it in
-    // place instead of rebuilding the whole list. This skips the cover-reload
-    // flicker and focus churn of populateQueueList and keeps the (possibly
-    // grabbed) row under focus, since the row view itself isn't destroyed.
+    // Fast path: a mid-list adjacent move (neither endpoint is the first up-next
+    // row) is just a swap of two adjacent row views — do it in place instead of
+    // rebuilding the whole list. This skips the cover-reload flicker and focus
+    // churn of populateQueueList and keeps the (possibly grabbed) row focused,
+    // since the row view itself isn't destroyed.
     //
     // The first row is excluded because it carries the UP->Clear escape route
     // (see linkFirstRowToClear); moving it would need to move that route, and
     // borealis has no route-erase (a null route traps UP rather than falling
     // through). Mid-list rows have no custom routes, so swapping them needs no
-    // route handling. Shuffled queues rebuild too: moveTrack reorders absolute
-    // indices, not the shuffle order, so the simple two-row index swap below
-    // wouldn't hold.
-    if (!queue.isShuffleEnabled() && childIdx >= 1 && targetChild >= 1) {
+    // route handling.
+    if (childIdx >= 1 && targetChild >= 1) {
         brls::View* rowFrom = children[childIdx];
-        brls::View* rowTo   = children[targetChild];
         queueList->removeView(rowFrom, /*free=*/false);  // detach, don't destroy
         queueList->addView(rowFrom, targetChild);        // re-insert at new slot
-        // Adjacent non-shuffled swap only exchanges these two tracks' absolute
-        // indices, so swapping the two rows' stored trackIdx keeps play / remove
-        // / further moves pointing at the right tracks.
-        std::swap(itFrom->second.trackIdx, itTo->second.trackIdx);
+        // Non-shuffled: moveInPlayOrder swapped the two tracks' absolute indices,
+        // so swap the rows' stored trackIdx to match. Shuffled: only the shuffle
+        // order changed; m_queue (and each row's absolute trackIdx) is unchanged,
+        // so the rows keep their trackIdx as-is.
+        if (!shuffled) std::swap(itFrom->second.trackIdx, itTo->second.trackIdx);
         brls::Application::giveFocus(rowFrom);  // keep focus on the moved row
+        // moveInPlayOrder bumped the queue version; sync our cache so the
+        // periodic refresh (which rebuilds on a version change) doesn't tear
+        // down and rebuild the list we just hand-edited.
+        m_cachedQueueVersion = queue.getVersion();
+        m_lastRenderedCurrentIndex = queue.getCurrentIndex();
         return;
     }
 

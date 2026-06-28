@@ -47,6 +47,14 @@ public:
     void insertTrackAfterCurrent(const MediaItem& item);  // Insert after current track (play next)
     void removeTrack(int index);
     void moveTrack(int fromIndex, int toIndex);
+    // Reorder by PLAY position (the order the up-next list shows): the shuffle
+    // order when shuffled, the queue itself when not. moveTrack takes absolute
+    // queue indices and only reorders m_queue, which is wrong for a client-side
+    // shuffle (m_shuffleOrder is a permutation over m_queue) — it would leave
+    // the shuffle->track mapping pointing at the wrong tracks. This moves the
+    // shuffle-order entry instead and leaves m_queue (and the absolute indices
+    // the UI rows hold) untouched, so shuffled reorder is correct.
+    void moveInPlayOrder(int fromPlayPos, int toPlayPos);
 
     // Set queue from album/playlist (clears existing queue)
     void setQueue(const std::vector<MediaItem>& items, int startIndex = 0);
