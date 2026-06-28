@@ -150,6 +150,15 @@ void RecyclingGrid::scrollToItemIndex(size_t index, bool animated) {
 brls::View* RecyclingGrid::getNextFocus(brls::FocusDirection direction, brls::View* currentView) {
     brls::View* next = brls::ScrollingFrame::getNextFocus(direction, currentView);
 
+    // At the right edge (no cell to the right) hop to an opt-in escape target,
+    // e.g. the A-Z jump rail — but only when it's actually visible. Without this
+    // RIGHT off the last item in a row dead-ends instead of reaching the rail.
+    if (direction == brls::FocusDirection::RIGHT && next == nullptr &&
+        m_rightFocusEscape &&
+        m_rightFocusEscape->getVisibility() == brls::Visibility::VISIBLE) {
+        return m_rightFocusEscape;
+    }
+
     // If navigating DOWN and there's nowhere to go, we're at the bottom.
     // Trigger loading the next page if more items are available.
     if (direction == brls::FocusDirection::DOWN && next == nullptr &&
