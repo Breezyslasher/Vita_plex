@@ -822,6 +822,9 @@ void LibrarySectionTab::showMultiSelect(const std::string& field,
                 m_activeFilters[fieldCopy] = af;
             }
             applyFilters();
+            // Return to the filter menu (not the grid) so the user can keep
+            // picking other filters; they back out of the menu to the grid.
+            showFilterMenu();
         });
 }
 
@@ -842,6 +845,7 @@ void LibrarySectionTab::showFilterValues(const std::string& field,
         [this, field](brls::View*) {
             m_activeFilters.erase(field);
             applyFilters();
+            showFilterMenu();   // back to the filter menu, like the multi-select picker
             return true;
         }});
 
@@ -855,6 +859,7 @@ void LibrarySectionTab::showFilterValues(const std::string& field,
                 af.values.push_back({ vkey, vtitle });
                 m_activeFilters[field] = af;
                 applyFilters();
+                showFilterMenu();
                 return true;
             }});
     }

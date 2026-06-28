@@ -5819,6 +5819,7 @@ void MediaDetailView::showMultiSelectFilter(
     panel->addView(scroll);
 
     brls::View* firstRow = nullptr;
+    brls::View* lastRow  = nullptr;
     for (const auto& it : items) {
         const std::string key = it.key;
         const std::string label = it.label;
@@ -5872,6 +5873,7 @@ void MediaDetailView::showMultiSelectFilter(
         row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
         listBox->addView(row);
         if (!firstRow) firstRow = row;
+        lastRow = row;
     }
 
     // Apply button.
@@ -5893,6 +5895,14 @@ void MediaDetailView::showMultiSelectFilter(
     apply->registerClickAction([commit](brls::View*) { commit(); return true; });
     apply->addGestureRecognizer(new brls::TapGestureRecognizer(apply));
     panel->addView(apply);
+
+    // The ScrollingFrame traps UP/DOWN at its first/last row, so without these
+    // routes DOWN off the last value wouldn't reach Apply and UP off the first
+    // wouldn't reach the Match row. Wire both ends across the scroll boundary.
+    if (firstRow) firstRow->setCustomNavigationRoute(brls::FocusDirection::UP, modeRow);
+    if (lastRow)  lastRow->setCustomNavigationRoute(brls::FocusDirection::DOWN, apply);
+    modeRow->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstRow ? firstRow : apply);
+    apply->setCustomNavigationRoute(brls::FocusDirection::UP, lastRow ? lastRow : modeRow);
 
     scrim->addView(panel);
     scrim->registerAction("Back", brls::ControllerButton::BUTTON_B,
