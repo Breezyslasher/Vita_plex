@@ -153,6 +153,13 @@ brls::View* PlayerActivity::createContentView() {
 void PlayerActivity::onContentAvailable() {
     brls::Logger::debug("PlayerActivity content available");
 
+    // The up-next list scrolls CENTERED so D-pad Up/Down always change focus and
+    // scroll immediately. The default NATURAL only moves focus once the next row
+    // is already fully on screen, so UP/DOWN couldn't reach an off-screen track.
+    // CENTERED clamps at the ends, so the first/last tracks still sit flush.
+    if (queueScroll)
+        queueScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
+
     // We're on screen now — suppress the SyncLounge auto-join prompt (the
     // in-player auto-load follows content changes instead).
     s_active.store(true);
@@ -3724,16 +3731,11 @@ void PlayerActivity::scrollQueueToChild(int idx) {
     if (viewH <= 0.0f) return;
     int n = (int)queueList->getChildren().size();
     float maxScroll = std::max(0.0f, n * rowH + 8.0f - viewH);
-    float offset = queueScroll->getContentOffsetY();
-    float rowTop = idx * rowH;
-    float rowBottom = rowTop + rowH;
-    float newOffset = offset;
-    if (rowTop < offset)
-        newOffset = rowTop;                         // above the viewport -> scroll up
-    else if (rowBottom > offset + viewH)
-        newOffset = rowBottom - viewH;              // below the viewport -> scroll down
+    // Center the row (clamped at the ends), matching the list's CENTERED nav so
+    // a grab-mode move keeps the held row centered as the list scrolls under it.
+    float newOffset = (idx * rowH + rowH / 2.0f) - viewH / 2.0f;
     newOffset = std::min(std::max(newOffset, 0.0f), maxScroll);
-    if (std::abs(newOffset - offset) > 0.5f)
+    if (std::abs(newOffset - queueScroll->getContentOffsetY()) > 0.5f)
         queueScroll->setContentOffsetY(newOffset, false);
 }
 
