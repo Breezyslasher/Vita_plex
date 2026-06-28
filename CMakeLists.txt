@@ -263,6 +263,7 @@ set(APP_SOURCES
     src/view/overlay_dialog.cpp
     src/view/horizontal_scroll_row.cpp
     src/view/long_press_gesture.cpp
+    src/view/sidebar_editor.cpp
 
     # Player
     src/player/mpv_player.cpp
