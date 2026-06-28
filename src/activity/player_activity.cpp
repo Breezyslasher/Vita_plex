@@ -614,30 +614,7 @@ void PlayerActivity::onContentAvailable() {
             queueBtn->addGestureRecognizer(new brls::TapGestureRecognizer(queueBtn));
         }
 
-        // Queue side-sheet header controls (shuffle / repeat / sort) + Clear.
-        // These live inside the hidden overlay but are wired once at init.
-        if (queueShuffleBtn) {
-            queueShuffleBtn->registerClickAction([this](brls::View* view) {
-                toggleShuffle();
-                if (m_queueOverlayVisible) populateQueueList();
-                return true;
-            });
-            queueShuffleBtn->addGestureRecognizer(new brls::TapGestureRecognizer(queueShuffleBtn));
-        }
-        if (queueRepeatBtn) {
-            queueRepeatBtn->registerClickAction([this](brls::View* view) {
-                toggleRepeat();
-                return true;
-            });
-            queueRepeatBtn->addGestureRecognizer(new brls::TapGestureRecognizer(queueRepeatBtn));
-        }
-        if (queueSortBtn) {
-            queueSortBtn->registerClickAction([this](brls::View* view) {
-                showQueueSortMenu();
-                return true;
-            });
-            queueSortBtn->addGestureRecognizer(new brls::TapGestureRecognizer(queueSortBtn));
-        }
+        // Queue side-sheet "Clear" control (wired once; lives in the hidden overlay)
         if (queueClearBtn) {
             queueClearBtn->registerClickAction([this](brls::View* view) {
                 clearUpcoming();
@@ -645,9 +622,6 @@ void PlayerActivity::onContentAvailable() {
             });
             queueClearBtn->addGestureRecognizer(new brls::TapGestureRecognizer(queueClearBtn));
         }
-        // Reflect current shuffle/repeat state on the header icons + active tint
-        updateShuffleIcon();
-        updateRepeatIcon();
 
         // Music mode: controls never auto-hide, always visible
         // Override the controls auto-hide for music
@@ -2896,12 +2870,10 @@ void PlayerActivity::toggleRepeat() {
 }
 
 void PlayerActivity::updateShuffleIcon() {
+    if (!shuffleIcon) return;
     MusicQueue& queue = MusicQueue::getInstance();
-    bool on = queue.isShuffleEnabled();
-    const char* res = on ? "icons/shuffle-variant.png" : "icons/shuffle-disabled.png";
-    if (shuffleIcon) shuffleIcon->setImageFromRes(res);
-    if (queueShuffleHdrIcon) queueShuffleHdrIcon->setImageFromRes(res);
-    setQueueHeaderButtonActive(queueShuffleBtn, on);
+    shuffleIcon->setImageFromRes(queue.isShuffleEnabled()
+        ? "icons/shuffle-variant.png" : "icons/shuffle-disabled.png");
 }
 
 void PlayerActivity::applyMusicLayoutForViewport() {
@@ -2935,14 +2907,12 @@ void PlayerActivity::applyMusicLayoutForViewport() {
 }
 
 void PlayerActivity::updateRepeatIcon() {
-    MusicQueue& queue = MusicQueue::getInstance();
-    RepeatMode mode = queue.getRepeatMode();
-    const char* res = (mode == RepeatMode::ONE) ? "icons/repeat-once.png"
-                    : (mode == RepeatMode::ALL) ? "icons/repeat.png"
-                                                : "icons/repeat-off.png";
-    if (repeatIcon) repeatIcon->setImageFromRes(res);
-    if (queueRepeatHdrIcon) queueRepeatHdrIcon->setImageFromRes(res);
-    setQueueHeaderButtonActive(queueRepeatBtn, mode != RepeatMode::OFF);
+    if (!repeatIcon) return;
+    switch (MusicQueue::getInstance().getRepeatMode()) {
+        case RepeatMode::OFF: repeatIcon->setImageFromRes("icons/repeat-off.png");  break;
+        case RepeatMode::ALL: repeatIcon->setImageFromRes("icons/repeat.png");      break;
+        case RepeatMode::ONE: repeatIcon->setImageFromRes("icons/repeat-once.png"); break;
+    }
 }
 
 void PlayerActivity::onTrackEnded(const QueueItem* nextTrack) {
@@ -3215,8 +3185,150 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
             }
         }, brls::PanAxis::HORIZONTAL));
 
-    // Tap / A to play this track
+    // Vertical pan: hold briefly to drag-reorder, otherwise scroll the list.
+    // Touch users get reordering back without an L/R controller; the dragged
+    // row follows the finger while neighbours slide out of the way, and the
+    // drop commits via moveTrack + rebuild.
+    row->addGestureRecognizer(new brls::PanGestureRecognizer(
+        [this, row](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
+            constexpr float rowH = 54.0f;  // 52 height + 2 margin
+            float deltaY = status.position.y - status.startPosition.y;
+
+            if (status.state == brls::GestureState::UNSURE) {
+                if (!m_dragState.active && m_dragState.draggedRow != row) {
+                    m_dragState.holdStart = std::chrono::steady_clock::now();
+                    m_dragState.holdMet = false;
+                    m_dragState.active = false;
+                    m_dragState.draggedRow = row;
+                    m_dragState.scrollPassthrough = true;
+                    m_dragState.initialScrollY = queueScroll ? queueScroll->getContentOffsetY() : 0.0f;
+                    m_dragState.originalDisplayIdx = findQueueRowDisplayIndex(row);
+                    m_dragState.targetDisplayIdx = m_dragState.originalDisplayIdx;
+                    auto it = m_queueRowData.find(row);
+                    m_dragState.draggedTrackIdx = (it != m_queueRowData.end()) ? it->second.trackIdx : -1;
+                }
+            } else if (status.state == brls::GestureState::START ||
+                       status.state == brls::GestureState::STAY) {
+                // Promote a still-held touch into a drag
+                if (!m_dragState.holdMet && m_dragState.draggedRow == row) {
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - m_dragState.holdStart).count();
+                    if (elapsed >= HOLD_THRESHOLD_MS && std::abs(deltaY) < rowH * 0.5f) {
+                        m_dragState.holdMet = true;
+                        m_dragState.active = true;
+                        m_dragState.scrollPassthrough = false;
+                        m_dragState.originalDisplayIdx = findQueueRowDisplayIndex(row);
+                        m_dragState.targetDisplayIdx = m_dragState.originalDisplayIdx;
+                        m_dragState.dragStartY = status.position.y;
+                        m_dragState.dragStartScrollY = queueScroll ? queueScroll->getContentOffsetY() : 0.0f;
+                        row->setBackgroundColor(nvgRGBA(229, 160, 13, 60));  // lift cue
+                    }
+                }
+
+                // Not yet a drag: forward the vertical motion to the scroll view
+                if (m_dragState.scrollPassthrough && m_dragState.draggedRow == row) {
+                    if (queueScroll && std::abs(deltaY) >= 10.0f) {
+                        float newOffset = m_dragState.initialScrollY - deltaY;
+                        if (newOffset < 0) newOffset = 0;
+                        float viewH = queueScroll->getHeight();
+                        int n = queueList ? (int)queueList->getChildren().size() : 0;
+                        float maxScroll = std::max(0.0f, n * rowH + 8.0f - viewH);
+                        if (newOffset > maxScroll) newOffset = maxScroll;
+                        queueScroll->setContentOffsetY(newOffset, false);
+                    }
+                    return;
+                }
+                if (!m_dragState.holdMet || m_dragState.draggedRow != row) return;
+
+                // Drag mode: row follows the finger, displaced rows slide aside
+                float scrollDelta = queueScroll
+                    ? (queueScroll->getContentOffsetY() - m_dragState.dragStartScrollY) : 0.0f;
+                float eff = (status.position.y - m_dragState.dragStartY) + scrollDelta;
+                row->setTranslationY(eff);
+
+                int origIdx = m_dragState.originalDisplayIdx;
+                int childCount = queueList ? (int)queueList->getChildren().size() : 0;
+                int newTarget = origIdx + (int)std::lround(eff / rowH);
+                if (newTarget < 0) newTarget = 0;
+                if (newTarget > childCount - 1) newTarget = childCount - 1;
+                m_dragState.targetDisplayIdx = newTarget;
+
+                if (queueList) {
+                    auto& children = queueList->getChildren();
+                    for (int i = 0; i < (int)children.size(); i++) {
+                        if (i == origIdx) continue;
+                        float shift = 0.0f;
+                        if (newTarget > origIdx && i > origIdx && i <= newTarget) shift = -rowH;
+                        else if (newTarget < origIdx && i >= newTarget && i < origIdx) shift = rowH;
+                        children[i]->setTranslationY(shift);
+                    }
+                }
+            } else if (status.state == brls::GestureState::END ||
+                       status.state == brls::GestureState::FAILED) {
+                bool didDrag = m_dragState.holdMet && m_dragState.draggedRow == row;
+                int origIdx = m_dragState.originalDisplayIdx;
+                int targetIdx = m_dragState.targetDisplayIdx;
+                int fromTrack = m_dragState.draggedTrackIdx;
+
+                if (queueList) for (auto* c : queueList->getChildren()) c->setTranslationY(0);
+
+                bool committed = false;
+                if (didDrag && status.state == brls::GestureState::END &&
+                    origIdx >= 0 && targetIdx >= 0 && origIdx != targetIdx && fromTrack >= 0) {
+                    MusicQueue& queue = MusicQueue::getInstance();
+                    bool shuffled = queue.isShuffleEnabled();
+                    const auto& sOrder = queue.getShuffleOrder();
+                    int targetPlayPos = targetIdx + m_queueWindowStart;
+                    int toTrack = (shuffled && targetPlayPos < (int)sOrder.size())
+                                    ? sOrder[targetPlayPos] : targetPlayPos;
+                    if (toTrack >= 0 && toTrack < queue.getQueueSize() && toTrack != fromTrack) {
+                        if (queue.isServerSynced()) {
+                            const auto& q = queue.getQueue();
+                            int pqItemID = (fromTrack < (int)q.size()) ? q[fromTrack].playQueueItemID : 0;
+                            int afterPQItemID = (toTrack > 0 && toTrack - 1 < (int)q.size())
+                                                    ? q[toTrack - 1].playQueueItemID : 0;
+                            if (pqItemID > 0)
+                                PlexClient::getInstance().movePlayQueueItem(
+                                    queue.getPlayQueueID(), pqItemID, afterPQItemID);
+                        }
+                        queue.moveTrack(fromTrack, toTrack);
+                        committed = true;
+                        brls::sync([this, targetIdx]() {
+                            populateQueueList();
+                            m_dragState.justEnded = false;
+                            if (queueList) {
+                                auto& ch = queueList->getChildren();
+                                if (!ch.empty()) {
+                                    int t = std::min(std::max(targetIdx, 0), (int)ch.size() - 1);
+                                    brls::Application::giveFocus(ch[t]);
+                                }
+                            }
+                        });
+                    }
+                }
+                // Suppress the click that fires right after a drag gesture
+                m_dragState.justEnded = didDrag;
+                if (!committed) {
+                    row->setBackgroundColor(m_focusedQueueRow == row
+                        ? nvgRGB(58, 58, 70) : nvgRGBA(0, 0, 0, 0));
+                }
+
+                m_dragState.active = false;
+                m_dragState.holdMet = false;
+                m_dragState.draggedRow = nullptr;
+                m_dragState.scrollPassthrough = false;
+                m_dragState.originalDisplayIdx = -1;
+                m_dragState.targetDisplayIdx = -1;
+                m_dragState.draggedTrackIdx = -1;
+            }
+        }, brls::PanAxis::VERTICAL));
+
+    // Tap / A to play this track (suppressed right after a drag-reorder)
     row->registerClickAction([this, row](brls::View* view) {
+        if (m_dragState.justEnded) {
+            m_dragState.justEnded = false;
+            return true;
+        }
         auto it = m_queueRowData.find(row);
         if (it != m_queueRowData.end()) {
             int idx = it->second.trackIdx;
@@ -3403,17 +3515,6 @@ void PlayerActivity::updateNowPlayingBlock() {
     }
 }
 
-void PlayerActivity::setQueueHeaderButtonActive(brls::Box* btn, bool active) {
-    if (!btn) return;
-    if (active) {
-        btn->setBackgroundColor(nvgRGBA(229, 160, 13, 46));    // gold @ .18
-        btn->setBorderColor(nvgRGBA(229, 160, 13, 128));       // gold @ .5
-    } else {
-        btn->setBackgroundColor(nvgRGB(64, 64, 64));
-        btn->setBorderColor(nvgRGB(71, 71, 71));
-    }
-}
-
 void PlayerActivity::removeQueueTrackByIndex(int trackIdx) {
     MusicQueue& queue = MusicQueue::getInstance();
     if (trackIdx < 0 || trackIdx >= queue.getQueueSize()) return;
@@ -3514,73 +3615,6 @@ void PlayerActivity::clearUpcoming() {
     }
     populateQueueList();
     MpvPlayer::getInstance().showOSD("Cleared up next", 1.5);
-}
-
-void PlayerActivity::showQueueSortMenu() {
-    MusicQueue& queue = MusicQueue::getInstance();
-    if (queue.isShuffleEnabled()) {
-        MpvPlayer::getInstance().showOSD("Turn off shuffle to sort", 1.8);
-        return;
-    }
-    int start = queue.getCurrentIndex() + 1;
-    int n = queue.getQueueSize();
-    if (n - start < 2) {
-        MpvPlayer::getInstance().showOSD("Nothing to sort", 1.5);
-        return;
-    }
-    if (n - start > 400) {
-        MpvPlayer::getInstance().showOSD("Too many tracks to sort", 1.8);
-        return;
-    }
-
-    std::vector<std::string> options = {
-        "Title (A-Z)", "Artist (A-Z)", "Album (A-Z)", "Original order"
-    };
-    auto* dropdown = new brls::Dropdown(
-        "Sort Up Next", options,
-        [this](int picked) {
-            if (picked < 0) return;
-            MusicQueue& q = MusicQueue::getInstance();
-            int s = q.getCurrentIndex() + 1;
-            int total = q.getQueueSize();
-            if (total - s < 2) return;
-
-            auto lower = [](std::string v) {
-                for (auto& c : v) c = (char)std::tolower((unsigned char)c);
-                return v;
-            };
-
-            // Desired order of the upcoming sub-range
-            std::vector<const QueueItem*> up;
-            for (int i = s; i < total; i++) up.push_back(&q.getQueue()[i]);
-            std::stable_sort(up.begin(), up.end(),
-                [&](const QueueItem* a, const QueueItem* b) {
-                    switch (picked) {
-                        case 0:  return lower(a->title)  < lower(b->title);
-                        case 1:  return lower(a->artist) < lower(b->artist);
-                        case 2:  return lower(a->album)  < lower(b->album);
-                        default: return a->index < b->index;  // original order
-                    }
-                });
-            std::vector<std::string> desired;
-            desired.reserve(up.size());
-            for (auto* it : up) desired.push_back(it->ratingKey);
-
-            // Place each target slot using moveTrack (erase + insert)
-            for (int t = s; t < total; t++) {
-                const std::string& want = desired[t - s];
-                int curPos = -1;
-                const auto& qv = q.getQueue();
-                for (int j = t; j < total; j++) {
-                    if (qv[j].ratingKey == want) { curPos = j; break; }
-                }
-                if (curPos < 0 || curPos == t) continue;
-                q.moveTrack(curPos, t);
-            }
-            populateQueueList();
-        },
-        -1);
-    brls::Application::pushActivity(new brls::Activity(dropdown));
 }
 
 void PlayerActivity::populateQueueBatch() {
