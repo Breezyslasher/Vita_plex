@@ -396,6 +396,7 @@ bool Application::loadSettings() {
     m_settings.collapseSidebar = extractBool("collapseSidebar", false);
     m_settings.hiddenLibraries = extractString("hiddenLibraries");
     m_settings.sidebarOrder    = extractString("sidebarOrder");
+    m_settings.librarySortPrefs = extractString("librarySortPrefs");
 
     // Content display settings
     m_settings.showCollections  = extractBool("showCollections", true);
@@ -551,6 +552,7 @@ bool Application::saveSettings() {
     json += "  \"collapseSidebar\": " + b(m_settings.collapseSidebar) + ",\n";
     json += "  \"hiddenLibraries\": \"" + esc(m_settings.hiddenLibraries) + "\",\n";
     json += "  \"sidebarOrder\": \"" + esc(m_settings.sidebarOrder) + "\",\n";
+    json += "  \"librarySortPrefs\": \"" + esc(m_settings.librarySortPrefs) + "\",\n";
     json += "  \"showCollections\": " + b(m_settings.showCollections) + ",\n";
     json += "  \"showPlaylists\": " + b(m_settings.showPlaylists) + ",\n";
     json += "  \"showGenres\": " + b(m_settings.showGenres) + ",\n";

@@ -33,10 +33,53 @@ size_t LibrarySectionTab::playlistTrackPageSize() {
     return v > 0 ? static_cast<size_t>(v) : 50;
 }
 
-// Remembers each library section's chosen sort for the session, keyed by section
-// key, so navigating away and back (which recreates the tab) keeps the user's
-// sort instead of snapping to the default. Value = {sortParam, sortLabel}.
+// Remembers each library section's chosen sort, keyed by section key, so it
+// survives navigating away and back AND app restarts. Value = {param, label}.
+// Backed by AppSettings.librarySortPrefs (encoded "key=param|label;key2=…"),
+// loaded lazily and written through to disk on every change.
 static std::map<std::string, std::pair<std::string, std::string>> s_sortBySection;
+static bool s_sortPrefsLoaded = false;
+
+static std::string encodeSortPrefs() {
+    std::string out;
+    for (const auto& kv : s_sortBySection) {
+        if (!out.empty()) out += ";";
+        out += kv.first + "=" + kv.second.first + "|" + kv.second.second;
+    }
+    return out;
+}
+
+static void ensureSortPrefsLoaded() {
+    if (s_sortPrefsLoaded) return;
+    s_sortPrefsLoaded = true;
+    const std::string& enc = Application::getInstance().getSettings().librarySortPrefs;
+    size_t pos = 0;
+    while (pos < enc.size()) {
+        size_t semi = enc.find(';', pos);
+        std::string entry = enc.substr(
+            pos, semi == std::string::npos ? std::string::npos : semi - pos);
+        size_t eq = entry.find('=');
+        if (eq != std::string::npos) {
+            size_t bar = entry.find('|', eq + 1);
+            if (bar != std::string::npos) {
+                std::string key   = entry.substr(0, eq);
+                std::string param = entry.substr(eq + 1, bar - eq - 1);
+                std::string label = entry.substr(bar + 1);
+                if (!key.empty() && !param.empty())
+                    s_sortBySection[key] = { param, label };
+            }
+        }
+        if (semi == std::string::npos) break;
+        pos = semi + 1;
+    }
+}
+
+static void persistSortPref(const std::string& sectionKey,
+                            const std::string& param, const std::string& label) {
+    s_sortBySection[sectionKey] = { param, label };
+    Application::getInstance().getSettings().librarySortPrefs = encodeSortPrefs();
+    Application::getInstance().saveSettings();
+}
 
 LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::string& title, const std::string& sectionType)
     : m_sectionKey(sectionKey), m_title(title), m_sectionType(sectionType) {
@@ -47,6 +90,7 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     // Restore this section's remembered sort (if the user picked one before).
     // Must happen before the Sort chip is built and before loadContent() reads
     // m_sortParam, so both reflect the saved choice.
+    ensureSortPrefsLoaded();
     auto savedSort = s_sortBySection.find(sectionKey);
     if (savedSort != s_sortBySection.end()) {
         m_sortParam = savedSort->second.first;
@@ -633,7 +677,7 @@ void LibrarySectionTab::showSortMenu() {
             [this, label, param](brls::View*) {
                 m_sortParam = param;
                 m_sortLabel = label;
-                s_sortBySection[m_sectionKey] = { param, label };  // remember for this section
+                persistSortPref(m_sectionKey, param, label);  // remember + save to disk
                 if (m_sortBtn) m_sortBtn->setText("Sort: " + label);
                 reloadAllItems();
                 return true;
