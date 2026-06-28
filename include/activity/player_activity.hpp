@@ -136,8 +136,15 @@ private:
     void removeFocusedQueueTrack(); // Remove the track for the focused up-next row
     void removeQueueTrackByIndex(int trackIdx);  // Shared remove (server sync + rebuild)
     void moveFocusedQueueTrack(int direction);  // -1 = up, +1 = down (LB/RB)
+    // Controller/remote reorder, mirroring the sidebar editor's grab model:
+    // START (or Android TV hold-center) picks up the focused track, then
+    // Up/Down move it and A/OK drops it. Gives bare D-pad remotes a way to
+    // reorder without the L/R bumpers (which Android TV remotes lack).
+    void toggleQueueGrab();         // pick up the focused track / drop it
+    void setQueueGrab(bool on);     // enter/leave move mode + update the row cue
     void linkFirstRowToClear();     // route UP off the first up-next row to the Clear button
     bool m_queueOverlayVisible = false;
+    bool m_queueGrabActive = false;     // a track is "picked up" for Up/Down reorder
     bool m_queuePopulating = false;     // Guard against re-entrant populateQueueList
     uint32_t m_cachedQueueVersion = 0; // Queue version when rows were last built (0 = never)
     // Current-track index the up-next list was last built for. playTrack/playNext
