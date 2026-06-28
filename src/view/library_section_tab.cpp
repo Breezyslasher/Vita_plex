@@ -33,11 +33,25 @@ size_t LibrarySectionTab::playlistTrackPageSize() {
     return v > 0 ? static_cast<size_t>(v) : 50;
 }
 
+// Remembers each library section's chosen sort for the session, keyed by section
+// key, so navigating away and back (which recreates the tab) keeps the user's
+// sort instead of snapping to the default. Value = {sortParam, sortLabel}.
+static std::map<std::string, std::pair<std::string, std::string>> s_sortBySection;
+
 LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::string& title, const std::string& sectionType)
     : m_sectionKey(sectionKey), m_title(title), m_sectionType(sectionType) {
 
     // Create alive flag for async callback safety
     m_alive = std::make_shared<bool>(true);
+
+    // Restore this section's remembered sort (if the user picked one before).
+    // Must happen before the Sort chip is built and before loadContent() reads
+    // m_sortParam, so both reflect the saved choice.
+    auto savedSort = s_sortBySection.find(sectionKey);
+    if (savedSort != s_sortBySection.end()) {
+        m_sortParam = savedSort->second.first;
+        m_sortLabel = savedSort->second.second;
+    }
 
     this->setAxis(brls::Axis::COLUMN);
     this->setJustifyContent(brls::JustifyContent::FLEX_START);
@@ -292,6 +306,12 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     };
     m_contentGrid->registerAction("Back", brls::ControllerButton::BUTTON_B, backHandler);
     m_trackListScroll->registerAction("Back", brls::ControllerButton::BUTTON_B, backHandler);
+    // Also on the toolbar row, so Back works while a chip (Filters / Sort /
+    // Collections / Playlists / a filter chip) is focused — its walk-up reaches
+    // m_viewModeBox, whereas the grid/track-list handlers are not in that chain.
+    // m_viewModeBox is a child of `this`, so TabFrame's BUTTON_B override (which
+    // only lands on the tab's content view) doesn't wipe it.
+    m_viewModeBox->registerAction("Back", brls::ControllerButton::BUTTON_B, backHandler);
 
     // A-Z jump rail (absolute, right edge) — starts hidden; refreshAzRail shows
     // it only while the all-items grid is sorted Title A-Z.
@@ -613,6 +633,7 @@ void LibrarySectionTab::showSortMenu() {
             [this, label, param](brls::View*) {
                 m_sortParam = param;
                 m_sortLabel = label;
+                s_sortBySection[m_sectionKey] = { param, label };  // remember for this section
                 if (m_sortBtn) m_sortBtn->setText("Sort: " + label);
                 reloadAllItems();
                 return true;
