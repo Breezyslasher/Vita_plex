@@ -126,14 +126,28 @@ private:
     void updateQueueDisplay();      // Update UI with queue info
     void playNextEpisode();         // Auto-play next episode in season/show
 
-    // Queue list overlay
+    // Queue list overlay (Direction-A side sheet)
     void showQueueOverlay();
     void hideQueueOverlay();
     void populateQueueList();       // Build queue list with cover art and titles
     void playFromQueue(int index);  // Play a specific track from queue list
+    void updateNowPlayingBlock();   // Refresh the "Now Playing" header from the current track
+    void showQueueSortMenu();       // Sort the upcoming tracks (Title / Artist / Reset)
+    void clearUpcoming();           // Remove every track after the current one
+    void removeFocusedQueueTrack(); // Remove the track for the focused up-next row
+    void removeQueueTrackByIndex(int trackIdx);  // Shared remove (server sync + rebuild)
+    void moveFocusedQueueTrack(int direction);  // -1 = up, +1 = down (LB/RB)
+    void setQueueHeaderButtonActive(brls::Box* btn, bool active);  // gold-tint a header icon button
     bool m_queueOverlayVisible = false;
     bool m_queuePopulating = false;     // Guard against re-entrant populateQueueList
     uint32_t m_cachedQueueVersion = 0; // Queue version when rows were last built (0 = never)
+    // Current-track index the up-next list was last built for. playTrack/playNext
+    // don't bump the queue version, so the refresh loop watches this to rebuild
+    // the sheet (Now Playing + Up Next) when the song advances.
+    int m_lastRenderedCurrentIndex = -2;
+    // Row that currently owns focus inside the up-next list — used to reveal its
+    // remove (✕) affordance and restore the previous row's styling on focus move.
+    brls::Box* m_focusedQueueRow = nullptr;
 
     // Windowed queue rendering - only create rows for a window around the current track
     // to avoid creating thousands of views for large queues
@@ -169,6 +183,7 @@ private:
     struct QueueRowData {
         int trackIdx;
         std::string title;
+        brls::Box* removeBtn = nullptr;  // the ✕ affordance, shown only while focused
     };
     std::unordered_map<brls::View*, QueueRowData> m_queueRowData;
 
@@ -369,9 +384,24 @@ private:
     BRLS_BIND(brls::Box, queueBtn, "player/queue_btn");
     BRLS_BIND(brls::Image, queueIcon, "player/queue_icon");
     BRLS_BIND(brls::Box, queueOverlay, "player/queue_overlay");
+    BRLS_BIND(brls::Box, queueScrim, "player/queue_scrim");
     BRLS_BIND(brls::Label, queueOverlayTitle, "player/queue_overlay_title");
     BRLS_BIND(brls::Box, queueList, "player/queue_list");
     BRLS_BIND(brls::ScrollingFrame, queueScroll, "player/queue_scroll");
+    // Side-sheet header icon buttons + their icons
+    BRLS_BIND(brls::Box, queueShuffleBtn, "player/queue_shuffle_btn");
+    BRLS_BIND(brls::Image, queueShuffleHdrIcon, "player/queue_shuffle_hdr_icon");
+    BRLS_BIND(brls::Box, queueRepeatBtn, "player/queue_repeat_btn");
+    BRLS_BIND(brls::Image, queueRepeatHdrIcon, "player/queue_repeat_hdr_icon");
+    BRLS_BIND(brls::Box, queueSortBtn, "player/queue_sort_btn");
+    // Now Playing block + Up Next header
+    BRLS_BIND(brls::Box, queueNowPlaying, "player/queue_now_playing");
+    BRLS_BIND(brls::Image, queueNpThumb, "player/queue_np_thumb");
+    BRLS_BIND(brls::Label, queueNpTitle, "player/queue_np_title");
+    BRLS_BIND(brls::Label, queueNpArtist, "player/queue_np_artist");
+    BRLS_BIND(brls::Label, queueNpLabel, "player/queue_np_label");
+    BRLS_BIND(brls::Label, queueUpNextLabel, "player/queue_upnext_label");
+    BRLS_BIND(brls::Box, queueClearBtn, "player/queue_clear_btn");
 
     // Music-specific UI elements
     BRLS_BIND(brls::Box, musicInfo, "player/music_info");
