@@ -462,12 +462,12 @@
             textColor="#FFFFFF"/>
     </brls:Box>
 
-    <!-- Queue list overlay - slides up from bottom -->
+    <!-- Queue side sheet overlay - slides in from the right (Direction A) -->
     <brls:Box
         id="player/queue_overlay"
         width="100%"
         height="100%"
-        axis="column"
+        axis="row"
         justifyContent="flexEnd"
         alignItems="stretch"
         positionType="absolute"
@@ -475,49 +475,203 @@
         positionLeft="0"
         positionRight="0"
         positionBottom="0"
-        backgroundColor="#CC000000"
+        backgroundColor="#08080973"
         visibility="gone">
 
-        <!-- Spacer to push queue to bottom half -->
-        <brls:Box grow="1"/>
-
-        <!-- Queue panel at bottom -->
+        <!-- Scrim: fills the area left of the sheet, tap to dismiss -->
         <brls:Box
-            width="100%"
+            id="player/queue_scrim"
+            grow="1"
+            height="100%"/>
+
+        <!-- Side sheet panel anchored to the right edge -->
+        <brls:Box
+            width="460"
+            height="100%"
             axis="column"
             alignItems="stretch"
-            backgroundColor="#F0141420"
-            cornerRadius="18"
-            paddingTop="16"
-            paddingBottom="16"
-            paddingLeft="20"
-            paddingRight="20"
-            marginLeft="10"
-            marginRight="10"
-            marginBottom="10"
-            borderColor="#30FFFFFF"
-            borderThickness="1">
+            backgroundColor="#202022"
+            paddingTop="22"
+            paddingLeft="22"
+            paddingRight="22"
+            paddingBottom="6">
 
-            <!-- Queue title -->
+            <!-- Header: "Queue" + shuffle / repeat / sort icon buttons -->
+            <brls:Box
+                width="100%"
+                axis="row"
+                alignItems="center"
+                marginBottom="14">
+                <brls:Label
+                    id="player/queue_overlay_title"
+                    text="Queue"
+                    grow="1"
+                    fontSize="21"
+                    textColor="#FFFFFF"/>
+
+                <brls:Box
+                    id="player/queue_shuffle_btn"
+                    width="38"
+                    height="38"
+                    axis="row"
+                    justifyContent="center"
+                    alignItems="center"
+                    cornerRadius="8"
+                    marginLeft="8"
+                    backgroundColor="#404040"
+                    borderColor="#474747"
+                    borderThickness="1"
+                    focusable="true">
+                    <brls:Image
+                        id="player/queue_shuffle_hdr_icon"
+                        width="18"
+                        height="18"
+                        image="@res/icons/shuffle-disabled.png"
+                        scalingType="fit"/>
+                </brls:Box>
+
+                <brls:Box
+                    id="player/queue_repeat_btn"
+                    width="38"
+                    height="38"
+                    axis="row"
+                    justifyContent="center"
+                    alignItems="center"
+                    cornerRadius="8"
+                    marginLeft="8"
+                    backgroundColor="#404040"
+                    borderColor="#474747"
+                    borderThickness="1"
+                    focusable="true">
+                    <brls:Image
+                        id="player/queue_repeat_hdr_icon"
+                        width="18"
+                        height="18"
+                        image="@res/icons/repeat-off.png"
+                        scalingType="fit"/>
+                </brls:Box>
+
+                <brls:Box
+                    id="player/queue_sort_btn"
+                    width="38"
+                    height="38"
+                    axis="row"
+                    justifyContent="center"
+                    alignItems="center"
+                    cornerRadius="8"
+                    marginLeft="8"
+                    backgroundColor="#404040"
+                    borderColor="#474747"
+                    borderThickness="1"
+                    focusable="true">
+                    <brls:Image
+                        id="player/queue_sort_hdr_icon"
+                        width="18"
+                        height="18"
+                        image="@res/icons/format-list-group.png"
+                        scalingType="fit"/>
+                </brls:Box>
+            </brls:Box>
+
+            <!-- NOW PLAYING section label -->
             <brls:Label
-                id="player/queue_overlay_title"
-                text="Queue"
-                fontSize="19"
-                textColor="#EEEEEE"
-                horizontalAlign="center"
-                marginBottom="12"/>
+                id="player/queue_np_label"
+                text="NOW PLAYING"
+                fontSize="12"
+                textColor="#8A8A90"
+                marginBottom="8"/>
 
-            <!-- Queue track list container (scrollable) -->
+            <!-- Now Playing row (current track) -->
+            <brls:Box
+                id="player/queue_now_playing"
+                width="100%"
+                height="60"
+                axis="row"
+                alignItems="center"
+                cornerRadius="10"
+                paddingLeft="8"
+                paddingRight="10"
+                marginBottom="16"
+                backgroundColor="#E5A00D1F">
+                <brls:Image
+                    id="player/queue_np_thumb"
+                    width="44"
+                    height="44"
+                    cornerRadius="6"
+                    scalingType="fit"
+                    marginRight="12"/>
+                <brls:Box
+                    grow="1"
+                    axis="column"
+                    justifyContent="center">
+                    <brls:Label
+                        id="player/queue_np_title"
+                        text=""
+                        fontSize="15"
+                        textColor="#FFC23D"/>
+                    <brls:Label
+                        id="player/queue_np_artist"
+                        text=""
+                        fontSize="12"
+                        marginTop="2"
+                        textColor="#B4B4BA"/>
+                </brls:Box>
+                <!-- Animated-style equaliser glyph (3 static gold bars) -->
+                <brls:Box
+                    width="16"
+                    height="14"
+                    axis="row"
+                    alignItems="flexEnd"
+                    justifyContent="spaceBetween"
+                    marginLeft="6">
+                    <brls:Box width="3" height="6"  cornerRadius="1" backgroundColor="#E5A00D"/>
+                    <brls:Box width="3" height="13" cornerRadius="1" backgroundColor="#E5A00D"/>
+                    <brls:Box width="3" height="9"  cornerRadius="1" backgroundColor="#E5A00D"/>
+                </brls:Box>
+            </brls:Box>
+
+            <!-- UP NEXT header row: label + Clear -->
+            <brls:Box
+                width="100%"
+                axis="row"
+                alignItems="center"
+                marginBottom="6">
+                <brls:Label
+                    id="player/queue_upnext_label"
+                    text="UP NEXT"
+                    grow="1"
+                    fontSize="12"
+                    textColor="#8A8A90"/>
+                <brls:Box
+                    id="player/queue_clear_btn"
+                    axis="row"
+                    alignItems="center"
+                    justifyContent="center"
+                    cornerRadius="6"
+                    paddingLeft="8"
+                    paddingRight="8"
+                    paddingTop="3"
+                    paddingBottom="3"
+                    focusable="true">
+                    <brls:Label
+                        text="Clear"
+                        fontSize="12"
+                        textColor="#E5A00D"/>
+                </brls:Box>
+            </brls:Box>
+
+            <!-- Up Next track list (scrollable) -->
             <brls:ScrollingFrame
                 id="player/queue_scroll"
                 width="100%"
-                height="320">
+                grow="1">
                 <brls:Box
                     id="player/queue_list"
                     width="100%"
                     axis="column"
                     alignItems="stretch"
-                    padding="4"/>
+                    paddingTop="2"
+                    paddingBottom="8"/>
             </brls:ScrollingFrame>
 
         </brls:Box>
