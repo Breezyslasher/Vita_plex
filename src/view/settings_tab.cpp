@@ -647,19 +647,31 @@ brls::Box* SettingsTab::createUISection() {
     });
     box->addView(mpvStatsToggle);
 
-    // Manage hidden libraries. Hidden libraries are kept out of the sidebar
-    // (and the sidebar reorder editor); this is the one place to toggle them.
+    // Manage hidden libraries (+ Live TV / Downloads). Hidden items are kept out
+    // of the sidebar and the sidebar reorder editor; this is the one place to
+    // toggle them.
     m_hiddenLibrariesCell = new brls::DetailCell();
     m_hiddenLibrariesCell->setText("Manage Hidden Libraries");
-    int hiddenCount = 0;
-    if (!settings.hiddenLibraries.empty()) {
-        // Count comma-separated items
-        hiddenCount = 1;
-        for (char c : settings.hiddenLibraries) {
-            if (c == ',') hiddenCount++;
-        }
+    {
+        // Count hidden entries across both stores: libraries plus the hideable
+        // built-ins (Live TV / Downloads) — mirrors what the dialog shows.
+        auto tokens = [](const std::string& csv) {
+            std::vector<std::string> out;
+            std::string s = csv;
+            size_t p;
+            while ((p = s.find(',')) != std::string::npos) {
+                if (p > 0) out.push_back(s.substr(0, p));
+                s.erase(0, p + 1);
+            }
+            if (!s.empty()) out.push_back(s);
+            return out;
+        };
+        int hiddenCount = (int)tokens(settings.hiddenLibraries).size();
+        for (const auto& t : tokens(settings.hiddenSidebarItems))
+            if (t == "livetv" || t == "downloads") hiddenCount++;
+        m_hiddenLibrariesCell->setDetailText(
+            hiddenCount > 0 ? std::to_string(hiddenCount) + " hidden" : "None hidden");
     }
-    m_hiddenLibrariesCell->setDetailText(hiddenCount > 0 ? std::to_string(hiddenCount) + " hidden" : "None hidden");
     m_hiddenLibrariesCell->registerClickAction([this](brls::View* view) {
         onManageHiddenLibraries();
         return true;
@@ -1395,10 +1407,27 @@ void SettingsTab::onManageHiddenLibraries() {
     Application& app = Application::getInstance();
     AppSettings& settings = app.getSettings();
 
-    // Fetch library sections
+    auto csvToSet = [](const std::string& csv) {
+        std::set<std::string> out;
+        std::string s = csv;
+        size_t pos;
+        while ((pos = s.find(',')) != std::string::npos) {
+            std::string t = s.substr(0, pos);
+            if (!t.empty()) out.insert(t);
+            s.erase(0, pos + 1);
+        }
+        if (!s.empty()) out.insert(s);
+        return out;
+    };
+
+    // Fetch library sections.
     std::vector<LibrarySection> sections;
     PlexClient::getInstance().fetchLibrarySections(sections);
 
+    // Committing rewrites hiddenLibraries from the dialog's selection, so every
+    // library must be present for unselected ones to read as visible. If the
+    // fetch came back empty (offline), bail rather than risk wiping the saved
+    // hidden set — matches the prior behavior.
     if (sections.empty()) {
         brls::Dialog* dialog = new brls::Dialog("No libraries found");
         dialog->addButton("OK", []() {});
@@ -1406,50 +1435,55 @@ void SettingsTab::onManageHiddenLibraries() {
         return;
     }
 
-    // Parse the currently hidden library keys
-    std::set<std::string> hiddenKeys;
-    {
-        std::string hidden = settings.hiddenLibraries;
-        size_t pos = 0;
-        while ((pos = hidden.find(',')) != std::string::npos) {
-            std::string key = hidden.substr(0, pos);
-            if (!key.empty()) hiddenKeys.insert(key);
-            hidden.erase(0, pos + 1);
-        }
-        if (!hidden.empty()) hiddenKeys.insert(hidden);
-    }
+    std::set<std::string> hiddenLibs  = csvToSet(settings.hiddenLibraries);
+    std::set<std::string> hiddenItems = csvToSet(settings.hiddenSidebarItems);
 
-    // One toggle row per library; "selected" means hidden.
+    // One toggle row per library, then the hideable built-ins (Live TV — only
+    // if the server has it — and Downloads). "selected" means hidden. Libraries
+    // store their hidden state in hiddenLibraries; built-ins in
+    // hiddenSidebarItems. Search is intentionally omitted — it's always shown.
     std::vector<MultiSelectItem> items;
-    items.reserve(sections.size());
+    items.reserve(sections.size() + 2);
     for (const auto& section : sections) {
         MultiSelectItem it;
         it.key      = section.key;
         it.label    = section.title;
-        it.selected = (hiddenKeys.find(section.key) != hiddenKeys.end());
+        it.selected = (hiddenLibs.find(section.key) != hiddenLibs.end());
         items.push_back(it);
     }
+    if (PlexClient::getInstance().hasLiveTV()) {
+        items.push_back({ "livetv", "Live TV",
+                          hiddenItems.find("livetv") != hiddenItems.end() });
+    }
+    items.push_back({ "downloads", "Downloads",
+                      hiddenItems.find("downloads") != hiddenItems.end() });
 
     // Present the filter-styled multi-toggle dialog (Hidden / Visible per row).
     MediaDetailView::showMultiToggleDialog(
-        "Hidden Libraries",
-        "Hidden libraries are removed from the sidebar and Home.",
+        "Hidden Items",
+        "Hidden libraries, Live TV, and Downloads are removed from the sidebar and Home.",
         "Hidden", "Visible",
         items,
-        [this](const std::vector<std::string>& hiddenKeys) {
+        [this](const std::vector<std::string>& hiddenSelected) {
             Application& app = Application::getInstance();
             AppSettings& settings = app.getSettings();
 
-            std::string newHidden;
-            for (const auto& k : hiddenKeys) {
-                if (!newHidden.empty()) newHidden += ",";
-                newHidden += k;
+            // Partition the hidden keys: built-in ids → hiddenSidebarItems,
+            // everything else is a library key → hiddenLibraries. (Rewriting
+            // hiddenSidebarItems from scratch also drops any stale "search".)
+            std::string newLibs, newItems;
+            for (const auto& k : hiddenSelected) {
+                bool builtin = (k == "livetv" || k == "downloads");
+                std::string& dst = builtin ? newItems : newLibs;
+                if (!dst.empty()) dst += ",";
+                dst += k;
             }
-            settings.hiddenLibraries = newHidden;
+            settings.hiddenLibraries    = newLibs;
+            settings.hiddenSidebarItems = newItems;
             app.saveSettings();
 
             if (m_hiddenLibrariesCell) {
-                int count = static_cast<int>(hiddenKeys.size());
+                int count = static_cast<int>(hiddenSelected.size());
                 m_hiddenLibrariesCell->setDetailText(
                     count > 0 ? std::to_string(count) + " hidden" : "None hidden");
             }

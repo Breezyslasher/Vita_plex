@@ -100,13 +100,13 @@ const char* steamDeckPath(brls::ControllerButton b) {
 }
 
 const char* keyboardPath(brls::ControllerButton b) {
-    // Best-effort: map common gamepad actions to the keys that brls's
-    // SDL2 default binding actually fires.
+    // Best-effort: map common gamepad actions to the keys the desktop glfw
+    // input patch (patches/glfw_input.cpp) actually fires.
     //   A      -> Enter   (confirm)
     //   B      -> Esc     (cancel/back)
     //   X      -> X
     //   Y      -> Y
-    //   Start  -> +
+    //   Start  -> F1      (Options / context menu)
     //   Back   -> -
     //   LB/RB  -> Q / E
     //   dpad   -> arrow keys
@@ -115,7 +115,7 @@ const char* keyboardPath(brls::ControllerButton b) {
         case brls::BUTTON_B:     return "images/Keyboard & Mouse/Default/keyboard_escape.png";
         case brls::BUTTON_X:     return "images/Keyboard & Mouse/Default/keyboard_x.png";
         case brls::BUTTON_Y:     return "images/Keyboard & Mouse/Default/keyboard_y.png";
-        case brls::BUTTON_START: return "images/Keyboard & Mouse/Default/keyboard_plus.png";
+        case brls::BUTTON_START: return "images/Keyboard & Mouse/Default/keyboard_f1.png";
         case brls::BUTTON_BACK:  return "images/Keyboard & Mouse/Default/keyboard_minus.png";
         case brls::BUTTON_LB:    return "images/Keyboard & Mouse/Default/keyboard_q.png";
         case brls::BUTTON_RB:    return "images/Keyboard & Mouse/Default/keyboard_e.png";
