@@ -3655,11 +3655,35 @@ void PlayerActivity::moveFocusedQueueTrack(int direction) {
 
     queue.moveTrack(fromTrack, toTrack);
 
-    // Land focus on the row now occupying the target slot once the list is
-    // rebuilt. populateQueueList honors this in both its synchronous and
-    // batched paths — doing it here (rather than a giveFocus after the call)
-    // is what fixes large queues, where the async batch finishes *after* this
-    // function returns and would otherwise re-focus the top row.
+    // Fast path: a non-shuffled, mid-list adjacent move (neither endpoint is the
+    // first up-next row) is just a swap of two adjacent row views — do it in
+    // place instead of rebuilding the whole list. This skips the cover-reload
+    // flicker and focus churn of populateQueueList and keeps the (possibly
+    // grabbed) row under focus, since the row view itself isn't destroyed.
+    //
+    // The first row is excluded because it carries the UP->Clear escape route
+    // (see linkFirstRowToClear); moving it would need to move that route, and
+    // borealis has no route-erase (a null route traps UP rather than falling
+    // through). Mid-list rows have no custom routes, so swapping them needs no
+    // route handling. Shuffled queues rebuild too: moveTrack reorders absolute
+    // indices, not the shuffle order, so the simple two-row index swap below
+    // wouldn't hold.
+    if (!queue.isShuffleEnabled() && childIdx >= 1 && targetChild >= 1) {
+        brls::View* rowFrom = children[childIdx];
+        brls::View* rowTo   = children[targetChild];
+        queueList->removeView(rowFrom, /*free=*/false);  // detach, don't destroy
+        queueList->addView(rowFrom, targetChild);        // re-insert at new slot
+        // Adjacent non-shuffled swap only exchanges these two tracks' absolute
+        // indices, so swapping the two rows' stored trackIdx keeps play / remove
+        // / further moves pointing at the right tracks.
+        std::swap(itFrom->second.trackIdx, itTo->second.trackIdx);
+        brls::Application::giveFocus(rowFrom);  // keep focus on the moved row
+        return;
+    }
+
+    // Otherwise rebuild — land focus on the moved track's new slot. populateQueueList
+    // honors this in both its synchronous and batched paths, which is what keeps
+    // large queues (built asynchronously) from re-focusing the top row.
     m_queueFocusTargetChild = targetChild;
     populateQueueList();
 }
