@@ -48,6 +48,20 @@
 
 <table>
   <tr>
+    <th colspan="2" align="center">Manage Hiiden Libaries Dialog</th>
+  </tr>
+  <tr>
+    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 1.1.9</b></td>
+  </tr>
+  <tr>
+    <td><img src="../Screenshots/Beta-0.6.1/hidden_dialog.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/hidden_dialog.png" width="400"/></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
     <th colspan="2" align="center"> Movies Libary</th>
   </tr>
   <tr>
