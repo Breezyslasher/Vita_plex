@@ -99,7 +99,6 @@ private:
     void onControlsAutoHideChanged(int index);
     void onConnectionTimeoutChanged(int index);
     void onManageHiddenLibraries();
-    void onManageSidebarOrder();
     void onManageDefaultDvrLibrary();
     void onSwitchUser();
 
@@ -134,7 +133,6 @@ private:
     brls::BooleanCell* m_debugLogToggle = nullptr;
 
     // Layout section
-    brls::BooleanCell* m_sidebarLibrariesToggle = nullptr;
     brls::BooleanCell* m_collapseSidebarToggle = nullptr;
     brls::DetailCell* m_hiddenLibrariesCell = nullptr;
     brls::DetailCell* m_sidebarOrderCell = nullptr;

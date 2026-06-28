@@ -21,11 +21,7 @@ namespace sb {
     inline NVGcolor rail()    { return nvgRGB(0x16, 0x16, 0x17); }
     inline NVGcolor veil()    { return nvgRGBA(8, 8, 9, 158); }      // rgba .62
     inline NVGcolor rowGrab() { return nvgRGB(0x3a, 0x3a, 0x46); }
-    inline NVGcolor noteBg()  { return nvgRGBA(229, 160, 13, 20); }  // gold .08
-    inline NVGcolor noteBd()  { return nvgRGBA(229, 160, 13, 56); }  // gold .22
-    inline NVGcolor goldTile(){ return nvgRGBA(229, 160, 13, 36); }  // gold .14
     inline NVGcolor gold()    { return nvgRGB(0xe5, 0xa0, 0x0d); }
-    inline NVGcolor softGold(){ return nvgRGB(0xe7, 0xc8, 0x7a); }
     inline NVGcolor text()    { return nvgRGB(0xff, 0xff, 0xff); }
     inline NVGcolor muted()   { return nvgRGB(0xb4, 0xb4, 0xba); }
     inline NVGcolor muted2()  { return nvgRGB(0x8a, 0x8a, 0x90); }
@@ -115,49 +111,6 @@ public:
                 if (s.state == brls::GestureState::END) commit();
             }));
         panel->addView(head);
-
-        // Libraries note — only when libraries-in-sidebar is on
-        if (m_libsMode) {
-            auto* note = new brls::Box();
-            note->setAxis(brls::Axis::ROW);
-            note->setAlignItems(brls::AlignItems::CENTER);
-            note->setMarginLeft(12.0f);
-            note->setMarginRight(12.0f);
-            note->setMarginBottom(12.0f);
-            note->setPaddingTop(9.0f);
-            note->setPaddingBottom(9.0f);
-            note->setPaddingLeft(12.0f);
-            note->setPaddingRight(12.0f);
-            note->setCornerRadius(10.0f);
-            note->setBackgroundColor(sb::noteBg());
-            note->setBorderColor(sb::noteBd());
-            note->setBorderThickness(1.0f);
-
-            auto* tile = new brls::Box();
-            tile->setWidth(24.0f);
-            tile->setHeight(24.0f);
-            tile->setCornerRadius(6.0f);
-            tile->setBackgroundColor(sb::goldTile());
-            tile->setJustifyContent(brls::JustifyContent::CENTER);
-            tile->setAlignItems(brls::AlignItems::CENTER);
-            tile->setMarginRight(9.0f);
-            auto* tileIco = new brls::Image();
-            tileIco->setWidth(14.0f);
-            tileIco->setHeight(14.0f);
-            tileIco->setScalingType(brls::ImageScalingType::FIT);
-            tileIco->setImageFromRes("icons/book-multiple.png");
-            tile->addView(tileIco);
-            note->addView(tile);
-
-            auto* cap = new brls::Label();
-            cap->setText("Libraries appear here because \"Libraries in Sidebar\" is on. "
-                         "Change that in Settings.");
-            cap->setFontSize(10.5f);
-            cap->setTextColor(sb::muted());
-            cap->setGrow(1.0f);
-            note->addView(cap);
-            panel->addView(note);
-        }
 
         // Section label
         auto* sec = new brls::Label();
@@ -268,22 +221,17 @@ private:
     void buildModel() {
         m_items.clear();
         AppSettings& s = Application::getInstance().getSettings();
-        m_libsMode = s.showLibrariesInSidebar;
         bool hasLiveTV = PlexClient::getInstance().hasLiveTV();
 
         m_items.push_back({ "home", "Home", true, false, false });
 
-        // Movable universe (default order) + titles
+        // Movable universe (default order) + titles: each library, then the
+        // built-ins. Libraries always live in the sidebar.
         std::vector<std::pair<std::string, std::string>> universe;
-        if (m_libsMode) {
-            std::vector<LibrarySection> sections;
-            PlexClient::getInstance().fetchLibrarySections(sections);
-            for (const auto& sec : sections)
-                universe.push_back({ "lib:" + sec.key, sec.title });
-        } else {
-            universe.push_back({ "library", "Library" });
-            universe.push_back({ "music", "Music" });
-        }
+        std::vector<LibrarySection> sections;
+        m_libsFetched = PlexClient::getInstance().fetchLibrarySections(sections);
+        for (const auto& sec : sections)
+            universe.push_back({ "lib:" + sec.key, sec.title });
         universe.push_back({ "search", "Search" });
         if (hasLiveTV) universe.push_back({ "livetv", "Live TV" });
         universe.push_back({ "downloads", "Downloads" });
@@ -455,9 +403,9 @@ private:
     void commit() {
         AppSettings& s = Application::getInstance().getSettings();
 
-        // Ids the editor owns this session (current-mode movable items). Ids in
-        // the saved settings that aren't owned belong to the *other* mode and
-        // are preserved so toggling "Libraries in Sidebar" doesn't wipe them.
+        // Ids the editor saw this session (movable items). Anything in the saved
+        // settings the editor didn't see — e.g. a library that failed to fetch —
+        // is preserved so its order / hidden state isn't wiped.
         std::vector<std::string> owned;
         for (const auto& it : m_items)
             if (!it.fixed) owned.push_back(it.id);
@@ -480,12 +428,15 @@ private:
         s.sidebarOrder = joinCsv(order);
         s.hiddenSidebarItems = joinCsv(hiddenItems);
 
-        // Libraries are only shown (and thus owned) in libraries-in-sidebar mode;
-        // don't touch hiddenLibraries from premade mode.
-        if (m_libsMode) {
+        // Rewrite the hidden-library set from the rows shown — but only when the
+        // library list actually loaded, and preserve the hidden state of any
+        // library the editor didn't see this session.
+        if (m_libsFetched) {
             std::vector<std::string> hiddenLibs;
             for (const auto& it : m_items)
                 if (it.isLibrary && it.hidden) hiddenLibs.push_back(it.id.substr(4));
+            for (const auto& key : splitCsv(s.hiddenLibraries))
+                if (!isOwned("lib:" + key)) hiddenLibs.push_back(key);
             s.hiddenLibraries = joinCsv(hiddenLibs);
         }
 
@@ -505,7 +456,7 @@ private:
     std::vector<EditItem> m_items;
     int m_focus = 0;
     int m_grabbed = -1;
-    bool m_libsMode = false;
+    bool m_libsFetched = false;
     bool m_attached = false;
 };
 

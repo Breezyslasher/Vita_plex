@@ -85,7 +85,6 @@ struct AppSettings {
     bool debugLogging = true;  // Enable debug logging
 
     // Layout Settings
-    bool showLibrariesInSidebar = false;  // Show libraries in sidebar instead of Library tab
     bool collapseSidebar = false;         // Collapse sidebar to icons only
     std::string hiddenLibraries;          // Comma-separated list of library keys to hide
     std::string sidebarOrder;             // Custom sidebar order. Movable ids between Home and Settings,
