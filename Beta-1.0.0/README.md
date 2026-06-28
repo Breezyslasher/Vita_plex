@@ -56,7 +56,7 @@
   </tr>
   <tr>
     <td><img src="../Screenshots/Beta-0.6.1/order_dialog.png" width="400"/></td>
-    <td><img src="../Screenshots/Beta-1.0.0/hidden_dialo.png" width="400"/></td>
+    <td><img src="../Screenshots/Beta-1.0.0/reorder.png" width="400"/></td>
   </tr>
 </table>
 
