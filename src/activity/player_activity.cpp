@@ -891,6 +891,18 @@ void PlayerActivity::loadFromQueue() {
     }
     m_loadingMedia = true;
 
+    // Clear the end-of-track guard so this track's end is detected and triggers
+    // auto-advance to the next — otherwise it stays set from the previous track
+    // and playback stops at the end of the song. When loading off an ENDED track
+    // (auto-advance), stop() first: it sets the state to IDLE synchronously, so
+    // the update loop can't re-fire end-of-track on the still-ENDED player and
+    // skip this track before it finishes loading. (A normal resume is still
+    // playing, so hasEnded() is false and this is a no-op there.)
+    if (MpvPlayer::getInstance().hasEnded()) {
+        MpvPlayer::getInstance().stop();
+    }
+    m_endHandled = false;
+
     MusicQueue& queue = MusicQueue::getInstance();
     const QueueItem* track = queue.getCurrentTrack();
 
