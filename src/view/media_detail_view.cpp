@@ -17,6 +17,7 @@
 #include "platform/platform.hpp"
 #include <thread>
 #include <unordered_set>
+#include <algorithm>
 
 #ifdef __vita__
 #include <psp2/kernel/threadmgr.h>
@@ -5903,6 +5904,178 @@ void MediaDetailView::showMultiSelectFilter(
     if (lastRow)  lastRow->setCustomNavigationRoute(brls::FocusDirection::DOWN, apply);
     modeRow->setCustomNavigationRoute(brls::FocusDirection::DOWN, firstRow ? firstRow : apply);
     apply->setCustomNavigationRoute(brls::FocusDirection::UP, lastRow ? lastRow : modeRow);
+
+    scrim->addView(panel);
+    scrim->registerAction("Back", brls::ControllerButton::BUTTON_B,
+        [commit](brls::View*) { commit(); return true; });
+    brls::Application::pushActivity(new PopoverActivity(scrim));
+    if (firstRow) brls::Application::giveFocus(firstRow);
+}
+
+void MediaDetailView::showMultiToggleDialog(
+    const std::string& title,
+    const std::string& subtitle,
+    const std::string& onStateLabel,
+    const std::string& offStateLabel,
+    std::vector<MultiSelectItem> items,
+    std::function<void(const std::vector<std::string>&)> onApply) {
+    namespace pc = pickcol;
+
+    // Keys currently toggled ON, mutated by row taps and read on commit.
+    struct State { std::vector<std::string> on; };
+    auto state = std::make_shared<State>();
+    for (const auto& it : items)
+        if (it.selected) state->on.push_back(it.key);
+
+    const float screenH = platform::viewportHeight();
+
+    // Same shell as the filter / picker dialogs: scrim + centered dark panel.
+    auto* scrim = new brls::Box();
+    scrim->setAxis(brls::Axis::COLUMN);
+    scrim->setWidthPercentage(100.0f);
+    scrim->setHeightPercentage(100.0f);
+    scrim->setJustifyContent(brls::JustifyContent::CENTER);
+    scrim->setAlignItems(brls::AlignItems::CENTER);
+    scrim->setBackgroundColor(pc::scrim());
+
+    auto* panel = new brls::Box();
+    panel->setAxis(brls::Axis::COLUMN);
+    panel->setWidth(440.0f);
+    panel->setBackgroundColor(pc::dialogBg());
+    panel->setBorderColor(pc::line());
+    panel->setBorderThickness(1.0f);
+    panel->setCornerRadius(18.0f);
+    panel->setShadowType(brls::ShadowType::GENERIC);
+    panel->setPadding(22.0f, 22.0f, 16.0f, 22.0f);
+    panel->addGestureRecognizer(new brls::TapGestureRecognizer(panel, []() {}));
+
+    // Apply / Back / tap-outside all commit the current selection.
+    auto commit = [state, onApply]() {
+        brls::Application::popActivity();
+        if (onApply) onApply(state->on);
+    };
+    scrim->addGestureRecognizer(new brls::TapGestureRecognizer(scrim,
+        [commit]() { commit(); }));
+
+    auto* titleLbl = new brls::Label();
+    titleLbl->setText(title);
+    titleLbl->setFontSize(21.0f);
+    titleLbl->setTextColor(pc::text());
+    panel->addView(titleLbl);
+
+    if (!subtitle.empty()) {
+        auto* subLbl = new brls::Label();
+        subLbl->setText(subtitle);
+        subLbl->setFontSize(13.0f);
+        subLbl->setTextColor(pc::dim());
+        subLbl->setMarginTop(3.0f);
+        panel->addView(subLbl);
+    }
+
+    auto* hair = new brls::Box();
+    hair->setHeight(1.0f);
+    hair->setBackgroundColor(pc::line());
+    hair->setMarginTop(12.0f);
+    hair->setMarginBottom(12.0f);
+    panel->addView(hair);
+
+    // Scrollable, height-capped list.
+    auto* listBox = new brls::Box();
+    listBox->setAxis(brls::Axis::COLUMN);
+    auto* scroll = new brls::ScrollingFrame();
+    scroll->setContentView(listBox);
+    float maxH = screenH * 0.5f;
+    if (maxH < 180.0f) maxH = 180.0f;
+    const float wantH = static_cast<float>(items.size()) * 52.0f;
+    scroll->setHeight(wantH < maxH ? wantH : maxH);
+    panel->addView(scroll);
+
+    brls::View* firstRow = nullptr;
+    brls::View* lastRow  = nullptr;
+    for (const auto& it : items) {
+        const std::string key = it.key;
+        const bool startOn = it.selected;
+
+        auto* row = new brls::Box();
+        row->setAxis(brls::Axis::ROW);
+        row->setAlignItems(brls::AlignItems::CENTER);
+        row->setHeight(44.0f);
+        row->setCornerRadius(9.0f);
+        row->setPaddingLeft(14.0f);
+        row->setPaddingRight(14.0f);
+        row->setMarginBottom(8.0f);
+        row->setFocusable(true);
+        row->setHighlightCornerRadius(9.0f);
+        row->setBackgroundColor(startOn ? pc::goldTint() : pc::surface());
+
+        // Leading eye icon — hidden (eye-off) when ON, visible (eye) when OFF.
+        auto* icon = new brls::Image();
+        icon->setImageFromRes(startOn ? "icons/hide.png" : "icons/show.png");
+        icon->setWidth(20.0f);
+        icon->setHeight(20.0f);
+        icon->setMarginRight(12.0f);
+        icon->setScalingType(brls::ImageScalingType::FIT);
+        row->addView(icon);
+
+        auto* lbl = new brls::Label();
+        lbl->setText(it.label);
+        lbl->setFontSize(16.0f);
+        lbl->setTextColor(pc::text());
+        lbl->setGrow(1.0f);
+        row->addView(lbl);
+
+        // Trailing state word: gold "Hidden" when ON, dim "Visible" when OFF.
+        auto* stateLbl = new brls::Label();
+        stateLbl->setText(startOn ? onStateLabel : offStateLabel);
+        stateLbl->setFontSize(13.0f);
+        stateLbl->setHorizontalAlign(brls::HorizontalAlign::RIGHT);
+        stateLbl->setSingleLine(true);
+        stateLbl->setMarginLeft(10.0f);
+        stateLbl->setTextColor(startOn ? pc::gold() : pc::dim());
+        row->addView(stateLbl);
+
+        row->registerClickAction(
+            [state, key, onStateLabel, offStateLabel, icon, stateLbl, row](brls::View*) {
+                auto& on = state->on;
+                bool nowOn;
+                auto found = std::find(on.begin(), on.end(), key);
+                if (found != on.end()) { on.erase(found); nowOn = false; }
+                else { on.push_back(key); nowOn = true; }
+                icon->setImageFromRes(nowOn ? "icons/hide.png" : "icons/show.png");
+                stateLbl->setText(nowOn ? onStateLabel : offStateLabel);
+                stateLbl->setTextColor(nowOn ? pc::gold() : pc::dim());
+                row->setBackgroundColor(nowOn ? pc::goldTint() : pc::surface());
+                return true;  // stay open
+            });
+        row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
+        listBox->addView(row);
+        if (!firstRow) firstRow = row;
+        lastRow = row;
+    }
+
+    // Apply button.
+    auto* apply = new brls::Box();
+    apply->setAxis(brls::Axis::ROW);
+    apply->setJustifyContent(brls::JustifyContent::CENTER);
+    apply->setAlignItems(brls::AlignItems::CENTER);
+    apply->setHeight(46.0f);
+    apply->setCornerRadius(10.0f);
+    apply->setMarginTop(10.0f);
+    apply->setFocusable(true);
+    apply->setHighlightCornerRadius(10.0f);
+    apply->setBackgroundColor(pc::gold());
+    auto* applyLbl = new brls::Label();
+    applyLbl->setText("Apply");
+    applyLbl->setFontSize(16.0f);
+    applyLbl->setTextColor(pc::goldInk());
+    apply->addView(applyLbl);
+    apply->registerClickAction([commit](brls::View*) { commit(); return true; });
+    apply->addGestureRecognizer(new brls::TapGestureRecognizer(apply));
+    panel->addView(apply);
+
+    // The ScrollingFrame traps DOWN at the last row; route it to Apply (and back).
+    if (lastRow) lastRow->setCustomNavigationRoute(brls::FocusDirection::DOWN, apply);
+    apply->setCustomNavigationRoute(brls::FocusDirection::UP, lastRow ? lastRow : firstRow);
 
     scrim->addView(panel);
     scrim->registerAction("Back", brls::ControllerButton::BUTTON_B,
