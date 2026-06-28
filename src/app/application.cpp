@@ -215,7 +215,11 @@ void Application::applyTheme() {
     //     a fill — so a focused control reads differently from a gold-filled
     //     selected one. (We deliberately move the old cyan glow to warm; the
     //     halo's brightness + the fact selection is a *fill* keep them apart.)
-    const NVGcolor goldPulse   = pal::goldTint(0.15f);          // click ripple, gold low-alpha
+    // Click ripple. Kept very faint (was 0.15) — on the centered menus/dialogs
+    // the rows are wide, so a 15% gold fill pulsing on select read as a
+    // screen-wide gold flash. 0.04 is barely-there press feedback; the focus
+    // halo already signals the active row.
+    const NVGcolor goldPulse   = pal::goldTint(0.04f);          // click ripple, gold low-alpha
     const NVGcolor spinnerGold = nvgRGBA(229, 160, 13, 90);     // global loading spinner
     for (brls::Theme* t : { &brls::Theme::getDarkTheme(),
                             &brls::Theme::getLightTheme() }) {
