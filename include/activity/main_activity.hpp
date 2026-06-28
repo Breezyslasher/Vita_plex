@@ -26,6 +26,10 @@ public:
     // (order + hidden sets). Safe to call while the activity is on screen.
     void rebuildSidebar();
 
+    // Current on-screen width of the sidebar, so the inline editor can size its
+    // panel to match and read as the sidebar in edit mode (0 if unavailable).
+    float getSidebarWidth();
+
 private:
     // Add Home, then the ordered + visible movable items (each library, then
     // Search / Live TV / Downloads), then Settings, honoring sidebarOrder +
