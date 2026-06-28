@@ -2,20 +2,15 @@
  * VitaPlex hint icon registry.
  *
  * Resolves abstract button names (A/B/X/Y/Start/Select/L/R/dpad) to the
- * platform-specific PNG path under resources/images/<Platform>/. The set
- * of platforms is fixed at compile time except on desktop and android,
- * where the icon set follows the current input source (controller / kbd
- * & mouse / touch) and switches at runtime.
+ * platform-specific PNG path under resources/images/<Platform>/. The icon
+ * set is fixed per platform at compile time — there is no runtime input
+ * swapping. Each platform shows exactly one set:
  *
- *   PSV       -> resources/images/PSV/
- *   PS4       -> resources/images/Ps4/         (outline-* line-art set)
- *   Switch    -> resources/images/Nintendo Switch/Default/
- *   Desktop   -> resources/images/Steam Deck/Default/   (controller)
- *                resources/images/Keyboard & Mouse/Default/
- *                resources/images/Touch/Default/
- *   Android   -> resources/images/Touch/Default/        (touch by default)
- *                resources/images/Steam Deck/Default/
- *                resources/images/Keyboard & Mouse/Default/
+ *   PSV       -> resources/images/PSV/                  (controller)
+ *   PS4       -> resources/images/Ps4/                  (outline-* line-art)
+ *   Switch    -> resources/images/Nintendo Switch/Default/   (controller)
+ *   Desktop   -> resources/images/Keyboard & Mouse/Default/  (keyboard keys)
+ *   Android   -> resources/images/Touch/Default/        (touch hints)
  */
 
 #pragma once
@@ -40,18 +35,18 @@ public:
     // the current platform / input source.
     static std::string getResPath(brls::ControllerButton button);
 
-    // Current input source. On PSV/PS4/Switch this is fixed at Controller.
-    // On Desktop / Android it tracks the most recently used input.
+    // The platform's fixed input source: Controller on PSV/PS4/Switch,
+    // KeyboardMouse on Desktop, Touch on Android. Never changes at runtime.
     static InputSource currentSource();
 
-    // Subscribe to input source changes. Callback fires on the brls UI
-    // thread whenever currentSource() flips value. Subscription lasts the
-    // lifetime of the process.
+    // Subscribe to input source changes. Retained for API compatibility, but
+    // since the source is now fixed per platform the callback never fires.
+    // Subscription lasts the lifetime of the process.
     static void onSourceChanged(std::function<void()> cb);
 
-    // Initialize input source tracking. Wires up the brls input hooks that
-    // detect controller / keyboard&mouse / touch activity on desktop and
-    // android. No-op on PSV / PS4 / Switch. Call once from app startup.
+    // Initialize the hint registry. The input source is fixed per platform,
+    // so this is a no-op beyond marking the registry ready. Call once from
+    // app startup.
     static void init();
 };
 
