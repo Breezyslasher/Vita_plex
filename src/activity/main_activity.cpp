@@ -59,7 +59,6 @@ brls::View* MainActivity::createContentView() {
 
 void MainActivity::applySidebarSizingForViewport() {
     if (!tabFrame) return;
-    AppSettings& settings = Application::getInstance().getSettings();
     const auto& ic = platform::getImageConstraints();
 
     // Calculate dynamic sidebar width based on content. min/max are
@@ -85,14 +84,8 @@ void MainActivity::applySidebarSizingForViewport() {
     sidebarWidth = std::min(sidebarWidth, ic.sidebarMaxWidth);
     brls::View* sidebar = tabFrame->getView("brls/tab_frame/sidebar");
     if (sidebar) {
-        if (settings.collapseSidebar) {
-            int collapsedWidth = std::max(120, (ic.sidebarMinWidth * 4) / 5);
-            sidebar->setWidth(collapsedWidth);
-            brls::Logger::debug("MainActivity: Collapsed sidebar to {}px", collapsedWidth);
-        } else {
-            sidebar->setWidth(sidebarWidth);
-            brls::Logger::debug("MainActivity: Dynamic sidebar width: {}px", sidebarWidth);
-        }
+        sidebar->setWidth(sidebarWidth);
+        brls::Logger::debug("MainActivity: Dynamic sidebar width: {}px", sidebarWidth);
     }
 }
 

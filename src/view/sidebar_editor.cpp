@@ -270,8 +270,13 @@ private:
             it.id = id;
             it.title = titleOf(id);
             if (id.rfind("lib:", 0) == 0) {
+                // Library visibility is managed by Settings ▸ Interface ▸ Manage
+                // Hidden Libraries, not here — skip hidden libraries so the
+                // reorder list only shows libraries actually in the sidebar.
+                // Their hidden state + order entry are preserved on commit
+                // (excluded items aren't "owned", so commit() keeps them).
+                if (csvHas(s.hiddenLibraries, id.substr(4))) continue;
                 it.isLibrary = true;
-                it.hidden = csvHas(s.hiddenLibraries, id.substr(4));
             } else {
                 it.hidden = csvHas(s.hiddenSidebarItems, id);
             }
@@ -315,8 +320,10 @@ private:
         nm->setTextColor(grabbed ? pal::gold : (it.hidden ? pal::dim : pal::text));
         row->addView(nm);
 
-        // Hide toggle (touch). Fixed items reserve the slot instead.
-        if (!it.fixed) {
+        // Hide toggle (touch). Fixed items and libraries reserve the slot
+        // instead — library visibility is managed in Settings, not here, so
+        // only the built-in items (Search / Live TV / Downloads) toggle here.
+        if (!it.fixed && !it.isLibrary) {
             auto* eye = new brls::Box();
             eye->setWidth(30.0f);
             eye->setHeight(30.0f);
@@ -470,7 +477,9 @@ private:
     void toggleHide() {
         if (m_focus < 0 || m_focus >= (int)m_items.size()) return;
         EditItem& it = m_items[m_focus];
-        if (it.fixed) return;
+        // Fixed rows can't hide; libraries are hidden via Settings ▸ Interface ▸
+        // Manage Hidden Libraries, so X only toggles the built-in items.
+        if (it.fixed || it.isLibrary) return;
         it.hidden = !it.hidden;
         renderRows();
     }

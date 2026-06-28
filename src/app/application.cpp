@@ -392,7 +392,6 @@ bool Application::loadSettings() {
     m_settings.debugLogging = extractBool("debugLogging", true);
 
     // Layout settings
-    m_settings.collapseSidebar = extractBool("collapseSidebar", false);
     m_settings.hiddenLibraries = extractString("hiddenLibraries");
     m_settings.sidebarOrder    = extractString("sidebarOrder");
     m_settings.hiddenSidebarItems = extractString("hiddenSidebarItems");
@@ -548,7 +547,6 @@ bool Application::saveSettings() {
     json += "  \"username\": \"" + esc(m_username) + "\",\n";
     json += "  \"theme\": " + std::to_string(static_cast<int>(m_settings.theme)) + ",\n";
     json += "  \"debugLogging\": " + b(m_settings.debugLogging) + ",\n";
-    json += "  \"collapseSidebar\": " + b(m_settings.collapseSidebar) + ",\n";
     json += "  \"hiddenLibraries\": \"" + esc(m_settings.hiddenLibraries) + "\",\n";
     json += "  \"sidebarOrder\": \"" + esc(m_settings.sidebarOrder) + "\",\n";
     json += "  \"hiddenSidebarItems\": \"" + esc(m_settings.hiddenSidebarItems) + "\",\n";
