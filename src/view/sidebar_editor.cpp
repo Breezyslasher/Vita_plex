@@ -151,7 +151,6 @@ public:
         footHr->setBackgroundColor(pal::line);
         panel->addView(footHr);
         addHint(foot, brls::BUTTON_A, "Grab");
-        addHint(foot, brls::BUTTON_X, "Hide");
         addHint(foot, brls::BUTTON_B, "Done");
         panel->addView(foot);
 
@@ -168,15 +167,14 @@ public:
         root->addView(rest);
 
         // Input: D-pad / arrows move focus (and the grabbed row); A grabs/drops;
-        // X hides/shows; B commits. Hidden hints — the footer carries them.
+        // B commits. Hiding is managed in Settings, not here — the editor only
+        // reorders. Hidden hints — the footer carries them.
         root->registerAction("", brls::ControllerButton::BUTTON_NAV_UP,
             [this](brls::View*) { moveFocus(-1); return true; }, true, true);
         root->registerAction("", brls::ControllerButton::BUTTON_NAV_DOWN,
             [this](brls::View*) { moveFocus(1); return true; }, true, true);
         root->registerAction("", brls::ControllerButton::BUTTON_A,
             [this](brls::View*) { toggleGrab(); return true; }, true);
-        root->registerAction("", brls::ControllerButton::BUTTON_X,
-            [this](brls::View*) { toggleHide(); return true; }, true);
         root->registerAction("", brls::ControllerButton::BUTTON_B,
             [this](brls::View*) { commit(); return true; }, true);
 
@@ -278,7 +276,10 @@ private:
                 if (csvHas(s.hiddenLibraries, id.substr(4))) continue;
                 it.isLibrary = true;
             } else {
-                it.hidden = csvHas(s.hiddenSidebarItems, id);
+                // Built-ins: Live TV / Downloads can be hidden via the same
+                // setting, so skip them here when hidden. Search is always
+                // shown. (Hidden built-ins keep their order entry on commit.)
+                if (id != "search" && csvHas(s.hiddenSidebarItems, id)) continue;
             }
             m_items.push_back(it);
         }
@@ -317,37 +318,11 @@ private:
         nm->setFontSize(m_fontSz);
         nm->setSingleLine(true);
         nm->setGrow(1.0f);
-        nm->setTextColor(grabbed ? pal::gold : (it.hidden ? pal::dim : pal::text));
+        nm->setTextColor(grabbed ? pal::gold : pal::text);
+        // Right inset so the label doesn't run to the panel edge, matching the
+        // live sidebar item padding (the editor only reorders — no hide toggle).
+        nm->setMarginRight(m_padSide * 0.5f);
         row->addView(nm);
-
-        // Hide toggle (touch). Fixed items and libraries reserve the slot
-        // instead — library visibility is managed in Settings, not here, so
-        // only the built-in items (Search / Live TV / Downloads) toggle here.
-        if (!it.fixed && !it.isLibrary) {
-            auto* eye = new brls::Box();
-            eye->setWidth(30.0f);
-            eye->setHeight(30.0f);
-            eye->setCornerRadius(6.0f);
-            eye->setJustifyContent(brls::JustifyContent::CENTER);
-            eye->setAlignItems(brls::AlignItems::CENTER);
-            eye->setMarginRight(m_padSide * 0.5f);
-            auto* eyeIco = new brls::Image();
-            eyeIco->setWidth(18.0f);
-            eyeIco->setHeight(18.0f);
-            eyeIco->setScalingType(brls::ImageScalingType::FIT);
-            eyeIco->setImageFromRes(it.hidden ? "icons/hide.png" : "icons/show.png");
-            eye->addView(eyeIco);
-            eye->addGestureRecognizer(new brls::TapGestureRecognizer(
-                [this, idx](brls::TapGestureStatus s, brls::Sound*) {
-                    if (s.state == brls::GestureState::END) { m_focus = idx; toggleHide(); }
-                }));
-            row->addView(eye);
-        } else {
-            auto* sp = new brls::Box();
-            sp->setWidth(30.0f);
-            sp->setMarginRight(m_padSide * 0.5f);
-            row->addView(sp);
-        }
 
         row->getFocusEvent()->subscribe([this, idx](brls::View*) { m_focus = idx; });
 
@@ -474,19 +449,14 @@ private:
         renderRows();
     }
 
-    void toggleHide() {
-        if (m_focus < 0 || m_focus >= (int)m_items.size()) return;
-        EditItem& it = m_items[m_focus];
-        // Fixed rows can't hide; libraries are hidden via Settings ▸ Interface ▸
-        // Manage Hidden Libraries, so X only toggles the built-in items.
-        if (it.fixed || it.isLibrary) return;
-        it.hidden = !it.hidden;
-        renderRows();
-    }
-
     void commit() {
         AppSettings& s = Application::getInstance().getSettings();
 
+        // The editor only reorders — hiding is owned by Settings, so leave
+        // hiddenLibraries / hiddenSidebarItems untouched and write just the
+        // order: the visible items the editor shows (in their new order),
+        // then any ids it didn't show (hidden libraries / items) kept from the
+        // existing order so hide → reorder → unhide round-trips cleanly.
         std::vector<std::string> owned;
         for (const auto& it : m_items)
             if (!it.fixed) owned.push_back(it.id);
@@ -500,23 +470,7 @@ private:
         for (const auto& id : splitCsv(s.sidebarOrder))
             if (!isOwned(id)) order.push_back(id);
 
-        std::vector<std::string> hiddenItems;
-        for (const auto& it : m_items)
-            if (!it.fixed && !it.isLibrary && it.hidden) hiddenItems.push_back(it.id);
-        for (const auto& id : splitCsv(s.hiddenSidebarItems))
-            if (!isOwned(id)) hiddenItems.push_back(id);
-
         s.sidebarOrder = joinCsv(order);
-        s.hiddenSidebarItems = joinCsv(hiddenItems);
-
-        if (m_libsFetched) {
-            std::vector<std::string> hiddenLibs;
-            for (const auto& it : m_items)
-                if (it.isLibrary && it.hidden) hiddenLibs.push_back(it.id.substr(4));
-            for (const auto& key : splitCsv(s.hiddenLibraries))
-                if (!isOwned("lib:" + key)) hiddenLibs.push_back(key);
-            s.hiddenLibraries = joinCsv(hiddenLibs);
-        }
 
         Application::getInstance().saveSettings();
 

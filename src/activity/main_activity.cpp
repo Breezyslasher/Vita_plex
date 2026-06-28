@@ -296,7 +296,9 @@ void MainActivity::buildSidebarTabs() {
             std::string k = sec->key, t = sec->title, ty = sec->type;
             tabFrame->addTab(t, [k, t, ty]() { return new LibrarySectionTab(k, t, ty); });
         } else {
-            if (sidebarCsvHas(settings.hiddenSidebarItems, id)) continue;
+            // Search is always shown; only Live TV / Downloads can be hidden
+            // (via Settings ▸ Interface ▸ Manage Hidden Libraries).
+            if (id != "search" && sidebarCsvHas(settings.hiddenSidebarItems, id)) continue;
             if (id == "search")         tabFrame->addTab("Search",    []() { return new SearchTab(); });
             else if (id == "livetv")    tabFrame->addTab("Live TV",   []() { return new LiveTVTab(); });
             else if (id == "downloads") tabFrame->addTab("Downloads", []() { return new DownloadsTab(); });
