@@ -142,6 +142,10 @@ private:
     // reorder without the L/R bumpers (which Android TV remotes lack).
     void toggleQueueGrab();         // pick up the focused track / drop it
     void setQueueGrab(bool on);     // enter/leave move mode + update the row cue
+    // Animated pickup cue: slides the grabbed row out to the right with a small
+    // overshoot "pop" and casts a shadow, then settles it back on drop. Makes
+    // picking up a track read as a physical lift, not just a colour change.
+    void animateGrabLift(bool lifted);
     void linkFirstRowToClear();     // route UP off the first up-next row to the Clear button
     // After an in-place reorder swaps rows around index `lo` (and lo+1), keep
     // the UP-escape routes correct: row 0 -> Clear, others -> the row above.
@@ -162,6 +166,10 @@ private:
     // Row that currently owns focus inside the up-next list — used to reveal its
     // remove (✕) affordance and restore the previous row's styling on focus move.
     brls::Box* m_focusedQueueRow = nullptr;
+    // Drives the pickup "lift" animation (0 = seated in the list, 1 = lifted
+    // out). Mapped to translationX on m_focusedQueueRow each tick.
+    brls::Animatable m_grabLift;
+    static constexpr float kGrabLiftPx = 14.0f;  // how far the held row slides out
     // When >= 0, the child index populateQueueList / the batched build should land
     // focus on after the next rebuild, instead of the default (first / current
     // row). Set by moveFocusedQueueTrack so a reorder keeps the hover on the moved

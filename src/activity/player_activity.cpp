@@ -3089,6 +3089,7 @@ void PlayerActivity::hideQueueOverlay() {
     m_queueGrabActive = false;   // drop any held track when the sheet closes
     m_queueBatchActive = false;  // Cancel any in-progress batch
     m_focusedQueueRow = nullptr;
+    m_grabLift.reset(0.0f);      // stop any in-flight pickup animation
     if (queueOverlay) {
         queueOverlay->setVisibility(brls::Visibility::GONE);
     }
@@ -3421,6 +3422,9 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     row->getFocusEvent()->subscribe([this, row](brls::View*) {
         if (m_focusedQueueRow && m_focusedQueueRow != row) {
             m_focusedQueueRow->setBackgroundColor(nvgRGBA(0, 0, 0, 0));
+            // Seat any lifted row back if focus genuinely moves off it.
+            m_focusedQueueRow->setTranslationX(0.0f);
+            m_focusedQueueRow->setShadowVisibility(false);
             auto pit = m_queueRowData.find(m_focusedQueueRow);
             if (pit != m_queueRowData.end() && pit->second.removeBtn) {
                 pit->second.removeBtn->setVisibility(brls::Visibility::INVISIBLE);
@@ -3453,6 +3457,7 @@ void PlayerActivity::populateQueueList() {
     // Park focus on the Clear button before tearing down rows so we never
     // destroy the focused view out from under borealis.
     m_focusedQueueRow = nullptr;
+    m_grabLift.reset(0.0f);  // stop any in-flight lift before rows are destroyed
     if (!queueList->getChildren().empty() && queueClearBtn) {
         brls::Application::giveFocus(queueClearBtn);
     }
@@ -3772,10 +3777,47 @@ void PlayerActivity::setQueueGrab(bool on) {
     if (m_focusedQueueRow) {
         m_focusedQueueRow->setBackgroundColor(on ? nvgRGBA(229, 160, 13, 90)
                                                   : nvgRGB(58, 58, 70));
+        // Slide the row out (pop on pickup) / settle it back (on drop), with a
+        // shadow while held so the lift reads physically, not just by colour.
+        animateGrabLift(on);
     }
     if (on) {
         MpvPlayer::getInstance().showOSD("Moving track \xC2\xB7 Up/Down to move, OK to drop", 2.0);
     }
+}
+
+void PlayerActivity::animateGrabLift(bool lifted) {
+    brls::Box* row = m_focusedQueueRow;
+    if (!row) return;
+    // Capture the specific row so the animation always targets it (not whoever
+    // holds focus later) — a quick drop-then-navigate can't tug a different
+    // row. The m_queueRowData lookup guards against the row being torn down by
+    // a rebuild mid-animation (populateQueueList clears the map first).
+    // Detach any prior end callback first so the reset() below can't fire a
+    // stale shadow-cleanup (e.g. a re-pickup that interrupts a settle-back).
+    m_grabLift.setEndCallback([](bool) {});
+    m_grabLift.reset(m_grabLift.getValue());
+    if (lifted) {
+        row->setShadowType(brls::ShadowType::GENERIC);
+        row->setShadowVisibility(true);
+        // Overshoot past the seated-out position, then settle: a tactile "pop".
+        m_grabLift.addStep(1.18f, 110, brls::EasingFunction::quadraticOut);
+        m_grabLift.addStep(1.0f, 90, brls::EasingFunction::quadraticOut);
+    } else {
+        m_grabLift.addStep(0.0f, 140, brls::EasingFunction::quadraticOut);
+        // Drop the shadow and zero the offset only once fully seated again.
+        m_grabLift.setEndCallback([this, row](bool) {
+            if (m_queueRowData.count(row)) {
+                row->setTranslationX(0.0f);
+                row->setShadowVisibility(false);
+            }
+        });
+    }
+    m_grabLift.setTickCallback([this, row] {
+        if (m_queueRowData.count(row))
+            row->setTranslationX(m_grabLift.getValue() * kGrabLiftPx);
+    });
+    m_grabLift.start();
 }
 
 void PlayerActivity::clearUpcoming() {
