@@ -120,8 +120,6 @@ A native Plex client for PlayStation Vita and beyond. Stream movies, TV, music, 
 
 **Android / Android TV:** Install the APK and sign in on first launch.
 
-**iOS / iPadOS / tvOS:** Build and sideload using AltStore / Xcode (signed builds are published on Releases when available).
-
 **Desktop:** Download the appropriate build for Windows, macOS, or Linux from [Releases](../../releases) and run.
 
 ## License
