@@ -190,6 +190,34 @@ void MusicQueue::moveTrack(int fromIndex, int toIndex) {
     notifyQueueChanged();
 }
 
+void MusicQueue::moveInPlayOrder(int fromPlayPos, int toPlayPos) {
+    if (!m_shuffleEnabled) {
+        // Play order == queue order; reuse the absolute-index move.
+        moveTrack(fromPlayPos, toPlayPos);
+        return;
+    }
+    if (fromPlayPos < 0 || fromPlayPos >= (int)m_shuffleOrder.size()) return;
+    if (toPlayPos < 0 || toPlayPos >= (int)m_shuffleOrder.size()) return;
+    if (fromPlayPos == toPlayPos) return;
+
+    // Reorder the shuffle order only — m_queue (and the absolute indices the UI
+    // rows hold) stays put, so each row keeps showing the same track.
+    int v = m_shuffleOrder[fromPlayPos];
+    m_shuffleOrder.erase(m_shuffleOrder.begin() + fromPlayPos);
+    m_shuffleOrder.insert(m_shuffleOrder.begin() + toPlayPos, v);
+
+    // Keep the current play position pointing at the same (current) track.
+    if (m_shufflePosition == fromPlayPos) {
+        m_shufflePosition = toPlayPos;
+    } else if (fromPlayPos < m_shufflePosition && toPlayPos >= m_shufflePosition) {
+        m_shufflePosition--;
+    } else if (fromPlayPos > m_shufflePosition && toPlayPos <= m_shufflePosition) {
+        m_shufflePosition++;
+    }
+
+    notifyQueueChanged();
+}
+
 void MusicQueue::setQueue(const std::vector<MediaItem>& items, int startIndex) {
     clear();
 
