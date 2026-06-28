@@ -3489,6 +3489,7 @@ void PlayerActivity::populateQueueList() {
         if (m_queueOverlayVisible && queueClearBtn) {
             brls::Application::giveFocus(queueClearBtn);
         }
+        m_queueFocusTargetChild = -1;
         m_queuePopulating = false;
         return;
     }
@@ -3517,8 +3518,13 @@ void PlayerActivity::populateQueueList() {
         linkFirstRowToClear();
         loadQueueThumbsAroundIndex(0);
         if (m_queueOverlayVisible && queueList && !queueList->getChildren().empty()) {
-            brls::Application::giveFocus(queueList->getChildren()[0]);
+            // After a reorder, land on the moved track's new slot; otherwise the
+            // first row.
+            int fc = (m_queueFocusTargetChild >= 0) ? m_queueFocusTargetChild : 0;
+            fc = std::min(std::max(fc, 0), (int)queueList->getChildren().size() - 1);
+            brls::Application::giveFocus(queueList->getChildren()[fc]);
         }
+        m_queueFocusTargetChild = -1;
         m_queuePopulating = false;
         return;
     }
@@ -3648,16 +3654,14 @@ void PlayerActivity::moveFocusedQueueTrack(int direction) {
     }
 
     queue.moveTrack(fromTrack, toTrack);
-    populateQueueList();
 
-    // Re-focus the row now occupying the target slot
-    if (queueList) {
-        auto& newChildren = queueList->getChildren();
-        if (!newChildren.empty()) {
-            int t = std::min(std::max(targetChild, 0), (int)newChildren.size() - 1);
-            brls::Application::giveFocus(newChildren[t]);
-        }
-    }
+    // Land focus on the row now occupying the target slot once the list is
+    // rebuilt. populateQueueList honors this in both its synchronous and
+    // batched paths — doing it here (rather than a giveFocus after the call)
+    // is what fixes large queues, where the async batch finishes *after* this
+    // function returns and would otherwise re-focus the top row.
+    m_queueFocusTargetChild = targetChild;
+    populateQueueList();
 }
 
 void PlayerActivity::toggleQueueGrab() {
@@ -3751,13 +3755,16 @@ void PlayerActivity::populateQueueBatch() {
         loadQueueThumbsAroundIndex(childFocusIdx);
         linkFirstRowToClear();
 
-        // Give focus to the current track now that all rows exist
+        // Give focus to the current track now that all rows exist — or, after a
+        // reorder, to the moved track's new slot.
         if (m_queueOverlayVisible && queueList && !queueList->getChildren().empty()) {
+            if (m_queueFocusTargetChild >= 0) childFocusIdx = m_queueFocusTargetChild;
             childFocusIdx = std::min(childFocusIdx, (int)queueList->getChildren().size() - 1);
             if (childFocusIdx < 0) childFocusIdx = 0;
             brls::Application::giveFocus(queueList->getChildren()[childFocusIdx]);
             if (queueOverlayTitle) queueOverlayTitle->setFocusable(false);
         }
+        m_queueFocusTargetChild = -1;
     } else {
         // Schedule next batch on the next frame via brls::sync
         brls::sync([this]() {

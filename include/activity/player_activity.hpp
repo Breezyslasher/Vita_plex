@@ -154,6 +154,12 @@ private:
     // Row that currently owns focus inside the up-next list — used to reveal its
     // remove (✕) affordance and restore the previous row's styling on focus move.
     brls::Box* m_focusedQueueRow = nullptr;
+    // When >= 0, the child index populateQueueList / the batched build should land
+    // focus on after the next rebuild, instead of the default (first / current
+    // row). Set by moveFocusedQueueTrack so a reorder keeps the hover on the moved
+    // track even on large queues (which build asynchronously and would otherwise
+    // re-focus the top row on completion). Reset to -1 once consumed.
+    int m_queueFocusTargetChild = -1;
 
     // Windowed queue rendering - only create rows for a window around the current track
     // to avoid creating thousands of views for large queues
