@@ -621,6 +621,10 @@ void PlayerActivity::onContentAvailable() {
                 return true;
             });
             queueClearBtn->addGestureRecognizer(new brls::TapGestureRecognizer(queueClearBtn));
+            // Clear is the top of the sheet's focusable content; route UP back to
+            // itself so it can't escape to the player's queue button behind the
+            // overlay (which is what happens with the default upward traversal).
+            queueClearBtn->setCustomNavigationRoute(brls::FocusDirection::UP, queueClearBtn);
         }
 
         // Music mode: controls never auto-hide, always visible
@@ -3245,6 +3249,30 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     ? (queueScroll->getContentOffsetY() - m_dragState.dragStartScrollY) : 0.0f;
                 float eff = (status.position.y - m_dragState.dragStartY) + scrollDelta;
                 row->setTranslationY(eff);
+
+                // Auto-scroll while the finger sits near the top/bottom edge of
+                // the viewport, so a drag can reach rows past the visible window.
+                // STAY fires every frame the finger is held, so this keeps
+                // scrolling even when the finger isn't moving.
+                if (queueScroll) {
+                    constexpr float EDGE = 44.0f;
+                    constexpr float SPEED = 9.0f;
+                    float viewH = queueScroll->getHeight();
+                    float fingerInView = status.position.y - queueScroll->getY();
+                    float scrollY = queueScroll->getContentOffsetY();
+                    int n = queueList ? (int)queueList->getChildren().size() : 0;
+                    float maxScroll = std::max(0.0f, n * rowH + 8.0f - viewH);
+                    if (fingerInView > viewH - EDGE && scrollY < maxScroll) {
+                        queueScroll->setContentOffsetY(std::min(maxScroll, scrollY + SPEED), false);
+                    } else if (fingerInView < EDGE && scrollY > 0) {
+                        queueScroll->setContentOffsetY(std::max(0.0f, scrollY - SPEED), false);
+                    }
+                    // Re-read the scroll offset so the dragged row stays under the
+                    // finger and the target index reflects the new scroll position.
+                    scrollDelta = queueScroll->getContentOffsetY() - m_dragState.dragStartScrollY;
+                    eff = (status.position.y - m_dragState.dragStartY) + scrollDelta;
+                    row->setTranslationY(eff);
+                }
 
                 int origIdx = m_dragState.originalDisplayIdx;
                 int childCount = queueList ? (int)queueList->getChildren().size() : 0;
