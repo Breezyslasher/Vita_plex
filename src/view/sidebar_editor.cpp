@@ -13,10 +13,13 @@
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
 #include "app/plex_palette.hpp"
+#include "app/hint_icons.hpp"
 
 #include <borealis.hpp>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -61,6 +64,10 @@ struct EditItem {
 class SidebarEditorActivity : public brls::Activity {
 public:
     bool isTranslucent() override { return true; }
+
+    // HintIcons::onSourceChanged subscriptions live for the whole process, so
+    // guard their callbacks against this editor having been destroyed.
+    ~SidebarEditorActivity() override { m_alive->store(false); }
 
     brls::View* createContentView() override {
         buildModel();
@@ -142,9 +149,9 @@ public:
         footHr->setMarginRight(m_padSide);
         footHr->setBackgroundColor(pal::line);
         panel->addView(footHr);
-        addHint(foot, "A", "Grab");
-        addHint(foot, "X", "Hide");
-        addHint(foot, "B", "Done");
+        addHint(foot, brls::BUTTON_A, "Grab");
+        addHint(foot, brls::BUTTON_X, "Hide");
+        addHint(foot, brls::BUTTON_B, "Done");
         panel->addView(foot);
 
         root->addView(panel);
@@ -185,23 +192,35 @@ public:
     }
 
 private:
-    void addHint(brls::Box* parent, const std::string& cap, const std::string& label) {
-        auto* k = new brls::Box();
-        k->setHeight(18.0f);
-        k->setWidth(18.0f);
-        k->setCornerRadius(5.0f);
-        k->setJustifyContent(brls::JustifyContent::CENTER);
-        k->setAlignItems(brls::AlignItems::CENTER);
-        k->setBackgroundColor(pal::surface3);
-        k->setBorderColor(pal::line);
-        k->setBorderThickness(1.0f);
-        k->setMarginRight(6.0f);
-        auto* kl = new brls::Label();
-        kl->setText(cap);
-        kl->setFontSize(9.0f);
-        kl->setTextColor(pal::text);
-        k->addView(kl);
-        parent->addView(k);
+    // A platform/input-aware button hint (glyph + label), matching the app's
+    // media-cell hints: the glyph PNG comes from HintIcons (PlayStation shapes
+    // on Vita/PS4, keyboard keys on desktop, touch art on Android, etc.) and
+    // refreshes live when the input source flips.
+    void addHint(brls::Box* parent, brls::ControllerButton button, const std::string& label) {
+        auto* icon = new brls::Image();
+        icon->setWidth(18.0f);
+        icon->setHeight(18.0f);
+        icon->setScalingType(brls::ImageScalingType::FIT);
+        icon->setMarginRight(5.0f);
+        std::string path = HintIcons::getResPath(button);
+        if (!path.empty())
+            icon->setImageFromRes(path);
+        else
+            icon->setVisibility(brls::Visibility::GONE);  // e.g. touch: no glyph
+        std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+        HintIcons::onSourceChanged([aliveWeak, icon, button]() {
+            auto a = aliveWeak.lock();
+            if (!a || !a->load()) return;
+            std::string p = HintIcons::getResPath(button);
+            if (!p.empty()) {
+                icon->setImageFromRes(p);
+                icon->setVisibility(brls::Visibility::VISIBLE);
+            } else {
+                icon->setVisibility(brls::Visibility::GONE);
+            }
+        });
+        parent->addView(icon);
+
         auto* l = new brls::Label();
         l->setText(label);
         l->setFontSize(11.0f);
@@ -486,6 +505,8 @@ private:
     bool  m_dragActive = false;
     int   m_dragFrom = -1, m_dragTarget = -1;
     float m_dragStartY = 0.0f;
+
+    std::shared_ptr<std::atomic<bool>> m_alive = std::make_shared<std::atomic<bool>>(true);
 };
 
 } // namespace
