@@ -33,11 +33,69 @@ size_t LibrarySectionTab::playlistTrackPageSize() {
     return v > 0 ? static_cast<size_t>(v) : 50;
 }
 
+// Remembers each library section's chosen sort, keyed by section key, so it
+// survives navigating away and back AND app restarts. Value = {param, label}.
+// Backed by AppSettings.librarySortPrefs (encoded "key=param|label;key2=…"),
+// loaded lazily and written through to disk on every change.
+static std::map<std::string, std::pair<std::string, std::string>> s_sortBySection;
+static bool s_sortPrefsLoaded = false;
+
+static std::string encodeSortPrefs() {
+    std::string out;
+    for (const auto& kv : s_sortBySection) {
+        if (!out.empty()) out += ";";
+        out += kv.first + "=" + kv.second.first + "|" + kv.second.second;
+    }
+    return out;
+}
+
+static void ensureSortPrefsLoaded() {
+    if (s_sortPrefsLoaded) return;
+    s_sortPrefsLoaded = true;
+    const std::string& enc = Application::getInstance().getSettings().librarySortPrefs;
+    size_t pos = 0;
+    while (pos < enc.size()) {
+        size_t semi = enc.find(';', pos);
+        std::string entry = enc.substr(
+            pos, semi == std::string::npos ? std::string::npos : semi - pos);
+        size_t eq = entry.find('=');
+        if (eq != std::string::npos) {
+            size_t bar = entry.find('|', eq + 1);
+            if (bar != std::string::npos) {
+                std::string key   = entry.substr(0, eq);
+                std::string param = entry.substr(eq + 1, bar - eq - 1);
+                std::string label = entry.substr(bar + 1);
+                if (!key.empty() && !param.empty())
+                    s_sortBySection[key] = { param, label };
+            }
+        }
+        if (semi == std::string::npos) break;
+        pos = semi + 1;
+    }
+}
+
+static void persistSortPref(const std::string& sectionKey,
+                            const std::string& param, const std::string& label) {
+    s_sortBySection[sectionKey] = { param, label };
+    Application::getInstance().getSettings().librarySortPrefs = encodeSortPrefs();
+    Application::getInstance().saveSettings();
+}
+
 LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::string& title, const std::string& sectionType)
     : m_sectionKey(sectionKey), m_title(title), m_sectionType(sectionType) {
 
     // Create alive flag for async callback safety
     m_alive = std::make_shared<bool>(true);
+
+    // Restore this section's remembered sort (if the user picked one before).
+    // Must happen before the Sort chip is built and before loadContent() reads
+    // m_sortParam, so both reflect the saved choice.
+    ensureSortPrefsLoaded();
+    auto savedSort = s_sortBySection.find(sectionKey);
+    if (savedSort != s_sortBySection.end()) {
+        m_sortParam = savedSort->second.first;
+        m_sortLabel = savedSort->second.second;
+    }
 
     this->setAxis(brls::Axis::COLUMN);
     this->setJustifyContent(brls::JustifyContent::FLEX_START);
@@ -292,6 +350,12 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     };
     m_contentGrid->registerAction("Back", brls::ControllerButton::BUTTON_B, backHandler);
     m_trackListScroll->registerAction("Back", brls::ControllerButton::BUTTON_B, backHandler);
+    // Also on the toolbar row, so Back works while a chip (Filters / Sort /
+    // Collections / Playlists / a filter chip) is focused — its walk-up reaches
+    // m_viewModeBox, whereas the grid/track-list handlers are not in that chain.
+    // m_viewModeBox is a child of `this`, so TabFrame's BUTTON_B override (which
+    // only lands on the tab's content view) doesn't wipe it.
+    m_viewModeBox->registerAction("Back", brls::ControllerButton::BUTTON_B, backHandler);
 
     // A-Z jump rail (absolute, right edge) — starts hidden; refreshAzRail shows
     // it only while the all-items grid is sorted Title A-Z.
@@ -613,6 +677,7 @@ void LibrarySectionTab::showSortMenu() {
             [this, label, param](brls::View*) {
                 m_sortParam = param;
                 m_sortLabel = label;
+                persistSortPref(m_sectionKey, param, label);  // remember + save to disk
                 if (m_sortBtn) m_sortBtn->setText("Sort: " + label);
                 reloadAllItems();
                 return true;
