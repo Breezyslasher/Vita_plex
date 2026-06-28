@@ -304,4 +304,11 @@ void MainActivity::rebuildSidebar() {
     tabFrame->focusTab(0);
 }
 
+float MainActivity::getSidebarWidth() {
+    if (!tabFrame) return 0.0f;
+    if (brls::View* sb = tabFrame->getView("brls/tab_frame/sidebar"))
+        return sb->getWidth();
+    return 0.0f;
+}
+
 } // namespace vitaplex

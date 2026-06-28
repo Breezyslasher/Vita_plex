@@ -1,14 +1,22 @@
 /**
- * VitaPlex - Sidebar Editor (Direction D) implementation
+ * VitaPlex - Sidebar Editor implementation
+ *
+ * A seamless in-place editor: a panel sized + coloured to match the live
+ * sidebar (so it reads as the sidebar in edit mode, no dim) where the user
+ * reorders and shows/hides items. Reorder works on every platform — D-pad /
+ * arrow keys (grab with A, move with Up/Down) and touch (drag a row). Commits
+ * the order + hidden set to settings.cfg and rebuilds the live sidebar.
  */
 
 #include "view/sidebar_editor.hpp"
 #include "activity/main_activity.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
+#include "app/plex_palette.hpp"
 
 #include <borealis.hpp>
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -16,23 +24,7 @@ namespace vitaplex {
 
 namespace {
 
-// ---- Direction-D design tokens -------------------------------------------
-namespace sb {
-    inline NVGcolor rail()    { return nvgRGB(0x16, 0x16, 0x17); }
-    inline NVGcolor veil()    { return nvgRGBA(8, 8, 9, 158); }      // rgba .62
-    inline NVGcolor rowGrab() { return nvgRGB(0x3a, 0x3a, 0x46); }
-    inline NVGcolor gold()    { return nvgRGB(0xe5, 0xa0, 0x0d); }
-    inline NVGcolor text()    { return nvgRGB(0xff, 0xff, 0xff); }
-    inline NVGcolor muted()   { return nvgRGB(0xb4, 0xb4, 0xba); }
-    inline NVGcolor muted2()  { return nvgRGB(0x8a, 0x8a, 0x90); }
-    inline NVGcolor muted3()  { return nvgRGB(0x6a, 0x6a, 0x70); }
-    inline NVGcolor mutedDim(){ return nvgRGBA(0x8a, 0x8a, 0x90, 115); }  // grip on fixed
-    inline NVGcolor hair()    { return nvgRGB(0x2a, 0x2a, 0x2e); }
-    inline NVGcolor tagBd()   { return nvgRGB(0x3a, 0x3a, 0x40); }
-    inline NVGcolor surface2(){ return nvgRGB(0x40, 0x40, 0x40); }
-    inline NVGcolor line()    { return nvgRGB(0x47, 0x47, 0x47); }
-    inline NVGcolor capInk()  { return nvgRGB(0xc2, 0xc2, 0xc8); }
-}
+namespace pal = vitaplex::palette;
 
 std::vector<std::string> splitCsv(const std::string& s) {
     std::vector<std::string> out;
@@ -57,15 +49,15 @@ std::string joinCsv(const std::vector<std::string>& v) {
 }
 
 struct EditItem {
-    std::string id;        // home, search, livetv, downloads, library, music, settings, lib:<key>
+    std::string id;        // home, search, livetv, downloads, settings, lib:<key>
     std::string title;
     bool fixed = false;    // home, settings — can't move or hide
     bool hidden = false;
     bool isLibrary = false;
 };
 
-// Full-screen translucent editor: a 262px rail on the left (opaque) with the
-// rest of the app showing through a dim veil.
+// Translucent so the live app (and its real sidebar) renders behind; the panel
+// covers the sidebar region exactly, so it looks like the sidebar in edit mode.
 class SidebarEditorActivity : public brls::Activity {
 public:
     bool isTranslucent() override { return true; }
@@ -73,38 +65,53 @@ public:
     brls::View* createContentView() override {
         buildModel();
 
+        // Match the live sidebar's metrics so the panel reads as the sidebar.
+        brls::Style style = brls::Application::getStyle();
+        m_rowH    = style["brls/sidebar/item_height"];
+        m_fontSz  = style["brls/sidebar/item_font_size"];
+        m_padSide = style["brls/sidebar/item_accent_margin_sides"];
+        m_accentW = style["brls/sidebar/item_accent_rect_width"];
+        if (m_rowH < 24.0f)   m_rowH = 70.0f;
+        if (m_fontSz < 8.0f)  m_fontSz = 22.0f;
+        if (m_padSide < 2.0f) m_padSide = 16.0f;
+        if (m_accentW < 1.0f) m_accentW = 4.0f;
+
+        float w = 240.0f;
+        if (auto* m = MainActivity::getInstance()) {
+            float gw = m->getSidebarWidth();
+            if (gw > 80.0f) w = gw;
+        }
+
         auto* root = new brls::Box();
         root->setAxis(brls::Axis::ROW);
         root->setWidthPercentage(100.0f);
         root->setHeightPercentage(100.0f);
 
-        // ---- Rail (edit panel) ----
+        // ---- Panel (matches the sidebar) ----
         auto* panel = new brls::Box();
         panel->setAxis(brls::Axis::COLUMN);
-        panel->setWidth(262.0f);
+        panel->setWidth(w);
         panel->setHeightPercentage(100.0f);
-        panel->setBackgroundColor(sb::rail());
-        panel->setPaddingTop(18.0f);
-        panel->setPaddingBottom(18.0f);
-        panel->setShadowType(brls::ShadowType::GENERIC);
+        panel->setBackgroundColor(pal::panel);
 
-        // Header: "Edit Sidebar" + Done
+        // Slim header: eyebrow + Done (Done also commits on tap, for touch)
         auto* head = new brls::Box();
         head->setAxis(brls::Axis::ROW);
         head->setAlignItems(brls::AlignItems::CENTER);
         head->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
-        head->setPaddingLeft(18.0f);
-        head->setPaddingRight(18.0f);
-        head->setMarginBottom(14.0f);
-        auto* htitle = new brls::Label();
-        htitle->setText("Edit Sidebar");
-        htitle->setFontSize(15.0f);
-        htitle->setTextColor(sb::text());
-        head->addView(htitle);
+        head->setPaddingLeft(m_padSide);
+        head->setPaddingRight(m_padSide);
+        head->setPaddingTop(14.0f);
+        head->setPaddingBottom(10.0f);
+        auto* eyebrow = new brls::Label();
+        eyebrow->setText("EDIT SIDEBAR");
+        eyebrow->setFontSize(11.0f);
+        eyebrow->setTextColor(pal::muted);
+        head->addView(eyebrow);
         auto* done = new brls::Label();
         done->setText("✓ Done");
-        done->setFontSize(12.5f);
-        done->setTextColor(sb::gold());
+        done->setFontSize(13.0f);
+        done->setTextColor(pal::gold);
         head->addView(done);
         head->addGestureRecognizer(new brls::TapGestureRecognizer(
             [this](brls::TapGestureStatus s, brls::Sound*) {
@@ -112,63 +119,56 @@ public:
             }));
         panel->addView(head);
 
-        // Section label
-        auto* sec = new brls::Label();
-        sec->setText("PRESS A TO MOVE · X TO HIDE");
-        sec->setFontSize(10.5f);
-        sec->setTextColor(sb::muted2());
-        sec->setMarginLeft(18.0f);
-        sec->setMarginRight(18.0f);
-        sec->setMarginBottom(8.0f);
-        sec->setMarginTop(4.0f);
-        panel->addView(sec);
+        auto* hr = new brls::Box();
+        hr->setHeight(1.0f);
+        hr->setMarginLeft(m_padSide);
+        hr->setMarginRight(m_padSide);
+        hr->setMarginBottom(4.0f);
+        hr->setBackgroundColor(pal::line);
+        panel->addView(hr);
 
-        // Scrollable row list
         auto* scroll = new brls::ScrollingFrame();
         scroll->setGrow(1.0f);
         m_listBox = new brls::Box();
         m_listBox->setAxis(brls::Axis::COLUMN);
-        m_listBox->setPaddingLeft(10.0f);
-        m_listBox->setPaddingRight(10.0f);
         scroll->setContentView(m_listBox);
         panel->addView(scroll);
 
-        // Footer: top hairline + button hints
-        auto* hair = new brls::Box();
-        hair->setHeight(1.0f);
-        hair->setMarginTop(6.0f);
-        hair->setMarginLeft(18.0f);
-        hair->setMarginRight(18.0f);
-        hair->setBackgroundColor(sb::hair());
-        panel->addView(hair);
-
+        // Footer hints (controller / keyboard)
         auto* foot = new brls::Box();
         foot->setAxis(brls::Axis::ROW);
         foot->setAlignItems(brls::AlignItems::CENTER);
-        foot->setPaddingLeft(16.0f);
-        foot->setPaddingRight(16.0f);
-        foot->setPaddingTop(11.0f);
-        addHint(foot, "A", "Grab / move");
+        foot->setPaddingLeft(m_padSide);
+        foot->setPaddingRight(m_padSide);
+        foot->setPaddingTop(10.0f);
+        foot->setPaddingBottom(8.0f);
+        auto* footHr = new brls::Box();
+        footHr->setHeight(1.0f);
+        footHr->setMarginLeft(m_padSide);
+        footHr->setMarginRight(m_padSide);
+        footHr->setBackgroundColor(pal::line);
+        panel->addView(footHr);
+        addHint(foot, "A", "Grab");
         addHint(foot, "X", "Hide");
         addHint(foot, "B", "Done");
         panel->addView(foot);
 
         root->addView(panel);
 
-        // ---- Veil over the dimmed app ----
-        auto* veil = new brls::Box();
-        veil->setGrow(1.0f);
-        veil->setHeightPercentage(100.0f);
-        veil->setBackgroundColor(sb::veil());
-        veil->addGestureRecognizer(new brls::TapGestureRecognizer(
+        // Transparent dismiss area over the live content — tap commits.
+        auto* rest = new brls::Box();
+        rest->setGrow(1.0f);
+        rest->setHeightPercentage(100.0f);
+        rest->addGestureRecognizer(new brls::TapGestureRecognizer(
             [this](brls::TapGestureStatus s, brls::Sound*) {
                 if (s.state == brls::GestureState::END) commit();
             }));
-        root->addView(veil);
+        root->addView(rest);
 
-        // ---- Input ----
+        // Input: D-pad / arrows move focus (and the grabbed row); A grabs/drops;
+        // X hides/shows; B commits. Hidden hints — the footer carries them.
         root->registerAction("", brls::ControllerButton::BUTTON_NAV_UP,
-            [this](brls::View*) { moveFocus(-1); return true; }, /*hidden*/ true, /*repeat*/ true);
+            [this](brls::View*) { moveFocus(-1); return true; }, true, true);
         root->registerAction("", brls::ControllerButton::BUTTON_NAV_DOWN,
             [this](brls::View*) { moveFocus(1); return true; }, true, true);
         root->registerAction("", brls::ControllerButton::BUTTON_A,
@@ -195,26 +195,24 @@ private:
         auto* k = new brls::Box();
         k->setHeight(18.0f);
         k->setWidth(18.0f);
-        k->setPaddingLeft(5.0f);
-        k->setPaddingRight(5.0f);
         k->setCornerRadius(5.0f);
         k->setJustifyContent(brls::JustifyContent::CENTER);
         k->setAlignItems(brls::AlignItems::CENTER);
-        k->setBackgroundColor(sb::surface2());
-        k->setBorderColor(sb::line());
+        k->setBackgroundColor(pal::surface3);
+        k->setBorderColor(pal::line);
         k->setBorderThickness(1.0f);
         k->setMarginRight(6.0f);
         auto* kl = new brls::Label();
         kl->setText(cap);
         kl->setFontSize(9.0f);
-        kl->setTextColor(sb::capInk());
+        kl->setTextColor(pal::text);
         k->addView(kl);
         parent->addView(k);
         auto* l = new brls::Label();
         l->setText(label);
-        l->setFontSize(10.5f);
-        l->setTextColor(sb::muted2());
-        l->setMarginRight(12.0f);
+        l->setFontSize(11.0f);
+        l->setTextColor(pal::muted);
+        l->setMarginRight(14.0f);
         parent->addView(l);
     }
 
@@ -225,8 +223,7 @@ private:
 
         m_items.push_back({ "home", "Home", true, false, false });
 
-        // Movable universe (default order) + titles: each library, then the
-        // built-ins. Libraries always live in the sidebar.
+        // Movable universe (default order) + titles: each library, then built-ins.
         std::vector<std::pair<std::string, std::string>> universe;
         std::vector<LibrarySection> sections;
         m_libsFetched = PlexClient::getInstance().fetchLibrarySections(sections);
@@ -280,74 +277,67 @@ private:
         auto* row = new brls::Box();
         row->setAxis(brls::Axis::ROW);
         row->setAlignItems(brls::AlignItems::CENTER);
-        row->setHeight(44.0f);
-        row->setCornerRadius(9.0f);
-        row->setPaddingLeft(10.0f + (it.isLibrary ? 8.0f : 0.0f));  // library rows indent
-        row->setPaddingRight(10.0f);
-        row->setMarginBottom(6.0f);
+        row->setHeight(m_rowH);
         row->setFocusable(true);
-        row->setHighlightCornerRadius(9.0f);
-        if (grabbed) {
-            row->setBackgroundColor(sb::rowGrab());
-            row->setBorderColor(sb::gold());
-            row->setBorderThickness(2.0f);
-        }
+        if (grabbed) row->setBackgroundColor(pal::goldTint());
 
-        // Grip (three bars). Dimmed for fixed rows (lock substitute).
-        auto* grip = new brls::Box();
-        grip->setAxis(brls::Axis::COLUMN);
-        grip->setJustifyContent(brls::JustifyContent::CENTER);
-        grip->setWidth(13.0f);
-        grip->setMarginRight(10.0f);
-        NVGcolor gripCol = grabbed ? sb::gold() : (it.fixed ? sb::mutedDim() : sb::muted2());
-        for (int b = 0; b < 3; b++) {
-            auto* bar = new brls::Box();
-            bar->setWidth(13.0f);
-            bar->setHeight(2.0f);
-            bar->setCornerRadius(1.0f);
-            bar->setBackgroundColor(gripCol);
-            if (b < 2) bar->setMarginBottom(3.0f);
-            grip->addView(bar);
-        }
-        row->addView(grip);
+        // Gold accent rect on the left, like the sidebar's active item — shown
+        // when grabbed. Reserves its slot otherwise so labels stay aligned.
+        auto* accent = new brls::Box();
+        accent->setWidth(m_accentW);
+        accent->setHeight(m_rowH * 0.46f);
+        accent->setCornerRadius(m_accentW * 0.5f);
+        accent->setMarginLeft(m_padSide * 0.5f);
+        accent->setMarginRight(m_padSide * 0.5f);
+        accent->setBackgroundColor(pal::gold);
+        accent->setVisibility(grabbed ? brls::Visibility::VISIBLE : brls::Visibility::INVISIBLE);
+        row->addView(accent);
 
-        // Name
         auto* nm = new brls::Label();
         nm->setText(it.title);
-        nm->setFontSize(13.0f);
+        nm->setFontSize(m_fontSz);
         nm->setSingleLine(true);
         nm->setGrow(1.0f);
-        nm->setTextColor(grabbed ? sb::text() : (it.hidden ? sb::muted3() : sb::muted()));
+        nm->setTextColor(grabbed ? pal::gold : (it.hidden ? pal::dim : pal::text));
         row->addView(nm);
 
-        // Trailing tag: HIDDEN takes priority, else LIBRARY for library rows
-        if (it.hidden) {
-            row->addView(makeTag("HIDDEN", sb::muted3()));
-        } else if (it.isLibrary) {
-            row->addView(makeTag("LIBRARY", sb::muted3()));
+        // Hide toggle (touch). Fixed items reserve the slot instead.
+        if (!it.fixed) {
+            auto* eye = new brls::Box();
+            eye->setWidth(30.0f);
+            eye->setHeight(30.0f);
+            eye->setCornerRadius(6.0f);
+            eye->setJustifyContent(brls::JustifyContent::CENTER);
+            eye->setAlignItems(brls::AlignItems::CENTER);
+            eye->setMarginRight(m_padSide * 0.5f);
+            auto* eyeIco = new brls::Image();
+            eyeIco->setWidth(18.0f);
+            eyeIco->setHeight(18.0f);
+            eyeIco->setScalingType(brls::ImageScalingType::FIT);
+            eyeIco->setImageFromRes(it.hidden ? "icons/hide.png" : "icons/show.png");
+            eye->addView(eyeIco);
+            eye->addGestureRecognizer(new brls::TapGestureRecognizer(
+                [this, idx](brls::TapGestureStatus s, brls::Sound*) {
+                    if (s.state == brls::GestureState::END) { m_focus = idx; toggleHide(); }
+                }));
+            row->addView(eye);
+        } else {
+            auto* sp = new brls::Box();
+            sp->setWidth(30.0f);
+            sp->setMarginRight(m_padSide * 0.5f);
+            row->addView(sp);
         }
 
         row->getFocusEvent()->subscribe([this, idx](brls::View*) { m_focus = idx; });
 
-        return row;
-    }
+        // Touch: drag a row to reorder it (fixed rows can't be dragged).
+        if (!it.fixed) {
+            row->addGestureRecognizer(new brls::PanGestureRecognizer(
+                [this, idx](brls::PanGestureStatus st, brls::Sound*) { onRowPan(idx, st); },
+                brls::PanAxis::VERTICAL));
+        }
 
-    brls::Box* makeTag(const std::string& text, NVGcolor color) {
-        auto* tag = new brls::Box();
-        tag->setCornerRadius(4.0f);
-        tag->setPaddingLeft(5.0f);
-        tag->setPaddingRight(5.0f);
-        tag->setPaddingTop(1.0f);
-        tag->setPaddingBottom(1.0f);
-        tag->setMarginLeft(6.0f);
-        tag->setBorderColor(sb::tagBd());
-        tag->setBorderThickness(1.0f);
-        auto* l = new brls::Label();
-        l->setText(text);
-        l->setFontSize(9.0f);
-        l->setTextColor(color);
-        tag->addView(l);
-        return tag;
+        return row;
     }
 
     void renderRows() {
@@ -365,13 +355,59 @@ private:
         }
     }
 
+    // Touch drag-to-reorder: the dragged row follows the finger, neighbours
+    // slide aside, and the drop reorders the model (clamped between the fixed
+    // Home / Settings rows).
+    void onRowPan(int idx, brls::PanGestureStatus st) {
+        int n = (int)m_items.size();
+        if (idx < 0 || idx >= n || m_items[idx].fixed) return;
+        using GS = brls::GestureState;
+
+        if (st.state == GS::UNSURE) {
+            m_dragActive = true;
+            m_dragFrom = idx;
+            m_dragTarget = idx;
+            m_dragStartY = st.position.y;
+        } else if (st.state == GS::START || st.state == GS::STAY) {
+            if (!m_dragActive) return;
+            float dy = st.position.y - m_dragStartY;
+            if (m_dragFrom < (int)m_rows.size()) {
+                m_rows[m_dragFrom]->setTranslationY(dy);
+                m_rows[m_dragFrom]->setBackgroundColor(pal::goldTint());
+            }
+            int target = m_dragFrom + (int)std::lround(dy / m_rowH);
+            if (target < 1) target = 1;
+            if (target > n - 2) target = n - 2;
+            m_dragTarget = target;
+            for (int i = 0; i < (int)m_rows.size(); i++) {
+                if (i == m_dragFrom) continue;
+                float shift = 0.0f;
+                if (target > m_dragFrom && i > m_dragFrom && i <= target) shift = -m_rowH;
+                else if (target < m_dragFrom && i >= target && i < m_dragFrom) shift = m_rowH;
+                m_rows[i]->setTranslationY(shift);
+            }
+        } else if (st.state == GS::END || st.state == GS::FAILED) {
+            if (!m_dragActive) return;
+            m_dragActive = false;
+            for (auto* r : m_rows) r->setTranslationY(0);
+            if (st.state == GS::END && m_dragTarget != m_dragFrom &&
+                m_dragFrom >= 1 && m_dragFrom <= n - 2 &&
+                m_dragTarget >= 1 && m_dragTarget <= n - 2) {
+                EditItem moved = m_items[m_dragFrom];
+                m_items.erase(m_items.begin() + m_dragFrom);
+                m_items.insert(m_items.begin() + m_dragTarget, moved);
+                m_focus = m_dragTarget;
+            }
+            renderRows();
+        }
+    }
+
     void moveFocus(int dir) {
         int n = (int)m_items.size();
         if (n == 0) return;
         if (m_grabbed >= 0) {
-            // Reorder the grabbed item, staying between Home (0) and Settings (n-1)
             int ni = m_grabbed + dir;
-            if (ni < 1 || ni > n - 2) return;
+            if (ni < 1 || ni > n - 2) return;  // keep Home / Settings pinned
             std::swap(m_items[m_grabbed], m_items[ni]);
             m_grabbed = ni;
             m_focus = ni;
@@ -387,7 +423,7 @@ private:
 
     void toggleGrab() {
         if (m_focus < 0 || m_focus >= (int)m_items.size()) return;
-        if (m_items[m_focus].fixed) return;  // Home / Settings can't move
+        if (m_items[m_focus].fixed) return;
         m_grabbed = (m_grabbed == m_focus) ? -1 : m_focus;
         renderRows();
     }
@@ -395,7 +431,7 @@ private:
     void toggleHide() {
         if (m_focus < 0 || m_focus >= (int)m_items.size()) return;
         EditItem& it = m_items[m_focus];
-        if (it.fixed) return;  // Home / Settings always visible
+        if (it.fixed) return;
         it.hidden = !it.hidden;
         renderRows();
     }
@@ -403,9 +439,6 @@ private:
     void commit() {
         AppSettings& s = Application::getInstance().getSettings();
 
-        // Ids the editor saw this session (movable items). Anything in the saved
-        // settings the editor didn't see — e.g. a library that failed to fetch —
-        // is preserved so its order / hidden state isn't wiped.
         std::vector<std::string> owned;
         for (const auto& it : m_items)
             if (!it.fixed) owned.push_back(it.id);
@@ -428,9 +461,6 @@ private:
         s.sidebarOrder = joinCsv(order);
         s.hiddenSidebarItems = joinCsv(hiddenItems);
 
-        // Rewrite the hidden-library set from the rows shown — but only when the
-        // library list actually loaded, and preserve the hidden state of any
-        // library the editor didn't see this session.
         if (m_libsFetched) {
             std::vector<std::string> hiddenLibs;
             for (const auto& it : m_items)
@@ -442,8 +472,6 @@ private:
 
         Application::getInstance().saveSettings();
 
-        // Pop first, then rebuild the live sidebar on the next frame once the
-        // editor activity is gone, so focus lands cleanly on the new sidebar.
         brls::Application::popActivity();
         brls::sync([]() {
             if (auto* main = MainActivity::getInstance())
@@ -458,6 +486,12 @@ private:
     int m_grabbed = -1;
     bool m_libsFetched = false;
     bool m_attached = false;
+
+    // Sidebar metrics (matched at open) + touch-drag state.
+    float m_rowH = 70.0f, m_fontSz = 22.0f, m_padSide = 16.0f, m_accentW = 4.0f;
+    bool  m_dragActive = false;
+    int   m_dragFrom = -1, m_dragTarget = -1;
+    float m_dragStartY = 0.0f;
 };
 
 } // namespace
