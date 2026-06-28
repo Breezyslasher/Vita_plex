@@ -4,16 +4,17 @@
  * The resolver tables below map a borealis ControllerButton to a relative
  * resource path. One table per "icon set":
  *
- *   PSV         (always, PSV build)
+ *   PSV         (PSV build)
  *   PlayStation (PS4 build — shares the PS5 Default art for PS-family
  *                buttons, which is a unified set covering PS3-5)
  *   Switch      (Switch build)
- *   SteamDeck   (Desktop / Android with controller as the latest input)
- *   Keyboard    (Desktop / Android with kbd/mouse as the latest input)
- *   Touch       (Desktop / Android with touch as the latest input)
+ *   Keyboard    (Desktop build)
+ *   Touch       (Android build)
  *
- * On PSV/PS4/Switch the source is fixed; on Desktop and Android we listen
- * to brls's keyboard / mouse / controller hooks and switch in real time.
+ * The source is fixed per platform — there is no runtime swapping. PSV/PS4/
+ * Switch show controller glyphs, Desktop always shows keyboard keys, and
+ * Android always shows touch hints. (SteamDeck controller art is retained
+ * in the table but no platform selects it by default.)
  */
 
 #include "app/hint_icons.hpp"
@@ -155,11 +156,13 @@ constexpr InputSource kDefaultSource = InputSource::Controller;
 constexpr bool kSourceIsDynamic = false;
 constexpr InputSource kDefaultSource = InputSource::Controller;
 #elif defined(__ANDROID__)
+// Android is treated as a pure touch device — always show touch hints.
 constexpr bool kSourceIsDynamic = true;
 constexpr InputSource kDefaultSource = InputSource::Touch;
 #else
+// Desktop always shows keyboard hints (no runtime controller/touch swapping).
 constexpr bool kSourceIsDynamic = true;
-constexpr InputSource kDefaultSource = InputSource::Controller;
+constexpr InputSource kDefaultSource = InputSource::KeyboardMouse;
 #endif
 
 // Tracker state. Atomic so reads from the draw thread are race-free
@@ -168,19 +171,6 @@ std::atomic<InputSource> g_source{kDefaultSource};
 std::mutex g_callbacksMutex;
 std::vector<std::function<void()>> g_callbacks;
 bool g_initialized = false;
-
-void setSource(InputSource s) {
-    InputSource prev = g_source.exchange(s);
-    if (prev == s) return;
-    // Snapshot the callback list before firing so a callback that
-    // subscribes can't invalidate the iterator.
-    std::vector<std::function<void()>> snap;
-    {
-        std::lock_guard<std::mutex> lock(g_callbacksMutex);
-        snap = g_callbacks;
-    }
-    for (auto& cb : snap) cb();
-}
 
 // Resolves the path table for a given input source on a dynamic platform.
 const char* resolveDynamic(brls::ControllerButton b, InputSource src) {
@@ -224,33 +214,10 @@ void HintIcons::onSourceChanged(std::function<void()> cb) {
 }
 
 void HintIcons::init() {
-    if (g_initialized) return;
+    // The input source is now fixed per platform (no runtime swapping):
+    // PSV/PS4/Switch -> Controller glyphs, Android -> Touch, Desktop -> Keyboard.
+    // Nothing to watch; the default source set above is final.
     g_initialized = true;
-
-    // On fixed-source platforms there's nothing to watch.
-    if (!kSourceIsDynamic) return;
-
-    auto* platform = brls::Application::getPlatform();
-    auto* input = platform ? platform->getInputManager() : nullptr;
-    if (!input) return;
-
-    // Keyboard activity flips the source to KeyboardMouse. brls fires
-    // this event from the SDL keyboard handler.
-    input->getKeyboardKeyStateChanged()->subscribe([](brls::KeyState) {
-        setSource(InputSource::KeyboardMouse);
-    });
-
-    // Mouse movement also indicates kbd/mouse mode.
-    input->getMouseCusorOffsetChanged()->subscribe([](brls::Point) {
-        setSource(InputSource::KeyboardMouse);
-    });
-
-    // Controller sensor activity (gyro / button presses surface through
-    // the unified controller state, but the sensor event fires whenever
-    // ANY controller activity ticks — close enough to flip the source).
-    input->getControllerSensorStateChanged()->subscribe([](brls::SensorEvent) {
-        setSource(InputSource::Controller);
-    });
 }
 
 }  // namespace vitaplex
