@@ -130,6 +130,7 @@ public:
         // CENTERED so D-pad / arrow focus changes scroll the focused row into
         // view (the default NATURAL behavior only scrolls on touch).
         scroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
+        m_scroll = scroll;
         m_listBox = new brls::Box();
         m_listBox->setAxis(brls::Axis::COLUMN);
         scroll->setContentView(m_listBox);
@@ -381,9 +382,34 @@ private:
             m_dragFrom = idx;
             m_dragTarget = idx;
             m_dragStartY = st.position.y;
+            m_dragStartScrollY = m_scroll ? m_scroll->getContentOffsetY() : 0.0f;
         } else if (st.state == GS::START || st.state == GS::STAY) {
             if (!m_dragActive) return;
-            float dy = st.position.y - m_dragStartY;
+
+            // Auto-scroll while the finger sits near the top/bottom edge of the
+            // viewport, so a drag can reach rows past the visible window. STAY
+            // fires every frame the finger is held, so this keeps scrolling even
+            // when the finger is stationary.
+            if (m_scroll) {
+                const float EDGE = std::min(50.0f, m_rowH * 0.8f);
+                constexpr float SPEED = 11.0f;
+                float viewH = m_scroll->getHeight();
+                float fingerInView = st.position.y - m_scroll->getY();
+                float scrollY = m_scroll->getContentOffsetY();
+                float contentH = m_listBox ? m_listBox->getHeight() : (n * m_rowH);
+                float maxScroll = std::max(0.0f, contentH - viewH);
+                if (fingerInView > viewH - EDGE && scrollY < maxScroll)
+                    m_scroll->setContentOffsetY(std::min(maxScroll, scrollY + SPEED), false);
+                else if (fingerInView < EDGE && scrollY > 0)
+                    m_scroll->setContentOffsetY(std::max(0.0f, scrollY - SPEED), false);
+            }
+
+            // Keep the dragged row pinned under the finger: its translation is
+            // the finger delta plus however far the list has scrolled since the
+            // drag began, so auto-scroll doesn't slide the row out from under it.
+            float scrollDelta = m_scroll
+                ? (m_scroll->getContentOffsetY() - m_dragStartScrollY) : 0.0f;
+            float dy = (st.position.y - m_dragStartY) + scrollDelta;
             if (m_dragFrom < (int)m_rows.size()) {
                 m_rows[m_dragFrom]->setTranslationY(dy);
                 m_rows[m_dragFrom]->setBackgroundColor(pal::goldTint());
@@ -493,6 +519,7 @@ private:
     }
 
     brls::Box* m_listBox = nullptr;
+    brls::ScrollingFrame* m_scroll = nullptr;
     std::vector<brls::Box*> m_rows;
     std::vector<EditItem> m_items;
     int m_focus = 0;
@@ -505,6 +532,7 @@ private:
     bool  m_dragActive = false;
     int   m_dragFrom = -1, m_dragTarget = -1;
     float m_dragStartY = 0.0f;
+    float m_dragStartScrollY = 0.0f;
 
     std::shared_ptr<std::atomic<bool>> m_alive = std::make_shared<std::atomic<bool>>(true);
 };
