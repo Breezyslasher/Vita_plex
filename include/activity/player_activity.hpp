@@ -136,6 +136,7 @@ private:
     void removeFocusedQueueTrack(); // Remove the track for the focused up-next row
     void removeQueueTrackByIndex(int trackIdx);  // Shared remove (server sync + rebuild)
     void moveFocusedQueueTrack(int direction);  // -1 = up, +1 = down (LB/RB)
+    void linkFirstRowToClear();     // route UP off the first up-next row to the Clear button
     bool m_queueOverlayVisible = false;
     bool m_queuePopulating = false;     // Guard against re-entrant populateQueueList
     uint32_t m_cachedQueueVersion = 0; // Queue version when rows were last built (0 = never)

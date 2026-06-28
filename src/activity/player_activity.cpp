@@ -3451,6 +3451,7 @@ void PlayerActivity::populateQueueList() {
             createQueueRow(pos, tIdx, tracks[tIdx], false);
         }
         addMoreLabel();
+        linkFirstRowToClear();
         loadQueueThumbsAroundIndex(0);
         if (m_queueOverlayVisible && queueList && !queueList->getChildren().empty()) {
             brls::Application::giveFocus(queueList->getChildren()[0]);
@@ -3528,6 +3529,19 @@ void PlayerActivity::removeQueueTrackByIndex(int trackIdx) {
     }
     queue.removeTrack(trackIdx);
     populateQueueList();
+}
+
+void PlayerActivity::linkFirstRowToClear() {
+    // The up-next list lives in a ScrollingFrame, which traps UP navigation at
+    // its first row. Route UP off that row to the Clear button sitting above the
+    // list so focus can escape upward. (Entering the list via DOWN from Clear is
+    // not trapped, so it needs no route.) The route points from the ephemeral
+    // row to the stable Clear button, so it can't dangle across rebuilds.
+    if (!queueList || !queueClearBtn) return;
+    auto& children = queueList->getChildren();
+    if (!children.empty()) {
+        children[0]->setCustomNavigationRoute(brls::FocusDirection::UP, queueClearBtn);
+    }
 }
 
 void PlayerActivity::removeFocusedQueueTrack() {
@@ -3645,6 +3659,7 @@ void PlayerActivity::populateQueueBatch() {
         // Convert absolute display index to child index within rendered window
         int childFocusIdx = focusIdx - m_queueWindowStart;
         loadQueueThumbsAroundIndex(childFocusIdx);
+        linkFirstRowToClear();
 
         // Give focus to the current track now that all rows exist
         if (m_queueOverlayVisible && queueList && !queueList->getChildren().empty()) {
