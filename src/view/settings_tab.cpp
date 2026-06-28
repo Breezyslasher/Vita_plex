@@ -1454,123 +1454,54 @@ void SettingsTab::onManageHiddenLibraries() {
         return;
     }
 
-    // Parse currently hidden libraries
+    // Parse the currently hidden library keys
     std::set<std::string> hiddenKeys;
-    std::string hidden = settings.hiddenLibraries;
-    size_t pos = 0;
-    while ((pos = hidden.find(',')) != std::string::npos) {
-        std::string key = hidden.substr(0, pos);
-        if (!key.empty()) hiddenKeys.insert(key);
-        hidden.erase(0, pos + 1);
+    {
+        std::string hidden = settings.hiddenLibraries;
+        size_t pos = 0;
+        while ((pos = hidden.find(',')) != std::string::npos) {
+            std::string key = hidden.substr(0, pos);
+            if (!key.empty()) hiddenKeys.insert(key);
+            hidden.erase(0, pos + 1);
+        }
+        if (!hidden.empty()) hiddenKeys.insert(hidden);
     }
-    if (!hidden.empty()) hiddenKeys.insert(hidden);
 
-    // Create scrollable dialog content for many libraries
-    brls::Box* outerBox = new brls::Box();
-    outerBox->setAxis(brls::Axis::COLUMN);
-    outerBox->setAlignItems(brls::AlignItems::STRETCH);
-    outerBox->setWidth(340);
-    outerBox->setHeight(350);  // Fixed height for scrolling
-
-    auto* title = new brls::Label();
-    title->setText("Select libraries to hide:");
-    title->setFontSize(20);
-    title->setMarginBottom(15);
-    title->setMarginLeft(20);
-    title->setMarginTop(20);
-    outerBox->addView(title);
-
-    // Scrolling frame for checkboxes
-    brls::ScrollingFrame* scrollFrame = new brls::ScrollingFrame();
-    scrollFrame->setGrow(1.0f);
-
-    brls::Box* content = new brls::Box();
-    content->setAxis(brls::Axis::COLUMN);
-    content->setAlignItems(brls::AlignItems::STRETCH);
-    content->setPaddingLeft(20);
-    content->setPaddingRight(8);
-
-    std::vector<std::pair<std::string, brls::BooleanCell*>> checkboxes;
-
+    // One toggle row per library; "selected" means hidden.
+    std::vector<MultiSelectItem> items;
+    items.reserve(sections.size());
     for (const auto& section : sections) {
-        auto* checkbox = new brls::BooleanCell();
-        bool isHidden = (hiddenKeys.find(section.key) != hiddenKeys.end());
-        checkbox->init(section.title, isHidden, [](bool value) {});
-        content->addView(checkbox);
-        checkboxes.push_back({section.key, checkbox});
+        MultiSelectItem it;
+        it.key      = section.key;
+        it.label    = section.title;
+        it.selected = (hiddenKeys.find(section.key) != hiddenKeys.end());
+        items.push_back(it);
     }
 
-    scrollFrame->setContentView(content);
-    outerBox->addView(scrollFrame);
+    // Present the filter-styled multi-toggle dialog (Hidden / Visible per row).
+    MediaDetailView::showMultiToggleDialog(
+        "Hidden Libraries",
+        "Hidden libraries are removed from the sidebar and Home.",
+        "Hidden", "Visible",
+        items,
+        [this](const std::vector<std::string>& hiddenKeys) {
+            Application& app = Application::getInstance();
+            AppSettings& settings = app.getSettings();
 
-    auto* actionRow = new brls::Box();
-    actionRow->setAxis(brls::Axis::ROW);
-    actionRow->setMarginTop(10);
-    actionRow->setMarginBottom(20);
-    actionRow->setMarginLeft(20);
-    actionRow->setMarginRight(20);
-    actionRow->setJustifyContent(brls::JustifyContent::FLEX_END);
-
-    auto* cancelButton = new brls::Button();
-    cancelButton->setText("Cancel");
-    cancelButton->setWidth(140);
-    actionRow->addView(cancelButton);
-
-    auto* saveButton = new brls::Button();
-    saveButton->setText("Save");
-    saveButton->setWidth(140);
-    saveButton->setMarginLeft(10);
-    actionRow->addView(saveButton);
-
-    outerBox->addView(actionRow);
-
-    brls::Dialog* dialog = new brls::Dialog(outerBox);
-    dialog->setWidth(360);
-
-    cancelButton->registerClickAction([dialog](brls::View* view) {
-        dialog->dismiss();
-        return true;
-    });
-
-    saveButton->registerClickAction([checkboxes, this, dialog](brls::View* view) {
-        Application& app = Application::getInstance();
-        AppSettings& settings = app.getSettings();
-
-        std::string newHidden;
-        for (const auto& pair : checkboxes) {
-            if (pair.second->isOn()) {
+            std::string newHidden;
+            for (const auto& k : hiddenKeys) {
                 if (!newHidden.empty()) newHidden += ",";
-                newHidden += pair.first;
+                newHidden += k;
             }
-        }
+            settings.hiddenLibraries = newHidden;
+            app.saveSettings();
 
-        settings.hiddenLibraries = newHidden;
-        app.saveSettings();
-
-        // Update the cell text
-        int count = 0;
-        if (!newHidden.empty()) {
-            count = 1;
-            for (char c : newHidden) {
-                if (c == ',') count++;
+            if (m_hiddenLibrariesCell) {
+                int count = static_cast<int>(hiddenKeys.size());
+                m_hiddenLibrariesCell->setDetailText(
+                    count > 0 ? std::to_string(count) + " hidden" : "None hidden");
             }
-        }
-        if (m_hiddenLibrariesCell) {
-            m_hiddenLibrariesCell->setDetailText(count > 0 ? std::to_string(count) + " hidden" : "None hidden");
-        }
-        dialog->dismiss();
-        return true;
-    });
-
-    // Controller navigation: pressing DOWN on the last library should land on Cancel.
-    if (!checkboxes.empty()) {
-        brls::View* lastLibrary = checkboxes.back().second;
-        lastLibrary->setCustomNavigationRoute(brls::FocusDirection::DOWN, cancelButton);
-        cancelButton->setCustomNavigationRoute(brls::FocusDirection::UP, lastLibrary);
-        saveButton->setCustomNavigationRoute(brls::FocusDirection::UP, lastLibrary);
-    }
-
-    dialog->open();
+        });
 }
 
 void SettingsTab::onManageDefaultDvrLibrary() {

@@ -496,7 +496,7 @@
             paddingRight="22"
             paddingBottom="6">
 
-            <!-- Header: "Queue" + shuffle / repeat / sort icon buttons -->
+            <!-- Header -->
             <brls:Box
                 width="100%"
                 axis="row"
@@ -508,69 +508,6 @@
                     grow="1"
                     fontSize="21"
                     textColor="#FFFFFF"/>
-
-                <brls:Box
-                    id="player/queue_shuffle_btn"
-                    width="38"
-                    height="38"
-                    axis="row"
-                    justifyContent="center"
-                    alignItems="center"
-                    cornerRadius="8"
-                    marginLeft="8"
-                    backgroundColor="#404040"
-                    borderColor="#474747"
-                    borderThickness="1"
-                    focusable="true">
-                    <brls:Image
-                        id="player/queue_shuffle_hdr_icon"
-                        width="18"
-                        height="18"
-                        image="@res/icons/shuffle-disabled.png"
-                        scalingType="fit"/>
-                </brls:Box>
-
-                <brls:Box
-                    id="player/queue_repeat_btn"
-                    width="38"
-                    height="38"
-                    axis="row"
-                    justifyContent="center"
-                    alignItems="center"
-                    cornerRadius="8"
-                    marginLeft="8"
-                    backgroundColor="#404040"
-                    borderColor="#474747"
-                    borderThickness="1"
-                    focusable="true">
-                    <brls:Image
-                        id="player/queue_repeat_hdr_icon"
-                        width="18"
-                        height="18"
-                        image="@res/icons/repeat-off.png"
-                        scalingType="fit"/>
-                </brls:Box>
-
-                <brls:Box
-                    id="player/queue_sort_btn"
-                    width="38"
-                    height="38"
-                    axis="row"
-                    justifyContent="center"
-                    alignItems="center"
-                    cornerRadius="8"
-                    marginLeft="8"
-                    backgroundColor="#404040"
-                    borderColor="#474747"
-                    borderThickness="1"
-                    focusable="true">
-                    <brls:Image
-                        id="player/queue_sort_hdr_icon"
-                        width="18"
-                        height="18"
-                        image="@res/icons/format-list-group.png"
-                        scalingType="fit"/>
-                </brls:Box>
             </brls:Box>
 
             <!-- NOW PLAYING section label -->

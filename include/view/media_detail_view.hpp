@@ -151,6 +151,18 @@ public:
         std::vector<MultiSelectItem> items,
         std::function<void(const std::vector<std::pair<std::string, std::string>>&, bool)> onApply);
 
+    // Centered multi-toggle dialog styled exactly like the filter menus, but
+    // each row shows an explicit on/off STATE (e.g. "Hidden" / "Visible") with
+    // an eye icon instead of a match-mode toggle. Used by Settings → Manage
+    // Hidden Libraries. onApply receives the keys that ended up toggled ON.
+    static void showMultiToggleDialog(
+        const std::string& title,
+        const std::string& subtitle,
+        const std::string& onStateLabel,
+        const std::string& offStateLabel,
+        std::vector<MultiSelectItem> items,
+        std::function<void(const std::vector<std::string>&)> onApply);
+
     void performTrackAction(const MediaItem& track, size_t trackIndex);  // Handle track default action
     void showTrackActionDialog(const MediaItem& track, size_t trackIndex);  // Ask user what to do
 

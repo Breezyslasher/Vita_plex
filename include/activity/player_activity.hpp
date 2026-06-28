@@ -132,12 +132,11 @@ private:
     void populateQueueList();       // Build queue list with cover art and titles
     void playFromQueue(int index);  // Play a specific track from queue list
     void updateNowPlayingBlock();   // Refresh the "Now Playing" header from the current track
-    void showQueueSortMenu();       // Sort the upcoming tracks (Title / Artist / Reset)
     void clearUpcoming();           // Remove every track after the current one
     void removeFocusedQueueTrack(); // Remove the track for the focused up-next row
     void removeQueueTrackByIndex(int trackIdx);  // Shared remove (server sync + rebuild)
     void moveFocusedQueueTrack(int direction);  // -1 = up, +1 = down (LB/RB)
-    void setQueueHeaderButtonActive(brls::Box* btn, bool active);  // gold-tint a header icon button
+    void linkFirstRowToClear();     // route UP off the first up-next row to the Clear button
     bool m_queueOverlayVisible = false;
     bool m_queuePopulating = false;     // Guard against re-entrant populateQueueList
     uint32_t m_cachedQueueVersion = 0; // Queue version when rows were last built (0 = never)
@@ -388,12 +387,6 @@ private:
     BRLS_BIND(brls::Label, queueOverlayTitle, "player/queue_overlay_title");
     BRLS_BIND(brls::Box, queueList, "player/queue_list");
     BRLS_BIND(brls::ScrollingFrame, queueScroll, "player/queue_scroll");
-    // Side-sheet header icon buttons + their icons
-    BRLS_BIND(brls::Box, queueShuffleBtn, "player/queue_shuffle_btn");
-    BRLS_BIND(brls::Image, queueShuffleHdrIcon, "player/queue_shuffle_hdr_icon");
-    BRLS_BIND(brls::Box, queueRepeatBtn, "player/queue_repeat_btn");
-    BRLS_BIND(brls::Image, queueRepeatHdrIcon, "player/queue_repeat_hdr_icon");
-    BRLS_BIND(brls::Box, queueSortBtn, "player/queue_sort_btn");
     // Now Playing block + Up Next header
     BRLS_BIND(brls::Box, queueNowPlaying, "player/queue_now_playing");
     BRLS_BIND(brls::Image, queueNpThumb, "player/queue_np_thumb");
