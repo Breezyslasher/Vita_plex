@@ -2999,6 +2999,9 @@ void PlayerActivity::showQueueOverlay() {
         queueOverlay->setVisibility(brls::Visibility::VISIBLE);
 
         queueOverlay->registerAction("Back", brls::ControllerButton::BUTTON_B, [this](brls::View* view) {
+            // While a track is grabbed, B drops it (keeps the queue open) rather
+            // than closing — press again to close.
+            if (m_queueGrabActive) { setQueueGrab(false); return true; }
             hideQueueOverlay();
             return true;
         });
@@ -3016,6 +3019,27 @@ void PlayerActivity::showQueueOverlay() {
             moveFocusedQueueTrack(1);
             return true;
         });
+        // START picks up / drops the focused track for reorder. On Android TV
+        // hold-center fires GUIDE, which the player's GUIDE handler re-dispatches
+        // to the focused view's START action — landing here — so bare D-pad
+        // remotes (no L/R bumpers) can reorder too.
+        queueOverlay->registerAction("Move", brls::ControllerButton::BUTTON_START, [this](brls::View* view) {
+            toggleQueueGrab();
+            return true;
+        });
+        // While grabbed, Up/Down move the held track; otherwise return false so
+        // borealis does its normal list navigation (it only navigates when the
+        // button isn't consumed by an action).
+        queueOverlay->registerAction("", brls::ControllerButton::BUTTON_NAV_UP, [this](brls::View* view) {
+            if (!m_queueGrabActive) return false;
+            moveFocusedQueueTrack(-1);
+            return true;
+        }, /*hidden*/ true, /*allowRepeating*/ true);
+        queueOverlay->registerAction("", brls::ControllerButton::BUTTON_NAV_DOWN, [this](brls::View* view) {
+            if (!m_queueGrabActive) return false;
+            moveFocusedQueueTrack(1);
+            return true;
+        }, /*hidden*/ true, /*allowRepeating*/ true);
     }
 
     // Rebuild when the queue changed (version) or when the song advanced -
@@ -3043,6 +3067,7 @@ void PlayerActivity::showQueueOverlay() {
 
 void PlayerActivity::hideQueueOverlay() {
     m_queueOverlayVisible = false;
+    m_queueGrabActive = false;   // drop any held track when the sheet closes
     m_queueBatchActive = false;  // Cancel any in-progress batch
     m_focusedQueueRow = nullptr;
     if (queueOverlay) {
@@ -3351,10 +3376,16 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
             }
         }, brls::PanAxis::VERTICAL));
 
-    // Tap / A to play this track (suppressed right after a drag-reorder)
+    // Tap / A to play this track (suppressed right after a drag-reorder). While
+    // a track is grabbed for reorder, A/OK drops it instead of playing — so
+    // click-to-play still works normally whenever nothing is grabbed.
     row->registerClickAction([this, row](brls::View* view) {
         if (m_dragState.justEnded) {
             m_dragState.justEnded = false;
+            return true;
+        }
+        if (m_queueGrabActive) {
+            setQueueGrab(false);
             return true;
         }
         auto it = m_queueRowData.find(row);
@@ -3377,7 +3408,11 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
             }
         }
         m_focusedQueueRow = row;
-        row->setBackgroundColor(nvgRGB(58, 58, 70));
+        // Grabbed rows get a gold "lifted" tint (re-applied here so it survives
+        // the rebuild + re-focus that each move triggers); otherwise the normal
+        // focus tint.
+        row->setBackgroundColor(m_queueGrabActive ? nvgRGBA(229, 160, 13, 90)
+                                                  : nvgRGB(58, 58, 70));
         auto it = m_queueRowData.find(row);
         if (it != m_queueRowData.end() && it->second.removeBtn) {
             it->second.removeBtn->setVisibility(brls::Visibility::VISIBLE);
@@ -3622,6 +3657,33 @@ void PlayerActivity::moveFocusedQueueTrack(int direction) {
             int t = std::min(std::max(targetChild, 0), (int)newChildren.size() - 1);
             brls::Application::giveFocus(newChildren[t]);
         }
+    }
+}
+
+void PlayerActivity::toggleQueueGrab() {
+    if (!m_queueOverlayVisible) return;
+    if (m_queueGrabActive) {
+        setQueueGrab(false);
+        return;
+    }
+    // Only pick up an actual up-next track row — not the Clear button, the
+    // "+N more" label, or the empty-state text.
+    brls::View* focused = brls::Application::getCurrentFocus();
+    if (!focused || m_queueRowData.find(focused) == m_queueRowData.end())
+        return;
+    setQueueGrab(true);
+}
+
+void PlayerActivity::setQueueGrab(bool on) {
+    m_queueGrabActive = on;
+    // Lift the grabbed (focused) row with a gold tint, mirroring the sidebar
+    // editor's grabbed-row cue; restore the normal focus tint on drop.
+    if (m_focusedQueueRow) {
+        m_focusedQueueRow->setBackgroundColor(on ? nvgRGBA(229, 160, 13, 90)
+                                                  : nvgRGB(58, 58, 70));
+    }
+    if (on) {
+        MpvPlayer::getInstance().showOSD("Moving track \xC2\xB7 Up/Down to move, OK to drop", 2.0);
     }
 }
 
