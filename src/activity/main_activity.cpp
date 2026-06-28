@@ -30,6 +30,8 @@ namespace vitaplex {
 // Cached library sections for sidebar mode
 static std::vector<LibrarySection> s_cachedSections;
 
+MainActivity* MainActivity::s_instance = nullptr;
+
 // Helper to calculate text width (approximate based on character count).
 // Average character width scales with the platform's title font size, so
 // desktop builds with larger UI text reserve more pixels per character
@@ -44,6 +46,11 @@ static int calculateTextWidth(const std::string& text) {
 
 MainActivity::MainActivity() {
     brls::Logger::debug("MainActivity created");
+    s_instance = this;
+}
+
+MainActivity::~MainActivity() {
+    if (s_instance == this) s_instance = nullptr;
 }
 
 brls::View* MainActivity::createContentView() {
@@ -125,75 +132,7 @@ void MainActivity::onContentAvailable() {
             applySidebarSizingForViewport();
         });
 
-        bool isOffline = Application::getInstance().isOfflineMode();
-        bool hasLiveTV = !isOffline && PlexClient::getInstance().hasLiveTV();
-
-        // In offline mode, skip all server-dependent tabs (Home, Search, Library, etc.)
-        // Only Downloads and Settings will be shown
-        if (!isOffline) {
-            // If showing libraries in sidebar, only show actual library sections
-            // Don't show premade tabs like "Library", "Music", "TV"
-            if (settings.showLibrariesInSidebar) {
-                // Home tab
-                tabFrame->addTab("Home", []() { return new HomeTab(); });
-
-                // Load actual library sections to sidebar
-                loadLibrariesToSidebar();
-
-                // Search
-                tabFrame->addTab("Search", []() { return new SearchTab(); });
-
-                // Live TV if available
-                if (hasLiveTV) {
-                    tabFrame->addTab("Live TV", []() { return new LiveTVTab(); });
-                }
-            } else {
-                // Standard mode with premade tabs
-                // Add tabs based on sidebar order setting
-                std::string sidebarOrder = settings.sidebarOrder;
-
-                // Parse the order or use default
-                std::vector<std::string> order;
-                if (!sidebarOrder.empty()) {
-                    std::string orderStr = sidebarOrder;
-                    size_t pos = 0;
-                    while ((pos = orderStr.find(',')) != std::string::npos) {
-                        order.push_back(orderStr.substr(0, pos));
-                        orderStr.erase(0, pos + 1);
-                    }
-                    if (!orderStr.empty()) {
-                        order.push_back(orderStr);
-                    }
-                } else {
-                    // Default order
-                    order = {"home", "library", "music", "search", "livetv"};
-                }
-
-                // Add tabs in specified order
-                for (const std::string& item : order) {
-                    if (item == "home") {
-                        tabFrame->addTab("Home", []() { return new HomeTab(); });
-                    } else if (item == "library") {
-                        tabFrame->addTab("Library", []() { return new LibraryTab(); });
-                    } else if (item == "music") {
-                        tabFrame->addTab("Music", []() { return new MusicTab(); });
-                    } else if (item == "search") {
-                        tabFrame->addTab("Search", []() { return new SearchTab(); });
-                    } else if (item == "livetv" && hasLiveTV) {
-                        tabFrame->addTab("Live TV", []() { return new LiveTVTab(); });
-                    }
-                }
-            }
-        }
-
-        // Downloads tab (always available)
-        tabFrame->addTab("Downloads", []() { return new DownloadsTab(); });
-
-        // Settings sits at the bottom. The Debug tab and its gating
-        // showDebugTab setting were removed when the Settings tab UI
-        // dropped its Debug sub-section.
-        tabFrame->addSeparator();
-        tabFrame->addTab("Settings", []() { return new SettingsTab(); });
+        buildSidebarTabs();
 
         // Focus first tab
         tabFrame->focusTab(0);
@@ -250,54 +189,117 @@ void MainActivity::onContentAvailable() {
     }
 }
 
-void MainActivity::loadLibrariesToSidebar() {
-    brls::Logger::debug("MainActivity: Loading libraries to sidebar...");
-
-    // Add separator before libraries
-    tabFrame->addSeparator();
-
-    // Fetch libraries synchronously to maintain correct sidebar order
-    PlexClient& client = PlexClient::getInstance();
-    std::vector<LibrarySection> sections;
-
-    if (client.fetchLibrarySections(sections)) {
-        brls::Logger::info("MainActivity: Got {} library sections", sections.size());
-
-        // Get hidden libraries setting
-        std::string hiddenLibraries = Application::getInstance().getSettings().hiddenLibraries;
-
-        // Helper to check if hidden
-        auto isHidden = [&hiddenLibraries](const std::string& key) -> bool {
-            if (hiddenLibraries.empty()) return false;
-            std::string hidden = hiddenLibraries;
-            size_t pos = 0;
-            while ((pos = hidden.find(',')) != std::string::npos) {
-                if (hidden.substr(0, pos) == key) return true;
-                hidden.erase(0, pos + 1);
-            }
-            return (hidden == key);
-        };
-
-        // Add library tabs
-        for (const auto& section : sections) {
-            if (isHidden(section.key)) {
-                brls::Logger::debug("MainActivity: Hiding library: {}", section.title);
-                continue;
-            }
-
-            std::string key = section.key;
-            std::string title = section.title;
-            std::string type = section.type;
-
-            tabFrame->addTab(title, [key, title, type]() {
-                return new LibrarySectionTab(key, title, type);
-            });
-
-            brls::Logger::debug("MainActivity: Added sidebar tab for library: {}", title);
-        }
-    } else {
-        brls::Logger::error("MainActivity: Failed to fetch library sections");
+// Split a comma-separated id list into ordered, non-empty tokens.
+static std::vector<std::string> splitSidebarCsv(const std::string& s) {
+    std::vector<std::string> out;
+    std::string cur = s;
+    size_t pos;
+    while ((pos = cur.find(',')) != std::string::npos) {
+        std::string t = cur.substr(0, pos);
+        if (!t.empty()) out.push_back(t);
+        cur.erase(0, pos + 1);
     }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+
+static bool sidebarCsvHas(const std::string& csv, const std::string& id) {
+    for (const auto& t : splitSidebarCsv(csv))
+        if (t == id) return true;
+    return false;
+}
+
+void MainActivity::buildSidebarTabs() {
+    if (!tabFrame) return;
+    AppSettings& settings = Application::getInstance().getSettings();
+
+    // Offline: only Downloads + Settings are reachable, order doesn't apply.
+    if (Application::getInstance().isOfflineMode()) {
+        tabFrame->addTab("Downloads", []() { return new DownloadsTab(); });
+        tabFrame->addSeparator();
+        tabFrame->addTab("Settings", []() { return new SettingsTab(); });
+        return;
+    }
+
+    const bool libsMode  = settings.showLibrariesInSidebar;
+    const bool hasLiveTV = PlexClient::getInstance().hasLiveTV();
+
+    // Home is always pinned to the top.
+    tabFrame->addTab("Home", []() { return new HomeTab(); });
+
+    // Library sections (sidebar mode) — fetch synchronously + cache.
+    std::vector<LibrarySection> sections;
+    if (libsMode) {
+        if (PlexClient::getInstance().fetchLibrarySections(sections)) {
+            s_cachedSections = sections;
+        } else {
+            sections = s_cachedSections;  // fall back to whatever we last saw
+        }
+    }
+
+    // Movable item universe for this mode, in DEFAULT order.
+    std::vector<std::string> defaultOrder;
+    if (libsMode) {
+        for (const auto& sec : sections) defaultOrder.push_back("lib:" + sec.key);
+    } else {
+        defaultOrder.push_back("library");
+        defaultOrder.push_back("music");
+    }
+    defaultOrder.push_back("search");
+    if (hasLiveTV) defaultOrder.push_back("livetv");
+    defaultOrder.push_back("downloads");
+
+    auto isValid = [&](const std::string& id) {
+        return std::find(defaultOrder.begin(), defaultOrder.end(), id) != defaultOrder.end();
+    };
+
+    // Final order: the saved order (filtered to ids valid in this mode), then
+    // any missing valid ids appended in their default position — so newly
+    // discovered libraries land sensibly without clobbering the user's order.
+    std::vector<std::string> order;
+    auto isPlaced = [&](const std::string& id) {
+        return std::find(order.begin(), order.end(), id) != order.end();
+    };
+    for (const auto& id : splitSidebarCsv(settings.sidebarOrder))
+        if (isValid(id) && !isPlaced(id)) order.push_back(id);
+    for (const auto& id : defaultOrder)
+        if (!isPlaced(id)) order.push_back(id);
+
+    auto findSection = [&](const std::string& key) -> const LibrarySection* {
+        for (const auto& sec : sections)
+            if (sec.key == key) return &sec;
+        return nullptr;
+    };
+
+    for (const auto& id : order) {
+        if (id.rfind("lib:", 0) == 0) {
+            std::string key = id.substr(4);
+            if (sidebarCsvHas(settings.hiddenLibraries, key)) continue;
+            const LibrarySection* sec = findSection(key);
+            if (!sec) continue;
+            std::string k = sec->key, t = sec->title, ty = sec->type;
+            tabFrame->addTab(t, [k, t, ty]() { return new LibrarySectionTab(k, t, ty); });
+        } else {
+            if (sidebarCsvHas(settings.hiddenSidebarItems, id)) continue;
+            if (id == "library")        tabFrame->addTab("Library",   []() { return new LibraryTab(); });
+            else if (id == "music")     tabFrame->addTab("Music",     []() { return new MusicTab(); });
+            else if (id == "search")    tabFrame->addTab("Search",    []() { return new SearchTab(); });
+            else if (id == "livetv")    tabFrame->addTab("Live TV",   []() { return new LiveTVTab(); });
+            else if (id == "downloads") tabFrame->addTab("Downloads", []() { return new DownloadsTab(); });
+        }
+    }
+
+    // Settings is always pinned to the bottom.
+    tabFrame->addSeparator();
+    tabFrame->addTab("Settings", []() { return new SettingsTab(); });
+}
+
+void MainActivity::rebuildSidebar() {
+    if (!tabFrame) return;
+    tabFrame->clearTabs();
+    buildSidebarTabs();
+    applySidebarSizingForViewport();
+    tabFrame->focusTab(0);
 }
 
 } // namespace vitaplex

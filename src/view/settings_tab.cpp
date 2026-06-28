@@ -17,6 +17,7 @@
 #include "app/downloads_manager.hpp"
 #include "app/synclounge_session.hpp"
 #include "view/media_detail_view.hpp"
+#include "view/sidebar_editor.hpp"
 #include "activity/player_activity.hpp"
 #include "utils/http_client.hpp"
 #include "utils/http_cache.hpp"
@@ -696,12 +697,12 @@ brls::Box* SettingsTab::createLayoutSection() {
     });
     box->addView(m_hiddenLibrariesCell);
 
-    // Manage sidebar order
+    // Edit sidebar (inline reorder + show/hide editor)
     m_sidebarOrderCell = new brls::DetailCell();
-    m_sidebarOrderCell->setText("Sidebar Order");
+    m_sidebarOrderCell->setText("Edit Sidebar");
     m_sidebarOrderCell->setDetailText(settings.sidebarOrder.empty() ? "Default" : "Custom");
-    m_sidebarOrderCell->registerClickAction([this](brls::View* view) {
-        onManageSidebarOrder();
+    m_sidebarOrderCell->registerClickAction([](brls::View* view) {
+        SidebarEditor::open();
         return true;
     });
     box->addView(m_sidebarOrderCell);

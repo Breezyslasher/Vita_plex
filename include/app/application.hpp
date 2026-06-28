@@ -88,7 +88,11 @@ struct AppSettings {
     bool showLibrariesInSidebar = false;  // Show libraries in sidebar instead of Library tab
     bool collapseSidebar = false;         // Collapse sidebar to icons only
     std::string hiddenLibraries;          // Comma-separated list of library keys to hide
-    std::string sidebarOrder;             // Custom sidebar order (comma-separated: home,library,search,livetv,settings)
+    std::string sidebarOrder;             // Custom sidebar order. Movable ids between Home and Settings,
+                                          // comma-separated. Built-ins: search,livetv,downloads,library,music;
+                                          // per-library ids are "lib:<sectionKey>".
+    std::string hiddenSidebarItems;       // Comma-separated built-in sidebar ids hidden via the editor
+                                          // (search,livetv,downloads,library,music). Libraries use hiddenLibraries.
     std::string librarySortPrefs;         // Per-section sort, encoded "key=param|label;key2=..."
 
     // Content Display Settings
