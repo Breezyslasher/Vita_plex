@@ -943,9 +943,12 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
                 "&container=ogg&audioCodec=vorbis)"
             "+add-direct-play-profile(type=musicProfile"
                 "&container=ogg&audioCodec=opus)"
+            // replace=true for the same reason as the video target below: the
+            // built-in Generic profile already has a music/streaming/http
+            // target, so without it our augmentation is ignored / fails.
             "+add-transcode-target(type=musicProfile"
                 "&context=streaming&protocol=http"
-                "&container=mp3&audioCodec=mp3)";
+                "&container=mp3&audioCodec=mp3&replace=true)";
     } else {
         const auto& vc = platform::getVideoConstraints();
         AppSettings& settings = Application::getInstance().getSettings();
@@ -983,12 +986,20 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
                 "&container=mkv&videoCodec=hevc&audioCodec=aac)"
             "+add-direct-play-profile(type=videoProfile"
                 "&container=mkv&videoCodec=hevc&audioCodec=ac3)"
-            // Transcode target as the fallback path when the source
-            // doesn't match any direct-play profile.
+            // Transcode fallback for a source that matches no direct-play
+            // profile (e.g. an HEVC source that must become H.264). replace=true
+            // is the crucial bit: per the API's profile-augmentation rules,
+            // add-transcode-target is IGNORED (and the whole augmentation can
+            // fail) when a target with the same type+context+protocol already
+            // exists — which the built-in "Generic" profile has for video /
+            // streaming / http. Without replace the server is left with "no
+            // transcode profile", falls back to direct play, and errors out on
+            // http/mp4/hevc — exactly what the download queue did before. mp4
+            // matches the .mp4 we store the file as.
             "+add-transcode-target(type=videoProfile"
                 "&context=streaming&protocol=http"
-                "&container=mkv&videoCodec=h264"
-                "&audioCodec=aac)"
+                "&container=mp4&videoCodec=h264"
+                "&audioCodec=aac&replace=true)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
                 "&type=upperBound&name=video.level&value=%d)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
