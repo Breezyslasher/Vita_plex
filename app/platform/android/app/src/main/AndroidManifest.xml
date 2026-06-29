@@ -61,6 +61,11 @@
     <!-- Post the music media-session notification (runtime grant on Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- Keep music + its notification alive in the background via a media
+         foreground service (FOREGROUND_SERVICE_MEDIA_PLAYBACK required at targetSdk 34) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
     <!-- if you want to capture audio, uncomment this. -->
     <!-- <uses-permission android:name="android.permission.RECORD_AUDIO" /> -->
 
@@ -113,6 +118,14 @@
             </intent-filter>
             -->
         </activity>
+
+        <!-- Media foreground service: keeps music + its notification alive in
+             the background. mediaPlayback type pairs with the
+             FOREGROUND_SERVICE_MEDIA_PLAYBACK permission above. -->
+        <service
+            android:name="org.VitaPlex.app.MusicService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
     </application>
 
 </manifest>

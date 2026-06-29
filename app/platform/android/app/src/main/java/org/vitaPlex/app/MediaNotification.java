@@ -35,7 +35,8 @@ import java.net.URL;
 public final class MediaNotification {
     private static final String TAG = "VitaPlexMedia";
     private static final String CHANNEL_ID = "vitaplex_music";
-    private static final int NOTIFICATION_ID = 0x7654;
+    // Package-visible so MusicService can foreground this same notification.
+    static final int NOTIFICATION_ID = 0x7654;
 
     // Transport codes shared with src/utils/now_playing.cpp (keep in sync).
     private static final int CODE_TOGGLE = 1;
@@ -56,6 +57,7 @@ public final class MediaNotification {
     private static MediaSession sSession;
     private static boolean sChannelCreated;
     private static BroadcastReceiver sReceiver;
+    private static boolean sServiceStarted;   // MusicService is foregrounding us
 
     // Last-known state, so an async art load can re-post without re-plumbing.
     private static String sTitle = "", sArtist = "", sAlbum = "", sArtUrl = "";
@@ -96,6 +98,7 @@ public final class MediaNotification {
                 try {
                     Context ctx = VitaPlexActivity.getAppContext();
                     if (ctx != null) {
+                        stopService(ctx);  // drop the foreground service first
                         NotificationManager nm = (NotificationManager)
                             ctx.getSystemService(Context.NOTIFICATION_SERVICE);
                         if (nm != null) nm.cancel(NOTIFICATION_ID);
@@ -201,6 +204,25 @@ public final class MediaNotification {
         NotificationManager nm = (NotificationManager)
             ctx.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
+        Notification n = buildNotification(ctx);
+        if (n == null) return;
+        try {
+            nm.notify(NOTIFICATION_ID, n);
+        } catch (Throwable t) {
+            Log.w(TAG, "notify failed", t);
+        }
+        ensureService(ctx);  // run a media foreground service so playback survives backgrounding
+    }
+
+    /**
+     * Build the current MediaStyle notification. Package-visible: MusicService
+     * calls this to obtain the notification it foregrounds with. Returns null
+     * before a session exists.
+     */
+    static Notification buildNotification(Context ctx) {
+        ensureSession(ctx);
+        ensureChannel(ctx);
+        if (sSession == null) return null;
 
         Notification.Builder b;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -246,12 +268,31 @@ public final class MediaNotification {
             style.setShowActionsInCompactView(toggleIdx);
         }
         b.setStyle(style);
+        return b.build();
+    }
 
+    // Start the media foreground service so audio + the notification survive the
+    // app being backgrounded / the screen turning off. Started from the app's
+    // foreground (music begins while the app is visible), so it's allowed.
+    private static void ensureService(Context ctx) {
+        if (sServiceStarted) return;
         try {
-            nm.notify(NOTIFICATION_ID, b.build());
+            Intent i = new Intent(ctx, MusicService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ctx.startForegroundService(i);
+            } else {
+                ctx.startService(i);
+            }
+            sServiceStarted = true;
         } catch (Throwable t) {
-            Log.w(TAG, "notify failed", t);
+            Log.w(TAG, "startForegroundService failed", t);
         }
+    }
+
+    private static void stopService(Context ctx) {
+        if (!sServiceStarted) return;
+        try { ctx.stopService(new Intent(ctx, MusicService.class)); } catch (Throwable ignore) {}
+        sServiceStarted = false;
     }
 
     private static Notification.Action action(Context ctx, int icon, String title, int code) {
