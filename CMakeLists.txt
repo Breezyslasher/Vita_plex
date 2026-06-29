@@ -741,6 +741,7 @@ elseif(PLATFORM_DESKTOP)
 #include <windows.media.h>
 #include <systemmediatransportcontrolsinterop.h>
 using Microsoft::WRL::ComPtr;
+using Microsoft::WRL::Wrappers::HStringReference;
 using namespace ABI::Windows::Media;
 typedef ABI::Windows::Foundation::ITypedEventHandler<
     SystemMediaTransportControls*, SystemMediaTransportControlsButtonPressedEventArgs*> BD;
@@ -759,7 +760,7 @@ struct H : BD {
 };
 int main() {
     ComPtr<ISystemMediaTransportControlsInterop> interop;
-    RoGetActivationFactory(Wrappers::HStringReference(
+    RoGetActivationFactory(HStringReference(
         RuntimeClass_Windows_Media_SystemMediaTransportControls).Get(),
         IID_PPV_ARGS(&interop));
     ComPtr<ISystemMediaTransportControls> smtc;
@@ -773,7 +774,7 @@ int main() {
     up->put_Type(MediaPlaybackType_Music);
     ComPtr<IMusicDisplayProperties> mp;
     up->get_MusicProperties(&mp);
-    mp->put_Title(Wrappers::HStringReference(L"x").Get());
+    mp->put_Title(HStringReference(L"x").Get());
     up->Update();
     EventRegistrationToken tok;
     H* cb = new H();
