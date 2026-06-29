@@ -1705,10 +1705,10 @@ bool PlexClient::fetchArtistAlbumsByFilter(const std::string& sectionKey,
                                           const std::string& filter,
                                           std::vector<MediaItem>& items) {
     items.clear();
-    if (sectionKey.empty() || artistRatingKey.empty() || filter.empty()) return false;
+    if (sectionKey.empty() || artistRatingKey.empty()) return false;
 
     brls::Logger::debug("fetchArtistAlbumsByFilter: section={} artist={} filter={}",
-                        sectionKey, artistRatingKey, filter);
+                        sectionKey, artistRatingKey, filter.empty() ? "(all)" : filter);
 
     HttpClient client;
     // Mirror the official client: a section query scoped to the artist (type=9
@@ -1717,9 +1717,12 @@ bool PlexClient::fetchArtistAlbumsByFilter(const std::string& sectionKey,
     // group=title here: an artist can have several distinct same-titled releases
     // (e.g. multiple "Total Coverage" compilations) and grouping would collapse
     // them into one.
+    // An empty filter returns every release type the artist owns (regular albums
+    // plus singles / EPs / compilations / soundtracks / …) in one query — used by
+    // playback and download to gather an artist's whole discography at once.
     std::string url = buildApiUrl("/library/sections/" + sectionKey +
         "/all?type=9&artist.id=" + artistRatingKey +
-        "&" + filter +
+        (filter.empty() ? "" : "&" + filter) +
         "&sort=year:desc");
 
     HttpRequest req;

@@ -337,8 +337,10 @@ public:
     // official client splits releases. `filter` is a single field=value token,
     // e.g. "album.format=Single" / "album.format=EP" (MusicBrainz primary types)
     // or "album.subformat=Compilation" / "album.subformat=Live" (secondary
-    // types). One value per call — Plex's comma/IN form is unreliable. Needs the
-    // artist's library section id and numeric id (the artist ratingKey).
+    // types). One value per call — Plex's comma/IN form is unreliable. Pass an
+    // EMPTY filter to get every release type the artist owns (regular albums plus
+    // all typed releases) in a single query. Needs the artist's library section
+    // id and numeric id (the artist ratingKey).
     bool fetchArtistAlbumsByFilter(const std::string& sectionKey,
                                    const std::string& artistRatingKey,
                                    const std::string& filter,
