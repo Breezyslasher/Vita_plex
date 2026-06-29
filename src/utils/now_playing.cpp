@@ -125,6 +125,16 @@ void mprisClear();
 void update(const Info& info) { detail::mprisUpdate(info); }
 void clear() { detail::mprisClear(); }
 
+#elif defined(VITAPLEX_SMTC)  // ---- Windows desktop: System Media Transport Controls ----
+
+// Implemented in now_playing_smtc.cpp (keeps the WinRT/WRL dependency isolated).
+namespace detail {
+void smtcUpdate(const Info& info);
+void smtcClear();
+}
+void update(const Info& info) { detail::smtcUpdate(info); }
+void clear() { detail::smtcClear(); }
+
 #else  // ---- other platforms: no OS media session ----
 
 void update(const Info&) {}

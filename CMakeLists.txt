@@ -726,7 +726,63 @@ elseif(PLATFORM_DESKTOP)
     target_link_libraries(${PROJECT_NAME} Threads::Threads)
     if(APPLE)
         target_link_libraries(${PROJECT_NAME} "-framework CoreWLAN")
-    elseif(NOT WIN32)
+    elseif(WIN32)
+        # Windows: System Media Transport Controls (media overlay + media keys)
+        # via WinRT. MinGW's WinRT support varies, so feature-probe by actually
+        # compiling + linking a snippet; only enable if it builds, else fall back
+        # to the no-op so the build never breaks.
+        include(CheckCXXSourceCompiles)
+        set(CMAKE_REQUIRED_LIBRARIES runtimeobject ole32)
+        check_cxx_source_compiles("
+            #include <windows.h>
+            #include <roapi.h>
+            #include <wrl.h>
+            #include <wrl/event.h>
+            #include <wrl/wrappers/corewrappers.h>
+            #include <windows.media.h>
+            #include <systemmediatransportcontrolsinterop.h>
+            using namespace Microsoft::WRL;
+            using namespace ABI::Windows::Media;
+            int main() {
+                ComPtr<ISystemMediaTransportControlsInterop> interop;
+                RoGetActivationFactory(Wrappers::HStringReference(
+                    RuntimeClass_Windows_Media_SystemMediaTransportControls).Get(),
+                    IID_PPV_ARGS(&interop));
+                ComPtr<ISystemMediaTransportControls> smtc;
+                interop->GetForWindow((HWND)0, IID_PPV_ARGS(&smtc));
+                smtc->put_IsEnabled(true);
+                smtc->put_IsPlayEnabled(true);
+                smtc->put_IsNextEnabled(1);
+                smtc->put_PlaybackStatus(MediaPlaybackStatus_Playing);
+                ComPtr<ISystemMediaTransportControlsDisplayUpdater> up;
+                smtc->get_DisplayUpdater(&up);
+                up->put_Type(MediaPlaybackType_Music);
+                ComPtr<IMusicDisplayProperties> mp;
+                up->get_MusicProperties(&mp);
+                mp->put_Title(Wrappers::HStringReference(L\"x\").Get());
+                up->Update();
+                EventRegistrationToken tok;
+                auto cb = Callback<ABI::Windows::Foundation::ITypedEventHandler<
+                    SystemMediaTransportControls*, SystemMediaTransportControlsButtonPressedEventArgs*>>(
+                    [](ISystemMediaTransportControls*,
+                       ISystemMediaTransportControlsButtonPressedEventArgs* a) -> HRESULT {
+                        SystemMediaTransportControlsButton b;
+                        a->get_Button(&b);
+                        return b == SystemMediaTransportControlsButton_Play ? S_OK : S_OK;
+                    });
+                smtc->add_ButtonPressed(cb.Get(), &tok);
+                return 0;
+            }" VITAPLEX_HAVE_SMTC)
+        unset(CMAKE_REQUIRED_LIBRARIES)
+        if(VITAPLEX_HAVE_SMTC)
+            message(STATUS "SMTC media controls enabled")
+            target_sources(${PROJECT_NAME} PRIVATE src/utils/now_playing_smtc.cpp)
+            target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_SMTC=1)
+            target_link_libraries(${PROJECT_NAME} runtimeobject ole32)
+        else()
+            message(STATUS "WinRT SMTC unavailable in this toolchain — media controls disabled")
+        endif()
+    else()
         # Linux desktop: expose MPRIS media controls over D-Bus so the multimedia
         # keys and the GNOME/KDE media widget drive playback even when VitaPlex
         # isn't the focused window. Optional — falls back to a no-op if dbus-1
