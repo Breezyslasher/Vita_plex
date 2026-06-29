@@ -160,6 +160,35 @@ void Application::createWindow(std::string windowTitle)
     Application::getWindowCreationDoneEvent()->fire();
 }
 
+#if defined(ANDROID) || defined(IOS)
+namespace
+{
+    // Mobile only: the OS tears down our GL/EGL drawing surface whenever the app
+    // is backgrounded. We keep the main loop running there on purpose
+    // (SDL_ANDROID_BLOCK_ON_PAUSE=0) so background music transport + the
+    // auto-advance / timeline timers keep ticking, but we must not draw without a
+    // live surface — nanovg would upload the next track's glyphs and cover image
+    // against a dead context, the uploads silently fail, and the font atlas +
+    // image textures come back corrupted (garbled title/artist, black cover) on
+    // return. These gate the render so we only draw with a valid surface.
+    bool g_appForeground       = true;  // false between background/foreground
+    int  g_resumeWarmupFrames  = 0;     // skip a few draws after resume to let
+                                        // SDL recreate the surface first
+}
+#endif
+
+bool Application::isWindowForeground()
+{
+#if defined(ANDROID) || defined(IOS)
+    // Report foreground only once the post-resume warm-up is done, i.e. the GL
+    // surface is back and we've actually drawn. Callers use the false->true edge
+    // to retry GL work (cover re-upload), so it must not fire before we can draw.
+    return g_appForeground && g_resumeWarmupFrames == 0;
+#else
+    return true;
+#endif
+}
+
 bool Application::mainLoop()
 {
     return Application::platform->runLoop(internalMainLoop);
@@ -197,8 +226,34 @@ bool Application::internalMainLoop()
 #endif
     Ticking::updateTickings();
 
-    // Render
+    // Render. On mobile, skip drawing while backgrounded (no GL surface) and for
+    // a few warm-up frames after returning, so we never upload textures against a
+    // dead/just-recreated context. The logic above/below (timers, input, sync
+    // tasks) still runs every iteration, so background music keeps working.
+#if defined(ANDROID) || defined(IOS)
+    {
+        static bool s_focusHooked = false;
+        if (!s_focusHooked)
+        {
+            s_focusHooked = true;
+            Application::getWindowFocusChangedEvent()->subscribe([](bool focused) {
+                g_appForeground = focused;
+                if (focused)
+                    g_resumeWarmupFrames = 4;  // let SDL rebuild the surface
+            });
+        }
+
+        if (g_appForeground)
+        {
+            if (g_resumeWarmupFrames > 0)
+                g_resumeWarmupFrames--;
+            else
+                Application::frame();
+        }
+    }
+#else
     Application::frame();
+#endif
 
     // Run sync functions
     Threading::performSyncTasks();

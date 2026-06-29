@@ -732,6 +732,33 @@ void PlayerActivity::onContentAvailable() {
         // Keep the OS media notification's play/pause honest while the player is
         // up (e.g. mpv paused by audio-focus loss). No-op unless it diverged.
         if (m_isQueueMode) MusicController::getInstance().syncSessionState();
+
+        // Returning from the background (Android/iOS): while the app was hidden
+        // the OS tore down our GL surface, so a cover that finished loading during
+        // that window failed to upload and renders black. Once we're visible
+        // again, re-issue the current track's cover load so it uploads cleanly.
+        // (The bytes are still in the ImageLoader cache, so this is a cheap re-
+        // upload, not a re-download.)
+        bool fg = brls::Application::isWindowForeground();
+        if (m_isQueueMode && fg && !m_wasForeground && albumArt && !m_destroying) {
+            const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
+            if (track && !track->ratingKey.empty()) {
+                DownloadItem dl;
+                if (DownloadsManager::getInstance().getDownloadCopy(track->ratingKey, dl) &&
+                    dl.state == DownloadState::COMPLETED && !dl.thumbPath.empty()) {
+                    if (ImageLoader::loadFromFile(dl.thumbPath, albumArt))
+                        albumArt->setVisibility(brls::Visibility::VISIBLE);
+                } else if (!track->thumb.empty()) {
+                    std::string thumbUrl = PlexClient::getInstance().getThumbnailUrl(track->thumb, 300, 300);
+                    ImageLoader::setPaused(false);
+                    ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
+                        img->setVisibility(brls::Visibility::VISIBLE);
+                    }, albumArt, m_alive);
+                    ImageLoader::setPaused(true);
+                }
+            }
+        }
+        m_wasForeground = fg;
     });
     m_updateTimer.start(1000); // Update every second
 
