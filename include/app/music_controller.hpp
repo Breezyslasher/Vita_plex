@@ -48,8 +48,11 @@ public:
     bool hasForeground() const { return m_hasForeground; }
 
     // Push the current track + playback state to the OS media session. Call when
-    // the track changes and when play/pause toggles.
-    void publishNowPlaying();
+    // the track changes and when play/pause toggles. playingOverride forces the
+    // play/pause flag (1 playing, 0 paused) instead of querying MpvPlayer, whose
+    // state lags the play()/pause() command by an async event — without it the
+    // notification needs a second press to catch up. -1 = query MpvPlayer.
+    void publishNowPlaying(int playingOverride = -1);
     // Stop and clear the OS media session/notification.
     void stopSession();
 

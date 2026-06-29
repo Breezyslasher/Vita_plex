@@ -1100,7 +1100,7 @@ void PlayerActivity::loadFromQueue() {
 
     m_isPlaying = true;
     m_loadingMedia = false;
-    MusicController::getInstance().publishNowPlaying();
+    MusicController::getInstance().publishNowPlaying(1);
 }
 
 void PlayerActivity::loadMedia() {
@@ -1544,7 +1544,7 @@ void PlayerActivity::updateProgress() {
                 }
                 m_isPlaying = true;
                 updatePlayPauseLabel();
-                if (m_isQueueMode) MusicController::getInstance().publishNowPlaying();
+                if (m_isQueueMode) MusicController::getInstance().publishNowPlaying(1);
                 brls::Logger::info("PlayerActivity: Deferred load started successfully");
             } else {
                 brls::Logger::error("PlayerActivity: Deferred loadUrl failed");
@@ -2041,8 +2041,10 @@ void PlayerActivity::togglePlayPause() {
     }
     updatePlayPauseLabel();
 
-    // Keep the OS media notification's play/pause state in sync.
-    if (m_isQueueMode) MusicController::getInstance().publishNowPlaying();
+    // Keep the OS media notification's play/pause state in sync. m_isPlaying is
+    // the intended state we just set; publish it directly since MpvPlayer's state
+    // lags the command.
+    if (m_isQueueMode) MusicController::getInstance().publishNowPlaying(m_isPlaying ? 1 : 0);
 
     // SyncLounge: a manual play/pause is a user action — announce it (and,
     // under auto-host, claim host so the party follows the Vita).

@@ -101,7 +101,7 @@ void MusicController::handleTrackEnded(const QueueItem* nextTrack) {
     }
     if (nextTrack) {
         loadCurrentHeadless();
-        publishNowPlaying();
+        publishNowPlaying(1);   // auto-advanced into a playing track
     } else {
         stopSession();  // queue finished
     }
@@ -138,7 +138,7 @@ bool MusicController::loadCurrentHeadless() {
     return true;
 }
 
-void MusicController::publishNowPlaying() {
+void MusicController::publishNowPlaying(int playingOverride) {
     MusicQueue& q = MusicQueue::getInstance();
     const QueueItem* t = q.getCurrentTrack();
     if (!t) { stopSession(); return; }
@@ -159,7 +159,9 @@ void MusicController::publishNowPlaying() {
 
     info.durationMs = (long long)t->duration * 1000;   // QueueItem.duration is seconds
     info.positionMs = (long long)(p.getPosition() * 1000.0);
-    info.playing = p.isPlaying();
+    // MpvPlayer's state lags the play()/pause() command; trust the caller's intent
+    // when it knows it (playingOverride), else fall back to the queried state.
+    info.playing = (playingOverride >= 0) ? (playingOverride != 0) : p.isPlaying();
     info.hasNext = q.hasNext();
     info.hasPrev = q.hasPrevious();
     nowplaying::update(info);
@@ -173,22 +175,23 @@ void MusicController::stopSession() {
 void MusicController::togglePlayPause() {
     MpvPlayer& p = MpvPlayer::getInstance();
     if (!p.isInitialized()) return;
+    bool wasPaused = p.isPaused();   // settled state read before the toggle
     p.togglePause();
-    publishNowPlaying();
+    publishNowPlaying(wasPaused ? 1 : 0);
 }
 
 void MusicController::playPause(bool play) {
     MpvPlayer& p = MpvPlayer::getInstance();
     if (!p.isInitialized()) return;
     if (play) p.play(); else p.pause();
-    publishNowPlaying();
+    publishNowPlaying(play ? 1 : 0);
 }
 
 void MusicController::next() {
     if (m_hasForeground && m_fg.onNext) { m_fg.onNext(); return; }
     if (MusicQueue::getInstance().playNext()) {
         loadCurrentHeadless();
-        publishNowPlaying();
+        publishNowPlaying(1);   // a freshly loaded track is playing
     }
 }
 
@@ -196,7 +199,7 @@ void MusicController::previous() {
     if (m_hasForeground && m_fg.onPrevious) { m_fg.onPrevious(); return; }
     if (MusicQueue::getInstance().playPrevious()) {
         loadCurrentHeadless();
-        publishNowPlaying();
+        publishNowPlaying(1);
     }
 }
 
