@@ -50,9 +50,9 @@
             maxWidth="100%"
             axis="column"
             alignItems="stretch"
-            backgroundColor="#34343e"
+            backgroundColor="#383838"
             cornerRadius="22"
-            borderColor="#43434a"
+            borderColor="#474747"
             borderThickness="1"
             paddingLeft="36"
             paddingRight="36"
@@ -103,7 +103,7 @@
                     <brls:Label
                         text="On your phone or computer, visit"
                         fontSize="15"
-                        textColor="#A3A3A3"/>
+                        textColor="#B4B4BA"/>
                     <brls:Label
                         text="plex.tv/link"
                         fontSize="15"
@@ -113,7 +113,7 @@
                     <brls:Label
                         text="and enter the code below."
                         fontSize="15"
-                        textColor="#A3A3A3"/>
+                        textColor="#B4B4BA"/>
                 </brls:Box>
 
                 <!-- PIN digit tiles — built at runtime from
@@ -148,7 +148,7 @@
                         id="login/expiry"
                         text=""
                         fontSize="14"
-                        textColor="#A3A3A3"/>
+                        textColor="#B4B4BA"/>
                 </brls:Box>
 
                 <!-- "Get a new code" — repurposed pin_button; hidden
@@ -172,14 +172,14 @@
                     justifyContent="center"
                     width="380"
                     marginBottom="18">
-                    <brls:Box grow="1.0" height="1" backgroundColor="#43434a"/>
+                    <brls:Box grow="1.0" height="1" backgroundColor="#474747"/>
                     <brls:Label
                         text="OR"
                         fontSize="13"
-                        textColor="#7C7C84"
+                        textColor="#8A8A90"
                         marginLeft="12"
                         marginRight="12"/>
-                    <brls:Box grow="1.0" height="1" backgroundColor="#43434a"/>
+                    <brls:Box grow="1.0" height="1" backgroundColor="#474747"/>
                 </brls:Box>
 
                 <!-- Secondary action row. cpp will stack vertically on
@@ -226,7 +226,7 @@
                 <brls:Label
                     text="Tap a field to type via the on-screen keyboard."
                     fontSize="13"
-                    textColor="#A3A3A3"
+                    textColor="#B4B4BA"
                     marginBottom="20"/>
 
                 <!-- Username field. -->
@@ -234,13 +234,13 @@
                     <brls:Label
                         text="USERNAME"
                         fontSize="11"
-                        textColor="#7C7C84"
+                        textColor="#8A8A90"
                         marginBottom="6"/>
                     <brls:Box
                         axis="row"
                         alignItems="center"
-                        backgroundColor="#34343e"
-                        borderColor="#43434a"
+                        backgroundColor="#2d2d2d"
+                        borderColor="#474747"
                         borderThickness="1"
                         cornerRadius="12"
                         paddingLeft="14"
@@ -251,7 +251,7 @@
                             id="login/username_label"
                             text="Not set"
                             fontSize="15"
-                            textColor="#A3A3A3"
+                            textColor="#B4B4BA"
                             focusable="true"
                             grow="1.0"/>
                     </brls:Box>
@@ -263,13 +263,13 @@
                     <brls:Label
                         text="PASSWORD"
                         fontSize="11"
-                        textColor="#7C7C84"
+                        textColor="#8A8A90"
                         marginBottom="6"/>
                     <brls:Box
                         axis="row"
                         alignItems="center"
-                        backgroundColor="#34343e"
-                        borderColor="#43434a"
+                        backgroundColor="#2d2d2d"
+                        borderColor="#474747"
                         borderThickness="1"
                         cornerRadius="12"
                         paddingLeft="14"
@@ -280,7 +280,7 @@
                             id="login/password_label"
                             text="Not set"
                             fontSize="15"
-                            textColor="#A3A3A3"
+                            textColor="#B4B4BA"
                             focusable="true"
                             grow="1.0"/>
                     </brls:Box>
