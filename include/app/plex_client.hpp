@@ -302,12 +302,22 @@ public:
     bool fetchHomeUsers(const std::string& masterToken,
                         std::vector<HomeUser>& users);
     // POST /api/v2/home/users/{uuid}/switch . pin is optional; pass empty
-    // string for unprotected users. On success outToken holds the
-    // per-user authToken to use for all subsequent API calls.
+    // string for unprotected users. On success outToken holds the per-user
+    // plex.tv *account* token. NOTE: this is NOT a valid media-server token
+    // for a managed/shared user — pass it to useHomeUserTokens() to resolve
+    // the per-server access token before making any server requests.
     bool switchHomeUser(const std::string& masterToken,
                         const std::string& userUuid,
                         const std::string& pin,
                         std::string& outToken);
+    // Adopt the tokens for a just-switched Plex Home user. `accountToken` is
+    // the plex.tv token from switchHomeUser; the media server rejects it for a
+    // managed/shared user (401, authenticates as "guest"). This fetches that
+    // user's /api/v2/resources, finds the currently-connected server by machine
+    // id, and adopts its per-user access token for all server requests — only
+    // that token is registered with the server. Falls back to `accountToken`
+    // (the owner / own-server case, where the two are the same).
+    void useHomeUserTokens(const std::string& accountToken);
 
     // Library operations
     bool fetchLibrarySections(std::vector<LibrarySection>& sections);

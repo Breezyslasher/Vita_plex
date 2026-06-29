@@ -175,8 +175,10 @@ void Application::showHomeUserPicker(std::function<void()> onComplete) {
                 app.getMasterAuthToken(), user.uuid, pin, newToken)) {
             return false;
         }
-        app.setAuthToken(newToken);
-        PlexClient::getInstance().setAuthToken(newToken);
+        // newToken is the user's plex.tv account token, NOT a media-server
+        // token — for a managed/shared user the server 401s and authenticates
+        // as "guest". Resolve and adopt the per-server access token instead.
+        PlexClient::getInstance().useHomeUserTokens(newToken);
         app.setCurrentHomeUserUuid(user.uuid);
         app.setCurrentHomeUserTitle(user.title);
         app.saveSettings();
