@@ -41,13 +41,18 @@ static std::string formatElapsedTime(int totalSeconds) {
     return std::to_string(minutes) + "m " + std::to_string(seconds) + "s";
 }
 
-// Build a transcoding status string with elapsed time and animated dots
-static std::string buildTranscodeStatus(int elapsedSeconds) {
+// Build a transcoding status string: the server's transcode percentage (once
+// it's reporting one) plus elapsed time and animated dots. Before the first
+// percent arrives we just show elapsed so the row doesn't look stuck at 0%.
+static std::string buildTranscodeStatus(int percent, int elapsedSeconds) {
     int dotCount = (elapsedSeconds % 3) + 1;
     std::string dots(dotCount, '.');
 
     std::string status = "Transcoding on server" + dots;
-    if (elapsedSeconds > 0) {
+    if (percent > 0) {
+        status += " " + std::to_string(percent) + "%";
+        if (elapsedSeconds > 0) status += " (" + formatElapsedTime(elapsedSeconds) + ")";
+    } else if (elapsedSeconds > 0) {
         status += " (" + formatElapsedTime(elapsedSeconds) + " elapsed)";
     }
     return status;
@@ -58,7 +63,7 @@ static std::string buildItemStatusText(const DownloadItem& item) {
         case DownloadState::QUEUED:
             return "Queued";
         case DownloadState::TRANSCODING:
-            return buildTranscodeStatus(item.transcodeElapsedSeconds);
+            return buildTranscodeStatus(item.transcodeProgressPercent, item.transcodeElapsedSeconds);
         case DownloadState::DOWNLOADING:
             if (item.totalBytes > 0) {
                 int percent = (int)((item.downloadedBytes * 100) / item.totalBytes);
@@ -707,6 +712,7 @@ void DownloadsTab::refresh() {
         ci.state = static_cast<int>(d.state);
         ci.viewOffset = d.viewOffset;
         ci.transcodeElapsedSeconds = d.transcodeElapsedSeconds;
+        ci.transcodeProgressPercent = d.transcodeProgressPercent;
         currentState.push_back(ci);
     }
 
@@ -717,7 +723,8 @@ void DownloadsTab::refresh() {
             if (currentState[i].ratingKey != m_lastState[i].ratingKey ||
                 currentState[i].state != m_lastState[i].state ||
                 currentState[i].downloadedBytes != m_lastState[i].downloadedBytes ||
-                currentState[i].transcodeElapsedSeconds != m_lastState[i].transcodeElapsedSeconds) {
+                currentState[i].transcodeElapsedSeconds != m_lastState[i].transcodeElapsedSeconds ||
+                currentState[i].transcodeProgressPercent != m_lastState[i].transcodeProgressPercent) {
                 anyChange = true;
                 break;
             }
@@ -1948,8 +1955,8 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
                     auto& h = it->second;
 
                     // Always refresh the progress text — buildItemStatus
-                    // text changes byte-by-byte during DOWNLOADING, and
-                    // the elapsed seconds during TRANSCODING.
+                    // text changes byte-by-byte during DOWNLOADING, and the
+                    // transcode percent / elapsed seconds during TRANSCODING.
                     if (item.state != DownloadState::COMPLETED) {
                         h.statusLabel->setText(buildItemStatusText(item));
                     }

@@ -89,8 +89,20 @@ public:
     // sizeCallback: called with total file size when known
     using WriteCallback = std::function<bool(const char* data, size_t size)>;
     using SizeCallback = std::function<void(int64_t totalSize)>;
+    // startCallback (optional): invoked exactly once, right before the first
+    // body byte is delivered (or after headers for an empty-body response),
+    // with the FINAL HTTP status code and the full file size — the Content-Range
+    // total for a 206 resume, the Content-Length for a 200, or -1 when unknown
+    // (chunked). Lets a resuming caller open its output file in the correct mode
+    // (append for 206, truncate for 200) before any data lands.
+    using DownloadStartCallback = std::function<void(int statusCode, int64_t fullSize)>;
+    // resumeOffset > 0 asks the server to continue from that byte (HTTP Range /
+    // CURLOPT_RESUME_FROM). The server answers 206 (honoured) or 200 (full file)
+    // — inspect statusCode in startCallback to decide append vs truncate.
     bool downloadFile(const std::string& url, WriteCallback writeCallback, SizeCallback sizeCallback = nullptr,
-                      const std::map<std::string, std::string>& headers = {});
+                      const std::map<std::string, std::string>& headers = {},
+                      int64_t resumeOffset = 0,
+                      DownloadStartCallback startCallback = nullptr);
 
     // URL encoding
     static std::string urlEncode(const std::string& str);

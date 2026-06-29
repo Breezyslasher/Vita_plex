@@ -41,6 +41,54 @@ static const char* DOWNLOADS_DIR = "ux0:data/VitaPlex/downloads";
 static const char* STATE_FILE = "ux0:data/VitaPlex/downloads/state.json";
 #endif
 
+// On-disk size of a file in bytes, or 0 if it doesn't exist / can't be read.
+// This is the source of truth for a resume offset: a hard crash can leave the
+// in-memory byte counter ahead of what was actually flushed to disk.
+static int64_t partFileSize(const std::string& path) {
+    if (path.empty()) return 0;
+#ifdef __vita__
+    SceIoStat st;
+    if (sceIoGetstat(path.c_str(), &st) >= 0 && st.st_size > 0) return (int64_t)st.st_size;
+    return 0;
+#else
+    std::error_code ec;
+    auto sz = std::filesystem::file_size(path, ec);
+    if (ec) return 0;
+    return (int64_t)sz;
+#endif
+}
+
+// Sequential file writer that can either truncate (fresh download) or append
+// (resume), hiding the Vita / desktop file-API split from the download loop.
+struct PartFileWriter {
+#ifdef __vita__
+    SceUID fd = -1;
+    bool open(const std::string& p, bool append) {
+        int flags = SCE_O_WRONLY | SCE_O_CREAT | (append ? SCE_O_APPEND : SCE_O_TRUNC);
+        fd = sceIoOpen(p.c_str(), flags, 0777);
+        return fd >= 0;
+    }
+    bool write(const char* d, size_t n) {
+        int w = sceIoWrite(fd, d, n);
+        return w >= 0 && (size_t)w == n;
+    }
+    void close() { if (fd >= 0) { sceIoClose(fd); fd = -1; } }
+    bool isOpen() const { return fd >= 0; }
+#else
+    std::ofstream f;
+    bool open(const std::string& p, bool append) {
+        f.open(p, std::ios::binary | (append ? std::ios::app : std::ios::trunc));
+        return f.is_open();
+    }
+    bool write(const char* d, size_t n) {
+        f.write(d, (std::streamsize)n);
+        return f.good();
+    }
+    void close() { if (f.is_open()) f.close(); }
+    bool isOpen() { return f.is_open(); }
+#endif
+};
+
 // Helper: extract a JSON string value by key from a simple JSON object string
 static std::string extractJsonString(const std::string& json, const std::string& key) {
     std::string searchKey = "\"" + key + "\":\"";
@@ -581,7 +629,11 @@ void DownloadsManager::resumeIncompleteDownloads() {
         for (auto& item : m_downloads) {
             if (item.state == DownloadState::PAUSED || item.state == DownloadState::FAILED) {
                 item.state = DownloadState::QUEUED;
-                item.downloadedBytes = 0;  // Re-download from scratch (transcoded streams aren't resumable)
+                // Keep the partial file; resume from whatever is on disk. The
+                // download continues via HTTP Range (the Download Queue /media
+                // file and direct files both support it), and cleanly falls
+                // back to a full re-download if the server answers 200.
+                item.downloadedBytes = partFileSize(item.localPath);
                 resumed++;
             }
         }
@@ -891,9 +943,15 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
                 "&container=ogg&audioCodec=vorbis)"
             "+add-direct-play-profile(type=musicProfile"
                 "&container=ogg&audioCodec=opus)"
+            // replace=true (override the Generic profile's built-in target) and
+            // both streaming + static contexts, matching the video targets so a
+            // download decision finds a usable target whichever context it uses.
             "+add-transcode-target(type=musicProfile"
                 "&context=streaming&protocol=http"
-                "&container=mp3&audioCodec=mp3)";
+                "&container=mp3&audioCodec=mp3&replace=true)"
+            "+add-transcode-target(type=musicProfile"
+                "&context=static&protocol=http"
+                "&container=mp3&audioCodec=mp3&replace=true)";
     } else {
         const auto& vc = platform::getVideoConstraints();
         AppSettings& settings = Application::getInstance().getSettings();
@@ -911,10 +969,13 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         addUrl += "&subtitles=none";
         char dlProfileBuf[1536];
         snprintf(dlProfileBuf, sizeof(dlProfileBuf),
-            // Direct-play profiles tell the server "you can ship this
-            // file untouched". Without these, the server defaults to
-            // transcoding even with directPlay=1 because it doesn't
-            // know what containers/codecs the client supports natively.
+            // Direct-play profiles say "ship this file untouched" — keep them
+            // for H.264 (mp4/mkv) so an already-compatible source downloads
+            // as-is. We deliberately do NOT list HEVC: with an HEVC direct-play
+            // profile the server tries to KEEP HEVC for the download (remux),
+            // which it can't resolve for http + multichannel audio (the "Cannot
+            // make a decision" error) and which wouldn't play on the Vita/Switch
+            // anyway. Dropping it forces HEVC down the H.264 transcode path.
             "add-direct-play-profile(type=videoProfile"
                 "&container=mp4&videoCodec=h264&audioCodec=aac)"
             "+add-direct-play-profile(type=videoProfile"
@@ -927,16 +988,20 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
                 "&container=mkv&videoCodec=h264&audioCodec=ac3)"
             "+add-direct-play-profile(type=videoProfile"
                 "&container=mkv&videoCodec=h264&audioCodec=eac3)"
-            "+add-direct-play-profile(type=videoProfile"
-                "&container=mkv&videoCodec=hevc&audioCodec=aac)"
-            "+add-direct-play-profile(type=videoProfile"
-                "&container=mkv&videoCodec=hevc&audioCodec=ac3)"
-            // Transcode target as the fallback path when the source
-            // doesn't match any direct-play profile.
+            // Transcode fallback (H.264/AAC, mp4 to match our stored file).
+            // replace=true so it overrides the Generic profile's built-in
+            // target instead of being ignored. We register BOTH a streaming
+            // AND a static target: a download decision can resolve in either
+            // context, and registering only "streaming" left the server
+            // reporting "no transcode profile" for the download decision.
             "+add-transcode-target(type=videoProfile"
                 "&context=streaming&protocol=http"
-                "&container=mkv&videoCodec=h264"
-                "&audioCodec=aac)"
+                "&container=mp4&videoCodec=h264"
+                "&audioCodec=aac&replace=true)"
+            "+add-transcode-target(type=videoProfile"
+                "&context=static&protocol=http"
+                "&container=mp4&videoCodec=h264"
+                "&audioCodec=aac&replace=true)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
                 "&type=upperBound&name=video.level&value=%d)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
@@ -1501,6 +1566,12 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         }
 #endif
 
+        // HLS concatenates fresh TS segments into the truncated file above — it
+        // can't resume a partial, so reset the byte counter (validateDownloaded-
+        // Files / resumeIncompleteDownloads may have seeded it from a leftover
+        // .ts on disk for the resumable paths).
+        item.downloadedBytes = 0;
+
         // Download segments. For live-style HLS playlists (no #EXT-X-ENDLIST),
         // we poll for new segments until the playlist is finalized.
         int totalSegments = 0;
@@ -1673,7 +1744,12 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
 #endif
 
     } else {
-        // Non-HLS download (audio direct download, or Download Queue API URL)
+        // Non-HLS download (audio direct download, or Download Queue API /media
+        // URL). Resume support: if a partial file already exists, ask the server
+        // to continue from that byte via HTTP Range. The Download Queue /media
+        // file and direct ?download=1 files both honour it (206 Partial Content);
+        // a server that doesn't answers 200 and we transparently restart from
+        // zero — we never splice mismatched bytes into a half-file.
         const int maxDownloadAttempts = 3;
         for (int attempt = 0; attempt < maxDownloadAttempts && m_downloading.load(); attempt++) {
             if (attempt > 0) {
@@ -1685,76 +1761,90 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
 #else
                 std::this_thread::sleep_for(std::chrono::seconds(waitSec));
 #endif
-                item.downloadedBytes = 0;
             }
 
-#ifdef __vita__
-            SceUID fd = sceIoOpen(item.localPath.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
-            if (fd < 0) {
-                brls::Logger::error("DownloadsManager: Failed to create file {}", item.localPath);
-                item.state = DownloadState::FAILED;
-                saveState();
-                return;
-            }
-#else
-            std::ofstream file(item.localPath, std::ios::binary);
-            if (!file.is_open()) {
-                brls::Logger::error("DownloadsManager: Failed to create file {}", item.localPath);
-                item.state = DownloadState::FAILED;
-                saveState();
-                return;
-            }
-#endif
+            // Trust the bytes actually on disk as the resume point each attempt.
+            int64_t resumeOffset = partFileSize(item.localPath);
 
-            brls::Logger::debug("DownloadsManager: Downloading from {}", url);
+            PartFileWriter out;
+            bool alreadyComplete = false;   // server said 416 → file is whole
+            bool openFailed = false;
+
+            // Decide append-vs-truncate the instant the final status is known,
+            // before any body byte is delivered.
+            auto onStart = [&](int statusCode, int64_t fullSize) {
+                if (statusCode == 416) {
+                    // Range past end of file — it's already fully downloaded.
+                    alreadyComplete = true;
+                    if (fullSize > 0) item.totalBytes = fullSize;
+                    item.downloadedBytes = resumeOffset;
+                    return;
+                }
+                bool resume = (statusCode == 206) && resumeOffset > 0;
+                // Guard: a 206 whose full size disagrees with the size we recorded
+                // earlier means the server's file changed — restart clean rather
+                // than append onto stale bytes.
+                if (resume && fullSize > 0 && item.totalBytes > 0 && fullSize != item.totalBytes) {
+                    brls::Logger::warning("DownloadsManager: size changed ({} vs {}), restarting {}",
+                                          fullSize, item.totalBytes, item.title);
+                    resume = false;
+                }
+                if (fullSize > 0) item.totalBytes = fullSize;
+                item.downloadedBytes = resume ? resumeOffset : 0;
+                if (!out.open(item.localPath, /*append=*/resume)) {
+                    openFailed = true;
+                    brls::Logger::error("DownloadsManager: Failed to open file {}", item.localPath);
+                } else if (resume) {
+                    brls::Logger::info("DownloadsManager: Resuming {} from {} bytes",
+                                       item.title, resumeOffset);
+                }
+            };
+
+            brls::Logger::debug("DownloadsManager: Downloading from {} (resume offset {})",
+                                url, resumeOffset);
 
             HttpClient http;
             success = http.downloadFile(url,
                 [&](const char* data, size_t size) {
-#ifdef __vita__
-                    int written = sceIoWrite(fd, data, size);
-                    if (written < 0 || (size_t)written != size) {
-                        brls::Logger::error("DownloadsManager: Write failed, wrote {}/{}", written, size);
-                        return false;
+                    if (alreadyComplete) return false;   // 416: ignore any error body
+                    if (openFailed) return false;
+                    // Safety net: if the status path never opened a file, start fresh.
+                    if (!out.isOpen()) {
+                        item.downloadedBytes = 0;
+                        if (!out.open(item.localPath, /*append=*/false)) { openFailed = true; return false; }
                     }
-#else
-                    file.write(data, size);
-                    if (!file.good()) {
+                    if (!out.write(data, size)) {
                         brls::Logger::error("DownloadsManager: Write failed (disk full?)");
                         return false;
                     }
-#endif
                     item.downloadedBytes += size;
                     auto cb = m_progressCallback;
-                    if (cb) {
-                        cb(item.downloadedBytes, item.totalBytes);
-                    }
+                    if (cb) cb(item.downloadedBytes, item.totalBytes);
                     return m_downloading.load() && item.state != DownloadState::CANCELLED;
                 },
-                [&](int64_t total) {
-                    item.totalBytes = total;
-                    brls::Logger::debug("DownloadsManager: Total size: {} bytes", total);
-                },
-                dlHeaders
+                /*sizeCallback*/ nullptr,   // full size comes from startCallback (correct for 206 + 200)
+                dlHeaders,
+                resumeOffset,
+                onStart
             );
+            out.close();
 
-#ifdef __vita__
-            sceIoClose(fd);
-#else
-            file.close();
-#endif
+            if (alreadyComplete) { success = true; break; }
+            if (openFailed) { item.state = DownloadState::FAILED; saveState(); return; }
 
             if (success || !m_downloading.load() || item.state == DownloadState::CANCELLED) {
                 break;
             }
 
-            if (item.downloadedBytes > 0) {
-                brls::Logger::info("DownloadsManager: Download got {} bytes before failing",
-                                  item.downloadedBytes);
+            // Made progress this attempt? Keep the partial and resume next time
+            // (next attempt, or a later launch) rather than throwing it away.
+            int64_t now = partFileSize(item.localPath);
+            if (now > resumeOffset) {
+                brls::Logger::info("DownloadsManager: Got {} bytes before failing, will resume", now);
                 break;
             }
 
-            brls::Logger::warning("DownloadsManager: Download returned 0 bytes (attempt {}/{})",
+            brls::Logger::warning("DownloadsManager: Download made no progress (attempt {}/{})",
                                  attempt + 1, maxDownloadAttempts);
         }
     }
@@ -1775,13 +1865,20 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         brls::Logger::info("DownloadsManager: Paused download of {}", item.title);
     } else {
         item.state = DownloadState::FAILED;
-        brls::Logger::error("DownloadsManager: Failed to download {}", item.title);
-        // Delete partial file
+        // Keep whatever bytes reached disk so a retry / next launch resumes via
+        // Range instead of starting over. Only a 0-byte stub is removed so it's
+        // never mistaken for real progress.
+        int64_t onDisk = partFileSize(item.localPath);
+        if (onDisk == 0) {
 #ifdef __vita__
-        sceIoRemove(item.localPath.c_str());
+            sceIoRemove(item.localPath.c_str());
 #else
-        std::remove(item.localPath.c_str());
+            std::remove(item.localPath.c_str());
 #endif
+        }
+        item.downloadedBytes = onDisk;
+        brls::Logger::error("DownloadsManager: Failed to download {} (kept {} partial bytes)",
+                            item.title, onDisk);
     }
 
     saveState();
@@ -1907,10 +2004,13 @@ void DownloadsManager::validateDownloadedFiles() {
             }
         }
 
-        // Convert DOWNLOADING/TRANSCODING to QUEUED on startup (app was interrupted)
+        // App was interrupted mid-download. Re-queue, but KEEP the partial file
+        // and set the resume point to whatever actually reached disk (a hard
+        // crash can leave the counter ahead of the flushed bytes) so the next
+        // run continues via HTTP Range instead of starting over.
         if (item.state == DownloadState::DOWNLOADING || item.state == DownloadState::TRANSCODING) {
             item.state = DownloadState::QUEUED;
-            item.downloadedBytes = 0;
+            item.downloadedBytes = partFileSize(item.localPath);
         }
     }
 }
