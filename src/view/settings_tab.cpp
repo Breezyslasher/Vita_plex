@@ -1130,6 +1130,36 @@ brls::Box* SettingsTab::createDownloadsSection() {
     });
     box->addView(m_deleteAfterWatchToggle);
 
+    // Download quality. Original keeps the source as-is on HEVC-capable
+    // platforms (fast, no transcode); a lower tier forces a server-side
+    // transcode to that size — smaller files, faster on the Vita, plays
+    // everywhere. Index maps 1:1 to VideoQuality (0 = Original).
+    auto* dlQualitySelector = new brls::SelectorCell();
+    dlQualitySelector->init("Download Quality",
+        {"Original (no transcode)", "1080p", "720p", "480p", "360p", "240p"},
+        static_cast<int>(settings.downloadQuality),
+        [&settings](int index) {
+            settings.downloadQuality = static_cast<VideoQuality>(index);
+            Application::getInstance().saveSettings();
+        });
+    box->addView(dlQualitySelector);
+
+    // Keep the source's surround audio instead of downmixing to stereo.
+    auto* dlKeepAudioToggle = new brls::BooleanCell();
+    dlKeepAudioToggle->init("Keep Original Audio", settings.downloadKeepOriginalAudio, [&settings](bool value) {
+        settings.downloadKeepOriginalAudio = value;
+        Application::getInstance().saveSettings();
+    });
+    box->addView(dlKeepAudioToggle);
+
+    // Embed subtitles into transcoded downloads (otherwise they're stripped).
+    auto* dlSubtitlesToggle = new brls::BooleanCell();
+    dlSubtitlesToggle->init("Include Subtitles", settings.downloadIncludeSubtitles, [&settings](bool value) {
+        settings.downloadIncludeSubtitles = value;
+        Application::getInstance().saveSettings();
+    });
+    box->addView(dlSubtitlesToggle);
+
     // Clear all downloads
     m_clearDownloadsCell = new brls::DetailCell();
     m_clearDownloadsCell->setText("Clear All Downloads");

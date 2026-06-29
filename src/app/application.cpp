@@ -453,6 +453,12 @@ bool Application::loadSettings() {
 
     // Download settings
     m_settings.deleteAfterWatch = extractBool("deleteAfterWatch", false);
+    {
+        int dq = extractInt("downloadQuality");   // 0 (ORIGINAL) when absent
+        if (dq >= 0 && dq <= 5) m_settings.downloadQuality = static_cast<VideoQuality>(dq);
+    }
+    m_settings.downloadKeepOriginalAudio = extractBool("downloadKeepOriginalAudio", false);
+    m_settings.downloadIncludeSubtitles  = extractBool("downloadIncludeSubtitles", false);
 
     // Music settings
     int trackAction = extractInt("trackDefaultAction");
@@ -576,6 +582,9 @@ bool Application::saveSettings() {
     json += "  \"connectionTimeout\": " + std::to_string(m_settings.connectionTimeout) + ",\n";
     json += "  \"directPlay\": " + b(m_settings.directPlay) + ",\n";
     json += "  \"deleteAfterWatch\": " + b(m_settings.deleteAfterWatch) + ",\n";
+    json += "  \"downloadQuality\": " + std::to_string(static_cast<int>(m_settings.downloadQuality)) + ",\n";
+    json += "  \"downloadKeepOriginalAudio\": " + b(m_settings.downloadKeepOriginalAudio) + ",\n";
+    json += "  \"downloadIncludeSubtitles\": " + b(m_settings.downloadIncludeSubtitles) + ",\n";
     json += "  \"trackDefaultAction\": " + std::to_string(static_cast<int>(m_settings.trackDefaultAction)) + ",\n";
     json += "  \"backgroundMusic\": " + b(m_settings.backgroundMusic) + ",\n";
     json += "  \"defaultDvrSectionId\": \"" + esc(m_settings.defaultDvrSectionId) + "\",\n";

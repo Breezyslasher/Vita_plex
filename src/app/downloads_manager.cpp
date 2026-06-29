@@ -921,7 +921,12 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
     addUrl += "&protocol=http";
     addUrl += "&directPlay=1&directStream=1&directStreamAudio=1";
     addUrl += "&location=lan";
-    addUrl += "&audioBoost=100&audioChannelCount=2";
+    addUrl += "&audioBoost=100";
+    // Keep the source's surround layout when the user asked for it; otherwise
+    // cap at 2.0 stereo (the default — smaller, universally playable).
+    AppSettings& settings = Application::getInstance().getSettings();
+    if (!settings.downloadKeepOriginalAudio)
+        addUrl += "&audioChannelCount=2";
     addUrl += "&mediaIndex=0&partIndex=0";
 
     std::string profileExtra;
@@ -954,20 +959,33 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
                 "&container=mp3&audioCodec=mp3&replace=true)";
     } else {
         const auto& vc = platform::getVideoConstraints();
-        AppSettings& settings = Application::getInstance().getSettings();
+        // Resolution + video bitrate from the download-quality setting. ORIGINAL
+        // keeps the platform's ceiling (and, with directPlay above, ships an
+        // already-compatible source untouched); a specific tier yields a smaller
+        // file that also encodes faster.
+        std::string resolution = vc.defaultResolution;
         int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : vc.defaultBitrate;
+        switch (settings.downloadQuality) {
+            case VideoQuality::QUALITY_1080P: resolution = "1920x1080"; bitrate = 20000; break;
+            case VideoQuality::QUALITY_720P:  resolution = "1280x720";  bitrate = 4000;  break;
+            case VideoQuality::QUALITY_480P:  resolution = "854x480";   bitrate = 2000;  break;
+            case VideoQuality::QUALITY_360P:  resolution = "640x360";   bitrate = 1000;  break;
+            case VideoQuality::QUALITY_240P:  resolution = "426x240";   bitrate = 500;   break;
+            case VideoQuality::ORIGINAL: default: break;  // keep the platform default
+        }
         char bitrateStr[64];
         snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
         addUrl += bitrateStr;
-        addUrl += "&videoResolution=";
-        addUrl += vc.defaultResolution;
-        // subtitles=none (not =burn) — burning subs ALWAYS requires a
-        // re-encode pass, which defeats directPlay even when the source
-        // is otherwise compatible. Downloads ship the file without
-        // burned subs; subtitles get applied at playback via mpv's sub
-        // track selection.
-        addUrl += "&subtitles=none";
-        char dlProfileBuf[1536];
+        addUrl += "&videoResolution=" + resolution;
+        // subtitles=embedded muxes soft subs into the file (mpv can toggle them);
+        // none strips them (the default). Never =burn — that hardcodes subs and
+        // adds a re-encode pass. subCodec is only advertised on the transcode
+        // target when subs are wanted, so the default (no-subs) profile stays
+        // exactly the one already known to work.
+        const bool wantSubs = settings.downloadIncludeSubtitles;
+        addUrl += wantSubs ? "&subtitles=embedded" : "&subtitles=none";
+        const char* subCodec = wantSubs ? "&subtitleCodec=mov_text" : "";
+        char dlProfileBuf[1700];
         snprintf(dlProfileBuf, sizeof(dlProfileBuf),
             // Direct-play profiles say "ship this file untouched" — keep them
             // for H.264 (mp4/mkv) so an already-compatible source downloads
@@ -997,18 +1015,18 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
             "+add-transcode-target(type=videoProfile"
                 "&context=streaming&protocol=http"
                 "&container=mp4&videoCodec=h264"
-                "&audioCodec=aac&replace=true)"
+                "&audioCodec=aac%s&replace=true)"
             "+add-transcode-target(type=videoProfile"
                 "&context=static&protocol=http"
                 "&container=mp4&videoCodec=h264"
-                "&audioCodec=aac&replace=true)"
+                "&audioCodec=aac%s&replace=true)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
                 "&type=upperBound&name=video.level&value=%d)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
                 "&type=upperBound&name=video.width&value=%d)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
                 "&type=upperBound&name=video.height&value=%d)",
-            vc.maxVideoLevel, vc.maxVideoWidth, vc.maxVideoHeight);
+            subCodec, subCodec, vc.maxVideoLevel, vc.maxVideoWidth, vc.maxVideoHeight);
         profileExtra = dlProfileBuf;
     }
 
@@ -1248,8 +1266,14 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     // supportsHevc=false and routes through the Download Queue for a server-side
     // transcode to H.264 (directPlay=1 still ships an already-compatible source
     // untouched there).
+    // Direct (raw) download only when the platform plays HEVC AND the user
+    // hasn't asked for a smaller transcoded copy (downloadQuality == ORIGINAL).
+    // A specific download quality forces the queue so the server produces the
+    // chosen-resolution transcode even on a platform that could play the raw.
     const bool preferDirect =
-        platform::getVideoConstraints().supportsHevc && !item.partPath.empty();
+        platform::getVideoConstraints().supportsHevc &&
+        Application::getInstance().getSettings().downloadQuality == VideoQuality::ORIGINAL &&
+        !item.partPath.empty();
 
     if (!preferDirect &&
         tryDownloadQueueApi(serverUrl, token, item.ratingKey, url, m_downloading, item)) {

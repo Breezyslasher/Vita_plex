@@ -133,6 +133,19 @@ struct AppSettings {
 
     // Download Settings
     bool deleteAfterWatch = false;     // Auto-delete after fully watched
+    // Download quality. ORIGINAL keeps the source as-is on HEVC-capable
+    // platforms (no transcode, full quality); a specific resolution forces a
+    // server-side transcode to that size — smaller files, faster Vita encodes,
+    // and plays everywhere. Maps to videoResolution + videoBitrate on
+    // /downloadQueue/add (and gates the direct-vs-transcode download path).
+    VideoQuality downloadQuality = VideoQuality::ORIGINAL;
+    // Keep the source's surround audio instead of downmixing to 2.0 stereo
+    // (drops the audioChannelCount=2 limit on transcoded downloads).
+    bool downloadKeepOriginalAudio = false;
+    // Embed subtitles into transcoded downloads (otherwise they're stripped
+    // with subtitles=none). Direct (untranscoded) downloads always carry
+    // whatever subs the source file already embeds.
+    bool downloadIncludeSubtitles = false;
 
     // Music Settings
     TrackDefaultAction trackDefaultAction = TrackDefaultAction::ASK_EACH_TIME;  // Default action for tracks
