@@ -58,6 +58,7 @@ void MusicController::install() {
         } else if (p.isPlaying() || p.isPaused()) {
             m_endHandled = false;
         }
+        syncSessionState();   // keep the notification honest about play/pause
     });
 }
 
@@ -165,11 +166,29 @@ void MusicController::publishNowPlaying(int playingOverride) {
     info.hasNext = q.hasNext();
     info.hasPrev = q.hasPrevious();
     nowplaying::update(info);
+
+    m_lastPublishedPlaying = info.playing;
+    m_sessionActive = true;
 }
 
 void MusicController::stopSession() {
     stopPolling();
     nowplaying::clear();
+    m_sessionActive = false;
+}
+
+void MusicController::syncSessionState() {
+    if (!m_sessionActive) return;
+    MpvPlayer& p = MpvPlayer::getInstance();
+    if (!p.isInitialized()) return;
+    // Only react to a settled play/pause that disagrees with the last publish;
+    // LOADING/BUFFERING is neither isPlaying() nor isPaused(), so a buffer stall
+    // can't wrongly flip the notification to paused.
+    if (m_lastPublishedPlaying && p.isPaused()) {
+        publishNowPlaying(0);        // mpv paused on its own (e.g. audio-focus loss)
+    } else if (!m_lastPublishedPlaying && p.isPlaying()) {
+        publishNowPlaying(1);        // mpv resumed / finally started
+    }
 }
 
 void MusicController::togglePlayPause() {

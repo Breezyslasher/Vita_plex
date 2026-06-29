@@ -729,6 +729,9 @@ void PlayerActivity::onContentAvailable() {
     // Start update timer
     m_updateTimer.setCallback([this]() {
         updateProgress();
+        // Keep the OS media notification's play/pause honest while the player is
+        // up (e.g. mpv paused by audio-focus loss). No-op unless it diverged.
+        if (m_isQueueMode) MusicController::getInstance().syncSessionState();
     });
     m_updateTimer.start(1000); // Update every second
 

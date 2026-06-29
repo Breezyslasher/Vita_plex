@@ -56,6 +56,13 @@ public:
     // Stop and clear the OS media session/notification.
     void stopSession();
 
+    // Re-publish the session if MpvPlayer's *settled* play/pause state diverged
+    // from what we last sent — catches changes we didn't trigger (audio-focus
+    // pause, a stall, an optimistic state that didn't take). Cheap; call it from
+    // the per-second timers that already run (the headless poll + the foreground
+    // player's update timer). Ignores transient LOADING/BUFFERING.
+    void syncSessionState();
+
     // Transport entry points. These are also the targets of the OS media buttons
     // (wired through nowplaying::setHandler in install()).
     void togglePlayPause();
@@ -79,6 +86,8 @@ private:
     bool m_hasForeground = false;
     bool m_polling = false;
     bool m_endHandled = false;
+    bool m_sessionActive = false;        // a session/notification is currently up
+    bool m_lastPublishedPlaying = false; // play flag of the most recent publish
     ForegroundHooks m_fg;
     brls::RepeatingTimer m_pollTimer;  // headless end-of-track watcher
 };
