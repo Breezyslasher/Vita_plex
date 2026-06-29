@@ -14,9 +14,11 @@ import android.media.MediaMetadata;
 import android.media.session.MediaSession;
 import android.media.session.PlaybackState;
 import android.net.Uri;
+import android.net.wifi.WifiManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.Log;
 
@@ -58,6 +60,8 @@ public final class MediaNotification {
     private static boolean sChannelCreated;
     private static BroadcastReceiver sReceiver;
     private static boolean sServiceStarted;   // MusicService is foregrounding us
+    private static PowerManager.WakeLock sWakeLock;   // held only while playing
+    private static WifiManager.WifiLock sWifiLock;    // held only while playing
 
     // Last-known state, so an async art load can re-post without re-plumbing.
     private static String sTitle = "", sArtist = "", sAlbum = "", sArtUrl = "";
@@ -96,6 +100,7 @@ public final class MediaNotification {
         sMain.post(new Runnable() {
             @Override public void run() {
                 try {
+                    releaseLocks();  // never leave the CPU/Wi-Fi held after playback ends
                     Context ctx = VitaPlexActivity.getAppContext();
                     if (ctx != null) {
                         stopService(ctx);  // drop the foreground service first
@@ -151,7 +156,51 @@ public final class MediaNotification {
         sSession.setPlaybackState(state);
         sSession.setActive(true);
 
+        updateLocks(ctx, sPlaying);
         postNotification(ctx);
+    }
+
+    // Hold the CPU (PARTIAL_WAKE_LOCK) and Wi-Fi radio (FULL_HIGH_PERF) awake only
+    // while actually playing, so a screen-off device can't suspend the CPU / park
+    // the Wi-Fi radio and stall the network transcode stream. Released the moment
+    // we pause (and on clear()) so we don't drain the battery sitting paused in the
+    // background. Both are non-reference-counted + isHeld()-guarded, so the
+    // repeated applyUpdate() path can't double-acquire or over-release.
+    private static void updateLocks(Context ctx, boolean playing) {
+        try {
+            if (playing) {
+                if (sWakeLock == null) {
+                    PowerManager pm = (PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+                    if (pm != null) {
+                        sWakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "VitaPlex:music");
+                        sWakeLock.setReferenceCounted(false);
+                    }
+                }
+                if (sWakeLock != null && !sWakeLock.isHeld()) sWakeLock.acquire();
+
+                if (sWifiLock == null) {
+                    WifiManager wm = (WifiManager)
+                        ctx.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                    if (wm != null) {
+                        sWifiLock = wm.createWifiLock(
+                            WifiManager.WIFI_MODE_FULL_HIGH_PERF, "VitaPlex:music");
+                        sWifiLock.setReferenceCounted(false);
+                    }
+                }
+                if (sWifiLock != null && !sWifiLock.isHeld()) sWifiLock.acquire();
+            } else {
+                releaseLocks();
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "updateLocks failed", t);
+        }
+    }
+
+    private static void releaseLocks() {
+        try {
+            if (sWifiLock != null && sWifiLock.isHeld()) sWifiLock.release();
+            if (sWakeLock != null && sWakeLock.isHeld()) sWakeLock.release();
+        } catch (Throwable ignore) {}
     }
 
     private static void ensureSession(Context ctx) {

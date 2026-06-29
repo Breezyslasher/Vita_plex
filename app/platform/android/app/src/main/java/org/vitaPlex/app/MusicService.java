@@ -14,6 +14,10 @@ import android.util.Log;
  * MediaNotification builds the notification + MediaSession; this service just
  * foregrounds that same notification so Android won't reclaim the process.
  *
+ * The CPU + Wi-Fi locks that keep a screen-off stream from stalling are managed
+ * by MediaNotification, tied to play/pause state so they're not held (draining
+ * battery) while paused in the background.
+ *
  * Lifecycle: MediaNotification.ensureService() starts it (from the foreground,
  * when music begins) and clear() stops it when playback ends.
  */
