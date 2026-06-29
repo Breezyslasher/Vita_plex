@@ -574,7 +574,10 @@ void LoginActivity::showServerSelectionDialog(const std::vector<PlexServer>& ser
 void LoginActivity::showServerSelectionContent() {
     const float vw      = brls::Application::contentWidth;
     const bool  narrow  = platform::isPortrait() || vw < 600;
-    const float dialogW = narrow ? std::max(320.0f, vw - 32.0f) : 560.0f;
+    // Keep the panel a centered, contained width like the Sort / Filter
+    // pickers instead of stretching to fill a portrait / narrow viewport:
+    // cap at 560 and only shrink when the screen is actually narrower.
+    const float dialogW = std::max(320.0f, std::min(vw - 32.0f, 560.0f));
 
     // ── Card shell ──────────────────────────────────────────────────
     auto* card = new brls::Box();
@@ -874,7 +877,9 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
     // ── Connecting card (same shell, swapped into the modal) ────────
     const float vw      = brls::Application::contentWidth;
     const bool  narrow  = platform::isPortrait() || vw < 600;
-    const float dialogW = narrow ? std::max(320.0f, vw - 32.0f) : 520.0f;
+    // Contained, centered width (matches the server-select panel) rather
+    // than filling a portrait / narrow viewport.
+    const float dialogW = std::max(320.0f, std::min(vw - 32.0f, 520.0f));
     const float innerW  = std::max(220.0f, dialogW - 60.0f);
 
     auto* card = new brls::Box();
