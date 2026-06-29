@@ -88,7 +88,15 @@
         <meta-data android:name="SDL_ENV.SDL_ACCELEROMETER_AS_JOYSTICK" android:value="0"/>
          -->
         <meta-data android:name="SDL_ENV.SDL_ANDROID_TRAP_BACK_BUTTON" android:value="1" />
-     
+
+        <!-- Keep the borealis/SDL main loop running while the app is backgrounded.
+             SDL's default blocks the main thread on pause, which freezes the loop
+             that services the media-notification transport (play/pause/next/prev
+             arrive via brls::sync onto this loop) and the music auto-advance /
+             timeline poll. With the media foreground service keeping the process
+             alive, 0 here lets those run with the screen off / app in background. -->
+        <meta-data android:name="SDL_ENV.SDL_ANDROID_BLOCK_ON_PAUSE" android:value="0" />
+
         <activity android:name="org.VitaPlex.app.VitaPlexActivity"
             android:label="@string/app_name"
             android:alwaysRetainTaskState="true"
