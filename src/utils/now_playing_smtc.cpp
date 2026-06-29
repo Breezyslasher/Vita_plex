@@ -28,7 +28,6 @@
 #include <windows.h>
 #include <roapi.h>
 #include <wrl.h>
-#include <wrl/event.h>
 #include <wrl/wrappers/corewrappers.h>
 #include <windows.media.h>
 #include <systemmediatransportcontrolsinterop.h>
@@ -45,8 +44,7 @@ void smtcClear();
 
 namespace {
 
-using Microsoft::WRL::ComPtr;
-using Microsoft::WRL::Callback;
+using namespace Microsoft::WRL;  // ComPtr, RuntimeClass, RuntimeClassFlags, Make
 using Microsoft::WRL::Wrappers::HStringReference;
 namespace WM = ABI::Windows::Media;
 namespace WF = ABI::Windows::Foundation;
@@ -89,6 +87,24 @@ void onButton(WM::SystemMediaTransportControlsButton btn) {
     brls::sync([t]() { dispatchTransport(t); });
 }
 
+// WinRT delegate for the ButtonPressed event. Hand-rolled via WRL RuntimeClass
+// rather than WRL Callback<>, because MinGW ships wrl/implements.h (RuntimeClass)
+// but not wrl/event.h (where Callback lives).
+class ButtonHandler : public RuntimeClass<RuntimeClassFlags<ClassicCom>,
+    WF::ITypedEventHandler<WM::SystemMediaTransportControls*,
+                           WM::SystemMediaTransportControlsButtonPressedEventArgs*>> {
+public:
+    HRESULT STDMETHODCALLTYPE Invoke(
+        WM::ISystemMediaTransportControls*,
+        WM::ISystemMediaTransportControlsButtonPressedEventArgs* args) override {
+        if (args) {
+            WM::SystemMediaTransportControlsButton btn;
+            if (SUCCEEDED(args->get_Button(&btn))) onButton(btn);
+        }
+        return S_OK;
+    }
+};
+
 bool ensureInit() {
     if (g_init) return true;
     if (g_failed) return false;
@@ -121,16 +137,7 @@ bool ensureInit() {
     }
 
     EventRegistrationToken token = {};
-    auto handler = Callback<WF::ITypedEventHandler<
-        WM::SystemMediaTransportControls*, WM::SystemMediaTransportControlsButtonPressedEventArgs*>>(
-        [](WM::ISystemMediaTransportControls*,
-           WM::ISystemMediaTransportControlsButtonPressedEventArgs* args) -> HRESULT {
-            if (args) {
-                WM::SystemMediaTransportControlsButton btn;
-                if (SUCCEEDED(args->get_Button(&btn))) onButton(btn);
-            }
-            return S_OK;
-        });
+    auto handler = Make<ButtonHandler>();
     if (handler) g_smtc->add_ButtonPressed(handler.Get(), &token);
 
     g_init = true;

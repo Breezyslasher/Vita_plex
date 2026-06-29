@@ -737,12 +737,19 @@ elseif(PLATFORM_DESKTOP)
 #include <windows.h>
 #include <roapi.h>
 #include <wrl.h>
-#include <wrl/event.h>
 #include <wrl/wrappers/corewrappers.h>
 #include <windows.media.h>
 #include <systemmediatransportcontrolsinterop.h>
 using namespace Microsoft::WRL;
 using namespace ABI::Windows::Media;
+struct H : RuntimeClass<RuntimeClassFlags<ClassicCom>,
+    ABI::Windows::Foundation::ITypedEventHandler<
+        SystemMediaTransportControls*, SystemMediaTransportControlsButtonPressedEventArgs*>> {
+    HRESULT STDMETHODCALLTYPE Invoke(ISystemMediaTransportControls*,
+        ISystemMediaTransportControlsButtonPressedEventArgs* a) override {
+        SystemMediaTransportControlsButton b; a->get_Button(&b); return S_OK;
+    }
+};
 int main() {
     ComPtr<ISystemMediaTransportControlsInterop> interop;
     RoGetActivationFactory(Wrappers::HStringReference(
@@ -762,11 +769,7 @@ int main() {
     mp->put_Title(Wrappers::HStringReference(L"x").Get());
     up->Update();
     EventRegistrationToken tok;
-    auto cb = Callback<ABI::Windows::Foundation::ITypedEventHandler<
-        SystemMediaTransportControls*, SystemMediaTransportControlsButtonPressedEventArgs*>>(
-        [](ISystemMediaTransportControls*,
-           ISystemMediaTransportControlsButtonPressedEventArgs* a) -> HRESULT {
-            SystemMediaTransportControlsButton b; a->get_Button(&b); return S_OK; });
+    auto cb = Make<H>();
     smtc->add_ButtonPressed(cb.Get(), &tok);
     return 0;
 }
