@@ -58,6 +58,14 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
+    <!-- Post the music media-session notification (runtime grant on Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Keep music + its notification alive in the background via a media
+         foreground service (FOREGROUND_SERVICE_MEDIA_PLAYBACK required at targetSdk 34) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+
     <!-- if you want to capture audio, uncomment this. -->
     <!-- <uses-permission android:name="android.permission.RECORD_AUDIO" /> -->
 
@@ -80,7 +88,15 @@
         <meta-data android:name="SDL_ENV.SDL_ACCELEROMETER_AS_JOYSTICK" android:value="0"/>
          -->
         <meta-data android:name="SDL_ENV.SDL_ANDROID_TRAP_BACK_BUTTON" android:value="1" />
-     
+
+        <!-- Keep the borealis/SDL main loop running while the app is backgrounded.
+             SDL's default blocks the main thread on pause, which freezes the loop
+             that services the media-notification transport (play/pause/next/prev
+             arrive via brls::sync onto this loop) and the music auto-advance /
+             timeline poll. With the media foreground service keeping the process
+             alive, 0 here lets those run with the screen off / app in background. -->
+        <meta-data android:name="SDL_ENV.SDL_ANDROID_BLOCK_ON_PAUSE" android:value="0" />
+
         <activity android:name="org.VitaPlex.app.VitaPlexActivity"
             android:label="@string/app_name"
             android:alwaysRetainTaskState="true"
@@ -110,6 +126,14 @@
             </intent-filter>
             -->
         </activity>
+
+        <!-- Media foreground service: keeps music + its notification alive in
+             the background. mediaPlayback type pairs with the
+             FOREGROUND_SERVICE_MEDIA_PLAYBACK permission above. -->
+        <service
+            android:name="org.VitaPlex.app.MusicService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
     </application>
 
 </manifest>
