@@ -35,7 +35,7 @@ struct Info {
 };
 
 // Transport commands the OS controls can send back to us.
-enum class Transport { Toggle, Play, Pause, Next, Previous, Stop };
+enum class Transport { Toggle, Play, Pause, Next, Previous, Stop, FastForward, Rewind };
 
 // Publish / refresh the OS media session + notification. No-op off Android.
 void update(const Info& info);

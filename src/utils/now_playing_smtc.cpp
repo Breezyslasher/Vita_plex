@@ -77,11 +77,13 @@ HWND currentHwnd() {
 void onButton(WM::SystemMediaTransportControlsButton btn) {
     Transport t;
     switch (btn) {
-        case WM::SystemMediaTransportControlsButton_Play:     t = Transport::Play;     break;
-        case WM::SystemMediaTransportControlsButton_Pause:    t = Transport::Pause;    break;
-        case WM::SystemMediaTransportControlsButton_Next:     t = Transport::Next;     break;
-        case WM::SystemMediaTransportControlsButton_Previous: t = Transport::Previous; break;
-        case WM::SystemMediaTransportControlsButton_Stop:     t = Transport::Stop;     break;
+        case WM::SystemMediaTransportControlsButton_Play:        t = Transport::Play;        break;
+        case WM::SystemMediaTransportControlsButton_Pause:       t = Transport::Pause;       break;
+        case WM::SystemMediaTransportControlsButton_Next:        t = Transport::Next;        break;
+        case WM::SystemMediaTransportControlsButton_Previous:    t = Transport::Previous;    break;
+        case WM::SystemMediaTransportControlsButton_Stop:        t = Transport::Stop;        break;
+        case WM::SystemMediaTransportControlsButton_FastForward: t = Transport::FastForward; break;
+        case WM::SystemMediaTransportControlsButton_Rewind:      t = Transport::Rewind;      break;
         default: return;
     }
     brls::sync([t]() { dispatchTransport(t); });
@@ -145,6 +147,9 @@ void smtcUpdate(const Info& info) {
 
     g_smtc->put_IsPlayEnabled(true);
     g_smtc->put_IsPauseEnabled(true);
+    g_smtc->put_IsStopEnabled(true);
+    g_smtc->put_IsFastForwardEnabled(true);
+    g_smtc->put_IsRewindEnabled(true);
     g_smtc->put_IsNextEnabled(info.hasNext ? 1 : 0);
     g_smtc->put_IsPreviousEnabled(info.hasPrev ? 1 : 0);
     g_smtc->put_PlaybackStatus(info.playing ? WM::MediaPlaybackStatus_Playing

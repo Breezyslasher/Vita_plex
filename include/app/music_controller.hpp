@@ -70,6 +70,8 @@ public:
     void next();
     void previous();
     void seekToMs(long long ms);
+    void seekRelativeMs(long long deltaMs);   // fast-forward / rewind keys
+    void stopPlayback();                       // Stop key: halt mpv + clear session
 
 private:
     MusicController() = default;
