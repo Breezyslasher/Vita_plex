@@ -1241,14 +1241,26 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     //    Last resort, captures a streaming session to disk in HLS
     //    segments. Awkward to play back outside the app but exists for
     //    servers that don't expose the Download Queue API.
-    if (tryDownloadQueueApi(serverUrl, token, item.ratingKey, url, m_downloading, item)) {
+    // Platform gate (platform::getVideoConstraints().supportsHevc). A platform
+    // whose decoder plays the source directly grabs the raw file and SKIPS the
+    // (often very slow, CPU-bound) server transcode — seconds instead of the
+    // many minutes a transcode takes. The Vita, which is H.264-only, leaves
+    // supportsHevc=false and routes through the Download Queue for a server-side
+    // transcode to H.264 (directPlay=1 still ships an already-compatible source
+    // untouched there).
+    const bool preferDirect =
+        platform::getVideoConstraints().supportsHevc && !item.partPath.empty();
+
+    if (!preferDirect &&
+        tryDownloadQueueApi(serverUrl, token, item.ratingKey, url, m_downloading, item)) {
         urlReady = true;
         brls::Logger::info("DownloadsManager: Download Queue API ready for {}", item.title);
     } else if (!item.partPath.empty()) {
         url = buildDirectDownloadUrl(serverUrl, token, item.partPath);
         if (!url.empty()) {
             urlReady = true;
-            brls::Logger::info("DownloadsManager: Direct file fallback for {}", item.title);
+            brls::Logger::info("DownloadsManager: Direct file download for {} ({})",
+                               item.title, preferDirect ? "raw, no transcode" : "fallback");
         }
     } else {
         brls::Logger::warning(

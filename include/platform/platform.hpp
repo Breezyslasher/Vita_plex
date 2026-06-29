@@ -206,6 +206,13 @@ struct VideoConstraints {
     // Default enum value (int-cast to avoid including application.hpp)
     // matching vitaplex::VideoQuality. 3=480P, 2=720P, 1=1080P.
     int   defaultVideoQualityIndex;
+    // Whether this platform's video decoder plays HEVC/H.265 natively. When
+    // true, offline downloads grab the raw source file (fast — no transcode);
+    // when false (the Vita is H.264-only) they route through the Download Queue
+    // for a server-side transcode to H.264 so the file actually plays. Defaults
+    // false so a platform that forgets to set it stays safe — it just gets a
+    // guaranteed-playable transcode instead of a raw file it might not decode.
+    bool  supportsHevc = false;
 };
 
 /**

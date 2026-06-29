@@ -218,6 +218,7 @@ const VideoConstraints& getVideoConstraints() {
         /* defaultBitrate   */ 2000,
         /* defaultResolution*/ "960x544",
         /* defaultVideoQualityIndex */ 3,  // QUALITY_480P
+        /* supportsHevc     */ false,  // H.264-only decoder — must transcode HEVC
     };
     return v;
 }

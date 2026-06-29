@@ -111,6 +111,7 @@ const VideoConstraints& getVideoConstraints() {
         /* defaultBitrate   */ 10000,
         /* defaultResolution*/ "1920x1080",
         /* defaultVideoQualityIndex */ 1,  // QUALITY_1080P
+        /* supportsHevc     */ true,  // PS4 has a hardware HEVC decoder
     };
     return v;
 }
