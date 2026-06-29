@@ -192,10 +192,12 @@ void smtcUpdate(const Info& info) {
     g_smtc->put_PlaybackStatus(info.playing ? WM::MediaPlaybackStatus_Playing
                                             : WM::MediaPlaybackStatus_Paused);
     if (g_music) {
-        std::wstring t = widen(info.title), a = widen(info.artist), al = widen(info.album);
+        std::wstring t = widen(info.title), a = widen(info.artist);
         g_music->put_Title(HStringReference(t.c_str()).Get());
         g_music->put_Artist(HStringReference(a.c_str()).Get());
-        g_music->put_AlbumTitle(HStringReference(al.c_str()).Get());
+        // AlbumTitle lives on IMusicDisplayProperties2, which mingw-w64's
+        // IMusicDisplayProperties doesn't expose; title + artist are what the
+        // SMTC overlay shows anyway.
     }
     if (g_updater) g_updater->Update();
 }
