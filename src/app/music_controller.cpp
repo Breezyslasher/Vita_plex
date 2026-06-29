@@ -29,22 +29,8 @@ void MusicController::install() {
         MusicController::getInstance().handleTrackEnded(nextTrack);
     });
 
-    // Receive the OS media buttons (Android lock-screen / notification controls).
-    nowplaying::setHandler(
-        [](nowplaying::Transport t) {
-            auto& self = MusicController::getInstance();
-            switch (t) {
-                case nowplaying::Transport::Play:     self.playPause(true);   break;
-                case nowplaying::Transport::Pause:    self.playPause(false);  break;
-                case nowplaying::Transport::Toggle:   self.togglePlayPause(); break;
-                case nowplaying::Transport::Next:        self.next();                break;
-                case nowplaying::Transport::Previous:    self.previous();            break;
-                case nowplaying::Transport::Stop:        self.stopPlayback();        break;
-                case nowplaying::Transport::FastForward: self.seekRelativeMs(10000); break;
-                case nowplaying::Transport::Rewind:      self.seekRelativeMs(-10000);break;
-            }
-        },
-        [](long long ms) { MusicController::getInstance().seekToMs(ms); });
+    // Receive the OS media buttons (lock-screen / notification / media keys).
+    registerOsHandler();
 
     // Headless end-of-track watcher — mirrors PlayerActivity's per-second poll
     // (MpvPlayer has no end callback). Runs only while we're driving headlessly.
@@ -64,8 +50,30 @@ void MusicController::install() {
     });
 }
 
+void MusicController::registerOsHandler() {
+    // The transport handler is global (one per process). A video PlayerActivity
+    // installs its own while it's on screen; this reclaims it for music whenever
+    // music (re)attaches, so the two never fight over it.
+    nowplaying::setHandler(
+        [](nowplaying::Transport t) {
+            auto& self = MusicController::getInstance();
+            switch (t) {
+                case nowplaying::Transport::Play:        self.playPause(true);       break;
+                case nowplaying::Transport::Pause:       self.playPause(false);      break;
+                case nowplaying::Transport::Toggle:      self.togglePlayPause();     break;
+                case nowplaying::Transport::Next:        self.next();                break;
+                case nowplaying::Transport::Previous:    self.previous();            break;
+                case nowplaying::Transport::Stop:        self.stopPlayback();        break;
+                case nowplaying::Transport::FastForward: self.seekRelativeMs(10000); break;
+                case nowplaying::Transport::Rewind:      self.seekRelativeMs(-10000);break;
+            }
+        },
+        [](long long ms) { MusicController::getInstance().seekToMs(ms); });
+}
+
 void MusicController::attachForeground(ForegroundHooks hooks) {
     install();
+    registerOsHandler();   // reclaim from any video session that had it
     m_fg = std::move(hooks);
     m_hasForeground = true;
     stopPolling();  // the live player polls + drives the queue itself

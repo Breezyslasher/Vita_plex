@@ -79,6 +79,7 @@ private:
     MusicController& operator=(const MusicController&) = delete;
 
     void install();                 // one-time: queue callback + OS handler
+    void registerOsHandler();       // (re)claim the nowplaying transport handler
     void handleTrackEnded(const QueueItem* nextTrack);
     bool loadCurrentHeadless();     // minimal URL resolve + mpv loadUrl (no UI)
     void startPolling();

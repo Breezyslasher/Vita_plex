@@ -289,6 +289,14 @@ private:
                                    // background->foreground return (mobile): a
                                    // cover loaded while hidden fails to upload to
                                    // GL, so we re-load it once we're visible again.
+    bool m_videoOsActive = false;      // OS media session wired up for video playback
+    bool m_lastVideoOsPlaying = false; // last play-state pushed to the video session
+
+    // OS media controls (media keys / overlay) for VIDEO playback. Music uses the
+    // MusicController path; these mirror it for the non-queue (video) player so the
+    // same keys control video. No-ops where the platform has no media session.
+    void setupVideoMediaSession();
+    void publishVideoNowPlaying();
     double m_pendingSeek = 0.0;    // Pending seek position (set when resuming)
     int m_transcodeBaseOffsetMs = 0;  // Base offset (ms) used to start current transcode
     int m_mediaDurationMs = 0;        // Full media length (ms) from Plex metadata; 0 = unknown

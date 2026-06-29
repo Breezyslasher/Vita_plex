@@ -8,6 +8,7 @@
 #include "app/downloads_manager.hpp"
 #include "app/music_queue.hpp"
 #include "app/music_controller.hpp"
+#include "utils/now_playing.hpp"
 #include "app/plex_palette.hpp"
 #include "app/synclounge_session.hpp"
 #include "player/mpv_player.hpp"
@@ -816,6 +817,15 @@ void PlayerActivity::willDisappear(bool resetState) {
     // once the user is no longer in the player activity.
     pip::setVideoPlaybackState(false, 0, 0);
 
+    // Tear down the video OS media session (media keys / overlay) if we set one
+    // up. Music's session is owned by MusicController, so this only fires for
+    // video; clearHandler() drops our transport closure so a late key is a no-op.
+    if (m_videoOsActive) {
+        m_videoOsActive = false;
+        nowplaying::clear();
+        nowplaying::clearHandler();
+    }
+
     // Re-enable background thumbnail loading now that playback is ending
     ImageLoader::setPaused(false);
 
@@ -1516,6 +1526,18 @@ void PlayerActivity::updateProgress() {
     // Don't update if destroying or showing photo
     if (m_destroying || m_isPhoto) return;
 
+    // Mirror the OS media session for VIDEO so the media keys / overlay control it
+    // like they do music. Set it up on the first active frame (covers deferred
+    // loads + episode changes) and refresh each tick so play/pause + position stay
+    // current. Music goes through MusicController instead.
+    if (!m_isQueueMode) {
+        MpvPlayer& osp = MpvPlayer::getInstance();
+        if (osp.isInitialized() && (osp.isPlaying() || osp.isPaused())) {
+            if (!m_videoOsActive) setupVideoMediaSession();
+            else                  publishVideoNowPlaying();
+        }
+    }
+
     // Tick the diagnostic overlay every second alongside progress.
     // No-op when the toggle is off; lazy-creates the views the first
     // time it sees the toggle on so the panel doesn't sit in the view
@@ -2075,6 +2097,7 @@ void PlayerActivity::togglePlayPause() {
     // the intended state we just set; publish it directly since MpvPlayer's state
     // lags the command.
     if (m_isQueueMode) MusicController::getInstance().publishNowPlaying(m_isPlaying ? 1 : 0);
+    else if (m_videoOsActive) publishVideoNowPlaying();
 
     // SyncLounge: a manual play/pause is a user action — announce it (and,
     // under auto-host, claim host so the party follows the Vita).
@@ -2087,6 +2110,61 @@ void PlayerActivity::togglePlayPause() {
     SyncLoungeSession& slpp = SyncLoungeSession::instance();
     if (slpp.isConnected() && slpp.isPartyPauseEnabled())
         slpp.sendPartyPause(!m_isPlaying);
+}
+
+void PlayerActivity::setupVideoMediaSession() {
+    // Video only — music drives the OS session through MusicController.
+    if (m_videoOsActive || m_isQueueMode) return;
+    m_videoOsActive = true;
+    auto alive = m_alive;
+
+    // Take over the global transport handler for the duration of this video.
+    // alive-guarded so a key dispatched right as we tear down is a no-op; music
+    // reclaims the handler via MusicController::registerOsHandler() on its next
+    // attach.
+    nowplaying::setHandler(
+        [this, alive](nowplaying::Transport t) {
+            if (!alive->load() || m_destroying) return;
+            using T = nowplaying::Transport;
+            switch (t) {
+                case T::Play:        if (!m_isPlaying) togglePlayPause(); break;
+                case T::Pause:       if (m_isPlaying)  togglePlayPause(); break;
+                case T::Toggle:      togglePlayPause(); break;
+                case T::Next:        playNextEpisode(); break;
+                case T::Previous: {
+                    double pos = MpvPlayer::getInstance().getPosition();
+                    seek(-(int)(pos + 1.0));   // restart current item
+                    break;
+                }
+                case T::Stop:        if (m_isPlaying) togglePlayPause(); break;
+                case T::FastForward: seek(30);  break;
+                case T::Rewind:      seek(-10); break;
+            }
+            publishVideoNowPlaying();
+        },
+        [this, alive](long long ms) {
+            if (!alive->load() || m_destroying) return;
+            double cur = MpvPlayer::getInstance().getPosition();
+            seek((int)((double)ms / 1000.0 - cur));   // absolute -> relative
+            publishVideoNowPlaying();
+        });
+
+    publishVideoNowPlaying();
+}
+
+void PlayerActivity::publishVideoNowPlaying() {
+    if (m_isQueueMode) return;   // music has its own publish path
+    MpvPlayer& p = MpvPlayer::getInstance();
+
+    nowplaying::Info info;
+    if (titleLabel) info.title = titleLabel->getFullText();
+    info.playing    = m_isPlaying;
+    info.positionMs = (long long)(p.getPosition() * 1000.0);
+    info.durationMs = (long long)(p.getDuration() * 1000.0);
+    info.hasNext    = !m_grandparentRatingKey.empty();  // episodes can skip ahead
+    info.hasPrev    = false;
+    nowplaying::update(info);
+    m_lastVideoOsPlaying = m_isPlaying;
 }
 
 void PlayerActivity::syncLoungeReportUserAction(const std::string& state, double absTimeMs) {
