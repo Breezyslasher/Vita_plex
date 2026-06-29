@@ -69,6 +69,14 @@ struct DownloadItem {
     int transcodePollAttempt = 0;     // Current poll attempt number
     int transcodeProgressPercent = 0; // Server-reported transcode progress (0-100)
 
+    // Per-download subtitle intent, set from the download-options picker so a
+    // single download can override the global "Include Subtitles" setting:
+    //   -1 = follow the global setting, 0 = no subtitles, 1 = include subtitles.
+    // Only meaningful on transcoded (Download Queue) downloads — the user's
+    // chosen subtitle stream is selected on the part and embedded by the
+    // transcode. Raw downloads ignore it (they carry their own embedded subs).
+    int subtitlePref = -1;
+
     // Grouping fields for organized display in downloads tab
     DownloadGroupType groupType = DownloadGroupType::NONE;
     std::string groupKey;       // ratingKey of the parent (playlist/album/artist/show)
@@ -99,7 +107,8 @@ public:
                        const std::string& groupKey = "",
                        const std::string& groupTitle = "",
                        const std::string& groupThumb = "",
-                       const std::string& albumTitle = "");
+                       const std::string& albumTitle = "",
+                       int subtitlePref = -1);
 
     // Get all downloads belonging to a specific group
     std::vector<DownloadItem> getDownloadsByGroup(DownloadGroupType type, const std::string& groupKey) const;
@@ -182,6 +191,12 @@ private:
 
     // Download cover art for a music track
     void downloadCoverArt(DownloadItem& item);
+
+    // Fetch the part's external (sidecar) subtitles and save them next to the
+    // media file (e.g. "Movie.en.srt") so a raw, untranscoded download still
+    // carries its subtitles offline. Embedded subs already travel inside the
+    // file; this only covers the separate ones the source keeps alongside.
+    void downloadSidecarSubtitles(DownloadItem& item);
 
     // Report timeline to server
     bool reportTimeline(const DownloadItem& item, const std::string& state);

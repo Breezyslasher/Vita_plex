@@ -2247,32 +2247,69 @@ void MediaDetailView::onDownload() {
         parentTitle = m_item.grandparentTitle;  // Artist name
     }
 
-    // Queue the download (pass thumb for cover art on music tracks)
-    bool queued = DownloadsManager::getInstance().queueDownload(
-        m_item.ratingKey,
-        m_item.title,
-        m_item.partPath,
-        m_item.duration,
-        mediaType,
-        parentTitle,
-        seasonNum,
-        episodeNum,
-        m_item.thumb
-    );
-
-    if (queued) {
-        if (m_downloadButton) {
-            m_downloadButton->setText("Queued");
+    // The actual enqueue, shared by the direct path and the download-options
+    // confirm. subtitlePref: -1 follow the global setting, 0 force off, 1 force on.
+    auto doQueue = [this, mediaType, parentTitle, seasonNum, episodeNum](int subtitlePref) {
+        bool queued = DownloadsManager::getInstance().queueDownload(
+            m_item.ratingKey, m_item.title, m_item.partPath, m_item.duration,
+            mediaType, parentTitle, seasonNum, episodeNum, m_item.thumb,
+            DownloadGroupType::NONE, "", "", "", "", subtitlePref);
+        if (queued) {
+            if (m_downloadButton) m_downloadButton->setText("Queued");
+            brls::Application::notify("Added to download queue: " + m_item.title);
+            DownloadsManager::getInstance().startDownloads();
+        } else {
+            brls::Application::notify("Failed to queue download");
         }
+    };
 
-        // Just notify the user and add to queue - no progress dialog
-        brls::Application::notify("Added to download queue: " + m_item.title);
-
-        // Start downloading in background
-        DownloadsManager::getInstance().startDownloads();
-    } else {
-        brls::Application::notify("Failed to queue download");
+    // A transcoded download (the platform can't direct-play the source, or the
+    // user picked a smaller download quality) bakes in exactly one audio + one
+    // subtitle track. Let the user choose them — and pull new subs online —
+    // before queueing. Raw downloads keep every track and their embedded subs,
+    // so they skip straight to the queue.
+    const bool willTranscode =
+        !(platform::getVideoConstraints().supportsHevc &&
+          Application::getInstance().getSettings().downloadQuality == VideoQuality::ORIGINAL);
+    const bool isVideo = (m_item.mediaType == MediaType::MOVIE ||
+                          m_item.mediaType == MediaType::EPISODE);
+    int audioCount = 0, subCount = 0;
+    for (const auto& s : m_streams) {
+        if (s.streamType == 2) audioCount++;
+        else if (s.streamType == 3 || s.streamType == 4) subCount++;
     }
+
+    if (willTranscode && isVideo && m_partId > 0 && (audioCount > 1 || subCount > 0)) {
+        // Confirm: apply the final audio + subtitle selection to the part, THEN
+        // queue — so the ordering is guaranteed before the transcode's /add reads
+        // it. subtitlePref: any subtitle selected → include it (1), else off (0),
+        // overriding the global "Include Subtitles" setting for this download.
+        auto alive = m_alive;
+        auto onConfirm = [this, doQueue, alive]() {
+            int audioId = -1, subId = 0;
+            bool anySub = false;
+            for (const auto& s : m_streams) {
+                if (s.streamType == 2 && s.selected) audioId = s.id;
+                else if ((s.streamType == 3 || s.streamType == 4) && s.selected) {
+                    subId = s.id;
+                    anySub = true;
+                }
+            }
+            int pref = anySub ? 1 : 0;
+            int partId = m_partId;
+            asyncRun([partId, audioId, anySub, subId, doQueue, pref, alive]() {
+                PlexClient::getInstance().setStreamSelection(partId, audioId, anySub ? subId : 0);
+                brls::sync([doQueue, pref, alive]() {
+                    if (!alive->load()) return;
+                    doQueue(pref);
+                });
+            });
+        };
+        showStreamDialog(subCount > 0 ? 1 : 0, /*downloadMode=*/true, onConfirm);
+        return;
+    }
+
+    doQueue(-1);
 }
 
 void MediaDetailView::showDownloadOptions() {
@@ -5089,7 +5126,8 @@ static brls::Box* makeResultRow(const std::string& title,
 // detail page (light scrim, page stays visible, no hint bar), with an
 // Audio | Subtitles segmented switch. Reuses the existing stream lists and
 // the exact selection / online-search handlers; only the shell changed.
-void MediaDetailView::showStreamDialog(int defaultTab) {
+void MediaDetailView::showStreamDialog(int defaultTab, bool downloadMode,
+                                       std::function<void()> onConfirm) {
     if (m_partId <= 0) return;
     namespace pc = pickcol;
 
@@ -5144,7 +5182,8 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     iconTile->setJustifyContent(brls::JustifyContent::CENTER);
     iconTile->setAlignItems(brls::AlignItems::CENTER);
     iconTile->setMarginRight(12.0f);
-    auto* iconGlyph = new MdiGlyphIcon(MdiGlyph::ClosedCaption, pc::gold());
+    auto* iconGlyph = new MdiGlyphIcon(
+        downloadMode ? MdiGlyph::Download : MdiGlyph::ClosedCaption, pc::gold());
     iconGlyph->setWidth(22.0f);
     iconGlyph->setHeight(22.0f);
     iconTile->addView(iconGlyph);
@@ -5155,7 +5194,7 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     titleCol->setGrow(1.0f);
     titleCol->setJustifyContent(brls::JustifyContent::CENTER);
     auto* titleLbl = new brls::Label();
-    titleLbl->setText("Audio & Subtitles");
+    titleLbl->setText(downloadMode ? "Download options" : "Audio & Subtitles");
     titleLbl->setFontSize(21.0f);
     titleLbl->setTextColor(pc::text());
     titleLbl->setSingleLine(true);
@@ -5302,6 +5341,48 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     body->addView(searchRow);
     panel->addView(body);
 
+    // Download-mode footer: a primary "Download" button that commits the queue.
+    // The picked streams are already selected on the part (each tap persisted
+    // them), so all this does is fire onConfirm and dismiss. Cancel/Back/tap-out
+    // leaves without queueing.
+    if (downloadMode) {
+        auto* footer = new brls::Box();
+        footer->setAxis(brls::Axis::ROW);
+        footer->setAlignItems(brls::AlignItems::CENTER);
+        footer->setPadding(12.0f, 16.0f, 16.0f, 16.0f);
+        footer->setLineColor(pc::line());
+        footer->setLineTop(1.0f);
+
+        auto* dlBtn = new brls::Box();
+        dlBtn->setAxis(brls::Axis::ROW);
+        dlBtn->setGrow(1.0f);
+        dlBtn->setHeight(46.0f);
+        dlBtn->setCornerRadius(11.0f);
+        dlBtn->setJustifyContent(brls::JustifyContent::CENTER);
+        dlBtn->setAlignItems(brls::AlignItems::CENTER);
+        dlBtn->setBackgroundColor(pc::gold());
+        dlBtn->setFocusable(true);
+        dlBtn->setHighlightCornerRadius(11.0f);
+        auto* dlIcon = new MdiGlyphIcon(MdiGlyph::Download, pc::goldInk());
+        dlIcon->setWidth(20.0f);
+        dlIcon->setHeight(20.0f);
+        dlIcon->setMarginRight(8.0f);
+        dlBtn->addView(dlIcon);
+        auto* dlLbl = new brls::Label();
+        dlLbl->setText("Download");
+        dlLbl->setFontSize(16.0f);
+        dlLbl->setTextColor(pc::goldInk());
+        dlBtn->addView(dlLbl);
+        dlBtn->registerClickAction([onConfirm](brls::View*) {
+            brls::Application::popActivity();
+            if (onConfirm) onConfirm();
+            return true;
+        });
+        dlBtn->addGestureRecognizer(new brls::TapGestureRecognizer(dlBtn));
+        footer->addView(dlBtn);
+        panel->addView(footer);
+    }
+
     // Language driving the results view (shared by the IME callback and the
     // re-labelling helper). resultsMode replaces the old button-text probe.
     auto currentLang = std::make_shared<std::string>(
@@ -5327,9 +5408,15 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     auto promptLang         = std::make_shared<std::function<void()>>();
     auto selectTab          = std::make_shared<std::function<void(int)>>();
 
+    // Weak self-refs so a download-mode row tap can re-render its own list (to
+    // move the checkmark) without the closure owning a strong ref to itself.
+    // While the dialog lives, selectTab keeps these alive, so lock() succeeds.
+    std::weak_ptr<std::function<void()>> weakAudio     = buildAudioList;
+    std::weak_ptr<std::function<void()>> weakInstalled = buildInstalledList;
+
     // Audio tab: one row per audio stream; selecting applies it (same
     // setStreamSelection path) and closes the dialog.
-    *buildAudioList = [this, alive, dlgAlive, listBox, audioTab]() {
+    *buildAudioList = [this, alive, dlgAlive, listBox, audioTab, downloadMode, weakAudio]() {
         if (!alive->load() || !*dlgAlive) return;
         brls::Application::giveFocus(audioTab.box);  // park before clearViews
         listBox->clearViews();
@@ -5339,18 +5426,32 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
             int streamId = s.id;
             std::string display = streamName(s);
             auto* rowv = makeStreamRow(langTile(s), display, audioSubLine(s), s.selected, StreamBadge::None,
-                [this, alive, streamId, display](brls::View*) {
-                    brls::Application::popActivity();
+                [this, alive, dlgAlive, streamId, display, downloadMode, weakAudio](brls::View*) {
                     int partId = m_partId;
-                    asyncRun([this, alive, partId, streamId, display]() {
-                        PlexClient::getInstance().setStreamSelection(partId, streamId, -1);
-                        brls::sync([this, alive, streamId, display]() {
-                            if (!alive->load()) return;
-                            for (auto& s2 : m_streams)
-                                if (s2.streamType == 2) s2.selected = (s2.id == streamId);
-                            updateStreamRowLabels();
+                    if (downloadMode) {
+                        // Optimistic: reflect the pick instantly (so a fast Download
+                        // tap reads the right selection) and re-render the checkmark;
+                        // persist to the server in the background.
+                        for (auto& s2 : m_streams)
+                            if (s2.streamType == 2) s2.selected = (s2.id == streamId);
+                        updateStreamRowLabels();
+                        if (*dlgAlive)
+                            if (auto b = weakAudio.lock()) (*b)();
+                        asyncRun([partId, streamId]() {
+                            PlexClient::getInstance().setStreamSelection(partId, streamId, -1);
                         });
-                    });
+                    } else {
+                        brls::Application::popActivity();
+                        asyncRun([this, alive, partId, streamId, display]() {
+                            PlexClient::getInstance().setStreamSelection(partId, streamId, -1);
+                            brls::sync([this, alive, streamId, display]() {
+                                if (!alive->load()) return;
+                                for (auto& s2 : m_streams)
+                                    if (s2.streamType == 2) s2.selected = (s2.id == streamId);
+                                updateStreamRowLabels();
+                            });
+                        });
+                    }
                     return true;
                 });
             listBox->addView(rowv);
@@ -5370,7 +5471,7 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
 
     // Subtitles tab: "None" then each installed track. Verbatim selection
     // handlers (setStreamSelection), now rendered as rich rows.
-    *buildInstalledList = [this, alive, dlgAlive, listBox, searchRow, setSearchBtnFor]() {
+    *buildInstalledList = [this, alive, dlgAlive, listBox, searchRow, setSearchBtnFor, downloadMode, weakInstalled]() {
         if (!alive->load() || !*dlgAlive) return;
         setSearchBtnFor(/*resultsMode=*/false);
         brls::Application::giveFocus(searchRow);  // park before clearViews
@@ -5381,18 +5482,29 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
             if ((s.streamType == 3 || s.streamType == 4) && s.selected) { anyOn = true; break; }
 
         auto* noneRow = makeStreamRow("", "None", "Subtitles off", !anyOn, StreamBadge::None,
-            [this, alive](brls::View*) {
-                brls::Application::popActivity();
+            [this, alive, dlgAlive, downloadMode, weakInstalled](brls::View*) {
                 int partId = m_partId;
-                asyncRun([this, alive, partId]() {
-                    PlexClient::getInstance().setStreamSelection(partId, -1, 0);
-                    brls::sync([this, alive]() {
-                        if (!alive->load()) return;
-                        for (auto& s : m_streams)
-                            if (s.streamType == 3 || s.streamType == 4) s.selected = false;
-                        updateStreamRowLabels();
+                if (downloadMode) {
+                    for (auto& s : m_streams)
+                        if (s.streamType == 3 || s.streamType == 4) s.selected = false;
+                    updateStreamRowLabels();
+                    if (*dlgAlive)
+                        if (auto b = weakInstalled.lock()) (*b)();
+                    asyncRun([partId]() {
+                        PlexClient::getInstance().setStreamSelection(partId, -1, 0);
                     });
-                });
+                } else {
+                    brls::Application::popActivity();
+                    asyncRun([this, alive, partId]() {
+                        PlexClient::getInstance().setStreamSelection(partId, -1, 0);
+                        brls::sync([this, alive]() {
+                            if (!alive->load()) return;
+                            for (auto& s : m_streams)
+                                if (s.streamType == 3 || s.streamType == 4) s.selected = false;
+                            updateStreamRowLabels();
+                        });
+                    });
+                }
                 return true;
             });
         listBox->addView(noneRow);
@@ -5405,19 +5517,31 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
             bool selected = s.selected;
             StreamBadge badge = subtitleBadge(s);
             listBox->addView(makeStreamRow(langTile(s), display, subtitleSubLine(s), selected, badge,
-                [this, alive, streamId, display](brls::View*) {
-                    brls::Application::popActivity();
+                [this, alive, dlgAlive, streamId, display, downloadMode, weakInstalled](brls::View*) {
                     int partId = m_partId;
-                    asyncRun([this, alive, partId, streamId, display]() {
-                        PlexClient::getInstance().setStreamSelection(partId, -1, streamId);
-                        brls::sync([this, alive, streamId, display]() {
-                            if (!alive->load()) return;
-                            for (auto& s : m_streams)
-                                if (s.streamType == 3 || s.streamType == 4)
-                                    s.selected = (s.id == streamId);
-                            updateStreamRowLabels();
+                    if (downloadMode) {
+                        for (auto& s : m_streams)
+                            if (s.streamType == 3 || s.streamType == 4)
+                                s.selected = (s.id == streamId);
+                        updateStreamRowLabels();
+                        if (*dlgAlive)
+                            if (auto b = weakInstalled.lock()) (*b)();
+                        asyncRun([partId, streamId]() {
+                            PlexClient::getInstance().setStreamSelection(partId, -1, streamId);
                         });
-                    });
+                    } else {
+                        brls::Application::popActivity();
+                        asyncRun([this, alive, partId, streamId, display]() {
+                            PlexClient::getInstance().setStreamSelection(partId, -1, streamId);
+                            brls::sync([this, alive, streamId, display]() {
+                                if (!alive->load()) return;
+                                for (auto& s : m_streams)
+                                    if (s.streamType == 3 || s.streamType == 4)
+                                        s.selected = (s.id == streamId);
+                                updateStreamRowLabels();
+                            });
+                        });
+                    }
                     return true;
                 }));
         }
@@ -5426,7 +5550,7 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
 
     // Search-results view inside the same scroll. Picking a result installs
     // it (selectSearchedSubtitle), then refetches streams. Verbatim flow.
-    *showResults = [this, alive, dlgAlive, listBox, searchRow, setSearchBtnFor](
+    *showResults = [this, alive, dlgAlive, listBox, searchRow, setSearchBtnFor, downloadMode, weakInstalled](
             const std::vector<PlexClient::SubtitleResult>& results) {
         if (!alive->load() || !*dlgAlive) return;
         setSearchBtnFor(/*resultsMode=*/true);
@@ -5458,22 +5582,26 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
                 meta += (meta.empty() ? "" : "  \xC2\xB7  ") + std::string("forced signs");
 
             auto* rr = makeResultRow(display, meta,
-                [this, alive, key, ratingKey, display](brls::View*) {
-                    brls::Application::popActivity();
+                [this, alive, dlgAlive, key, ratingKey, display, downloadMode, weakInstalled](brls::View*) {
+                    if (!downloadMode) brls::Application::popActivity();
                     int partId = m_partId;
-                    asyncRun([this, alive, ratingKey, partId, key, display]() {
+                    asyncRun([this, alive, dlgAlive, ratingKey, partId, key, display, downloadMode, weakInstalled]() {
                         bool ok = PlexClient::getInstance()
                             .selectSearchedSubtitle(ratingKey, partId, key);
                         std::vector<PlexStream> fresh;
                         int freshPart = partId;
                         PlexClient::getInstance().fetchStreams(ratingKey, fresh, freshPart);
-                        brls::sync([this, alive, ok, display, fresh, freshPart]() {
+                        brls::sync([this, alive, dlgAlive, ok, display, fresh, freshPart, downloadMode, weakInstalled]() {
                             if (!alive->load()) return;
                             if (ok) {
                                 m_streams = fresh;
                                 m_partId  = freshPart;
                                 updateStreamRowLabels();
                                 brls::Application::notify("Subtitle added: " + display);
+                                // Download mode stays open: drop back to the installed
+                                // list so the freshly added sub shows up selected.
+                                if (downloadMode && *dlgAlive)
+                                    if (auto b = weakInstalled.lock()) (*b)();
                             } else {
                                 brls::Application::notify("Couldn't add subtitle");
                             }
