@@ -370,49 +370,47 @@ std::string clampText(const std::string& s, size_t maxChars) {
     return out + "\xE2\x80\xA6";   // … (UTF-8)
 }
 
-// Gather an artist's albums for playback / download. The base releases come
-// from /children (the fast path Play/Shuffle always used). When that's empty
-// the artist's only releases are "typed" ones Plex deliberately keeps OUT of
-// /children — compilations, soundtracks, singles, EPs, live sets, … — so fall
-// back to the album.format / album.subformat filters the artist page already
-// uses for its category rails (loadMusicCategories). Without this, an artist
-// whose sole release is a compilation or soundtrack yields zero albums and
-// Play / Shuffle / Add / Download all report "No tracks found". De-dups by
-// ratingKey. Runs on a background thread (issues blocking HTTP calls).
+// Gather ALL of an artist's albums for playback / download — every release type
+// they own, not just the "regular" ones. /children only returns base albums;
+// Plex deliberately keeps typed releases (compilations, soundtracks, singles,
+// EPs, live sets, …) OUT of it, so an artist whose sole release is a compilation
+// yielded zero albums ("No tracks found"), and a mixed artist's Play/Shuffle
+// silently skipped their soundtracks and compilations.
+//
+// Fix: union /children with one artist-scoped section query (type=9 &
+// artist.id, empty filter) that returns the artist's whole discography across
+// every subtype — the same scoping the artist page rails use, so this finds
+// exactly what the page shows. It pulls the artist's OWN releases; a "Various
+// Artists" compilation they merely guest on (album artist != this artist) is
+// not included, matching the page. De-dups by ratingKey. Runs on a background
+// thread (blocking HTTP).
 std::vector<MediaItem> gatherArtistAlbums(PlexClient& client, const MediaItem& artist) {
     std::vector<MediaItem> albums;
-    client.fetchChildren(artist.ratingKey, albums);
-    albums.erase(std::remove_if(albums.begin(), albums.end(),
-        [](const MediaItem& a) { return a.mediaType != MediaType::MUSIC_ALBUM; }),
-        albums.end());
-    if (!albums.empty()) return albums;   // typical artist — behaviour unchanged
+    std::unordered_set<std::string> seen;
+    auto addUnique = [&](std::vector<MediaItem>& src) {
+        for (auto& a : src)
+            if (a.mediaType == MediaType::MUSIC_ALBUM && seen.insert(a.ratingKey).second)
+                albums.push_back(std::move(a));
+    };
 
-    // Section id is required for the filtered queries; fall back to the artist
-    // metadata when the passed-in item doesn't carry it.
+    // Base albums.
+    std::vector<MediaItem> children;
+    client.fetchChildren(artist.ratingKey, children);
+    addUnique(children);
+
+    // Typed releases (compilations / soundtracks / singles / EPs / …). Needs the
+    // library section id; fall back to the artist metadata when the passed-in
+    // item doesn't carry it.
     std::string sectionKey = artist.librarySectionKey;
     if (sectionKey.empty()) {
         MediaItem full;
         if (client.fetchMediaDetails(artist.ratingKey, full))
             sectionKey = full.librarySectionKey;
     }
-    if (sectionKey.empty()) return albums;
-
-    // The same release-type split the artist page rails use.
-    static const char* kFilters[] = {
-        "album.format=Single", "album.format=EP",
-        "album.subformat=Compilation", "album.subformat=Soundtrack",
-        "album.subformat=Live", "album.subformat=Remix",
-        "album.subformat=Demo", "album.subformat=DJ-mix",
-        "album.subformat=Mixtape/Street", "album.subformat=Spokenword",
-        "album.subformat=Interview", "album.subformat=Audiobook",
-    };
-    std::unordered_set<std::string> seen;
-    for (const char* f : kFilters) {
-        std::vector<MediaItem> part;
-        client.fetchArtistAlbumsByFilter(sectionKey, artist.ratingKey, f, part);
-        for (auto& a : part)
-            if (a.mediaType == MediaType::MUSIC_ALBUM && seen.insert(a.ratingKey).second)
-                albums.push_back(a);
+    if (!sectionKey.empty()) {
+        std::vector<MediaItem> typed;
+        client.fetchArtistAlbumsByFilter(sectionKey, artist.ratingKey, /*filter=*/"", typed);
+        addUnique(typed);
     }
     return albums;
 }
