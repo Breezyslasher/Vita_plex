@@ -726,6 +726,23 @@ elseif(PLATFORM_DESKTOP)
     target_link_libraries(${PROJECT_NAME} Threads::Threads)
     if(APPLE)
         target_link_libraries(${PROJECT_NAME} "-framework CoreWLAN")
+    elseif(NOT WIN32)
+        # Linux desktop: expose MPRIS media controls over D-Bus so the multimedia
+        # keys and the GNOME/KDE media widget drive playback even when VitaPlex
+        # isn't the focused window. Optional — falls back to a no-op if dbus-1
+        # isn't present at configure time.
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(DBUS IMPORTED_TARGET dbus-1)
+            if(DBUS_FOUND)
+                message(STATUS "MPRIS media controls enabled (dbus-1 ${DBUS_VERSION})")
+                target_sources(${PROJECT_NAME} PRIVATE src/utils/now_playing_mpris.cpp)
+                target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_MPRIS=1)
+                target_link_libraries(${PROJECT_NAME} PkgConfig::DBUS)
+            else()
+                message(STATUS "dbus-1 not found — MPRIS media controls disabled")
+            endif()
+        endif()
     endif()
 endif()
 

@@ -115,7 +115,17 @@ void clear() {
     env->DeleteLocalRef(cls);
 }
 
-#else  // ---- non-Android: no OS media session ----
+#elif defined(VITAPLEX_MPRIS)  // ---- Linux desktop: MPRIS over D-Bus ----
+
+// Implemented in now_playing_mpris.cpp (keeps the libdbus dependency isolated).
+namespace detail {
+void mprisUpdate(const Info& info);
+void mprisClear();
+}
+void update(const Info& info) { detail::mprisUpdate(info); }
+void clear() { detail::mprisClear(); }
+
+#else  // ---- other platforms: no OS media session ----
 
 void update(const Info&) {}
 void clear() {}
