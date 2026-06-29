@@ -64,14 +64,17 @@ private:
 // ───────────────────────────────────────────────────────────────────
 namespace {
 
-// Design tokens (mirror the spec / Application::getTheme dark table).
+// Design tokens — mirror the picker palette (`pickcol` in media_detail_view.cpp)
+// so the server-select / connecting dialogs wear the same neutral-grey shell as
+// the Sort / Filter menus instead of their old blue-tinted darks. Keep these in
+// sync with pickcol if that palette ever shifts.
 const NVGcolor kWhite    = nvgRGB(255, 255, 255);
-const NVGcolor kMuted    = nvgRGB(163, 163, 163);
-const NVGcolor kDim      = nvgRGB(124, 124, 132);
-const NVGcolor kDialogBg = nvgRGB(44, 44, 52);
-const NVGcolor kCard     = nvgRGB(52, 52, 62);
-const NVGcolor kRaised   = nvgRGB(67, 67, 79);
-const NVGcolor kLine     = nvgRGB(67, 67, 74);
+const NVGcolor kMuted    = nvgRGB(180, 180, 186);  // pickcol muted
+const NVGcolor kDim      = nvgRGB(138, 138, 144);  // pickcol dim
+const NVGcolor kDialogBg = nvgRGB(43, 43, 43);     // pickcol dialogBg (#2B)
+const NVGcolor kCard     = nvgRGB(56, 56, 56);     // pickcol surface  (#38)
+const NVGcolor kRaised   = nvgRGB(73, 73, 73);     // pickcol surface3 (#49)
+const NVGcolor kLine     = nvgRGB(71, 71, 71);     // pickcol line     (#47)
 const NVGcolor kGold     = nvgRGB(229, 160, 13);
 const NVGcolor kGoldDeep = nvgRGB(200, 135, 10);
 const NVGcolor kGoldInk  = nvgRGB(36, 28, 8);
@@ -571,7 +574,10 @@ void LoginActivity::showServerSelectionDialog(const std::vector<PlexServer>& ser
 void LoginActivity::showServerSelectionContent() {
     const float vw      = brls::Application::contentWidth;
     const bool  narrow  = platform::isPortrait() || vw < 600;
-    const float dialogW = narrow ? std::max(320.0f, vw - 32.0f) : 560.0f;
+    // Keep the panel a centered, contained width like the Sort / Filter
+    // pickers instead of stretching to fill a portrait / narrow viewport:
+    // cap at 560 and only shrink when the screen is actually narrower.
+    const float dialogW = std::max(320.0f, std::min(vw - 32.0f, 560.0f));
 
     // ── Card shell ──────────────────────────────────────────────────
     auto* card = new brls::Box();
@@ -579,51 +585,41 @@ void LoginActivity::showServerSelectionContent() {
     card->setWidth(dialogW);
     card->setMaxWidthPercentage(100.0f);
     card->setBackgroundColor(kDialogBg);
-    card->setCornerRadius(20);
+    card->setCornerRadius(18);
     card->setBorderColor(kLine);
     card->setBorderThickness(1);
     card->setShadowType(brls::ShadowType::GENERIC);
 
-    // ── Header: gold eyebrow + title + subtitle ─────────────────────
+    // ── Header: plain title + subtitle, matching the Sort / Filter pickers
+    //    (no gold eyebrow) ────────────────────────────────────────────
     auto* head = new brls::Box();
     head->setAxis(brls::Axis::COLUMN);
-    head->setPadding(24, 26, 18, 26);
+    head->setPadding(22, 22, 16, 22);
     head->setLineBottom(1);
     head->setLineColor(kLine);
 
-    auto* eyebrow = new brls::Box();
-    eyebrow->setAxis(brls::Axis::ROW);
-    eyebrow->setAlignItems(brls::AlignItems::CENTER);
-    eyebrow->setMarginBottom(9);
-    auto* eg = new GlyphView(Glyph::Server, kGold);
-    eg->setWidth(15); eg->setHeight(15); eg->setMarginRight(8);
-    eyebrow->addView(eg);
     // Header copy adapts to the no-servers case: when auto-detect turned up
     // nothing this dialog is purely the manual-entry surface.
     const bool empty = m_servers.empty();
-    auto* el = new brls::Label();
-    el->setText(empty ? "ADD A SERVER" : "CHOOSE A SERVER");
-    el->setFontSize(12); el->setTextColor(kGold);
-    eyebrow->addView(el);
-    head->addView(eyebrow);
-
     auto* title = new brls::Label();
     title->setText(empty ? std::string("No servers found")
                          : "We found " + std::to_string(m_servers.size()) + " servers");
-    title->setFontSize(23); title->setTextColor(kWhite);
+    title->setFontSize(21); title->setTextColor(kWhite);
     head->addView(title);
 
     auto* sub = new brls::Label();
     sub->setText(empty ? "Enter your server's address to connect."
                        : "Pick one to connect — we'll test every address and use the fastest.");
-    sub->setFontSize(14); sub->setTextColor(kMuted); sub->setMarginTop(4);
+    sub->setFontSize(13); sub->setTextColor(kDim); sub->setMarginTop(3);
     head->addView(sub);
     card->addView(head);
 
     // ── Body: one focusable card per server ─────────────────────────
+    // Side insets match the header (22) so the cards line up under the title,
+    // like the picker rows.
     auto* body = new brls::Box();
     body->setAxis(brls::Axis::COLUMN);
-    body->setPadding(16, 16, 16, 16);
+    body->setPadding(14, 22, 14, 22);
     brls::View* firstCard = nullptr;
     for (const auto& s : m_servers) {
         PlexServer sv = s;  // capture by value for the activation lambda
@@ -642,7 +638,7 @@ void LoginActivity::showServerSelectionContent() {
     auto* foot = new brls::Box();
     foot->setAxis(brls::Axis::ROW);
     foot->setAlignItems(brls::AlignItems::CENTER);
-    foot->setPadding(14, 20, 14, 20);
+    foot->setPadding(14, 22, 14, 22);
     foot->setLineTop(1);
     foot->setLineColor(kLine);
     // Right-align the manual affordance on wide layouts (left on narrow).
@@ -694,13 +690,13 @@ brls::Box* LoginActivity::buildServerCard(const PlexServer& server,
     card->setAxis(brls::Axis::ROW);
     card->setAlignItems(brls::AlignItems::CENTER);
     card->setPadding(14, 15, 14, 15);
-    card->setCornerRadius(13);
+    card->setCornerRadius(11);
     card->setBackgroundColor(kCard);
     card->setBorderColor(kLine);
     card->setBorderThickness(1);
-    card->setMarginBottom(9);
+    card->setMarginBottom(8);
     card->setFocusable(true);                 // borealis paints the cyan ring
-    card->setHighlightCornerRadius(13);
+    card->setHighlightCornerRadius(11);
     card->registerClickAction([onActivate](brls::View*) { onActivate(); return true; });
     card->addGestureRecognizer(new brls::TapGestureRecognizer(card));
 
@@ -850,7 +846,7 @@ void LoginActivity::presentDialogCard(brls::View* card, brls::View* focusView) {
         m_dialogScrim->setHeightPercentage(100.0f);
         m_dialogScrim->setJustifyContent(brls::JustifyContent::CENTER);
         m_dialogScrim->setAlignItems(brls::AlignItems::CENTER);
-        m_dialogScrim->setBackgroundColor(nvgRGBA(10, 11, 14, 200));
+        m_dialogScrim->setBackgroundColor(nvgRGBA(0, 0, 0, 115));  // pickcol scrim (~0.45)
         m_dialogScrim->addView(card);
         brls::Application::pushActivity(new brls::Activity(m_dialogScrim));
     } else {
@@ -881,7 +877,9 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
     // ── Connecting card (same shell, swapped into the modal) ────────
     const float vw      = brls::Application::contentWidth;
     const bool  narrow  = platform::isPortrait() || vw < 600;
-    const float dialogW = narrow ? std::max(320.0f, vw - 32.0f) : 520.0f;
+    // Contained, centered width (matches the server-select panel) rather
+    // than filling a portrait / narrow viewport.
+    const float dialogW = std::max(320.0f, std::min(vw - 32.0f, 520.0f));
     const float innerW  = std::max(220.0f, dialogW - 60.0f);
 
     auto* card = new brls::Box();
@@ -890,7 +888,7 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
     card->setMaxWidthPercentage(100.0f);
     card->setAlignItems(brls::AlignItems::CENTER);
     card->setBackgroundColor(kDialogBg);
-    card->setCornerRadius(20);
+    card->setCornerRadius(18);
     card->setBorderColor(kLine);
     card->setBorderThickness(1);
     card->setShadowType(brls::ShadowType::GENERIC);
@@ -936,14 +934,14 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
         row->setAxis(brls::Axis::ROW);
         row->setAlignItems(brls::AlignItems::CENTER);
         row->setPadding(8, 11, 8, 11);
-        row->setCornerRadius(9);
+        row->setCornerRadius(11);
         row->setBackgroundColor(kCard);
-        row->setMarginBottom(6);
+        row->setMarginBottom(8);
         // Focusable so the list is navigable on a controller — Up/Down moves
         // between rows and the ScrollingFrame scrolls to keep focus visible.
         // Native cyan highlight; no action (rows are informational).
         row->setFocusable(true);
-        row->setHighlightCornerRadius(9);
+        row->setHighlightCornerRadius(11);
 
         auto* pi = new ProbeIcon();
         pi->setWidth(18); pi->setHeight(18); pi->setMarginRight(10);
