@@ -220,6 +220,39 @@ static bool sidebarCsvHas(const std::string& csv, const std::string& id) {
     return false;
 }
 
+// Wrap a browse tab's content so Back opens the music player when a queue is
+// active. borealis's TabFrame registers its OWN Back handler (focus the sidebar)
+// on whatever view a tab creator returns, and that consumes Back before it can
+// reach MainActivity's root music-player handler — so from a content cell, Back
+// only ever moved focus to the sidebar, and the player was reachable solely from
+// there. Returning `content` inside a thin wrapper puts our handler on a CHILD of
+// the view TabFrame patches, so it sits lower in the focus walk and runs first:
+// a live queue opens the player; with no queue it returns false and TabFrame's
+// focus-sidebar default still fires. (This also rescues LibrarySectionTab's
+// top-level Back, whose existing `return false` previously just hit the sidebar.)
+static brls::Box* withMusicBack(brls::View* content) {
+    content->registerAction(
+        "Now Playing", brls::ControllerButton::BUTTON_B,
+        [](brls::View*) {
+            MusicQueue& queue = MusicQueue::getInstance();
+            if (!queue.isEmpty() && queue.getCurrentIndex() >= 0) {
+                brls::Application::pushActivity(PlayerActivity::createResumeQueue());
+                return true;
+            }
+            return false;  // no queue → let TabFrame focus the sidebar
+        },
+        /*hidden=*/true);
+    // The wrapper is transparent: a single stretched, growing child fills it in
+    // both axes, exactly as the tab content did when added straight to TabFrame.
+    auto* wrap = new brls::Box();
+    wrap->setAxis(brls::Axis::COLUMN);
+    wrap->setGrow(1.0f);
+    wrap->setAlignItems(brls::AlignItems::STRETCH);
+    content->setGrow(1.0f);
+    wrap->addView(content);
+    return wrap;
+}
+
 // Paints the platform START glyph on a sidebar item while it's focused — the
 // discoverable "Start = edit sidebar" affordance, mirroring the focus hint the
 // media cells show (HintIcons::getResPath(BUTTON_START): F1 on desktop, the
@@ -312,7 +345,7 @@ void MainActivity::buildSidebarTabs() {
     const bool hasLiveTV = PlexClient::getInstance().hasLiveTV();
 
     // Home is always pinned to the top.
-    tabFrame->addTab("Home", []() { return new HomeTab(); });
+    tabFrame->addTab("Home", []() { return withMusicBack(new HomeTab()); });
 
     // Library sections — fetch synchronously + cache (libraries always live in
     // the sidebar now; there is no premade Library/Music tab mode).
@@ -360,12 +393,12 @@ void MainActivity::buildSidebarTabs() {
             const LibrarySection* sec = findSection(key);
             if (!sec) continue;
             std::string k = sec->key, t = sec->title, ty = sec->type;
-            tabFrame->addTab(t, [k, t, ty]() { return new LibrarySectionTab(k, t, ty); });
+            tabFrame->addTab(t, [k, t, ty]() { return withMusicBack(new LibrarySectionTab(k, t, ty)); });
         } else {
             // Search is always shown; only Live TV / Downloads can be hidden
             // (via Settings ▸ Interface ▸ Manage Hidden Libraries).
             if (id != "search" && sidebarCsvHas(settings.hiddenSidebarItems, id)) continue;
-            if (id == "search")         tabFrame->addTab("Search",    []() { return new SearchTab(); });
+            if (id == "search")         tabFrame->addTab("Search",    []() { return withMusicBack(new SearchTab()); });
             else if (id == "livetv")    tabFrame->addTab("Live TV",   []() { return new LiveTVTab(); });
             else if (id == "downloads") tabFrame->addTab("Downloads", []() { return new DownloadsTab(); });
         }
