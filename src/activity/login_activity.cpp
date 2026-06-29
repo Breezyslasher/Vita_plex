@@ -384,13 +384,13 @@ void LoginActivity::onContentAvailable() {
     if (usernameLabel) {
         std::string current = m_username.empty() ? std::string("Not set") : m_username;
         usernameLabel->setText(current);
-        usernameLabel->setTextColor(m_username.empty() ? nvgRGB(163, 163, 163) : nvgRGB(255, 255, 255));
+        usernameLabel->setTextColor(m_username.empty() ? nvgRGB(180, 180, 186) : nvgRGB(255, 255, 255));
         usernameLabel->registerClickAction([this](brls::View*) {
             brls::Application::getImeManager()->openForText([this](std::string text) {
                 m_username = text;
                 if (usernameLabel) {
                     usernameLabel->setText(text.empty() ? std::string("Not set") : text);
-                    usernameLabel->setTextColor(text.empty() ? nvgRGB(163, 163, 163) : nvgRGB(255, 255, 255));
+                    usernameLabel->setTextColor(text.empty() ? nvgRGB(180, 180, 186) : nvgRGB(255, 255, 255));
                 }
             }, "Enter Username", "", 128, m_username);
             return true;
@@ -400,13 +400,13 @@ void LoginActivity::onContentAvailable() {
 
     if (passwordLabel) {
         passwordLabel->setText(m_password.empty() ? std::string("Not set") : std::string("********"));
-        passwordLabel->setTextColor(m_password.empty() ? nvgRGB(163, 163, 163) : nvgRGB(255, 255, 255));
+        passwordLabel->setTextColor(m_password.empty() ? nvgRGB(180, 180, 186) : nvgRGB(255, 255, 255));
         passwordLabel->registerClickAction([this](brls::View*) {
             brls::Application::getImeManager()->openForPassword([this](std::string text) {
                 m_password = text;
                 if (passwordLabel) {
                     passwordLabel->setText(text.empty() ? std::string("Not set") : std::string("********"));
-                    passwordLabel->setTextColor(text.empty() ? nvgRGB(163, 163, 163) : nvgRGB(255, 255, 255));
+                    passwordLabel->setTextColor(text.empty() ? nvgRGB(180, 180, 186) : nvgRGB(255, 255, 255));
                 }
             }, "Enter Password", "", 128, "");
             return true;
