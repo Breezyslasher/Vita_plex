@@ -110,6 +110,7 @@ private:
         int state = 0;
         int64_t viewOffset = 0;
         int transcodeElapsedSeconds = 0;
+        int transcodeProgressPercent = 0;
     };
     std::vector<CachedItem> m_lastState;
 
