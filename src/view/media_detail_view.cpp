@@ -370,19 +370,65 @@ std::string clampText(const std::string& s, size_t maxChars) {
     return out + "\xE2\x80\xA6";   // … (UTF-8)
 }
 
+// Gather an artist's albums for playback / download. The base releases come
+// from /children (the fast path Play/Shuffle always used). When that's empty
+// the artist's only releases are "typed" ones Plex deliberately keeps OUT of
+// /children — compilations, soundtracks, singles, EPs, live sets, … — so fall
+// back to the album.format / album.subformat filters the artist page already
+// uses for its category rails (loadMusicCategories). Without this, an artist
+// whose sole release is a compilation or soundtrack yields zero albums and
+// Play / Shuffle / Add / Download all report "No tracks found". De-dups by
+// ratingKey. Runs on a background thread (issues blocking HTTP calls).
+std::vector<MediaItem> gatherArtistAlbums(PlexClient& client, const MediaItem& artist) {
+    std::vector<MediaItem> albums;
+    client.fetchChildren(artist.ratingKey, albums);
+    albums.erase(std::remove_if(albums.begin(), albums.end(),
+        [](const MediaItem& a) { return a.mediaType != MediaType::MUSIC_ALBUM; }),
+        albums.end());
+    if (!albums.empty()) return albums;   // typical artist — behaviour unchanged
+
+    // Section id is required for the filtered queries; fall back to the artist
+    // metadata when the passed-in item doesn't carry it.
+    std::string sectionKey = artist.librarySectionKey;
+    if (sectionKey.empty()) {
+        MediaItem full;
+        if (client.fetchMediaDetails(artist.ratingKey, full))
+            sectionKey = full.librarySectionKey;
+    }
+    if (sectionKey.empty()) return albums;
+
+    // The same release-type split the artist page rails use.
+    static const char* kFilters[] = {
+        "album.format=Single", "album.format=EP",
+        "album.subformat=Compilation", "album.subformat=Soundtrack",
+        "album.subformat=Live", "album.subformat=Remix",
+        "album.subformat=Demo", "album.subformat=DJ-mix",
+        "album.subformat=Mixtape/Street", "album.subformat=Spokenword",
+        "album.subformat=Interview", "album.subformat=Audiobook",
+    };
+    std::unordered_set<std::string> seen;
+    for (const char* f : kFilters) {
+        std::vector<MediaItem> part;
+        client.fetchArtistAlbumsByFilter(sectionKey, artist.ratingKey, f, part);
+        for (auto& a : part)
+            if (a.mediaType == MediaType::MUSIC_ALBUM && seen.insert(a.ratingKey).second)
+                albums.push_back(a);
+    }
+    return albums;
+}
+
 // Collect every track across an artist's albums and start playback. Shared by
 // the artist detail Play / Shuffle buttons and the artist context menu. Runs on
 // a background thread; captures only a copy of the artist (never `this`).
 void playAllArtistTracks(const MediaItem& artist, bool shuffle) {
     asyncRun([artist, shuffle]() {
         PlexClient& client = PlexClient::getInstance();
-        std::vector<MediaItem> albums, allTracks;
-        if (client.fetchChildren(artist.ratingKey, albums)) {
-            for (const auto& album : albums) {
-                std::vector<MediaItem> tracks;
-                if (client.fetchChildren(album.ratingKey, tracks))
-                    allTracks.insert(allTracks.end(), tracks.begin(), tracks.end());
-            }
+        std::vector<MediaItem> albums = gatherArtistAlbums(client, artist);
+        std::vector<MediaItem> allTracks;
+        for (const auto& album : albums) {
+            std::vector<MediaItem> tracks;
+            if (client.fetchChildren(album.ratingKey, tracks))
+                allTracks.insert(allTracks.end(), tracks.begin(), tracks.end());
         }
         if (allTracks.empty()) {
             brls::sync([]() { brls::Application::notify("No tracks found"); });
@@ -405,24 +451,22 @@ void downloadArtistTracks(const MediaItem& artist) {
     asyncRun([artist]() {
         PlexClient& client = PlexClient::getInstance();
         auto& mgr = DownloadsManager::getInstance();
-        std::vector<MediaItem> albums;
+        std::vector<MediaItem> albums = gatherArtistAlbums(client, artist);
         int queued = 0, skipped = 0;
-        if (client.fetchChildren(artist.ratingKey, albums)) {
-            for (const auto& album : albums) {
-                std::vector<MediaItem> tracks;
-                if (client.fetchChildren(album.ratingKey, tracks)) {
-                    for (const auto& track : tracks) {
-                        if (mgr.isDownloaded(track.ratingKey) ||
-                            mgr.getDownload(track.ratingKey) != nullptr) { skipped++; continue; }
-                        MediaItem full;
-                        if (client.fetchMediaDetails(track.ratingKey, full) && !full.partPath.empty()) {
-                            if (mgr.queueDownload(
-                                    full.ratingKey, full.title, full.partPath,
-                                    full.duration, "track", artist.title, 0, full.index,
-                                    full.thumb, DownloadGroupType::ARTIST, artist.ratingKey,
-                                    artist.title, artist.thumb, album.title))
-                                queued++;
-                        }
+        for (const auto& album : albums) {
+            std::vector<MediaItem> tracks;
+            if (client.fetchChildren(album.ratingKey, tracks)) {
+                for (const auto& track : tracks) {
+                    if (mgr.isDownloaded(track.ratingKey) ||
+                        mgr.getDownload(track.ratingKey) != nullptr) { skipped++; continue; }
+                    MediaItem full;
+                    if (client.fetchMediaDetails(track.ratingKey, full) && !full.partPath.empty()) {
+                        if (mgr.queueDownload(
+                                full.ratingKey, full.title, full.partPath,
+                                full.duration, "track", artist.title, 0, full.index,
+                                full.thumb, DownloadGroupType::ARTIST, artist.ratingKey,
+                                artist.title, artist.thumb, album.title))
+                            queued++;
                     }
                 }
             }
@@ -441,13 +485,12 @@ void downloadArtistTracks(const MediaItem& artist) {
 void enqueueArtistTracks(const MediaItem& artist) {
     asyncRun([artist]() {
         PlexClient& client = PlexClient::getInstance();
-        std::vector<MediaItem> albums, allTracks;
-        if (client.fetchChildren(artist.ratingKey, albums)) {
-            for (const auto& album : albums) {
-                std::vector<MediaItem> tracks;
-                if (client.fetchChildren(album.ratingKey, tracks))
-                    allTracks.insert(allTracks.end(), tracks.begin(), tracks.end());
-            }
+        std::vector<MediaItem> albums = gatherArtistAlbums(client, artist);
+        std::vector<MediaItem> allTracks;
+        for (const auto& album : albums) {
+            std::vector<MediaItem> tracks;
+            if (client.fetchChildren(album.ratingKey, tracks))
+                allTracks.insert(allTracks.end(), tracks.begin(), tracks.end());
         }
         if (allTracks.empty()) {
             brls::sync([]() { brls::Application::notify("No tracks found"); });
@@ -2371,15 +2414,17 @@ void MediaDetailView::downloadAll() {
             // Get direct children (episodes or tracks)
             client.fetchChildren(ratingKey, items);
         } else if (mediaType == MediaType::MUSIC_ARTIST) {
-            // Get all albums, then all tracks
-            std::vector<MediaItem> albums;
-            if (client.fetchChildren(ratingKey, albums)) {
-                for (const auto& album : albums) {
-                    std::vector<MediaItem> tracks;
-                    if (client.fetchChildren(album.ratingKey, tracks)) {
-                        for (auto& track : tracks) {
-                            items.push_back(track);
-                        }
+            // Get all albums — including compilations/soundtracks/singles Plex
+            // keeps out of /children — then all tracks. Pass just the ratingKey;
+            // gatherArtistAlbums resolves the library section itself.
+            MediaItem artistItem;
+            artistItem.ratingKey = ratingKey;
+            std::vector<MediaItem> albums = gatherArtistAlbums(client, artistItem);
+            for (const auto& album : albums) {
+                std::vector<MediaItem> tracks;
+                if (client.fetchChildren(album.ratingKey, tracks)) {
+                    for (auto& track : tracks) {
+                        items.push_back(track);
                     }
                 }
             }
