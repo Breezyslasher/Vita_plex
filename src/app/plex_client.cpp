@@ -505,6 +505,42 @@ bool PlexClient::switchHomeUser(const std::string& masterToken,
     return true;
 }
 
+void PlexClient::useHomeUserTokens(const std::string& accountToken) {
+    if (accountToken.empty()) return;
+
+    const std::string machineId = m_currentServer.machineIdentifier;
+
+    // Temporarily fly the account token so fetchServers (a plex.tv call)
+    // authorises and returns THIS user's per-server access tokens.
+    m_authToken = accountToken;
+
+    std::string serverToken;
+    if (!machineId.empty()) {
+        std::vector<PlexServer> servers;
+        if (fetchServers(servers)) {
+            for (const auto& s : servers) {
+                if (s.machineIdentifier == machineId && !s.accessToken.empty()) {
+                    serverToken = s.accessToken;
+                    break;
+                }
+            }
+        }
+        if (serverToken.empty()) {
+            brls::Logger::warning(
+                "useHomeUserTokens: no per-server token for machine {} — "
+                "falling back to the account token (server may 401 if this "
+                "user has no access)", machineId);
+        }
+    }
+
+    // Server requests use the per-server token when we found one; otherwise the
+    // account token (owner / own-server, where the two are identical).
+    m_authToken = serverToken.empty() ? accountToken : serverToken;
+    Application::getInstance().setAuthToken(m_authToken);
+    brls::Logger::info("useHomeUserTokens: adopted {} token for server requests",
+                       serverToken.empty() ? "account" : "per-server access");
+}
+
 bool PlexClient::refreshToken() {
     // Legacy Plex tokens don't expire, but they can be revoked.
     // Validate the current token against plex.tv; if invalid, trigger reauth.
@@ -614,6 +650,10 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers) {
             PlexServer server;
             server.name             = extractJsonValue(obj, "name");
             server.machineIdentifier = extractJsonValue(obj, "clientIdentifier");
+            // Per-user, per-server access token. For an owned server this equals
+            // the account token, but for a managed/shared user it's a distinct
+            // token — the only one the server will accept (see useHomeUserTokens).
+            server.accessToken      = extractJsonValue(obj, "accessToken");
             // owned + version + sourceTitle drive the new server-picker
             // card: gold tint + "OWNED" chip for owned, "Shared by …"
             // line for friends, and a version readout next to the
