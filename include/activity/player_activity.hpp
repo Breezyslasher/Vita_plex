@@ -285,6 +285,10 @@ private:
     // lyrics support removed
     bool m_destroying = false;     // Flag to prevent timer callbacks during destruction
     bool m_loadingMedia = false;   // Flag to prevent rapid re-entry of loadMedia
+    bool m_wasForeground = true;   // Tracks app foreground state to detect a
+                                   // background->foreground return (mobile): a
+                                   // cover loaded while hidden fails to upload to
+                                   // GL, so we re-load it once we're visible again.
     double m_pendingSeek = 0.0;    // Pending seek position (set when resuming)
     int m_transcodeBaseOffsetMs = 0;  // Base offset (ms) used to start current transcode
     int m_mediaDurationMs = 0;        // Full media length (ms) from Plex metadata; 0 = unknown

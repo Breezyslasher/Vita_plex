@@ -282,6 +282,12 @@ class Application
     static VoidEvent* getWindowShouldCloseEvent();
     static Event<bool>* getWindowFocusChangedEvent();
 
+    // VitaPlex: true while the app has a live drawing surface. Always true on
+    // desktop; on mobile it is false between OS background/foreground (the GL
+    // surface is gone), so callers can avoid or retry GL work — e.g. re-upload a
+    // cover image that silently failed to upload while the app was hidden.
+    static bool isWindowForeground();
+
     static View* getCurrentFocus();
 
     static std::string getTitle();
