@@ -22,8 +22,16 @@
 
 #include <borealis.hpp>
 
+// SDL2's include dir is exposed differently per toolchain: some put the parent
+// of SDL2/ on the search path (<SDL2/SDL.h>), MinGW/msys2 puts SDL2/ itself on it
+// (<SDL.h>). Pick whichever exists.
+#if __has_include(<SDL2/SDL.h>)
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_syswm.h>
+#else
+#include <SDL.h>
+#include <SDL_syswm.h>
+#endif
 
 #include <windows.h>
 #include <roapi.h>
