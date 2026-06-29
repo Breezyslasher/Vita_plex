@@ -70,6 +70,8 @@ public:
     void next();
     void previous();
     void seekToMs(long long ms);
+    void seekRelativeMs(long long deltaMs);   // fast-forward / rewind keys
+    void stopPlayback();                       // Stop key: halt mpv + clear session
 
 private:
     MusicController() = default;
@@ -77,6 +79,7 @@ private:
     MusicController& operator=(const MusicController&) = delete;
 
     void install();                 // one-time: queue callback + OS handler
+    void registerOsHandler();       // (re)claim the nowplaying transport handler
     void handleTrackEnded(const QueueItem* nextTrack);
     bool loadCurrentHeadless();     // minimal URL resolve + mpv loadUrl (no UI)
     void startPolling();

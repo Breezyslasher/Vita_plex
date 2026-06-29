@@ -726,6 +726,93 @@ elseif(PLATFORM_DESKTOP)
     target_link_libraries(${PROJECT_NAME} Threads::Threads)
     if(APPLE)
         target_link_libraries(${PROJECT_NAME} "-framework CoreWLAN")
+    elseif(WIN32)
+        # Windows: System Media Transport Controls (media overlay + media keys)
+        # via WinRT. MinGW's WinRT support varies, so feature-probe by actually
+        # compiling + linking a snippet; only enable if it builds, else fall back
+        # to the no-op so the build never breaks. On failure the probe's compiler
+        # output is printed so the toolchain gap is diagnosable from the CI log.
+        set(_smtc_probe "${CMAKE_BINARY_DIR}/smtc_probe.cpp")
+        file(WRITE "${_smtc_probe}" [==[
+#include <windows.h>
+#include <roapi.h>
+#include <wrl.h>
+#include <wrl/wrappers/corewrappers.h>
+#include <windows.media.h>
+#include <systemmediatransportcontrolsinterop.h>
+using Microsoft::WRL::ComPtr;
+using Microsoft::WRL::Wrappers::HStringReference;
+using namespace ABI::Windows::Media;
+typedef ABI::Windows::Foundation::ITypedEventHandler<
+    SystemMediaTransportControls*, SystemMediaTransportControlsButtonPressedEventArgs*> BD;
+struct H : BD {
+    LONG r = 1;
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** p) override {
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(BD)) { *p = static_cast<BD*>(this); return S_OK; }
+        *p = 0; return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return (ULONG)++r; }
+    ULONG STDMETHODCALLTYPE Release() override { return (ULONG)--r; }
+    HRESULT STDMETHODCALLTYPE Invoke(ISystemMediaTransportControls*,
+        ISystemMediaTransportControlsButtonPressedEventArgs* a) override {
+        SystemMediaTransportControlsButton b; a->get_Button(&b); return S_OK;
+    }
+};
+int main() {
+    ComPtr<ISystemMediaTransportControlsInterop> interop;
+    RoGetActivationFactory(HStringReference(
+        RuntimeClass_Windows_Media_SystemMediaTransportControls).Get(),
+        IID_PPV_ARGS(&interop));
+    ComPtr<ISystemMediaTransportControls> smtc;
+    interop->GetForWindow((HWND)0, IID_PPV_ARGS(&smtc));
+    smtc->put_IsEnabled(true);
+    smtc->put_IsPlayEnabled(true);
+    smtc->put_IsNextEnabled(1);
+    smtc->put_PlaybackStatus(MediaPlaybackStatus_Playing);
+    ComPtr<ISystemMediaTransportControlsDisplayUpdater> up;
+    smtc->get_DisplayUpdater(&up);
+    up->put_Type(MediaPlaybackType_Music);
+    ComPtr<IMusicDisplayProperties> mp;
+    up->get_MusicProperties(&mp);
+    mp->put_Title(HStringReference(L"x").Get());
+    up->Update();
+    EventRegistrationToken tok;
+    H* cb = new H();
+    smtc->add_ButtonPressed(cb, &tok);
+    cb->Release();
+    return 0;
+}
+]==])
+        try_compile(VITAPLEX_HAVE_SMTC "${CMAKE_BINARY_DIR}/smtc_probe_bin"
+            SOURCES "${_smtc_probe}"
+            LINK_LIBRARIES runtimeobject ole32
+            CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON
+            OUTPUT_VARIABLE _smtc_out)
+        if(VITAPLEX_HAVE_SMTC)
+            message(STATUS "SMTC media controls enabled")
+            target_sources(${PROJECT_NAME} PRIVATE src/utils/now_playing_smtc.cpp)
+            target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_SMTC=1)
+            target_link_libraries(${PROJECT_NAME} runtimeobject ole32 user32)
+        else()
+            message(STATUS "WinRT SMTC unavailable — disabled. Probe output:\n${_smtc_out}")
+        endif()
+    else()
+        # Linux desktop: expose MPRIS media controls over D-Bus so the multimedia
+        # keys and the GNOME/KDE media widget drive playback even when VitaPlex
+        # isn't the focused window. Optional — falls back to a no-op if dbus-1
+        # isn't present at configure time.
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(DBUS IMPORTED_TARGET dbus-1)
+            if(DBUS_FOUND)
+                message(STATUS "MPRIS media controls enabled (dbus-1 ${DBUS_VERSION})")
+                target_sources(${PROJECT_NAME} PRIVATE src/utils/now_playing_mpris.cpp)
+                target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_MPRIS=1)
+                target_link_libraries(${PROJECT_NAME} PkgConfig::DBUS)
+            else()
+                message(STATUS "dbus-1 not found — MPRIS media controls disabled")
+            endif()
+        endif()
     endif()
 endif()
 
