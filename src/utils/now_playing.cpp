@@ -1,0 +1,158 @@
+/**
+ * VitaPlex - OS "Now Playing" media session bridge (implementation)
+ *
+ * See include/utils/now_playing.hpp. The Android path talks to the Java helper
+ * org.VitaPlex.app.MediaNotification over JNI, mirroring the pattern in
+ * src/utils/pip.cpp. All other platforms get no-op update()/clear().
+ */
+
+#include "utils/now_playing.hpp"
+
+#include <borealis.hpp>
+#include <mutex>
+
+#ifdef __ANDROID__
+#include <SDL2/SDL.h>
+#include <jni.h>
+#endif
+
+namespace vitaplex {
+namespace nowplaying {
+
+namespace {
+std::mutex g_mutex;
+std::function<void(Transport)> g_onTransport;
+std::function<void(int64_t)> g_onSeek;
+
+} // namespace
+
+void setHandler(std::function<void(Transport)> onTransport,
+                std::function<void(int64_t)> onSeekMs) {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_onTransport = std::move(onTransport);
+    g_onSeek = std::move(onSeekMs);
+}
+
+void clearHandler() {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_onTransport = nullptr;
+    g_onSeek = nullptr;
+}
+
+void dispatchTransport(Transport t) {
+    std::function<void(Transport)> fn;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        fn = g_onTransport;
+    }
+    if (fn) fn(t);
+}
+
+void dispatchSeek(int64_t positionMs) {
+    std::function<void(int64_t)> fn;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        fn = g_onSeek;
+    }
+    if (fn) fn(positionMs);
+}
+
+#ifdef __ANDROID__
+
+void update(const Info& info) {
+    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
+    if (!env) return;
+
+    jclass cls = env->FindClass("org/VitaPlex/app/MediaNotification");
+    if (!cls) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return;
+    }
+    jmethodID mid = env->GetStaticMethodID(
+        cls, "update",
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJZZZ)V");
+    if (!mid) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(cls);
+        return;
+    }
+
+    jstring jTitle = env->NewStringUTF(info.title.c_str());
+    jstring jArtist = env->NewStringUTF(info.artist.c_str());
+    jstring jAlbum = env->NewStringUTF(info.album.c_str());
+    jstring jArt = env->NewStringUTF(info.artUrl.c_str());
+
+    env->CallStaticVoidMethod(cls, mid, jTitle, jArtist, jAlbum, jArt,
+                              (jlong)info.durationMs, (jlong)info.positionMs,
+                              (jboolean)info.playing, (jboolean)info.hasNext,
+                              (jboolean)info.hasPrev);
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+
+    env->DeleteLocalRef(jTitle);
+    env->DeleteLocalRef(jArtist);
+    env->DeleteLocalRef(jAlbum);
+    env->DeleteLocalRef(jArt);
+    env->DeleteLocalRef(cls);
+}
+
+void clear() {
+    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
+    if (!env) return;
+
+    jclass cls = env->FindClass("org/VitaPlex/app/MediaNotification");
+    if (!cls) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return;
+    }
+    jmethodID mid = env->GetStaticMethodID(cls, "clear", "()V");
+    if (mid) {
+        env->CallStaticVoidMethod(cls, mid);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    }
+    env->DeleteLocalRef(cls);
+}
+
+#else  // ---- non-Android: no OS media session ----
+
+void update(const Info&) {}
+void clear() {}
+
+#endif
+
+} // namespace nowplaying
+} // namespace vitaplex
+
+#ifdef __ANDROID__
+// Java -> native: a transport button was pressed in the OS media controls.
+// Marshals onto the main thread (brls::sync) before touching playback, exactly
+// like the PiP action trampoline in pip.cpp.
+extern "C" JNIEXPORT void JNICALL
+Java_org_VitaPlex_app_MediaNotification_nativeMediaAction(JNIEnv*, jclass, jint code) {
+    // Codes shared with MediaNotification.java (keep in sync).
+    brls::sync([code]() {
+        using vitaplex::nowplaying::Transport;
+        Transport t;
+        switch ((int)code) {
+            case 2:  t = Transport::Play;     break;
+            case 3:  t = Transport::Pause;    break;
+            case 4:  t = Transport::Next;     break;
+            case 5:  t = Transport::Previous; break;
+            case 6:  t = Transport::Stop;     break;
+            case 1:
+            default: t = Transport::Toggle;   break;
+        }
+        vitaplex::nowplaying::dispatchTransport(t);
+    });
+}
+
+// Java -> native: an absolute seek (ms) was requested from the OS controls.
+extern "C" JNIEXPORT void JNICALL
+Java_org_VitaPlex_app_MediaNotification_nativeMediaSeek(JNIEnv*, jclass, jlong positionMs) {
+    brls::sync([positionMs]() {
+        vitaplex::nowplaying::dispatchSeek((int64_t)positionMs);
+    });
+}
+#endif

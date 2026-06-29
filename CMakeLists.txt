@@ -237,6 +237,7 @@ set(APP_SOURCES
     src/app/plex_client.cpp
     src/app/downloads_manager.cpp
     src/app/music_queue.cpp
+    src/app/music_controller.cpp
     src/app/hint_icons.cpp
     src/app/synclounge_client.cpp
     src/app/synclounge_session.cpp
@@ -274,6 +275,7 @@ set(APP_SOURCES
     src/utils/https_proxy.cpp
     src/utils/image_loader.cpp
     src/utils/jwt_auth.cpp
+    src/utils/now_playing.cpp
     src/utils/pip.cpp
 )
 

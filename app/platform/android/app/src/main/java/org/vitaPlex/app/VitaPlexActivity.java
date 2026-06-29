@@ -97,10 +97,33 @@ public class VitaPlexActivity extends SDLActivity
         }
     }
 
+    /**
+     * Public Context accessor for MediaNotification, which posts the music
+     * media-session notification but isn't an SDLActivity subclass and so can't
+     * reach the protected singleton directly.
+     */
+    public static Context getAppContext() {
+        return getContext();
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         mSurface.getHolder().setFormat(PixelFormat.RGBA_8888);
+
+        // Android 13+ gates notifications behind a runtime grant; ask once so the
+        // music media notification can be posted. Denial is non-fatal (the
+        // notification just won't show).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            try {
+                if (checkSelfPermission("android.permission.POST_NOTIFICATIONS")
+                        != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(new String[]{"android.permission.POST_NOTIFICATIONS"}, 1001);
+                }
+            } catch (Throwable t) {
+                Log.w(TAG, "POST_NOTIFICATIONS request failed", t);
+            }
+        }
 
         PlatformUtils.borealisHandler = new BorealisHandler();
         _setAppScreenBrightness(_getSystemScreenBrightness());

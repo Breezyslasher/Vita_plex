@@ -7,6 +7,7 @@
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/music_queue.hpp"
+#include "app/music_controller.hpp"
 #include "app/plex_palette.hpp"
 #include "app/synclounge_session.hpp"
 #include "player/mpv_player.hpp"
@@ -119,9 +120,13 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
         queue.setQueue(tracks, startIndex);
     }
 
-    // Set up track ended callback
-    queue.setTrackEndedCallback([activity](const QueueItem* nextTrack) {
-        activity->onTrackEnded(nextTrack);
+    // Hand transport to the persistent MusicController while this player is
+    // alive: the OS media buttons + queue end-of-track route to the rich
+    // on-screen methods. On leave it hands back / takes over headlessly.
+    MusicController::getInstance().attachForeground({
+        [activity]() { activity->playNext(); },
+        [activity]() { activity->playPrevious(); },
+        [activity](const QueueItem* nextTrack) { activity->onTrackEnded(nextTrack); }
     });
 
     brls::Logger::info("PlayerActivity created with queue of {} tracks, starting at {} (server={})",
@@ -137,9 +142,11 @@ PlayerActivity* PlayerActivity::createResumeQueue() {
     // Resume existing queue - don't reset it
     MusicQueue& queue = MusicQueue::getInstance();
 
-    // Set up track ended callback for the new activity
-    queue.setTrackEndedCallback([activity](const QueueItem* nextTrack) {
-        activity->onTrackEnded(nextTrack);
+    // Reclaim transport from the (possibly headless) MusicController.
+    MusicController::getInstance().attachForeground({
+        [activity]() { activity->playNext(); },
+        [activity]() { activity->playPrevious(); },
+        [activity](const QueueItem* nextTrack) { activity->onTrackEnded(nextTrack); }
     });
 
     brls::Logger::info("PlayerActivity resumed existing queue at index {}", queue.getCurrentIndex());
@@ -799,6 +806,9 @@ void PlayerActivity::willDisappear(bool resetState) {
         brls::Logger::info("PlayerActivity: Leaving with background music enabled, not stopping");
         m_updateTimer.stop();
         if (m_alive) m_alive->store(false);
+        // Hand off to the persistent controller: it keeps the OS media session
+        // live and takes over end-of-track + next/previous while mpv plays on.
+        MusicController::getInstance().detachForeground();
         return;
     }
 
@@ -881,6 +891,13 @@ void PlayerActivity::willDisappear(bool resetState) {
     }
 
     m_isPlaying = false;
+
+    // Music player is actually tearing down (not background music) — detach so
+    // the controller drops the dangling hooks and, with mpv now stopped, clears
+    // the OS media session/notification.
+    if (m_isQueueMode) {
+        MusicController::getInstance().detachForeground();
+    }
 }
 
 void PlayerActivity::loadFromQueue() {
@@ -1083,6 +1100,7 @@ void PlayerActivity::loadFromQueue() {
 
     m_isPlaying = true;
     m_loadingMedia = false;
+    MusicController::getInstance().publishNowPlaying();
 }
 
 void PlayerActivity::loadMedia() {
@@ -1526,6 +1544,7 @@ void PlayerActivity::updateProgress() {
                 }
                 m_isPlaying = true;
                 updatePlayPauseLabel();
+                if (m_isQueueMode) MusicController::getInstance().publishNowPlaying();
                 brls::Logger::info("PlayerActivity: Deferred load started successfully");
             } else {
                 brls::Logger::error("PlayerActivity: Deferred loadUrl failed");
@@ -2021,6 +2040,9 @@ void PlayerActivity::togglePlayPause() {
         m_isPlaying = true;
     }
     updatePlayPauseLabel();
+
+    // Keep the OS media notification's play/pause state in sync.
+    if (m_isQueueMode) MusicController::getInstance().publishNowPlaying();
 
     // SyncLounge: a manual play/pause is a user action — announce it (and,
     // under auto-host, claim host so the party follows the Vita).
