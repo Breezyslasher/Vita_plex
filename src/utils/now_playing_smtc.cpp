@@ -22,17 +22,6 @@
 
 #include <borealis.hpp>
 
-// SDL2's include dir is exposed differently per toolchain: some put the parent
-// of SDL2/ on the search path (<SDL2/SDL.h>), MinGW/msys2 puts SDL2/ itself on it
-// (<SDL.h>). Pick whichever exists.
-#if __has_include(<SDL2/SDL.h>)
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_syswm.h>
-#else
-#include <SDL.h>
-#include <SDL_syswm.h>
-#endif
-
 #include <windows.h>
 #include <roapi.h>
 #include <wrl.h>
@@ -71,13 +60,26 @@ std::wstring widen(const std::string& s) {
     return w;
 }
 
+// Find this process's main top-level window without depending on SDL headers
+// (SDL's include dir isn't on this TU's search path under MinGW). SMTC's
+// GetForWindow just needs any valid HWND we own; the visible, unowned top-level
+// window is the app window.
+HWND g_appHwnd = nullptr;
+BOOL CALLBACK enumWindowsProc(HWND hwnd, LPARAM) {
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid == GetCurrentProcessId() && IsWindowVisible(hwnd) &&
+        GetWindow(hwnd, GW_OWNER) == nullptr) {
+        g_appHwnd = hwnd;
+        return FALSE;  // found it — stop enumerating
+    }
+    return TRUE;
+}
+
 HWND currentHwnd() {
-    SDL_Window* w = SDL_GL_GetCurrentWindow();
-    if (!w) return nullptr;
-    SDL_SysWMinfo wmi;
-    SDL_VERSION(&wmi.version);
-    if (SDL_GetWindowWMInfo(w, &wmi) != SDL_TRUE) return nullptr;
-    return wmi.info.win.window;
+    g_appHwnd = nullptr;
+    EnumWindows(enumWindowsProc, 0);
+    return g_appHwnd;
 }
 
 void onButton(WM::SystemMediaTransportControlsButton btn) {

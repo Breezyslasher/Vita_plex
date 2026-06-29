@@ -792,7 +792,7 @@ int main() {
             message(STATUS "SMTC media controls enabled")
             target_sources(${PROJECT_NAME} PRIVATE src/utils/now_playing_smtc.cpp)
             target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_SMTC=1)
-            target_link_libraries(${PROJECT_NAME} runtimeobject ole32)
+            target_link_libraries(${PROJECT_NAME} runtimeobject ole32 user32)
         else()
             message(STATUS "WinRT SMTC unavailable — disabled. Probe output:\n${_smtc_out}")
         endif()
