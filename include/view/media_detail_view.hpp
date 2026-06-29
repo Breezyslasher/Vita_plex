@@ -104,14 +104,7 @@ private:
     void showSubtitlePicker();
     // Merged audio + subtitle picker (one dialog, two tabs). defaultTab:
     // 0 = Audio, 1 = Subtitles. Both rows above open this same dialog.
-    //
-    // downloadMode reuses the same panel as a pre-download chooser: rows select
-    // in place (instead of applying-and-closing) and a "Download" button in the
-    // footer commits via onConfirm. The picked streams are selected on the part,
-    // so the server's transcode bakes in that audio/subtitle. onConfirm runs only
-    // when the user presses Download (cancel/Back just dismisses).
-    void showStreamDialog(int defaultTab, bool downloadMode = false,
-                          std::function<void()> onConfirm = nullptr);
+    void showStreamDialog(int defaultTab);
 
 public:
     // Static context menus callable from any view (home, search, library grid, etc.)

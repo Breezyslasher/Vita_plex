@@ -201,8 +201,7 @@ bool DownloadsManager::queueDownload(const std::string& ratingKey, const std::st
                                       const std::string& groupKey,
                                       const std::string& groupTitle,
                                       const std::string& groupThumb,
-                                      const std::string& albumTitle,
-                                      int subtitlePref) {
+                                      const std::string& albumTitle) {
     std::lock_guard<std::mutex> lock(m_mutex);
 
     // Check if already in queue
@@ -229,7 +228,6 @@ bool DownloadsManager::queueDownload(const std::string& ratingKey, const std::st
     item.groupTitle = groupTitle;
     item.groupThumb = groupThumb;
     item.albumTitle = albumTitle;
-    item.subtitlePref = subtitlePref;
 
     // ratingKey and partPath come from the Plex server's JSON response. A
     // malicious or compromised server can return arbitrary strings, so we
@@ -984,13 +982,7 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         // adds a re-encode pass. subCodec is only advertised on the transcode
         // target when subs are wanted, so the default (no-subs) profile stays
         // exactly the one already known to work.
-        // Per-download choice from the download-options picker wins; otherwise
-        // fall back to the global "Include Subtitles" setting. Whichever subtitle
-        // stream the user picked is already selected on the part, so the server
-        // embeds that one.
-        const bool wantSubs = (item.subtitlePref == 1) ? true
-                            : (item.subtitlePref == 0) ? false
-                            : settings.downloadIncludeSubtitles;
+        const bool wantSubs = settings.downloadIncludeSubtitles;
         addUrl += wantSubs ? "&subtitles=embedded" : "&subtitles=none";
         const char* subCodec = wantSubs ? "&subtitleCodec=mov_text" : "";
         char dlProfileBuf[1700];
@@ -1248,7 +1240,6 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     std::string url;
     std::string profileExtra;
     bool urlReady = false;
-    bool directFileDownload = false;  // true when we fetch the raw source file untouched
 
     // Layered URL strategy — try each option from "most Plex-native" to
     // "last resort", taking the first that works for this item + server:
@@ -1292,7 +1283,6 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         url = buildDirectDownloadUrl(serverUrl, token, item.partPath);
         if (!url.empty()) {
             urlReady = true;
-            directFileDownload = true;
             brls::Logger::info("DownloadsManager: Direct file download for {} ({})",
                                item.title, preferDirect ? "raw, no transcode" : "fallback");
         }
@@ -1906,18 +1896,6 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
         if (!item.thumbUrl.empty() && !item.thumbPath.empty()) {
             downloadCoverArt(item);
         }
-
-        // Raw (untranscoded) video keeps its embedded subs but leaves sidecar
-        // subtitles behind on the server. When the user wants subs, pull those
-        // sidecars down next to the file so they're available offline. Transcoded
-        // downloads embed the chosen sub instead, so they skip this. Honour the
-        // per-download choice first, then the global "Include Subtitles" setting.
-        const bool wantSubs = (item.subtitlePref == 1) ? true
-                            : (item.subtitlePref == 0) ? false
-                            : Application::getInstance().getSettings().downloadIncludeSubtitles;
-        if (directFileDownload && !isAudio && wantSubs) {
-            downloadSidecarSubtitles(item);
-        }
     } else if (!m_downloading.load()) {
         item.state = DownloadState::PAUSED;
         brls::Logger::info("DownloadsManager: Paused download of {}", item.title);
@@ -2004,97 +1982,6 @@ void DownloadsManager::downloadCoverArt(DownloadItem& item) {
 #endif
         item.thumbPath.clear();
     }
-}
-
-void DownloadsManager::downloadSidecarSubtitles(DownloadItem& item) {
-    PlexClient& client = PlexClient::getInstance();
-    std::string serverUrl = client.getServerUrl();
-    std::string token = client.getAuthToken();
-    if (serverUrl.empty() || token.empty() || item.localPath.empty()) return;
-
-    std::vector<PlexStream> streams;
-    int partId = 0;
-    if (!client.fetchStreams(item.ratingKey, streams, partId)) return;
-
-    // Strip the media extension once: "/dl/Movie.mkv" -> "/dl/Movie". Sidecars
-    // hang off this stem so mpv's filename-prefix auto-load picks them up.
-    std::string base = item.localPath;
-    {
-        size_t slash = base.find_last_of("/\\");
-        size_t dot   = base.find_last_of('.');
-        if (dot != std::string::npos && (slash == std::string::npos || dot > slash))
-            base = base.substr(0, dot);
-    }
-
-    std::string baseUrl = convertToHttpForDownload(serverUrl);
-    std::vector<std::string> usedNames;  // avoid collisions on same lang + flags
-    int saved = 0;
-
-    for (const auto& s : streams) {
-        if (s.streamType != 3 || !s.external || s.key.empty()) continue;
-
-        // File extension from the codec (text subs only; default to srt).
-        std::string codec = s.codec;
-        for (auto& c : codec) if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
-        std::string ext = "srt";
-        if (codec == "ass" || codec == "ssa") ext = "ass";
-        else if (codec == "webvtt" || codec == "vtt") ext = "vtt";
-
-        // "<base>.<lang>[.sdh][.forced][.N].<ext>".
-        std::string lang = s.languageCode.empty() ? "und" : s.languageCode;
-        std::string stem = base + "." + lang;
-        if (s.hearingImpaired) stem += ".sdh";
-        if (s.forced)          stem += ".forced";
-        std::string name = stem + "." + ext;
-        for (int n = 1; ; n++) {
-            bool clash = false;
-            for (const auto& u : usedNames) if (u == name) { clash = true; break; }
-            if (!clash) break;
-            name = stem + "." + std::to_string(n) + "." + ext;
-        }
-        usedNames.push_back(name);
-
-        std::string subUrl = baseUrl + s.key + "?download=1&X-Plex-Token=" + token;
-        brls::Logger::info("DownloadsManager: Fetching sidecar subtitle {} -> {}",
-                           s.key, name);
-
-#ifdef __vita__
-        SceUID fd = sceIoOpen(name.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
-        if (fd < 0) continue;
-#else
-        std::ofstream file(name, std::ios::binary);
-        if (!file.is_open()) continue;
-#endif
-        HttpClient http;
-        bool ok = http.downloadFile(subUrl,
-            [&](const char* data, size_t size) {
-#ifdef __vita__
-                sceIoWrite(fd, data, size);
-#else
-                file.write(data, size);
-#endif
-                return true;
-            },
-            [](int64_t) {});
-#ifdef __vita__
-        sceIoClose(fd);
-#else
-        file.close();
-#endif
-        if (ok) {
-            saved++;
-        } else {
-#ifdef __vita__
-            sceIoRemove(name.c_str());
-#else
-            std::remove(name.c_str());
-#endif
-        }
-    }
-
-    if (saved > 0)
-        brls::Logger::info("DownloadsManager: Saved {} sidecar subtitle(s) for {}",
-                           saved, item.title);
 }
 
 bool DownloadsManager::reportTimeline(const DownloadItem& item, const std::string& state) {
@@ -2202,8 +2089,7 @@ void DownloadsManager::saveStateUnlocked() {
            << "\"groupTitle\":\"" << escapeJson(item.groupTitle) << "\",\n"
            << "\"groupThumb\":\"" << escapeJson(item.groupThumb) << "\",\n"
            << "\"albumTitle\":\"" << escapeJson(item.albumTitle) << "\",\n"
-           << "\"groupTotalItems\":" << item.groupTotalItems << ",\n"
-           << "\"subtitlePref\":" << item.subtitlePref << "\n"
+           << "\"groupTotalItems\":" << item.groupTotalItems << "\n"
            << "}";
     }
 
@@ -2309,10 +2195,6 @@ void DownloadsManager::loadState() {
         item.groupThumb = extractJsonString(objStr, "groupThumb");
         item.albumTitle = extractJsonString(objStr, "albumTitle");
         item.groupTotalItems = static_cast<int>(extractJsonInt(objStr, "groupTotalItems"));
-        // Legacy state files predate this field — keep the -1 default (follow
-        // the global setting) rather than letting extractJsonInt's 0 mean "off".
-        if (objStr.find("\"subtitlePref\"") != std::string::npos)
-            item.subtitlePref = static_cast<int>(extractJsonInt(objStr, "subtitlePref"));
 
         if (!item.ratingKey.empty()) {
             m_downloads.push_back(item);

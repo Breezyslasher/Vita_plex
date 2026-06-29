@@ -275,8 +275,6 @@ struct PlexStream {
     bool forced = false;          // Forced subtitle (signs/songs)
     bool hearingImpaired = false; // SDH / hearing-impaired subtitle
     bool external = false;        // Sidecar subtitle (has a key) vs embedded
-    std::string key;              // Stream key for external subs (e.g. /library/streams/NNN);
-                                  // used to fetch the sidecar file for offline downloads
 };
 
 /**
