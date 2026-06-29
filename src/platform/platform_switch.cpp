@@ -93,6 +93,7 @@ const VideoConstraints& getVideoConstraints() {
         /* defaultBitrate   */ 4000,
         /* defaultResolution*/ "1280x720",
         /* defaultVideoQualityIndex */ 2,  // QUALITY_720P
+        /* supportsHevc     */ true,  // Tegra X1 decodes HEVC in hardware
     };
     return v;
 }

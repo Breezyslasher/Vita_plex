@@ -144,6 +144,7 @@ const VideoConstraints& getVideoConstraints() {
         /* defaultBitrate   */ 10000,
         /* defaultResolution*/ "1920x1080",
         /* defaultVideoQualityIndex */ 1,  // QUALITY_1080P
+        /* supportsHevc     */ true,  // desktop players decode HEVC natively
     };
     return v;
 }

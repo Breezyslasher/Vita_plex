@@ -203,6 +203,7 @@ const VideoConstraints& getVideoConstraints() {
         /* defaultBitrate   */ 20000,
         /* defaultResolution*/ "1920x1080",
         /* defaultVideoQualityIndex */ 1,  // QUALITY_1080P
+        /* supportsHevc     */ true,  // Apple TV decodes HEVC in hardware
     };
 #else
     static const VideoConstraints v = {
@@ -214,6 +215,7 @@ const VideoConstraints& getVideoConstraints() {
         /* defaultBitrate   */ 8000,
         /* defaultResolution*/ "1920x1080",
         /* defaultVideoQualityIndex */ 2,  // QUALITY_720P
+        /* supportsHevc     */ true,  // iOS devices decode HEVC in hardware
     };
 #endif
     return v;
