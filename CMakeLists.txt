@@ -740,11 +740,18 @@ elseif(PLATFORM_DESKTOP)
 #include <wrl/wrappers/corewrappers.h>
 #include <windows.media.h>
 #include <systemmediatransportcontrolsinterop.h>
-using namespace Microsoft::WRL;
+using Microsoft::WRL::ComPtr;
 using namespace ABI::Windows::Media;
-struct H : RuntimeClass<RuntimeClassFlags<ClassicCom>,
-    ABI::Windows::Foundation::ITypedEventHandler<
-        SystemMediaTransportControls*, SystemMediaTransportControlsButtonPressedEventArgs*>> {
+typedef ABI::Windows::Foundation::ITypedEventHandler<
+    SystemMediaTransportControls*, SystemMediaTransportControlsButtonPressedEventArgs*> BD;
+struct H : BD {
+    LONG r = 1;
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** p) override {
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(BD)) { *p = static_cast<BD*>(this); return S_OK; }
+        *p = 0; return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return (ULONG)++r; }
+    ULONG STDMETHODCALLTYPE Release() override { return (ULONG)--r; }
     HRESULT STDMETHODCALLTYPE Invoke(ISystemMediaTransportControls*,
         ISystemMediaTransportControlsButtonPressedEventArgs* a) override {
         SystemMediaTransportControlsButton b; a->get_Button(&b); return S_OK;
@@ -769,8 +776,9 @@ int main() {
     mp->put_Title(Wrappers::HStringReference(L"x").Get());
     up->Update();
     EventRegistrationToken tok;
-    auto cb = Make<H>();
-    smtc->add_ButtonPressed(cb.Get(), &tok);
+    H* cb = new H();
+    smtc->add_ButtonPressed(cb, &tok);
+    cb->Release();
     return 0;
 }
 ]==])

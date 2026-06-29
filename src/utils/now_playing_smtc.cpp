@@ -44,7 +44,7 @@ void smtcClear();
 
 namespace {
 
-using namespace Microsoft::WRL;  // ComPtr, RuntimeClass, RuntimeClassFlags, Make
+using Microsoft::WRL::ComPtr;
 using Microsoft::WRL::Wrappers::HStringReference;
 namespace WM = ABI::Windows::Media;
 namespace WF = ABI::Windows::Foundation;
@@ -87,13 +87,32 @@ void onButton(WM::SystemMediaTransportControlsButton btn) {
     brls::sync([t]() { dispatchTransport(t); });
 }
 
-// WinRT delegate for the ButtonPressed event. Hand-rolled via WRL RuntimeClass
-// rather than WRL Callback<>, because MinGW ships wrl/implements.h (RuntimeClass)
-// but not wrl/event.h (where Callback lives).
-class ButtonHandler : public RuntimeClass<RuntimeClassFlags<ClassicCom>,
-    WF::ITypedEventHandler<WM::SystemMediaTransportControls*,
-                           WM::SystemMediaTransportControlsButtonPressedEventArgs*>> {
+// WinRT delegate for the ButtonPressed event, hand-rolled as a plain COM object.
+// MinGW's WRL ships neither wrl/event.h (Callback) nor a usable RuntimeClass/Make,
+// so we implement IUnknown + ITypedEventHandler::Invoke directly. The delegate's
+// vtable is just IUnknown + Invoke (it derives from IUnknown, not IInspectable).
+typedef WF::ITypedEventHandler<WM::SystemMediaTransportControls*,
+                               WM::SystemMediaTransportControlsButtonPressedEventArgs*> ButtonDelegate;
+
+class ButtonHandler : public ButtonDelegate {
+    LONG m_ref = 1;
 public:
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
+        if (!ppv) return E_POINTER;
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(ButtonDelegate)) {
+            *ppv = static_cast<ButtonDelegate*>(this);
+            AddRef();
+            return S_OK;
+        }
+        *ppv = nullptr;
+        return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return (ULONG)InterlockedIncrement(&m_ref); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG r = (ULONG)InterlockedDecrement(&m_ref);
+        if (r == 0) delete this;
+        return r;
+    }
     HRESULT STDMETHODCALLTYPE Invoke(
         WM::ISystemMediaTransportControls*,
         WM::ISystemMediaTransportControlsButtonPressedEventArgs* args) override {
@@ -137,8 +156,9 @@ bool ensureInit() {
     }
 
     EventRegistrationToken token = {};
-    auto handler = Make<ButtonHandler>();
-    if (handler) g_smtc->add_ButtonPressed(handler.Get(), &token);
+    ButtonHandler* handler = new ButtonHandler();   // ref = 1
+    g_smtc->add_ButtonPressed(handler, &token);     // the session takes its own ref
+    handler->Release();                             // drop ours; the session keeps it
 
     g_init = true;
     brls::Logger::info("SMTC: Windows media controls active");
