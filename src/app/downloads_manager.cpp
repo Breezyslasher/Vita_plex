@@ -943,11 +943,14 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
                 "&container=ogg&audioCodec=vorbis)"
             "+add-direct-play-profile(type=musicProfile"
                 "&container=ogg&audioCodec=opus)"
-            // replace=true for the same reason as the video target below: the
-            // built-in Generic profile already has a music/streaming/http
-            // target, so without it our augmentation is ignored / fails.
+            // replace=true (override the Generic profile's built-in target) and
+            // both streaming + static contexts, matching the video targets so a
+            // download decision finds a usable target whichever context it uses.
             "+add-transcode-target(type=musicProfile"
                 "&context=streaming&protocol=http"
+                "&container=mp3&audioCodec=mp3&replace=true)"
+            "+add-transcode-target(type=musicProfile"
+                "&context=static&protocol=http"
                 "&container=mp3&audioCodec=mp3&replace=true)";
     } else {
         const auto& vc = platform::getVideoConstraints();
@@ -966,10 +969,13 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         addUrl += "&subtitles=none";
         char dlProfileBuf[1536];
         snprintf(dlProfileBuf, sizeof(dlProfileBuf),
-            // Direct-play profiles tell the server "you can ship this
-            // file untouched". Without these, the server defaults to
-            // transcoding even with directPlay=1 because it doesn't
-            // know what containers/codecs the client supports natively.
+            // Direct-play profiles say "ship this file untouched" — keep them
+            // for H.264 (mp4/mkv) so an already-compatible source downloads
+            // as-is. We deliberately do NOT list HEVC: with an HEVC direct-play
+            // profile the server tries to KEEP HEVC for the download (remux),
+            // which it can't resolve for http + multichannel audio (the "Cannot
+            // make a decision" error) and which wouldn't play on the Vita/Switch
+            // anyway. Dropping it forces HEVC down the H.264 transcode path.
             "add-direct-play-profile(type=videoProfile"
                 "&container=mp4&videoCodec=h264&audioCodec=aac)"
             "+add-direct-play-profile(type=videoProfile"
@@ -982,22 +988,18 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
                 "&container=mkv&videoCodec=h264&audioCodec=ac3)"
             "+add-direct-play-profile(type=videoProfile"
                 "&container=mkv&videoCodec=h264&audioCodec=eac3)"
-            "+add-direct-play-profile(type=videoProfile"
-                "&container=mkv&videoCodec=hevc&audioCodec=aac)"
-            "+add-direct-play-profile(type=videoProfile"
-                "&container=mkv&videoCodec=hevc&audioCodec=ac3)"
-            // Transcode fallback for a source that matches no direct-play
-            // profile (e.g. an HEVC source that must become H.264). replace=true
-            // is the crucial bit: per the API's profile-augmentation rules,
-            // add-transcode-target is IGNORED (and the whole augmentation can
-            // fail) when a target with the same type+context+protocol already
-            // exists — which the built-in "Generic" profile has for video /
-            // streaming / http. Without replace the server is left with "no
-            // transcode profile", falls back to direct play, and errors out on
-            // http/mp4/hevc — exactly what the download queue did before. mp4
-            // matches the .mp4 we store the file as.
+            // Transcode fallback (H.264/AAC, mp4 to match our stored file).
+            // replace=true so it overrides the Generic profile's built-in
+            // target instead of being ignored. We register BOTH a streaming
+            // AND a static target: a download decision can resolve in either
+            // context, and registering only "streaming" left the server
+            // reporting "no transcode profile" for the download decision.
             "+add-transcode-target(type=videoProfile"
                 "&context=streaming&protocol=http"
+                "&container=mp4&videoCodec=h264"
+                "&audioCodec=aac&replace=true)"
+            "+add-transcode-target(type=videoProfile"
+                "&context=static&protocol=http"
                 "&container=mp4&videoCodec=h264"
                 "&audioCodec=aac&replace=true)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
