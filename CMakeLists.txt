@@ -793,6 +793,52 @@ int main() {
             target_sources(${PROJECT_NAME} PRIVATE src/utils/now_playing_smtc.cpp)
             target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_SMTC=1)
             target_link_libraries(${PROJECT_NAME} runtimeobject ole32 user32)
+
+            # Optional cover-art + album-title extension. Needs the WinRT URI +
+            # RandomAccessStreamReference + IMusicDisplayProperties2 APIs, which
+            # vary on MinGW — probe separately so a gap here only drops the
+            # artwork, never the base SMTC controls above.
+            set(_smtc_thumb_probe "${CMAKE_BINARY_DIR}/smtc_thumb_probe.cpp")
+            file(WRITE "${_smtc_thumb_probe}" [==[
+#include <windows.h>
+#include <roapi.h>
+#include <wrl.h>
+#include <wrl/wrappers/corewrappers.h>
+#include <windows.foundation.h>
+#include <windows.storage.streams.h>
+#include <windows.media.h>
+using Microsoft::WRL::ComPtr;
+using Microsoft::WRL::Wrappers::HStringReference;
+using namespace ABI::Windows::Foundation;
+using namespace ABI::Windows::Storage::Streams;
+using namespace ABI::Windows::Media;
+int main() {
+    ComPtr<IUriRuntimeClassFactory> uf;
+    RoGetActivationFactory(HStringReference(RuntimeClass_Windows_Foundation_Uri).Get(), IID_PPV_ARGS(&uf));
+    ComPtr<IUriRuntimeClass> uri;
+    uf->CreateUri(HStringReference(L"http://x").Get(), &uri);
+    ComPtr<IRandomAccessStreamReferenceStatics> rs;
+    RoGetActivationFactory(HStringReference(RuntimeClass_Windows_Storage_Streams_RandomAccessStreamReference).Get(), IID_PPV_ARGS(&rs));
+    ComPtr<IRandomAccessStreamReference> ref;
+    rs->CreateFromUri(uri.Get(), &ref);
+    ComPtr<ISystemMediaTransportControlsDisplayUpdater> up;
+    up->put_Thumbnail(ref.Get());
+    ComPtr<IMusicDisplayProperties2> m2;
+    m2->put_AlbumTitle(HStringReference(L"x").Get());
+    return 0;
+}
+]==])
+            try_compile(VITAPLEX_HAVE_SMTC_THUMB "${CMAKE_BINARY_DIR}/smtc_thumb_probe_bin"
+                SOURCES "${_smtc_thumb_probe}"
+                LINK_LIBRARIES runtimeobject ole32
+                CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON
+                OUTPUT_VARIABLE _smtc_thumb_out)
+            if(VITAPLEX_HAVE_SMTC_THUMB)
+                message(STATUS "SMTC cover art + album title enabled")
+                target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_SMTC_THUMB=1)
+            else()
+                message(STATUS "SMTC cover art unavailable — title/artist only. Probe output:\n${_smtc_thumb_out}")
+            endif()
         else()
             message(STATUS "WinRT SMTC unavailable — disabled. Probe output:\n${_smtc_out}")
         endif()

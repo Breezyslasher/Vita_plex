@@ -28,6 +28,10 @@
 #include <wrl/wrappers/corewrappers.h>
 #include <windows.media.h>
 #include <systemmediatransportcontrolsinterop.h>
+#if defined(VITAPLEX_SMTC_THUMB)
+#include <windows.foundation.h>          // Windows.Foundation.Uri
+#include <windows.storage.streams.h>     // RandomAccessStreamReference
+#endif
 
 #include <string>
 
@@ -175,6 +179,44 @@ bool ensureInit() {
     return true;
 }
 
+#if defined(VITAPLEX_SMTC_THUMB)
+namespace WSS = ABI::Windows::Storage::Streams;
+
+// Point the overlay's artwork at the cover. Windows fetches it itself from the
+// URI, so http(s) Plex thumbnails work directly; a local downloaded cover is
+// handed over as a file:/// URI. Best-effort — any failure just leaves no art.
+void setThumbnail(const std::string& artUrl) {
+    if (artUrl.empty() || !g_updater) return;
+
+    std::string u;
+    if (artUrl.rfind("http://", 0) == 0 || artUrl.rfind("https://", 0) == 0 ||
+        artUrl.rfind("file:", 0) == 0) {
+        u = artUrl;
+    } else {
+        std::string p = artUrl;
+        for (char& c : p) if (c == '\\') c = '/';
+        u = "file:///" + p;
+    }
+    std::wstring wu = widen(u);
+
+    ComPtr<WF::IUriRuntimeClassFactory> uriFactory;
+    if (FAILED(RoGetActivationFactory(
+            HStringReference(RuntimeClass_Windows_Foundation_Uri).Get(),
+            IID_PPV_ARGS(&uriFactory))) || !uriFactory) return;
+    ComPtr<WF::IUriRuntimeClass> uri;
+    if (FAILED(uriFactory->CreateUri(HStringReference(wu.c_str()).Get(), &uri)) || !uri) return;
+
+    ComPtr<WSS::IRandomAccessStreamReferenceStatics> rasrStatics;
+    if (FAILED(RoGetActivationFactory(
+            HStringReference(RuntimeClass_Windows_Storage_Streams_RandomAccessStreamReference).Get(),
+            IID_PPV_ARGS(&rasrStatics))) || !rasrStatics) return;
+    ComPtr<WSS::IRandomAccessStreamReference> streamRef;
+    if (FAILED(rasrStatics->CreateFromUri(uri.Get(), &streamRef)) || !streamRef) return;
+
+    g_updater->put_Thumbnail(streamRef.Get());
+}
+#endif
+
 } // namespace
 
 namespace detail {
@@ -195,10 +237,18 @@ void smtcUpdate(const Info& info) {
         std::wstring t = widen(info.title), a = widen(info.artist);
         g_music->put_Title(HStringReference(t.c_str()).Get());
         g_music->put_Artist(HStringReference(a.c_str()).Get());
-        // AlbumTitle lives on IMusicDisplayProperties2, which mingw-w64's
-        // IMusicDisplayProperties doesn't expose; title + artist are what the
-        // SMTC overlay shows anyway.
+#if defined(VITAPLEX_SMTC_THUMB)
+        // AlbumTitle lives on the IMusicDisplayProperties2 revision.
+        ComPtr<WM::IMusicDisplayProperties2> music2;
+        if (SUCCEEDED(g_music.As(&music2)) && music2) {
+            std::wstring al = widen(info.album);
+            music2->put_AlbumTitle(HStringReference(al.c_str()).Get());
+        }
+#endif
     }
+#if defined(VITAPLEX_SMTC_THUMB)
+    setThumbnail(info.artUrl);
+#endif
     if (g_updater) g_updater->Update();
 }
 
