@@ -492,19 +492,37 @@ bool HttpClient::del(const std::string& url, std::string& response) {
 struct DownloadCallbackData {
     HttpClient::WriteCallback writeCallback;
     HttpClient::SizeCallback sizeCallback;
+    HttpClient::DownloadStartCallback startCallback;
     bool sizeReported;
     bool cancelled;
+    int  lastStatus = 0;        // most recent HTTP status line seen (final after redirects)
+    int64_t fullSize = -1;      // full file size: Content-Range total, else Content-Length
+    bool startFired = false;    // startCallback invoked once
 };
+
+// Fire the one-shot startCallback with the final status + full size. Called both
+// from the header callback (covers empty-body responses like 416) and as a guard
+// from the write callback (covers servers that omit a clean end-of-headers line).
+static void fireDownloadStart(DownloadCallbackData* data) {
+    if (data && !data->startFired) {
+        data->startFired = true;
+        if (data->startCallback) data->startCallback(data->lastStatus, data->fullSize);
+    }
+}
 
 static size_t downloadWriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     DownloadCallbackData* data = static_cast<DownloadCallbackData*>(userp);
     size_t totalSize = size * nmemb;
 
-    if (data && data->writeCallback) {
-        // Call user's write callback
-        if (!data->writeCallback(static_cast<const char*>(contents), totalSize)) {
-            data->cancelled = true;
-            return 0; // Return 0 to signal curl to abort
+    if (data) {
+        // First body byte: headers are all in, so the status + size are final.
+        fireDownloadStart(data);
+        if (data->writeCallback) {
+            // Call user's write callback
+            if (!data->writeCallback(static_cast<const char*>(contents), totalSize)) {
+                data->cancelled = true;
+                return 0; // Return 0 to signal curl to abort
+            }
         }
     }
 
@@ -514,27 +532,56 @@ static size_t downloadWriteCallback(void* contents, size_t size, size_t nmemb, v
 static size_t downloadHeaderCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     DownloadCallbackData* data = static_cast<DownloadCallbackData*>(userp);
     size_t totalSize = size * nmemb;
+    if (!data) return totalSize;
 
-    if (data && data->sizeCallback && !data->sizeReported) {
-        std::string header(static_cast<char*>(contents), totalSize);
+    std::string header(static_cast<char*>(contents), totalSize);
 
-        // Look for Content-Length header
-        if (header.find("Content-Length:") == 0 || header.find("content-length:") == 0) {
-            size_t colonPos = header.find(':');
-            if (colonPos != std::string::npos) {
-                std::string value = header.substr(colonPos + 1);
-                // Trim whitespace
-                while (!value.empty() && (value[0] == ' ' || value[0] == '\t')) {
-                    value = value.substr(1);
-                }
-                // Use strtoll instead of stoll to avoid exceptions (fatal on Vita)
-                char* endPtr = nullptr;
-                int64_t contentLength = strtoll(value.c_str(), &endPtr, 10);
-                if (endPtr != value.c_str() && contentLength > 0) {
+    // Status line ("HTTP/1.1 206 Partial Content"). With redirects curl feeds us
+    // each response's headers; keep the latest — the body only follows the final.
+    if (header.size() >= 5 && (header.compare(0, 5, "HTTP/") == 0)) {
+        size_t sp = header.find(' ');
+        if (sp != std::string::npos) {
+            data->lastStatus = (int)strtol(header.c_str() + sp + 1, nullptr, 10);
+        }
+        return totalSize;
+    }
+
+    // Content-Range: bytes <start>-<end>/<total> — the total is the FULL size.
+    if (header.find("Content-Range:") == 0 || header.find("content-range:") == 0) {
+        size_t slash = header.rfind('/');
+        if (slash != std::string::npos) {
+            int64_t total = strtoll(header.c_str() + slash + 1, nullptr, 10);
+            if (total > 0) data->fullSize = total;
+        }
+        return totalSize;
+    }
+
+    if (header.find("Content-Length:") == 0 || header.find("content-length:") == 0) {
+        size_t colonPos = header.find(':');
+        if (colonPos != std::string::npos) {
+            std::string value = header.substr(colonPos + 1);
+            while (!value.empty() && (value[0] == ' ' || value[0] == '\t')) value = value.substr(1);
+            char* endPtr = nullptr;
+            int64_t contentLength = strtoll(value.c_str(), &endPtr, 10);
+            if (endPtr != value.c_str() && contentLength > 0) {
+                // For a 200, Content-Length IS the full size; for a 206 it's the
+                // remaining bytes, so only use it when Content-Range didn't set it.
+                if (data->lastStatus != 206 && data->fullSize < 0) data->fullSize = contentLength;
+                if (data->sizeCallback && !data->sizeReported) {
                     data->sizeCallback(contentLength);
                     data->sizeReported = true;
                 }
             }
+        }
+        return totalSize;
+    }
+
+    // Blank line = end of a header block. If this was the final response (not a
+    // 3xx redirect), the status + size are settled even if no body follows
+    // (e.g. 416 Range Not Satisfiable) — fire startCallback now.
+    if (header == "\r\n" || header == "\n") {
+        if (data->lastStatus < 300 || data->lastStatus >= 400) {
+            fireDownloadStart(data);
         }
     }
 
@@ -542,7 +589,9 @@ static size_t downloadHeaderCallback(void* contents, size_t size, size_t nmemb, 
 }
 
 bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallback, SizeCallback sizeCallback,
-                              const std::map<std::string, std::string>& headers) {
+                              const std::map<std::string, std::string>& headers,
+                              int64_t resumeOffset,
+                              DownloadStartCallback startCallback) {
     if (!m_curl) {
         brls::Logger::error("CURL not initialized for download");
         return false;
@@ -583,10 +632,18 @@ bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallbac
     // Prefer HTTP/1.1 for better compatibility with Vita's network stack
     curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
 
+    // Resume from a byte offset (HTTP Range). The server replies 206 (honoured)
+    // or 200 (ignored, full file) — the caller's startCallback inspects the
+    // status to open its file append-vs-truncate before any body is written.
+    if (resumeOffset > 0) {
+        curl_easy_setopt(curl, CURLOPT_RESUME_FROM_LARGE, (curl_off_t)resumeOffset);
+    }
+
     // Setup callback data
     DownloadCallbackData callbackData;
     callbackData.writeCallback = writeCallback;
     callbackData.sizeCallback = sizeCallback;
+    callbackData.startCallback = startCallback;
     callbackData.sizeReported = false;
     callbackData.cancelled = false;
 
