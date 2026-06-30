@@ -160,27 +160,28 @@ void Application::createWindow(std::string windowTitle)
     Application::getWindowCreationDoneEvent()->fire();
 }
 
-#if defined(ANDROID) || defined(IOS)
+#if defined(ANDROID) || defined(IOS) || defined(__vita__)
 namespace
 {
-    // Mobile only: the OS tears down our GL/EGL drawing surface whenever the app
-    // is backgrounded. We keep the main loop running there on purpose
-    // (SDL_ANDROID_BLOCK_ON_PAUSE=0) so background music transport + the
-    // auto-advance / timeline timers keep ticking, but we must not draw without a
-    // live surface — nanovg would upload the next track's glyphs and cover image
-    // against a dead context, the uploads silently fail, and the font atlas +
-    // image textures come back corrupted (garbled title/artist, black cover) on
-    // return. These gate the render so we only draw with a valid surface.
+    // Backgrounding gate. On mobile the OS tears down our GL/EGL drawing surface
+    // whenever the app is backgrounded; on Vita the user can exit to LiveArea /
+    // turn off the screen while we hold the BGM port (background music). In both
+    // cases we keep the main loop running on purpose so background music
+    // transport + the auto-advance / timeline timers keep ticking, but we must
+    // NOT draw while backgrounded — nanovg/GXM would render against a surface the
+    // system has taken (silent texture-upload corruption -> garbled title/black
+    // cover on Android; a torn-down display on Vita). These gate the render so we
+    // only draw while in the foreground with a valid surface.
     bool g_appForeground       = true;  // false between background/foreground
     int  g_resumeWarmupFrames  = 0;     // skip a few draws after resume to let
-                                        // SDL recreate the surface first
+                                        // the surface come back first
 }
 #endif
 
 bool Application::isWindowForeground()
 {
-#if defined(ANDROID) || defined(IOS)
-    // Report foreground only once the post-resume warm-up is done, i.e. the GL
+#if defined(ANDROID) || defined(IOS) || defined(__vita__)
+    // Report foreground only once the post-resume warm-up is done, i.e. the
     // surface is back and we've actually drawn. Callers use the false->true edge
     // to retry GL work (cover re-upload), so it must not fire before we can draw.
     return g_appForeground && g_resumeWarmupFrames == 0;
@@ -226,11 +227,13 @@ bool Application::internalMainLoop()
 #endif
     Ticking::updateTickings();
 
-    // Render. On mobile, skip drawing while backgrounded (no GL surface) and for
-    // a few warm-up frames after returning, so we never upload textures against a
-    // dead/just-recreated context. The logic above/below (timers, input, sync
-    // tasks) still runs every iteration, so background music keeps working.
-#if defined(ANDROID) || defined(IOS)
+    // Render. On mobile/Vita, skip drawing while backgrounded (the OS has taken
+    // our drawing surface / display) and for a few warm-up frames after
+    // returning, so we never render against a dead/just-recreated context. The
+    // logic above/below (timers, input, sync tasks) still runs every iteration,
+    // so background music keeps working. On Vita the focus edge is fired by the
+    // power callback (PS button / suspend / resume) in psv_platform.cpp.
+#if defined(ANDROID) || defined(IOS) || defined(__vita__)
     {
         static bool s_focusHooked = false;
         if (!s_focusHooked)
@@ -239,7 +242,7 @@ bool Application::internalMainLoop()
             Application::getWindowFocusChangedEvent()->subscribe([](bool focused) {
                 g_appForeground = focused;
                 if (focused)
-                    g_resumeWarmupFrames = 4;  // let SDL rebuild the surface
+                    g_resumeWarmupFrames = 4;  // let the surface/display come back
             });
         }
 
