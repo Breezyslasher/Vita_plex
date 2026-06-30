@@ -16,6 +16,7 @@ import android.media.session.PlaybackState;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
@@ -52,6 +53,12 @@ public final class MediaNotification {
 
     private static final String ACTION = "org.VitaPlex.app.MEDIA_ACTION";
     private static final String EXTRA_CODE = "code";
+
+    // PlaybackState custom-action ids. Android 13+ builds the media controls from
+    // the MediaSession's PlaybackState (it ignores notification addAction buttons),
+    // so shuffle/repeat must also be exposed as custom actions to appear there.
+    private static final String CUSTOM_SHUFFLE = "org.VitaPlex.app.CUSTOM_SHUFFLE";
+    private static final String CUSTOM_REPEAT = "org.VitaPlex.app.CUSTOM_REPEAT";
 
     private static native void nativeMediaAction(int code);
     private static native void nativeMediaSeek(long positionMs);
@@ -157,12 +164,27 @@ public final class MediaNotification {
             | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_STOP;
         if (sHasNext) actions |= PlaybackState.ACTION_SKIP_TO_NEXT;
         if (sHasPrev) actions |= PlaybackState.ACTION_SKIP_TO_PREVIOUS;
-        PlaybackState state = new PlaybackState.Builder()
+        PlaybackState.Builder psb = new PlaybackState.Builder()
             .setActions(actions)
             .setState(sPlaying ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
-                      sPositionMs, 1.0f, SystemClock.elapsedRealtime())
-            .build();
-        sSession.setPlaybackState(state);
+                      sPositionMs, 1.0f, SystemClock.elapsedRealtime());
+        // Shuffle/repeat as PlaybackState custom actions so they appear in the
+        // Android 13+ system media controls (which ignore notification actions).
+        // onCustomAction() routes them back; pre-13 uses the notification actions.
+        if (sShowModes) {
+            int shufIcon = drawableId(ctx, "ic_shuffle");
+            if (shufIcon != 0) {
+                psb.addCustomAction(new PlaybackState.CustomAction.Builder(
+                    CUSTOM_SHUFFLE, sShuffle ? "Shuffle on" : "Shuffle off", shufIcon).build());
+            }
+            int repIcon = drawableId(ctx, sRepeat == 2 ? "ic_repeat_one" : "ic_repeat");
+            if (repIcon != 0) {
+                String rt = sRepeat == 2 ? "Repeat one" : (sRepeat == 1 ? "Repeat all" : "Repeat off");
+                psb.addCustomAction(new PlaybackState.CustomAction.Builder(
+                    CUSTOM_REPEAT, rt, repIcon).build());
+            }
+        }
+        sSession.setPlaybackState(psb.build());
         sSession.setActive(true);
 
         updateLocks(ctx, sPlaying);
@@ -226,9 +248,12 @@ public final class MediaNotification {
             @Override public void onSeekTo(long pos) {
                 try { nativeMediaSeek(pos); } catch (Throwable t) { Log.w(TAG, "seek", t); }
             }
-            // Note: the framework MediaSession.Callback (non-AndroidX) has no
-            // onSetRepeatMode/onSetShuffleMode — repeat/shuffle ride the custom
-            // notification actions (CODE_REPEAT/CODE_SHUFFLE) instead.
+            // Android 13+ media controls fire shuffle/repeat as custom actions
+            // (the framework Callback has no onSetRepeatMode/onSetShuffleMode).
+            @Override public void onCustomAction(String action, Bundle extras) {
+                if (CUSTOM_SHUFFLE.equals(action))      send(CODE_SHUFFLE);
+                else if (CUSTOM_REPEAT.equals(action))  send(CODE_REPEAT);
+            }
         });
     }
 
