@@ -223,6 +223,10 @@ const VideoConstraints& getVideoConstraints() {
     return v;
 }
 
+// sceBgAppUtilStartBgApp lives in <psp2/bgapputil.h>; declared here to avoid
+// touching the include block. Starts the bundled background helper (eboot2.bin).
+extern "C" int sceBgAppUtilStartBgApp(int mode);
+
 bool init() {
     if (!initVitaSystem()) {
         return false;
@@ -232,6 +236,16 @@ bool init() {
     }
     sceIoMkdir("ux0:data/VitaPlex", 0777);
     openLogFile();
+
+    // Phase-0 background-music proof: launch the bundled background helper so we
+    // can test whether a Vita background app keeps running after VitaPlex is sent
+    // to LiveArea (watch ux0:data/VitaPlex/bgapp.log for continuing heartbeats).
+    // Harmless if the helper isn't bundled (returns an error we just log). mode 0
+    // matches GrapheneCt's working BG-App/BGFTP samples (the header says 1).
+    sceSysmoduleLoadModule(SCE_SYSMODULE_BG_APP_UTIL);
+    int bgret = sceBgAppUtilStartBgApp(0);
+    brls::Logger::info("VitaPlex: sceBgAppUtilStartBgApp(0) -> {:#x}", (unsigned) bgret);
+
     return true;
 }
 

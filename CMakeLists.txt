@@ -110,6 +110,12 @@ if(PLATFORM_PSV)
     set(VITA_TITLEID  "VPLEX0001")
     set(VITA_VERSION  "01.00")
     set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12")
+    # Background-music helper: when CI supplies the prebuilt helper self
+    # (-DVITA_BGAPP_EBOOT=...), flag the main app as having a paired background
+    # application so the OS permits launching it via sceBgAppUtilStartBgApp().
+    if(VITA_BGAPP_EBOOT)
+        set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -s PUBTOOLINFO=has_bg=1")
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------
@@ -672,6 +678,7 @@ if(PLATFORM_PSV)
         SceRtc_stub
         SceShellSvc_stub
         SceAppMgr_stub
+        SceBgAppUtil_stub
         SceTouch_stub
         SceAudiodec_stub
         SceVideodec_stub
@@ -930,11 +937,34 @@ endif()
 # Platform packaging / post-build
 # ---------------------------------------------------------------------------
 if(PLATFORM_PSV)
+    # Background-music helper bundling: when CI provides the prebuilt eboot2.bin
+    # (-DVITA_BGAPP_EBOOT=...), generate its CATEGORY=gdd param2.sfo and add both
+    # to the VPK as eboot2.bin + sce_sys/param2.sfo. Empty otherwise, so local
+    # builds without the helper are unaffected.
+    set(VITA_BGAPP_VPK_FILES "")
+    if(VITA_BGAPP_EBOOT)
+        add_custom_command(
+            OUTPUT ${CMAKE_BINARY_DIR}/bgapp_param2.sfo
+            COMMAND vita-mksfoex -s APP_VER=01.00 -s TITLE_ID=VPLEX0002
+                    -d ATTRIBUTE=17305600 -s CATEGORY=gdd
+                    "VitaPlex BGM" ${CMAKE_BINARY_DIR}/bgapp_param2.sfo
+            COMMENT "Generating background-helper param2.sfo" VERBATIM)
+        add_custom_target(vitaplex_bgapp_sfo ALL DEPENDS ${CMAKE_BINARY_DIR}/bgapp_param2.sfo)
+        # Force the sfo to exist before the VPK is packed (the main app, hence
+        # its self and vpk, depend on it).
+        add_dependencies(${PROJECT_NAME} vitaplex_bgapp_sfo)
+        list(APPEND VITA_BGAPP_VPK_FILES
+            FILE ${VITA_BGAPP_EBOOT} eboot2.bin
+            FILE ${CMAKE_BINARY_DIR}/bgapp_param2.sfo sce_sys/param2.sfo)
+        message(STATUS "VitaPlex: bundling background helper from ${VITA_BGAPP_EBOOT}")
+    endif()
+
     vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME} UNSAFE NOASLR)
 
     vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
         VERSION ${VITA_VERSION}
         NAME    ${VITA_APP_NAME}
+        ${VITA_BGAPP_VPK_FILES}
 
         FILE app/platform/psv/sce_sys/icon0.png                      sce_sys/icon0.png
         FILE app/platform/psv/sce_sys/pic0.png                       sce_sys/pic0.png

@@ -306,7 +306,12 @@ jobs:
 
       - name: Build
         run: |
+          # Background-music helper first (separate vitasdk build) -> eboot2.bin
+          cmake -S app/platform/psv/bgapp -B bgapp-build -G Ninja
+          cmake --build bgapp-build
+          # Main app, bundling the helper into the VPK
           cmake -B build -G Ninja -DPLATFORM_PSV=ON \
+          -DVITA_BGAPP_EBOOT="$PWD/bgapp-build/eboot2.bin" \
           -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
           -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
