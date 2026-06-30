@@ -24,7 +24,6 @@
 #include "app/downloads_manager.hpp"
 #include "app/hint_icons.hpp"
 #include "utils/http_client.hpp"
-#include "utils/now_playing.hpp"
 #include "platform/platform.hpp"
 
 static void registerCustomViews() {
@@ -40,12 +39,6 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
     (void)argv;
 
     brls::Logger::setLogLevel(brls::LogLevel::LOG_DEBUG);
-
-    // Establish the OS app identity before any window is created — on Windows
-    // this is what makes the media overlay show "VitaPlex" instead of "unknown
-    // app" (the window inherits the AppUserModelID at creation time). No-op
-    // elsewhere.
-    vitaplex::nowplaying::initAppIdentity();
 
     // Bootstrap the current platform: load native modules, init networking,
     // open the platform-specific log file (if any). Implementation lives in

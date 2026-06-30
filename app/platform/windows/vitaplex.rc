@@ -1,0 +1,40 @@
+/*
+ * VitaPlex - Win32 version resource.
+ *
+ * Gives the unpackaged .exe a real identity (FileDescription / ProductName).
+ * Windows reads this for the Task Manager / file-properties name and, for a
+ * portable app with no installed registration, as the "source app" name shown
+ * in the System Media Transport Controls overlay — so it reads "VitaPlex"
+ * instead of "Unknown app". Compiled by windres (MinGW) via CMake's RC language.
+ */
+
+#include <windows.h>
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION    1,2,4,0
+ PRODUCTVERSION 1,2,4,0
+ FILEFLAGSMASK  0x3fL
+ FILEFLAGS      0x0L
+ FILEOS         0x40004L          /* VOS_NT_WINDOWS32 */
+ FILETYPE       0x1L              /* VFT_APP */
+ FILESUBTYPE    0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"          /* U.S. English, Unicode */
+        BEGIN
+            VALUE "CompanyName",      "VitaPlex"
+            VALUE "FileDescription",  "VitaPlex"
+            VALUE "FileVersion",      "1.2.4.0"
+            VALUE "InternalName",     "VitaPlex"
+            VALUE "OriginalFilename", "VitaPlex.exe"
+            VALUE "ProductName",      "VitaPlex"
+            VALUE "ProductVersion",   "1.2.4.0"
+            VALUE "LegalCopyright",   "VitaPlex"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

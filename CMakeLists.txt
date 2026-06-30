@@ -735,7 +735,6 @@ elseif(PLATFORM_DESKTOP)
         set(_smtc_probe "${CMAKE_BINARY_DIR}/smtc_probe.cpp")
         file(WRITE "${_smtc_probe}" [==[
 #include <windows.h>
-#include <shobjidl.h>
 #include <roapi.h>
 #include <wrl.h>
 #include <wrl/wrappers/corewrappers.h>
@@ -781,24 +780,19 @@ int main() {
     H* cb = new H();
     smtc->add_ButtonPressed(cb, &tok);
     cb->Release();
-    SetCurrentProcessExplicitAppUserModelID(L"VitaPlex");
-    HKEY k = 0;
-    RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\AppUserModelId\\VitaPlex",
-                    0, 0, 0, KEY_WRITE, 0, &k, 0);
-    if (k) RegCloseKey(k);
     return 0;
 }
 ]==])
         try_compile(VITAPLEX_HAVE_SMTC "${CMAKE_BINARY_DIR}/smtc_probe_bin"
             SOURCES "${_smtc_probe}"
-            LINK_LIBRARIES runtimeobject ole32 shell32 advapi32
+            LINK_LIBRARIES runtimeobject ole32
             CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON
             OUTPUT_VARIABLE _smtc_out)
         if(VITAPLEX_HAVE_SMTC)
             message(STATUS "SMTC media controls enabled")
             target_sources(${PROJECT_NAME} PRIVATE src/utils/now_playing_smtc.cpp)
             target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_SMTC=1)
-            target_link_libraries(${PROJECT_NAME} runtimeobject ole32 user32 shell32 advapi32)
+            target_link_libraries(${PROJECT_NAME} runtimeobject ole32 user32)
 
             # Optional cover-art + album-title extension. Needs the WinRT URI +
             # RandomAccessStreamReference + IMusicDisplayProperties2 APIs, which
@@ -890,46 +884,17 @@ int main() {
             else()
                 message(STATUS "SMTC repeat/shuffle unavailable. Probe output:\n${_smtc_modes_out}")
             endif()
-
-            # Optional: stamp the window's AppUserModelID via the property store as
-            # a fallback for the "unknown app" name fix. Needs SHGetPropertyStoreForWindow
-            # + IPropertyStore (propsys.h), which vary on MinGW — probe so a gap here
-            # only drops the window-tag fallback, never the base controls. The primary
-            # name fix (early process AUMID + registry DisplayName) ships regardless.
-            set(_smtc_winid_probe "${CMAKE_BINARY_DIR}/smtc_winid_probe.cpp")
-            file(WRITE "${_smtc_winid_probe}" [==[
-#include <windows.h>
-#include <shobjidl.h>
-#include <propsys.h>
-#include <wrl.h>
-using Microsoft::WRL::ComPtr;
-int main() {
-    ComPtr<IPropertyStore> store;
-    SHGetPropertyStoreForWindow((HWND)0, IID_PPV_ARGS(&store));
-    PROPERTYKEY key = { {0x9F4C2855, 0x9F79, 0x4B39,
-                         {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 5 };
-    PROPVARIANT pv;
-    pv.vt = VT_LPWSTR;
-    pv.pwszVal = (PWSTR)L"VitaPlex";
-    store->SetValue(key, pv);
-    store->Commit();
-    return 0;
-}
-]==])
-            try_compile(VITAPLEX_HAVE_SMTC_WINID "${CMAKE_BINARY_DIR}/smtc_winid_probe_bin"
-                SOURCES "${_smtc_winid_probe}"
-                LINK_LIBRARIES runtimeobject ole32 shell32
-                CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON
-                OUTPUT_VARIABLE _smtc_winid_out)
-            if(VITAPLEX_HAVE_SMTC_WINID)
-                message(STATUS "SMTC window AppUserModelID tagging enabled")
-                target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_SMTC_WINID=1)
-            else()
-                message(STATUS "SMTC window-tag fallback unavailable. Probe output:\n${_smtc_winid_out}")
-            endif()
         else()
             message(STATUS "WinRT SMTC unavailable — disabled. Probe output:\n${_smtc_out}")
         endif()
+
+        # Embed a Win32 version resource so the .exe identifies itself as
+        # "VitaPlex" (FileDescription/ProductName). Without it an unpackaged exe
+        # has no identity and Windows labels the media overlay "Unknown app";
+        # with it, the overlay (and Task Manager / file properties) shows the
+        # app name. Compiled by windres under MinGW via CMake's RC language.
+        enable_language(RC)
+        target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/app/platform/windows/vitaplex.rc")
     else()
         # Linux desktop: expose MPRIS media controls over D-Bus so the multimedia
         # keys and the GNOME/KDE media widget drive playback even when VitaPlex

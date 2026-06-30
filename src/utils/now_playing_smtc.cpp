@@ -23,7 +23,6 @@
 #include <borealis.hpp>
 
 #include <windows.h>
-#include <shobjidl.h>                    // SetCurrentProcessExplicitAppUserModelID, SHGetPropertyStoreForWindow
 #include <roapi.h>
 #include <wrl.h>
 #include <wrl/wrappers/corewrappers.h>
@@ -32,9 +31,6 @@
 #if defined(VITAPLEX_SMTC_THUMB)
 #include <windows.foundation.h>          // Windows.Foundation.Uri
 #include <windows.storage.streams.h>     // RandomAccessStreamReference
-#endif
-#if defined(VITAPLEX_SMTC_WINID)
-#include <propsys.h>                     // IPropertyStore (tag the window's AppUserModelID)
 #endif
 
 #include <string>
@@ -45,7 +41,6 @@ namespace nowplaying {
 namespace detail {
 void smtcUpdate(const Info& info);
 void smtcClear();
-void smtcInitAppIdentity();
 }
 
 namespace {
@@ -63,8 +58,6 @@ ComPtr<WM::ISystemMediaTransportControlsDisplayUpdater> g_updater;
 ComPtr<WM::IMusicDisplayProperties> g_music;
 bool g_init = false;     // SMTC wired up
 bool g_failed = false;   // hard failure — stop retrying
-
-constexpr const wchar_t* kAumid = L"VitaPlex";   // app identity for the media overlay
 
 std::wstring widen(const std::string& s) {
     if (s.empty()) return std::wstring();
@@ -230,30 +223,8 @@ bool ensureInit() {
         RoInitialize(RO_INIT_SINGLETHREADED);
     }
 
-    detail::smtcInitAppIdentity();  // ensure identity is set (no-op if main() already did)
-
     HWND hwnd = currentHwnd();
     if (!hwnd) return false;   // window not up yet — retry on the next update()
-
-#if defined(VITAPLEX_SMTC_WINID)
-    // Belt-and-suspenders: tag the window itself with our AppUserModelID. The
-    // early process-wide AUMID (set in main() before the window existed) is
-    // normally what the overlay resolves, but stamping the window directly
-    // covers cases where it was created with a different identity.
-    {
-        ComPtr<IPropertyStore> store;
-        if (SUCCEEDED(SHGetPropertyStoreForWindow(hwnd, IID_PPV_ARGS(&store))) && store) {
-            // PKEY_AppUserModel_ID = {9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3}, pid 5
-            PROPERTYKEY key = { {0x9F4C2855, 0x9F79, 0x4B39,
-                                 {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 5 };
-            PROPVARIANT pv;
-            pv.vt = VT_LPWSTR;
-            pv.pwszVal = const_cast<PWSTR>(kAumid);  // SetValue copies the string
-            store->SetValue(key, pv);
-            store->Commit();
-        }
-    }
-#endif
 
     ComPtr<ISystemMediaTransportControlsInterop> interop;
     HRESULT hr = RoGetActivationFactory(
@@ -336,28 +307,6 @@ void setThumbnail(const std::string& artUrl) {
 } // namespace
 
 namespace detail {
-
-// Give the overlay a real app name. An unpackaged Win32 app with no
-// AppUserModelID shows up as "unknown app"; we register an explicit AUMID + its
-// DisplayName under HKCU so Windows resolves "VitaPlex". Call this before any
-// window is created (from main()) — the window inherits the process AUMID at
-// creation time, which is what the media overlay reads. Idempotent + best-effort.
-void smtcInitAppIdentity() {
-    static bool s_done = false;
-    if (s_done) return;
-    s_done = true;
-
-    HKEY key = nullptr;
-    if (RegCreateKeyExW(HKEY_CURRENT_USER,
-            L"Software\\Classes\\AppUserModelId\\VitaPlex",
-            0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr) == ERROR_SUCCESS && key) {
-        RegSetValueExW(key, L"DisplayName", 0, REG_SZ,
-                       reinterpret_cast<const BYTE*>(kAumid),
-                       (DWORD)((wcslen(kAumid) + 1) * sizeof(wchar_t)));
-        RegCloseKey(key);
-    }
-    SetCurrentProcessExplicitAppUserModelID(kAumid);
-}
 
 void smtcUpdate(const Info& info) {
     if (!ensureInit()) return;
