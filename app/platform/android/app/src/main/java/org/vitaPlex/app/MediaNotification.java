@@ -160,10 +160,12 @@ public final class MediaNotification {
         }
         sSession.setMetadata(meta.build());
 
+        // Always advertise prev/next so the system media controls keep both
+        // buttons visible even at the first/last track (the queue just no-ops
+        // there). Gating on hasPrev made the Previous button vanish on track 1.
         long actions = PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_PLAY
-            | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_STOP;
-        if (sHasNext) actions |= PlaybackState.ACTION_SKIP_TO_NEXT;
-        if (sHasPrev) actions |= PlaybackState.ACTION_SKIP_TO_PREVIOUS;
+            | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_STOP
+            | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS;
         PlaybackState.Builder psb = new PlaybackState.Builder()
             .setActions(actions)
             .setState(sPlaying ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
@@ -172,12 +174,12 @@ public final class MediaNotification {
         // Android 13+ system media controls (which ignore notification actions).
         // onCustomAction() routes them back; pre-13 uses the notification actions.
         if (sShowModes) {
-            int shufIcon = drawableId(ctx, "ic_shuffle");
+            int shufIcon = drawableId(ctx, sShuffle ? "ic_shuffle_on" : "ic_shuffle");
             if (shufIcon != 0) {
                 psb.addCustomAction(new PlaybackState.CustomAction.Builder(
                     CUSTOM_SHUFFLE, sShuffle ? "Shuffle on" : "Shuffle off", shufIcon).build());
             }
-            int repIcon = drawableId(ctx, sRepeat == 2 ? "ic_repeat_one" : "ic_repeat");
+            int repIcon = drawableId(ctx, sRepeat == 2 ? "ic_repeat_one" : sRepeat == 1 ? "ic_repeat_on" : "ic_repeat");
             if (repIcon != 0) {
                 String rt = sRepeat == 2 ? "Repeat one" : (sRepeat == 1 ? "Repeat all" : "Repeat off");
                 psb.addCustomAction(new PlaybackState.CustomAction.Builder(
@@ -332,32 +334,30 @@ public final class MediaNotification {
             b.setContentIntent(PendingIntent.getActivity(ctx, 100, open, piFlags));
         }
 
-        // Order: shuffle, prev, play/pause, next, repeat. The compact view keeps
-        // just prev/toggle/next; shuffle + repeat only appear in the expanded view
-        // (and only for music — sShowModes). Custom glyphs are looked up by name so
-        // the Java side needs no generated-R dependency; a missing drawable just
-        // drops that one action.
-        int idx = 0, prevIdx = -1, toggleIdx, nextIdx = -1;
+        // Order: shuffle, prev, play/pause, next, repeat. Compact view keeps
+        // prev/toggle/next; shuffle + repeat are extras (music only — sShowModes).
+        // Prev/next are ALWAYS shown so the transport row doesn't reshuffle (and
+        // prev doesn't vanish) at the first/last track — the queue just no-ops
+        // there. Glyphs vary by state: shuffle on/off and repeat off/all/one each
+        // get a distinct icon so the current mode is readable. Looked up by name
+        // so this hand-written Java needs no generated-R dependency.
+        int idx = 0, prevIdx, toggleIdx, nextIdx;
 
-        int shuffleIcon = sShowModes ? drawableId(ctx, "ic_shuffle") : 0;
+        int shuffleIcon = sShowModes ? drawableId(ctx, sShuffle ? "ic_shuffle_on" : "ic_shuffle") : 0;
         if (shuffleIcon != 0) {
             b.addAction(action(ctx, shuffleIcon, sShuffle ? "Shuffle on" : "Shuffle off", CODE_SHUFFLE));
             idx++;
         }
-        if (sHasPrev) {
-            b.addAction(action(ctx, android.R.drawable.ic_media_previous, "Previous", CODE_PREVIOUS));
-            prevIdx = idx++;
-        }
+        b.addAction(action(ctx, android.R.drawable.ic_media_previous, "Previous", CODE_PREVIOUS));
+        prevIdx = idx++;
         b.addAction(action(ctx,
             sPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
             sPlaying ? "Pause" : "Play", CODE_TOGGLE));
         toggleIdx = idx++;
-        if (sHasNext) {
-            b.addAction(action(ctx, android.R.drawable.ic_media_next, "Next", CODE_NEXT));
-            nextIdx = idx++;
-        }
+        b.addAction(action(ctx, android.R.drawable.ic_media_next, "Next", CODE_NEXT));
+        nextIdx = idx++;
         int repeatIcon = sShowModes
-            ? drawableId(ctx, sRepeat == 2 ? "ic_repeat_one" : "ic_repeat") : 0;
+            ? drawableId(ctx, sRepeat == 2 ? "ic_repeat_one" : sRepeat == 1 ? "ic_repeat_on" : "ic_repeat") : 0;
         if (repeatIcon != 0) {
             String rt = sRepeat == 2 ? "Repeat one" : (sRepeat == 1 ? "Repeat all" : "Repeat off");
             b.addAction(action(ctx, repeatIcon, rt, CODE_REPEAT));
@@ -366,11 +366,7 @@ public final class MediaNotification {
 
         Notification.MediaStyle style = new Notification.MediaStyle()
             .setMediaSession(sSession.getSessionToken());
-        if (prevIdx >= 0 && nextIdx >= 0) {
-            style.setShowActionsInCompactView(prevIdx, toggleIdx, nextIdx);
-        } else {
-            style.setShowActionsInCompactView(toggleIdx);
-        }
+        style.setShowActionsInCompactView(prevIdx, toggleIdx, nextIdx);
         b.setStyle(style);
         return b.build();
     }
