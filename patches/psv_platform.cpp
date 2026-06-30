@@ -46,6 +46,15 @@ static std::atomic<bool> s_audioPlaybackActive{false};
 // we never keep the app alive in the background when nothing is playing.
 static std::atomic<bool> s_bgmHeld{false};
 
+// vitasdk's <psp2/appmgr.h> exposes only the plain sceAppMgrAcquireBgmPort();
+// the reference background-audio player (ElevenMPV-A) uses the priority variant
+// instead. The SDK generates its stubs from the full NID database, so the stub
+// for this exists even though the header omits the declaration — declare the
+// prototype here and let the SceAppMgr stub resolve it at link time. (If this
+// toolchain turns out not to provide the stub, the Vita link fails loudly and
+// we revert to the plain call.)
+extern "C" int sceAppMgrAcquireBgmPortWithPriority(int priority);
+
 extern "C" void vitaplex_set_audio_playback_active(bool active)
 {
     s_audioPlaybackActive.store(active);
@@ -55,11 +64,13 @@ extern "C" void vitaplex_set_audio_playback_active(bool active)
         bool expected = false;
         if (s_bgmHeld.compare_exchange_strong(expected, true))
         {
-            int ret = sceAppMgrAcquireBgmPort();
-            // Diagnostic (temporary): 0x0 means the system granted the BGM port.
-            // A negative / 0x80... code means the acquire itself failed, which
-            // would by itself explain why audio doesn't survive backgrounding.
-            brls::Logger::info("Vita BGM probe: sceAppMgrAcquireBgmPort() -> 0x{:08X}", (unsigned int)ret);
+            // Use the priority variant the reference player relies on. The plain
+            // acquire returns success (0x0) yet the whole app is still suspended
+            // on PS press (proven by the probe: the main-loop heartbeat stops
+            // dead the instant PS is pressed). 0x80 mirrors ElevenMPV-A's base
+            // BGM priority. 0x0 = granted; a negative / 0x80... code = failure.
+            int ret = sceAppMgrAcquireBgmPortWithPriority(0x80);
+            brls::Logger::info("Vita BGM probe: sceAppMgrAcquireBgmPortWithPriority(0x80) -> 0x{:08X}", (unsigned int)ret);
         }
     }
     else
