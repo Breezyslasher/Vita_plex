@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-#include <psp2/appmgr.h>
 #include <psp2/apputil.h>
 #include <psp2/avconfig.h>
 #include <psp2/kernel/processmgr.h>
@@ -37,51 +36,9 @@ limitations under the License.
 // hardware buffer at 48kHz).
 static std::atomic<bool> s_audioPlaybackActive{false};
 
-// Hold the system "background music" port while music is actually playing, so
-// the kernel keeps our audio + mpv decode/network threads running after the
-// user exits to LiveArea / another app / turns off the screen (the same port
-// games use to keep their BGM going). Released as soon as playback stops so a
-// paused/finished session suspends normally. Acquire/release are idempotent via
-// s_bgmHeld; tied to the audio-playback flag rather than acquired permanently so
-// we never keep the app alive in the background when nothing is playing.
-static std::atomic<bool> s_bgmHeld{false};
-
-// vitasdk's <psp2/appmgr.h> exposes only the plain sceAppMgrAcquireBgmPort();
-// the reference background-audio player (ElevenMPV-A) uses the priority variant
-// instead. The SDK generates its stubs from the full NID database, so the stub
-// for this exists even though the header omits the declaration — declare the
-// prototype here and let the SceAppMgr stub resolve it at link time. (If this
-// toolchain turns out not to provide the stub, the Vita link fails loudly and
-// we revert to the plain call.)
-extern "C" int sceAppMgrAcquireBgmPortWithPriority(int priority);
-
 extern "C" void vitaplex_set_audio_playback_active(bool active)
 {
     s_audioPlaybackActive.store(active);
-
-    if (active)
-    {
-        bool expected = false;
-        if (s_bgmHeld.compare_exchange_strong(expected, true))
-        {
-            // Use the priority variant the reference player relies on. The plain
-            // acquire returns success (0x0) yet the whole app is still suspended
-            // on PS press (proven by the probe: the main-loop heartbeat stops
-            // dead the instant PS is pressed). 0x80 mirrors ElevenMPV-A's base
-            // BGM priority. 0x0 = granted; a negative / 0x80... code = failure.
-            int ret = sceAppMgrAcquireBgmPortWithPriority(0x80);
-            brls::Logger::info("Vita BGM probe: sceAppMgrAcquireBgmPortWithPriority(0x80) -> 0x{:08X}", (unsigned int)ret);
-        }
-    }
-    else
-    {
-        bool expected = true;
-        if (s_bgmHeld.compare_exchange_strong(expected, false))
-        {
-            int ret = sceAppMgrReleaseBgmPort();
-            brls::Logger::info("Vita BGM probe: sceAppMgrReleaseBgmPort() -> 0x{:08X}", (unsigned int)ret);
-        }
-    }
 }
 
 // Video render hook - called at the start of mainLoopIteration(), BEFORE
@@ -107,20 +64,12 @@ namespace brls
 
 static int powerCallback(int notifyId, int notifyCount, int powerInfo, void* common)
 {
-    // Diagnostic (temporary): log the raw power-callback bitmask so a captured
-    // log shows exactly which event fires when the user presses PS / the screen
-    // sleeps. Combined with the BGM-port acquire result and the main-loop
-    // heartbeat, this reveals whether backgrounding mutes our audio port or
-    // suspends the whole app.
-    brls::Logger::info("Vita BGM probe: power callback powerInfo=0x{:08X}", (unsigned int)powerInfo);
     if ((powerInfo & SCE_POWER_CB_APP_RESUME) || (powerInfo & SCE_POWER_CB_APP_RESUMING))
     {
-        brls::Logger::info("Vita BGM probe: RESUME -> focus(true)");
         brls::Application::getWindowFocusChangedEvent()->fire(true);
     }
     else if ((powerInfo & SCE_POWER_CB_BUTTON_PS_PRESS) || (powerInfo & SCE_POWER_CB_APP_SUSPEND) || (powerInfo & SCE_POWER_CB_SYSTEM_SUSPEND))
     {
-        brls::Logger::info("Vita BGM probe: PS/SUSPEND -> focus(false)");
         brls::Application::getWindowFocusChangedEvent()->fire(false);
     }
     return 0;
@@ -234,15 +183,6 @@ bool PsvPlatform::mainLoopIteration()
     // so the ao_vita audio thread can feed the hardware without underruns.
     // ~33ms sleep gives ~30fps which is plenty for a static music player UI.
     if (s_audioPlaybackActive.load(std::memory_order_relaxed)) {
-        // Diagnostic heartbeat (temporary): proves the main loop is still being
-        // scheduled while music plays. If these lines keep appearing AFTER the
-        // app is backgrounded (PS button), the app is alive and any silence is
-        // the audio port being muted (the fix lives inside mpv's ao); if they
-        // STOP at the PS event, the whole app was suspended (a different
-        // problem). ~2s cadence at the 33ms audio throttle.
-        static int s_hb = 0;
-        if ((s_hb++ % 60) == 0)
-            brls::Logger::info("Vita BGM probe: main loop alive (audio active), tick {}", s_hb);
         sceKernelDelayThread(33000);  // 33ms -> ~30fps
     }
     return true;
