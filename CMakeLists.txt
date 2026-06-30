@@ -196,6 +196,17 @@ if(NOT PLATFORM_SWITCH AND NOT PLATFORM_PSV AND NOT PLATFORM_PS4 AND NOT PLATFOR
         message(STATUS "Applying patch: glfw_input.cpp")
         configure_file(${GLFW_INPUT_PATCH} ${GLFW_INPUT_TARGET} COPYONLY)
     endif()
+
+    # GLFW platform patch (desktop only): keep the main loop ticking while the
+    # window is minimized so OS media-control transport (Linux MPRIS / multimedia
+    # keys, posted onto the loop via brls::sync) still drives playback. Upstream
+    # blocked in glfwWaitEvents() while iconified, freezing sync-task processing.
+    set(GLFW_PLATFORM_PATCH  ${CMAKE_CURRENT_SOURCE_DIR}/patches/glfw_platform.cpp)
+    set(GLFW_PLATFORM_TARGET ${BOREALIS_LIBRARY}/lib/platforms/glfw/glfw_platform.cpp)
+    if(EXISTS ${GLFW_PLATFORM_PATCH})
+        message(STATUS "Applying patch: glfw_platform.cpp")
+        configure_file(${GLFW_PLATFORM_PATCH} ${GLFW_PLATFORM_TARGET} COPYONLY)
+    endif()
 endif()
 
 # iOS / tvOS embed app resources through libromfs (borealis toolchain.cmake
