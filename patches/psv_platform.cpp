@@ -54,13 +54,22 @@ extern "C" void vitaplex_set_audio_playback_active(bool active)
     {
         bool expected = false;
         if (s_bgmHeld.compare_exchange_strong(expected, true))
-            sceAppMgrAcquireBgmPort();
+        {
+            int ret = sceAppMgrAcquireBgmPort();
+            // Diagnostic (temporary): 0x0 means the system granted the BGM port.
+            // A negative / 0x80... code means the acquire itself failed, which
+            // would by itself explain why audio doesn't survive backgrounding.
+            brls::Logger::info("Vita BGM probe: sceAppMgrAcquireBgmPort() -> 0x{:08X}", (unsigned int)ret);
+        }
     }
     else
     {
         bool expected = true;
         if (s_bgmHeld.compare_exchange_strong(expected, false))
-            sceAppMgrReleaseBgmPort();
+        {
+            int ret = sceAppMgrReleaseBgmPort();
+            brls::Logger::info("Vita BGM probe: sceAppMgrReleaseBgmPort() -> 0x{:08X}", (unsigned int)ret);
+        }
     }
 }
 
@@ -87,12 +96,20 @@ namespace brls
 
 static int powerCallback(int notifyId, int notifyCount, int powerInfo, void* common)
 {
+    // Diagnostic (temporary): log the raw power-callback bitmask so a captured
+    // log shows exactly which event fires when the user presses PS / the screen
+    // sleeps. Combined with the BGM-port acquire result and the main-loop
+    // heartbeat, this reveals whether backgrounding mutes our audio port or
+    // suspends the whole app.
+    brls::Logger::info("Vita BGM probe: power callback powerInfo=0x{:08X}", (unsigned int)powerInfo);
     if ((powerInfo & SCE_POWER_CB_APP_RESUME) || (powerInfo & SCE_POWER_CB_APP_RESUMING))
     {
+        brls::Logger::info("Vita BGM probe: RESUME -> focus(true)");
         brls::Application::getWindowFocusChangedEvent()->fire(true);
     }
     else if ((powerInfo & SCE_POWER_CB_BUTTON_PS_PRESS) || (powerInfo & SCE_POWER_CB_APP_SUSPEND) || (powerInfo & SCE_POWER_CB_SYSTEM_SUSPEND))
     {
+        brls::Logger::info("Vita BGM probe: PS/SUSPEND -> focus(false)");
         brls::Application::getWindowFocusChangedEvent()->fire(false);
     }
     return 0;
@@ -206,6 +223,15 @@ bool PsvPlatform::mainLoopIteration()
     // so the ao_vita audio thread can feed the hardware without underruns.
     // ~33ms sleep gives ~30fps which is plenty for a static music player UI.
     if (s_audioPlaybackActive.load(std::memory_order_relaxed)) {
+        // Diagnostic heartbeat (temporary): proves the main loop is still being
+        // scheduled while music plays. If these lines keep appearing AFTER the
+        // app is backgrounded (PS button), the app is alive and any silence is
+        // the audio port being muted (the fix lives inside mpv's ao); if they
+        // STOP at the PS event, the whole app was suspended (a different
+        // problem). ~2s cadence at the 33ms audio throttle.
+        static int s_hb = 0;
+        if ((s_hb++ % 60) == 0)
+            brls::Logger::info("Vita BGM probe: main loop alive (audio active), tick {}", s_hb);
         sceKernelDelayThread(33000);  // 33ms -> ~30fps
     }
     return true;
