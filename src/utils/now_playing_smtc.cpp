@@ -23,6 +23,7 @@
 #include <borealis.hpp>
 
 #include <windows.h>
+#include <shobjidl.h>                    // SetCurrentProcessExplicitAppUserModelID
 #include <roapi.h>
 #include <wrl.h>
 #include <wrl/wrappers/corewrappers.h>
@@ -51,10 +52,35 @@ namespace WM = ABI::Windows::Media;
 namespace WF = ABI::Windows::Foundation;
 
 ComPtr<WM::ISystemMediaTransportControls> g_smtc;
+#if defined(VITAPLEX_SMTC_MODES)
+ComPtr<WM::ISystemMediaTransportControls2> g_smtc2;  // AutoRepeatMode + ShuffleEnabled (revision 2)
+#endif
 ComPtr<WM::ISystemMediaTransportControlsDisplayUpdater> g_updater;
 ComPtr<WM::IMusicDisplayProperties> g_music;
 bool g_init = false;     // SMTC wired up
 bool g_failed = false;   // hard failure — stop retrying
+
+// Give the SMTC overlay a real app name. An unpackaged Win32 app with no
+// AppUserModelID shows up as "unknown app" in the media flyout; we register an
+// explicit AUMID + its DisplayName under HKCU so Windows resolves "VitaPlex".
+// Best-effort and idempotent — a failure just leaves the prior (generic) name.
+void setAppIdentity() {
+    static bool s_done = false;
+    if (s_done) return;
+    s_done = true;
+
+    HKEY key = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER,
+            L"Software\\Classes\\AppUserModelId\\VitaPlex",
+            0, nullptr, 0, KEY_WRITE, nullptr, &key, nullptr) == ERROR_SUCCESS && key) {
+        const wchar_t* name = L"VitaPlex";
+        RegSetValueExW(key, L"DisplayName", 0, REG_SZ,
+                       reinterpret_cast<const BYTE*>(name),
+                       (DWORD)((wcslen(name) + 1) * sizeof(wchar_t)));
+        RegCloseKey(key);
+    }
+    SetCurrentProcessExplicitAppUserModelID(L"VitaPlex");
+}
 
 std::wstring widen(const std::string& s) {
     if (s.empty()) return std::wstring();
@@ -138,6 +164,76 @@ public:
     }
 };
 
+#if defined(VITAPLEX_SMTC_MODES)
+// The overlay's repeat + shuffle toggles hand back an explicit requested state.
+// Same hand-rolled-COM-delegate pattern as ButtonHandler (no WRL Callback on
+// MinGW), one per event.
+typedef WF::ITypedEventHandler<WM::SystemMediaTransportControls*,
+        WM::AutoRepeatModeChangeRequestedEventArgs*> RepeatDelegate;
+typedef WF::ITypedEventHandler<WM::SystemMediaTransportControls*,
+        WM::ShuffleEnabledChangeRequestedEventArgs*> ShuffleDelegate;
+
+class RepeatHandler : public RepeatDelegate {
+    LONG m_ref = 1;
+public:
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
+        if (!ppv) return E_POINTER;
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(RepeatDelegate)) {
+            *ppv = static_cast<RepeatDelegate*>(this); AddRef(); return S_OK;
+        }
+        *ppv = nullptr; return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return (ULONG)InterlockedIncrement(&m_ref); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG r = (ULONG)InterlockedDecrement(&m_ref);
+        if (r == 0) delete this;
+        return r;
+    }
+    HRESULT STDMETHODCALLTYPE Invoke(
+        WM::ISystemMediaTransportControls*,
+        WM::IAutoRepeatModeChangeRequestedEventArgs* args) override {
+        if (args) {
+            WM::MediaPlaybackAutoRepeatMode m;
+            if (SUCCEEDED(args->get_RequestedAutoRepeatMode(&m))) {
+                RepeatMode rm = (m == WM::MediaPlaybackAutoRepeatMode_Track) ? RepeatMode::One
+                              : (m == WM::MediaPlaybackAutoRepeatMode_List)  ? RepeatMode::All
+                                                                             : RepeatMode::Off;
+                brls::sync([rm]() { dispatchSetRepeat(rm); });
+            }
+        }
+        return S_OK;
+    }
+};
+
+class ShuffleHandler : public ShuffleDelegate {
+    LONG m_ref = 1;
+public:
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override {
+        if (!ppv) return E_POINTER;
+        if (riid == __uuidof(IUnknown) || riid == __uuidof(ShuffleDelegate)) {
+            *ppv = static_cast<ShuffleDelegate*>(this); AddRef(); return S_OK;
+        }
+        *ppv = nullptr; return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() override { return (ULONG)InterlockedIncrement(&m_ref); }
+    ULONG STDMETHODCALLTYPE Release() override {
+        ULONG r = (ULONG)InterlockedDecrement(&m_ref);
+        if (r == 0) delete this;
+        return r;
+    }
+    HRESULT STDMETHODCALLTYPE Invoke(
+        WM::ISystemMediaTransportControls*,
+        WM::IShuffleEnabledChangeRequestedEventArgs* args) override {
+        if (args) {
+            boolean on = 0;
+            if (SUCCEEDED(args->get_RequestedShuffleEnabled(&on)))
+                brls::sync([on]() { dispatchSetShuffle(on != 0); });
+        }
+        return S_OK;
+    }
+};
+#endif // VITAPLEX_SMTC_MODES
+
 bool ensureInit() {
     if (g_init) return true;
     if (g_failed) return false;
@@ -149,6 +245,8 @@ bool ensureInit() {
         // RPC_E_CHANGED_MODE — we only need a usable apartment for the factory.
         RoInitialize(RO_INIT_SINGLETHREADED);
     }
+
+    setAppIdentity();          // fix "unknown app" before the controls resolve our name
 
     HWND hwnd = currentHwnd();
     if (!hwnd) return false;   // window not up yet — retry on the next update()
@@ -173,6 +271,20 @@ bool ensureInit() {
     ButtonHandler* handler = new ButtonHandler();   // ref = 1
     g_smtc->add_ButtonPressed(handler, &token);     // the session takes its own ref
     handler->Release();                             // drop ours; the session keeps it
+
+#if defined(VITAPLEX_SMTC_MODES)
+    // Repeat + shuffle live on the revision-2 interface; subscribe to their
+    // change-requested events so the overlay toggles drive the queue.
+    if (SUCCEEDED(g_smtc.As(&g_smtc2)) && g_smtc2) {
+        EventRegistrationToken rt = {}, st = {};
+        RepeatHandler* rh = new RepeatHandler();
+        g_smtc2->add_AutoRepeatModeChangeRequested(rh, &rt);
+        rh->Release();
+        ShuffleHandler* sh = new ShuffleHandler();
+        g_smtc2->add_ShuffleEnabledChangeRequested(sh, &st);
+        sh->Release();
+    }
+#endif
 
     g_init = true;
     brls::Logger::info("SMTC: Windows media controls active");
@@ -246,6 +358,19 @@ void smtcUpdate(const Info& info) {
         }
 #endif
     }
+#if defined(VITAPLEX_SMTC_MODES)
+    // Reflect the queue's repeat/shuffle on the overlay toggles (music only).
+    if (g_smtc2) {
+        if (info.showRepeat) {
+            WM::MediaPlaybackAutoRepeatMode m =
+                info.repeat == RepeatMode::One ? WM::MediaPlaybackAutoRepeatMode_Track :
+                info.repeat == RepeatMode::All ? WM::MediaPlaybackAutoRepeatMode_List  :
+                                                 WM::MediaPlaybackAutoRepeatMode_None;
+            g_smtc2->put_AutoRepeatMode(m);
+        }
+        if (info.showShuffle) g_smtc2->put_ShuffleEnabled(info.shuffle ? 1 : 0);
+    }
+#endif
 #if defined(VITAPLEX_SMTC_THUMB)
     setThumbnail(info.artUrl);
 #endif

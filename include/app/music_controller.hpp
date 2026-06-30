@@ -39,6 +39,8 @@ public:
         std::function<void()> onNext;                       // play next (rich UI load)
         std::function<void()> onPrevious;                   // play previous
         std::function<void(const QueueItem*)> onTrackEnded; // auto-advance handler
+        std::function<void(bool)> onSetShuffle;             // server-aware shuffle + icon refresh
+        std::function<void(RepeatMode)> onSetRepeat;        // set repeat + icon refresh
     };
 
     // Called by PlayerActivity on create (attach) and on destroy / background
@@ -72,6 +74,14 @@ public:
     void seekToMs(long long ms);
     void seekRelativeMs(long long deltaMs);   // fast-forward / rewind keys
     void stopPlayback();                       // Stop key: halt mpv + clear session
+
+    // Repeat / shuffle from the OS controls. set* take an explicit target (SMTC /
+    // MPRIS); cycle/toggle advance from the current state (Android custom actions).
+    // All update the queue, refresh the on-screen player if attached, and re-publish.
+    void setShuffleMode(bool on);
+    void toggleShuffleMode();
+    void setRepeatMode(RepeatMode mode);
+    void cycleRepeatMode();
 
 private:
     MusicController() = default;

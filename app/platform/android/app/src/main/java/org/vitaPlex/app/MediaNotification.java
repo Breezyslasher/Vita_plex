@@ -47,6 +47,8 @@ public final class MediaNotification {
     private static final int CODE_NEXT = 4;
     private static final int CODE_PREVIOUS = 5;
     private static final int CODE_STOP = 6;
+    private static final int CODE_REPEAT = 7;    // cycle repeat off -> all -> one
+    private static final int CODE_SHUFFLE = 8;   // toggle shuffle
 
     private static final String ACTION = "org.VitaPlex.app.MEDIA_ACTION";
     private static final String EXTRA_CODE = "code";
@@ -67,6 +69,9 @@ public final class MediaNotification {
     private static String sTitle = "", sArtist = "", sAlbum = "", sArtUrl = "";
     private static long sDurationMs, sPositionMs;
     private static boolean sPlaying, sHasNext, sHasPrev;
+    private static int sRepeat;          // 0 off, 1 all, 2 one
+    private static boolean sShuffle;
+    private static boolean sShowModes;   // expose repeat/shuffle (music, not video)
     private static String sLoadedArtUrl;   // url whose bitmap is in sArtBitmap
     private static Bitmap sArtBitmap;
 
@@ -75,7 +80,8 @@ public final class MediaNotification {
     /** Called from native (any thread). Marshals to the main looper. */
     public static void update(final String title, final String artist, final String album,
                               final String artUrl, final long durationMs, final long positionMs,
-                              final boolean playing, final boolean hasNext, final boolean hasPrev) {
+                              final boolean playing, final boolean hasNext, final boolean hasPrev,
+                              final int repeat, final boolean shuffle, final boolean showModes) {
         sMain.post(new Runnable() {
             @Override public void run() {
                 sTitle = title != null ? title : "";
@@ -87,6 +93,9 @@ public final class MediaNotification {
                 sPlaying = playing;
                 sHasNext = hasNext;
                 sHasPrev = hasPrev;
+                sRepeat = repeat;
+                sShuffle = shuffle;
+                sShowModes = showModes;
                 // Drop a stale cover the instant the track changes.
                 if (!sArtUrl.equals(sLoadedArtUrl)) sArtBitmap = null;
                 try { applyUpdate(); } catch (Throwable t) { Log.w(TAG, "update failed", t); }
@@ -148,6 +157,7 @@ public final class MediaNotification {
             | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_STOP;
         if (sHasNext) actions |= PlaybackState.ACTION_SKIP_TO_NEXT;
         if (sHasPrev) actions |= PlaybackState.ACTION_SKIP_TO_PREVIOUS;
+        if (sShowModes) actions |= PlaybackState.ACTION_SET_REPEAT_MODE | PlaybackState.ACTION_SET_SHUFFLE_MODE;
         PlaybackState state = new PlaybackState.Builder()
             .setActions(actions)
             .setState(sPlaying ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
@@ -155,6 +165,18 @@ public final class MediaNotification {
             .build();
         sSession.setPlaybackState(state);
         sSession.setActive(true);
+
+        // Mirror the modes onto the session so Android Auto / Wear / Assistant show
+        // the right state (setRepeat/ShuffleMode are API 29+; ignored before that).
+        if (sShowModes && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            try {
+                sSession.setRepeatMode(sRepeat == 2 ? PlaybackState.REPEAT_MODE_ONE
+                                     : sRepeat == 1 ? PlaybackState.REPEAT_MODE_ALL
+                                                    : PlaybackState.REPEAT_MODE_NONE);
+                sSession.setShuffleMode(sShuffle ? PlaybackState.SHUFFLE_MODE_ALL
+                                                 : PlaybackState.SHUFFLE_MODE_NONE);
+            } catch (Throwable t) { Log.w(TAG, "setMode failed", t); }
+        }
 
         updateLocks(ctx, sPlaying);
         postNotification(ctx);
@@ -217,6 +239,10 @@ public final class MediaNotification {
             @Override public void onSeekTo(long pos) {
                 try { nativeMediaSeek(pos); } catch (Throwable t) { Log.w(TAG, "seek", t); }
             }
+            // System surfaces (Android Auto / Wear) requesting a mode change — route
+            // to the same cycle/toggle the notification buttons use.
+            @Override public void onSetRepeatMode(int repeatMode) { send(CODE_REPEAT); }
+            @Override public void onSetShuffleMode(int shuffleMode) { send(CODE_SHUFFLE); }
         });
     }
 
@@ -295,7 +321,18 @@ public final class MediaNotification {
             b.setContentIntent(PendingIntent.getActivity(ctx, 100, open, piFlags));
         }
 
+        // Order: shuffle, prev, play/pause, next, repeat. The compact view keeps
+        // just prev/toggle/next; shuffle + repeat only appear in the expanded view
+        // (and only for music — sShowModes). Custom glyphs are looked up by name so
+        // the Java side needs no generated-R dependency; a missing drawable just
+        // drops that one action.
         int idx = 0, prevIdx = -1, toggleIdx, nextIdx = -1;
+
+        int shuffleIcon = sShowModes ? drawableId(ctx, "ic_shuffle") : 0;
+        if (shuffleIcon != 0) {
+            b.addAction(action(ctx, shuffleIcon, sShuffle ? "Shuffle on" : "Shuffle off", CODE_SHUFFLE));
+            idx++;
+        }
         if (sHasPrev) {
             b.addAction(action(ctx, android.R.drawable.ic_media_previous, "Previous", CODE_PREVIOUS));
             prevIdx = idx++;
@@ -308,6 +345,13 @@ public final class MediaNotification {
             b.addAction(action(ctx, android.R.drawable.ic_media_next, "Next", CODE_NEXT));
             nextIdx = idx++;
         }
+        int repeatIcon = sShowModes
+            ? drawableId(ctx, sRepeat == 2 ? "ic_repeat_one" : "ic_repeat") : 0;
+        if (repeatIcon != 0) {
+            String rt = sRepeat == 2 ? "Repeat one" : (sRepeat == 1 ? "Repeat all" : "Repeat off");
+            b.addAction(action(ctx, repeatIcon, rt, CODE_REPEAT));
+            idx++;
+        }
 
         Notification.MediaStyle style = new Notification.MediaStyle()
             .setMediaSession(sSession.getSessionToken());
@@ -318,6 +362,16 @@ public final class MediaNotification {
         }
         b.setStyle(style);
         return b.build();
+    }
+
+    // Resolve a drawable resource id by name (avoids a compile-time R dependency
+    // from this hand-written Java). Returns 0 if not found.
+    private static int drawableId(Context ctx, String name) {
+        try {
+            return ctx.getResources().getIdentifier(name, "drawable", ctx.getPackageName());
+        } catch (Throwable t) {
+            return 0;
+        }
     }
 
     // Start the media foreground service so audio + the notification survive the

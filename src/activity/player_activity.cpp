@@ -127,7 +127,9 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
     MusicController::getInstance().attachForeground({
         [activity]() { activity->playNext(); },
         [activity]() { activity->playPrevious(); },
-        [activity](const QueueItem* nextTrack) { activity->onTrackEnded(nextTrack); }
+        [activity](const QueueItem* nextTrack) { activity->onTrackEnded(nextTrack); },
+        [activity](bool on) { activity->setShuffleFromOs(on); },
+        [activity](RepeatMode m) { activity->setRepeatFromOs(m); }
     });
 
     brls::Logger::info("PlayerActivity created with queue of {} tracks, starting at {} (server={})",
@@ -147,7 +149,9 @@ PlayerActivity* PlayerActivity::createResumeQueue() {
     MusicController::getInstance().attachForeground({
         [activity]() { activity->playNext(); },
         [activity]() { activity->playPrevious(); },
-        [activity](const QueueItem* nextTrack) { activity->onTrackEnded(nextTrack); }
+        [activity](const QueueItem* nextTrack) { activity->onTrackEnded(nextTrack); },
+        [activity](bool on) { activity->setShuffleFromOs(on); },
+        [activity](RepeatMode m) { activity->setRepeatFromOs(m); }
     });
 
     brls::Logger::info("PlayerActivity resumed existing queue at index {}", queue.getCurrentIndex());
@@ -2139,6 +2143,8 @@ void PlayerActivity::setupVideoMediaSession() {
                 case T::Stop:        if (m_isPlaying) togglePlayPause(); break;
                 case T::FastForward: seek(30);  break;
                 case T::Rewind:      seek(-10); break;
+                case T::CycleRepeat:                  // video has no repeat / shuffle
+                case T::ToggleShuffle: break;
             }
             publishVideoNowPlaying();
         },
@@ -3029,6 +3035,24 @@ void PlayerActivity::updateShuffleIcon() {
     MusicQueue& queue = MusicQueue::getInstance();
     shuffleIcon->setImageFromRes(queue.isShuffleEnabled()
         ? "icons/shuffle-variant.png" : "icons/shuffle-disabled.png");
+}
+
+// OS media controls (lock screen / notification / SMTC / MPRIS) asked for an
+// explicit shuffle / repeat state. Reuse the on-screen toggle paths so the
+// server-side play-queue sync + icon refresh + OSD stay identical to a tap;
+// MusicController re-publishes the now-playing snapshot afterwards.
+void PlayerActivity::setShuffleFromOs(bool on) {
+    if (!m_isQueueMode) return;
+    if (on != MusicQueue::getInstance().isShuffleEnabled()) toggleShuffle();
+}
+
+void PlayerActivity::setRepeatFromOs(RepeatMode mode) {
+    if (!m_isQueueMode) return;
+    MusicQueue& queue = MusicQueue::getInstance();
+    if (queue.getRepeatMode() == mode) return;
+    queue.setRepeatMode(mode);
+    updateQueueDisplay();
+    updateRepeatIcon();
 }
 
 void PlayerActivity::applyMusicLayoutForViewport() {

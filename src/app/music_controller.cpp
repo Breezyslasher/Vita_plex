@@ -12,6 +12,25 @@
 
 namespace vitaplex {
 
+namespace {
+// Map between the queue's repeat enum and the OS-bridge enum (kept separate so
+// the bridge doesn't depend on MusicQueue).
+nowplaying::RepeatMode toBridgeRepeat(RepeatMode m) {
+    switch (m) {
+        case RepeatMode::ALL: return nowplaying::RepeatMode::All;
+        case RepeatMode::ONE: return nowplaying::RepeatMode::One;
+        case RepeatMode::OFF: default: return nowplaying::RepeatMode::Off;
+    }
+}
+RepeatMode fromBridgeRepeat(nowplaying::RepeatMode m) {
+    switch (m) {
+        case nowplaying::RepeatMode::All: return RepeatMode::ALL;
+        case nowplaying::RepeatMode::One: return RepeatMode::ONE;
+        case nowplaying::RepeatMode::Off: default: return RepeatMode::OFF;
+    }
+}
+} // namespace
+
 MusicController& MusicController::getInstance() {
     static MusicController instance;
     return instance;
@@ -58,17 +77,21 @@ void MusicController::registerOsHandler() {
         [](nowplaying::Transport t) {
             auto& self = MusicController::getInstance();
             switch (t) {
-                case nowplaying::Transport::Play:        self.playPause(true);       break;
-                case nowplaying::Transport::Pause:       self.playPause(false);      break;
-                case nowplaying::Transport::Toggle:      self.togglePlayPause();     break;
-                case nowplaying::Transport::Next:        self.next();                break;
-                case nowplaying::Transport::Previous:    self.previous();            break;
-                case nowplaying::Transport::Stop:        self.stopPlayback();        break;
-                case nowplaying::Transport::FastForward: self.seekRelativeMs(10000); break;
-                case nowplaying::Transport::Rewind:      self.seekRelativeMs(-10000);break;
+                case nowplaying::Transport::Play:          self.playPause(true);       break;
+                case nowplaying::Transport::Pause:         self.playPause(false);      break;
+                case nowplaying::Transport::Toggle:        self.togglePlayPause();     break;
+                case nowplaying::Transport::Next:          self.next();                break;
+                case nowplaying::Transport::Previous:      self.previous();            break;
+                case nowplaying::Transport::Stop:          self.stopPlayback();        break;
+                case nowplaying::Transport::FastForward:   self.seekRelativeMs(10000); break;
+                case nowplaying::Transport::Rewind:        self.seekRelativeMs(-10000);break;
+                case nowplaying::Transport::CycleRepeat:   self.cycleRepeatMode();     break;
+                case nowplaying::Transport::ToggleShuffle: self.toggleShuffleMode();   break;
             }
         },
-        [](long long ms) { MusicController::getInstance().seekToMs(ms); });
+        [](long long ms) { MusicController::getInstance().seekToMs(ms); },
+        [](nowplaying::RepeatMode m) { MusicController::getInstance().setRepeatMode(fromBridgeRepeat(m)); },
+        [](bool on) { MusicController::getInstance().setShuffleMode(on); });
 }
 
 void MusicController::attachForeground(ForegroundHooks hooks) {
@@ -175,6 +198,10 @@ void MusicController::publishNowPlaying(int playingOverride) {
     info.playing = (playingOverride >= 0) ? (playingOverride != 0) : p.isPlaying();
     info.hasNext = q.hasNext();
     info.hasPrev = q.hasPrevious();
+    info.repeat = toBridgeRepeat(q.getRepeatMode());
+    info.shuffle = q.isShuffleEnabled();
+    info.showRepeat = true;    // music exposes repeat + shuffle (video doesn't)
+    info.showShuffle = true;
     nowplaying::update(info);
 
     m_lastPublishedPlaying = info.playing;
@@ -252,6 +279,41 @@ void MusicController::stopPlayback() {
     MpvPlayer& p = MpvPlayer::getInstance();
     if (p.isInitialized()) p.stop();
     stopSession();
+}
+
+void MusicController::setShuffleMode(bool on) {
+    MusicQueue& q = MusicQueue::getInstance();
+    if (m_hasForeground && m_fg.onSetShuffle) {
+        m_fg.onSetShuffle(on);              // rich, server-aware path + on-screen icon
+    } else if (on != q.isShuffleEnabled()) {
+        q.setShuffle(on);                   // headless: client-side shuffle
+    }
+    publishNowPlaying();                     // reflect the new state back to the OS
+}
+
+void MusicController::toggleShuffleMode() {
+    setShuffleMode(!MusicQueue::getInstance().isShuffleEnabled());
+}
+
+void MusicController::setRepeatMode(RepeatMode mode) {
+    MusicQueue& q = MusicQueue::getInstance();
+    if (m_hasForeground && m_fg.onSetRepeat) {
+        m_fg.onSetRepeat(mode);             // set + on-screen icon refresh
+    } else {
+        q.setRepeatMode(mode);
+    }
+    publishNowPlaying();
+}
+
+void MusicController::cycleRepeatMode() {
+    // Match the in-app order: OFF -> ALL -> ONE -> OFF.
+    RepeatMode next;
+    switch (MusicQueue::getInstance().getRepeatMode()) {
+        case RepeatMode::OFF: next = RepeatMode::ALL; break;
+        case RepeatMode::ALL: next = RepeatMode::ONE; break;
+        case RepeatMode::ONE: default: next = RepeatMode::OFF; break;
+    }
+    setRepeatMode(next);
 }
 
 } // namespace vitaplex

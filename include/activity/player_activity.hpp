@@ -120,6 +120,8 @@ private:
     void playPrevious();
     void toggleShuffle();
     void toggleRepeat();
+    void setShuffleFromOs(bool on);     // OS media controls set an explicit shuffle state
+    void setRepeatFromOs(RepeatMode mode); // OS media controls set an explicit repeat mode
     void updateShuffleIcon();       // Update shuffle button icon based on state
     void updateRepeatIcon();        // Update repeat button icon based on state
     void onTrackEnded(const QueueItem* nextTrack);  // Called when track ends

@@ -735,6 +735,7 @@ elseif(PLATFORM_DESKTOP)
         set(_smtc_probe "${CMAKE_BINARY_DIR}/smtc_probe.cpp")
         file(WRITE "${_smtc_probe}" [==[
 #include <windows.h>
+#include <shobjidl.h>
 #include <roapi.h>
 #include <wrl.h>
 #include <wrl/wrappers/corewrappers.h>
@@ -780,19 +781,24 @@ int main() {
     H* cb = new H();
     smtc->add_ButtonPressed(cb, &tok);
     cb->Release();
+    SetCurrentProcessExplicitAppUserModelID(L"VitaPlex");
+    HKEY k = 0;
+    RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Classes\\AppUserModelId\\VitaPlex",
+                    0, 0, 0, KEY_WRITE, 0, &k, 0);
+    if (k) RegCloseKey(k);
     return 0;
 }
 ]==])
         try_compile(VITAPLEX_HAVE_SMTC "${CMAKE_BINARY_DIR}/smtc_probe_bin"
             SOURCES "${_smtc_probe}"
-            LINK_LIBRARIES runtimeobject ole32
+            LINK_LIBRARIES runtimeobject ole32 shell32 advapi32
             CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON
             OUTPUT_VARIABLE _smtc_out)
         if(VITAPLEX_HAVE_SMTC)
             message(STATUS "SMTC media controls enabled")
             target_sources(${PROJECT_NAME} PRIVATE src/utils/now_playing_smtc.cpp)
             target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_SMTC=1)
-            target_link_libraries(${PROJECT_NAME} runtimeobject ole32 user32)
+            target_link_libraries(${PROJECT_NAME} runtimeobject ole32 user32 shell32 advapi32)
 
             # Optional cover-art + album-title extension. Needs the WinRT URI +
             # RandomAccessStreamReference + IMusicDisplayProperties2 APIs, which
@@ -838,6 +844,51 @@ int main() {
                 target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_SMTC_THUMB=1)
             else()
                 message(STATUS "SMTC cover art unavailable — title/artist only. Probe output:\n${_smtc_thumb_out}")
+            endif()
+
+            # Optional repeat + shuffle toggles. These live on the revision-2
+            # interface (ISystemMediaTransportControls2) + its change-requested
+            # events, which vary on MinGW — probe separately so a gap here only
+            # drops repeat/shuffle, never the base SMTC controls.
+            set(_smtc_modes_probe "${CMAKE_BINARY_DIR}/smtc_modes_probe.cpp")
+            file(WRITE "${_smtc_modes_probe}" [==[
+#include <windows.h>
+#include <roapi.h>
+#include <wrl.h>
+#include <wrl/wrappers/corewrappers.h>
+#include <windows.media.h>
+using Microsoft::WRL::ComPtr;
+using namespace ABI::Windows::Media;
+typedef ABI::Windows::Foundation::ITypedEventHandler<
+    SystemMediaTransportControls*, AutoRepeatModeChangeRequestedEventArgs*> RD;
+typedef ABI::Windows::Foundation::ITypedEventHandler<
+    SystemMediaTransportControls*, ShuffleEnabledChangeRequestedEventArgs*> SD;
+int main() {
+    ComPtr<ISystemMediaTransportControls2> smtc2;
+    smtc2->put_AutoRepeatMode(MediaPlaybackAutoRepeatMode_List);
+    smtc2->put_ShuffleEnabled(true);
+    EventRegistrationToken t1, t2;
+    smtc2->add_AutoRepeatModeChangeRequested((RD*)0, &t1);
+    smtc2->add_ShuffleEnabledChangeRequested((SD*)0, &t2);
+    ComPtr<IAutoRepeatModeChangeRequestedEventArgs> ra;
+    MediaPlaybackAutoRepeatMode m;
+    ra->get_RequestedAutoRepeatMode(&m);
+    ComPtr<IShuffleEnabledChangeRequestedEventArgs> sa;
+    boolean b;
+    sa->get_RequestedShuffleEnabled(&b);
+    return 0;
+}
+]==])
+            try_compile(VITAPLEX_HAVE_SMTC_MODES "${CMAKE_BINARY_DIR}/smtc_modes_probe_bin"
+                SOURCES "${_smtc_modes_probe}"
+                LINK_LIBRARIES runtimeobject ole32
+                CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON
+                OUTPUT_VARIABLE _smtc_modes_out)
+            if(VITAPLEX_HAVE_SMTC_MODES)
+                message(STATUS "SMTC repeat + shuffle enabled")
+                target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_SMTC_MODES=1)
+            else()
+                message(STATUS "SMTC repeat/shuffle unavailable. Probe output:\n${_smtc_modes_out}")
             endif()
         else()
             message(STATUS "WinRT SMTC unavailable — disabled. Probe output:\n${_smtc_out}")
