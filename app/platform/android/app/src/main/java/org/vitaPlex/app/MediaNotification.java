@@ -157,7 +157,6 @@ public final class MediaNotification {
             | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_STOP;
         if (sHasNext) actions |= PlaybackState.ACTION_SKIP_TO_NEXT;
         if (sHasPrev) actions |= PlaybackState.ACTION_SKIP_TO_PREVIOUS;
-        if (sShowModes) actions |= PlaybackState.ACTION_SET_REPEAT_MODE | PlaybackState.ACTION_SET_SHUFFLE_MODE;
         PlaybackState state = new PlaybackState.Builder()
             .setActions(actions)
             .setState(sPlaying ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
@@ -165,18 +164,6 @@ public final class MediaNotification {
             .build();
         sSession.setPlaybackState(state);
         sSession.setActive(true);
-
-        // Mirror the modes onto the session so Android Auto / Wear / Assistant show
-        // the right state (setRepeat/ShuffleMode are API 29+; ignored before that).
-        if (sShowModes && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            try {
-                sSession.setRepeatMode(sRepeat == 2 ? PlaybackState.REPEAT_MODE_ONE
-                                     : sRepeat == 1 ? PlaybackState.REPEAT_MODE_ALL
-                                                    : PlaybackState.REPEAT_MODE_NONE);
-                sSession.setShuffleMode(sShuffle ? PlaybackState.SHUFFLE_MODE_ALL
-                                                 : PlaybackState.SHUFFLE_MODE_NONE);
-            } catch (Throwable t) { Log.w(TAG, "setMode failed", t); }
-        }
 
         updateLocks(ctx, sPlaying);
         postNotification(ctx);
@@ -239,10 +226,9 @@ public final class MediaNotification {
             @Override public void onSeekTo(long pos) {
                 try { nativeMediaSeek(pos); } catch (Throwable t) { Log.w(TAG, "seek", t); }
             }
-            // System surfaces (Android Auto / Wear) requesting a mode change — route
-            // to the same cycle/toggle the notification buttons use.
-            @Override public void onSetRepeatMode(int repeatMode) { send(CODE_REPEAT); }
-            @Override public void onSetShuffleMode(int shuffleMode) { send(CODE_SHUFFLE); }
+            // Note: the framework MediaSession.Callback (non-AndroidX) has no
+            // onSetRepeatMode/onSetShuffleMode — repeat/shuffle ride the custom
+            // notification actions (CODE_REPEAT/CODE_SHUFFLE) instead.
         });
     }
 
