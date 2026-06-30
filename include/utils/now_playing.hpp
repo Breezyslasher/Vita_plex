@@ -49,6 +49,14 @@ struct Info {
 enum class Transport { Toggle, Play, Pause, Next, Previous, Stop, FastForward, Rewind,
                        CycleRepeat, ToggleShuffle };
 
+// Set the OS-level application identity as early as possible — call this before
+// any window is created. On Windows it registers an explicit AppUserModelID +
+// DisplayName so the System Media Transport Controls overlay shows the app name
+// ("VitaPlex") instead of "unknown app"; the window inherits this identity at
+// creation time, which is why it must run first. No-op where the concept doesn't
+// apply (Android / Linux / consoles).
+void initAppIdentity();
+
 // Publish / refresh the OS media session + notification. No-op off Android.
 void update(const Info& info);
 

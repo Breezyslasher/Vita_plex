@@ -164,6 +164,7 @@ void clear() { detail::mprisClear(); }
 namespace detail {
 void smtcUpdate(const Info& info);
 void smtcClear();
+void smtcInitAppIdentity();
 }
 void update(const Info& info) { detail::smtcUpdate(info); }
 void clear() { detail::smtcClear(); }
@@ -173,6 +174,12 @@ void clear() { detail::smtcClear(); }
 void update(const Info&) {}
 void clear() {}
 
+#endif
+
+#if defined(VITAPLEX_SMTC)
+void initAppIdentity() { detail::smtcInitAppIdentity(); }
+#else
+void initAppIdentity() {}
 #endif
 
 } // namespace nowplaying
