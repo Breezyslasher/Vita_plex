@@ -24,15 +24,29 @@
  * BGFTP background-service pattern.
  */
 
+#include <psp2/types.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/power.h>
 #include <psp2/appmgr.h>
 #include <psp2/sysmodule.h>
-#include <psp2/io/fcntl.h>
-#include <psp2/io/stat.h>
+#include <psp2/kernel/iofilemgr.h>
 #include <stdio.h>
 #include <string.h>
+
+/* DolceSDK uses the older psp2 header layout: file I/O lives in
+   <psp2/kernel/iofilemgr.h> (current vitasdk's <psp2/io/fcntl.h> isn't present
+   here). Define the SCE_O_* open flags defensively in case this SDK's
+   iofilemgr.h doesn't expose them. */
+#ifndef SCE_O_WRONLY
+#define SCE_O_WRONLY 0x0002
+#endif
+#ifndef SCE_O_APPEND
+#define SCE_O_APPEND 0x0100
+#endif
+#ifndef SCE_O_CREAT
+#define SCE_O_CREAT  0x0200
+#endif
 
 /* Not declared in DolceSDK headers — resolved via SceNotificationUtil.yml. */
 extern int SceNotificationUtilBgApp_CBE814C1(void); /* sceNotificationUtilBgAppInitialize */
