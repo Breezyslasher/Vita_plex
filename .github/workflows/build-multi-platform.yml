@@ -331,35 +331,14 @@ jobs:
     if: ${{ inputs.platform == 'psvita' || inputs.platform == 'all' ||  github.event_name != 'workflow_dispatch' }}
     name: PS Vita BG helper
     runs-on: ubuntu-latest
-    env:
-      DOLCESDK: /home/runner/dolcesdk
+    container:
+      image: vitasdk/vitasdk:latest
     steps:
-      - name: Install build tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake ninja-build python3 python3-pip git wget
-          python3 -m pip install --user requests || true
+      - name: Install build requirements
+        run: apk add cmake ninja git
 
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install DolceSDK
-        run: |
-          mkdir -p "$DOLCESDK"
-          git clone --depth=1 https://github.com/DolceSDK2/ddpm.git
-          python3 ddpm/dolcesdk-update.py --auth "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}"
-          echo "$DOLCESDK/bin" >> "$GITHUB_PATH"
-          ls -la "$DOLCESDK/share" || true
-
-      - name: Probe DolceSDK headers
-        run: |
-          INC="$DOLCESDK/arm-dolce-eabi/include"
-          echo "=== psp2/ top level ==="; ls "$INC/psp2" 2>/dev/null || true
-          echo "=== psp2/io ==="; ls "$INC/psp2/io" 2>/dev/null || true
-          echo "=== find fcntl.h / stat.h ==="; find "$DOLCESDK" -name 'fcntl.h' -o -name 'stat.h' 2>/dev/null || true
-          echo "=== headers declaring sceIoOpen ==="; grep -rl 'sceIoOpen' "$INC" 2>/dev/null || true
-          echo "=== headers declaring sceIoMkdir ==="; grep -rl 'sceIoMkdir' "$INC" 2>/dev/null || true
-          echo "=== headers declaring sceKernelPowerTick ==="; grep -rl 'sceKernelPowerTick' "$INC" 2>/dev/null || true
 
       - name: Build BG helper
         run: |
@@ -371,9 +350,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: VitaPlex-vita-bgapp-${{ github.run_number }}
-          path: |
-            app/platform/psv/bgapp/build/eboot2.bin
-            app/platform/psv/bgapp/build/param2.sfo
+          path: app/platform/psv/bgapp/build/eboot2.bin
 
   # ───────────────────────────────────────────────
   # Android — switchfin-style APK build
