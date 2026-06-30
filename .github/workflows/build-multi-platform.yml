@@ -351,6 +351,16 @@ jobs:
           echo "$DOLCESDK/bin" >> "$GITHUB_PATH"
           ls -la "$DOLCESDK/share" || true
 
+      - name: Probe DolceSDK headers
+        run: |
+          INC="$DOLCESDK/arm-dolce-eabi/include"
+          echo "=== psp2/ top level ==="; ls "$INC/psp2" 2>/dev/null || true
+          echo "=== psp2/io ==="; ls "$INC/psp2/io" 2>/dev/null || true
+          echo "=== find fcntl.h / stat.h ==="; find "$DOLCESDK" -name 'fcntl.h' -o -name 'stat.h' 2>/dev/null || true
+          echo "=== headers declaring sceIoOpen ==="; grep -rl 'sceIoOpen' "$INC" 2>/dev/null || true
+          echo "=== headers declaring sceIoMkdir ==="; grep -rl 'sceIoMkdir' "$INC" 2>/dev/null || true
+          echo "=== headers declaring sceKernelPowerTick ==="; grep -rl 'sceKernelPowerTick' "$INC" 2>/dev/null || true
+
       - name: Build BG helper
         run: |
           cd app/platform/psv/bgapp
