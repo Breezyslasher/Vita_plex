@@ -111,10 +111,13 @@ if(PLATFORM_PSV)
     set(VITA_VERSION  "01.00")
     set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12")
     # Background-music helper: when CI supplies the prebuilt helper self
-    # (-DVITA_BGAPP_EBOOT=...), flag the main app as having a paired background
-    # application so the OS permits launching it via sceBgAppUtilStartBgApp().
+    # (-DVITA_BGAPP_EBOOT=...), the main app must declare itself a background-app
+    # HOST, or the installer rejects the whole package (error 0x80101104). The OS
+    # validates the pairing by category: host = gdc, the bundled bg app = gdd.
+    # Match GrapheneCt's BG-App-PSV host SFO exactly: CATEGORY=gdc + the host
+    # ATTRIBUTE word (0x1008000) + has_bg=1.
     if(VITA_BGAPP_EBOOT)
-        set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -s PUBTOOLINFO=has_bg=1")
+        set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d ATTRIBUTE=16809984 -s CATEGORY=gdc -s PUBTOOLINFO=has_bg=1")
     endif()
 endif()
 
