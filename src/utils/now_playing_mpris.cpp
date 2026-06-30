@@ -205,8 +205,14 @@ bool appendProp(DBusMessageIter* it, const std::string& iface,
         if (prop == "MinimumRate")    { vDouble(it, 1.0); return true; }
         if (prop == "MaximumRate")    { vDouble(it, 1.0); return true; }
         if (prop == "Volume")         { vDouble(it, 1.0); return true; }
-        if (prop == "LoopStatus")     { vStr(it, "None"); return true; }
-        if (prop == "Shuffle")        { vBool(it, false); return true; }
+        if (prop == "LoopStatus") {
+            const char* ls = "None";
+            if (s.info.repeat == RepeatMode::One)      ls = "Track";
+            else if (s.info.repeat == RepeatMode::All) ls = "Playlist";
+            vStr(it, ls);
+            return true;
+        }
+        if (prop == "Shuffle")        { vBool(it, s.info.shuffle); return true; }
         return false;
     }
     return false;
@@ -243,6 +249,8 @@ void sendEmptyReply(DBusConnection* conn, DBusMessage* msg) {
 // Run a transport action on the borealis main loop (MusicQueue isn't thread-safe).
 void post(Transport t)            { brls::sync([t]() { dispatchTransport(t); }); }
 void postSeek(int64_t positionMs) { brls::sync([positionMs]() { dispatchSeek(positionMs); }); }
+void postRepeat(RepeatMode m)     { brls::sync([m]() { dispatchSetRepeat(m); }); }
+void postShuffle(bool on)         { brls::sync([on]() { dispatchSetShuffle(on); }); }
 
 const char* INTROSPECT_XML =
     "<!DOCTYPE node PUBLIC \"-//freedesktop//DTD D-BUS Object Introspection 1.0//EN\" "
@@ -281,6 +289,8 @@ const char* INTROSPECT_XML =
     "<property name=\"CanControl\" type=\"b\" access=\"read\"/>"
     "<property name=\"Position\" type=\"x\" access=\"read\"/>"
     "<property name=\"Volume\" type=\"d\" access=\"readwrite\"/>"
+    "<property name=\"LoopStatus\" type=\"s\" access=\"readwrite\"/>"
+    "<property name=\"Shuffle\" type=\"b\" access=\"readwrite\"/>"
     "</interface>"
     "</node>";
 
@@ -334,8 +344,36 @@ DBusHandlerResult onMessage(DBusConnection* conn, DBusMessage* msg, void*) {
             return DBUS_HANDLER_RESULT_HANDLED;
         }
         if (!std::strcmp(member, "Set")) {
-            // We expose Volume as writable but don't track system volume; accept
-            // and ignore so clients don't error.
+            // Set(interface, property, variant). We honor LoopStatus + Shuffle
+            // (the desktop loop/shuffle widgets); Volume and anything else are
+            // accepted-and-ignored so clients don't error.
+            DBusMessageIter it;
+            const char *pp = nullptr;
+            if (dbus_message_iter_init(msg, &it) &&
+                dbus_message_iter_get_arg_type(&it) == DBUS_TYPE_STRING) {
+                dbus_message_iter_next(&it);  // skip interface name
+                if (dbus_message_iter_get_arg_type(&it) == DBUS_TYPE_STRING) {
+                    dbus_message_iter_get_basic(&it, &pp);
+                    dbus_message_iter_next(&it);
+                }
+            }
+            if (pp && dbus_message_iter_get_arg_type(&it) == DBUS_TYPE_VARIANT) {
+                DBusMessageIter var;
+                dbus_message_iter_recurse(&it, &var);
+                int vt = dbus_message_iter_get_arg_type(&var);
+                if (!std::strcmp(pp, "LoopStatus") && vt == DBUS_TYPE_STRING) {
+                    const char* s = nullptr;
+                    dbus_message_iter_get_basic(&var, &s);
+                    RepeatMode m = RepeatMode::Off;
+                    if (s && !std::strcmp(s, "Track"))         m = RepeatMode::One;
+                    else if (s && !std::strcmp(s, "Playlist")) m = RepeatMode::All;
+                    postRepeat(m);
+                } else if (!std::strcmp(pp, "Shuffle") && vt == DBUS_TYPE_BOOLEAN) {
+                    dbus_bool_t b = 0;
+                    dbus_message_iter_get_basic(&var, &b);
+                    postShuffle(b != 0);
+                }
+            }
             sendEmptyReply(conn, msg);
             return DBUS_HANDLER_RESULT_HANDLED;
         }
@@ -394,7 +432,8 @@ void emitPropertiesChanged(DBusConnection* conn) {
     dbus_message_iter_append_basic(&it, DBUS_TYPE_STRING, &iface);
 
     dbus_message_iter_open_container(&it, DBUS_TYPE_ARRAY, "{sv}", &changed);
-    static const char* changedProps[] = { "PlaybackStatus", "Metadata", "CanGoNext", "CanGoPrevious" };
+    static const char* changedProps[] = { "PlaybackStatus", "Metadata", "CanGoNext",
+                                           "CanGoPrevious", "LoopStatus", "Shuffle" };
     for (const char* p : changedProps) {
         DBusMessageIter de;
         dbus_message_iter_open_container(&changed, DBUS_TYPE_DICT_ENTRY, nullptr, &de);

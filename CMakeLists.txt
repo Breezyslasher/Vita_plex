@@ -196,6 +196,17 @@ if(NOT PLATFORM_SWITCH AND NOT PLATFORM_PSV AND NOT PLATFORM_PS4 AND NOT PLATFOR
         message(STATUS "Applying patch: glfw_input.cpp")
         configure_file(${GLFW_INPUT_PATCH} ${GLFW_INPUT_TARGET} COPYONLY)
     endif()
+
+    # GLFW platform patch (desktop only): keep the main loop ticking while the
+    # window is minimized so OS media-control transport (Linux MPRIS / multimedia
+    # keys, posted onto the loop via brls::sync) still drives playback. Upstream
+    # blocked in glfwWaitEvents() while iconified, freezing sync-task processing.
+    set(GLFW_PLATFORM_PATCH  ${CMAKE_CURRENT_SOURCE_DIR}/patches/glfw_platform.cpp)
+    set(GLFW_PLATFORM_TARGET ${BOREALIS_LIBRARY}/lib/platforms/glfw/glfw_platform.cpp)
+    if(EXISTS ${GLFW_PLATFORM_PATCH})
+        message(STATUS "Applying patch: glfw_platform.cpp")
+        configure_file(${GLFW_PLATFORM_PATCH} ${GLFW_PLATFORM_TARGET} COPYONLY)
+    endif()
 endif()
 
 # iOS / tvOS embed app resources through libromfs (borealis toolchain.cmake
@@ -839,9 +850,62 @@ int main() {
             else()
                 message(STATUS "SMTC cover art unavailable — title/artist only. Probe output:\n${_smtc_thumb_out}")
             endif()
+
+            # Optional repeat + shuffle toggles. These live on the revision-2
+            # interface (ISystemMediaTransportControls2) + its change-requested
+            # events, which vary on MinGW — probe separately so a gap here only
+            # drops repeat/shuffle, never the base SMTC controls.
+            set(_smtc_modes_probe "${CMAKE_BINARY_DIR}/smtc_modes_probe.cpp")
+            file(WRITE "${_smtc_modes_probe}" [==[
+#include <windows.h>
+#include <roapi.h>
+#include <wrl.h>
+#include <wrl/wrappers/corewrappers.h>
+#include <windows.media.h>
+using Microsoft::WRL::ComPtr;
+using namespace ABI::Windows::Media;
+typedef ABI::Windows::Foundation::ITypedEventHandler<
+    SystemMediaTransportControls*, AutoRepeatModeChangeRequestedEventArgs*> RD;
+typedef ABI::Windows::Foundation::ITypedEventHandler<
+    SystemMediaTransportControls*, ShuffleEnabledChangeRequestedEventArgs*> SD;
+int main() {
+    ComPtr<ISystemMediaTransportControls2> smtc2;
+    smtc2->put_AutoRepeatMode(MediaPlaybackAutoRepeatMode_List);
+    smtc2->put_ShuffleEnabled(true);
+    EventRegistrationToken t1, t2;
+    smtc2->add_AutoRepeatModeChangeRequested((RD*)0, &t1);
+    smtc2->add_ShuffleEnabledChangeRequested((SD*)0, &t2);
+    ComPtr<IAutoRepeatModeChangeRequestedEventArgs> ra;
+    MediaPlaybackAutoRepeatMode m;
+    ra->get_RequestedAutoRepeatMode(&m);
+    ComPtr<IShuffleEnabledChangeRequestedEventArgs> sa;
+    boolean b;
+    sa->get_RequestedShuffleEnabled(&b);
+    return 0;
+}
+]==])
+            try_compile(VITAPLEX_HAVE_SMTC_MODES "${CMAKE_BINARY_DIR}/smtc_modes_probe_bin"
+                SOURCES "${_smtc_modes_probe}"
+                LINK_LIBRARIES runtimeobject ole32
+                CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON
+                OUTPUT_VARIABLE _smtc_modes_out)
+            if(VITAPLEX_HAVE_SMTC_MODES)
+                message(STATUS "SMTC repeat + shuffle enabled")
+                target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_SMTC_MODES=1)
+            else()
+                message(STATUS "SMTC repeat/shuffle unavailable. Probe output:\n${_smtc_modes_out}")
+            endif()
         else()
             message(STATUS "WinRT SMTC unavailable — disabled. Probe output:\n${_smtc_out}")
         endif()
+
+        # Embed a Win32 version resource so the .exe identifies itself as
+        # "VitaPlex" (FileDescription/ProductName). Without it an unpackaged exe
+        # has no identity and Windows labels the media overlay "Unknown app";
+        # with it, the overlay (and Task Manager / file properties) shows the
+        # app name. Compiled by windres under MinGW via CMake's RC language.
+        enable_language(RC)
+        target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_SOURCE_DIR}/app/platform/windows/vitaplex.rc")
     else()
         # Linux desktop: expose MPRIS media controls over D-Bus so the multimedia
         # keys and the GNOME/KDE media widget drive playback even when VitaPlex

@@ -281,6 +281,16 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "vd-lavc-dr", "yes");
         mpv_set_option_string(m_mpv, "vd-lavc-fast", "yes");
         mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
+#elif defined(_WIN32)
+        // Windows: zero-copy dxva2/d3d11va surfaces don't interop cleanly with
+        // our vo=libmpv (FBO + NanoVG composite) render path — they come out
+        // garbled (horizontal-line tearing) and the failed dxva2 surface
+        // allocation stalls the pipeline enough to starve WASAPI (audio
+        // crackle). Use copy-back hwdec instead: decoded frames are copied to
+        // system memory and uploaded to the GL FBO exactly like software frames,
+        // so they render correctly. Falls back through d3d11va -> dxva2 ->
+        // software, so a machine with no usable HW decoder still plays (in SW).
+        mpv_set_option_string(m_mpv, "hwdec", "d3d11va-copy,dxva2-copy,no");
 #else
         mpv_set_option_string(m_mpv, "hwdec", "auto-safe");
 #endif

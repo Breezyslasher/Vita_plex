@@ -23,20 +23,28 @@ namespace {
 std::mutex g_mutex;
 std::function<void(Transport)> g_onTransport;
 std::function<void(int64_t)> g_onSeek;
+std::function<void(RepeatMode)> g_onSetRepeat;
+std::function<void(bool)> g_onSetShuffle;
 
 } // namespace
 
 void setHandler(std::function<void(Transport)> onTransport,
-                std::function<void(int64_t)> onSeekMs) {
+                std::function<void(int64_t)> onSeekMs,
+                std::function<void(RepeatMode)> onSetRepeat,
+                std::function<void(bool)> onSetShuffle) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_onTransport = std::move(onTransport);
     g_onSeek = std::move(onSeekMs);
+    g_onSetRepeat = std::move(onSetRepeat);
+    g_onSetShuffle = std::move(onSetShuffle);
 }
 
 void clearHandler() {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_onTransport = nullptr;
     g_onSeek = nullptr;
+    g_onSetRepeat = nullptr;
+    g_onSetShuffle = nullptr;
 }
 
 void dispatchTransport(Transport t) {
@@ -57,6 +65,24 @@ void dispatchSeek(int64_t positionMs) {
     if (fn) fn(positionMs);
 }
 
+void dispatchSetRepeat(RepeatMode mode) {
+    std::function<void(RepeatMode)> fn;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        fn = g_onSetRepeat;
+    }
+    if (fn) fn(mode);
+}
+
+void dispatchSetShuffle(bool on) {
+    std::function<void(bool)> fn;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        fn = g_onSetShuffle;
+    }
+    if (fn) fn(on);
+}
+
 #ifdef __ANDROID__
 
 void update(const Info& info) {
@@ -70,7 +96,7 @@ void update(const Info& info) {
     }
     jmethodID mid = env->GetStaticMethodID(
         cls, "update",
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJZZZ)V");
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJZZZIZZ)V");
     if (!mid) {
         if (env->ExceptionCheck()) env->ExceptionClear();
         env->DeleteLocalRef(cls);
@@ -82,10 +108,17 @@ void update(const Info& info) {
     jstring jAlbum = env->NewStringUTF(info.album.c_str());
     jstring jArt = env->NewStringUTF(info.artUrl.c_str());
 
+    // Repeat mode as an int the Java side maps to its drawables: 0 off, 1 all, 2 one.
+    jint jRepeat = info.repeat == RepeatMode::All ? 1 : (info.repeat == RepeatMode::One ? 2 : 0);
+    // Show the repeat/shuffle actions only when the publisher wants them (music,
+    // not video).
+    jboolean jShowModes = (info.showRepeat || info.showShuffle) ? JNI_TRUE : JNI_FALSE;
+
     env->CallStaticVoidMethod(cls, mid, jTitle, jArtist, jAlbum, jArt,
                               (jlong)info.durationMs, (jlong)info.positionMs,
                               (jboolean)info.playing, (jboolean)info.hasNext,
-                              (jboolean)info.hasPrev);
+                              (jboolean)info.hasPrev, jRepeat,
+                              (jboolean)info.shuffle, jShowModes);
     if (env->ExceptionCheck()) {
         env->ExceptionDescribe();
         env->ExceptionClear();
@@ -156,13 +189,15 @@ Java_org_VitaPlex_app_MediaNotification_nativeMediaAction(JNIEnv*, jclass, jint 
         using vitaplex::nowplaying::Transport;
         Transport t;
         switch ((int)code) {
-            case 2:  t = Transport::Play;     break;
-            case 3:  t = Transport::Pause;    break;
-            case 4:  t = Transport::Next;     break;
-            case 5:  t = Transport::Previous; break;
-            case 6:  t = Transport::Stop;     break;
+            case 2:  t = Transport::Play;          break;
+            case 3:  t = Transport::Pause;         break;
+            case 4:  t = Transport::Next;          break;
+            case 5:  t = Transport::Previous;      break;
+            case 6:  t = Transport::Stop;          break;
+            case 7:  t = Transport::CycleRepeat;   break;
+            case 8:  t = Transport::ToggleShuffle; break;
             case 1:
-            default: t = Transport::Toggle;   break;
+            default: t = Transport::Toggle;        break;
         }
         vitaplex::nowplaying::dispatchTransport(t);
     });

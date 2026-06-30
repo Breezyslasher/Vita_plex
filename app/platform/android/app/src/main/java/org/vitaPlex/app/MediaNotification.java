@@ -16,6 +16,7 @@ import android.media.session.PlaybackState;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.os.Build;
+import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
@@ -47,9 +48,17 @@ public final class MediaNotification {
     private static final int CODE_NEXT = 4;
     private static final int CODE_PREVIOUS = 5;
     private static final int CODE_STOP = 6;
+    private static final int CODE_REPEAT = 7;    // cycle repeat off -> all -> one
+    private static final int CODE_SHUFFLE = 8;   // toggle shuffle
 
     private static final String ACTION = "org.VitaPlex.app.MEDIA_ACTION";
     private static final String EXTRA_CODE = "code";
+
+    // PlaybackState custom-action ids. Android 13+ builds the media controls from
+    // the MediaSession's PlaybackState (it ignores notification addAction buttons),
+    // so shuffle/repeat must also be exposed as custom actions to appear there.
+    private static final String CUSTOM_SHUFFLE = "org.VitaPlex.app.CUSTOM_SHUFFLE";
+    private static final String CUSTOM_REPEAT = "org.VitaPlex.app.CUSTOM_REPEAT";
 
     private static native void nativeMediaAction(int code);
     private static native void nativeMediaSeek(long positionMs);
@@ -67,6 +76,9 @@ public final class MediaNotification {
     private static String sTitle = "", sArtist = "", sAlbum = "", sArtUrl = "";
     private static long sDurationMs, sPositionMs;
     private static boolean sPlaying, sHasNext, sHasPrev;
+    private static int sRepeat;          // 0 off, 1 all, 2 one
+    private static boolean sShuffle;
+    private static boolean sShowModes;   // expose repeat/shuffle (music, not video)
     private static String sLoadedArtUrl;   // url whose bitmap is in sArtBitmap
     private static Bitmap sArtBitmap;
 
@@ -75,7 +87,8 @@ public final class MediaNotification {
     /** Called from native (any thread). Marshals to the main looper. */
     public static void update(final String title, final String artist, final String album,
                               final String artUrl, final long durationMs, final long positionMs,
-                              final boolean playing, final boolean hasNext, final boolean hasPrev) {
+                              final boolean playing, final boolean hasNext, final boolean hasPrev,
+                              final int repeat, final boolean shuffle, final boolean showModes) {
         sMain.post(new Runnable() {
             @Override public void run() {
                 sTitle = title != null ? title : "";
@@ -87,6 +100,9 @@ public final class MediaNotification {
                 sPlaying = playing;
                 sHasNext = hasNext;
                 sHasPrev = hasPrev;
+                sRepeat = repeat;
+                sShuffle = shuffle;
+                sShowModes = showModes;
                 // Drop a stale cover the instant the track changes.
                 if (!sArtUrl.equals(sLoadedArtUrl)) sArtBitmap = null;
                 try { applyUpdate(); } catch (Throwable t) { Log.w(TAG, "update failed", t); }
@@ -144,16 +160,33 @@ public final class MediaNotification {
         }
         sSession.setMetadata(meta.build());
 
+        // Always advertise prev/next so the system media controls keep both
+        // buttons visible even at the first/last track (the queue just no-ops
+        // there). Gating on hasPrev made the Previous button vanish on track 1.
         long actions = PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_PLAY
-            | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_STOP;
-        if (sHasNext) actions |= PlaybackState.ACTION_SKIP_TO_NEXT;
-        if (sHasPrev) actions |= PlaybackState.ACTION_SKIP_TO_PREVIOUS;
-        PlaybackState state = new PlaybackState.Builder()
+            | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_STOP
+            | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS;
+        PlaybackState.Builder psb = new PlaybackState.Builder()
             .setActions(actions)
             .setState(sPlaying ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
-                      sPositionMs, 1.0f, SystemClock.elapsedRealtime())
-            .build();
-        sSession.setPlaybackState(state);
+                      sPositionMs, 1.0f, SystemClock.elapsedRealtime());
+        // Shuffle/repeat as PlaybackState custom actions so they appear in the
+        // Android 13+ system media controls (which ignore notification actions).
+        // onCustomAction() routes them back; pre-13 uses the notification actions.
+        if (sShowModes) {
+            int shufIcon = drawableId(ctx, sShuffle ? "ic_shuffle_on" : "ic_shuffle");
+            if (shufIcon != 0) {
+                psb.addCustomAction(new PlaybackState.CustomAction.Builder(
+                    CUSTOM_SHUFFLE, sShuffle ? "Shuffle on" : "Shuffle off", shufIcon).build());
+            }
+            int repIcon = drawableId(ctx, sRepeat == 2 ? "ic_repeat_one" : sRepeat == 1 ? "ic_repeat_on" : "ic_repeat");
+            if (repIcon != 0) {
+                String rt = sRepeat == 2 ? "Repeat one" : (sRepeat == 1 ? "Repeat all" : "Repeat off");
+                psb.addCustomAction(new PlaybackState.CustomAction.Builder(
+                    CUSTOM_REPEAT, rt, repIcon).build());
+            }
+        }
+        sSession.setPlaybackState(psb.build());
         sSession.setActive(true);
 
         updateLocks(ctx, sPlaying);
@@ -216,6 +249,12 @@ public final class MediaNotification {
             @Override public void onStop() { send(CODE_STOP); }
             @Override public void onSeekTo(long pos) {
                 try { nativeMediaSeek(pos); } catch (Throwable t) { Log.w(TAG, "seek", t); }
+            }
+            // Android 13+ media controls fire shuffle/repeat as custom actions
+            // (the framework Callback has no onSetRepeatMode/onSetShuffleMode).
+            @Override public void onCustomAction(String action, Bundle extras) {
+                if (CUSTOM_SHUFFLE.equals(action))      send(CODE_SHUFFLE);
+                else if (CUSTOM_REPEAT.equals(action))  send(CODE_REPEAT);
             }
         });
     }
@@ -295,29 +334,51 @@ public final class MediaNotification {
             b.setContentIntent(PendingIntent.getActivity(ctx, 100, open, piFlags));
         }
 
-        int idx = 0, prevIdx = -1, toggleIdx, nextIdx = -1;
-        if (sHasPrev) {
-            b.addAction(action(ctx, android.R.drawable.ic_media_previous, "Previous", CODE_PREVIOUS));
-            prevIdx = idx++;
+        // Order: shuffle, prev, play/pause, next, repeat. Compact view keeps
+        // prev/toggle/next; shuffle + repeat are extras (music only — sShowModes).
+        // Prev/next are ALWAYS shown so the transport row doesn't reshuffle (and
+        // prev doesn't vanish) at the first/last track — the queue just no-ops
+        // there. Glyphs vary by state: shuffle on/off and repeat off/all/one each
+        // get a distinct icon so the current mode is readable. Looked up by name
+        // so this hand-written Java needs no generated-R dependency.
+        int idx = 0, prevIdx, toggleIdx, nextIdx;
+
+        int shuffleIcon = sShowModes ? drawableId(ctx, sShuffle ? "ic_shuffle_on" : "ic_shuffle") : 0;
+        if (shuffleIcon != 0) {
+            b.addAction(action(ctx, shuffleIcon, sShuffle ? "Shuffle on" : "Shuffle off", CODE_SHUFFLE));
+            idx++;
         }
+        b.addAction(action(ctx, android.R.drawable.ic_media_previous, "Previous", CODE_PREVIOUS));
+        prevIdx = idx++;
         b.addAction(action(ctx,
             sPlaying ? android.R.drawable.ic_media_pause : android.R.drawable.ic_media_play,
             sPlaying ? "Pause" : "Play", CODE_TOGGLE));
         toggleIdx = idx++;
-        if (sHasNext) {
-            b.addAction(action(ctx, android.R.drawable.ic_media_next, "Next", CODE_NEXT));
-            nextIdx = idx++;
+        b.addAction(action(ctx, android.R.drawable.ic_media_next, "Next", CODE_NEXT));
+        nextIdx = idx++;
+        int repeatIcon = sShowModes
+            ? drawableId(ctx, sRepeat == 2 ? "ic_repeat_one" : sRepeat == 1 ? "ic_repeat_on" : "ic_repeat") : 0;
+        if (repeatIcon != 0) {
+            String rt = sRepeat == 2 ? "Repeat one" : (sRepeat == 1 ? "Repeat all" : "Repeat off");
+            b.addAction(action(ctx, repeatIcon, rt, CODE_REPEAT));
+            idx++;
         }
 
         Notification.MediaStyle style = new Notification.MediaStyle()
             .setMediaSession(sSession.getSessionToken());
-        if (prevIdx >= 0 && nextIdx >= 0) {
-            style.setShowActionsInCompactView(prevIdx, toggleIdx, nextIdx);
-        } else {
-            style.setShowActionsInCompactView(toggleIdx);
-        }
+        style.setShowActionsInCompactView(prevIdx, toggleIdx, nextIdx);
         b.setStyle(style);
         return b.build();
+    }
+
+    // Resolve a drawable resource id by name (avoids a compile-time R dependency
+    // from this hand-written Java). Returns 0 if not found.
+    private static int drawableId(Context ctx, String name) {
+        try {
+            return ctx.getResources().getIdentifier(name, "drawable", ctx.getPackageName());
+        } catch (Throwable t) {
+            return 0;
+        }
     }
 
     // Start the media foreground service so audio + the notification survive the
