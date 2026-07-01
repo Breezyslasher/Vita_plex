@@ -433,6 +433,12 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         if (row && row->getVisibility() != brls::Visibility::VISIBLE) continue;
         cullToViewport(content, hs, /*vertical=*/false);
     }
+
+    // The time header rides its own HScrollingFrame with 2-4x more slot
+    // boxes (label + hairline each) than fit on screen — cull those too.
+    if (m_timeHeaderBox && m_timeHeaderScroll)
+        cullToViewport(m_timeHeaderBox, m_timeHeaderScroll, /*vertical=*/false);
+
     const int64_t pf1 = brls::getCPUTimeUsec();
     m_perfCullUs += pf1 - pf0;
 
