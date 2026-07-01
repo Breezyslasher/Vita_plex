@@ -409,12 +409,32 @@ void LiveTVTab::cullToViewport(brls::Box* content, brls::View* viewport, bool ve
 
 void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height,
                      brls::Style style, brls::FrameContext* ctx) {
+    const int64_t pf0 = brls::getCPUTimeUsec();
+    if (m_perfLastFrameUs > 0) m_perfFrameUs += pf0 - m_perfLastFrameUs;
+    m_perfLastFrameUs = pf0;
+
     // With 100+ channels the EPG grid holds ~100 rows and the favourites /
     // DVR rows hold ~100 cards each. borealis only culls off-screen *leaf*
     // views, never nested Boxes, so every off-screen row/card still painted
     // every frame — pure overdraw. Toggle INVISIBLE on anything scrolled
     // out of its viewport so frame() early-outs for the entire subtree.
     cullToViewport(m_guideBox, m_guideScrollV, /*vertical=*/true);
+
+    // Same idea horizontally, inside the rows that survived the vertical
+    // cull: a row spans the whole guide window (~15-25 cell Boxes) but only
+    // ~5 cells are on screen. The HScrollingFrame scissor only hides the
+    // result — every off-screen cell still recorded its rounded-rect
+    // background each frame.
+    for (size_t i = 0; i < m_rowProgramScrolls.size() && i < m_rowProgramBoxes.size(); i++) {
+        brls::HScrollingFrame* hs = m_rowProgramScrolls[i];
+        brls::Box* content = m_rowProgramBoxes[i];
+        if (!hs || !content) continue;
+        brls::View* row = hs->getParent();
+        if (row && row->getVisibility() != brls::Visibility::VISIBLE) continue;
+        cullToViewport(content, hs, /*vertical=*/false);
+    }
+    const int64_t pf1 = brls::getCPUTimeUsec();
+    m_perfCullUs += pf1 - pf0;
 
     // Slide the cyan "now" line each frame so it tracks the wall clock
     // even when the guide grid itself doesn't rebuild.
@@ -484,8 +504,12 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
 
     // Hover-driven hero refresh, applied only once focus has rested.
     applyPendingHero();
+    const int64_t pf2 = brls::getCPUTimeUsec();
+    m_perfSyncUs += pf2 - pf1;
 
     brls::Box::draw(vg, x, y, width, height, style, ctx);
+    const int64_t pf3 = brls::getCPUTimeUsec();
+    m_perfDrawUs += pf3 - pf2;
 
     // Batch text rendering for the EPG cells. Every cell that's visible
     // in its row's HScrollingFrame contributes one title and one subtitle
@@ -494,7 +518,8 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
     // is ~80–120 cells, so this collapses ~200 per-Label draw calls into
     // 2 batched ones. No path fills may happen between Begin and End or
     // they'd clobber the batch — only nvgText.
-    if (!m_epgCells.empty() && m_guideScrollV) {
+    [&]() {
+        if (m_epgRowRanges.empty() || m_epgCells.empty() || !m_guideScrollV) return;
         const float vScrollTop    = m_guideScrollV->getY();
         const float vScrollBottom = vScrollTop + m_guideScrollV->getHeight();
 
@@ -527,14 +552,17 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         std::vector<VisibleCell> visible;
         visible.reserve(m_epgCells.size());
 
-        for (const EpgCellInfo& info : m_epgCells) {
+        for (const EpgRowRange& rr : m_epgRowRanges) {
+            // One visibility check skips a culled row's entire cell range —
+            // previously every cell struct in the grid (channels × programs,
+            // easily >1000 entries) was walked per frame just to find the
+            // on-screen handful.
+            if (rr.row && rr.row->getVisibility() != brls::Visibility::VISIBLE) continue;
+            for (size_t ci = rr.begin; ci < rr.end && ci < m_epgCells.size(); ci++) {
+            const EpgCellInfo& info = m_epgCells[ci];
             if (!info.cell || !info.scroll) continue;
-            // Rows scrolled out of the guide viewport are culled INVISIBLE
-            // (cullToViewport above); their cells' own visibility stays
-            // VISIBLE, so check the row first and skip the 4 recursive
-            // position getters per cell for the ~85% of cells that are in
-            // culled rows.
-            if (info.row && info.row->getVisibility() != brls::Visibility::VISIBLE) continue;
+            // Horizontally-culled cells are INVISIBLE (cell cull above) —
+            // skip before paying the recursive position getters.
             if (info.cell->getVisibility() != brls::Visibility::VISIBLE) continue;
 
             const float cx = info.cell->getX();
@@ -554,6 +582,7 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
             v.title    = &info.title;
             v.subtitle = &info.subtitle;
             visible.push_back(v);
+            }
         }
 
         if (visible.empty()) return;
@@ -583,6 +612,24 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         }
         nvgTextBatchEnd(vg);
         nvgRestore(vg);
+    }();
+
+    const int64_t pf4 = brls::getCPUTimeUsec();
+    m_perfTextUs += pf4 - pf3;
+
+    // Periodic cost report (~every 5-20s depending on frame rate). On Vita
+    // this lands in ux0:data/VitaPlex/vitaplex.log, so a hardware log shows
+    // exactly where guide frame time goes: total = wall time between draws
+    // (everything incl. GPU/other views), the rest are this tab's sections.
+    if (++m_perfFrames >= 300) {
+        brls::Logger::info(
+            "LiveTV perf avg us/frame over {} frames: total={} cull={} sync={} boxdraw={} text={}",
+            m_perfFrames,
+            m_perfFrameUs / m_perfFrames, m_perfCullUs / m_perfFrames,
+            m_perfSyncUs / m_perfFrames, m_perfDrawUs / m_perfFrames,
+            m_perfTextUs / m_perfFrames);
+        m_perfFrameUs = m_perfCullUs = m_perfSyncUs = m_perfDrawUs = m_perfTextUs = 0;
+        m_perfFrames  = 0;
     }
 }
 
@@ -1186,6 +1233,7 @@ void LiveTVTab::buildEPGGrid() {
     // just wiped via m_guideBox->clearViews(); purge before rebuilding
     // so draw()'s batch pass doesn't dereference freed cells.
     m_epgCells.clear();
+    m_epgRowRanges.clear();
     // Reset the per-frame sync / time-line caches — the grid start time
     // shifts on rebuild and the row scroll frames have been recreated.
     m_lastSyncedScrollX     = -1;
@@ -1248,6 +1296,8 @@ void LiveTVTab::buildEPGGrid() {
     // Build channel rows
     for (const auto& channel : m_channels) {
         auto* rowBox = new brls::Box();
+        const size_t rowCellsBegin = m_epgCells.size();  // cells appended below
+                                                         // belong to this row
         rowBox->setAxis(brls::Axis::ROW);
         rowBox->setHeight(livetvRowHeight());
         rowBox->setJustifyContent(brls::JustifyContent::FLEX_START);
@@ -1532,6 +1582,8 @@ void LiveTVTab::buildEPGGrid() {
         rowBox->addView(programsScroll);
         m_rowProgramScrolls.push_back(programsScroll);
         m_rowProgramBoxes.push_back(programsBox);
+        if (m_epgCells.size() > rowCellsBegin)
+            m_epgRowRanges.push_back({ rowBox, rowCellsBegin, m_epgCells.size() });
         m_guideBox->addView(rowBox);
     }
 
