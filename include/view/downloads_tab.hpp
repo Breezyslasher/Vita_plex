@@ -114,6 +114,10 @@ private:
     };
     std::vector<CachedItem> m_lastState;
 
+    // Last storage-meter fill width we pushed. setWidth() triggers a full-tree
+    // Yoga relayout in borealis, so we skip it when the width hasn't changed.
+    float m_lastMeterWidth = -1.0f;
+
     // In-place update: maps for updating text without full rebuild
     std::map<std::string, brls::Label*> m_itemStatusLabels;   // ratingKey -> status label
     std::map<std::string, brls::Box*> m_itemRows;             // ratingKey -> row box (for color updates)
