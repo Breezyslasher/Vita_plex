@@ -609,6 +609,11 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         int nowCells = 0, upcomingCells = 0;
         for (const VisibleCell& v : visible) (v.onNow ? nowCells : upcomingCells)++;
 
+        // AA fringes are the bulk of NanoVG's per-path stencil geometry, and
+        // on 6px-radius guide cells they're visually irrelevant — turn shape
+        // AA off for the batched fills/strokes (restored below).
+        nvgShapeAntiAlias(vg, 0);
+
         if (upcomingCells > 0) {
             nvgBeginPath(vg);
             for (const VisibleCell& v : visible)
@@ -631,6 +636,8 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
             nvgStrokeWidth(vg, 1.0f);
             nvgStroke(vg);
         }
+
+        nvgShapeAntiAlias(vg, 1);
 
         nvgFontFace(vg, "regular");
         nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
