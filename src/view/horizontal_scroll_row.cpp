@@ -37,6 +37,46 @@ void HorizontalScrollRow::onLayout() {
     updateScroll();
 }
 
+static bool rowIsDescendantOf(brls::View* view, brls::View* ancestor) {
+    for (brls::View* v = view; v; v = v->getParent())
+        if (v == ancestor) return true;
+    return false;
+}
+
+void HorizontalScrollRow::draw(NVGcontext* vg, float x, float y, float width, float height,
+                               brls::Style style, brls::FrameContext* ctx) {
+    // Toggle INVISIBLE on cards scrolled out of the row so View::frame()
+    // early-outs their whole subtree (INVISIBLE<->VISIBLE never touches
+    // layout — only GONE does). clipsToBounds alone only hides them
+    // visually: every off-screen card still ran its full draw() (cover
+    // pattern, badge paths, per-frame text measurement) every frame.
+    // The margin keeps the immediate off-screen neighbours drawable so
+    // directional focus can still reach them (borealis navigation skips
+    // non-VISIBLE views); once focused they scroll in and the next pass
+    // reveals the following ones.
+    const float margin  = 300.0f;
+    const float rowLeft = this->getX();
+    const float rowRight = rowLeft + this->getWidth();
+    brls::View* focus = brls::Application::getCurrentFocus();
+
+    for (brls::View* child : this->getChildren()) {
+        const brls::Visibility v = child->getVisibility();
+        if (v == brls::Visibility::GONE) continue;  // hidden by owner, keep as-is
+
+        const float cLeft  = child->getX();
+        const float cRight = cLeft + child->getWidth();
+        bool visible = (cRight >= rowLeft - margin) && (cLeft <= rowRight + margin);
+        if (!visible && focus && rowIsDescendantOf(focus, child))
+            visible = true;
+
+        const brls::Visibility want = visible ? brls::Visibility::VISIBLE
+                                              : brls::Visibility::INVISIBLE;
+        if (v != want) child->setVisibility(want);
+    }
+
+    brls::Box::draw(vg, x, y, width, height, style, ctx);
+}
+
 void HorizontalScrollRow::onPan(brls::PanGestureStatus status, brls::Sound* sound) {
     if (status.state == brls::GestureState::START) {
         m_panStartOffset = m_scrollOffset;

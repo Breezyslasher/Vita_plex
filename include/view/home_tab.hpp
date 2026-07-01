@@ -23,6 +23,11 @@ public:
 
     void onFocusGained() override;
     void willDisappear(bool resetState) override;
+    // Culls rails/headers scrolled out of the page before drawing —
+    // borealis never culls nested Boxes, so below-the-fold rails (and
+    // every card in them) were drawn every frame.
+    void draw(NVGcontext* vg, float x, float y, float width, float height,
+              brls::Style style, brls::FrameContext* ctx) override;
 
 private:
     void loadContent();

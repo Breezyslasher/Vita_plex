@@ -110,6 +110,8 @@ MediaItemCell::~MediaItemCell() {
 
 void MediaItemCell::setItem(const MediaItem& item) {
     m_item = item;
+    m_ratingTextW = -1.0f;  // re-measure the cover badges for the new item
+    m_charTextW   = -1.0f;
 
     // Item-change resets any previously-loaded cover. The grid pass will
     // paint a placeholder rect for this cell until loadThumbnail() fires
@@ -375,8 +377,13 @@ void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float he
                     nvgFontFace(vg, "regular");
                     nvgFontSize(vg, 12.0f);
                     nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-                    float tb[4];
-                    float numW = nvgTextBounds(vg, 0, 0, rbuf, nullptr, tb);
+                    // The badge string is static per item — measure once, not
+                    // per frame (nvgTextBounds does fontstash shaping).
+                    if (m_ratingTextW < 0.0f) {
+                        float tb[4];
+                        m_ratingTextW = nvgTextBounds(vg, 0, 0, rbuf, nullptr, tb);
+                    }
+                    float numW = m_ratingTextW;
 
                     const float bh = 20.0f, iconR = 6.0f, padH = 6.0f, gap = 4.0f;
                     float bw = padH + iconR * 2.0f + gap + numW + padH;
@@ -434,8 +441,11 @@ void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float he
                 nvgFontFace(vg, "regular");
                 nvgFontSize(vg, 11.0f);
                 nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_MIDDLE);
-                float tb[4];
-                float tw = nvgTextBounds(vg, 0, 0, m_item.character.c_str(), nullptr, tb);
+                if (m_charTextW < 0.0f) {
+                    float tb[4];
+                    m_charTextW = nvgTextBounds(vg, 0, 0, m_item.character.c_str(), nullptr, tb);
+                }
+                float tw = m_charTextW;
 
                 const float bh = 18.0f, padH = 7.0f;
                 float bw = tw + padH * 2.0f;

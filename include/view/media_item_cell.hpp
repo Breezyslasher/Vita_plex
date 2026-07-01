@@ -63,6 +63,12 @@ private:
     brls::Label* m_subtitleLabel = nullptr;
     brls::Label* m_descriptionLabel = nullptr;  // Shows on focus for episodes
     brls::Rectangle* m_progressBar = nullptr;
+
+    // Cached nvgTextBounds() results for the cover badges. The strings are
+    // static per item, but draw() ran the measurement (fontstash shaping)
+    // every frame for every visible cell. Reset in setItem().
+    float m_ratingTextW = -1.0f;
+    float m_charTextW   = -1.0f;
 };
 
 } // namespace vitaplex
