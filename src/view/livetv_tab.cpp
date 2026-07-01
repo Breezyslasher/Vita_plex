@@ -31,6 +31,14 @@ extern "C" {
 
 namespace vitaplex {
 
+// ── TEMPORARY DIAGNOSTIC ────────────────────────────────────────────────
+// Strip the Live TV tab to bare boxes: blank hero card, empty guide cells,
+// no text, no images. Bisects the remaining sub-30 FPS: if this build runs
+// at 60, the cost is the CONTENT (glyphs / logos / hero); if it's still
+// ~24, the cost is the STRUCTURE (boxes, scroll frames, layout, renderer
+// overhead). Flip to false to restore the full guide.
+static constexpr bool kBareGuideDiag = true;
+
 // ============================================================================
 // GuideBox
 // ============================================================================
@@ -741,6 +749,9 @@ void LiveTVTab::buildHero() {
     // hide the Watch live / Record buttons inside it from the focus chain.
     // The buttons themselves are the actual focus targets.
 
+    // Diagnostic: hero stays a blank card — no thumb, labels, or buttons.
+    if (kBareGuideDiag) return;
+
     // Thumbnail holder. The Image itself is added invisible — we flip it
     // on once the async load finishes; the holder Box owns the slot in
     // the meantime so layout doesn't jump.
@@ -1006,6 +1017,7 @@ void LiveTVTab::resizeHeroThumbToImage(brls::Image* img) {
 }
 
 void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
+    if (kBareGuideDiag) return;  // blank hero in diagnostic mode
     // Find the currently-airing program and forward to the per-program
     // updater. Falls back to the channel's legacy currentProgram/start/end
     // fields if the EPG didn't fill the programs vector.
@@ -1079,6 +1091,7 @@ void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
 
 void LiveTVTab::updateHeroForProgram(const LiveTVChannel& channel,
                                      const GuideProgram& program) {
+    if (kBareGuideDiag) return;  // blank hero in diagnostic mode
     m_heroChannel      = channel;
     m_heroProgram      = program;
     m_heroProgramValid = true;
@@ -1334,11 +1347,13 @@ void LiveTVTab::buildEPGGrid() {
             timeSlot->addView(leftRule);
         }
 
-        auto* timeLabel = new brls::Label();
-        timeLabel->setText(formatTime(slotTime));
-        timeLabel->setFontSize(13);
-        timeLabel->setTextColor(tok::muted());
-        timeSlot->addView(timeLabel);
+        if (!kBareGuideDiag) {
+            auto* timeLabel = new brls::Label();
+            timeLabel->setText(formatTime(slotTime));
+            timeLabel->setFontSize(13);
+            timeLabel->setTextColor(tok::muted());
+            timeSlot->addView(timeLabel);
+        }
 
         m_timeHeaderBox->addView(timeSlot);
     }
@@ -1392,7 +1407,7 @@ void LiveTVTab::buildEPGGrid() {
         logoBox->addView(logo);
         channelCol->addView(logoBox);
 
-        if (!channel.thumb.empty()) {
+        if (!kBareGuideDiag && !channel.thumb.empty()) {
             PlexClient& client = PlexClient::getInstance();
             std::string url = client.getThumbnailUrl(channel.thumb,
                                                      logoW * 2, logoH * 2);
@@ -1402,18 +1417,20 @@ void LiveTVTab::buildEPGGrid() {
             }, logo, alive);
         }
 
-        auto* chNumLabel = new brls::Label();
-        chNumLabel->setText(!channel.channelIdentifier.empty()
-                            ? channel.channelIdentifier
-                            : std::to_string(channel.channelNumber));
-        chNumLabel->setFontSize(11);
-        // Channel number is body text in a long vertical list — keep
-        // it muted so the gold accent stays reserved for fills,
-        // selected states, and key hero numbers rather than shimmering
-        // down every row of the channel sidebar.
-        chNumLabel->setTextColor(tok::muted());
-        chNumLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
-        channelCol->addView(chNumLabel);
+        if (!kBareGuideDiag) {
+            auto* chNumLabel = new brls::Label();
+            chNumLabel->setText(!channel.channelIdentifier.empty()
+                                ? channel.channelIdentifier
+                                : std::to_string(channel.channelNumber));
+            chNumLabel->setFontSize(11);
+            // Channel number is body text in a long vertical list — keep
+            // it muted so the gold accent stays reserved for fills,
+            // selected states, and key hero numbers rather than shimmering
+            // down every row of the channel sidebar.
+            chNumLabel->setTextColor(tok::muted());
+            chNumLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+            channelCol->addView(chNumLabel);
+        }
 
         LiveTVChannel capturedChannel = channel;
         channelCol->setFocusable(true);
@@ -1516,6 +1533,7 @@ void LiveTVTab::buildEPGGrid() {
                 std::string sub = formatTime(prog.startTime) + " – " + formatTime(prog.endTime);
                 if (isCurrently) sub += "  ·  on now";
                 info.subtitle = std::move(sub);
+                if (kBareGuideDiag) { info.title.clear(); info.subtitle.clear(); }
                 m_epgCells.push_back(info);
 
                 GuideProgram gp;
@@ -1582,6 +1600,7 @@ void LiveTVTab::buildEPGGrid() {
             if ((int)title.length() > maxChars) title = title.substr(0, maxChars - 2) + "..";
             info.title = std::move(title);
             info.subtitle = formatTime(channel.programStart) + " – " + formatTime(channel.programEnd) + "  ·  on now";
+            if (kBareGuideDiag) { info.title.clear(); info.subtitle.clear(); }
             m_epgCells.push_back(info);
 
             // Hover on the legacy fallback updates the hero with this
@@ -1609,11 +1628,13 @@ void LiveTVTab::buildEPGGrid() {
             emptyCell->setFocusable(true);
             emptyCell->setPadding(8);
 
-            auto* noInfo = new brls::Label();
-            noInfo->setText("No guide data");
-            noInfo->setFontSize(11);
-            noInfo->setTextColor(tok::dim());
-            emptyCell->addView(noInfo);
+            if (!kBareGuideDiag) {
+                auto* noInfo = new brls::Label();
+                noInfo->setText("No guide data");
+                noInfo->setFontSize(11);
+                noInfo->setTextColor(tok::dim());
+                emptyCell->addView(noInfo);
+            }
 
             emptyCell->registerClickAction([this, capturedChannel](brls::View*) {
                 onChannelSelected(capturedChannel);
