@@ -436,24 +436,54 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
             }
         }
         if (anchor) {
+            // Focus moved to a different row: align its internal offset with
+            // the shared offset every row is already displaying, so its own
+            // centering starts from what's on screen instead of a stale
+            // value. One invalidate per vertical move — a discrete event.
+            if (anchor != m_lastAnchorScroll) {
+                if (m_lastSyncedScrollX >= 0 &&
+                    std::abs(anchor->getContentOffsetX() - m_lastSyncedScrollX) > 0.5f)
+                    anchor->setContentOffsetX(m_lastSyncedScrollX, false);
+                m_lastAnchorScroll = anchor;
+            }
             const float target = anchor->getContentOffsetX();
             // Steady-state (not actively scrolling) is the common case —
             // the anchor's offset matches what we already pushed to the
             // other rows. Skip the whole O(rows) sync loop in that case.
             if (std::abs(target - m_lastSyncedScrollX) > 0.5f) {
-                for (brls::HScrollingFrame* hs : m_rowProgramScrolls) {
-                    if (hs == anchor) continue;
-                    if (std::abs(hs->getContentOffsetX() - target) > 0.5f)
-                        hs->setContentOffsetX(target, false);
+                // Follow the anchor by translating the other rows' content
+                // boxes directly — a plain float store, and exactly how
+                // borealis applies scroll offsets internally (see
+                // HScrollingFrame::scrollAnimationTick). The previous
+                // setContentOffsetX path ran invalidate() per row, i.e. a
+                // full-tree Yoga relayout of the ~1500-view grid PER ROW
+                // PER FRAME while the anchor's scroll animated — the
+                // guide's 4 FPS on Vita.
+                for (size_t i = 0; i < m_rowProgramScrolls.size(); i++) {
+                    brls::HScrollingFrame* hs = m_rowProgramScrolls[i];
+                    brls::Box* content = i < m_rowProgramBoxes.size() ? m_rowProgramBoxes[i] : nullptr;
+                    if (!hs || !content || hs == anchor) continue;
+                    // Clamp to this row's own scrollable range, like
+                    // borealis does — rows whose programs end early have
+                    // narrower content than the full guide window.
+                    float limit = content->getWidth() - hs->getWidth();
+                    if (limit < 0) limit = 0;
+                    float t = target < 0 ? 0 : (target > limit ? limit : target);
+                    content->setTranslationX(-t);
                 }
-                if (m_timeHeaderScroll &&
-                    std::abs(m_timeHeaderScroll->getContentOffsetX() - target) > 0.5f) {
-                    m_timeHeaderScroll->setContentOffsetX(target, false);
+                if (m_timeHeaderBox && m_timeHeaderScroll) {
+                    float limit = m_timeHeaderBox->getWidth() - m_timeHeaderScroll->getWidth();
+                    if (limit < 0) limit = 0;
+                    float t = target < 0 ? 0 : (target > limit ? limit : target);
+                    m_timeHeaderBox->setTranslationX(-t);
                 }
                 m_lastSyncedScrollX = target;
             }
         }
     }
+
+    // Hover-driven hero refresh, applied only once focus has rested.
+    applyPendingHero();
 
     brls::Box::draw(vg, x, y, width, height, style, ctx);
 
@@ -499,6 +529,12 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
 
         for (const EpgCellInfo& info : m_epgCells) {
             if (!info.cell || !info.scroll) continue;
+            // Rows scrolled out of the guide viewport are culled INVISIBLE
+            // (cullToViewport above); their cells' own visibility stays
+            // VISIBLE, so check the row first and skip the 4 recursive
+            // position getters per cell for the ~85% of cells that are in
+            // culled rows.
+            if (info.row && info.row->getVisibility() != brls::Visibility::VISIBLE) continue;
             if (info.cell->getVisibility() != brls::Visibility::VISIBLE) continue;
 
             const float cx = info.cell->getX();
@@ -813,6 +849,43 @@ void LiveTVTab::buildHero() {
     // remains a non-interactive visual.
 }
 
+// setText() always invalidates (a synchronous full-tree Yoga relayout),
+// even for identical text. Guard every hero label so repeat updates only
+// pay for the labels that actually changed.
+static void setLabelText(brls::Label* label, const std::string& text) {
+    if (label && label->getFullText() != text) label->setText(text);
+}
+
+void LiveTVTab::queueHeroForChannel(const LiveTVChannel& channel) {
+    m_pendingHeroChannel    = channel;
+    m_pendingHeroHasProgram = false;
+    m_heroUpdatePending     = true;
+    m_lastHoverUs           = brls::getCPUTimeUsec();
+}
+
+void LiveTVTab::queueHeroForProgram(const LiveTVChannel& channel, const GuideProgram& program) {
+    m_pendingHeroChannel    = channel;
+    m_pendingHeroProgram    = program;
+    m_pendingHeroHasProgram = true;
+    m_heroUpdatePending     = true;
+    m_lastHoverUs           = brls::getCPUTimeUsec();
+}
+
+void LiveTVTab::applyPendingHero() {
+    if (!m_heroUpdatePending) return;
+    // Apply once focus has rested ~180 ms. Refreshing the hero on every
+    // hover cost a dozen label/width relayouts plus a thumbnail HTTP
+    // fetch per dpad press — dpad-repeat across the guide became a
+    // relayout + network storm. Deferring to focus-rest keeps navigation
+    // at full frame rate; the hero fills in the moment you stop.
+    if (brls::getCPUTimeUsec() - m_lastHoverUs < 180000) return;
+    m_heroUpdatePending = false;
+    if (m_pendingHeroHasProgram)
+        updateHeroForProgram(m_pendingHeroChannel, m_pendingHeroProgram);
+    else
+        updateHeroForChannel(m_pendingHeroChannel);
+}
+
 void LiveTVTab::resizeHeroThumbToImage(brls::Image* img) {
     if (!img || !m_heroThumb || !m_heroThumbHolder) return;
     float nw = img->getOriginalImageWidth();
@@ -873,18 +946,18 @@ void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
     m_heroChannel = channel;
     m_heroProgramValid = false;
     if (m_heroChannelName)
-        m_heroChannelName->setText(channel.callSign.empty() ? channel.title : channel.callSign);
+        setLabelText(m_heroChannelName, channel.callSign.empty() ? channel.title : channel.callSign);
     if (m_heroChannelId) {
         std::string chId = !channel.channelIdentifier.empty()
             ? "CH " + channel.channelIdentifier
             : (channel.channelNumber > 0 ? "CH " + std::to_string(channel.channelNumber) : "");
-        m_heroChannelId->setText(chId);
+        setLabelText(m_heroChannelId, chId);
     }
-    if (m_heroTitleLabel)   m_heroTitleLabel->setText(channel.title);
-    if (m_heroSummaryLabel) m_heroSummaryLabel->setText("No guide data");
-    if (m_heroStartLabel)   m_heroStartLabel->setText("");
-    if (m_heroEndLabel)     m_heroEndLabel->setText("");
-    if (m_heroPctLabel)     m_heroPctLabel->setText("");
+    setLabelText(m_heroTitleLabel, channel.title);
+    setLabelText(m_heroSummaryLabel, "No guide data");
+    setLabelText(m_heroStartLabel, "");
+    setLabelText(m_heroEndLabel, "");
+    setLabelText(m_heroPctLabel, "");
     if (m_heroProgressFill) m_heroProgressFill->setWidth(0);
     if (m_heroLiveBadge)    m_heroLiveBadge->setVisibility(brls::Visibility::INVISIBLE);
 
@@ -915,12 +988,12 @@ void LiveTVTab::updateHeroForProgram(const LiveTVChannel& channel,
 
     // Channel chrome.
     if (m_heroChannelName)
-        m_heroChannelName->setText(channel.callSign.empty() ? channel.title : channel.callSign);
+        setLabelText(m_heroChannelName, channel.callSign.empty() ? channel.title : channel.callSign);
     if (m_heroChannelId) {
         std::string chId = !channel.channelIdentifier.empty()
             ? "CH " + channel.channelIdentifier
             : (channel.channelNumber > 0 ? "CH " + std::to_string(channel.channelNumber) : "");
-        m_heroChannelId->setText(chId);
+        setLabelText(m_heroChannelId, chId);
     }
 
     // Title is single-line. Trim very long titles with an ellipsis so
@@ -931,12 +1004,12 @@ void LiveTVTab::updateHeroForProgram(const LiveTVChannel& channel,
         const size_t maxTitleChars = 46;
         if (title.length() > maxTitleChars)
             title = title.substr(0, maxTitleChars - 1) + "…";
-        m_heroTitleLabel->setText(title);
+        setLabelText(m_heroTitleLabel, title);
     }
     if (m_heroSummaryLabel)
-        m_heroSummaryLabel->setText(program.summary.empty() ? std::string(" ") : program.summary);
-    if (m_heroStartLabel)   m_heroStartLabel->setText(formatTime(program.startTime));
-    if (m_heroEndLabel)     m_heroEndLabel->setText(formatTime(program.endTime));
+        setLabelText(m_heroSummaryLabel, program.summary.empty() ? std::string(" ") : program.summary);
+    setLabelText(m_heroStartLabel, formatTime(program.startTime));
+    setLabelText(m_heroEndLabel, formatTime(program.endTime));
 
     // Progress + LIVE badge are only meaningful when the program is
     // currently airing; future / past programs show 0% and no badge.
@@ -949,7 +1022,7 @@ void LiveTVTab::updateHeroForProgram(const LiveTVChannel& channel,
         int64_t dur     = program.endTime - program.startTime;
         pct = (int)std::min<int64_t>(100, (elapsed * 100) / dur);
     }
-    if (m_heroPctLabel) m_heroPctLabel->setText(std::to_string(pct) + "%");
+    setLabelText(m_heroPctLabel, std::to_string(pct) + "%");
     if (m_heroProgressFill && m_heroProgressTrack) {
         float trackW = m_heroProgressTrack->getWidth();
         if (trackW <= 0) trackW = 200;  // pre-layout fallback
@@ -1075,7 +1148,6 @@ void LiveTVTab::updateCurrentTimeLine() {
     }
 
     float xOffset = (float)((now - m_guideStartTime) * livetvTimeSlotWidth() / 1800.0);
-    float left = (float)livetvChannelColWidth() + xOffset;
     float height = m_guideContainer->getHeight();
     if (height <= 1) {
         // pre-layout — try again next second
@@ -1083,12 +1155,16 @@ void LiveTVTab::updateCurrentTimeLine() {
         return;
     }
 
-    // Yoga itself short-circuits identical values but the setter wrapper
-    // still pays for the call; gate on cached state to skip entirely.
-    if (left != m_lastTimeLineLeft) {
-        m_currentTimeLine->setPositionLeft(left);
-        m_lastTimeLineLeft = left;
+    // Anchor the line's yoga position once (at the program-area origin),
+    // then ride setTranslationX for the per-second movement: a plain float
+    // store with no invalidate. setPositionLeft every second re-ran Yoga
+    // layout over the whole grid — a once-a-second frame hitch while just
+    // *sitting* on the tab.
+    if (!m_timeLineBasePlaced) {
+        m_currentTimeLine->setPositionLeft((float)livetvChannelColWidth());
+        m_timeLineBasePlaced = true;
     }
+    m_currentTimeLine->setTranslationX(xOffset);
     if (height != m_lastTimeLineHeight) {
         m_currentTimeLine->setHeight(height);
         m_lastTimeLineHeight = height;
@@ -1104,6 +1180,8 @@ void LiveTVTab::buildEPGGrid() {
     // we've just cleared via m_guideBox->clearViews), so the pointers in
     // this vector are about to dangle — purge them before rebuilding.
     m_rowProgramScrolls.clear();
+    m_rowProgramBoxes.clear();
+    m_lastAnchorScroll = nullptr;
     // Cell info entries reference Boxes owned by the row hierarchy we
     // just wiped via m_guideBox->clearViews(); purge before rebuilding
     // so draw()'s batch pass doesn't dereference freed cells.
@@ -1112,7 +1190,6 @@ void LiveTVTab::buildEPGGrid() {
     // shifts on rebuild and the row scroll frames have been recreated.
     m_lastSyncedScrollX     = -1;
     m_lastTimeLineUpdateSec = 0;
-    m_lastTimeLineLeft      = -1;
     m_lastTimeLineHeight    = -1;
 
     if (m_channels.empty()) {
@@ -1250,7 +1327,7 @@ void LiveTVTab::buildEPGGrid() {
         // through the channel list with the dpad.
         channelCol->getFocusEvent()->subscribe(
             [this, capturedChannel](brls::View*) {
-                updateHeroForChannel(capturedChannel);
+                queueHeroForChannel(capturedChannel);
             });
 
         rowBox->addView(channelCol);
@@ -1328,6 +1405,7 @@ void LiveTVTab::buildEPGGrid() {
                 EpgCellInfo info;
                 info.cell = progCell;
                 info.scroll = programsScroll;
+                info.row = rowBox;
                 std::string title = prog.title;
                 int maxChars = cellWidth / 8;
                 if (maxChars < 4) maxChars = 4;
@@ -1358,7 +1436,7 @@ void LiveTVTab::buildEPGGrid() {
                 // they read from m_heroChannel / m_heroProgram.
                 progCell->getFocusEvent()->subscribe(
                     [this, gp, capturedChannel](brls::View*) {
-                        updateHeroForProgram(capturedChannel, gp);
+                        queueHeroForProgram(capturedChannel, gp);
                     });
 
                 programsBox->addView(progCell);
@@ -1395,6 +1473,7 @@ void LiveTVTab::buildEPGGrid() {
             EpgCellInfo info;
             info.cell = progCell;
             info.scroll = programsScroll;
+            info.row = rowBox;
             std::string title = channel.currentProgram;
             int maxChars = cellWidth / 8;
             if (maxChars < 4) maxChars = 4;
@@ -1414,7 +1493,7 @@ void LiveTVTab::buildEPGGrid() {
                                   : channel.programStart + 1800;
             progCell->getFocusEvent()->subscribe(
                 [this, legacyGp, capturedChannel](brls::View*) {
-                    updateHeroForProgram(capturedChannel, legacyGp);
+                    queueHeroForProgram(capturedChannel, legacyGp);
                 });
 
             programsBox->addView(progCell);
@@ -1443,7 +1522,7 @@ void LiveTVTab::buildEPGGrid() {
             // on the hero so the user knows which channel they'd tune.
             emptyCell->getFocusEvent()->subscribe(
                 [this, capturedChannel](brls::View*) {
-                    updateHeroForChannel(capturedChannel);
+                    queueHeroForChannel(capturedChannel);
                 });
 
             programsBox->addView(emptyCell);
@@ -1452,6 +1531,7 @@ void LiveTVTab::buildEPGGrid() {
         programsScroll->setContentView(programsBox);
         rowBox->addView(programsScroll);
         m_rowProgramScrolls.push_back(programsScroll);
+        m_rowProgramBoxes.push_back(programsBox);
         m_guideBox->addView(rowBox);
     }
 
