@@ -734,6 +734,7 @@ void DownloadsTab::refresh() {
         ci.viewOffset = d.viewOffset;
         ci.transcodeElapsedSeconds = d.transcodeElapsedSeconds;
         ci.transcodeProgressPercent = d.transcodeProgressPercent;
+        ci.grouped = (d.groupType != DownloadGroupType::NONE && !d.groupKey.empty());
         currentState.push_back(ci);
     }
 
@@ -773,6 +774,13 @@ void DownloadsTab::refresh() {
     }
     if (!structureChanged) {
         for (size_t i = 0; i < currentState.size(); i++) {
+            // Grouped items have no per-item row (only their group row, whose
+            // text/strip update in place), so a track inside an album crossing
+            // the Cancel -> Play boundary doesn't change any row's button set.
+            // Without this skip, EVERY track completion during an album
+            // download forced a full list rebuild — row teardown, thumbnail
+            // re-fetches, focus dance — a visible hitch once per track.
+            if (currentState[i].grouped) continue;
             DownloadState oldS = static_cast<DownloadState>(m_lastState[i].state);
             DownloadState newS = static_cast<DownloadState>(currentState[i].state);
             if (buttonCategory(oldS) != buttonCategory(newS)) {
@@ -1978,11 +1986,17 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
                     if (it == rowHandles->end()) continue;
                     auto& h = it->second;
 
-                    // Always refresh the progress text — buildItemStatus
-                    // text changes byte-by-byte during DOWNLOADING, and the
-                    // transcode percent / elapsed seconds during TRANSCODING.
+                    // Refresh the progress text, but only when it actually
+                    // changed: setText() forces a synchronous full-tree
+                    // relayout in borealis, and most rows here are static
+                    // ("Queued") — re-setting all of them every second was
+                    // N relayouts per tick and the FPS dip while an album
+                    // downloads. Only the actively downloading/transcoding
+                    // row's text differs from one second to the next.
                     if (item.state != DownloadState::COMPLETED) {
-                        h.statusLabel->setText(buildItemStatusText(item));
+                        std::string newText = buildItemStatusText(item);
+                        if (h.statusLabel->getFullText() != newText)
+                            h.statusLabel->setText(newText);
                     }
 
                     if (!h.hasLastState || h.lastState != item.state) {
@@ -2005,9 +2019,12 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
                 int total       = (int)items.size();
                 int stableTotal = (contentTotal > 0) ? contentTotal : total;
                 std::string itemWord = captIsMusic ? "tracks" : "items";
-                captTypeLabel->setText(captTypeStr + " - " +
-                                       std::to_string(completed) + "/" +
-                                       std::to_string(stableTotal) + " " + itemWord + " ready");
+                std::string headerText = captTypeStr + " - " +
+                                         std::to_string(completed) + "/" +
+                                         std::to_string(stableTotal) + " " + itemWord + " ready";
+                // Changes only when a track completes; skip the relayout otherwise.
+                if (captTypeLabel->getFullText() != headerText)
+                    captTypeLabel->setText(headerText);
             });
         }
     });
