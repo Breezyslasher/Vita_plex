@@ -18,11 +18,15 @@ if(NOT DEFINED CMAKE_TOOLCHAIN_FILE)
   endif()
 endif()
 
-project(vitaplex_bgapp C)
+# ASM: shellsvc_stub.S is a hand-written vita import stub (assembled + scanned by
+# vita-elf-create) for sceShellSvcGetSvcObj, which vitasdk's db lacks.
+project(vitaplex_bgapp C ASM)
 
 include("$ENV{VITASDK}/share/vita.cmake" REQUIRED)
 
-add_executable(${PROJECT_NAME} bgapp.c)
+# bgapp.c   : watchdog + takeover; shellaudio.c: vendored libShellAudio (BGM);
+# shellsvc_stub.S: the one missing NID.
+add_executable(${PROJECT_NAME} bgapp.c shellaudio.c shellsvc_stub.S)
 target_link_libraries(${PROJECT_NAME}
   SceLibKernel_stub
   SceIofilemgr_stub
@@ -30,8 +34,7 @@ target_link_libraries(${PROJECT_NAME}
   SceProcessmgr_stub
   ScePower_stub
   SceNotificationUtil_stub
-  SceAudio_stub          # sceAudioOut* — audio output
-  m                      # sinf (tone) + minimp3 float math
+  SceAppMgr_stub         # _sceAppMgrSetBgmProxyApp — libShellAudio BGM proxy
 )
 
 # ATTRIBUTE 0x03 = background-app control-info attribute; MEMSIZE = KiB budget.
