@@ -143,10 +143,12 @@ private:
     // Cells themselves are intentionally label-less; draw() walks this
     // vector after the standard Box::draw to paint the text on top.
     struct EpgCellInfo {
-        brls::Box* cell = nullptr;     // owns the rect / focus / background
+        brls::Box* cell = nullptr;     // owns the rect / focus (background is
+                                       // painted batched in draw(), not by the Box)
         brls::HScrollingFrame* scroll = nullptr;  // viewport the cell lives in
         brls::Box* row = nullptr;      // owning channel row — culled rows let the
                                        // batch pass skip their cells outright
+        bool onNow = false;            // currently airing (fill + accent border)
         std::string title;
         std::string subtitle;          // start-end + " · on now" if currently airing
     };

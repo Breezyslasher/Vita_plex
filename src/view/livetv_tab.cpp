@@ -433,6 +433,12 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         if (row && row->getVisibility() != brls::Visibility::VISIBLE) continue;
         cullToViewport(content, hs, /*vertical=*/false);
     }
+
+    // The time header rides its own HScrollingFrame with 2-4x more slot
+    // boxes (label + hairline each) than fit on screen — cull those too.
+    if (m_timeHeaderBox && m_timeHeaderScroll)
+        cullToViewport(m_timeHeaderBox, m_timeHeaderScroll, /*vertical=*/false);
+
     const int64_t pf1 = brls::getCPUTimeUsec();
     m_perfCullUs += pf1 - pf0;
 
@@ -545,7 +551,9 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         // filtered list twice — once per batch — instead of redoing the
         // ~7 getter calls per cell on every pass.
         struct VisibleCell {
-            float x, y;
+            float x, y, w, h;   // cell rect (batched background fill)
+            float tx, ty;       // text origin
+            bool onNow;
             const std::string* title;
             const std::string* subtitle;
         };
@@ -577,8 +585,10 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
             if (cy + ch < vScrollTop  || cy > vScrollBottom) continue;
 
             VisibleCell v;
-            v.x = cx + 8.0f;
-            v.y = cy + (ch - 26.0f) * 0.5f;
+            v.x = cx; v.y = cy; v.w = cw; v.h = ch;
+            v.tx = cx + 8.0f;
+            v.ty = cy + (ch - 26.0f) * 0.5f;
+            v.onNow    = info.onNow;
             v.title    = &info.title;
             v.subtitle = &info.subtitle;
             visible.push_back(v);
@@ -589,6 +599,39 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
 
         nvgSave(vg);
         nvgScissor(vg, clipX, vScrollTop, clipW, vScrollBottom - vScrollTop);
+
+        // Batched cell backgrounds. Every visible cell's rounded rect merges
+        // into ONE path per colour (plus one stroke pass for the on-now
+        // borders), collapsing ~50-90 individually stenciled antialiased
+        // NanoVG fills into 3. The hardware profile showed the GPU pinned at
+        // 100% while CPU cores sat half idle — per-path stencil work is the
+        // wall on the Vita's tile-based GPU, so path count is what matters.
+        int nowCells = 0, upcomingCells = 0;
+        for (const VisibleCell& v : visible) (v.onNow ? nowCells : upcomingCells)++;
+
+        if (upcomingCells > 0) {
+            nvgBeginPath(vg);
+            for (const VisibleCell& v : visible)
+                if (!v.onNow) nvgRoundedRect(vg, v.x, v.y, v.w, v.h, 6.0f);
+            nvgFillColor(vg, tok::cellUpcoming());
+            nvgFill(vg);
+        }
+        if (nowCells > 0) {
+            nvgBeginPath(vg);
+            for (const VisibleCell& v : visible)
+                if (v.onNow) nvgRoundedRect(vg, v.x, v.y, v.w, v.h, 6.0f);
+            nvgFillColor(vg, tok::cellNow());
+            nvgFill(vg);
+
+            nvgBeginPath(vg);
+            for (const VisibleCell& v : visible)
+                if (v.onNow) nvgRoundedRect(vg, v.x + 0.5f, v.y + 0.5f,
+                                            v.w - 1.0f, v.h - 1.0f, 6.0f);
+            nvgStrokeColor(vg, tok::accent());
+            nvgStrokeWidth(vg, 1.0f);
+            nvgStroke(vg);
+        }
+
         nvgFontFace(vg, "regular");
         nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
 
@@ -598,7 +641,7 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         nvgTextBatchBegin(vg);
         for (const VisibleCell& v : visible) {
             if (v.title->empty()) continue;
-            nvgText(vg, v.x, v.y, v.title->c_str(), nullptr);
+            nvgText(vg, v.tx, v.ty, v.title->c_str(), nullptr);
         }
         nvgTextBatchEnd(vg);
 
@@ -608,7 +651,7 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         nvgTextBatchBegin(vg);
         for (const VisibleCell& v : visible) {
             if (v.subtitle->empty()) continue;
-            nvgText(vg, v.x, v.y + 16.0f, v.subtitle->c_str(), nullptr);
+            nvgText(vg, v.tx, v.ty + 16.0f, v.subtitle->c_str(), nullptr);
         }
         nvgTextBatchEnd(vg);
         nvgRestore(vg);
@@ -1439,13 +1482,14 @@ void LiveTVTab::buildEPGGrid() {
                 progCell->setWidth(cellWidth);
                 progCell->setHeight(livetvRowHeight() - 8);
                 progCell->setMargins(2, 2, 2, 2);
-                progCell->setBackgroundColor(isCurrently ? tok::cellNow() : tok::cellUpcoming());
+                // No per-cell background/border: each one is a separate
+                // stenciled antialiased NanoVG path — with ~50 cells visible
+                // the GPU sat at 100% (CPU half idle). draw() paints all
+                // visible cell rects as a few merged batched paths instead.
                 progCell->setCornerRadius(6);
                 progCell->setFocusable(true);
-                if (isCurrently) {
-                    progCell->setBorderColor(tok::accent());
-                    progCell->setBorderThickness(1);
-                }
+                progCell->setHideHighlightBackground(true);  // ring comes from the
+                                                             // app highlight pass
 
                 // Cell is intentionally label-less — the title and
                 // time-range strings are batched in draw() through the
@@ -1456,6 +1500,7 @@ void LiveTVTab::buildEPGGrid() {
                 info.cell = progCell;
                 info.scroll = programsScroll;
                 info.row = rowBox;
+                info.onNow = isCurrently;
                 std::string title = prog.title;
                 int maxChars = cellWidth / 8;
                 if (maxChars < 4) maxChars = 4;
@@ -1512,11 +1557,10 @@ void LiveTVTab::buildEPGGrid() {
             progCell->setWidth(cellWidth);
             progCell->setHeight(livetvRowHeight() - 8);
             progCell->setMargins(2, 2, 2, 2);
-            progCell->setBackgroundColor(tok::cellNow());
+            // Background/border painted batched in draw() (see main loop).
             progCell->setCornerRadius(6);
-            progCell->setBorderColor(tok::accent());
-            progCell->setBorderThickness(1);
             progCell->setFocusable(true);
+            progCell->setHideHighlightBackground(true);
 
             // Label-less cell — text painted in batch by draw() via
             // nvgTextBatchBegin/End. See the main loop above.
@@ -1524,6 +1568,7 @@ void LiveTVTab::buildEPGGrid() {
             info.cell = progCell;
             info.scroll = programsScroll;
             info.row = rowBox;
+            info.onNow = true;
             std::string title = channel.currentProgram;
             int maxChars = cellWidth / 8;
             if (maxChars < 4) maxChars = 4;
