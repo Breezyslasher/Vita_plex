@@ -30,6 +30,8 @@ target_link_libraries(${PROJECT_NAME}
   SceProcessmgr_stub
   ScePower_stub
   SceNotificationUtil_stub
+  SceAudio_stub          # sceAudioOut* — Phase-1a background tone
+  m                      # sinf for the tone table
 )
 
 # ATTRIBUTE 0x03 = background-app control-info attribute; MEMSIZE = KiB budget.

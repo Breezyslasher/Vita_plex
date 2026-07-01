@@ -16,6 +16,12 @@
 #include <jni.h>
 #endif
 
+#ifdef __vita__
+#include <psp2/io/fcntl.h>
+#include <psp2/io/stat.h>
+#include <string>
+#endif
+
 namespace vitaplex {
 namespace nowplaying {
 
@@ -167,6 +173,54 @@ void smtcClear();
 }
 void update(const Info& info) { detail::smtcUpdate(info); }
 void clear() { detail::smtcClear(); }
+
+#elif defined(__vita__)  // ---- PS Vita: background-music helper control files ----
+
+// The bundled background helper (eboot2.bin) plays audio while VitaPlex is in
+// LiveArea. It's a separate process that can't see our memory, so we hand it
+// state through two tiny files under ux0:data/VitaPlex (read by bgapp.c):
+//   bgm_status : "<playing>\n<title>\n" — refreshed here on every state change.
+//   bgm_tick   : a counter bumped 4x/sec by a RepeatingTimer while our main loop
+//                runs; it freezes when the app is suspended, which is how the
+//                helper detects backgrounding without us acting at suspend time.
+namespace detail {
+
+static void vitaWriteFile(const char* path, const std::string& data) {
+    SceUID fd = sceIoOpen(path, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+    if (fd < 0) return;
+    sceIoWrite(fd, data.data(), data.size());
+    sceIoClose(fd);
+}
+
+static brls::RepeatingTimer g_bgmTick;
+static bool g_bgmTickStarted = false;
+static uint32_t g_bgmTickCount = 0;
+
+static void vitaEnsureTick() {
+    if (g_bgmTickStarted) return;
+    g_bgmTickStarted = true;
+    sceIoMkdir("ux0:data", 0777);
+    sceIoMkdir("ux0:data/VitaPlex", 0777);
+    // 4 Hz liveness heartbeat, driven by the borealis main loop — so it freezes
+    // the instant VitaPlex is suspended, which is exactly what the helper's
+    // watchdog watches for.
+    g_bgmTick.setCallback([]() {
+        vitaWriteFile("ux0:data/VitaPlex/bgm_tick", std::to_string(++g_bgmTickCount));
+    });
+    g_bgmTick.start(250);
+}
+
+} // namespace detail
+
+void update(const Info& info) {
+    detail::vitaEnsureTick();
+    std::string s = (info.playing ? "1\n" : "0\n") + info.title + "\n";
+    detail::vitaWriteFile("ux0:data/VitaPlex/bgm_status", s);
+}
+
+void clear() {
+    detail::vitaWriteFile("ux0:data/VitaPlex/bgm_status", "0\n\n");
+}
 
 #else  // ---- other platforms: no OS media session ----
 
