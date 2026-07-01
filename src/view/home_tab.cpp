@@ -91,6 +91,46 @@ HomeTab::HomeTab() {
     loadContent();
 }
 
+static bool homeIsDescendantOf(brls::View* view, brls::View* ancestor) {
+    for (brls::View* v = view; v; v = v->getParent())
+        if (v == ancestor) return true;
+    return false;
+}
+
+void HomeTab::draw(NVGcontext* vg, float x, float y, float width, float height,
+                   brls::Style style, brls::FrameContext* ctx) {
+    // Vertical culling: mark rails/headers outside the page viewport
+    // INVISIBLE so their whole subtree skips draw (an off-screen rail's
+    // cards each cost a cover pattern + badge paths per frame otherwise).
+    // INVISIBLE<->VISIBLE never touches layout; GONE children (hidden
+    // Recent Channels rail) are left alone. The margin keeps the adjacent
+    // rail drawable so vertical focus navigation can reach it.
+    if (m_scrollView && m_scrollContent) {
+        const auto& ic = platform::getImageConstraints();
+        const float margin = (float)ic.homeRowHeight + 80.0f;
+        const float vpTop = m_scrollView->getY();
+        const float vpBottom = vpTop + m_scrollView->getHeight();
+        brls::View* focus = brls::Application::getCurrentFocus();
+
+        for (brls::View* child : m_scrollContent->getChildren()) {
+            const brls::Visibility v = child->getVisibility();
+            if (v == brls::Visibility::GONE) continue;
+
+            const float cTop = child->getY();
+            const float cBottom = cTop + child->getHeight();
+            bool visible = (cBottom >= vpTop - margin) && (cTop <= vpBottom + margin);
+            if (!visible && focus && homeIsDescendantOf(focus, child))
+                visible = true;
+
+            const brls::Visibility want = visible ? brls::Visibility::VISIBLE
+                                                  : brls::Visibility::INVISIBLE;
+            if (v != want) child->setVisibility(want);
+        }
+    }
+
+    brls::Box::draw(vg, x, y, width, height, style, ctx);
+}
+
 brls::Box* HomeTab::makeSectionHeader(const std::string& title) {
     const auto& ic = platform::getImageConstraints();
 
