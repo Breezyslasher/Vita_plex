@@ -80,6 +80,15 @@ private:
                                                      // image's natural aspect (no letterbox)
     void updateCurrentTimeLine();    // reposition the cyan "now" rule each second
 
+    // Hover-driven hero updates are debounced: focus events only record the
+    // wanted channel/program here, and draw() applies it once focus has
+    // rested. Applying immediately cost a dozen setText/setWidth calls (each
+    // a synchronous full-tree relayout) plus a thumbnail HTTP fetch per
+    // dpad press — the single biggest cost of navigating the guide on Vita.
+    void queueHeroForChannel(const LiveTVChannel& channel);
+    void queueHeroForProgram(const LiveTVChannel& channel, const GuideProgram& program);
+    void applyPendingHero();
+
     // UI Components
     brls::Label* m_titleLabel = nullptr;
     brls::Box* m_scrollContent = nullptr;       // Direct child of the tab — no outer page scroll
@@ -119,6 +128,13 @@ private:
     // offset and applies it to every other row + the time header so
     // they all move together.
     std::vector<brls::HScrollingFrame*> m_rowProgramScrolls;
+    // Content box of each row's HScrollingFrame, parallel to
+    // m_rowProgramScrolls. The cross-row scroll sync moves these directly
+    // via setTranslationX (a plain float store — exactly how borealis
+    // applies scroll offsets internally) instead of setContentOffsetX,
+    // which invalidates and re-runs Yoga layout over the whole ~1500-view
+    // grid — per row, per frame, while the anchor row's scroll animates.
+    std::vector<brls::Box*> m_rowProgramBoxes;
 
     // Batch text rendering for the EPG cells. The patched nanovg lets
     // us flush every visible cell's title (and separately, every
@@ -129,6 +145,8 @@ private:
     struct EpgCellInfo {
         brls::Box* cell = nullptr;     // owns the rect / focus / background
         brls::HScrollingFrame* scroll = nullptr;  // viewport the cell lives in
+        brls::Box* row = nullptr;      // owning channel row — culled rows let the
+                                       // batch pass skip their cells outright
         std::string title;
         std::string subtitle;          // start-end + " · on now" if currently airing
     };
@@ -150,9 +168,18 @@ private:
     // state so we can short-circuit the Yoga / scroll setter calls when
     // nothing has actually changed.
     int64_t m_lastTimeLineUpdateSec = 0;   // Wall-clock second of last time-line update
-    float   m_lastTimeLineLeft      = -1;  // Last applied left in px (-1 = unset)
+    bool    m_timeLineBasePlaced    = false; // positionLeft anchored once; per-second
+                                             // movement rides setTranslationX (free)
     float   m_lastTimeLineHeight    = -1;  // Last applied height in px (-1 = unset)
     float   m_lastSyncedScrollX     = -1;  // Last anchor offset propagated to other rows
+    brls::HScrollingFrame* m_lastAnchorScroll = nullptr;  // row whose offset we follow
+
+    // Debounced hero update (see queueHeroFor* / applyPendingHero).
+    LiveTVChannel m_pendingHeroChannel;
+    GuideProgram  m_pendingHeroProgram;
+    bool    m_pendingHeroHasProgram = false;
+    bool    m_heroUpdatePending     = false;
+    int64_t m_lastHoverUs           = 0;   // CPU time of the last hover event
 
     // Alive flag for crash prevention on quick tab switching
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);

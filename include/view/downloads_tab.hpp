@@ -111,6 +111,7 @@ private:
         int64_t viewOffset = 0;
         int transcodeElapsedSeconds = 0;
         int transcodeProgressPercent = 0;
+        bool grouped = false;  // lives under a group row (no per-item row/buttons)
     };
     std::vector<CachedItem> m_lastState;
 
