@@ -184,8 +184,14 @@ void MusicController::publishNowPlaying(int playingOverride) {
     info.album = t->album;
 
     DownloadItem dl;
-    if (DownloadsManager::getInstance().getDownloadCopy(t->ratingKey, dl) &&
-        dl.state == DownloadState::COMPLETED && !dl.thumbPath.empty()) {
+    bool haveDownload = DownloadsManager::getInstance().getDownloadCopy(t->ratingKey, dl) &&
+                        dl.state == DownloadState::COMPLETED;
+    // Hand the local media file to the OS bridge. The PS Vita background helper
+    // decodes+plays it while the app is suspended (downloaded tracks only).
+    if (haveDownload && !dl.localPath.empty()) {
+        info.localPath = dl.localPath;
+    }
+    if (haveDownload && !dl.thumbPath.empty()) {
         info.artUrl = dl.thumbPath;                    // local cover for offline tracks
     } else if (!t->thumb.empty()) {
         info.artUrl = PlexClient::getInstance().getThumbnailUrl(t->thumb, 512, 512);

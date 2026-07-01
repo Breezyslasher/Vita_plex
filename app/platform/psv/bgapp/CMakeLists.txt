@@ -30,7 +30,8 @@ target_link_libraries(${PROJECT_NAME}
   SceProcessmgr_stub
   ScePower_stub
   SceNotificationUtil_stub
-  SceAudio_stub          # sceAudioOut* — Phase-1a background tone
+  SceAudio_stub          # sceAudioOut* — audio output
+  SceAudiodec_stub       # sceAudiodec* — MP3 decode (Phase 1b)
   m                      # sinf for the tone table
 )
 

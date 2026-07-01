@@ -31,6 +31,9 @@ struct Info {
     std::string album;
     std::string artUrl;        // http(s) thumbnail URL, or a local file path for
                                // downloaded tracks; empty for none
+    std::string localPath;     // local media file for a completed download, else
+                               // empty. Used by the PS Vita background helper to
+                               // decode+play the track while the app is suspended.
     int64_t durationMs = 0;
     int64_t positionMs = 0;
     bool playing = false;      // true = playing, false = paused

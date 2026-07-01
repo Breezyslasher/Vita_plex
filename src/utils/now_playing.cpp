@@ -214,12 +214,19 @@ static void vitaEnsureTick() {
 
 void update(const Info& info) {
     detail::vitaEnsureTick();
-    std::string s = (info.playing ? "1\n" : "0\n") + info.title + "\n";
+    // Line 1 playing, 2 title, 3 local file path (downloaded track, else empty),
+    // 4 position ms. The background helper reads line 1 to decide whether to take
+    // over and line 3 to know which file to decode. Keep this format in sync with
+    // read_status() in app/platform/psv/bgapp/bgapp.c.
+    std::string s = (info.playing ? "1\n" : "0\n")
+                  + info.title + "\n"
+                  + info.localPath + "\n"
+                  + std::to_string(info.positionMs) + "\n";
     detail::vitaWriteFile("ux0:data/VitaPlex/bgm_status", s);
 }
 
 void clear() {
-    detail::vitaWriteFile("ux0:data/VitaPlex/bgm_status", "0\n\n");
+    detail::vitaWriteFile("ux0:data/VitaPlex/bgm_status", "0\n\n\n0\n");
 }
 
 #else  // ---- other platforms: no OS media session ----
