@@ -11,6 +11,11 @@
 
 namespace vitaplex {
 
+// The custom-drawn EPG grid (file-local in livetv_tab.cpp) — the whole
+// guide is ONE view that paints header, channel column, cells and the
+// now-line itself instead of a ~2500-view borealis forest.
+class EpgGridView;
+
 // Program guide item
 struct GuideProgram {
     std::string title;
@@ -54,12 +59,8 @@ public:
 
 private:
     brls::View* findFirstFocusableInBox(brls::Box* box);
-    brls::View* findLastFocusableInBox(brls::Box* box);
     bool isDescendantOf(brls::View* view, brls::View* ancestor);
 
-    // Hide rows/cards that have scrolled out of their viewport so borealis
-    // doesn't draw the whole off-screen subtree every frame (see draw()).
-    void cullToViewport(brls::Box* content, brls::View* viewport, bool vertical);
     void loadChannels();
     void refreshCurrentPrograms();  // Lightweight refresh: only update "now playing" info
     void loadGuide();
@@ -78,7 +79,6 @@ private:
                               const GuideProgram& program);    // program (hover-driven)
     void resizeHeroThumbToImage(brls::Image* img);   // resize the hero thumb box to the loaded
                                                      // image's natural aspect (no letterbox)
-    void updateCurrentTimeLine();    // reposition the cyan "now" rule each second
 
     // Hover-driven hero updates are debounced: focus events only record the
     // wanted channel/program here, and draw() applies it once focus has
@@ -114,65 +114,18 @@ private:
     bool          m_heroProgramValid = false;
     std::shared_ptr<std::atomic<bool>> m_heroThumbAlive;  // ImageLoader cancel handle
 
-    // EPG Guide section
+    // EPG Guide section. The guide is a single custom-drawn view — it
+    // owns its own data, scroll offsets and virtual focus cursor, so the
+    // tab keeps no per-row/per-cell state at all.
     brls::Label* m_guideLabel = nullptr;
-    brls::Box* m_guideContainer = nullptr;      // Contains time header + grid
-    brls::HScrollingFrame* m_timeHeaderScroll = nullptr;
-    brls::Box* m_timeHeaderBox = nullptr;       // Horizontal time slots
-    brls::ScrollingFrame* m_guideScrollV = nullptr;  // Vertical scroll inside the guide block
-    brls::Box* m_guideBox = nullptr;            // Contains channel rows; scrolls inside m_guideScrollV
-    brls::Box* m_currentTimeLine = nullptr;     // Absolute-positioned cyan rule over the program area
-    // Per-row HScrollingFrame for the program cells. The channel column
-    // sits *outside* this scroll on the left so it stays put when the
-    // programs scroll horizontally. draw() reads the focused row's
-    // offset and applies it to every other row + the time header so
-    // they all move together.
-    std::vector<brls::HScrollingFrame*> m_rowProgramScrolls;
-    // Content box of each row's HScrollingFrame, parallel to
-    // m_rowProgramScrolls. The cross-row scroll sync moves these directly
-    // via setTranslationX (a plain float store — exactly how borealis
-    // applies scroll offsets internally) instead of setContentOffsetX,
-    // which invalidates and re-runs Yoga layout over the whole ~1500-view
-    // grid — per row, per frame, while the anchor row's scroll animates.
-    std::vector<brls::Box*> m_rowProgramBoxes;
-
-    // Batch text rendering for the EPG cells. The patched nanovg lets
-    // us flush every visible cell's title (and separately, every
-    // subtitle) as a single render call instead of one per Label —
-    // ~100 cells per build x ~2 labels each = ~200 draw calls otherwise.
-    // Cells themselves are intentionally label-less; draw() walks this
-    // vector after the standard Box::draw to paint the text on top.
-    struct EpgCellInfo {
-        brls::Box* cell = nullptr;     // owns the rect / focus (background is
-                                       // painted batched in draw(), not by the Box)
-        brls::HScrollingFrame* scroll = nullptr;  // viewport the cell lives in
-        brls::Box* row = nullptr;      // owning channel row — culled rows let the
-                                       // batch pass skip their cells outright
-        bool onNow = false;            // currently airing (fill + accent border)
-        std::string title;
-        std::string subtitle;          // start-end + " · on now" if currently airing
-    };
-    std::vector<EpgCellInfo> m_epgCells;
-
-    // Cells grouped by channel row ([begin,end) into m_epgCells, which is
-    // built strictly row-by-row). The batch text pass iterates these so a
-    // culled row skips all its cells in one visibility check instead of
-    // touching every cell struct in the grid every frame.
-    struct EpgRowRange {
-        brls::Box* row = nullptr;
-        size_t begin = 0;
-        size_t end = 0;
-    };
-    std::vector<EpgRowRange> m_epgRowRanges;
+    brls::Box* m_guideContainer = nullptr;      // Card that hosts the grid
+    EpgGridView* m_grid = nullptr;
 
     // Per-frame cost accounting (logged on Vita every few hundred frames
     // so a hardware log pinpoints where guide frame time goes).
     int64_t m_perfLastFrameUs = 0;
     int64_t m_perfFrameUs = 0;
-    int64_t m_perfCullUs  = 0;
-    int64_t m_perfSyncUs  = 0;
     int64_t m_perfDrawUs  = 0;
-    int64_t m_perfTextUs  = 0;
     int     m_perfFrames  = 0;
 
     // Data
@@ -184,18 +137,6 @@ private:
     bool m_loaded = false;
     int64_t m_lastFullLoadTime = 0;   // Timestamp of last full channel/EPG load
     int64_t m_lastRefreshTime = 0;    // Timestamp of last "now playing" refresh
-
-    // Per-frame optimisation caches — see draw() / updateCurrentTimeLine().
-    // The wall-clock-driven time line and the cross-row scroll sync both
-    // produce identical output across most frames; cache the last applied
-    // state so we can short-circuit the Yoga / scroll setter calls when
-    // nothing has actually changed.
-    int64_t m_lastTimeLineUpdateSec = 0;   // Wall-clock second of last time-line update
-    bool    m_timeLineBasePlaced    = false; // positionLeft anchored once; per-second
-                                             // movement rides setTranslationX (free)
-    float   m_lastTimeLineHeight    = -1;  // Last applied height in px (-1 = unset)
-    float   m_lastSyncedScrollX     = -1;  // Last anchor offset propagated to other rows
-    brls::HScrollingFrame* m_lastAnchorScroll = nullptr;  // row whose offset we follow
 
     // Debounced hero update (see queueHeroFor* / applyPendingHero).
     LiveTVChannel m_pendingHeroChannel;

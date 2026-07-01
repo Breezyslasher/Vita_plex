@@ -17,7 +17,9 @@
 #include "platform/platform.hpp"
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <ctime>
+#include <functional>
 
 // Forward declarations for the patched nanovg batch text API. The
 // patches/nanovg.c version adds these but doesn't expose them in
@@ -30,93 +32,6 @@ extern "C" {
 }
 
 namespace vitaplex {
-
-// ── TEMPORARY DIAGNOSTIC ────────────────────────────────────────────────
-// Strip the Live TV tab to bare boxes: blank hero card, empty guide cells,
-// no text, no images. Bisects the remaining sub-30 FPS: if this build runs
-// at 60, the cost is the CONTENT (glyphs / logos / hero); if it's still
-// ~24, the cost is the STRUCTURE (boxes, scroll frames, layout, renderer
-// overhead). Flip to false to restore the full guide.
-static constexpr bool kBareGuideDiag = true;
-
-// ============================================================================
-// GuideBox
-// ============================================================================
-// borealis' default Box::getNextFocus for a COLUMN box just walks to the
-// next sibling and calls getDefaultFocus on it. For our EPG rows that
-// always lands on the row's first focusable view — the channel-logo
-// column — instead of the program cell that aligns with the one the
-// user came from.
-//
-// Match by the *start* of the source's box: walk the adjacent row for a
-// focusable view whose horizontal range contains source.getX(). That
-// way DOWN from a 1-hour show onto two 30-minute cells picks the *first*
-// cell (because the 1-hour cell starts at the same X as the first
-// 30-min cell), instead of bouncing onto the second when the source's
-// centre happens to land on the cell boundary. Fall back to matching
-// by the source's *end* X so a source that begins inside a gap still
-// finds a target whose end aligns. Walks further rows on visibility
-// gaps so the navigation doesn't dead-end on culled or empty rows.
-class GuideBox : public brls::Box {
-public:
-    brls::View* getNextFocus(brls::FocusDirection direction,
-                             brls::View* currentView) override {
-        if (direction == brls::FocusDirection::DOWN ||
-            direction == brls::FocusDirection::UP) {
-            brls::View* row = currentView;
-            while (row && row->getParent() != this) row = row->getParent();
-            if (row) {
-                auto& kids = getChildren();
-                int idx = -1;
-                for (int i = 0; i < (int)kids.size(); i++) {
-                    if (kids[i] == row) { idx = i; break; }
-                }
-                int step = (direction == brls::FocusDirection::DOWN) ? 1 : -1;
-                int targetIdx = idx + step;
-                // `currentView` is whatever bubbled up the focus chain
-                // (a rowBox or programsBox), not the actually-focused
-                // leaf cell. Probe by the real focused view so the X
-                // range matches the cell the user *sees* highlighted.
-                brls::View* focused = brls::Application::getCurrentFocus();
-                if (!focused) focused = currentView;
-                // Use a small epsilon-back from the source's right edge so a
-                // box ending at exactly 440 looks at 439 (which falls inside
-                // a target cell of [320, 440)) instead of 440 (which is the
-                // start of the next cell).
-                const float sourceStart = focused->getX();
-                const float sourceEnd   = sourceStart + focused->getWidth() - 0.5f;
-                while (idx >= 0 && targetIdx >= 0 && targetIdx < (int)kids.size()) {
-                    brls::View* targetRow = kids[targetIdx];
-                    if (targetRow->getVisibility() == brls::Visibility::VISIBLE) {
-                        if (brls::View* hit = findFocusableContainingX(targetRow, sourceStart)) return hit;
-                        if (brls::View* hit = findFocusableContainingX(targetRow, sourceEnd))   return hit;
-                    }
-                    targetIdx += step;
-                }
-            }
-        }
-        return brls::Box::getNextFocus(direction, currentView);
-    }
-
-private:
-    // Return the first focusable descendant of `root` whose horizontal
-    // range [X, X+W) contains the probe X.
-    static brls::View* findFocusableContainingX(brls::View* root, float x) {
-        if (!root || root->getVisibility() != brls::Visibility::VISIBLE) return nullptr;
-        if (root->isFocusable()) {
-            float cl = root->getX();
-            float cr = cl + root->getWidth();
-            if (x >= cl && x < cr) return root;
-        }
-        brls::Box* box = dynamic_cast<brls::Box*>(root);
-        if (box) {
-            for (auto* child : box->getChildren()) {
-                if (brls::View* hit = findFocusableContainingX(child, x)) return hit;
-            }
-        }
-        return nullptr;
-    }
-};
 
 // ============================================================================
 // Design tokens
@@ -183,9 +98,9 @@ static inline int livetvChannelColWidth() {
 static const int64_t FULL_RELOAD_INTERVAL = 300;   // 5 minutes between full EPG reloads
 static const int64_t REFRESH_INTERVAL = 60;         // 1 minute between "now playing" refreshes
 
-// EPG grid render window. Each row's program cells now sit inside an
-// HScrollingFrame, so cells past the visible width are reachable via the
-// dpad (cf. m_rowProgramScrolls). The render path uses whatever window
+// EPG grid render window. Cells past the visible width are reachable via
+// the dpad — EpgGridView pans its internal scroll offset as the virtual
+// cursor moves. The render path uses whatever window
 // LiveTVTab::m_hoursToShow holds — seeded from Application::getSettings()
 // .liveTvGuideHours, which is clamped to 1-48 on load.
 
@@ -204,6 +119,534 @@ static inline int heroThumbWidth() {
     return std::max(170, (int)((heroHeight() - 16) * 4.0 / 3.0));
 }
 
+// ============================================================================
+// EpgGridView
+// ============================================================================
+// The whole program guide — time header, channel column, program cells,
+// now-line, focus ring — drawn by ONE view in a single draw() pass.
+//
+// Hardware profiling showed the previous implementation (a borealis view
+// per row / cell: ~100 channels × ~25 views ≈ 2500 views + yoga nodes)
+// cost ~24 ms/frame at idle with all content stripped — bare boxes alone
+// held the guide at 42 FPS, and text/images added ~18 ms more (24 FPS
+// full). The per-view frame()/yoga overhead was the structure tax; this
+// class removes the structure entirely. There are no children: focus is a
+// virtual (row, cell) cursor moved by hidden repeating dpad actions, and
+// scrolling is two plain floats applied at draw time (no animation, no
+// relayout — a scroll is a subtraction).
+class EpgGridView : public brls::Box {
+public:
+    // One program cell, fully precomputed by LiveTVTab::buildEPGGrid so
+    // draw() does zero string work per frame: x/w are pixel offsets into
+    // the (unscrolled) program track, title/subtitle are pre-truncated /
+    // pre-formatted.
+    struct Cell {
+        GuideProgram prog;
+        float x = 0, w = 0;
+        bool onNow = false;
+        bool noData = false;   // placeholder cell — A tunes the channel
+        std::string title, subtitle;
+    };
+    // One channel row. logoImg is a raw NVG handle loaded lazily the
+    // first time the row scrolls into view (loadCoverAsync — same
+    // lifetime pattern as MediaItemCell::loadThumbnail); logoW/logoH are
+    // the decoded image's natural size for the letterbox-fit math.
+    struct Row {
+        LiveTVChannel channel;
+        std::vector<Cell> cells;
+        std::string chLabel;
+        int logoImg = 0;
+        int logoW = 0, logoH = 0;
+        bool logoRequested = false;
+    };
+
+    // Wired by LiveTVTab after construction.
+    std::function<void(const GuideProgram&, const LiveTVChannel&)> onCellSelected;
+    std::function<void(const LiveTVChannel&)> onChannelSelected;
+    std::function<void(const LiveTVChannel&, const GuideProgram&, bool hasProgram)> onHover;
+    // LiveTVTab::formatTime is a member of the tab, so the grid can't
+    // call it directly — the tab hands us a wrapping lambda instead.
+    // Only the header slot labels format at draw time; cell subtitles
+    // are pre-formatted in buildEPGGrid.
+    std::function<std::string(int64_t)> formatTime;
+
+    EpgGridView() {
+        setFocusable(true);
+        // We paint our own focus ring around the cursor cell; borealis'
+        // highlight would wrap the entire grid instead.
+        setHideHighlight(true);
+
+        // Hidden, repeating dpad actions. Actions run BEFORE
+        // Application::navigate, so returning true consumes the press —
+        // the cursor moved internally and focus stays on the grid —
+        // while returning false at a boundary lets normal borealis
+        // navigation take over (UP at row 0 escapes to the hero, LEFT at
+        // cell 0 escapes toward the sidebar).
+        registerAction("", brls::ControllerButton::BUTTON_NAV_LEFT,
+                       [this](brls::View*) { return this->moveCursor(-1, 0); },
+                       true, true, brls::SOUND_FOCUS_CHANGE);
+        registerAction("", brls::ControllerButton::BUTTON_NAV_RIGHT,
+                       [this](brls::View*) { return this->moveCursor(1, 0); },
+                       true, true, brls::SOUND_FOCUS_CHANGE);
+        registerAction("", brls::ControllerButton::BUTTON_NAV_UP,
+                       [this](brls::View*) { return this->moveCursor(0, -1); },
+                       true, true, brls::SOUND_FOCUS_CHANGE);
+        registerAction("", brls::ControllerButton::BUTTON_NAV_DOWN,
+                       [this](brls::View*) { return this->moveCursor(0, 1); },
+                       true, true, brls::SOUND_FOCUS_CHANGE);
+
+        // A activates the cursor cell; a touch tap fires the same click
+        // action (activates the cursor cell — fine for v1).
+        registerClickAction([this](brls::View*) { return this->activateCursorCell(); });
+        addGestureRecognizer(new brls::TapGestureRecognizer(this));
+    }
+
+    ~EpgGridView() override {
+        // Flip the alive flag so in-flight logo loads are dropped by
+        // ImageLoader (it deletes the decoded handle on our behalf),
+        // then free the handles we already own.
+        if (m_imgAlive) m_imgAlive->store(false);
+        NVGcontext* vg = brls::Application::getNVGContext();
+        for (Row& row : m_rows) {
+            if (row.logoImg != 0 && vg) nvgDeleteImage(vg, row.logoImg);
+        }
+    }
+
+    void setData(std::vector<Row> rows, int64_t guideStart, int hours) {
+        // Invalidate the previous generation of logo loads: any callback
+        // still in flight captured the OLD flag, so ImageLoader discards
+        // its handle instead of writing into a row that no longer exists.
+        if (m_imgAlive) m_imgAlive->store(false);
+        m_imgAlive = std::make_shared<std::atomic<bool>>(true);
+
+        // The old rows' logo handles would leak with the row structs —
+        // free them before the swap (the destructor only sees the new set).
+        NVGcontext* vg = brls::Application::getNVGContext();
+        for (Row& row : m_rows) {
+            if (row.logoImg != 0 && vg) nvgDeleteImage(vg, row.logoImg);
+        }
+
+        m_rows       = std::move(rows);
+        m_guideStart = guideStart;
+        m_hours      = hours;
+        m_scrollX    = 0;
+        m_scrollY    = 0;
+
+        // Cursor to the first row that has cells (cell 0). No yoga /
+        // view churn here — the grid has no children, so a full data
+        // swap is O(data) with zero relayout.
+        m_curRow  = 0;
+        m_curCell = 0;
+        for (size_t r = 0; r < m_rows.size(); r++) {
+            if (!m_rows[r].cells.empty()) { m_curRow = (int)r; break; }
+        }
+
+        // An empty grid must not take focus: it draws no cursor ring and
+        // suppresses the borealis highlight, so focus would just vanish.
+        this->setFocusable(!m_rows.empty());
+    }
+
+    // The tab's willDisappear cancels all in-flight image loads
+    // (ImageLoader::cancelAll bumps the loader generation), which strands
+    // rows marked logoRequested with no texture — and nothing would retry
+    // until the next full EPG reload (5 min). Called when the tab regains
+    // focus so visible rows simply re-request on the next draw.
+    void retryMissingLogos() {
+        for (Row& row : m_rows)
+            if (row.logoImg == 0) row.logoRequested = false;
+    }
+
+    void onFocusGained() override {
+        brls::Box::onFocusGained();
+        // Fill the hero the moment focus enters the grid, not on the
+        // first cursor move.
+        fireHover();
+    }
+
+    void draw(NVGcontext* vg, float x, float y, float width, float height,
+              brls::Style style, brls::FrameContext* ctx) override {
+        (void)style; (void)ctx;   // no children — Box::draw intentionally NOT called
+
+        // Empty guide (fetch failed / not loaded yet): paint the message the
+        // old label-based build showed instead of a silent blank card.
+        if (m_rows.empty()) {
+            nvgFontFace(vg, "regular");
+            nvgFontSize(vg, 14);
+            nvgFillColor(vg, tok::muted());
+            nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
+            nvgText(vg, x + 12.0f, y + 12.0f, "No program guide data available", nullptr);
+            return;
+        }
+
+        const float headerH  = (float)TIME_HEADER_HEIGHT;
+        const float rowH     = (float)livetvRowHeight();
+        const float colW     = (float)livetvChannelColWidth();
+        const float slotW    = (float)livetvTimeSlotWidth();
+        const float pxPerSec = slotW / 1800.0f;
+
+        // Program area / row area.
+        const float px = x + colW, pw = width - colW;
+        const float gy = y + headerH, gh = height - headerH;
+
+        // Visible row window — everything below iterates only these.
+        const int rows = (int)m_rows.size();
+        const int r0 = std::max(0, (int)(m_scrollY / rowH));
+        const int r1 = std::min(rows, (int)((m_scrollY + gh) / rowH) + 1);
+
+        // ── 1) TIME HEADER ─────────────────────────────────────────────
+        // Dim strip + batched slot labels. Scissored to the program strip
+        // so a half-scrolled label can't bleed over the channel column.
+        nvgSave(vg);
+        nvgScissor(vg, px, y, pw, headerH);
+        nvgBeginPath(vg);
+        nvgRect(vg, px, y, pw, headerH);
+        nvgFillColor(vg, nvgRGBA(0, 0, 0, 56));  // ~22% black overlay
+        nvgFill(vg);
+        if (m_guideStart > 0 && formatTime) {
+            nvgFontFace(vg, "regular");
+            nvgFontSize(vg, 13);
+            nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
+            nvgFillColor(vg, tok::muted());
+            // Only the on-screen slots format + draw (~6-8 of up to 96),
+            // flushed as one render call via the patched batch API.
+            nvgTextBatchBegin(vg);
+            const int totalSlots = m_hours * 2;
+            const int firstSlot  = std::max(0, (int)(m_scrollX / slotW));
+            for (int i = firstSlot; i < totalSlots; i++) {
+                const float sx = px + (float)i * slotW - m_scrollX + 8.0f;
+                if (sx > x + width) break;
+                std::string label = formatTime(m_guideStart + (int64_t)i * 1800);
+                if (!label.empty())
+                    nvgText(vg, sx, y + 10.0f, label.c_str(), nullptr);
+            }
+            nvgTextBatchEnd(vg);
+        }
+        nvgRestore(vg);
+
+        // ── 2) PROGRAM AREA ────────────────────────────────────────────
+        nvgSave(vg);
+        nvgScissor(vg, px, gy, pw, gh);
+
+        // Resolve the visible cells once; every pass below (fills, ring,
+        // two text batches) walks this short list instead of re-testing
+        // the whole grid.
+        struct VisCell {
+            float x, y, w, h;
+            const Cell* cell;
+        };
+        std::vector<VisCell> vis;
+        vis.reserve(128);
+        for (int r = r0; r < r1; r++) {
+            const Row& row  = m_rows[r];
+            const float cy  = gy + (float)r * rowH - m_scrollY + 4.0f;
+            const float chh = rowH - 8.0f;
+            for (const Cell& c : row.cells) {
+                const float cx = px + c.x - m_scrollX;
+                if (cx + c.w < px || cx > px + pw) continue;
+                vis.push_back({ cx, cy, c.w, chh, &c });
+            }
+        }
+
+        int nowCells = 0, upcomingCells = 0;
+        for (const VisCell& v : vis) (v.cell->onNow ? nowCells : upcomingCells)++;
+
+        // Batched cell backgrounds: ONE merged path per colour + one
+        // merged stroke pass, with shape AA off. Per-path stencil work is
+        // the wall on the Vita's tile-based GPU — path count is what
+        // matters, and AA fringes are the bulk of NanoVG's per-path
+        // geometry (invisible on 6px-radius guide cells anyway).
+        nvgShapeAntiAlias(vg, 0);
+        if (upcomingCells > 0) {
+            nvgBeginPath(vg);
+            for (const VisCell& v : vis)
+                if (!v.cell->onNow) nvgRoundedRect(vg, v.x, v.y, v.w, v.h, 6.0f);
+            nvgFillColor(vg, tok::cellUpcoming());
+            nvgFill(vg);
+        }
+        if (nowCells > 0) {
+            nvgBeginPath(vg);
+            for (const VisCell& v : vis)
+                if (v.cell->onNow) nvgRoundedRect(vg, v.x, v.y, v.w, v.h, 6.0f);
+            nvgFillColor(vg, tok::cellNow());
+            nvgFill(vg);
+
+            nvgBeginPath(vg);
+            for (const VisCell& v : vis)
+                if (v.cell->onNow) nvgRoundedRect(vg, v.x + 0.5f, v.y + 0.5f,
+                                                  v.w - 1.0f, v.h - 1.0f, 6.0f);
+            nvgStrokeColor(vg, tok::accent());
+            nvgStrokeWidth(vg, 1.0f);
+            nvgStroke(vg);
+        }
+        nvgShapeAntiAlias(vg, 1);
+
+        // Focus ring around the cursor cell (after the fills so it sits
+        // on top; AA on — it's a single path, cost is irrelevant).
+        if (this->isFocused() && cursorValid()) {
+            const Cell& c  = m_rows[m_curRow].cells[m_curCell];
+            const float fx = px + c.x - m_scrollX;
+            const float fy = gy + (float)m_curRow * rowH - m_scrollY + 4.0f;
+            nvgBeginPath(vg);
+            nvgRoundedRect(vg, fx - 1.0f, fy - 1.0f, c.w + 2.0f, rowH - 8.0f + 2.0f, 6.0f);
+            nvgStrokeColor(vg, tok::accent());
+            nvgStrokeWidth(vg, 2.0f);
+            nvgStroke(vg);
+        }
+
+        // Cell text: two batched passes (titles, then subtitles), one
+        // render flush per style instead of one per label. Strings are
+        // pre-truncated in buildEPGGrid — no per-frame allocation here.
+        nvgFontFace(vg, "regular");
+        nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
+
+        nvgFontSize(vg, 13);
+        nvgFillColor(vg, tok::text());
+        nvgTextBatchBegin(vg);
+        for (const VisCell& v : vis) {
+            if (v.cell->title.empty()) continue;
+            nvgText(vg, v.x + 8.0f, v.y + (v.h - 26.0f) * 0.5f,
+                    v.cell->title.c_str(), nullptr);
+        }
+        nvgTextBatchEnd(vg);
+
+        nvgFontSize(vg, 10);
+        nvgFillColor(vg, tok::dim());
+        nvgTextBatchBegin(vg);
+        for (const VisCell& v : vis) {
+            if (v.cell->subtitle.empty()) continue;
+            nvgText(vg, v.x + 8.0f, v.y + (v.h - 26.0f) * 0.5f + 16.0f,
+                    v.cell->subtitle.c_str(), nullptr);
+        }
+        nvgTextBatchEnd(vg);
+
+        // Now-line: tracks the wall clock for free — it's recomputed
+        // from time() every frame instead of nudging an absolutely
+        // positioned Box through yoga once a second like the old
+        // overlay rule did.
+        if (m_guideStart > 0) {
+            const float nowX = px + (float)((double)(time(nullptr) - m_guideStart) * (double)pxPerSec) - m_scrollX;
+            if (nowX >= px && nowX <= px + pw) {
+                nvgBeginPath(vg);
+                nvgRect(vg, nowX, gy, 2.0f, gh);
+                nvgFillColor(vg, tok::accent());
+                nvgFill(vg);
+            }
+        }
+        nvgRestore(vg);
+
+        // ── 3) CHANNEL COLUMN ──────────────────────────────────────────
+        nvgSave(vg);
+        nvgScissor(vg, x, gy, colW, gh);
+
+        // One column background + one 1px hairline — not per-row boxes.
+        nvgBeginPath(vg);
+        nvgRect(vg, x, gy, colW, gh);
+        nvgFillColor(vg, nvgRGBA(0, 0, 0, 31));  // ~12% black overlay
+        nvgFill(vg);
+        nvgBeginPath(vg);
+        nvgRect(vg, x + colW - 1.0f, gy, 1.0f, gh);
+        nvgFillColor(vg, tok::hairline());
+        nvgFill(vg);
+
+        const int logoW = gridChannelLogoWidth();
+        const int logoH = gridChannelLogoHeight();
+        for (int r = r0; r < r1; r++) {
+            Row& row = m_rows[r];
+
+            // Lazy logo load, first time this row scrolls into view.
+            // Raw-NVG covers (no brls::Image = no extra view); the alive
+            // flag + row-index guard follow the MediaItemCell::loadThumbnail
+            // lifetime pattern — ImageLoader only runs the callback while
+            // the captured flag is still true, and setData/destruction
+            // flip it before the rows go away.
+            if (!row.logoRequested && !row.channel.thumb.empty()) {
+                row.logoRequested = true;
+                PlexClient& client = PlexClient::getInstance();
+                std::string url = client.getThumbnailUrl(row.channel.thumb,
+                                                         logoW * 2, logoH * 2);
+                EpgGridView* self = this;
+                ImageLoader::loadCoverAsync(url,
+                    [self, aliveCopy = m_imgAlive, r](int nvgImg, int w, int h) {
+                        // Stale-row guard: if the data was swapped out from
+                        // under this load, discard the handle ourselves.
+                        if (!aliveCopy->load() || r >= (int)self->m_rows.size()) {
+                            NVGcontext* c = brls::Application::getNVGContext();
+                            if (c && nvgImg != 0) nvgDeleteImage(c, nvgImg);
+                            return;
+                        }
+                        Row& target = self->m_rows[r];
+                        if (target.logoImg != 0 && target.logoImg != nvgImg) {
+                            NVGcontext* c = brls::Application::getNVGContext();
+                            if (c) nvgDeleteImage(c, target.logoImg);
+                        }
+                        target.logoImg = nvgImg;
+                        target.logoW   = w;
+                        target.logoH   = h;
+                    },
+                    m_imgAlive);
+            }
+
+            if (row.logoImg != 0 && row.logoW > 0 && row.logoH > 0) {
+                // Letterbox-FIT inside a logoW×logoH slot, centered
+                // horizontally, vertically centered minus ~7px to leave
+                // room for the channel label underneath — same paint
+                // math as MediaItemCell::draw's cover.
+                const float rowTop = gy + (float)r * rowH - m_scrollY;
+                const float slotX  = x + (colW - (float)logoW) * 0.5f;
+                const float slotY  = rowTop + (rowH - (float)logoH) * 0.5f - 7.0f;
+                const float scale  = std::min((float)logoW / (float)row.logoW,
+                                              (float)logoH / (float)row.logoH);
+                const float sw = (float)row.logoW * scale;
+                const float sh = (float)row.logoH * scale;
+                const float ox = slotX + ((float)logoW - sw) * 0.5f;
+                const float oy = slotY + ((float)logoH - sh) * 0.5f;
+                NVGpaint paint = nvgImagePattern(vg, ox, oy, sw, sh, 0,
+                                                 row.logoImg, 1.0f);
+                nvgBeginPath(vg);
+                nvgRoundedRect(vg, ox, oy, sw, sh, 6.0f);
+                nvgFillPaint(vg, paint);
+                nvgFill(vg);
+            }
+        }
+
+        // Channel labels, batched. Left-aligned near the row bottom —
+        // per-row nvgTextBounds centering would cost more than it's worth.
+        nvgFontFace(vg, "regular");
+        nvgFontSize(vg, 11);
+        nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
+        nvgFillColor(vg, tok::muted());
+        nvgTextBatchBegin(vg);
+        for (int r = r0; r < r1; r++) {
+            const Row& row = m_rows[r];
+            if (row.chLabel.empty()) continue;
+            const float rowBottom = gy + (float)(r + 1) * rowH - m_scrollY;
+            nvgText(vg, x + 10.0f, rowBottom - 16.0f, row.chLabel.c_str(), nullptr);
+        }
+        nvgTextBatchEnd(vg);
+        nvgRestore(vg);
+    }
+
+private:
+    bool cursorValid() const {
+        return m_curRow >= 0 && m_curRow < (int)m_rows.size() &&
+               m_curCell >= 0 && m_curCell < (int)m_rows[m_curRow].cells.size();
+    }
+
+    bool activateCursorCell() {
+        if (!cursorValid()) return false;
+        const Row& row   = m_rows[m_curRow];
+        const Cell& cell = row.cells[m_curCell];
+        if (cell.noData) {
+            if (onChannelSelected) onChannelSelected(row.channel);
+        } else {
+            if (onCellSelected) onCellSelected(cell.prog, row.channel);
+        }
+        return true;
+    }
+
+    void fireHover() {
+        if (!onHover) return;
+        if (m_curRow < 0 || m_curRow >= (int)m_rows.size()) return;
+        const Row& row = m_rows[m_curRow];
+        if (m_curCell < 0 || m_curCell >= (int)row.cells.size()) {
+            onHover(row.channel, GuideProgram{}, false);
+            return;
+        }
+        const Cell& cell = row.cells[m_curCell];
+        if (cell.noData) onHover(row.channel, GuideProgram{}, false);
+        else             onHover(row.channel, cell.prog, true);
+    }
+
+    // Virtual focus movement. Returns false at a boundary so the press
+    // falls through to normal borealis navigation (escape to hero /
+    // sidebar); true consumes it.
+    bool moveCursor(int dx, int dy) {
+        if (m_rows.empty()) return false;
+
+        if (dy != 0) {
+            const int target = m_curRow + (dy > 0 ? 1 : -1);
+            if (target < 0 || target >= (int)m_rows.size()) return false;
+            const Row& next = m_rows[target];
+            // buildEPGGrid guarantees every row has at least one cell
+            // (noData placeholder), but guard anyway.
+            if (next.cells.empty()) return false;
+
+            // Pick the cell in the new row whose [x, x+w) range contains
+            // the CURRENT cell's x start — mirrors the old view-based
+            // X-alignment behaviour (DOWN from a 1-hour show onto two
+            // 30-minute cells picks the first, not the boundary
+            // neighbour). Fall back to the nearest cell by |x - curX|.
+            const float curX = cursorValid() ? m_rows[m_curRow].cells[m_curCell].x : 0.0f;
+            int pick = -1;
+            for (size_t i = 0; i < next.cells.size(); i++) {
+                const Cell& c = next.cells[i];
+                if (curX >= c.x && curX < c.x + c.w) { pick = (int)i; break; }
+            }
+            if (pick < 0) {
+                float best = 0.0f;
+                for (size_t i = 0; i < next.cells.size(); i++) {
+                    const float d = std::fabs(next.cells[i].x - curX);
+                    if (pick < 0 || d < best) { best = d; pick = (int)i; }
+                }
+            }
+            m_curRow  = target;
+            m_curCell = pick;
+        } else if (dx != 0) {
+            if (m_curRow < 0 || m_curRow >= (int)m_rows.size()) return false;
+            const Row& row   = m_rows[m_curRow];
+            const int target = m_curCell + (dx > 0 ? 1 : -1);
+            if (target < 0 || target >= (int)row.cells.size()) return false;
+            m_curCell = target;
+        } else {
+            return false;
+        }
+
+        ensureCursorVisible();
+        fireHover();
+        return true;
+    }
+
+    // Instant scroll (plain float stores — no animation, no relayout):
+    // clamp so the cursor row is fully inside the row viewport and the
+    // cursor cell's start (plus as much of its width as fits) is inside
+    // the program viewport.
+    void ensureCursorVisible() {
+        const float rowH  = (float)livetvRowHeight();
+        const float slotW = (float)livetvTimeSlotWidth();
+        const float gh    = getHeight() - (float)TIME_HEADER_HEIGHT;
+        const float pw    = getWidth() - (float)livetvChannelColWidth();
+
+        const float rowTop = (float)m_curRow * rowH;
+        const float rowBot = rowTop + rowH;
+        if (rowTop < m_scrollY)               m_scrollY = rowTop;
+        else if (gh > 0 && rowBot > m_scrollY + gh) m_scrollY = rowBot - gh;
+
+        if (cursorValid()) {
+            const Cell& c = m_rows[m_curRow].cells[m_curCell];
+            if (c.x < m_scrollX)                       m_scrollX = c.x;
+            else if (pw > 0 && c.x + c.w > m_scrollX + pw)
+                // Cells wider than the viewport pin their start to the
+                // left edge instead of pushing it off-screen.
+                m_scrollX = std::min(c.x, c.x + c.w - pw);
+        }
+
+        const float maxY = std::max(0.0f, (float)m_rows.size() * rowH - gh);
+        const float maxX = std::max(0.0f, (float)(m_hours * 2) * slotW - pw);
+        m_scrollY = std::min(std::max(m_scrollY, 0.0f), maxY);
+        m_scrollX = std::min(std::max(m_scrollX, 0.0f), maxX);
+    }
+
+    std::vector<Row> m_rows;
+    int64_t m_guideStart = 0;
+    int m_hours = 12;
+    float m_scrollX = 0, m_scrollY = 0;   // instant scroll, no animation
+    int m_curRow = 0, m_curCell = 0;      // virtual focus cursor
+    // Cancel handle for loadCoverAsync — regenerated on every setData so
+    // stale loads can't write into replaced rows.
+    std::shared_ptr<std::atomic<bool>> m_imgAlive =
+        std::make_shared<std::atomic<bool>>(true);
+};
+
 
 LiveTVTab::LiveTVTab() {
     this->setAxis(brls::Axis::COLUMN);
@@ -212,11 +655,8 @@ LiveTVTab::LiveTVTab() {
     this->setGrow(1.0f);
 
     // The whole tab is a flex column with NO outer page scroll — the
-    // guide gets its own inner scroll instead, so dpad-driven hover only
-    // moves one scroll frame at a time. (Two CENTERED scroll frames
-    // stacked would each scroll on every focus change and "double-scroll"
-    // the page.) The hero, guide and DVR sit at fixed positions; only the
-    // guide rows scroll inside m_guideScrollV.
+    // guide scrolls internally (EpgGridView pans two plain floats), so
+    // the hero stays pinned at the top while the guide moves.
     m_scrollContent = new brls::Box();
     m_scrollContent->setAxis(brls::Axis::COLUMN);
     m_scrollContent->setJustifyContent(brls::JustifyContent::FLEX_START);
@@ -254,58 +694,27 @@ LiveTVTab::LiveTVTab() {
     m_guideContainer->setBorderColor(tok::hairline());
     m_guideContainer->setBorderThickness(1);
 
-    // Time header row (horizontal scroll, offset to clear the sticky
-    // channel column on the left). Mark it non-focusable because the
-    // slot labels inside are not interactive — if we left it focusable,
-    // DOWN from the hero would land on the empty time strip first (it's
-    // the guide container's first child), forcing a second press to
-    // descend into the rows.
-    m_timeHeaderScroll = new brls::HScrollingFrame();
-    m_timeHeaderScroll->setHeight(TIME_HEADER_HEIGHT);
-    m_timeHeaderScroll->setMarginLeft(livetvChannelColWidth());
-    m_timeHeaderScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
-    m_timeHeaderScroll->setFocusable(false);
-
-    m_timeHeaderBox = new brls::Box();
-    m_timeHeaderBox->setAxis(brls::Axis::ROW);
-    m_timeHeaderBox->setJustifyContent(brls::JustifyContent::FLEX_START);
-    m_timeHeaderBox->setBackgroundColor(nvgRGBA(0, 0, 0, 56));  // ~22% black overlay
-    m_timeHeaderScroll->setContentView(m_timeHeaderBox);
-    m_guideContainer->addView(m_timeHeaderScroll);
-
-    // Inner vertical scroll for channel rows. This is the *only* scroll
-    // frame on the page so hover-driven scroll moves it alone, leaving
-    // the hero + DVR pinned to their slots above and below.
-    m_guideScrollV = new brls::ScrollingFrame();
-    m_guideScrollV->setGrow(1.0f);
-    m_guideScrollV->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
-    // The ScrollingFrame ctor sets focusable=true, but our cells inside
-    // are the real focus targets. Leaving the scroll focusable made
-    // DOWN from the hero land on the scroll frame itself first (felt
-    // like an invisible stop in between), forcing a second DOWN to
-    // actually reach a guide cell. Mark it non-focusable so
-    // getDefaultFocus descends straight to the cells.
-    m_guideScrollV->setFocusable(false);
-
-    m_guideBox = new GuideBox();
-    m_guideBox->setAxis(brls::Axis::COLUMN);
-    m_guideBox->setJustifyContent(brls::JustifyContent::FLEX_START);
-    m_guideBox->setAlignItems(brls::AlignItems::STRETCH);
-    m_guideScrollV->setContentView(m_guideBox);
-    m_guideContainer->addView(m_guideScrollV);
-
-    // Current-time vertical line: an absolutely-positioned cyan rule
-    // overlaid on the guide container. Positioned by updateCurrentTimeLine
-    // once the grid is built and any time the layout refreshes.
-    m_currentTimeLine = new brls::Box();
-    m_currentTimeLine->setPositionType(brls::PositionType::ABSOLUTE);
-    m_currentTimeLine->setBackgroundColor(tok::accent());
-    m_currentTimeLine->setWidth(2);
-    m_currentTimeLine->setHeight(1);  // grows in updateCurrentTimeLine
-    m_currentTimeLine->setPositionTop(0);
-    m_currentTimeLine->setPositionLeft(-1);
-    m_currentTimeLine->setVisibility(brls::Visibility::INVISIBLE);
-    m_guideContainer->addView(m_currentTimeLine);
+    // The entire guide — time header, channel column, cells, now-line —
+    // is ONE custom-drawn view. No scroll frames, no per-row boxes, no
+    // absolutely positioned time line: EpgGridView draws everything in a
+    // single pass and handles dpad movement with a virtual cursor.
+    m_grid = new EpgGridView();
+    m_grid->setGrow(1.0f);
+    m_grid->formatTime = [this](int64_t t) { return this->formatTime(t); };
+    m_grid->onCellSelected = [this](const GuideProgram& prog, const LiveTVChannel& ch) {
+        onProgramSelected(prog, ch);
+    };
+    m_grid->onChannelSelected = [this](const LiveTVChannel& ch) {
+        onChannelSelected(ch);
+    };
+    // Cursor movement drives the hero exactly like per-cell focus events
+    // used to — through the debounced queueHeroFor* path so dpad-repeat
+    // across the guide doesn't turn into a relayout + network storm.
+    m_grid->onHover = [this](const LiveTVChannel& ch, const GuideProgram& prog, bool hasProgram) {
+        if (hasProgram) queueHeroForProgram(ch, prog);
+        else            queueHeroForChannel(ch);
+    };
+    m_guideContainer->addView(m_grid);
 
     m_scrollContent->addView(m_guideContainer);
 
@@ -352,34 +761,17 @@ brls::View* LiveTVTab::findFirstFocusableInBox(brls::Box* box) {
     return nullptr;
 }
 
-brls::View* LiveTVTab::findLastFocusableInBox(brls::Box* box) {
-    if (!box) return nullptr;
-    auto& children = box->getChildren();
-    for (auto it = children.rbegin(); it != children.rend(); ++it) {
-        brls::View* child = *it;
-        if (child->getVisibility() != brls::Visibility::VISIBLE) continue;
-        brls::Box* childBox = dynamic_cast<brls::Box*>(child);
-        if (childBox) {
-            brls::View* found = findLastFocusableInBox(childBox);
-            if (found) return found;
-        }
-        if (child->isFocusable()) return child;
-    }
-    return nullptr;
-}
-
 brls::View* LiveTVTab::getNextFocus(brls::FocusDirection direction, brls::View* currentView) {
-    // Section layout (top to bottom):  Hero (m_heroBox) -> Guide (m_guideBox)
-    // Row-to-row movement *inside* the guide is handled by borealis' natural
-    // navigation (m_guideBox is a COLUMN box, so it resolves UP/DOWN between
-    // rows itself). This override only kicks in when that bubbles up to the
-    // tab — i.e. at a section boundary — so all we do is hop to the adjacent
-    // section.
+    // Section layout (top to bottom): Hero (m_heroBox) -> Guide (m_grid).
+    // Movement *inside* the guide is handled by EpgGridView's hidden dpad
+    // actions (virtual cursor); this override only kicks in when a press
+    // escapes the grid (moveCursor returned false at a boundary) or
+    // leaves the hero — so all we do is hop to the adjacent section.
     const bool inHero  = isDescendantOf(currentView, m_heroBox);
     const bool inGuide = isDescendantOf(currentView, m_guideContainer);
 
     if (direction == brls::FocusDirection::DOWN && inHero) {
-        if (brls::View* t = findFirstFocusableInBox(m_guideBox)) return t;
+        if (m_grid) return m_grid;
     }
     else if (direction == brls::FocusDirection::UP && inGuide) {
         if (brls::View* t = findFirstFocusableInBox(m_heroBox)) return t;
@@ -389,304 +781,33 @@ brls::View* LiveTVTab::getNextFocus(brls::FocusDirection direction, brls::View* 
     return brls::Box::getNextFocus(direction, currentView);
 }
 
-void LiveTVTab::cullToViewport(brls::Box* content, brls::View* viewport, bool vertical) {
-    if (!content || !viewport) return;
-
-    const float margin = vertical ? (float)livetvRowHeight() : (float)livetvTimeSlotWidth();
-
-    const float vpStart = vertical ? viewport->getY() : viewport->getX();
-    const float vpEnd   = vpStart + (vertical ? viewport->getHeight() : viewport->getWidth());
-
-    brls::View* focus = brls::Application::getCurrentFocus();
-
-    for (brls::View* child : content->getChildren()) {
-        const float cStart = vertical ? child->getY() : child->getX();
-        const float cEnd   = cStart + (vertical ? child->getHeight() : child->getWidth());
-
-        bool visible = (cEnd >= vpStart - margin) && (cStart <= vpEnd + margin);
-
-        if (!visible && focus && isDescendantOf(focus, child))
-            visible = true;
-
-        const brls::Visibility want = visible ? brls::Visibility::VISIBLE
-                                              : brls::Visibility::INVISIBLE;
-        if (child->getVisibility() != want)
-            child->setVisibility(want);
-    }
-}
-
 void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height,
                      brls::Style style, brls::FrameContext* ctx) {
+    // Frame-total accounting: wall time between draws captures everything
+    // (GPU, other views), while boxdraw is this tab's subtree — which now
+    // includes the entire guide via EpgGridView::draw. The old cull /
+    // scroll-sync / batch-text passes are gone: the grid has no view
+    // forest to cull or sync, and its text batches live inside its own
+    // draw().
     const int64_t pf0 = brls::getCPUTimeUsec();
     if (m_perfLastFrameUs > 0) m_perfFrameUs += pf0 - m_perfLastFrameUs;
     m_perfLastFrameUs = pf0;
 
-    // With 100+ channels the EPG grid holds ~100 rows and the favourites /
-    // DVR rows hold ~100 cards each. borealis only culls off-screen *leaf*
-    // views, never nested Boxes, so every off-screen row/card still painted
-    // every frame — pure overdraw. Toggle INVISIBLE on anything scrolled
-    // out of its viewport so frame() early-outs for the entire subtree.
-    cullToViewport(m_guideBox, m_guideScrollV, /*vertical=*/true);
-
-    // Same idea horizontally, inside the rows that survived the vertical
-    // cull: a row spans the whole guide window (~15-25 cell Boxes) but only
-    // ~5 cells are on screen. The HScrollingFrame scissor only hides the
-    // result — every off-screen cell still recorded its rounded-rect
-    // background each frame.
-    for (size_t i = 0; i < m_rowProgramScrolls.size() && i < m_rowProgramBoxes.size(); i++) {
-        brls::HScrollingFrame* hs = m_rowProgramScrolls[i];
-        brls::Box* content = m_rowProgramBoxes[i];
-        if (!hs || !content) continue;
-        brls::View* row = hs->getParent();
-        if (row && row->getVisibility() != brls::Visibility::VISIBLE) continue;
-        cullToViewport(content, hs, /*vertical=*/false);
-    }
-
-    // The time header rides its own HScrollingFrame with 2-4x more slot
-    // boxes (label + hairline each) than fit on screen — cull those too.
-    if (m_timeHeaderBox && m_timeHeaderScroll)
-        cullToViewport(m_timeHeaderBox, m_timeHeaderScroll, /*vertical=*/false);
-
-    const int64_t pf1 = brls::getCPUTimeUsec();
-    m_perfCullUs += pf1 - pf0;
-
-    // Slide the cyan "now" line each frame so it tracks the wall clock
-    // even when the guide grid itself doesn't rebuild.
-    updateCurrentTimeLine();
-
-    // Horizontal scroll sync. Each guide row has its own HScrollingFrame
-    // for the program cells (so RIGHT navigation can scroll past the
-    // visible width), but the user only sees one row's scroll *react*
-    // to their input. Match the other rows + the time header to the
-    // focused row's offset so the visible time slice is consistent
-    // across the whole guide — and so the time labels above always
-    // align with the cells below.
-    if (!m_rowProgramScrolls.empty()) {
-        brls::View* focused = brls::Application::getCurrentFocus();
-        brls::HScrollingFrame* anchor = nullptr;
-        if (focused) {
-            for (brls::HScrollingFrame* hs : m_rowProgramScrolls) {
-                if (isDescendantOf(focused, hs)) { anchor = hs; break; }
-            }
-        }
-        if (anchor) {
-            // Focus moved to a different row: align its internal offset with
-            // the shared offset every row is already displaying, so its own
-            // centering starts from what's on screen instead of a stale
-            // value. One invalidate per vertical move — a discrete event.
-            if (anchor != m_lastAnchorScroll) {
-                if (m_lastSyncedScrollX >= 0 &&
-                    std::abs(anchor->getContentOffsetX() - m_lastSyncedScrollX) > 0.5f)
-                    anchor->setContentOffsetX(m_lastSyncedScrollX, false);
-                m_lastAnchorScroll = anchor;
-            }
-            const float target = anchor->getContentOffsetX();
-            // Steady-state (not actively scrolling) is the common case —
-            // the anchor's offset matches what we already pushed to the
-            // other rows. Skip the whole O(rows) sync loop in that case.
-            if (std::abs(target - m_lastSyncedScrollX) > 0.5f) {
-                // Follow the anchor by translating the other rows' content
-                // boxes directly — a plain float store, and exactly how
-                // borealis applies scroll offsets internally (see
-                // HScrollingFrame::scrollAnimationTick). The previous
-                // setContentOffsetX path ran invalidate() per row, i.e. a
-                // full-tree Yoga relayout of the ~1500-view grid PER ROW
-                // PER FRAME while the anchor's scroll animated — the
-                // guide's 4 FPS on Vita.
-                for (size_t i = 0; i < m_rowProgramScrolls.size(); i++) {
-                    brls::HScrollingFrame* hs = m_rowProgramScrolls[i];
-                    brls::Box* content = i < m_rowProgramBoxes.size() ? m_rowProgramBoxes[i] : nullptr;
-                    if (!hs || !content || hs == anchor) continue;
-                    // Clamp to this row's own scrollable range, like
-                    // borealis does — rows whose programs end early have
-                    // narrower content than the full guide window.
-                    float limit = content->getWidth() - hs->getWidth();
-                    if (limit < 0) limit = 0;
-                    float t = target < 0 ? 0 : (target > limit ? limit : target);
-                    content->setTranslationX(-t);
-                }
-                if (m_timeHeaderBox && m_timeHeaderScroll) {
-                    float limit = m_timeHeaderBox->getWidth() - m_timeHeaderScroll->getWidth();
-                    if (limit < 0) limit = 0;
-                    float t = target < 0 ? 0 : (target > limit ? limit : target);
-                    m_timeHeaderBox->setTranslationX(-t);
-                }
-                m_lastSyncedScrollX = target;
-            }
-        }
-    }
-
     // Hover-driven hero refresh, applied only once focus has rested.
     applyPendingHero();
-    const int64_t pf2 = brls::getCPUTimeUsec();
-    m_perfSyncUs += pf2 - pf1;
 
+    const int64_t pf1 = brls::getCPUTimeUsec();
     brls::Box::draw(vg, x, y, width, height, style, ctx);
-    const int64_t pf3 = brls::getCPUTimeUsec();
-    m_perfDrawUs += pf3 - pf2;
-
-    // Batch text rendering for the EPG cells. Every cell that's visible
-    // in its row's HScrollingFrame contributes one title and one subtitle
-    // string; the patched nvgTextBatchBegin/End API lets us flush all of
-    // them as a single render call per style. A typical visible window
-    // is ~80–120 cells, so this collapses ~200 per-Label draw calls into
-    // 2 batched ones. No path fills may happen between Begin and End or
-    // they'd clobber the batch — only nvgText.
-    [&]() {
-        if (m_epgRowRanges.empty() || m_epgCells.empty() || !m_guideScrollV) return;
-        const float vScrollTop    = m_guideScrollV->getY();
-        const float vScrollBottom = vScrollTop + m_guideScrollV->getHeight();
-
-        // All HScrollingFrames live in the same column (channel column
-        // is fixed-width on the left), so any cell's scroll frame gives
-        // the program-area X range. Pick the first cell whose scroll
-        // frame is laid out and use it to clip the batch — without the
-        // scissor, cells panning under the channel column would still
-        // paint their text on top of the logo because batched draws
-        // bypass the per-frame scissor that the HScrollingFrame sets.
-        float clipX = 0.0f, clipW = 0.0f;
-        for (const EpgCellInfo& info : m_epgCells) {
-            if (!info.scroll) continue;
-            const float w = info.scroll->getWidth();
-            if (w <= 0) continue;
-            clipX = info.scroll->getX();
-            clipW = w;
-            break;
-        }
-        if (clipW <= 0) return;
-
-        // Resolve visible cells once, then iterate the (much smaller)
-        // filtered list twice — once per batch — instead of redoing the
-        // ~7 getter calls per cell on every pass.
-        struct VisibleCell {
-            float x, y, w, h;   // cell rect (batched background fill)
-            float tx, ty;       // text origin
-            bool onNow;
-            const std::string* title;
-            const std::string* subtitle;
-        };
-        std::vector<VisibleCell> visible;
-        visible.reserve(m_epgCells.size());
-
-        for (const EpgRowRange& rr : m_epgRowRanges) {
-            // One visibility check skips a culled row's entire cell range —
-            // previously every cell struct in the grid (channels × programs,
-            // easily >1000 entries) was walked per frame just to find the
-            // on-screen handful.
-            if (rr.row && rr.row->getVisibility() != brls::Visibility::VISIBLE) continue;
-            for (size_t ci = rr.begin; ci < rr.end && ci < m_epgCells.size(); ci++) {
-            const EpgCellInfo& info = m_epgCells[ci];
-            if (!info.cell || !info.scroll) continue;
-            // Horizontally-culled cells are INVISIBLE (cell cull above) —
-            // skip before paying the recursive position getters.
-            if (info.cell->getVisibility() != brls::Visibility::VISIBLE) continue;
-
-            const float cx = info.cell->getX();
-            const float cy = info.cell->getY();
-            const float cw = info.cell->getWidth();
-            const float ch = info.cell->getHeight();
-            if (cw <= 0 || ch <= 0) continue;
-
-            const float hScrollLeft  = info.scroll->getX();
-            const float hScrollRight = hScrollLeft + info.scroll->getWidth();
-            if (cx + cw < hScrollLeft || cx > hScrollRight) continue;
-            if (cy + ch < vScrollTop  || cy > vScrollBottom) continue;
-
-            VisibleCell v;
-            v.x = cx; v.y = cy; v.w = cw; v.h = ch;
-            v.tx = cx + 8.0f;
-            v.ty = cy + (ch - 26.0f) * 0.5f;
-            v.onNow    = info.onNow;
-            v.title    = &info.title;
-            v.subtitle = &info.subtitle;
-            visible.push_back(v);
-            }
-        }
-
-        if (visible.empty()) return;
-
-        nvgSave(vg);
-        nvgScissor(vg, clipX, vScrollTop, clipW, vScrollBottom - vScrollTop);
-
-        // Batched cell backgrounds. Every visible cell's rounded rect merges
-        // into ONE path per colour (plus one stroke pass for the on-now
-        // borders), collapsing ~50-90 individually stenciled antialiased
-        // NanoVG fills into 3. The hardware profile showed the GPU pinned at
-        // 100% while CPU cores sat half idle — per-path stencil work is the
-        // wall on the Vita's tile-based GPU, so path count is what matters.
-        int nowCells = 0, upcomingCells = 0;
-        for (const VisibleCell& v : visible) (v.onNow ? nowCells : upcomingCells)++;
-
-        // AA fringes are the bulk of NanoVG's per-path stencil geometry, and
-        // on 6px-radius guide cells they're visually irrelevant — turn shape
-        // AA off for the batched fills/strokes (restored below).
-        nvgShapeAntiAlias(vg, 0);
-
-        if (upcomingCells > 0) {
-            nvgBeginPath(vg);
-            for (const VisibleCell& v : visible)
-                if (!v.onNow) nvgRoundedRect(vg, v.x, v.y, v.w, v.h, 6.0f);
-            nvgFillColor(vg, tok::cellUpcoming());
-            nvgFill(vg);
-        }
-        if (nowCells > 0) {
-            nvgBeginPath(vg);
-            for (const VisibleCell& v : visible)
-                if (v.onNow) nvgRoundedRect(vg, v.x, v.y, v.w, v.h, 6.0f);
-            nvgFillColor(vg, tok::cellNow());
-            nvgFill(vg);
-
-            nvgBeginPath(vg);
-            for (const VisibleCell& v : visible)
-                if (v.onNow) nvgRoundedRect(vg, v.x + 0.5f, v.y + 0.5f,
-                                            v.w - 1.0f, v.h - 1.0f, 6.0f);
-            nvgStrokeColor(vg, tok::accent());
-            nvgStrokeWidth(vg, 1.0f);
-            nvgStroke(vg);
-        }
-
-        nvgShapeAntiAlias(vg, 1);
-
-        nvgFontFace(vg, "regular");
-        nvgTextAlign(vg, NVG_ALIGN_LEFT | NVG_ALIGN_TOP);
-
-        // Pass 1: titles
-        nvgFontSize(vg, 13);
-        nvgFillColor(vg, tok::text());
-        nvgTextBatchBegin(vg);
-        for (const VisibleCell& v : visible) {
-            if (v.title->empty()) continue;
-            nvgText(vg, v.tx, v.ty, v.title->c_str(), nullptr);
-        }
-        nvgTextBatchEnd(vg);
-
-        // Pass 2: subtitles (smaller, dim)
-        nvgFontSize(vg, 10);
-        nvgFillColor(vg, tok::dim());
-        nvgTextBatchBegin(vg);
-        for (const VisibleCell& v : visible) {
-            if (v.subtitle->empty()) continue;
-            nvgText(vg, v.tx, v.ty + 16.0f, v.subtitle->c_str(), nullptr);
-        }
-        nvgTextBatchEnd(vg);
-        nvgRestore(vg);
-    }();
-
-    const int64_t pf4 = brls::getCPUTimeUsec();
-    m_perfTextUs += pf4 - pf3;
+    m_perfDrawUs += brls::getCPUTimeUsec() - pf1;
 
     // Periodic cost report (~every 5-20s depending on frame rate). On Vita
-    // this lands in ux0:data/VitaPlex/vitaplex.log, so a hardware log shows
-    // exactly where guide frame time goes: total = wall time between draws
-    // (everything incl. GPU/other views), the rest are this tab's sections.
+    // this lands in ux0:data/VitaPlex/vitaplex.log.
     if (++m_perfFrames >= 300) {
         brls::Logger::info(
-            "LiveTV perf avg us/frame over {} frames: total={} cull={} sync={} boxdraw={} text={}",
+            "LiveTV perf avg us/frame over {} frames: total={} boxdraw={}",
             m_perfFrames,
-            m_perfFrameUs / m_perfFrames, m_perfCullUs / m_perfFrames,
-            m_perfSyncUs / m_perfFrames, m_perfDrawUs / m_perfFrames,
-            m_perfTextUs / m_perfFrames);
-        m_perfFrameUs = m_perfCullUs = m_perfSyncUs = m_perfDrawUs = m_perfTextUs = 0;
+            m_perfFrameUs / m_perfFrames, m_perfDrawUs / m_perfFrames);
+        m_perfFrameUs = m_perfDrawUs = 0;
         m_perfFrames  = 0;
     }
 }
@@ -694,6 +815,10 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
 void LiveTVTab::onFocusGained() {
     brls::Box::onFocusGained();
     m_alive = std::make_shared<bool>(true);
+
+    // willDisappear cancelled any in-flight logo loads; let the grid
+    // re-request the ones that never landed.
+    if (m_grid) m_grid->retryMissingLogos();
 
     // Pick up the user's EPG-hours setting on every focus so a change in
     // Settings → Live TV takes effect next time they tab back here,
@@ -748,9 +873,6 @@ void LiveTVTab::buildHero() {
     // first focusable ancestor, so making the whole hero focusable would
     // hide the Watch live / Record buttons inside it from the focus chain.
     // The buttons themselves are the actual focus targets.
-
-    // Diagnostic: hero stays a blank card — no thumb, labels, or buttons.
-    if (kBareGuideDiag) return;
 
     // Thumbnail holder. The Image itself is added invisible — we flip it
     // on once the async load finishes; the holder Box owns the slot in
@@ -1017,7 +1139,6 @@ void LiveTVTab::resizeHeroThumbToImage(brls::Image* img) {
 }
 
 void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
-    if (kBareGuideDiag) return;  // blank hero in diagnostic mode
     // Find the currently-airing program and forward to the per-program
     // updater. Falls back to the channel's legacy currentProgram/start/end
     // fields if the EPG didn't fill the programs vector.
@@ -1091,7 +1212,6 @@ void LiveTVTab::updateHeroForChannel(const LiveTVChannel& channel) {
 
 void LiveTVTab::updateHeroForProgram(const LiveTVChannel& channel,
                                      const GuideProgram& program) {
-    if (kBareGuideDiag) return;  // blank hero in diagnostic mode
     m_heroChannel      = channel;
     m_heroProgram      = program;
     m_heroProgramValid = true;
@@ -1237,432 +1357,125 @@ void LiveTVTab::loadChannels() {
     loadRecordings();
 }
 
-void LiveTVTab::updateCurrentTimeLine() {
-    if (!m_currentTimeLine || !m_guideContainer || m_guideStartTime == 0) return;
-
-    // Called every frame from draw() — but the wall clock only ticks
-    // once per second, and at typical slot widths the line moves under
-    // one pixel per second. Throttle the actual recompute to one per
-    // second; everything else this would do is a no-op anyway.
-    int64_t now = (int64_t)time(nullptr);
-    if (now == m_lastTimeLineUpdateSec) return;
-    m_lastTimeLineUpdateSec = now;
-
-    int gridHours = m_hoursToShow;
-    int64_t guideEnd = m_guideStartTime + (gridHours * 3600);
-
-    if (now < m_guideStartTime || now > guideEnd) {
-        if (m_currentTimeLine->getVisibility() != brls::Visibility::INVISIBLE)
-            m_currentTimeLine->setVisibility(brls::Visibility::INVISIBLE);
-        return;
-    }
-
-    float xOffset = (float)((now - m_guideStartTime) * livetvTimeSlotWidth() / 1800.0);
-    float height = m_guideContainer->getHeight();
-    if (height <= 1) {
-        // pre-layout — try again next second
-        m_lastTimeLineUpdateSec = 0;
-        return;
-    }
-
-    // Anchor the line's yoga position once (at the program-area origin),
-    // then ride setTranslationX for the per-second movement: a plain float
-    // store with no invalidate. setPositionLeft every second re-ran Yoga
-    // layout over the whole grid — a once-a-second frame hitch while just
-    // *sitting* on the tab.
-    if (!m_timeLineBasePlaced) {
-        m_currentTimeLine->setPositionLeft((float)livetvChannelColWidth());
-        m_timeLineBasePlaced = true;
-    }
-    m_currentTimeLine->setTranslationX(xOffset);
-    if (height != m_lastTimeLineHeight) {
-        m_currentTimeLine->setHeight(height);
-        m_lastTimeLineHeight = height;
-    }
-    if (m_currentTimeLine->getVisibility() != brls::Visibility::VISIBLE)
-        m_currentTimeLine->setVisibility(brls::Visibility::VISIBLE);
-}
-
 void LiveTVTab::buildEPGGrid() {
-    m_timeHeaderBox->clearViews();
-    m_guideBox->clearViews();
-    // Per-row HScrollingFrame pointers are owned by their rowBoxes (which
-    // we've just cleared via m_guideBox->clearViews), so the pointers in
-    // this vector are about to dangle — purge them before rebuilding.
-    m_rowProgramScrolls.clear();
-    m_rowProgramBoxes.clear();
-    m_lastAnchorScroll = nullptr;
-    // Cell info entries reference Boxes owned by the row hierarchy we
-    // just wiped via m_guideBox->clearViews(); purge before rebuilding
-    // so draw()'s batch pass doesn't dereference freed cells.
-    m_epgCells.clear();
-    m_epgRowRanges.clear();
-    // Reset the per-frame sync / time-line caches — the grid start time
-    // shifts on rebuild and the row scroll frames have been recreated.
-    m_lastSyncedScrollX     = -1;
-    m_lastTimeLineUpdateSec = 0;
-    m_lastTimeLineHeight    = -1;
-
-    if (m_channels.empty()) {
-        auto* noDataLabel = new brls::Label();
-        noDataLabel->setText("No program guide data available");
-        noDataLabel->setFontSize(14);
-        noDataLabel->setTextColor(tok::muted());
-        noDataLabel->setMarginLeft(12);
-        noDataLabel->setMarginTop(12);
-        m_guideBox->addView(noDataLabel);
-        return;
-    }
+    // Pure data build — NO views are created here. The old implementation
+    // manufactured a Box per row / spacer / cell (~2500 views + yoga nodes
+    // for 100 channels), so opening the guide paid a full-tree layout and
+    // every frame afterwards paid the per-view frame() walk. Now this
+    // just formats strings and computes pixel offsets, then hands the
+    // whole set to EpgGridView in one O(data) swap.
 
     // Set guide start time to current time rounded down to 30 minutes.
     time_t now = time(nullptr);
     m_guideStartTime = now - (now % 1800);
 
-    int gridHours = m_hoursToShow;
-    int totalSlots = gridHours * 2;
+    const int gridHours = m_hoursToShow;
+    const int64_t guideEndTime = m_guideStartTime + (int64_t)gridHours * 3600;
+    const int slotW = livetvTimeSlotWidth();
 
-    // Time header — each 30-min slot. Bold muted labels, left hairline
-    // separating slots.
-    for (int i = 0; i < totalSlots; i++) {
-        int64_t slotTime = m_guideStartTime + (i * 1800);
+    std::vector<EpgGridView::Row> rows;
+    rows.reserve(m_channels.size());
 
-        auto* timeSlot = new brls::Box();
-        timeSlot->setWidth(livetvTimeSlotWidth());
-        timeSlot->setHeight(TIME_HEADER_HEIGHT);
-        timeSlot->setJustifyContent(brls::JustifyContent::CENTER);
-        timeSlot->setAlignItems(brls::AlignItems::CENTER);
-        if (i > 0) {
-            timeSlot->setBorderColor(tok::hairline());
-            timeSlot->setBorderThickness(0);  // border drawn via line below
-            // borealis Box draws a uniform border; we want only a left
-            // hairline. Skip the border and draw a thin vertical strip
-            // instead so the visual stays clean.
-            auto* leftRule = new brls::Box();
-            leftRule->setPositionType(brls::PositionType::ABSOLUTE);
-            leftRule->setWidth(1);
-            leftRule->setHeight(TIME_HEADER_HEIGHT - 12);
-            leftRule->setPositionLeft(0);
-            leftRule->setPositionTop(6);
-            leftRule->setBackgroundColor(tok::hairline());
-            timeSlot->addView(leftRule);
-        }
-
-        if (!kBareGuideDiag) {
-            auto* timeLabel = new brls::Label();
-            timeLabel->setText(formatTime(slotTime));
-            timeLabel->setFontSize(13);
-            timeLabel->setTextColor(tok::muted());
-            timeSlot->addView(timeLabel);
-        }
-
-        m_timeHeaderBox->addView(timeSlot);
-    }
-
-    // Build channel rows
     for (const auto& channel : m_channels) {
-        auto* rowBox = new brls::Box();
-        const size_t rowCellsBegin = m_epgCells.size();  // cells appended below
-                                                         // belong to this row
-        rowBox->setAxis(brls::Axis::ROW);
-        rowBox->setHeight(livetvRowHeight());
-        rowBox->setJustifyContent(brls::JustifyContent::FLEX_START);
-        rowBox->setAlignItems(brls::AlignItems::CENTER);
-
-        // Sticky channel column — wide 16:9 logo on top, channel number
-        // underneath. No call sign so a user scrolling 100+ channels
-        // scans by logo instead of reading.
-        auto* channelCol = new brls::Box();
-        channelCol->setAxis(brls::Axis::COLUMN);
-        channelCol->setWidth(livetvChannelColWidth());
-        channelCol->setHeight(livetvRowHeight());
-        channelCol->setPadding(4);
-        channelCol->setBackgroundColor(nvgRGBA(0, 0, 0, 31));  // ~12% black overlay
-        channelCol->setJustifyContent(brls::JustifyContent::CENTER);
-        channelCol->setAlignItems(brls::AlignItems::CENTER);
-        // Right hairline separating the column from the program track.
-        auto* colRule = new brls::Box();
-        colRule->setPositionType(brls::PositionType::ABSOLUTE);
-        colRule->setWidth(1);
-        colRule->setHeight(livetvRowHeight() - 6);
-        colRule->setPositionLeft(livetvChannelColWidth() - 1);
-        colRule->setPositionTop(3);
-        colRule->setBackgroundColor(tok::hairline());
-        channelCol->addView(colRule);
-
-        const int logoW = gridChannelLogoWidth();
-        const int logoH = gridChannelLogoHeight();
-        auto* logoBox = new brls::Box();
-        logoBox->setWidth(logoW);
-        logoBox->setHeight(logoH);
-        logoBox->setCornerRadius(6);
-        logoBox->setBackgroundColor(tok::placeholder());
-        logoBox->setMarginBottom(2);
-
-        auto* logo = new brls::Image();
-        logo->setWidth(logoW);
-        logo->setHeight(logoH);
-        logo->setScalingType(brls::ImageScalingType::FIT);
-        logo->setCornerRadius(6);
-        logo->setVisibility(brls::Visibility::INVISIBLE);
-        logoBox->addView(logo);
-        channelCol->addView(logoBox);
-
-        if (!kBareGuideDiag && !channel.thumb.empty()) {
-            PlexClient& client = PlexClient::getInstance();
-            std::string url = client.getThumbnailUrl(channel.thumb,
-                                                     logoW * 2, logoH * 2);
-            auto alive = std::make_shared<std::atomic<bool>>(true);
-            ImageLoader::loadAsync(url, [](brls::Image* img) {
-                if (img) img->setVisibility(brls::Visibility::VISIBLE);
-            }, logo, alive);
-        }
-
-        if (!kBareGuideDiag) {
-            auto* chNumLabel = new brls::Label();
-            chNumLabel->setText(!channel.channelIdentifier.empty()
-                                ? channel.channelIdentifier
-                                : std::to_string(channel.channelNumber));
-            chNumLabel->setFontSize(11);
-            // Channel number is body text in a long vertical list — keep
-            // it muted so the gold accent stays reserved for fills,
-            // selected states, and key hero numbers rather than shimmering
-            // down every row of the channel sidebar.
-            chNumLabel->setTextColor(tok::muted());
-            chNumLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
-            channelCol->addView(chNumLabel);
-        }
-
-        LiveTVChannel capturedChannel = channel;
-        channelCol->setFocusable(true);
-        channelCol->registerClickAction([this, capturedChannel](brls::View*) {
-            onChannelSelected(capturedChannel);
-            return true;
-        });
-        channelCol->addGestureRecognizer(new brls::TapGestureRecognizer(channelCol));
-        // Hover on the channel column shows the channel's current show
-        // in the hero — keeps the preview in sync as the user scrolls
-        // through the channel list with the dpad.
-        channelCol->getFocusEvent()->subscribe(
-            [this, capturedChannel](brls::View*) {
-                queueHeroForChannel(capturedChannel);
-            });
-
-        rowBox->addView(channelCol);
-
-        // Program cells live inside their own HScrollingFrame so RIGHT
-        // arrow can pan past the visible width and bring later shows
-        // into view. CENTERED behaviour keeps the focused cell visible
-        // and the per-row scroll positions are synced together (and to
-        // the time header) in draw().
-        //
-        // The explicit height matters: rowBox's alignItems=CENTER won't
-        // stretch the scroll frame to fill the row's cross axis, and
-        // HScrollingFrame::setContentView wires contentView.height to
-        // self.height — without setHeight here the scroll collapses
-        // to ~0 high, the contentView follows, and the cells inside
-        // end up with no layout slot for their labels (text invisible,
-        // cell margins gone, focus highlight floats half a row down).
-        auto* programsScroll = new brls::HScrollingFrame();
-        programsScroll->setGrow(1.0f);
-        programsScroll->setHeight(livetvRowHeight());
-        programsScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
-        programsScroll->setFocusable(false);
-
-        auto* programsBox = new brls::Box();
-        programsBox->setAxis(brls::Axis::ROW);
-        programsBox->setJustifyContent(brls::JustifyContent::FLEX_START);
-        programsBox->setAlignItems(brls::AlignItems::CENTER);
+        EpgGridView::Row row;
+        row.channel = channel;
+        row.chLabel = !channel.channelIdentifier.empty()
+                          ? channel.channelIdentifier
+                          : std::to_string(channel.channelNumber);
 
         if (!channel.programs.empty()) {
-            int64_t guideEndTime = m_guideStartTime + (gridHours * 3600);
-            int64_t lastEndTime = m_guideStartTime;
-
-            for (size_t pi = 0; pi < channel.programs.size(); pi++) {
-                const auto& prog = channel.programs[pi];
-
+            for (const auto& prog : channel.programs) {
                 if (prog.endTime <= m_guideStartTime || prog.startTime >= guideEndTime) continue;
 
                 int64_t visStart = std::max(prog.startTime, m_guideStartTime);
-                int64_t visEnd = std::min(prog.endTime > 0 ? prog.endTime : visStart + 1800, guideEndTime);
+                int64_t visEnd   = std::min(prog.endTime > 0 ? prog.endTime : visStart + 1800,
+                                            guideEndTime);
 
-                if (visStart > lastEndTime) {
-                    int gapPixels = (int)((visStart - lastEndTime) * livetvTimeSlotWidth() / 1800);
-                    if (gapPixels > 0) {
-                        auto* spacer = new brls::Box();
-                        spacer->setWidth(gapPixels);
-                        spacer->setHeight(livetvRowHeight() - 4);
-                        programsBox->addView(spacer);
-                    }
-                }
-
-                int64_t durationSec = visEnd - visStart;
-                int cellWidth = (int)(durationSec * livetvTimeSlotWidth() / 1800);
+                int cellWidth = (int)((visEnd - visStart) * slotW / 1800);
                 if (cellWidth < 40) cellWidth = 40;
 
-                time_t nowSec = time(nullptr);
-                bool isCurrently = (prog.startTime <= (int64_t)nowSec && prog.endTime > (int64_t)nowSec);
+                bool isCurrently = (prog.startTime <= (int64_t)now && prog.endTime > (int64_t)now);
 
-                auto* progCell = new brls::Box();
-                progCell->setWidth(cellWidth);
-                progCell->setHeight(livetvRowHeight() - 8);
-                progCell->setMargins(2, 2, 2, 2);
-                // No per-cell background/border: each one is a separate
-                // stenciled antialiased NanoVG path — with ~50 cells visible
-                // the GPU sat at 100% (CPU half idle). draw() paints all
-                // visible cell rects as a few merged batched paths instead.
-                progCell->setCornerRadius(6);
-                progCell->setFocusable(true);
-                progCell->setHideHighlightBackground(true);  // ring comes from the
-                                                             // app highlight pass
+                EpgGridView::Cell cell;
+                // +2 / -4: the old cells carried 2px margins on each side;
+                // bake them into the rect so the visuals are identical.
+                cell.x = (float)((visStart - m_guideStartTime) * slotW / 1800.0) + 2.0f;
+                cell.w = (float)cellWidth - 4.0f;
+                cell.onNow = isCurrently;
 
-                // Cell is intentionally label-less — the title and
-                // time-range strings are batched in draw() through the
-                // patched nvgTextBatchBegin/End API so all visible cell
-                // text flushes as one render call per style instead of
-                // one per Label.
-                EpgCellInfo info;
-                info.cell = progCell;
-                info.scroll = programsScroll;
-                info.row = rowBox;
-                info.onNow = isCurrently;
+                // Truncate the title to what fits at ~8px/char so the
+                // batched text pass never paints outside its cell (there
+                // is no per-cell scissor — one scissor covers the whole
+                // program area).
                 std::string title = prog.title;
                 int maxChars = cellWidth / 8;
                 if (maxChars < 4) maxChars = 4;
                 if ((int)title.length() > maxChars) title = title.substr(0, maxChars - 2) + "..";
-                info.title = std::move(title);
+                cell.title = std::move(title);
+
                 std::string sub = formatTime(prog.startTime) + " – " + formatTime(prog.endTime);
                 if (isCurrently) sub += "  ·  on now";
-                info.subtitle = std::move(sub);
-                if (kBareGuideDiag) { info.title.clear(); info.subtitle.clear(); }
-                m_epgCells.push_back(info);
+                cell.subtitle = std::move(sub);
 
-                GuideProgram gp;
-                gp.title = prog.title;
-                gp.summary = prog.summary;
-                gp.startTime = prog.startTime;
-                gp.endTime = prog.endTime;
-                gp.ratingKey = prog.ratingKey;
-                gp.metadataKey = prog.metadataKey;
-                gp.thumb = prog.thumb;
+                cell.prog.title       = prog.title;
+                cell.prog.summary     = prog.summary;
+                cell.prog.startTime   = prog.startTime;
+                cell.prog.endTime     = prog.endTime;
+                cell.prog.ratingKey   = prog.ratingKey;
+                cell.prog.metadataKey = prog.metadataKey;
+                cell.prog.thumb       = prog.thumb;
 
-                progCell->registerClickAction([this, gp, capturedChannel](brls::View*) {
-                    onProgramSelected(gp, capturedChannel);
-                    return true;
-                });
-                progCell->addGestureRecognizer(new brls::TapGestureRecognizer(progCell));
-                // Hover → live-update the hero with this program's
-                // details (title, summary, thumb, progress, channel
-                // chrome). Watch live + Record buttons follow because
-                // they read from m_heroChannel / m_heroProgram.
-                progCell->getFocusEvent()->subscribe(
-                    [this, gp, capturedChannel](brls::View*) {
-                        queueHeroForProgram(capturedChannel, gp);
-                    });
-
-                programsBox->addView(progCell);
-                lastEndTime = visEnd;
+                row.cells.push_back(std::move(cell));
             }
         } else if (!channel.currentProgram.empty() && channel.programStart > 0) {
+            // Legacy fallback: the EPG didn't fill the programs vector but
+            // the channel still carries "now playing" fields — one on-now
+            // cell synthesized from those.
             int64_t progStart = std::max(channel.programStart, m_guideStartTime);
-            int64_t guideEndTime = m_guideStartTime + (gridHours * 3600);
-            int64_t progEnd = std::min(channel.programEnd > 0 ? channel.programEnd : progStart + 1800, guideEndTime);
+            int64_t progEnd   = std::min(channel.programEnd > 0 ? channel.programEnd
+                                                                : progStart + 1800,
+                                         guideEndTime);
 
-            int startOffset = (int)((progStart - m_guideStartTime) * livetvTimeSlotWidth() / 1800);
-            int cellWidth = (int)((progEnd - progStart) * livetvTimeSlotWidth() / 1800);
+            int cellWidth = (int)((progEnd - progStart) * slotW / 1800);
             if (cellWidth < 40) cellWidth = 40;
 
-            if (startOffset > 0) {
-                auto* spacer = new brls::Box();
-                spacer->setWidth(startOffset);
-                spacer->setHeight(livetvRowHeight() - 4);
-                programsBox->addView(spacer);
-            }
+            EpgGridView::Cell cell;
+            cell.x = (float)((progStart - m_guideStartTime) * slotW / 1800.0) + 2.0f;
+            cell.w = (float)cellWidth - 4.0f;
+            cell.onNow = true;
 
-            auto* progCell = new brls::Box();
-            progCell->setWidth(cellWidth);
-            progCell->setHeight(livetvRowHeight() - 8);
-            progCell->setMargins(2, 2, 2, 2);
-            // Background/border painted batched in draw() (see main loop).
-            progCell->setCornerRadius(6);
-            progCell->setFocusable(true);
-            progCell->setHideHighlightBackground(true);
-
-            // Label-less cell — text painted in batch by draw() via
-            // nvgTextBatchBegin/End. See the main loop above.
-            EpgCellInfo info;
-            info.cell = progCell;
-            info.scroll = programsScroll;
-            info.row = rowBox;
-            info.onNow = true;
             std::string title = channel.currentProgram;
             int maxChars = cellWidth / 8;
             if (maxChars < 4) maxChars = 4;
             if ((int)title.length() > maxChars) title = title.substr(0, maxChars - 2) + "..";
-            info.title = std::move(title);
-            info.subtitle = formatTime(channel.programStart) + " – " + formatTime(channel.programEnd) + "  ·  on now";
-            if (kBareGuideDiag) { info.title.clear(); info.subtitle.clear(); }
-            m_epgCells.push_back(info);
+            cell.title = std::move(title);
+            cell.subtitle = formatTime(channel.programStart) + " – "
+                          + formatTime(channel.programEnd) + "  ·  on now";
 
-            // Hover on the legacy fallback updates the hero with this
-            // channel's "now playing" — we don't have a full program
-            // struct here, so synthesize one from the channel fields.
-            GuideProgram legacyGp;
-            legacyGp.title     = channel.currentProgram;
-            legacyGp.startTime = channel.programStart;
-            legacyGp.endTime   = channel.programEnd > 0
-                                  ? channel.programEnd
-                                  : channel.programStart + 1800;
-            progCell->getFocusEvent()->subscribe(
-                [this, legacyGp, capturedChannel](brls::View*) {
-                    queueHeroForProgram(capturedChannel, legacyGp);
-                });
+            cell.prog.title     = channel.currentProgram;
+            cell.prog.startTime = channel.programStart;
+            cell.prog.endTime   = channel.programEnd > 0 ? channel.programEnd
+                                                         : channel.programStart + 1800;
 
-            programsBox->addView(progCell);
-        } else {
-            auto* emptyCell = new brls::Box();
-            emptyCell->setWidth(livetvTimeSlotWidth() * 2);
-            emptyCell->setHeight(livetvRowHeight() - 6);
-            emptyCell->setMargins(3, 3, 3, 3);
-            emptyCell->setBackgroundColor(tok::cardRaised());
-            emptyCell->setCornerRadius(7);
-            emptyCell->setFocusable(true);
-            emptyCell->setPadding(8);
-
-            if (!kBareGuideDiag) {
-                auto* noInfo = new brls::Label();
-                noInfo->setText("No guide data");
-                noInfo->setFontSize(11);
-                noInfo->setTextColor(tok::dim());
-                emptyCell->addView(noInfo);
-            }
-
-            emptyCell->registerClickAction([this, capturedChannel](brls::View*) {
-                onChannelSelected(capturedChannel);
-                return true;
-            });
-            emptyCell->addGestureRecognizer(new brls::TapGestureRecognizer(emptyCell));
-            // Hover on a no-data cell still updates the channel chrome
-            // on the hero so the user knows which channel they'd tune.
-            emptyCell->getFocusEvent()->subscribe(
-                [this, capturedChannel](brls::View*) {
-                    queueHeroForChannel(capturedChannel);
-                });
-
-            programsBox->addView(emptyCell);
+            row.cells.push_back(std::move(cell));
         }
 
-        programsScroll->setContentView(programsBox);
-        rowBox->addView(programsScroll);
-        m_rowProgramScrolls.push_back(programsScroll);
-        m_rowProgramBoxes.push_back(programsBox);
-        if (m_epgCells.size() > rowCellsBegin)
-            m_epgRowRanges.push_back({ rowBox, rowCellsBegin, m_epgCells.size() });
-        m_guideBox->addView(rowBox);
+        if (row.cells.empty()) {
+            // No guide data at all (or every program fell outside the
+            // window): a placeholder cell so A still tunes the channel
+            // and the vertical cursor never dead-ends on an empty row.
+            EpgGridView::Cell cell;
+            cell.noData = true;
+            cell.title  = "No guide data";
+            cell.x = 2.0f;
+            cell.w = (float)(slotW * 2) - 4.0f;
+            row.cells.push_back(std::move(cell));
+        }
+
+        rows.push_back(std::move(row));
     }
 
-    // Update the cyan time-line position now that the grid exists; the
-    // draw() override keeps it tracking the wall clock thereafter.
-    updateCurrentTimeLine();
+    m_grid->setData(std::move(rows), m_guideStartTime, m_hoursToShow);
 }
 
 void LiveTVTab::loadGuide() {
