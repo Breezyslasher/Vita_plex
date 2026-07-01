@@ -2,7 +2,7 @@
 
 A native Plex client for PlayStation Vita and beyond. Stream movies, TV, music, and live TV from your Plex Media Server directly on your device with full controller and touch support.
 
-> **Note:** App is still in beta — some features don't fully work on certain platforms yet. Check [Issue 124](../../issues/124) for known bugs.
+> **Note:** App is still in beta — some features don't fully work on certain platforms yet. Check [Issue 124](../../issues/124) for known bugs.Also fps is currently bad on vita sub 20 fps
 
 ## Features
 
