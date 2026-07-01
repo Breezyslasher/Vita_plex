@@ -949,7 +949,7 @@ if(PLATFORM_PSV)
         add_custom_command(
             OUTPUT ${CMAKE_BINARY_DIR}/bgapp_param2.sfo
             COMMAND vita-mksfoex -s APP_VER=01.00 -s TITLE_ID=VPLEX0002
-                    -d ATTRIBUTE=17305600 -s CATEGORY=gdd
+                    -d ATTRIBUTE=17305664 -s CATEGORY=gdd
                     "VitaPlex BGM" ${CMAKE_BINARY_DIR}/bgapp_param2.sfo
             COMMENT "Generating background-helper param2.sfo" VERBATIM)
         add_custom_target(vitaplex_bgapp_sfo ALL DEPENDS ${CMAKE_BINARY_DIR}/bgapp_param2.sfo)

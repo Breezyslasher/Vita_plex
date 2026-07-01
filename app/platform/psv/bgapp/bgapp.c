@@ -104,8 +104,12 @@ int main(void)
 
     log_append("[bgapp] ===== started (phase-1c: SceShell music service) =====\n");
 
+    /* opt.flag = -1 is required — matches the known-good BetterHomebrewBrowser /
+       libShellAudio BGM recipe; with flag 0 the shell accepted the file but
+       played nothing. */
     SceMusicOpt opt;
-    memset(&opt, 0, sizeof opt);   /* flag=0, param1=0 */
+    memset(&opt, 0, sizeof opt);
+    opt.flag = -1;
 
     int last_tick = -1, stall = 0, tick = 0, active = 0, hb = 0, warned_nofile = 0;
     char path[300];
@@ -130,13 +134,15 @@ int main(void)
         {
             if (path[0])
             {
-                /* init_type 1 = direct SceShell mode (how the Music app plays),
-                   vs 0 = BGM proxy for overlaying music on a foreground game.
-                   Mode 0 returned success but was inaudible from our context. */
-                int r0 = sceMusicInternalAppInitialize(1);
+                /* Exact known-good sequence from BetterHomebrewBrowser:
+                   Initialize(0) [app, not plugin] -> SetUri(flag=-1) ->
+                   SetVolume(0dB) -> SetRepeatMode(ONE) -> SendCommand(DEFAULT).
+                   Requires the ENABLE_BGM_PROXY (0x40) attribute in param2.sfo. */
+                int r0 = sceMusicInternalAppInitialize(0);
                 int r1 = sceMusicInternalAppSetUri(path, &opt);
-                sceMusicInternalAppSetVolume(0x8000);                 /* max */
-                int r2 = sceMusicInternalAppSetPlaybackCommand(SCE_MUSIC_EVENTID_PLAY, 0);
+                sceMusicInternalAppSetVolume(0x8000);                 /* SCE_AUDIO_VOLUME_0DB */
+                sceMusicInternalAppSetRepeatMode(SCE_MUSIC_REPEAT_ONE);
+                int r2 = sceMusicInternalAppSetPlaybackCommand(SCE_MUSIC_EVENTID_DEFAULT, 0);
 
                 /* Diagnostics: what does the shell think the playback state is? */
                 char st[0x40];
@@ -149,7 +155,7 @@ int main(void)
 
                 char b[512];
                 snprintf(b, sizeof b,
-                         "[bgapp] shell(t1): init=%#x uri=%#x play=%#x  status(%#x)=[%d %d %d %d]  last(%#x)=[%d %d]  %s\n",
+                         "[bgapp] shell: init=%#x uri=%#x cmd=%#x  status(%#x)=[%d %d %d %d]  last(%#x)=[%d %d]  %s\n",
                          (unsigned) r0, (unsigned) r1, (unsigned) r2,
                          (unsigned) rs, si[0], si[1], si[2], si[3],
                          (unsigned) rl, lr.state, lr.time, path);
