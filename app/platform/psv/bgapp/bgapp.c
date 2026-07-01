@@ -130,14 +130,29 @@ int main(void)
         {
             if (path[0])
             {
-                int r0 = sceMusicInternalAppInitialize(0);            /* BGM proxy */
+                /* init_type 1 = direct SceShell mode (how the Music app plays),
+                   vs 0 = BGM proxy for overlaying music on a foreground game.
+                   Mode 0 returned success but was inaudible from our context. */
+                int r0 = sceMusicInternalAppInitialize(1);
                 int r1 = sceMusicInternalAppSetUri(path, &opt);
                 sceMusicInternalAppSetVolume(0x8000);                 /* max */
                 int r2 = sceMusicInternalAppSetPlaybackCommand(SCE_MUSIC_EVENTID_PLAY, 0);
 
-                char b[420];
-                snprintf(b, sizeof b, "[bgapp] shell: init=%#x seturi=%#x play=%#x %s\n",
-                         (unsigned) r0, (unsigned) r1, (unsigned) r2, path);
+                /* Diagnostics: what does the shell think the playback state is? */
+                char st[0x40];
+                memset(st, 0, sizeof st);
+                int rs = sceMusicInternalAppGetPlaybackStatus(st);
+                const int *si = (const int *) st;
+                SceMusicInternalAppResult lr;
+                memset(&lr, 0, sizeof lr);
+                int rl = sceMusicInternalAppGetLastResult(&lr);
+
+                char b[512];
+                snprintf(b, sizeof b,
+                         "[bgapp] shell(t1): init=%#x uri=%#x play=%#x  status(%#x)=[%d %d %d %d]  last(%#x)=[%d %d]  %s\n",
+                         (unsigned) r0, (unsigned) r1, (unsigned) r2,
+                         (unsigned) rs, si[0], si[1], si[2], si[3],
+                         (unsigned) rl, lr.state, lr.time, path);
                 log_append(b);
                 active = 1;
                 warned_nofile = 0;
@@ -159,10 +174,24 @@ int main(void)
         if (++hb >= 50)
         {
             hb = 0;
-            char b[160];
-            snprintf(b, sizeof b, "[bgapp] hb: tick=%d stall=%d playing=%d bg=%d active=%d\n",
-                     tick, stall, playing, backgrounded, active);
-            log_append(b);
+            if (active)
+            {
+                char st[0x40];
+                memset(st, 0, sizeof st);
+                int rs = sceMusicInternalAppGetPlaybackStatus(st);
+                const int *si = (const int *) st;
+                char b[200];
+                snprintf(b, sizeof b, "[bgapp] hb: tick=%d stall=%d active=1  status(%#x)=[%d %d %d %d]\n",
+                         tick, stall, (unsigned) rs, si[0], si[1], si[2], si[3]);
+                log_append(b);
+            }
+            else
+            {
+                char b[160];
+                snprintf(b, sizeof b, "[bgapp] hb: tick=%d stall=%d playing=%d bg=%d active=0\n",
+                         tick, stall, playing, backgrounded);
+                log_append(b);
+            }
         }
 
         sceKernelDelayThread(POLL_US);
