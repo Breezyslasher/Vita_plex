@@ -152,6 +152,27 @@ private:
     };
     std::vector<EpgCellInfo> m_epgCells;
 
+    // Cells grouped by channel row ([begin,end) into m_epgCells, which is
+    // built strictly row-by-row). The batch text pass iterates these so a
+    // culled row skips all its cells in one visibility check instead of
+    // touching every cell struct in the grid every frame.
+    struct EpgRowRange {
+        brls::Box* row = nullptr;
+        size_t begin = 0;
+        size_t end = 0;
+    };
+    std::vector<EpgRowRange> m_epgRowRanges;
+
+    // Per-frame cost accounting (logged on Vita every few hundred frames
+    // so a hardware log pinpoints where guide frame time goes).
+    int64_t m_perfLastFrameUs = 0;
+    int64_t m_perfFrameUs = 0;
+    int64_t m_perfCullUs  = 0;
+    int64_t m_perfSyncUs  = 0;
+    int64_t m_perfDrawUs  = 0;
+    int64_t m_perfTextUs  = 0;
+    int     m_perfFrames  = 0;
+
     // Data
     std::vector<LiveTVChannel> m_channels;
     std::vector<EPGChannel> m_epgChannels;
