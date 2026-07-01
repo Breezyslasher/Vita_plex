@@ -581,7 +581,12 @@ void DownloadsTab::updateTypeCounts(const std::vector<DownloadItem>& all) {
     int counts[4] = { static_cast<int>(all.size()), 0, 0, 0 };
     for (const auto& it : all) counts[static_cast<int>(itemType(it))]++;
     for (int i = 0; i < 4; i++) {
-        if (m_typeTabs[i].count) m_typeTabs[i].count->setText(std::to_string(counts[i]));
+        if (!m_typeTabs[i].count) continue;
+        // Only push a new string when it actually changed: setText() forces a
+        // synchronous full-tree relayout in borealis, so re-setting the same
+        // count every second is pure wasted layout work.
+        std::string s = std::to_string(counts[i]);
+        if (m_typeTabs[i].count->getFullText() != s) m_typeTabs[i].count->setText(s);
     }
 }
 
@@ -591,13 +596,27 @@ void DownloadsTab::updateStorageReadout(const std::vector<DownloadItem>& all) {
         if (it.downloadedBytes > 0) used += it.downloadedBytes;
         total += (it.totalBytes > 0) ? it.totalBytes : it.downloadedBytes;
     }
-    if (m_storageUsedLabel)  m_storageUsedLabel->setText(formatBytes(used));
-    if (m_storageTotalLabel) m_storageTotalLabel->setText(total > 0 ? ("of " + formatBytes(total)) : "");
+    // Guard every setter: setText()/setWidth() each trigger a full-tree Yoga
+    // relayout in borealis, and this runs every second during a download.
+    if (m_storageUsedLabel) {
+        std::string s = formatBytes(used);
+        if (m_storageUsedLabel->getFullText() != s) m_storageUsedLabel->setText(s);
+    }
+    if (m_storageTotalLabel) {
+        std::string s = total > 0 ? ("of " + formatBytes(total)) : "";
+        if (m_storageTotalLabel->getFullText() != s) m_storageTotalLabel->setText(s);
+    }
     if (m_storageMeterFill) {
         float frac = (total > 0) ? static_cast<float>((double)used / (double)total) : 0.0f;
         if (frac < 0.0f) frac = 0.0f;
         if (frac > 1.0f) frac = 1.0f;
-        m_storageMeterFill->setWidth(200.0f * frac);
+        float w = 200.0f * frac;
+        float d = w - m_lastMeterWidth;
+        if (d < 0) d = -d;
+        if (d > 0.5f) {  // skip sub-pixel churn (and the relayout it would cost)
+            m_storageMeterFill->setWidth(w);
+            m_lastMeterWidth = w;
+        }
     }
 }
 
@@ -695,10 +714,12 @@ void DownloadsTab::refresh() {
     updateTypeCounts(downloads);
     updateStorageReadout(downloads);
 
-    if (DownloadsManager::getInstance().isDownloading()) {
-        m_startStopLabel->setText("Stop");
-    } else {
-        m_startStopLabel->setText("Start");
+    {
+        // Guarded: re-setting the same label text still forces a full-tree
+        // relayout in borealis, so only touch it on an actual change.
+        const char* want = DownloadsManager::getInstance().isDownloading() ? "Stop" : "Start";
+        if (m_startStopLabel && m_startStopLabel->getFullText() != want)
+            m_startStopLabel->setText(want);
     }
 
     // Build current state for comparison
@@ -1003,7 +1024,10 @@ void DownloadsTab::updateProgressInPlace(const std::vector<DownloadItem>& downlo
     for (const auto& item : downloads) {
         auto it = m_itemStatusLabels.find(item.ratingKey);
         if (it != m_itemStatusLabels.end()) {
-            it->second->setText(buildItemStatusText(item));
+            std::string newText = buildItemStatusText(item);
+            // setText() = full-tree relayout; skip unchanged rows (only the
+            // actively-downloading item's text ticks each second).
+            if (it->second->getFullText() != newText) it->second->setText(newText);
         }
         auto stripIt = m_itemStrips.find(item.ratingKey);
         if (stripIt != m_itemStrips.end()) {
@@ -1052,7 +1076,7 @@ void DownloadsTab::updateProgressInPlace(const std::vector<DownloadItem>& downlo
             if (gp.downloading > 0) {
                 statusText += " (" + std::to_string(gp.downloading) + " downloading)";
             }
-            it->second->setText(statusText);
+            if (it->second->getFullText() != statusText) it->second->setText(statusText);
         }
         auto stripIt = m_groupStrips.find(pair.first);
         if (stripIt != m_groupStrips.end()) {
