@@ -577,6 +577,22 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         std::vector<VisibleCell> visible;
         visible.reserve(m_epgCells.size());
 
+        // Subtitles (time ranges) render only for the FOCUSED row: LTVPROF
+        // measured the batched text pass at ~15.6ms/frame while navigating,
+        // roughly half of it the time-range line under every visible cell.
+        // Titles stay on every cell; the hero shows full times for the
+        // focused program anyway.
+        brls::Box* focusedRowBox = nullptr;
+        {
+            brls::View* fc = brls::Application::getCurrentFocus();
+            if (fc) {
+                for (const EpgRowRange& rr : m_epgRowRanges) {
+                    if (rr.row && isDescendantOf(fc, rr.row)) { focusedRowBox = rr.row; break; }
+                }
+            }
+        }
+        static const std::string kNoSubtitle;
+
         for (const EpgRowRange& rr : m_epgRowRanges) {
             // One visibility check skips a culled row's entire cell range —
             // previously every cell struct in the grid (channels × programs,
@@ -607,7 +623,8 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
             v.ty = cy + (ch - 26.0f) * 0.5f;
             v.onNow    = info.onNow;
             v.title    = &info.title;
-            v.subtitle = &info.subtitle;
+            v.subtitle = (rr.row && rr.row == focusedRowBox) ? &info.subtitle
+                                                             : &kNoSubtitle;
             visible.push_back(v);
             }
         }
@@ -1322,9 +1339,21 @@ void LiveTVTab::buildEPGGrid() {
     s_profLogoLatencyUs.store(0);
 
     m_timeHeaderBox->clearViews();
-    m_guideBox->clearViews();
+
+    // Build the new rows into an ORPHAN container and swap it into the
+    // scroll frame once at the end. Adding rows to the live guide box
+    // re-ran layout over the whole growing guide subtree on every single
+    // addView (amplified by each row's HScrollingFrame) — LTVPROF measured
+    // a 9.0-SECOND UI freeze for 32 rows / 503 cells. An orphan box has no
+    // attached scroll-frame cascade, so the same build costs milliseconds;
+    // setContentView() then pays ONE full layout and deletes the old tree.
+    GuideBox* newGuideBox = new GuideBox();
+    newGuideBox->setAxis(brls::Axis::COLUMN);
+    newGuideBox->setJustifyContent(brls::JustifyContent::FLEX_START);
+    newGuideBox->setAlignItems(brls::AlignItems::STRETCH);
+
     // Per-row HScrollingFrame pointers are owned by their rowBoxes (which
-    // we've just cleared via m_guideBox->clearViews), so the pointers in
+    // the swap below deletes with the old guide box), so the pointers in
     // this vector are about to dangle — purge them before rebuilding.
     m_rowProgramScrolls.clear();
     m_rowProgramBoxes.clear();
@@ -1349,7 +1378,8 @@ void LiveTVTab::buildEPGGrid() {
         noDataLabel->setTextColor(tok::muted());
         noDataLabel->setMarginLeft(12);
         noDataLabel->setMarginTop(12);
-        m_guideBox->addView(noDataLabel);
+        newGuideBox->addView(noDataLabel);
+        swapInGuideBox(newGuideBox);
         return;
     }
 
@@ -1700,8 +1730,12 @@ void LiveTVTab::buildEPGGrid() {
         m_rowProgramBoxes.push_back(programsBox);
         if (m_epgCells.size() > rowCellsBegin)
             m_epgRowRanges.push_back({ rowBox, rowCellsBegin, m_epgCells.size() });
-        m_guideBox->addView(rowBox);
+        newGuideBox->addView(rowBox);
     }
+
+    // Attach the finished rows — one relayout, old tree freed.
+    const int64_t profSwap0 = brls::getCPUTimeUsec();
+    swapInGuideBox(newGuideBox);
 
     // Update the cyan time-line position now that the grid exists; the
     // draw() override keeps it tracking the wall clock thereafter.
@@ -1709,14 +1743,29 @@ void LiveTVTab::buildEPGGrid() {
 
     s_profFirstDrawPending = true;
     brls::Logger::info(
-        "LTVPROF buildEPGGrid: total={}ms (teardown={}ms header={}ms rows={}ms) "
+        "LTVPROF buildEPGGrid: total={}ms (teardown={}ms header={}ms rows={}ms swap={}ms) "
         "rows={} cells={} logosQueued={}",
         (brls::getCPUTimeUsec() - profG0) / 1000,
         (profClear - profG0) / 1000,
         (profHeader - profClear) / 1000,
-        (brls::getCPUTimeUsec() - profHeader) / 1000,
+        (profSwap0 - profHeader) / 1000,
+        (brls::getCPUTimeUsec() - profSwap0) / 1000,
         (int)m_rowProgramScrolls.size(), (int)m_epgCells.size(),
         s_profLogoQueued.load());
+}
+
+void LiveTVTab::swapInGuideBox(brls::Box* newGuideBox) {
+    // If focus currently sits inside the old guide tree, park it on the
+    // hero first — setContentView() deletes the old rows, and a dangling
+    // Application::currentFocus would crash the next input event.
+    brls::View* fc = brls::Application::getCurrentFocus();
+    if (fc && m_guideBox && isDescendantOf(fc, m_guideBox)) {
+        if (brls::View* heroTarget = findFirstFocusableInBox(m_heroBox))
+            brls::Application::giveFocus(heroTarget);
+    }
+    if (m_guideScrollV) m_guideScrollV->setLastFocusedView(nullptr);
+    m_guideScrollV->setContentView(newGuideBox);  // deletes the old box
+    m_guideBox = newGuideBox;
 }
 
 void LiveTVTab::loadGuide() {
