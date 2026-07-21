@@ -3629,11 +3629,18 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
     // Grid endpoint: GET /{epgProviderKey}/grid?type={type}&beginsAt<={end}&endsAt>={now}
     bool gotProgramData = false;
 
+    bool skipPerChannel = false;
     if (!m_epgProviderKey.empty()) {
-        // Query grid for TV shows (type=4) and movies (type=1)
-        for (int gridType : {4, 1}) {
+        // Attempt ONE type-less grid query first (gridType -1 omits the
+        // type parameter): if the server returns airings of every EPG type
+        // across all channels in a single response, the two type-filtered
+        // queries AND the channels x dates fallback below (32x2 sequential
+        // HTTPS requests, ~7s wall time on Vita per LTVPROF) are skipped
+        // entirely. Falls back to the old behaviour when the type-less
+        // response is thin.
+        for (int gridType : {-1, 4, 1}) {
             std::string gridUrl = buildApiUrl("/" + m_epgProviderKey + "/grid");
-            gridUrl += "&type=" + std::to_string(gridType);
+            if (gridType >= 0) gridUrl += "&type=" + std::to_string(gridType);
             gridUrl += "&beginsAt%3C=" + std::to_string(endTime);
             gridUrl += "&endsAt%3E=" + std::to_string(now);
             req.url = gridUrl;
@@ -3809,6 +3816,23 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
                 brls::Logger::debug("fetchEPGGrid: Grid endpoint returned {} for type={}",
                                     resp.statusCode, gridType);
             }
+
+            if (gridType < 0) {
+                int progs = 0;
+                for (const auto& ch : channelsWithPrograms) progs += (int)ch.programs.size();
+                // "Enough" = a few programs per channel on average; then the
+                // type-filtered and per-channel sweeps add nothing but time.
+                if (progs >= (int)channelsWithPrograms.size() * 3) {
+                    skipPerChannel = true;
+                    brls::Logger::info(
+                        "LTVPROF type-less grid: {} programs in ONE request — skipping type + per-channel queries",
+                        progs);
+                    break;
+                }
+                brls::Logger::info(
+                    "LTVPROF type-less grid: only {} programs — falling back to type + per-channel queries",
+                    progs);
+            }
         }
     }
 
@@ -3821,7 +3845,7 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
     // episodes (4); sports, news, and talk-shows tagged with other
     // types would otherwise show up empty. Running this for every
     // channel ensures parity with the official app.
-    if (!m_epgProviderKey.empty()) {
+    if (!skipPerChannel && !m_epgProviderKey.empty()) {
         // Build the list of calendar dates the lookahead window spans.
         // The per-channel grid is keyed by `date=YYYY-MM-DD`, so a 12h
         // window starting after noon will need both today *and*
