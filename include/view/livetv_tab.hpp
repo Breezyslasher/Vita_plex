@@ -118,6 +118,20 @@ private:
     bool          m_heroProgramValid = false;
     std::shared_ptr<std::atomic<bool>> m_heroThumbAlive;  // ImageLoader cancel handle
 
+    // Lazily-loaded channel logos: buildEPGGrid only records url+targets;
+    // draw() requests a row's logo the first time that row is actually
+    // visible. Queueing all ~32 fetches during the build made them part of
+    // the tab-open stall and left them racing the EPG fetch for workers.
+    struct RowLogo {
+        brls::Box*   row = nullptr;
+        brls::Image* img = nullptr;
+        std::string  url;
+        bool requested = false;
+    };
+    std::vector<RowLogo> m_rowLogos;
+    std::shared_ptr<std::atomic<bool>> m_logoAlive;  // generation guard for
+                                                     // in-flight logo loads
+
     // EPG Guide section
     brls::Label* m_guideLabel = nullptr;
     brls::Box* m_guideContainer = nullptr;      // Contains time header + grid

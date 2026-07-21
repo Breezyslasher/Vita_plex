@@ -460,6 +460,26 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
     if (m_timeHeaderBox && m_timeHeaderScroll)
         cullToViewport(m_timeHeaderBox, m_timeHeaderScroll, /*vertical=*/false);
 
+    // Lazy logo loading: request each channel's logo the first time its row
+    // survives the cull above. O(rows) flag checks per frame.
+    for (RowLogo& rl : m_rowLogos) {
+        if (rl.requested || !rl.row || !rl.img) continue;
+        if (rl.row->getVisibility() != brls::Visibility::VISIBLE) continue;
+        rl.requested = true;
+        s_profLogoQueued.fetch_add(1);
+        const int64_t profQ0 = brls::getCPUTimeUsec();
+        ImageLoader::loadAsync(rl.url, [profQ0](brls::Image* img) {
+            if (img) img->setVisibility(brls::Visibility::VISIBLE);
+            const int done = s_profLogoDone.fetch_add(1) + 1;
+            s_profLogoLatencyUs.fetch_add(brls::getCPUTimeUsec() - profQ0);
+            const int queued = s_profLogoQueued.load();
+            if (done % 10 == 0 || done == queued)
+                brls::Logger::info("LTVPROF logos: {}/{} loaded, avg {}ms each",
+                                   done, queued,
+                                   s_profLogoLatencyUs.load() / done / 1000);
+        }, rl.img, m_logoAlive);
+    }
+
     const int64_t pf1 = brls::getCPUTimeUsec();
     m_perfCullUs += pf1 - pf0;
 
@@ -1344,6 +1364,11 @@ void LiveTVTab::buildEPGGrid() {
     s_profLogoQueued.store(0);
     s_profLogoDone.store(0);
     s_profLogoLatencyUs.store(0);
+    // Rotate the logo generation: in-flight loads from the previous grid
+    // captured the old flag and bail instead of touching freed Images.
+    if (m_logoAlive) m_logoAlive->store(false);
+    m_logoAlive = std::make_shared<std::atomic<bool>>(true);
+    m_rowLogos.clear();
     s_profFmtUs.store(0);
     s_profFmtCalls.store(0);
     // Row-loop phase accumulators: channel column (incl. logo request),
@@ -1633,17 +1658,24 @@ void LiveTVTab::buildEPGGrid() {
                 info.subtitle = std::move(sub);
                 m_epgCells.push_back(info);
 
-                GuideProgram gp;
-                gp.title = prog.title;
-                gp.summary = prog.summary;
-                gp.startTime = prog.startTime;
-                gp.endTime = prog.endTime;
-                gp.ratingKey = prog.ratingKey;
-                gp.metadataKey = prog.metadataKey;
-                gp.thumb = prog.thumb;
+                // One shared copy of the program per cell — capturing
+                // GuideProgram by value in the click AND hover lambdas
+                // duplicated its strings (summary is a whole paragraph)
+                // twice more per cell.
+                auto gp = std::make_shared<const GuideProgram>();
+                {
+                    auto* g = const_cast<GuideProgram*>(gp.get());
+                    g->title = prog.title;
+                    g->summary = prog.summary;
+                    g->startTime = prog.startTime;
+                    g->endTime = prog.endTime;
+                    g->ratingKey = prog.ratingKey;
+                    g->metadataKey = prog.metadataKey;
+                    g->thumb = prog.thumb;
+                }
 
                 progCell->registerClickAction([this, gp, capturedChannel](brls::View*) {
-                    onProgramSelected(gp, *capturedChannel);
+                    onProgramSelected(*gp, *capturedChannel);
                     return true;
                 });
                 progCell->addGestureRecognizer(new brls::TapGestureRecognizer(progCell));
@@ -1653,7 +1685,7 @@ void LiveTVTab::buildEPGGrid() {
                 // they read from m_heroChannel / m_heroProgram.
                 progCell->getFocusEvent()->subscribe(
                     [this, gp, capturedChannel](brls::View*) {
-                        queueHeroForProgram(*capturedChannel, gp);
+                        queueHeroForProgram(*capturedChannel, *gp);
                     });
 
                 programsBox->addView(progCell);
