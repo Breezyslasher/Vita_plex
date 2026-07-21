@@ -501,6 +501,12 @@ void SettingsTab::showSection(int sectionId) {
         m_detailContent->setLastFocusedView(target);
         if (m_detailScroll) m_detailScroll->setLastFocusedView(m_detailContent);
         if (m_detailContainer) m_detailContainer->setLastFocusedView(m_detailScroll);
+
+        // The scroll frame keeps its offset across the content swap, so a
+        // new section opened after scrolling deep into a long one started
+        // mid-list (or past its end, if shorter). Every section switch
+        // starts reading from the top.
+        if (m_detailScroll) m_detailScroll->setContentOffsetY(0.0f, false);
     }
 
     // Header text.
