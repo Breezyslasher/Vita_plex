@@ -298,7 +298,10 @@ jobs:
         env:
           BASE_URL: https://github.com/dragonflylee/switchfin/releases/download/vita-packages
         run: |
-          for pkg in mbedtls-3.6.5-1 curl-8.16.0-2 ffmpeg-n6.0-3 mpv-0.36.0-3; do
+          # NOTE: vita-packages is a ROLLING release on switchfin's side —
+          # version bumps REPLACE the old assets, so stale pins here 404.
+          # Current list: https://github.com/dragonflylee/switchfin/releases/tag/vita-packages
+          for pkg in mbedtls-3.6.7-1 curl-8.16.0-3 ffmpeg-n6.0-3 mpv-0.36.0-3; do
             wget "$BASE_URL/${pkg}-arm.tar.xz"
           done
           vdpm libass harfbuzz fribidi freetype libpng libwebp $PWD/*-arm.tar.xz
@@ -622,7 +625,7 @@ jobs:
             $BASE_URL/hacBrewPack-3.05-1-x86_64.pkg.tar.zst \
             $BASE_URL/libuam-master-1-any.pkg.tar.zst \
             $BASE_URL/switch-dav1d-1.5.3-1-any.pkg.tar.zst \
-            $BASE_URL/switch-mbedtls-3.6.5-1-any.pkg.tar.zst \
+            $BASE_URL/switch-mbedtls-3.6.7-1-any.pkg.tar.zst \
             $BASE_URL/switch-libssh2-1.11.1-1-any.pkg.tar.zst \
             $BASE_URL/switch-ffmpeg-7.1.5-5-any.pkg.tar.zst \
             $BASE_URL/${{ matrix.mpv_pkg }}
