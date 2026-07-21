@@ -1375,6 +1375,10 @@ void LiveTVTab::buildEPGGrid() {
     // program cells, and the per-row attach (setContentView + addView,
     // i.e. the yoga work). Whichever dominates is the real freeze cause.
     int64_t profColUs = 0, profCellsUs = 0, profAttachUs = 0;
+    // Cell-body micro-split: both prior theories for the ~3.7s cells cost
+    // (channel copies, program copies) only explained part of it, so
+    // measure the four segments of each cell directly.
+    int64_t profCellBoxUs = 0, profCellDataUs = 0, profCellWireUs = 0, profCellAddUs = 0;
 
     m_timeHeaderBox->clearViews();
 
@@ -1515,24 +1519,15 @@ void LiveTVTab::buildEPGGrid() {
         channelCol->addView(logoBox);
 
         if (!channel.thumb.empty()) {
-            PlexClient& client = PlexClient::getInstance();
-            std::string url = client.getThumbnailUrl(channel.thumb,
-                                                     logoW * 2, logoH * 2);
-            auto alive = std::make_shared<std::atomic<bool>>(true);
-            s_profLogoQueued.fetch_add(1);
-            const int64_t profQ0 = brls::getCPUTimeUsec();
-            ImageLoader::loadAsync(url, [profQ0](brls::Image* img) {
-                if (img) img->setVisibility(brls::Visibility::VISIBLE);
-                // Aggregate queue->visible latency; one log line per 10
-                // completions so ~100 channels don't spam the file.
-                const int done = s_profLogoDone.fetch_add(1) + 1;
-                s_profLogoLatencyUs.fetch_add(brls::getCPUTimeUsec() - profQ0);
-                const int queued = s_profLogoQueued.load();
-                if (done % 10 == 0 || done == queued)
-                    brls::Logger::info("LTVPROF logos: {}/{} loaded, avg {}ms each",
-                                       done, queued,
-                                       s_profLogoLatencyUs.load() / done / 1000);
-            }, logo, alive);
+            // Deferred to draw(): the fetch fires the first time this row is
+            // visible (see the lazy-logo pass), so the build does zero image
+            // work and off-screen channels never fetch at all.
+            RowLogo rl;
+            rl.row = rowBox;
+            rl.img = logo;
+            rl.url = PlexClient::getInstance().getThumbnailUrl(
+                channel.thumb, logoW * 2, logoH * 2);
+            m_rowLogos.push_back(std::move(rl));
         }
 
         auto* chNumLabel = new brls::Label();
@@ -1625,6 +1620,7 @@ void LiveTVTab::buildEPGGrid() {
                 time_t nowSec = time(nullptr);
                 bool isCurrently = (prog.startTime <= (int64_t)nowSec && prog.endTime > (int64_t)nowSec);
 
+                const int64_t pc0 = brls::getCPUTimeUsec();
                 auto* progCell = new brls::Box();
                 progCell->setWidth(cellWidth);
                 progCell->setHeight(livetvRowHeight() - 8);
@@ -1643,6 +1639,7 @@ void LiveTVTab::buildEPGGrid() {
                 // patched nvgTextBatchBegin/End API so all visible cell
                 // text flushes as one render call per style instead of
                 // one per Label.
+                const int64_t pc1 = brls::getCPUTimeUsec();
                 EpgCellInfo info;
                 info.cell = progCell;
                 info.scroll = programsScroll;
@@ -1674,6 +1671,7 @@ void LiveTVTab::buildEPGGrid() {
                     g->thumb = prog.thumb;
                 }
 
+                const int64_t pc2 = brls::getCPUTimeUsec();
                 progCell->registerClickAction([this, gp, capturedChannel](brls::View*) {
                     onProgramSelected(*gp, *capturedChannel);
                     return true;
@@ -1688,7 +1686,13 @@ void LiveTVTab::buildEPGGrid() {
                         queueHeroForProgram(*capturedChannel, *gp);
                     });
 
+                const int64_t pc3 = brls::getCPUTimeUsec();
                 programsBox->addView(progCell);
+                const int64_t pc4 = brls::getCPUTimeUsec();
+                profCellBoxUs  += pc1 - pc0;
+                profCellDataUs += pc2 - pc1;
+                profCellWireUs += pc3 - pc2;
+                profCellAddUs  += pc4 - pc3;
                 lastEndTime = visEnd;
             }
         } else if (!channel.currentProgram.empty() && channel.programStart > 0) {
@@ -1813,6 +1817,10 @@ void LiveTVTab::buildEPGGrid() {
         "formatTime={}ms over {} calls",
         profColUs / 1000, profCellsUs / 1000, profAttachUs / 1000,
         s_profFmtUs.load() / 1000, s_profFmtCalls.load());
+    brls::Logger::info(
+        "LTVPROF cells split: box={}ms data={}ms wire={}ms add={}ms",
+        profCellBoxUs / 1000, profCellDataUs / 1000,
+        profCellWireUs / 1000, profCellAddUs / 1000);
 }
 
 void LiveTVTab::swapInGuideBox(brls::Box* newGuideBox) {
