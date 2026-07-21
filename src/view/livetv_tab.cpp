@@ -207,6 +207,10 @@ static bool                 s_profFirstDrawPending = false;
 static std::atomic<int>     s_profLogoQueued{0};
 static std::atomic<int>     s_profLogoDone{0};
 static std::atomic<int64_t> s_profLogoLatencyUs{0};
+// formatTime() cost (localtime+strftime per call — a suspect for the row
+// build: ~500 cells x 2+ calls). Reset per buildEPGGrid.
+static std::atomic<int64_t> s_profFmtUs{0};
+static std::atomic<int>     s_profFmtCalls{0};
 
 LiveTVTab::LiveTVTab() {
     const int64_t profCtor0 = brls::getCPUTimeUsec();
@@ -754,6 +758,7 @@ void LiveTVTab::onFocusGained() {
 }
 
 std::string LiveTVTab::formatTime(int64_t timestamp) {
+    const int64_t profF0 = brls::getCPUTimeUsec();
     if (timestamp == 0) timestamp = time(nullptr);
 
     time_t t = (time_t)timestamp;
@@ -761,6 +766,8 @@ std::string LiveTVTab::formatTime(int64_t timestamp) {
 
     char buffer[16];
     strftime(buffer, sizeof(buffer), "%I:%M %p", tm_info);
+    s_profFmtUs.fetch_add(brls::getCPUTimeUsec() - profF0);
+    s_profFmtCalls.fetch_add(1);
     if (buffer[0] == '0') return std::string(buffer + 1);
     return std::string(buffer);
 }
@@ -1337,6 +1344,12 @@ void LiveTVTab::buildEPGGrid() {
     s_profLogoQueued.store(0);
     s_profLogoDone.store(0);
     s_profLogoLatencyUs.store(0);
+    s_profFmtUs.store(0);
+    s_profFmtCalls.store(0);
+    // Row-loop phase accumulators: channel column (incl. logo request),
+    // program cells, and the per-row attach (setContentView + addView,
+    // i.e. the yoga work). Whichever dominates is the real freeze cause.
+    int64_t profColUs = 0, profCellsUs = 0, profAttachUs = 0;
 
     m_timeHeaderBox->clearViews();
 
@@ -1430,6 +1443,7 @@ void LiveTVTab::buildEPGGrid() {
     for (const auto& channel : m_channels) {
         auto* rowBox = new brls::Box();
         const size_t rowCellsBegin = m_epgCells.size();  // cells appended below
+        const int64_t profRow0 = brls::getCPUTimeUsec();
                                                          // belong to this row
         rowBox->setAxis(brls::Axis::ROW);
         rowBox->setHeight(livetvRowHeight());
@@ -1525,6 +1539,8 @@ void LiveTVTab::buildEPGGrid() {
             });
 
         rowBox->addView(channelCol);
+        const int64_t profRow1 = brls::getCPUTimeUsec();
+        profColUs += profRow1 - profRow0;
 
         // Program cells live inside their own HScrollingFrame so RIGHT
         // arrow can pan past the visible width and bring later shows
@@ -1724,6 +1740,8 @@ void LiveTVTab::buildEPGGrid() {
             programsBox->addView(emptyCell);
         }
 
+        const int64_t profRow2 = brls::getCPUTimeUsec();
+        profCellsUs += profRow2 - profRow1;
         programsScroll->setContentView(programsBox);
         rowBox->addView(programsScroll);
         m_rowProgramScrolls.push_back(programsScroll);
@@ -1731,6 +1749,7 @@ void LiveTVTab::buildEPGGrid() {
         if (m_epgCells.size() > rowCellsBegin)
             m_epgRowRanges.push_back({ rowBox, rowCellsBegin, m_epgCells.size() });
         newGuideBox->addView(rowBox);
+        profAttachUs += brls::getCPUTimeUsec() - profRow2;
     }
 
     // Attach the finished rows — one relayout, old tree freed.
@@ -1752,6 +1771,11 @@ void LiveTVTab::buildEPGGrid() {
         (brls::getCPUTimeUsec() - profSwap0) / 1000,
         (int)m_rowProgramScrolls.size(), (int)m_epgCells.size(),
         s_profLogoQueued.load());
+    brls::Logger::info(
+        "LTVPROF buildEPGGrid rows split: channelCol={}ms cells={}ms attach={}ms | "
+        "formatTime={}ms over {} calls",
+        profColUs / 1000, profCellsUs / 1000, profAttachUs / 1000,
+        s_profFmtUs.load() / 1000, s_profFmtCalls.load());
 }
 
 void LiveTVTab::swapInGuideBox(brls::Box* newGuideBox) {
