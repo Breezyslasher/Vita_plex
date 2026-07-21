@@ -1,0 +1,42 @@
+name: Cleanup old artifacts
+
+# Frees artifact storage: keeps the newest few artifacts and deletes the rest.
+# GitHub recalculates quota usage every 6-12h after deletion.
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/cleanup-artifacts.yml"
+  schedule:
+    - cron: "17 6 * * *"
+
+permissions:
+  actions: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete all but the newest 4 artifacts
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const keep = 4;
+            const artifacts = await github.paginate(
+              github.rest.actions.listArtifactsForRepo,
+              { owner: context.repo.owner, repo: context.repo.repo, per_page: 100 }
+            );
+            artifacts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+            let deleted = 0, freed = 0;
+            for (const a of artifacts.slice(keep)) {
+              try {
+                await github.rest.actions.deleteArtifact({
+                  owner: context.repo.owner, repo: context.repo.repo, artifact_id: a.id
+                });
+                deleted++; freed += a.size_in_bytes;
+              } catch (e) {
+                core.warning(`Could not delete ${a.name}: ${e.message}`);
+              }
+            }
+            core.info(`Deleted ${deleted} artifacts, freed ${(freed/1024/1024).toFixed(1)} MB`);
