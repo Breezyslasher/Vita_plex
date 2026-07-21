@@ -3587,15 +3587,28 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
 bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, int hoursAhead) {
     brls::Logger::debug("fetchEPGGrid: fetching {} hours of programming", hoursAhead);
 
+    // LTVPROF: every phase of the guide load is timed and logged with an
+    // LTVPROF prefix — grep vitaplex.log for LTVPROF to see where Live TV
+    // tab-open time goes on hardware (network vs parse vs view build).
+    const int64_t profT0   = brls::getCPUTimeUsec();
+    int64_t profHttpUs = 0;   // wall time inside grid HTTP requests
+    int     profReqs   = 0;   // grid HTTP request count
+    int64_t profDvrUs  = 0;   // DVR availability check
+    int64_t profChanUs = 0;   // channel-list fetch (its own HTTP + parse)
+
     // Ensure DVR info is loaded
     if (m_dvrId.empty()) {
         checkLiveTVAvailability();
     }
+    profDvrUs = brls::getCPUTimeUsec() - profT0;
 
     // First get channel list via official API
     if (!fetchLiveTVChannels(channelsWithPrograms)) {
         return false;
     }
+    profChanUs = brls::getCPUTimeUsec() - profT0 - profDvrUs;
+    brls::Logger::info("LTVPROF channel list: {} channels in {}ms (dvr check {}ms)",
+                       channelsWithPrograms.size(), profChanUs / 1000, profDvrUs / 1000);
 
     if (channelsWithPrograms.empty()) {
         return false;
@@ -3616,17 +3629,27 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
     // Grid endpoint: GET /{epgProviderKey}/grid?type={type}&beginsAt<={end}&endsAt>={now}
     bool gotProgramData = false;
 
+    bool skipPerChannel = false;
     if (!m_epgProviderKey.empty()) {
-        // Query grid for TV shows (type=4) and movies (type=1)
-        for (int gridType : {4, 1}) {
+        // Attempt ONE type-less grid query first (gridType -1 omits the
+        // type parameter): if the server returns airings of every EPG type
+        // across all channels in a single response, the two type-filtered
+        // queries AND the channels x dates fallback below (32x2 sequential
+        // HTTPS requests, ~7s wall time on Vita per LTVPROF) are skipped
+        // entirely. Falls back to the old behaviour when the type-less
+        // response is thin.
+        for (int gridType : {-1, 4, 1}) {
             std::string gridUrl = buildApiUrl("/" + m_epgProviderKey + "/grid");
-            gridUrl += "&type=" + std::to_string(gridType);
+            if (gridType >= 0) gridUrl += "&type=" + std::to_string(gridType);
             gridUrl += "&beginsAt%3C=" + std::to_string(endTime);
             gridUrl += "&endsAt%3E=" + std::to_string(now);
             req.url = gridUrl;
 
             brls::Logger::debug("fetchEPGGrid: Trying grid endpoint: {}", gridUrl);
+            const int64_t profReq0 = brls::getCPUTimeUsec();
             HttpResponse resp = client.request(req);
+            profHttpUs += brls::getCPUTimeUsec() - profReq0;
+            profReqs++;
             if (resp.statusCode == 200 && !resp.body.empty()) {
                 brls::Logger::debug("fetchEPGGrid: Grid response ({} bytes, type={}), first 1000: {}",
                                     resp.body.length(), gridType, resp.body.substr(0, 1000));
@@ -3793,6 +3816,23 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
                 brls::Logger::debug("fetchEPGGrid: Grid endpoint returned {} for type={}",
                                     resp.statusCode, gridType);
             }
+
+            if (gridType < 0) {
+                int progs = 0;
+                for (const auto& ch : channelsWithPrograms) progs += (int)ch.programs.size();
+                // "Enough" = a few programs per channel on average; then the
+                // type-filtered and per-channel sweeps add nothing but time.
+                if (progs >= (int)channelsWithPrograms.size() * 3) {
+                    skipPerChannel = true;
+                    brls::Logger::info(
+                        "LTVPROF type-less grid: {} programs in ONE request — skipping type + per-channel queries",
+                        progs);
+                    break;
+                }
+                brls::Logger::info(
+                    "LTVPROF type-less grid: only {} programs — falling back to type + per-channel queries",
+                    progs);
+            }
         }
     }
 
@@ -3805,7 +3845,7 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
     // episodes (4); sports, news, and talk-shows tagged with other
     // types would otherwise show up empty. Running this for every
     // channel ensures parity with the official app.
-    if (!m_epgProviderKey.empty()) {
+    if (!skipPerChannel && !m_epgProviderKey.empty()) {
         // Build the list of calendar dates the lookahead window spans.
         // The per-channel grid is keyed by `date=YYYY-MM-DD`, so a 12h
         // window starting after noon will need both today *and*
@@ -3836,7 +3876,10 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
                 url += "&channelGridKey=" + HttpClient::urlEncode(channel.key);
                 url += "&date=" + date;
                 req.url = url;
+                const int64_t profReq0 = brls::getCPUTimeUsec();
                 HttpResponse resp = client.request(req);
+                profHttpUs += brls::getCPUTimeUsec() - profReq0;
+                profReqs++;
                 if (resp.statusCode != 200 || resp.body.empty()) continue;
 
             size_t metaArrayPos = resp.body.find("\"Metadata\"");
@@ -3956,6 +3999,19 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
         }
     }
     brls::Logger::info("fetchEPGGrid: Got {} channels, {} with program info", channelsWithPrograms.size(), programCount);
+    {
+        int totalPrograms = 0;
+        for (const auto& ch : channelsWithPrograms) totalPrograms += (int)ch.programs.size();
+        const int64_t totalUs = brls::getCPUTimeUsec() - profT0;
+        // parse/other = JSON scanning, channel matching, dedup and sorting —
+        // everything not spent waiting on the network. The dominant term
+        // tells us whether guide loading is network-bound (many sequential
+        // per-channel grid requests) or CPU-bound (string parsing).
+        brls::Logger::info(
+            "LTVPROF fetchEPGGrid total={}ms | grid http={}ms across {} reqs | parse/other={}ms | {} programs",
+            totalUs / 1000, profHttpUs / 1000, profReqs,
+            (totalUs - profHttpUs - profChanUs - profDvrUs) / 1000, totalPrograms);
+    }
     return !channelsWithPrograms.empty();
 }
 

@@ -65,6 +65,10 @@ private:
     void loadGuide();
     void loadRecordings();
     void buildEPGGrid();
+    // Attach a freshly built (orphan) guide content box to the scroll frame,
+    // parking focus safely first — see buildEPGGrid for why rows are built
+    // detached (per-addView relayout froze the UI for seconds otherwise).
+    void swapInGuideBox(brls::Box* newGuideBox);
     void onChannelSelected(const LiveTVChannel& channel);
     void onProgramSelected(const GuideProgram& program, const LiveTVChannel& channel);
     void scheduleRecording(const GuideProgram& program, const LiveTVChannel& channel);

@@ -197,7 +197,23 @@ static inline int heroThumbWidth() {
 }
 
 
+// ── LTVPROF: one-shot build/load profiling ─────────────────────────────
+// Every step of building the Live TV UI logs its duration with an LTVPROF
+// prefix (grep vitaplex.log for LTVPROF): fetch + JSON parse phases in
+// PlexClient::fetchEPGGrid, view construction here, logo loads, hero
+// updates, and the first frame after a grid rebuild (which pays the
+// initial full-tree yoga layout).
+static bool                 s_profFirstDrawPending = false;
+static std::atomic<int>     s_profLogoQueued{0};
+static std::atomic<int>     s_profLogoDone{0};
+static std::atomic<int64_t> s_profLogoLatencyUs{0};
+// formatTime() cost (localtime+strftime per call — a suspect for the row
+// build: ~500 cells x 2+ calls). Reset per buildEPGGrid.
+static std::atomic<int64_t> s_profFmtUs{0};
+static std::atomic<int>     s_profFmtCalls{0};
+
 LiveTVTab::LiveTVTab() {
+    const int64_t profCtor0 = brls::getCPUTimeUsec();
     this->setAxis(brls::Axis::COLUMN);
     this->setJustifyContent(brls::JustifyContent::FLEX_START);
     this->setAlignItems(brls::AlignItems::STRETCH);
@@ -224,8 +240,11 @@ LiveTVTab::LiveTVTab() {
     m_scrollContent->addView(m_titleLabel);
 
     // On-Now hero (single big focusable card at the top)
+    const int64_t profHero0 = brls::getCPUTimeUsec();
     buildHero();
     m_scrollContent->addView(m_heroBox);
+    brls::Logger::info("LTVPROF buildHero: {}ms",
+                       (brls::getCPUTimeUsec() - profHero0) / 1000);
 
     // EPG Guide — the dominant block.
     m_guideLabel = new brls::Label();
@@ -306,6 +325,8 @@ LiveTVTab::LiveTVTab() {
     this->addView(m_scrollContent);
 
     brls::Logger::debug("LiveTVTab: Loading content...");
+    brls::Logger::info("LTVPROF LiveTVTab ctor (shell views): {}ms",
+                       (brls::getCPUTimeUsec() - profCtor0) / 1000);
     loadChannels();
 }
 
@@ -560,6 +581,22 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         std::vector<VisibleCell> visible;
         visible.reserve(m_epgCells.size());
 
+        // Subtitles (time ranges) render only for the FOCUSED row: LTVPROF
+        // measured the batched text pass at ~15.6ms/frame while navigating,
+        // roughly half of it the time-range line under every visible cell.
+        // Titles stay on every cell; the hero shows full times for the
+        // focused program anyway.
+        brls::Box* focusedRowBox = nullptr;
+        {
+            brls::View* fc = brls::Application::getCurrentFocus();
+            if (fc) {
+                for (const EpgRowRange& rr : m_epgRowRanges) {
+                    if (rr.row && isDescendantOf(fc, rr.row)) { focusedRowBox = rr.row; break; }
+                }
+            }
+        }
+        static const std::string kNoSubtitle;
+
         for (const EpgRowRange& rr : m_epgRowRanges) {
             // One visibility check skips a culled row's entire cell range —
             // previously every cell struct in the grid (channels × programs,
@@ -590,7 +627,8 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
             v.ty = cy + (ch - 26.0f) * 0.5f;
             v.onNow    = info.onNow;
             v.title    = &info.title;
-            v.subtitle = &info.subtitle;
+            v.subtitle = (rr.row && rr.row == focusedRowBox) ? &info.subtitle
+                                                             : &kNoSubtitle;
             visible.push_back(v);
             }
         }
@@ -671,6 +709,15 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
     // this lands in ux0:data/VitaPlex/vitaplex.log, so a hardware log shows
     // exactly where guide frame time goes: total = wall time between draws
     // (everything incl. GPU/other views), the rest are this tab's sections.
+    if (s_profFirstDrawPending) {
+        s_profFirstDrawPending = false;
+        // The first frame after a grid rebuild pays the initial full-tree
+        // yoga layout of the freshly built forest — worth its own line.
+        brls::Logger::info(
+            "LTVPROF first frame after grid build: cull={}us sync={}us boxdraw={}us text={}us",
+            (int)(pf1 - pf0), (int)(pf2 - pf1), (int)(pf3 - pf2), (int)(pf4 - pf3));
+    }
+
     if (++m_perfFrames >= 300) {
         brls::Logger::info(
             "LiveTV perf avg us/frame over {} frames: total={} cull={} sync={} boxdraw={} text={}",
@@ -711,6 +758,7 @@ void LiveTVTab::onFocusGained() {
 }
 
 std::string LiveTVTab::formatTime(int64_t timestamp) {
+    const int64_t profF0 = brls::getCPUTimeUsec();
     if (timestamp == 0) timestamp = time(nullptr);
 
     time_t t = (time_t)timestamp;
@@ -718,6 +766,8 @@ std::string LiveTVTab::formatTime(int64_t timestamp) {
 
     char buffer[16];
     strftime(buffer, sizeof(buffer), "%I:%M %p", tm_info);
+    s_profFmtUs.fetch_add(brls::getCPUTimeUsec() - profF0);
+    s_profFmtCalls.fetch_add(1);
     if (buffer[0] == '0') return std::string(buffer + 1);
     return std::string(buffer);
 }
@@ -977,10 +1027,15 @@ void LiveTVTab::applyPendingHero() {
     // at full frame rate; the hero fills in the moment you stop.
     if (brls::getCPUTimeUsec() - m_lastHoverUs < 180000) return;
     m_heroUpdatePending = false;
+    const int64_t profH0 = brls::getCPUTimeUsec();
     if (m_pendingHeroHasProgram)
         updateHeroForProgram(m_pendingHeroChannel, m_pendingHeroProgram);
     else
         updateHeroForChannel(m_pendingHeroChannel);
+    // One line per hover-rest: the hero's ~10 label/width relayouts + the
+    // thumb request are the main per-interaction cost left in this tab.
+    brls::Logger::info("LTVPROF hero update (hover apply): {}ms",
+                       (brls::getCPUTimeUsec() - profH0) / 1000);
 }
 
 void LiveTVTab::resizeHeroThumbToImage(brls::Image* img) {
@@ -1191,7 +1246,11 @@ void LiveTVTab::loadChannels() {
         PlexClient& client = PlexClient::getInstance();
 
         std::vector<LiveTVChannel> channels;
+        const int64_t profFetch0 = brls::getCPUTimeUsec();
         bool success = client.fetchEPGGrid(channels, m_hoursToShow);
+        brls::Logger::info("LTVPROF fetch thread: fetchEPGGrid -> {} channels in {}ms",
+                           channels.size(),
+                           (brls::getCPUTimeUsec() - profFetch0) / 1000);
 
         if (success) {
             brls::Logger::info("LiveTVTab: Got {} channels with EPG", channels.size());
@@ -1199,13 +1258,21 @@ void LiveTVTab::loadChannels() {
             brls::sync([this, channels, aliveWeak]() {
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
+                const int64_t profCopy0 = brls::getCPUTimeUsec();
                 m_channels = channels;
+                const int64_t profUi0 = brls::getCPUTimeUsec();
 
                 if (!m_channels.empty()) {
                     updateHeroForChannel(m_channels.front());
                 }
+                const int64_t profUi1 = brls::getCPUTimeUsec();
 
                 buildEPGGrid();
+                brls::Logger::info(
+                    "LTVPROF UI apply: channel copy={}ms initial hero={}ms buildEPGGrid={}ms",
+                    (profUi0 - profCopy0) / 1000,
+                    (profUi1 - profUi0) / 1000,
+                    (brls::getCPUTimeUsec() - profUi1) / 1000);
 
                 m_loaded = true;
                 m_lastFullLoadTime = time(nullptr);
@@ -1271,10 +1338,35 @@ void LiveTVTab::updateCurrentTimeLine() {
 }
 
 void LiveTVTab::buildEPGGrid() {
+    const int64_t profG0 = brls::getCPUTimeUsec();
+    int64_t profClear  = profG0;   // after old-view teardown
+    int64_t profHeader = profG0;   // after time-header slot build
+    s_profLogoQueued.store(0);
+    s_profLogoDone.store(0);
+    s_profLogoLatencyUs.store(0);
+    s_profFmtUs.store(0);
+    s_profFmtCalls.store(0);
+    // Row-loop phase accumulators: channel column (incl. logo request),
+    // program cells, and the per-row attach (setContentView + addView,
+    // i.e. the yoga work). Whichever dominates is the real freeze cause.
+    int64_t profColUs = 0, profCellsUs = 0, profAttachUs = 0;
+
     m_timeHeaderBox->clearViews();
-    m_guideBox->clearViews();
+
+    // Build the new rows into an ORPHAN container and swap it into the
+    // scroll frame once at the end. Adding rows to the live guide box
+    // re-ran layout over the whole growing guide subtree on every single
+    // addView (amplified by each row's HScrollingFrame) — LTVPROF measured
+    // a 9.0-SECOND UI freeze for 32 rows / 503 cells. An orphan box has no
+    // attached scroll-frame cascade, so the same build costs milliseconds;
+    // setContentView() then pays ONE full layout and deletes the old tree.
+    GuideBox* newGuideBox = new GuideBox();
+    newGuideBox->setAxis(brls::Axis::COLUMN);
+    newGuideBox->setJustifyContent(brls::JustifyContent::FLEX_START);
+    newGuideBox->setAlignItems(brls::AlignItems::STRETCH);
+
     // Per-row HScrollingFrame pointers are owned by their rowBoxes (which
-    // we've just cleared via m_guideBox->clearViews), so the pointers in
+    // the swap below deletes with the old guide box), so the pointers in
     // this vector are about to dangle — purge them before rebuilding.
     m_rowProgramScrolls.clear();
     m_rowProgramBoxes.clear();
@@ -1290,6 +1382,8 @@ void LiveTVTab::buildEPGGrid() {
     m_lastTimeLineUpdateSec = 0;
     m_lastTimeLineHeight    = -1;
 
+    profClear = brls::getCPUTimeUsec();
+
     if (m_channels.empty()) {
         auto* noDataLabel = new brls::Label();
         noDataLabel->setText("No program guide data available");
@@ -1297,7 +1391,8 @@ void LiveTVTab::buildEPGGrid() {
         noDataLabel->setTextColor(tok::muted());
         noDataLabel->setMarginLeft(12);
         noDataLabel->setMarginTop(12);
-        m_guideBox->addView(noDataLabel);
+        newGuideBox->addView(noDataLabel);
+        swapInGuideBox(newGuideBox);
         return;
     }
 
@@ -1342,11 +1437,13 @@ void LiveTVTab::buildEPGGrid() {
 
         m_timeHeaderBox->addView(timeSlot);
     }
+    profHeader = brls::getCPUTimeUsec();
 
     // Build channel rows
     for (const auto& channel : m_channels) {
         auto* rowBox = new brls::Box();
         const size_t rowCellsBegin = m_epgCells.size();  // cells appended below
+        const int64_t profRow0 = brls::getCPUTimeUsec();
                                                          // belong to this row
         rowBox->setAxis(brls::Axis::ROW);
         rowBox->setHeight(livetvRowHeight());
@@ -1397,8 +1494,19 @@ void LiveTVTab::buildEPGGrid() {
             std::string url = client.getThumbnailUrl(channel.thumb,
                                                      logoW * 2, logoH * 2);
             auto alive = std::make_shared<std::atomic<bool>>(true);
-            ImageLoader::loadAsync(url, [](brls::Image* img) {
+            s_profLogoQueued.fetch_add(1);
+            const int64_t profQ0 = brls::getCPUTimeUsec();
+            ImageLoader::loadAsync(url, [profQ0](brls::Image* img) {
                 if (img) img->setVisibility(brls::Visibility::VISIBLE);
+                // Aggregate queue->visible latency; one log line per 10
+                // completions so ~100 channels don't spam the file.
+                const int done = s_profLogoDone.fetch_add(1) + 1;
+                s_profLogoLatencyUs.fetch_add(brls::getCPUTimeUsec() - profQ0);
+                const int queued = s_profLogoQueued.load();
+                if (done % 10 == 0 || done == queued)
+                    brls::Logger::info("LTVPROF logos: {}/{} loaded, avg {}ms each",
+                                       done, queued,
+                                       s_profLogoLatencyUs.load() / done / 1000);
             }, logo, alive);
         }
 
@@ -1415,10 +1523,15 @@ void LiveTVTab::buildEPGGrid() {
         chNumLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
         channelCol->addView(chNumLabel);
 
-        LiveTVChannel capturedChannel = channel;
+        // ONE channel copy per row, shared by every lambda in the row.
+        // Capturing LiveTVChannel by value in each cell's click + hover
+        // lambdas deep-copied the channel AND its ~40-program vector
+        // (hundreds of string allocs) twice per cell — LTVPROF measured
+        // cells=7368ms of the guide-build freeze from exactly this.
+        auto capturedChannel = std::make_shared<const LiveTVChannel>(channel);
         channelCol->setFocusable(true);
         channelCol->registerClickAction([this, capturedChannel](brls::View*) {
-            onChannelSelected(capturedChannel);
+            onChannelSelected(*capturedChannel);
             return true;
         });
         channelCol->addGestureRecognizer(new brls::TapGestureRecognizer(channelCol));
@@ -1427,10 +1540,12 @@ void LiveTVTab::buildEPGGrid() {
         // through the channel list with the dpad.
         channelCol->getFocusEvent()->subscribe(
             [this, capturedChannel](brls::View*) {
-                queueHeroForChannel(capturedChannel);
+                queueHeroForChannel(*capturedChannel);
             });
 
         rowBox->addView(channelCol);
+        const int64_t profRow1 = brls::getCPUTimeUsec();
+        profColUs += profRow1 - profRow0;
 
         // Program cells live inside their own HScrollingFrame so RIGHT
         // arrow can pan past the visible width and bring later shows
@@ -1528,7 +1643,7 @@ void LiveTVTab::buildEPGGrid() {
                 gp.thumb = prog.thumb;
 
                 progCell->registerClickAction([this, gp, capturedChannel](brls::View*) {
-                    onProgramSelected(gp, capturedChannel);
+                    onProgramSelected(gp, *capturedChannel);
                     return true;
                 });
                 progCell->addGestureRecognizer(new brls::TapGestureRecognizer(progCell));
@@ -1538,7 +1653,7 @@ void LiveTVTab::buildEPGGrid() {
                 // they read from m_heroChannel / m_heroProgram.
                 progCell->getFocusEvent()->subscribe(
                     [this, gp, capturedChannel](brls::View*) {
-                        queueHeroForProgram(capturedChannel, gp);
+                        queueHeroForProgram(*capturedChannel, gp);
                     });
 
                 programsBox->addView(progCell);
@@ -1595,7 +1710,7 @@ void LiveTVTab::buildEPGGrid() {
                                   : channel.programStart + 1800;
             progCell->getFocusEvent()->subscribe(
                 [this, legacyGp, capturedChannel](brls::View*) {
-                    queueHeroForProgram(capturedChannel, legacyGp);
+                    queueHeroForProgram(*capturedChannel, legacyGp);
                 });
 
             programsBox->addView(progCell);
@@ -1616,7 +1731,7 @@ void LiveTVTab::buildEPGGrid() {
             emptyCell->addView(noInfo);
 
             emptyCell->registerClickAction([this, capturedChannel](brls::View*) {
-                onChannelSelected(capturedChannel);
+                onChannelSelected(*capturedChannel);
                 return true;
             });
             emptyCell->addGestureRecognizer(new brls::TapGestureRecognizer(emptyCell));
@@ -1624,24 +1739,62 @@ void LiveTVTab::buildEPGGrid() {
             // on the hero so the user knows which channel they'd tune.
             emptyCell->getFocusEvent()->subscribe(
                 [this, capturedChannel](brls::View*) {
-                    queueHeroForChannel(capturedChannel);
+                    queueHeroForChannel(*capturedChannel);
                 });
 
             programsBox->addView(emptyCell);
         }
 
+        const int64_t profRow2 = brls::getCPUTimeUsec();
+        profCellsUs += profRow2 - profRow1;
         programsScroll->setContentView(programsBox);
         rowBox->addView(programsScroll);
         m_rowProgramScrolls.push_back(programsScroll);
         m_rowProgramBoxes.push_back(programsBox);
         if (m_epgCells.size() > rowCellsBegin)
             m_epgRowRanges.push_back({ rowBox, rowCellsBegin, m_epgCells.size() });
-        m_guideBox->addView(rowBox);
+        newGuideBox->addView(rowBox);
+        profAttachUs += brls::getCPUTimeUsec() - profRow2;
     }
+
+    // Attach the finished rows — one relayout, old tree freed.
+    const int64_t profSwap0 = brls::getCPUTimeUsec();
+    swapInGuideBox(newGuideBox);
 
     // Update the cyan time-line position now that the grid exists; the
     // draw() override keeps it tracking the wall clock thereafter.
     updateCurrentTimeLine();
+
+    s_profFirstDrawPending = true;
+    brls::Logger::info(
+        "LTVPROF buildEPGGrid: total={}ms (teardown={}ms header={}ms rows={}ms swap={}ms) "
+        "rows={} cells={} logosQueued={}",
+        (brls::getCPUTimeUsec() - profG0) / 1000,
+        (profClear - profG0) / 1000,
+        (profHeader - profClear) / 1000,
+        (profSwap0 - profHeader) / 1000,
+        (brls::getCPUTimeUsec() - profSwap0) / 1000,
+        (int)m_rowProgramScrolls.size(), (int)m_epgCells.size(),
+        s_profLogoQueued.load());
+    brls::Logger::info(
+        "LTVPROF buildEPGGrid rows split: channelCol={}ms cells={}ms attach={}ms | "
+        "formatTime={}ms over {} calls",
+        profColUs / 1000, profCellsUs / 1000, profAttachUs / 1000,
+        s_profFmtUs.load() / 1000, s_profFmtCalls.load());
+}
+
+void LiveTVTab::swapInGuideBox(brls::Box* newGuideBox) {
+    // If focus currently sits inside the old guide tree, park it on the
+    // hero first — setContentView() deletes the old rows, and a dangling
+    // Application::currentFocus would crash the next input event.
+    brls::View* fc = brls::Application::getCurrentFocus();
+    if (fc && m_guideBox && isDescendantOf(fc, m_guideBox)) {
+        if (brls::View* heroTarget = findFirstFocusableInBox(m_heroBox))
+            brls::Application::giveFocus(heroTarget);
+    }
+    if (m_guideScrollV) m_guideScrollV->setLastFocusedView(nullptr);
+    m_guideScrollV->setContentView(newGuideBox);  // deletes the old box
+    m_guideBox = newGuideBox;
 }
 
 void LiveTVTab::loadGuide() {
@@ -1662,7 +1815,11 @@ void LiveTVTab::loadRecordings() {
         req.headers["Accept"] = "application/json";
         req.timeout = 15;
 
+        const int64_t profR0 = brls::getCPUTimeUsec();
         HttpResponse resp = httpClient.request(req);
+        brls::Logger::info("LTVPROF DVR subscriptions fetch: {}ms ({} bytes)",
+                           (brls::getCPUTimeUsec() - profR0) / 1000,
+                           (int)resp.body.size());
 
         std::vector<DVRRecording> recordings;
 
