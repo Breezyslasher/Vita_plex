@@ -1523,10 +1523,15 @@ void LiveTVTab::buildEPGGrid() {
         chNumLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
         channelCol->addView(chNumLabel);
 
-        LiveTVChannel capturedChannel = channel;
+        // ONE channel copy per row, shared by every lambda in the row.
+        // Capturing LiveTVChannel by value in each cell's click + hover
+        // lambdas deep-copied the channel AND its ~40-program vector
+        // (hundreds of string allocs) twice per cell — LTVPROF measured
+        // cells=7368ms of the guide-build freeze from exactly this.
+        auto capturedChannel = std::make_shared<const LiveTVChannel>(channel);
         channelCol->setFocusable(true);
         channelCol->registerClickAction([this, capturedChannel](brls::View*) {
-            onChannelSelected(capturedChannel);
+            onChannelSelected(*capturedChannel);
             return true;
         });
         channelCol->addGestureRecognizer(new brls::TapGestureRecognizer(channelCol));
@@ -1535,7 +1540,7 @@ void LiveTVTab::buildEPGGrid() {
         // through the channel list with the dpad.
         channelCol->getFocusEvent()->subscribe(
             [this, capturedChannel](brls::View*) {
-                queueHeroForChannel(capturedChannel);
+                queueHeroForChannel(*capturedChannel);
             });
 
         rowBox->addView(channelCol);
@@ -1638,7 +1643,7 @@ void LiveTVTab::buildEPGGrid() {
                 gp.thumb = prog.thumb;
 
                 progCell->registerClickAction([this, gp, capturedChannel](brls::View*) {
-                    onProgramSelected(gp, capturedChannel);
+                    onProgramSelected(gp, *capturedChannel);
                     return true;
                 });
                 progCell->addGestureRecognizer(new brls::TapGestureRecognizer(progCell));
@@ -1648,7 +1653,7 @@ void LiveTVTab::buildEPGGrid() {
                 // they read from m_heroChannel / m_heroProgram.
                 progCell->getFocusEvent()->subscribe(
                     [this, gp, capturedChannel](brls::View*) {
-                        queueHeroForProgram(capturedChannel, gp);
+                        queueHeroForProgram(*capturedChannel, gp);
                     });
 
                 programsBox->addView(progCell);
@@ -1705,7 +1710,7 @@ void LiveTVTab::buildEPGGrid() {
                                   : channel.programStart + 1800;
             progCell->getFocusEvent()->subscribe(
                 [this, legacyGp, capturedChannel](brls::View*) {
-                    queueHeroForProgram(capturedChannel, legacyGp);
+                    queueHeroForProgram(*capturedChannel, legacyGp);
                 });
 
             programsBox->addView(progCell);
@@ -1726,7 +1731,7 @@ void LiveTVTab::buildEPGGrid() {
             emptyCell->addView(noInfo);
 
             emptyCell->registerClickAction([this, capturedChannel](brls::View*) {
-                onChannelSelected(capturedChannel);
+                onChannelSelected(*capturedChannel);
                 return true;
             });
             emptyCell->addGestureRecognizer(new brls::TapGestureRecognizer(emptyCell));
@@ -1734,7 +1739,7 @@ void LiveTVTab::buildEPGGrid() {
             // on the hero so the user knows which channel they'd tune.
             emptyCell->getFocusEvent()->subscribe(
                 [this, capturedChannel](brls::View*) {
-                    queueHeroForChannel(capturedChannel);
+                    queueHeroForChannel(*capturedChannel);
                 });
 
             programsBox->addView(emptyCell);
