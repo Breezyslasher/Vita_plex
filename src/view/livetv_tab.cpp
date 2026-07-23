@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <atomic>
 #include <ctime>
+#include <limits>
 
 // Forward declarations for the patched nanovg batch text API. The
 // patches/nanovg.c version adds these but doesn't expose them in
@@ -181,12 +182,14 @@ static const int64_t REFRESH_INTERVAL = 60;         // 1 minute between "now pla
 // rows append in small brls::sync chunks with a frame rendered between
 // each, instead of one ~6s blocking build of the full ~40-row grid.
 static const int kInitialRows  = 9;   // rows built before first paint (~one Vita screenful)
-// One row per chunk: a row costs ~160ms on Vita, and the first hardware
-// log with 4-row chunks showed ~650ms UI stalls that dropped the guide
-// to ~1.5fps while streaming and starved the logo loader's UI-thread
-// callbacks (logo latency 4.5s vs ~1s). Same total build time either
-// way — smaller chunks just leave a frame's worth of air between rows.
-static const int kRowsPerChunk = 1;   // rows appended per chained brls::sync chunk
+// Per-tick time budget for streaming the remaining rows in. Whole-row
+// ticks (~160ms each on Vita) held the guide at ~5fps for the entire
+// fill; slicing mid-row caps each tick near this budget instead, so the
+// guide keeps rendering at ~20fps while it fills. The budget is wall
+// time per tick: bigger fills faster but stutters more, smaller is
+// smoother but lengthens the tail. Cell construction is ~7ms each, so
+// 20ms ≈ 3 cells or one row-start per tick.
+static const int64_t kStreamBudgetUs = 20000;
 
 // EPG grid render window. Each row's program cells now sit inside an
 // HScrollingFrame, so cells past the visible width are reachable via the
@@ -1405,12 +1408,21 @@ static void logGuideBuildComplete(size_t rows, size_t cells, int64_t buildStartU
 // only live-tree work a row costs when the progressive chunks append
 // into the already-live m_guideBox. buildEPGGrid uses it too, with
 // intoBox = the orphan newGuideBox it swaps in afterwards.
+// Whole-row convenience used by the synchronous first screenful; the
+// streamed remainder drives the same three pieces with a real deadline.
 void LiveTVTab::appendGuideRow(const LiveTVChannel& channel, brls::Box* intoBox) {
-    const int gridHours = m_hoursToShow;
+    GuideRowCursor cur;
+    startGuideRowStream(channel, cur);
+    streamGuideRowCells(cur, std::numeric_limits<int64_t>::max());
+    finishGuideRowStream(cur, intoBox);
+}
 
+void LiveTVTab::startGuideRowStream(const LiveTVChannel& channel, GuideRowCursor& cur) {
     auto* rowBox = new brls::Box();
-    // Cells appended below belong to this row.
-    const size_t rowCellsBegin = m_epgCells.size();
+    // Cells appended by streamGuideRowCells belong to this row.
+    cur.cellsBegin = m_epgCells.size();
+    cur.nextProgram = 0;
+    cur.lastEndTime = m_guideStartTime;
     const int64_t profRow0 = brls::getCPUTimeUsec();
     rowBox->setAxis(brls::Axis::ROW);
     rowBox->setHeight(livetvRowHeight());
@@ -1459,13 +1471,12 @@ void LiveTVTab::appendGuideRow(const LiveTVChannel& channel, brls::Box* intoBox)
     if (!channel.thumb.empty()) {
         // Deferred to draw(): the fetch fires the first time this row is
         // visible (see the lazy-logo pass), so the build does zero image
-        // work and off-screen channels never fetch at all.
-        RowLogo rl;
-        rl.row = rowBox;
-        rl.img = logo;
-        rl.url = PlexClient::getInstance().getThumbnailUrl(
+        // work and off-screen channels never fetch at all. Registered in
+        // finishGuideRowStream — draw() must not see a logo entry for a
+        // row that hasn't been attached yet.
+        cur.logoImg = logo;
+        cur.logoUrl = PlexClient::getInstance().getThumbnailUrl(
             channel.thumb, logoW * 2, logoH * 2);
-        m_rowLogos.push_back(std::move(rl));
     }
 
     auto* chNumLabel = new brls::Label();
@@ -1486,7 +1497,10 @@ void LiveTVTab::appendGuideRow(const LiveTVChannel& channel, brls::Box* intoBox)
     // lambdas deep-copied the channel AND its ~40-program vector
     // (hundreds of string allocs) twice per cell — LTVPROF measured
     // cells=7368ms of the guide-build freeze from exactly this.
+    // The cursor keeps it so streamed cell ticks read this immutable
+    // snapshot rather than m_channels (which a refresh could touch).
     auto capturedChannel = std::make_shared<const LiveTVChannel>(channel);
+    cur.capturedChannel = capturedChannel;
     channelCol->setFocusable(true);
     channelCol->registerClickAction([this, capturedChannel](brls::View*) {
         onChannelSelected(*capturedChannel);
@@ -1502,8 +1516,8 @@ void LiveTVTab::appendGuideRow(const LiveTVChannel& channel, brls::Box* intoBox)
         });
 
     rowBox->addView(channelCol);
-    const int64_t profRow1 = brls::getCPUTimeUsec();
-    s_profColUs += profRow1 - profRow0;
+    // (s_profColUs closes at the end of this function — the "column"
+    // bucket now covers the whole row-start step incl. scroll wiring.)
 
     // Program cells live inside their own HScrollingFrame so RIGHT
     // arrow can pan past the visible width and bring later shows
@@ -1529,11 +1543,44 @@ void LiveTVTab::appendGuideRow(const LiveTVChannel& channel, brls::Box* intoBox)
     programsBox->setJustifyContent(brls::JustifyContent::FLEX_START);
     programsBox->setAlignItems(brls::AlignItems::CENTER);
 
+    // Wire content → scroll → row while everything is still detached
+    // (cheap local yoga ops; the subtree has no path to the live root).
+    // Attaching up front means a mid-row bail has exactly ONE loose tree
+    // to delete, and per-cell addViews only relayout this detached row.
+    programsScroll->setContentView(programsBox);
+    rowBox->addView(programsScroll);
+
+    cur.rowBox = rowBox;
+    cur.scroll = programsScroll;
+    cur.programsBox = programsBox;
+    s_profColUs += brls::getCPUTimeUsec() - profRow0;
+}
+
+// Append program cells until the row is complete (returns true) or the
+// deadline passes mid-row (returns false — the cursor remembers where to
+// resume). Guarantees progress: at least one cell is built per call
+// regardless of the deadline.
+bool LiveTVTab::streamGuideRowCells(GuideRowCursor& cur, int64_t deadlineUs) {
+    const LiveTVChannel& channel = *cur.capturedChannel;
+    const std::shared_ptr<const LiveTVChannel>& capturedChannel = cur.capturedChannel;
+    brls::Box* rowBox = cur.rowBox;
+    brls::HScrollingFrame* programsScroll = cur.scroll;
+    brls::Box* programsBox = cur.programsBox;
+    const int gridHours = m_hoursToShow;
+    const int64_t tick0 = brls::getCPUTimeUsec();
+
     if (!channel.programs.empty()) {
         int64_t guideEndTime = m_guideStartTime + (gridHours * 3600);
-        int64_t lastEndTime = m_guideStartTime;
+        int64_t lastEndTime = cur.lastEndTime;
+        bool builtAny = false;
 
-        for (size_t pi = 0; pi < channel.programs.size(); pi++) {
+        for (size_t pi = cur.nextProgram; pi < channel.programs.size(); pi++) {
+            if (builtAny && brls::getCPUTimeUsec() >= deadlineUs) {
+                cur.nextProgram = pi;
+                cur.lastEndTime = lastEndTime;
+                s_profCellsUs += brls::getCPUTimeUsec() - tick0;
+                return false;
+            }
             const auto& prog = channel.programs[pi];
 
             if (prog.endTime <= m_guideStartTime || prog.startTime >= guideEndTime) continue;
@@ -1632,7 +1679,11 @@ void LiveTVTab::appendGuideRow(const LiveTVChannel& channel, brls::Box* intoBox)
             s_profCellWireUs += pc3 - pc2;
             s_profCellAddUs  += pc4 - pc3;
             lastEndTime = visEnd;
+            builtAny = true;
         }
+        cur.nextProgram = channel.programs.size();
+        cur.lastEndTime = lastEndTime;
+        (void)builtAny;
     } else if (!channel.currentProgram.empty() && channel.programStart > 0) {
         int64_t progStart = std::max(channel.programStart, m_guideStartTime);
         int64_t guideEndTime = m_guideStartTime + (gridHours * 3600);
@@ -1719,16 +1770,37 @@ void LiveTVTab::appendGuideRow(const LiveTVChannel& channel, brls::Box* intoBox)
         programsBox->addView(emptyCell);
     }
 
+    s_profCellsUs += brls::getCPUTimeUsec() - tick0;
+    return true;
+}
+
+// Register the completed row with everything draw() iterates (logo
+// deferral, scroll sync, batch-text ranges) and attach it — the one
+// relayout of the live tree this row ever costs.
+void LiveTVTab::finishGuideRowStream(GuideRowCursor& cur, brls::Box* intoBox) {
     const int64_t profRow2 = brls::getCPUTimeUsec();
-    s_profCellsUs += profRow2 - profRow1;
-    programsScroll->setContentView(programsBox);
-    rowBox->addView(programsScroll);
-    m_rowProgramScrolls.push_back(programsScroll);
-    m_rowProgramBoxes.push_back(programsBox);
-    if (m_epgCells.size() > rowCellsBegin)
-        m_epgRowRanges.push_back({ rowBox, rowCellsBegin, m_epgCells.size() });
-    intoBox->addView(rowBox);
+    if (cur.logoImg && !cur.logoUrl.empty()) {
+        RowLogo rl;
+        rl.row = cur.rowBox;
+        rl.img = cur.logoImg;
+        rl.url = std::move(cur.logoUrl);
+        m_rowLogos.push_back(std::move(rl));
+    }
+    m_rowProgramScrolls.push_back(cur.scroll);
+    m_rowProgramBoxes.push_back(cur.programsBox);
+    if (m_epgCells.size() > cur.cellsBegin)
+        m_epgRowRanges.push_back({ cur.rowBox, cur.cellsBegin, m_epgCells.size() });
+    intoBox->addView(cur.rowBox);
     s_profAttachUs += brls::getCPUTimeUsec() - profRow2;
+
+    cur.rowBox = nullptr;
+    cur.scroll = nullptr;
+    cur.programsBox = nullptr;
+    cur.capturedChannel.reset();
+    cur.logoImg = nullptr;
+    cur.logoUrl.clear();
+    cur.nextProgram = 0;
+    cur.rowIndex++;
 }
 
 void LiveTVTab::buildEPGGrid() {
@@ -1882,13 +1954,16 @@ void LiveTVTab::buildEPGGrid() {
                        (int)m_rowProgramScrolls.size(),
                        (profVisible - profG0) / 1000);
 
-    // Stream in the remaining rows, kRowsPerChunk per brls::sync tick —
+    // Stream in the remaining rows in time-budgeted brls::sync ticks —
     // or, if the whole grid fit in the initial batch, the build is
     // already complete: log the totals right away.
-    if (initialRows < m_channels.size())
-        scheduleGuideRowChunk(initialRows, m_gridBuildGen, profG0);
-    else
+    if (initialRows < m_channels.size()) {
+        auto cur = std::make_shared<GuideRowCursor>();
+        cur->rowIndex = initialRows;
+        scheduleGuideRowChunk(cur, m_gridBuildGen, profG0);
+    } else {
         logGuideBuildComplete(m_rowProgramScrolls.size(), m_epgCells.size(), profG0);
+    }
 }
 
 // Append the next kRowsPerChunk rows into the LIVE guide box, then chain
@@ -1898,31 +1973,49 @@ void LiveTVTab::buildEPGGrid() {
 // iteration). Chunks run on the UI thread — no locking needed against
 // draw(), and the m_epgCells / EpgRowRange bookkeeping stays consistent
 // because appendGuideRow pushes strictly in order.
-void LiveTVTab::scheduleGuideRowChunk(size_t nextRow, int gen, int64_t buildStartUs) {
-    brls::sync([this, nextRow, gen, buildStartUs,
+void LiveTVTab::scheduleGuideRowChunk(std::shared_ptr<GuideRowCursor> cur, int gen, int64_t buildStartUs) {
+    brls::sync([this, cur, gen, buildStartUs,
                 aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         auto alive = aliveWeak.lock();
         if (!alive || !*alive) {
-            // Tab destroyed or hidden mid-build. If the object still
-            // exists (merely hidden) and no newer build superseded this
-            // one, the grid is left partial — drop m_loaded so the next
-            // focus does a full reload instead of showing a half guide.
+            // Tab destroyed or hidden mid-build. A partially built row is
+            // detached and owned by the cursor — free it (and, when the
+            // vectors are still this build's, drop its cell entries so
+            // nothing dangles). If the object still exists and no newer
+            // build superseded this one, drop m_loaded so the next focus
+            // does a full reload instead of showing a half guide.
+            if (cur->rowBox && alive && gen == m_gridBuildGen)
+                m_epgCells.resize(cur->cellsBegin);
+            delete cur->rowBox;   // safe when null; cascades col/scroll/cells
+            cur->rowBox = nullptr;
             if (alive && gen == m_gridBuildGen) m_loaded = false;
             return;
         }
-        // A reload rebuilt the grid while this chunk was queued: the new
-        // build owns m_guideBox (and schedules its own chunks) — bail.
-        if (gen != m_gridBuildGen || !m_guideBox) return;
+        // A reload rebuilt the grid while this tick was queued: the new
+        // build owns m_guideBox and the bookkeeping vectors (its teardown
+        // already cleared our cell entries) — free the loose row and bail.
+        if (gen != m_gridBuildGen || !m_guideBox) {
+            delete cur->rowBox;
+            cur->rowBox = nullptr;
+            return;
+        }
 
-        const size_t endRow = std::min(nextRow + (size_t)kRowsPerChunk, m_channels.size());
-        for (size_t i = nextRow; i < endRow; i++)
-            appendGuideRow(m_channels[i], m_guideBox);
-        // No per-chunk log line: with 1-row chunks that would be ~23
-        // synchronous file writes on Vita — the "progressive build
-        // complete" line already reports the totals.
+        // Spend at most the frame budget, resuming mid-row where the
+        // last tick stopped. finish may overshoot slightly (the live
+        // attach is ~25ms on Vita) — the budget check runs before each
+        // step, so the overshoot never compounds.
+        const int64_t deadline = brls::getCPUTimeUsec() + kStreamBudgetUs;
+        while (cur->rowIndex < m_channels.size() &&
+               brls::getCPUTimeUsec() < deadline) {
+            if (!cur->rowBox)
+                startGuideRowStream(m_channels[cur->rowIndex], *cur);
+            if (!streamGuideRowCells(*cur, deadline))
+                break;                                   // budget hit mid-row
+            finishGuideRowStream(*cur, m_guideBox);      // attaches + rowIndex++
+        }
 
-        if (endRow < m_channels.size())
-            scheduleGuideRowChunk(endRow, gen, buildStartUs);
+        if (cur->rowIndex < m_channels.size())
+            scheduleGuideRowChunk(cur, gen, buildStartUs);
         else
             logGuideBuildComplete(m_rowProgramScrolls.size(), m_epgCells.size(), buildStartUs);
     });
