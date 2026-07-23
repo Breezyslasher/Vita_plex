@@ -501,6 +501,11 @@ public:
                            std::string& liveSessionUuid,
                            const std::string& programMetadataKey = "");
     bool hasLiveTV() const { return m_hasLiveTV; }
+    // Blocking availability probe for worker threads: runs the (cached)
+    // /livetv/dvrs check if it hasn't happened yet and returns the result.
+    // Connect no longer probes eagerly, so callers that need a definitive
+    // answer (e.g. the sidebar's Live TV tab) call this off the UI thread.
+    bool probeLiveTV();
 
     // Build a playable HLS URL for a live tune session by routing it through
     // the transcode/universal pipeline (the raw HDHomeRun feed is mpeg2video

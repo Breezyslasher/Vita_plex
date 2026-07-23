@@ -3290,6 +3290,13 @@ bool PlexClient::markAsUnwatched(const std::string& ratingKey) {
     return resp.statusCode == 200;
 }
 
+bool PlexClient::probeLiveTV() {
+    if (m_dvrId.empty()) {
+        checkLiveTVAvailability();
+    }
+    return m_hasLiveTV;
+}
+
 void PlexClient::checkLiveTVAvailability() {
     // Official Plex API: GET /livetv/dvrs
     // Returns DVR list with key, lineup, uuid, Device array, and ChannelMapping
