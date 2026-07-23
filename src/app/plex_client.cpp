@@ -23,6 +23,7 @@ namespace vitaplex {
 static std::string redactBodyForLog(const std::string& body) {
     static const char* const keys[] = {
         "\"authToken\"", "\"AuthToken\"", "authenticationToken=",
+        "X-Plex-Token=",
     };
     std::string out = body;
     for (const char* k : keys) {
@@ -795,7 +796,7 @@ bool PlexClient::fetchLibrarySections(std::vector<LibrarySection>& sections) {
                         m_serverUrl, !m_authToken.empty());
 
     std::string url = buildApiUrl("/library/sections");
-    brls::Logger::debug("Fetching: {}", url);
+    brls::Logger::debug("Fetching: {}", redactBodyForLog(url));
 
     // Cache check — library sections rarely change. Skipping the
     // network entirely on a hit cuts a 100-500ms round-trip every time
@@ -3645,7 +3646,7 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
             gridUrl += "&endsAt%3E=" + std::to_string(now);
             req.url = gridUrl;
 
-            brls::Logger::debug("fetchEPGGrid: Trying grid endpoint: {}", gridUrl);
+            brls::Logger::debug("fetchEPGGrid: Trying grid endpoint: {}", redactBodyForLog(gridUrl));
             const int64_t profReq0 = brls::getCPUTimeUsec();
             HttpResponse resp = client.request(req);
             profHttpUs += brls::getCPUTimeUsec() - profReq0;
