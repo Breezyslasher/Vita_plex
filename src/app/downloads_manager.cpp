@@ -18,6 +18,7 @@
 #include "platform/platform.hpp"
 #include <borealis.hpp>
 #include <fstream>
+#include <algorithm>
 #include <sstream>
 #include <ctime>
 #include <cstdlib>
@@ -2018,37 +2019,67 @@ bool DownloadsManager::reportTimeline(const DownloadItem& item, const std::strin
 }
 
 void DownloadsManager::validateDownloadedFiles() {
-    // Check that COMPLETED items actually have their files on disk
+    // App was interrupted mid-download. Re-queue, but KEEP the partial file
+    // and set the resume point to whatever actually reached disk (a hard
+    // crash can leave the counter ahead of the flushed bytes) so the next
+    // run continues via HTTP Range instead of starting over. This stays
+    // synchronous: the download worker must see QUEUED, not a stale
+    // DOWNLOADING, when it first scans the queue — and it only touches
+    // the rare interrupted item, so it costs nothing at startup.
     for (auto& item : m_downloads) {
-        if (item.state == DownloadState::COMPLETED && !item.localPath.empty()) {
-            bool exists = false;
-#ifdef __vita__
-            SceUID fd = sceIoOpen(item.localPath.c_str(), SCE_O_RDONLY, 0);
-            if (fd >= 0) {
-                exists = true;
-                sceIoClose(fd);
-            }
-#else
-            std::ifstream f(item.localPath);
-            exists = f.good();
-#endif
-            if (!exists) {
-                brls::Logger::warning("DownloadsManager: File missing for {}, marking as failed",
-                                     item.title);
-                item.state = DownloadState::FAILED;
-                item.downloadedBytes = 0;
-            }
-        }
-
-        // App was interrupted mid-download. Re-queue, but KEEP the partial file
-        // and set the resume point to whatever actually reached disk (a hard
-        // crash can leave the counter ahead of the flushed bytes) so the next
-        // run continues via HTTP Range instead of starting over.
         if (item.state == DownloadState::DOWNLOADING || item.state == DownloadState::TRANSCODING) {
             item.state = DownloadState::QUEUED;
             item.downloadedBytes = partFileSize(item.localPath);
         }
     }
+
+    // The COMPLETED-items existence sweep opens one file per item — with
+    // a large library that's over a second of ux0 I/O, and it used to run
+    // on the main thread before the first frame. It only affects what the
+    // Downloads tab shows for an item whose file vanished, so it can run
+    // in the background: snapshot the candidates under the lock, probe
+    // the filesystem without it, then flip the missing ones to FAILED.
+    // The manager is a process-lifetime singleton, so `this` is safe.
+    asyncRun([this]() {
+        struct Probe { std::string ratingKey; std::string localPath; std::string title; };
+        std::vector<Probe> probes;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            for (const auto& item : m_downloads) {
+                if (item.state == DownloadState::COMPLETED && !item.localPath.empty())
+                    probes.push_back({item.ratingKey, item.localPath, item.title});
+            }
+        }
+
+        std::vector<std::string> missing;
+        for (const auto& p : probes) {
+            bool exists = false;
+#ifdef __vita__
+            SceUID fd = sceIoOpen(p.localPath.c_str(), SCE_O_RDONLY, 0);
+            if (fd >= 0) {
+                exists = true;
+                sceIoClose(fd);
+            }
+#else
+            std::ifstream f(p.localPath);
+            exists = f.good();
+#endif
+            if (!exists) {
+                brls::Logger::warning("DownloadsManager: File missing for {}, marking as failed",
+                                      p.title);
+                missing.push_back(p.ratingKey);
+            }
+        }
+        if (missing.empty()) return;
+
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto& item : m_downloads) {
+            if (item.state != DownloadState::COMPLETED) continue;
+            if (std::find(missing.begin(), missing.end(), item.ratingKey) == missing.end()) continue;
+            item.state = DownloadState::FAILED;
+            item.downloadedBytes = 0;
+        }
+    });
 }
 
 void DownloadsManager::saveState() {
@@ -2198,8 +2229,9 @@ void DownloadsManager::loadState() {
 
         if (!item.ratingKey.empty()) {
             m_downloads.push_back(item);
-            brls::Logger::debug("DownloadsManager: Loaded item: {} (state={})",
-                               item.title, static_cast<int>(item.state));
+            // No per-item log here: on Vita each debug line is a
+            // synchronous file write, and a large library (~142 items)
+            // spent over a second of app startup just logging this loop.
         }
 
         pos = objEnd;
