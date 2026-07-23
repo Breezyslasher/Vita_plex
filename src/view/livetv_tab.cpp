@@ -181,7 +181,12 @@ static const int64_t REFRESH_INTERVAL = 60;         // 1 minute between "now pla
 // rows append in small brls::sync chunks with a frame rendered between
 // each, instead of one ~6s blocking build of the full ~40-row grid.
 static const int kInitialRows  = 9;   // rows built before first paint (~one Vita screenful)
-static const int kRowsPerChunk = 4;   // rows appended per chained brls::sync chunk
+// One row per chunk: a row costs ~160ms on Vita, and the first hardware
+// log with 4-row chunks showed ~650ms UI stalls that dropped the guide
+// to ~1.5fps while streaming and starved the logo loader's UI-thread
+// callbacks (logo latency 4.5s vs ~1s). Same total build time either
+// way — smaller chunks just leave a frame's worth of air between rows.
+static const int kRowsPerChunk = 1;   // rows appended per chained brls::sync chunk
 
 // EPG grid render window. Each row's program cells now sit inside an
 // HScrollingFrame, so cells past the visible width are reachable via the
@@ -1909,13 +1914,12 @@ void LiveTVTab::scheduleGuideRowChunk(size_t nextRow, int gen, int64_t buildStar
         // build owns m_guideBox (and schedules its own chunks) — bail.
         if (gen != m_gridBuildGen || !m_guideBox) return;
 
-        const int64_t profC0 = brls::getCPUTimeUsec();
         const size_t endRow = std::min(nextRow + (size_t)kRowsPerChunk, m_channels.size());
         for (size_t i = nextRow; i < endRow; i++)
             appendGuideRow(m_channels[i], m_guideBox);
-        brls::Logger::info("LTVPROF chunk: rows {}..{} in {}ms",
-                           (int)nextRow, (int)(endRow - 1),
-                           (brls::getCPUTimeUsec() - profC0) / 1000);
+        // No per-chunk log line: with 1-row chunks that would be ~23
+        // synchronous file writes on Vita — the "progressive build
+        // complete" line already reports the totals.
 
         if (endRow < m_channels.size())
             scheduleGuideRowChunk(endRow, gen, buildStartUs);

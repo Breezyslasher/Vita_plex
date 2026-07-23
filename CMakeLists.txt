@@ -932,6 +932,23 @@ endif()
 if(PLATFORM_PSV)
     vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME} UNSAFE NOASLR)
 
+    # App icons, XML layouts and the PSV hint-button art are globbed at
+    # configure time so a newly added file can never be silently missing
+    # from the VPK again — the hand-maintained FILE list drifted and
+    # shipped builds with icons the UI references but couldn't load
+    # (check-circle.png / account.png in the sort and settings menus,
+    # among others). The multi-MB per-platform controller sets in
+    # resources/images/ deliberately stay out: Vita only consumes
+    # images/PSV (~60KB), and icons + xml total ~450KB.
+    file(GLOB_RECURSE VITA_PACKED_RESOURCES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/*.png
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/xml/*.xml
+        ${CMAKE_CURRENT_SOURCE_DIR}/resources/images/PSV/*.png)
+    set(VITA_RES_FILE_ARGS)
+    foreach(res IN LISTS VITA_PACKED_RESOURCES)
+        list(APPEND VITA_RES_FILE_ARGS FILE ${res} ${res})
+    endforeach()
+
     vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
         VERSION ${VITA_VERSION}
         NAME    ${VITA_APP_NAME}
@@ -958,111 +975,7 @@ if(PLATFORM_PSV)
         FILE ${BOREALIS_DIR}/resources/img/sys/ethernet_dark.png      resources/img/sys/ethernet_dark.png
         FILE ${BOREALIS_DIR}/resources/img/sys/ethernet_light.png     resources/img/sys/ethernet_light.png
 
-        FILE resources/xml/activity/main.xml     resources/xml/activity/main.xml
-        FILE resources/xml/activity/login.xml    resources/xml/activity/login.xml
-        FILE resources/xml/activity/player.xml   resources/xml/activity/player.xml
-        FILE resources/xml/activity/reader.xml   resources/xml/activity/reader.xml
-        FILE resources/xml/tabs/library.xml      resources/xml/tabs/library.xml
-        FILE resources/xml/tabs/search.xml       resources/xml/tabs/search.xml
-        FILE resources/xml/tabs/settings.xml     resources/xml/tabs/settings.xml
-        FILE resources/xml/tabs/extensions.xml   resources/xml/tabs/extensions.xml
-        FILE resources/xml/view/manga_detail.xml resources/xml/view/manga_detail.xml
-        FILE resources/xml/view/manga_item.xml   resources/xml/view/manga_item.xml
-        FILE resources/xml/view/chapter_item.xml resources/xml/view/chapter_item.xml
-
-        FILE resources/icons/a.png                        resources/icons/a.png
-        FILE resources/icons/az.png                       resources/icons/az.png
-        FILE resources/icons/za.png                       resources/icons/za.png
-        FILE resources/icons/back.png                     resources/icons/back.png
-        FILE resources/icons/checkbox.png                 resources/icons/checkbox.png
-        FILE resources/icons/checkbox_checked.png         resources/icons/checkbox_checked.png
-        FILE resources/icons/checkbox_crossed.png         resources/icons/checkbox_crossed.png
-        FILE resources/icons/circle.png                   resources/icons/circle.png
-        FILE resources/icons/cross.png                    resources/icons/cross.png
-        FILE resources/icons/download.png                 resources/icons/download.png
-        FILE resources/icons/fast-forward-10.png          resources/icons/fast-forward-10.png
-        FILE resources/icons/fast-forward-15.png          resources/icons/fast-forward-15.png
-        FILE resources/icons/fast-forward-30.png          resources/icons/fast-forward-30.png
-        FILE resources/icons/fast-forward-45.png          resources/icons/fast-forward-45.png
-        FILE resources/icons/fast-forward-5.png           resources/icons/fast-forward-5.png
-        FILE resources/icons/fast-forward-60.png          resources/icons/fast-forward-60.png
-        FILE resources/icons/hide.png                     resources/icons/hide.png
-        FILE resources/icons/history.png                  resources/icons/history.png
-        FILE resources/icons/hot.png                      resources/icons/hot.png
-        FILE resources/icons/import.png                   resources/icons/import.png
-        FILE resources/icons/left.png                     resources/icons/left.png
-        FILE resources/icons/menu.png                     resources/icons/menu.png
-        FILE resources/icons/mini_star.png                resources/icons/mini_star.png
-        FILE resources/icons/options.png                  resources/icons/options.png
-        FILE resources/icons/pause.png                    resources/icons/pause.png
-        FILE resources/icons/play.png                     resources/icons/play.png
-        FILE resources/icons/radio.png                    resources/icons/radio.png
-        FILE resources/icons/radio_checked.png            resources/icons/radio_checked.png
-        FILE resources/icons/refresh.png                  resources/icons/refresh.png
-        FILE resources/icons/repeat-off.png               resources/icons/repeat-off.png
-        FILE resources/icons/repeat-once.png              resources/icons/repeat-once.png
-        FILE resources/icons/repeat.png                   resources/icons/repeat.png
-        FILE resources/icons/rewind-10.png                resources/icons/rewind-10.png
-        FILE resources/icons/rewind-15.png                resources/icons/rewind-15.png
-        FILE resources/icons/rewind-30.png                resources/icons/rewind-30.png
-        FILE resources/icons/rewind-45.png                resources/icons/rewind-45.png
-        FILE resources/icons/rewind-5.png                 resources/icons/rewind-5.png
-        FILE resources/icons/rewind-60.png                resources/icons/rewind-60.png
-        FILE resources/icons/right.png                    resources/icons/right.png
-        FILE resources/icons/search.png                   resources/icons/search.png
-        FILE resources/icons/shuffle-disabled.png         resources/icons/shuffle-disabled.png
-        FILE resources/icons/shuffle-variant.png          resources/icons/shuffle-variant.png
-        FILE resources/icons/show.png                     resources/icons/show.png
-        FILE resources/icons/skip-next.png                resources/icons/skip-next.png
-        FILE resources/icons/skip-previous.png            resources/icons/skip-previous.png
-        FILE resources/icons/sort-1-9.png                 resources/icons/sort-1-9.png
-        FILE resources/icons/sort-9-1.png                 resources/icons/sort-9-1.png
-        FILE resources/icons/sort-clock-ascending.png     resources/icons/sort-clock-ascending.png
-        FILE resources/icons/sort-clock-descending.png    resources/icons/sort-clock-descending.png
-        FILE resources/icons/sort-calendar-ascending.png  resources/icons/sort-calendar-ascending.png
-        FILE resources/icons/sort-calendar-descending.png resources/icons/sort-calendar-descending.png
-        FILE resources/icons/book-open-page-variant.png   resources/icons/book-open-page-variant.png
-        FILE resources/icons/book-multiple.png            resources/icons/book-multiple.png
-        FILE resources/icons/book-arrow-down.png          resources/icons/book-arrow-down.png
-        FILE resources/icons/star.png                     resources/icons/star.png
-        FILE resources/icons/subtitles.png                resources/icons/subtitles.png
-        FILE resources/icons/tag.png                      resources/icons/tag.png
-        FILE resources/icons/translate.png                resources/icons/translate.png
-        FILE resources/icons/surround-sound-2-0.png       resources/icons/surround-sound-2-0.png
-        FILE resources/icons/surround-sound-3-1.png       resources/icons/surround-sound-3-1.png
-        FILE resources/icons/surround-sound-5-1.png       resources/icons/surround-sound-5-1.png
-        FILE resources/icons/surround-sound-5-1-2.png     resources/icons/surround-sound-5-1-2.png
-        FILE resources/icons/surround-sound-7-1.png       resources/icons/surround-sound-7-1.png
-        FILE resources/icons/magnify.png                  resources/icons/magnify.png
-        FILE resources/icons/delete-outline.png           resources/icons/delete-outline.png
-        FILE resources/icons/backspace-outline.png        resources/icons/backspace-outline.png
-        FILE resources/icons/keyboard-space.png           resources/icons/keyboard-space.png
-        FILE resources/icons/search-check.png             resources/icons/search-check.png
-        FILE resources/icons/playlist-plus.png            resources/icons/playlist-plus.png
-        FILE resources/icons/video-image.png              resources/icons/video-image.png
-        FILE resources/icons/web.png                      resources/icons/web.png
-        FILE resources/icons/filter-menu-outline.png      resources/icons/filter-menu-outline.png
-        FILE resources/icons/format-list-group.png        resources/icons/format-list-group.png
-
-        # PSV-native UI assets — the logo and the gradient backdrop live
-        # at the root; the controller-hint buttons (cross/circle/square…)
-        # moved into resources/images/PSV/ when platform-specific icon sets
-        # were introduced. resources/images/PSV/ is the ONLY platform icon
-        # set bundled in the VPK — Vita doesn't need Steam Deck / Switch
-        # / Xbox / Keyboard art and bundling them would bloat the VPK and
-        # eat scarce userland storage.
-        FILE resources/images/PSV/circle_button.png   resources/images/PSV/circle_button.png
-        FILE resources/images/PSV/cross_button.png    resources/images/PSV/cross_button.png
-        FILE resources/images/PSV/dpad.png            resources/images/PSV/dpad.png
-        FILE resources/images/PSV/gradient.png        resources/images/PSV/gradient.png
-        FILE resources/images/PSV/l_button.png        resources/images/PSV/l_button.png
-        FILE resources/images/PSV/logo-small.png      resources/images/PSV/logo-small.png
-        FILE resources/images/PSV/logo.png            resources/images/PSV/logo.png
-        FILE resources/images/PSV/r_button.png        resources/images/PSV/r_button.png
-        FILE resources/images/PSV/select_button.png   resources/images/PSV/select_button.png
-        FILE resources/images/PSV/square_button.png   resources/images/PSV/square_button.png
-        FILE resources/images/PSV/start_button.png    resources/images/PSV/start_button.png
-        FILE resources/images/PSV/triangle_button.png resources/images/PSV/triangle_button.png
+        ${VITA_RES_FILE_ARGS}
 
         FILE resources/font/font.ttf                      resources/font/font.ttf
         FILE resources/font/icon.ttf                      resources/font/icon.ttf

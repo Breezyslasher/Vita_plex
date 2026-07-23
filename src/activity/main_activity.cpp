@@ -126,6 +126,31 @@ void MainActivity::onContentAvailable() {
 
         buildSidebarTabs();
 
+        // Verify Live TV availability off-thread: the sidebar above was
+        // built from the persisted lastHadLiveTV flag, not a live probe.
+        // If reality disagrees (first run on this build, or the server
+        // gained/lost its DVR since last session), persist the answer and
+        // rebuild the sidebar once. MainActivity is re-resolved inside the
+        // sync callback (same pattern as the sidebar editor) so a logout
+        // mid-probe can't leave a dangling pointer.
+        if (!Application::getInstance().isOfflineMode()) {
+            const bool assumed = Application::getInstance().getSettings().lastHadLiveTV;
+            asyncRun([assumed]() {
+                const bool avail = PlexClient::getInstance().probeLiveTV();
+                brls::sync([assumed, avail]() {
+                    AppSettings& s = Application::getInstance().getSettings();
+                    if (s.lastHadLiveTV != avail) {
+                        s.lastHadLiveTV = avail;
+                        Application::getInstance().saveSettings();
+                    }
+                    if (avail != assumed) {
+                        if (auto* main = MainActivity::getInstance())
+                            main->rebuildSidebar();
+                    }
+                });
+            });
+        }
+
         // Focus first tab
         tabFrame->focusTab(0);
 
@@ -342,7 +367,13 @@ void MainActivity::buildSidebarTabs() {
         return;
     }
 
-    const bool hasLiveTV = PlexClient::getInstance().hasLiveTV();
+    // Connect no longer blocks on the /livetv/dvrs probe (it cost
+    // 0.1-3.2s of every launch), so at first build hasLiveTV() is still
+    // false even on servers with a DVR. Trust last session's persisted
+    // answer for the initial sidebar; the async probe kicked off after
+    // the first build corrects it (and rebuilds) if the server changed.
+    const bool hasLiveTV = PlexClient::getInstance().hasLiveTV()
+                        || Application::getInstance().getSettings().lastHadLiveTV;
 
     // Home is always pinned to the top.
     tabFrame->addTab("Home", []() { return withMusicBack(new HomeTab()); });

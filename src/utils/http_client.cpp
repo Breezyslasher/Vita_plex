@@ -11,6 +11,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cctype>
+#include <mutex>
 
 namespace vitaplex {
 
@@ -35,6 +36,50 @@ std::string redactTokensInUrl(const std::string& url) {
         }
     }
     return out;
+}
+
+// Process-wide curl share: DNS results, TLS session IDs and the connection
+// cache are shared across every HttpClient instance. Subsystems each own a
+// client (guide fetch, channel list, DVR checks, image loader, downloads),
+// and without sharing, every one of them pays a fresh TCP + TLS handshake —
+// ~300-600ms per call on Vita against a plex.direct host. With the share,
+// later calls reuse a warm connection (or at least an abbreviated TLS
+// resumption). The share is created once and intentionally never freed:
+// it must outlive every easy handle, including ones alive at exit.
+static std::mutex s_curlShareLocks[CURL_LOCK_DATA_LAST];
+
+static void curlShareLock(CURL*, curl_lock_data data, curl_lock_access, void*) {
+    s_curlShareLocks[data].lock();
+}
+
+static void curlShareUnlock(CURL*, curl_lock_data data, void*) {
+    s_curlShareLocks[data].unlock();
+}
+
+static CURLSH* curlShare() {
+    static CURLSH* share = []() -> CURLSH* {
+        CURLSH* sh = curl_share_init();
+        if (!sh) return nullptr;
+        curl_share_setopt(sh, CURLSHOPT_LOCKFUNC, curlShareLock);
+        curl_share_setopt(sh, CURLSHOPT_UNLOCKFUNC, curlShareUnlock);
+        curl_share_setopt(sh, CURLSHOPT_SHARE, CURL_LOCK_DATA_DNS);
+        curl_share_setopt(sh, CURLSHOPT_SHARE, CURL_LOCK_DATA_SSL_SESSION);
+        curl_share_setopt(sh, CURLSHOPT_SHARE, CURL_LOCK_DATA_CONNECT);
+        return sh;
+    }();
+    return share;
+}
+
+// Perf options shared by every request: connection/session reuse via the
+// process-wide share, and transparent response compression. The EPG grid
+// body is ~0.5MB of JSON that gzips ~10:1; ACCEPT_ENCODING "" advertises
+// whatever encodings this libcurl build supports and decompresses in the
+// write callback, so callers see plain bytes either way (and a zlib-less
+// build simply sends no header — identity, same as before).
+static void applyCurlPerfDefaults(CURL* curl) {
+    if (CURLSH* sh = curlShare())
+        curl_easy_setopt(curl, CURLOPT_SHARE, sh);
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
 }
 
 // Apply baseline security-sensitive curl options shared by every request.
@@ -286,6 +331,7 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
 
     // TLS verification, protocol allowlist, and signal safety.
     applyCurlSecurityDefaults(curl);
+    applyCurlPerfDefaults(curl);
 
     // Force HTTP/1.1 (see comment above CURLOPT_DNS_CACHE_TIMEOUT).
     curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
@@ -618,6 +664,7 @@ bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallbac
     // TLS verification, protocol allowlist, and NOSIGNAL (critical for
     // thread-safe operation — downloads run on a background thread).
     applyCurlSecurityDefaults(curl);
+    applyCurlPerfDefaults(curl);
 
     // User agent
     curl_easy_setopt(curl, CURLOPT_USERAGENT, m_userAgent.c_str());

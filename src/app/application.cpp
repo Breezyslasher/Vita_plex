@@ -398,6 +398,7 @@ bool Application::loadSettings() {
     m_settings.sidebarOrder    = extractString("sidebarOrder");
     m_settings.hiddenSidebarItems = extractString("hiddenSidebarItems");
     m_settings.librarySortPrefs = extractString("librarySortPrefs");
+    m_settings.lastHadLiveTV = extractBool("lastHadLiveTV", false);
 
     // Content display settings
     m_settings.showCollections  = extractBool("showCollections", true);
@@ -559,6 +560,7 @@ bool Application::saveSettings() {
     json += "  \"sidebarOrder\": \"" + esc(m_settings.sidebarOrder) + "\",\n";
     json += "  \"hiddenSidebarItems\": \"" + esc(m_settings.hiddenSidebarItems) + "\",\n";
     json += "  \"librarySortPrefs\": \"" + esc(m_settings.librarySortPrefs) + "\",\n";
+    json += "  \"lastHadLiveTV\": " + b(m_settings.lastHadLiveTV) + ",\n";
     json += "  \"showCollections\": " + b(m_settings.showCollections) + ",\n";
     json += "  \"showPlaylists\": " + b(m_settings.showPlaylists) + ",\n";
     json += "  \"showGenres\": " + b(m_settings.showGenres) + ",\n";

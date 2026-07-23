@@ -13,6 +13,7 @@
 #include <ctime>
 #include <algorithm>
 #include <set>
+#include <string_view>
 
 namespace vitaplex {
 
@@ -46,6 +47,56 @@ static std::string redactBodyForLog(const std::string& body) {
         }
     }
     return out;
+}
+
+// --- Zero-copy JSON field extraction for the EPG grid parse ---
+// The grid response is ~0.5MB with ~550 program objects. The original
+// parse substr()'d every metadata/media object out of the body and
+// re-allocated a quoted needle (and the value) for every field lookup —
+// ~19k heap allocations and ~13MB of rescanning per guide load, which
+// is where the multi-second "parse/other" LTVPROF bucket went on Vita.
+// These helpers scan string_view slices of the response in place; only
+// the fields that actually get stored are copied into std::strings.
+
+// Find the value of quotedKey (pass it WITH quotes, e.g. "\"title\"")
+// inside obj. Returns an empty view when missing or null. String values
+// return the raw (still-escaped) slice between the quotes — identical
+// semantics to extractJsonValue.
+static std::string_view jsonFieldView(std::string_view obj, std::string_view quotedKey) {
+    size_t keyPos = obj.find(quotedKey);
+    if (keyPos == std::string_view::npos) return {};
+    size_t colonPos = obj.find(':', keyPos + quotedKey.size());
+    if (colonPos == std::string_view::npos) return {};
+    size_t valueStart = obj.find_first_not_of(" \t\n\r", colonPos + 1);
+    if (valueStart == std::string_view::npos) return {};
+
+    if (obj[valueStart] == '"') {
+        size_t valueEnd = valueStart + 1;
+        while (valueEnd < obj.size()) {
+            if (obj[valueEnd] == '"' && obj[valueEnd - 1] != '\\') break;
+            valueEnd++;
+        }
+        if (valueEnd >= obj.size()) return {};
+        return obj.substr(valueStart + 1, valueEnd - valueStart - 1);
+    }
+    if (obj.compare(valueStart, 4, "null") == 0) return {};
+    size_t valueEnd = obj.find_first_of(",}]", valueStart);
+    if (valueEnd == std::string_view::npos) return {};
+    std::string_view value = obj.substr(valueStart, valueEnd - valueStart);
+    while (!value.empty() && (value.back() == ' ' || value.back() == '\n' || value.back() == '\r'))
+        value.remove_suffix(1);
+    return value;
+}
+
+// atoll for a non-NUL-terminated slice (string_view has no c_str()).
+static int64_t svToInt64(std::string_view v) {
+    int64_t out = 0;
+    bool neg = false;
+    size_t i = 0;
+    if (i < v.size() && (v[i] == '-' || v[i] == '+')) { neg = (v[i] == '-'); i++; }
+    for (; i < v.size() && v[i] >= '0' && v[i] <= '9'; i++)
+        out = out * 10 + (v[i] - '0');
+    return neg ? -out : out;
 }
 
 PlexClient& PlexClient::getInstance() {
@@ -773,8 +824,13 @@ bool PlexClient::connectToServer(const std::string& url, int timeoutSeconds) {
 
         brls::Logger::info("Connected to: {}", m_currentServer.name);
 
-        // Check if Live TV is available on this server
-        checkLiveTVAvailability();
+        // Live TV availability (m_dvrId / m_epgProviderKey) is probed
+        // lazily by every consumer (fetchLiveTVChannels, fetchEPGGrid,
+        // tuneLiveTVChannel all call checkLiveTVAvailability when
+        // m_dvrId is empty), so don't block session restore on the
+        // /livetv/dvrs round trip here — hardware logs showed it taking
+        // 0.1-3.2s of app launch depending on server mood, and the
+        // first Live TV fetch runs on a worker thread anyway.
 
         return true;
     }
@@ -3234,6 +3290,13 @@ bool PlexClient::markAsUnwatched(const std::string& ratingKey) {
     return resp.statusCode == 200;
 }
 
+bool PlexClient::probeLiveTV() {
+    if (m_dvrId.empty()) {
+        checkLiveTVAvailability();
+    }
+    return m_hasLiveTV;
+}
+
 void PlexClient::checkLiveTVAvailability() {
     // Official Plex API: GET /livetv/dvrs
     // Returns DVR list with key, lineup, uuid, Device array, and ChannelMapping
@@ -3655,94 +3718,100 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
                 brls::Logger::debug("fetchEPGGrid: Grid response ({} bytes, type={}), first 1000: {}",
                                     resp.body.length(), gridType, resp.body.substr(0, 1000));
 
-                // Parse Metadata array containing program entries
+                // Parse Metadata array containing program entries.
+                // Zero-copy pass: objects are scanned as string_views
+                // into resp.body (see jsonFieldView) — only stored
+                // fields become std::strings.
                 size_t metaArrayPos = resp.body.find("\"Metadata\"");
                 if (metaArrayPos == std::string::npos) continue;
 
                 size_t arrayStart = resp.body.find('[', metaArrayPos);
                 if (arrayStart == std::string::npos) continue;
 
+                const std::string_view body(resp.body);
+
                 // Iterate through Metadata objects
                 size_t pos = arrayStart + 1;
-                while (pos < resp.body.length()) {
+                while (pos < body.size()) {
                     // Skip whitespace and commas
-                    while (pos < resp.body.length() && (resp.body[pos] == ' ' || resp.body[pos] == ',' ||
-                           resp.body[pos] == '\n' || resp.body[pos] == '\r' || resp.body[pos] == '\t')) {
+                    while (pos < body.size() && (body[pos] == ' ' || body[pos] == ',' ||
+                           body[pos] == '\n' || body[pos] == '\r' || body[pos] == '\t')) {
                         pos++;
                     }
-                    if (pos >= resp.body.length() || resp.body[pos] == ']') break;
-                    if (resp.body[pos] != '{') { pos++; continue; }
+                    if (pos >= body.size() || body[pos] == ']') break;
+                    if (body[pos] != '{') { pos++; continue; }
 
-                    // Extract Metadata object
+                    // Extract Metadata object (a view into the body, no copy)
                     size_t objStart = pos;
                     int braceCount = 1;
                     pos++;
-                    while (braceCount > 0 && pos < resp.body.length()) {
-                        if (resp.body[pos] == '{') braceCount++;
-                        else if (resp.body[pos] == '}') braceCount--;
+                    while (braceCount > 0 && pos < body.size()) {
+                        if (body[pos] == '{') braceCount++;
+                        else if (body[pos] == '}') braceCount--;
                         pos++;
                     }
-                    std::string metaObj = resp.body.substr(objStart, pos - objStart);
+                    std::string_view metaObj = body.substr(objStart, pos - objStart);
 
                     // Extract program title
-                    std::string progTitle = extractJsonValue(metaObj, "title");
-                    std::string grandparentTitle = extractJsonValue(metaObj, "grandparentTitle");
+                    std::string_view progTitle = jsonFieldView(metaObj, "\"title\"");
+                    std::string_view grandparentTitle = jsonFieldView(metaObj, "\"grandparentTitle\"");
                     if (progTitle.empty()) continue;
 
                     std::string displayTitle;
                     if (!grandparentTitle.empty() && gridType == 4) {
-                        displayTitle = grandparentTitle + ": " + progTitle;
+                        displayTitle = std::string(grandparentTitle) + ": " + std::string(progTitle);
                     } else {
-                        displayTitle = progTitle;
+                        displayTitle = std::string(progTitle);
                     }
 
-                    std::string progRatingKey = extractJsonValue(metaObj, "ratingKey");
-                    std::string progMetadataKey = extractJsonValue(metaObj, "key");
+                    std::string progRatingKey(jsonFieldView(metaObj, "\"ratingKey\""));
+                    std::string progMetadataKey(jsonFieldView(metaObj, "\"key\""));
                     // Pull summary + thumb so the Live TV hero can show the show's
                     // description and poster, not just the title.
-                    std::string progSummary = extractJsonValue(metaObj, "summary");
-                    std::string progThumb = extractJsonValue(metaObj, "thumb");
-                    if (progThumb.empty()) progThumb = extractJsonValue(metaObj, "grandparentThumb");
-                    if (progThumb.empty()) progThumb = extractJsonValue(metaObj, "parentThumb");
-                    if (progThumb.empty()) progThumb = extractJsonValue(metaObj, "art");
+                    std::string progSummary(jsonFieldView(metaObj, "\"summary\""));
+                    std::string_view progThumbV = jsonFieldView(metaObj, "\"thumb\"");
+                    if (progThumbV.empty()) progThumbV = jsonFieldView(metaObj, "\"grandparentThumb\"");
+                    if (progThumbV.empty()) progThumbV = jsonFieldView(metaObj, "\"parentThumb\"");
+                    if (progThumbV.empty()) progThumbV = jsonFieldView(metaObj, "\"art\"");
+                    std::string progThumb(progThumbV);
 
                     // Parse Media array for channel + timing info
                     size_t mediaPos = metaObj.find("\"Media\"");
-                    if (mediaPos == std::string::npos) continue;
+                    if (mediaPos == std::string_view::npos) continue;
 
                     size_t mediaArrayStart = metaObj.find('[', mediaPos);
-                    if (mediaArrayStart == std::string::npos) continue;
+                    if (mediaArrayStart == std::string_view::npos) continue;
 
                     size_t mPos = mediaArrayStart + 1;
-                    while (mPos < metaObj.length()) {
+                    while (mPos < metaObj.size()) {
                         size_t mObjStart = metaObj.find('{', mPos);
-                        if (mObjStart == std::string::npos || mObjStart >= metaObj.length()) break;
+                        if (mObjStart == std::string_view::npos || mObjStart >= metaObj.size()) break;
 
                         int mBraceCount = 1;
                         size_t mObjEnd = mObjStart + 1;
-                        while (mBraceCount > 0 && mObjEnd < metaObj.length()) {
+                        while (mBraceCount > 0 && mObjEnd < metaObj.size()) {
                             if (metaObj[mObjEnd] == '{') mBraceCount++;
                             else if (metaObj[mObjEnd] == '}') mBraceCount--;
                             mObjEnd++;
                         }
-                        std::string mediaObj = metaObj.substr(mObjStart, mObjEnd - mObjStart);
+                        std::string_view mediaObj = metaObj.substr(mObjStart, mObjEnd - mObjStart);
                         mPos = mObjEnd;
 
-                        std::string beginsAtStr = extractJsonValue(mediaObj, "beginsAt");
-                        std::string endsAtStr = extractJsonValue(mediaObj, "endsAt");
+                        std::string_view beginsAtStr = jsonFieldView(mediaObj, "\"beginsAt\"");
+                        std::string_view endsAtStr = jsonFieldView(mediaObj, "\"endsAt\"");
                         if (beginsAtStr.empty() || endsAtStr.empty()) continue;
 
-                        int64_t progStart = atoll(beginsAtStr.c_str());
-                        int64_t progEnd = atoll(endsAtStr.c_str());
+                        int64_t progStart = svToInt64(beginsAtStr);
+                        int64_t progEnd = svToInt64(endsAtStr);
 
                         if (progEnd < (int64_t)now) continue;
 
                         // Match to channel list using callSign, channelIdentifier, VCN, or key
-                        std::string chanCallSign = extractJsonValue(mediaObj, "channelCallSign");
-                        std::string chanId = extractJsonValue(mediaObj, "channelIdentifier");
-                        std::string chanVcn = extractJsonValue(mediaObj, "channelVcn");
-                        std::string chanTitle = extractJsonValue(mediaObj, "channelTitle");
-                        std::string chanShortTitle = extractJsonValue(mediaObj, "channelShortTitle");
+                        std::string_view chanCallSign = jsonFieldView(mediaObj, "\"channelCallSign\"");
+                        std::string_view chanId = jsonFieldView(mediaObj, "\"channelIdentifier\"");
+                        std::string_view chanVcn = jsonFieldView(mediaObj, "\"channelVcn\"");
+                        std::string_view chanTitle = jsonFieldView(mediaObj, "\"channelTitle\"");
+                        std::string_view chanShortTitle = jsonFieldView(mediaObj, "\"channelShortTitle\"");
 
                         for (auto& channel : channelsWithPrograms) {
                             bool matched = false;
@@ -3888,65 +3957,70 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
             size_t arrayStart = resp.body.find('[', metaArrayPos);
             if (arrayStart == std::string::npos) continue;
 
+            // Zero-copy scan, same as the type-less grid path above.
+            const std::string_view body(resp.body);
+
             size_t pos = arrayStart + 1;
-            while (pos < resp.body.length()) {
-                while (pos < resp.body.length() && (resp.body[pos] == ' ' || resp.body[pos] == ',' ||
-                       resp.body[pos] == '\n' || resp.body[pos] == '\r' || resp.body[pos] == '\t')) {
+            while (pos < body.size()) {
+                while (pos < body.size() && (body[pos] == ' ' || body[pos] == ',' ||
+                       body[pos] == '\n' || body[pos] == '\r' || body[pos] == '\t')) {
                     pos++;
                 }
-                if (pos >= resp.body.length() || resp.body[pos] == ']') break;
-                if (resp.body[pos] != '{') { pos++; continue; }
+                if (pos >= body.size() || body[pos] == ']') break;
+                if (body[pos] != '{') { pos++; continue; }
 
                 size_t objStart = pos;
                 int braceCount = 1;
                 pos++;
-                while (braceCount > 0 && pos < resp.body.length()) {
-                    if (resp.body[pos] == '{') braceCount++;
-                    else if (resp.body[pos] == '}') braceCount--;
+                while (braceCount > 0 && pos < body.size()) {
+                    if (body[pos] == '{') braceCount++;
+                    else if (body[pos] == '}') braceCount--;
                     pos++;
                 }
-                std::string metaObj = resp.body.substr(objStart, pos - objStart);
+                std::string_view metaObj = body.substr(objStart, pos - objStart);
 
-                std::string progTitle = extractJsonValue(metaObj, "title");
+                std::string_view progTitle = jsonFieldView(metaObj, "\"title\"");
                 if (progTitle.empty()) continue;
-                std::string grandparentTitle = extractJsonValue(metaObj, "grandparentTitle");
+                std::string_view grandparentTitle = jsonFieldView(metaObj, "\"grandparentTitle\"");
                 std::string displayTitle = (!grandparentTitle.empty())
-                    ? grandparentTitle + ": " + progTitle : progTitle;
+                    ? std::string(grandparentTitle) + ": " + std::string(progTitle)
+                    : std::string(progTitle);
 
-                std::string progRatingKey   = extractJsonValue(metaObj, "ratingKey");
-                std::string progMetadataKey = extractJsonValue(metaObj, "key");
-                std::string progSummary     = extractJsonValue(metaObj, "summary");
-                std::string progThumb       = extractJsonValue(metaObj, "thumb");
-                if (progThumb.empty()) progThumb = extractJsonValue(metaObj, "grandparentThumb");
-                if (progThumb.empty()) progThumb = extractJsonValue(metaObj, "parentThumb");
-                if (progThumb.empty()) progThumb = extractJsonValue(metaObj, "art");
+                std::string progRatingKey(jsonFieldView(metaObj, "\"ratingKey\""));
+                std::string progMetadataKey(jsonFieldView(metaObj, "\"key\""));
+                std::string progSummary(jsonFieldView(metaObj, "\"summary\""));
+                std::string_view progThumbV = jsonFieldView(metaObj, "\"thumb\"");
+                if (progThumbV.empty()) progThumbV = jsonFieldView(metaObj, "\"grandparentThumb\"");
+                if (progThumbV.empty()) progThumbV = jsonFieldView(metaObj, "\"parentThumb\"");
+                if (progThumbV.empty()) progThumbV = jsonFieldView(metaObj, "\"art\"");
+                std::string progThumb(progThumbV);
 
                 size_t mediaPos = metaObj.find("\"Media\"");
-                if (mediaPos == std::string::npos) continue;
+                if (mediaPos == std::string_view::npos) continue;
                 size_t mediaArrayStart = metaObj.find('[', mediaPos);
-                if (mediaArrayStart == std::string::npos) continue;
+                if (mediaArrayStart == std::string_view::npos) continue;
 
                 size_t mPos = mediaArrayStart + 1;
-                while (mPos < metaObj.length()) {
+                while (mPos < metaObj.size()) {
                     size_t mObjStart = metaObj.find('{', mPos);
-                    if (mObjStart == std::string::npos || mObjStart >= metaObj.length()) break;
+                    if (mObjStart == std::string_view::npos || mObjStart >= metaObj.size()) break;
 
                     int mBraceCount = 1;
                     size_t mObjEnd = mObjStart + 1;
-                    while (mBraceCount > 0 && mObjEnd < metaObj.length()) {
+                    while (mBraceCount > 0 && mObjEnd < metaObj.size()) {
                         if (metaObj[mObjEnd] == '{') mBraceCount++;
                         else if (metaObj[mObjEnd] == '}') mBraceCount--;
                         mObjEnd++;
                     }
-                    std::string mediaObj = metaObj.substr(mObjStart, mObjEnd - mObjStart);
+                    std::string_view mediaObj = metaObj.substr(mObjStart, mObjEnd - mObjStart);
                     mPos = mObjEnd;
 
-                    std::string beginsAtStr = extractJsonValue(mediaObj, "beginsAt");
-                    std::string endsAtStr   = extractJsonValue(mediaObj, "endsAt");
+                    std::string_view beginsAtStr = jsonFieldView(mediaObj, "\"beginsAt\"");
+                    std::string_view endsAtStr   = jsonFieldView(mediaObj, "\"endsAt\"");
                     if (beginsAtStr.empty() || endsAtStr.empty()) continue;
 
-                    int64_t progStart = atoll(beginsAtStr.c_str());
-                    int64_t progEnd   = atoll(endsAtStr.c_str());
+                    int64_t progStart = svToInt64(beginsAtStr);
+                    int64_t progEnd   = svToInt64(endsAtStr);
                     if (progEnd < (int64_t)now) continue;
 
                     // Channel is fixed by the channelGridKey query, so no
