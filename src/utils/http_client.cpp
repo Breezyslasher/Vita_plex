@@ -18,7 +18,8 @@ namespace vitaplex {
 // Plex tokens are carried as "X-Plex-Token=..." in query strings, and many
 // call sites log req.url at debug level. Without redaction, a user's long-
 // lived auth token ends up in on-device logs and crash reports.
-static std::string redactTokensInUrl(const std::string& url) {
+// Declared in http_client.hpp so every logging call site can share it.
+std::string redactTokensInUrl(const std::string& url) {
     static const char* const kSensitiveKeys[] = {
         "X-Plex-Token=", "x-plex-token=", "token=",
     };

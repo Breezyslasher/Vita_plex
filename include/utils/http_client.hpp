@@ -12,6 +12,12 @@
 
 namespace vitaplex {
 
+// Redact sensitive query parameters (auth tokens) before logging a URL.
+// Any call site that logs a URL which may carry "X-Plex-Token=..." must go
+// through this, or the user's long-lived token ends up in on-device logs
+// that get shared for debugging.
+std::string redactTokensInUrl(const std::string& url);
+
 // HTTP response
 struct HttpResponse {
     int statusCode = 0;

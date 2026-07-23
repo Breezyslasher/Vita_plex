@@ -15,6 +15,7 @@
 #include "platform/platform.hpp"
 
 #include <ctime>
+#include <mutex>
 
 namespace vitaplex {
 
@@ -562,19 +563,44 @@ void HomeTab::loadContent() {
     brls::Logger::debug("HomeTab: Async content loading started");
 }
 
+// The channel rail's EPG snapshot outlives the tab instance (HomeTab is
+// recreated on every tab switch). Without this, each visit to Home kicks
+// off a full multi-second fetchEPGGrid that competes for the single HTTPS
+// pipe with the Live TV tab's own guide fetch.
+static std::vector<LiveTVChannel> s_recentChannelsCache;
+static time_t s_recentChannelsCacheAt = 0;
+static std::mutex s_recentChannelsCacheMutex;
+static constexpr time_t kRecentChannelsCacheTTL = 300;  // 5 minutes
+
 void HomeTab::loadRecentChannels() {
     asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
-        brls::Logger::debug("HomeTab: Fetching live channels (async)...");
-        PlexClient& client = PlexClient::getInstance();
-
-        // Same data path the Live TV tab uses (fetchEPGGrid). A small window is
-        // enough to surface the now-playing episode preview + tune metadata.
         std::vector<LiveTVChannel> channels;
-        if (!client.fetchEPGGrid(channels, 2)) {
-            brls::Logger::debug("HomeTab: no live channels (rail stays hidden)");
-            return;
+        {
+            std::lock_guard<std::mutex> lock(s_recentChannelsCacheMutex);
+            if (!s_recentChannelsCache.empty() &&
+                time(nullptr) - s_recentChannelsCacheAt < kRecentChannelsCacheTTL) {
+                channels = s_recentChannelsCache;
+            }
         }
-        if (channels.size() > 10) channels.resize(10);
+
+        if (channels.empty()) {
+            brls::Logger::debug("HomeTab: Fetching live channels (async)...");
+            PlexClient& client = PlexClient::getInstance();
+
+            // Same data path the Live TV tab uses (fetchEPGGrid). A small window is
+            // enough to surface the now-playing episode preview + tune metadata.
+            if (!client.fetchEPGGrid(channels, 2)) {
+                brls::Logger::debug("HomeTab: no live channels (rail stays hidden)");
+                return;
+            }
+            if (channels.size() > 10) channels.resize(10);
+
+            std::lock_guard<std::mutex> lock(s_recentChannelsCacheMutex);
+            s_recentChannelsCache = channels;
+            s_recentChannelsCacheAt = time(nullptr);
+        } else {
+            brls::Logger::debug("HomeTab: live channels served from cache");
+        }
 
         brls::sync([this, channels, aliveWeak]() {
             auto alive = aliveWeak.lock();

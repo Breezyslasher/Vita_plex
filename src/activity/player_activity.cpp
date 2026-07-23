@@ -1137,7 +1137,7 @@ void PlayerActivity::loadFromQueue() {
 
     // Player already initialized (track change) - load immediately
     if (!player.loadUrl(url, track->title)) {
-        brls::Logger::error("Failed to load URL: {}", url);
+        brls::Logger::error("Failed to load URL: {}", redactTokensInUrl(url));
         m_loadingMedia = false;
         return;
     }
@@ -1376,7 +1376,7 @@ void PlayerActivity::loadMedia() {
             if (!item.thumb.empty()) {
                 const auto& photoIc = platform::getImageConstraints();
                 std::string photoUrl = client.getThumbnailUrl(item.thumb, photoIc.photoRequestWidth, photoIc.photoRequestHeight);
-                brls::Logger::debug("Photo URL: {}", photoUrl);
+                brls::Logger::debug("Photo URL: {}", redactTokensInUrl(photoUrl));
 
                 // Load photo into the view (photoImage is defined in player.xml)
                 if (photoImage) {
@@ -1502,7 +1502,7 @@ void PlayerActivity::loadMedia() {
                 // Player already initialized (e.g., mode didn't change) - load immediately
                 brls::Logger::debug("PlayerActivity: Calling player.loadUrl...");
                 if (!player.loadUrl(url, item.title)) {
-                    brls::Logger::error("Failed to load URL: {}", url);
+                    brls::Logger::error("Failed to load URL: {}", redactTokensInUrl(url));
                     m_loadingMedia = false;
                     return;
                 }

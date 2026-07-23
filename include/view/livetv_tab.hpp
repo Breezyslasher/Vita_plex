@@ -65,6 +65,19 @@ private:
     void loadGuide();
     void loadRecordings();
     void buildEPGGrid();
+    // Build ONE fully-detached guide row for `channel` (channel column +
+    // lazy RowLogo entry + HScrollingFrame of program cells + all the
+    // m_epgCells / m_epgRowRanges / m_rowProgramScrolls bookkeeping) and
+    // attach it to `intoBox` last. Shared by buildEPGGrid's synchronous
+    // first screenful and the progressive chunks that append the rest.
+    void appendGuideRow(const LiveTVChannel& channel, brls::Box* intoBox);
+    // Progressive guide build: queue a brls::sync chunk that appends up
+    // to kRowsPerChunk rows starting at `nextRow` into the live guide
+    // box, then chains the next chunk so frames render in between. `gen`
+    // must still match m_gridBuildGen when the chunk runs (and the tab
+    // must still be alive) or the chunk bails — a reload rebuilt the
+    // grid. `buildStartUs` anchors the completion log's total wall time.
+    void scheduleGuideRowChunk(size_t nextRow, int gen, int64_t buildStartUs);
     // Attach a freshly built (orphan) guide content box to the scroll frame,
     // parking focus safely first — see buildEPGGrid for why rows are built
     // detached (per-addView relayout froze the UI for seconds otherwise).
@@ -117,6 +130,20 @@ private:
     GuideProgram  m_heroProgram;
     bool          m_heroProgramValid = false;
     std::shared_ptr<std::atomic<bool>> m_heroThumbAlive;  // ImageLoader cancel handle
+
+    // Lazily-loaded channel logos: buildEPGGrid only records url+targets;
+    // draw() requests a row's logo the first time that row is actually
+    // visible. Queueing all ~32 fetches during the build made them part of
+    // the tab-open stall and left them racing the EPG fetch for workers.
+    struct RowLogo {
+        brls::Box*   row = nullptr;
+        brls::Image* img = nullptr;
+        std::string  url;
+        bool requested = false;
+    };
+    std::vector<RowLogo> m_rowLogos;
+    std::shared_ptr<std::atomic<bool>> m_logoAlive;  // generation guard for
+                                                     // in-flight logo loads
 
     // EPG Guide section
     brls::Label* m_guideLabel = nullptr;
@@ -207,6 +234,12 @@ private:
     bool    m_pendingHeroHasProgram = false;
     bool    m_heroUpdatePending     = false;
     int64_t m_lastHoverUs           = 0;   // CPU time of the last hover event
+
+    // Progressive guide build generation — buildEPGGrid() bumps this and
+    // captures the new value into every row chunk it schedules; a pending
+    // chunk whose generation no longer matches (a reload rebuilt the
+    // grid) bails out instead of appending stale rows into the new guide.
+    int m_gridBuildGen = 0;
 
     // Alive flag for crash prevention on quick tab switching
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);

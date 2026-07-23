@@ -7,6 +7,7 @@
 #include "player/mpv_player.hpp"
 #include "app/application.hpp"
 #include "platform/platform.hpp"
+#include "utils/http_client.hpp"
 #ifdef __ANDROID__
 #include "platform/android_mpv_surface.hpp"
 #endif
@@ -584,16 +585,16 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
         }
         if (proxy.isRunning()) {
             normalizedUrl = proxy.rewriteUrl(normalizedUrl);
-            brls::Logger::info("MpvPlayer: PS4 HTTPS via proxy: {}", normalizedUrl.substr(0, 100));
+            brls::Logger::info("MpvPlayer: PS4 HTTPS via proxy: {}", redactTokensInUrl(normalizedUrl).substr(0, 100));
         } else {
             // Fallback: simple HTTP downgrade (works for local Plex servers)
             normalizedUrl = "http://" + normalizedUrl.substr(8);
-            brls::Logger::info("MpvPlayer: PS4 HTTPS->HTTP fallback: {}", normalizedUrl.substr(0, 80));
+            brls::Logger::info("MpvPlayer: PS4 HTTPS->HTTP fallback: {}", redactTokensInUrl(normalizedUrl).substr(0, 80));
         }
     }
 #endif
 
-    brls::Logger::info("MpvPlayer: Loading URL: {}", normalizedUrl);
+    brls::Logger::info("MpvPlayer: Loading URL: {}", redactTokensInUrl(normalizedUrl));
 
     m_currentUrl = normalizedUrl;
     m_playbackInfo = MpvPlaybackInfo();
@@ -916,7 +917,7 @@ void MpvPlayer::loadSubtitleUrl(const std::string& url) {
     }
 #endif
 
-    brls::Logger::info("MpvPlayer: Loading external subtitle: {}", subUrl);
+    brls::Logger::info("MpvPlayer: Loading external subtitle: {}", redactTokensInUrl(subUrl));
     const char* cmd[] = {"sub-add", subUrl.c_str(), "auto", NULL};
     mpv_command_async(m_mpv, 0, cmd);
     m_subtitlesVisible = true;
