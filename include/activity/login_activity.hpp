@@ -84,6 +84,7 @@ private:
     BRLS_BIND(brls::Button, loginButton,         "login/login_button");
     BRLS_BIND(brls::Button, pinButton,           "login/pin_button");
     BRLS_BIND(brls::Button, offlineButton,       "login/offline_button");
+    BRLS_BIND(brls::Button, localServerButton,   "login/local_server");
     BRLS_BIND(brls::Label,  statusLabel,         "login/status");
     BRLS_BIND(brls::Label,  pinCodeLabel,        "login/pin_code");
 

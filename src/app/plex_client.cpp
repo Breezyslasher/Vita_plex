@@ -940,6 +940,9 @@ void PlexClient::logout() {
     m_reauthTriggered = false;
     Application::getInstance().setAuthToken("");
     Application::getInstance().setServerUrl("");
+    // Drop the no-account session too, so a server that stops admitting
+    // this client without auth doesn't leave a stale flag behind.
+    Application::getInstance().getSettings().localServerMode = false;
 }
 
 bool PlexClient::fetchLibrarySections(std::vector<LibrarySection>& sections) {

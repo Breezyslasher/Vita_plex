@@ -87,9 +87,12 @@ void Application::run() {
             MediaDetailView::showCenteredChoice("Watch party", title, std::move(rows));
         });
 
-    // Check if we have saved login credentials
-    if (isLoggedIn() && !m_serverUrl.empty()) {
-        brls::Logger::info("Restoring saved session...");
+    // Check if we have saved login credentials. A local-server session has
+    // no token by design (the server admits this client without auth), so
+    // the server URL alone is enough to restore it.
+    if ((isLoggedIn() || m_settings.localServerMode) && !m_serverUrl.empty()) {
+        brls::Logger::info("Restoring saved session{}...",
+                           isLoggedIn() ? "" : " (local server, no account)");
         // Verify connection and go to main
         PlexClient::getInstance().setAuthToken(m_authToken);
         // Use connectToServer to properly initialize (including Live TV check)
@@ -398,6 +401,7 @@ bool Application::loadSettings() {
     m_settings.sidebarOrder    = extractString("sidebarOrder");
     m_settings.hiddenSidebarItems = extractString("hiddenSidebarItems");
     m_settings.librarySortPrefs = extractString("librarySortPrefs");
+    m_settings.localServerMode = extractBool("localServerMode", false);
     m_settings.lastHadLiveTV = extractBool("lastHadLiveTV", false);
 
     // Content display settings
@@ -560,6 +564,7 @@ bool Application::saveSettings() {
     json += "  \"sidebarOrder\": \"" + esc(m_settings.sidebarOrder) + "\",\n";
     json += "  \"hiddenSidebarItems\": \"" + esc(m_settings.hiddenSidebarItems) + "\",\n";
     json += "  \"librarySortPrefs\": \"" + esc(m_settings.librarySortPrefs) + "\",\n";
+    json += "  \"localServerMode\": " + b(m_settings.localServerMode) + ",\n";
     json += "  \"lastHadLiveTV\": " + b(m_settings.lastHadLiveTV) + ",\n";
     json += "  \"showCollections\": " + b(m_settings.showCollections) + ",\n";
     json += "  \"showPlaylists\": " + b(m_settings.showPlaylists) + ",\n";

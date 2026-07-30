@@ -92,6 +92,11 @@ struct AppSettings {
     std::string hiddenSidebarItems;       // Comma-separated built-in sidebar ids hidden via the editor
                                           // (search,livetv,downloads,library,music). Libraries use hiddenLibraries.
     std::string librarySortPrefs;         // Per-section sort, encoded "key=param|label;key2=..."
+    bool localServerMode = false;         // Connected directly to a server address with no Plex
+                                          // account (server allows this client without auth).
+                                          // isLoggedIn() is token-based, so without this flag a
+                                          // token-less session would bounce back to the login
+                                          // screen on the next launch.
     bool lastHadLiveTV = false;           // Server had a Live TV DVR last session. The sidebar is
                                           // built from this before the async /livetv/dvrs probe
                                           // lands (the probe no longer blocks app launch), then
