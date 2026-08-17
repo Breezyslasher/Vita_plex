@@ -673,7 +673,12 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
             v.ty = cy + (ch - 26.0f) * 0.5f;
             v.onNow    = info.onNow;
             v.title    = &info.title;
+            // Every visible row shows its programmes' start times; the focused
+            // row upgrades to the full range (+ "on now"). Cells narrower than
+            // a time string would spill the text over their neighbour, so they
+            // show the title only.
             v.subtitle = (rr.row && rr.row == focusedRowBox) ? &info.subtitle
+                       : (cw >= 50.0f)                       ? &info.startLabel
                                                              : &kNoSubtitle;
             visible.push_back(v);
             }
@@ -1635,9 +1640,11 @@ bool LiveTVTab::streamGuideRowCells(GuideRowCursor& cur, int64_t deadlineUs) {
             if (maxChars < 4) maxChars = 4;
             if ((int)title.length() > maxChars) title = title.substr(0, maxChars - 2) + "..";
             info.title = std::move(title);
-            std::string sub = formatTime(prog.startTime) + " – " + formatTime(prog.endTime);
+            std::string startStr = formatTime(prog.startTime);
+            std::string sub = startStr + " – " + formatTime(prog.endTime);
             if (isCurrently) sub += "  ·  on now";
-            info.subtitle = std::move(sub);
+            info.subtitle   = std::move(sub);
+            info.startLabel = std::move(startStr);
             m_epgCells.push_back(info);
 
             // One shared copy of the program per cell — capturing
@@ -1721,7 +1728,8 @@ bool LiveTVTab::streamGuideRowCells(GuideRowCursor& cur, int64_t deadlineUs) {
         if (maxChars < 4) maxChars = 4;
         if ((int)title.length() > maxChars) title = title.substr(0, maxChars - 2) + "..";
         info.title = std::move(title);
-        info.subtitle = formatTime(channel.programStart) + " – " + formatTime(channel.programEnd) + "  ·  on now";
+        info.startLabel = formatTime(channel.programStart);
+        info.subtitle = info.startLabel + " – " + formatTime(channel.programEnd) + "  ·  on now";
         m_epgCells.push_back(info);
 
         // Hover on the legacy fallback updates the hero with this

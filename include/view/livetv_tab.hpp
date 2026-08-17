@@ -209,6 +209,11 @@ private:
         bool onNow = false;            // currently airing (fill + accent border)
         std::string title;
         std::string subtitle;          // start-end + " · on now" if currently airing
+        std::string startLabel;        // just the start time ("7:00 PM"). Drawn on every
+                                       // visible row; the focused row gets `subtitle`
+                                       // instead. Rendering the full range everywhere
+                                       // cost ~2x the batched text pass, and the start
+                                       // time is what makes the grid readable at a glance.
     };
     std::vector<EpgCellInfo> m_epgCells;
 
