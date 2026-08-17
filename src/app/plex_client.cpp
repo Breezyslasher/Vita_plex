@@ -784,6 +784,64 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers) {
     return !servers.empty();
 }
 
+// plex.direct hostnames encode the server's address in their first label:
+//   https://192-168-1-28.<hash>.plex.direct:32400  ->  192.168.1.28
+// Those names resolve only through Plex's public nameservers, so an
+// internet outage makes a server on the SAME LAN unreachable even though
+// nothing between the app and the server is actually down. Deriving the
+// LAN URL from the hostname itself (rather than from a stored address)
+// means sessions saved by older builds get the fallback too.
+//
+// Returns "" for anything that isn't a plex.direct name with an IPv4
+// label — plex.direct also encodes IPv6 with dashes, which is skipped
+// rather than mangled.
+static std::string plexDirectFallbackUrl(const std::string& url) {
+    const size_t schemeEnd = url.find("://");
+    if (schemeEnd == std::string::npos) return "";
+
+    const size_t hostStart = schemeEnd + 3;
+    const size_t hostEnd = url.find_first_of(":/", hostStart);
+    const std::string host = (hostEnd == std::string::npos)
+                                 ? url.substr(hostStart)
+                                 : url.substr(hostStart, hostEnd - hostStart);
+    if (host.find(".plex.direct") == std::string::npos) return "";
+
+    const size_t labelEnd = host.find('.');
+    if (labelEnd == std::string::npos) return "";
+    const std::string label = host.substr(0, labelEnd);
+
+    std::string ip;
+    int octet = -1, octets = 0;
+    for (size_t i = 0; i <= label.size(); i++) {
+        const char c = (i < label.size()) ? label[i] : '-';  // virtual terminator
+        if (c >= '0' && c <= '9') {
+            octet = (octet < 0 ? 0 : octet * 10) + (c - '0');
+            if (octet > 255) return "";
+        } else if (c == '-') {
+            if (octet < 0 || ++octets > 4) return "";
+            ip += std::to_string(octet);
+            if (i < label.size()) ip += '.';
+            octet = -1;
+        } else {
+            return "";  // hex digit or letter: IPv6 or an unexpected shape
+        }
+    }
+    if (octets != 4) return "";
+
+    // Port carries over; the scheme drops to http because a bare IP can
+    // never match the plex.direct certificate. PMS serves http on the LAN
+    // unless "Secure connections" is set to Required.
+    std::string port = "32400";
+    if (hostEnd != std::string::npos && url[hostEnd] == ':') {
+        const size_t portEnd = url.find('/', hostEnd + 1);
+        port = (portEnd == std::string::npos)
+                   ? url.substr(hostEnd + 1)
+                   : url.substr(hostEnd + 1, portEnd - hostEnd - 1);
+    }
+    if (port.empty()) return "";
+    return "http://" + ip + ":" + port;
+}
+
 bool PlexClient::connectToServer(const std::string& url) {
     // Use connection timeout from settings (default 3 minutes for slow connections)
     int timeout = Application::getInstance().getSettings().connectionTimeout;
@@ -806,22 +864,58 @@ bool PlexClient::connectToServer(const std::string& url, int timeoutSeconds) {
     }
     Application::getInstance().setServerUrl(m_serverUrl);  // Use normalized URL
 
-    HttpClient client;
-    HttpRequest req;
-    req.url = buildApiUrl("/");
-    req.method = "GET";
-    req.headers["Accept"] = "application/json";
-    req.timeout = timeoutSeconds;
-
     brls::Logger::debug("Connection timeout: {} seconds", timeoutSeconds);
 
-    HttpResponse resp = client.request(req);
+    // Probe one base URL. m_serverUrl is set before the call because
+    // buildApiUrl() reads it; a failed probe restores the previous value
+    // so a rejected fallback can't leave the client pointed at a dead host.
+    auto probe = [&](const std::string& base) -> bool {
+        const std::string previous = m_serverUrl;
+        m_serverUrl = base;
 
-    if (resp.statusCode == 200) {
-        m_currentServer.name = extractJsonValue(resp.body, "friendlyName");
-        m_currentServer.machineIdentifier = extractJsonValue(resp.body, "machineIdentifier");
-        m_currentServer.address = url;
+        HttpClient client;
+        HttpRequest req;
+        req.url = buildApiUrl("/");
+        req.method = "GET";
+        req.headers["Accept"] = "application/json";
+        req.timeout = timeoutSeconds;
 
+        HttpResponse resp = client.request(req);
+        if (resp.statusCode == 200) {
+            m_currentServer.name = extractJsonValue(resp.body, "friendlyName");
+            m_currentServer.machineIdentifier = extractJsonValue(resp.body, "machineIdentifier");
+            m_currentServer.address = base;
+            return true;
+        }
+
+        m_serverUrl = previous;
+        brls::Logger::error("Connection failed: {} for {}", resp.statusCode, base);
+        return false;
+    };
+
+    bool connected = probe(m_serverUrl);
+
+    if (!connected) {
+        // The plex.direct name may simply be unresolvable — internet down,
+        // DNS blocked, or plex.tv's nameservers unreachable — while the
+        // server itself sits on the same LAN. Retry over its embedded IP.
+        const std::string fallback = plexDirectFallbackUrl(m_serverUrl);
+        if (!fallback.empty()) {
+            brls::Logger::info("Retrying over the LAN address {} (plex.direct name unreachable)",
+                               fallback);
+            connected = probe(fallback);
+            if (connected) {
+                // Deliberately NOT written back to Application's server URL:
+                // that one is persisted, and a LAN-only address would break
+                // the next launch away from home. The plex.direct name stays
+                // canonical and is retried first every time; this fallback
+                // is re-derived whenever it's needed again.
+                brls::Logger::info("Connected over LAN fallback (DNS for plex.direct failed)");
+            }
+        }
+    }
+
+    if (connected) {
         brls::Logger::info("Connected to: {}", m_currentServer.name);
 
         // Live TV availability (m_dvrId / m_epgProviderKey) is probed
@@ -835,7 +929,8 @@ bool PlexClient::connectToServer(const std::string& url, int timeoutSeconds) {
         return true;
     }
 
-    brls::Logger::error("Connection failed: {}", resp.statusCode);
+    // Per-attempt failures were already logged inside probe().
+    brls::Logger::error("Connection failed: no reachable address for {}", m_serverUrl);
     return false;
 }
 
@@ -845,6 +940,9 @@ void PlexClient::logout() {
     m_reauthTriggered = false;
     Application::getInstance().setAuthToken("");
     Application::getInstance().setServerUrl("");
+    // Drop the no-account session too, so a server that stops admitting
+    // this client without auth doesn't leave a stale flag behind.
+    Application::getInstance().getSettings().localServerMode = false;
 }
 
 bool PlexClient::fetchLibrarySections(std::vector<LibrarySection>& sections) {

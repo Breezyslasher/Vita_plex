@@ -199,6 +199,22 @@
                         width="160"/>
                 </brls:Box>
 
+                <!-- Direct-connect escape hatch. Signing in needs plex.tv,
+                     so when it (or the internet) is unreachable this is the
+                     only way into a server that allows LAN clients without
+                     auth (PMS ▸ Network ▸ "allowed without auth"). Own row
+                     so the secondary row above can't overflow narrow cards. -->
+                <brls:Box
+                    id="login/local_server_row"
+                    axis="row"
+                    justifyContent="center"
+                    marginTop="12">
+                    <brls:Button
+                        id="login/local_server"
+                        text="Connect to local server"
+                        width="270"/>
+                </brls:Box>
+
                 <!-- Vestigial label that the hpp still BRLS_BINDs. The
                      real PIN digits live in login/pin_tiles. -->
                 <brls:Label

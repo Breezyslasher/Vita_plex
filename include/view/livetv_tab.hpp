@@ -71,13 +71,40 @@ private:
     // attach it to `intoBox` last. Shared by buildEPGGrid's synchronous
     // first screenful and the progressive chunks that append the rest.
     void appendGuideRow(const LiveTVChannel& channel, brls::Box* intoBox);
-    // Progressive guide build: queue a brls::sync chunk that appends up
-    // to kRowsPerChunk rows starting at `nextRow` into the live guide
-    // box, then chains the next chunk so frames render in between. `gen`
-    // must still match m_gridBuildGen when the chunk runs (and the tab
-    // must still be alive) or the chunk bails — a reload rebuilt the
-    // grid. `buildStartUs` anchors the completion log's total wall time.
-    void scheduleGuideRowChunk(size_t nextRow, int gen, int64_t buildStartUs);
+
+    // Resumable row construction for the progressive build. A row is too
+    // expensive to build inside one frame (~160ms on Vita — streaming one
+    // whole row per tick held the guide at ~5fps for the whole fill), so
+    // the work is sliced into time-budgeted pieces that a chunk tick can
+    // stop and resume mid-row:
+    //   start  — row box + channel column + (detached) scroll/content
+    //   cells  — append program cells until done or the deadline passes
+    //   finish — bookkeeping vectors + attach to the live guide box
+    // The cursor owns the partially built (still detached) row between
+    // ticks; nothing in draw() can see it until finish registers it.
+    struct GuideRowCursor {
+        size_t rowIndex = 0;             // next channel to build
+        brls::Box* rowBox = nullptr;     // non-null while mid-row (detached)
+        brls::HScrollingFrame* scroll = nullptr;
+        brls::Box* programsBox = nullptr;
+        std::shared_ptr<const LiveTVChannel> capturedChannel;
+        size_t cellsBegin = 0;           // m_epgCells size at row start
+        size_t nextProgram = 0;          // resume point in programs[]
+        int64_t lastEndTime = 0;         // gap-fill accumulator
+        brls::Image* logoImg = nullptr;  // RowLogo registered at finish
+        std::string logoUrl;
+    };
+    void startGuideRowStream(const LiveTVChannel& channel, GuideRowCursor& cur);
+    bool streamGuideRowCells(GuideRowCursor& cur, int64_t deadlineUs);
+    void finishGuideRowStream(GuideRowCursor& cur, brls::Box* intoBox);
+
+    // Progressive guide build: queue a brls::sync tick that spends at most
+    // the frame budget building rows (resuming mid-row via the cursor),
+    // then chains the next tick so a frame renders in between. `gen` must
+    // still match m_gridBuildGen when the tick runs (and the tab must
+    // still be alive) or it bails — a reload rebuilt the grid.
+    // `buildStartUs` anchors the completion log's total wall time.
+    void scheduleGuideRowChunk(std::shared_ptr<GuideRowCursor> cur, int gen, int64_t buildStartUs);
     // Attach a freshly built (orphan) guide content box to the scroll frame,
     // parking focus safely first — see buildEPGGrid for why rows are built
     // detached (per-addView relayout froze the UI for seconds otherwise).

@@ -439,6 +439,17 @@ void LoginActivity::onContentAvailable() {
         });
     }
 
+    // Direct connect, no Plex account. Both credential paths go through
+    // plex.tv, so this is the only way in when plex.tv is unreachable —
+    // it works against a server whose "allowed without auth" network list
+    // covers the client (requests then carry no token at all).
+    if (localServerButton) {
+        localServerButton->registerClickAction([this](brls::View*) {
+            onEnterAddressManually();
+            return true;
+        });
+    }
+
     // "Use credentials" — swap the card to the credentials sub-view.
     if (useCredentialsButton) {
         useCredentialsButton->registerClickAction([this](brls::View*) {
@@ -1166,6 +1177,12 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
                     if (!ui->alive) return;
                     ui->alive = false;   // settle: Cancel becomes inert
                     if (ui->bar) ui->bar->setFraction(1.0f);
+                    // No token means the server let us in on its
+                    // "allowed without auth" network — remember that, or
+                    // the token-based isLoggedIn() check sends the next
+                    // launch back to the login screen.
+                    Application::getInstance().getSettings().localServerMode =
+                        Application::getInstance().getAuthToken().empty();
                     Application::getInstance().saveSettings();
                     if (statusLabel) statusLabel->setText("Connected to " + server.name);
                     brls::delay(500, [this]() {
