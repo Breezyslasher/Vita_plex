@@ -283,7 +283,12 @@ jobs:
     name: PS Vita
     runs-on: ubuntu-latest
     container:
-      image: vitasdk/vitasdk:latest
+      # Pinned, not :latest. A rolling rebuild of :latest moved the base
+      # distro (breaking "apk add") and swapped vdpm onto pacman in the same
+      # week — both landed as build failures with no change on our side.
+      # 2026.08 is the series switchfin itself builds its vita-packages
+      # against, so it matches the assets fetched below.
+      image: vitasdk/vitasdk:2026.08
 
     steps:
       - name: Install build requirements
@@ -329,9 +334,15 @@ jobs:
           # NOTE: vita-packages is a ROLLING release on switchfin's side —
           # version bumps REPLACE the old assets, so stale pins here 404.
           # Current list: https://github.com/dragonflylee/switchfin/releases/tag/vita-packages
+          #
+          # Use the *-vita.pkg.tar.xz assets, not the legacy *-arm.tar.xz ones.
+          # The -arm files are bare sysroot trees (include/ + lib/, no .PKGINFO)
+          # from the pre-pacman vdpm era; feeding them to pacman fails with
+          # "missing package metadata ... invalid or corrupted package". The
+          # -vita.pkg.tar.xz assets are real pacman packages.
           set -eu
           for pkg in mbedtls-3.6.7-1 curl-8.16.0-3 ffmpeg-n6.0-3 mpv-0.36.0-3; do
-            wget "$BASE_URL/${pkg}-arm.tar.xz"
+            wget "$BASE_URL/${pkg}-vita.pkg.tar.xz"
           done
 
           # Packages carried by the VitaSDK repo go in by name.
@@ -354,10 +365,10 @@ jobs:
               --cachedir "$VITASDK/var/cache/pacman/pkg" \
               --logfile "$VITASDK/var/log/pacman.log" \
               --noscriptlet --noconfirm --noprogressbar \
-              --upgrade $PWD/*-arm.tar.xz
+              --upgrade $PWD/*-vita.pkg.tar.xz
           else
             # Legacy vdpm (pre-pacman) took local tarballs directly.
-            vdpm $PWD/*-arm.tar.xz
+            vdpm $PWD/*-vita.pkg.tar.xz
           fi
 
           git config --system --add safe.directory "$GITHUB_WORKSPACE"
