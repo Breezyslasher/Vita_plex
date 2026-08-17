@@ -554,6 +554,22 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
         return false;
     }
 
+    // Discard events left over from a previous playback session. The event
+    // pump lives on PlayerActivity's update timer, which is stopped before
+    // that activity calls stop() — so the END_FILE (and trailing IDLE) that
+    // stop() provokes are still queued here. Drained on the *next* session's
+    // first tick they arrive moments after the loadfile below and stomp the
+    // new file's LOADING state straight back to IDLE, which is why starting
+    // a second video after leaving the first never began playing.
+    int drained = 0;
+    while (true) {
+        mpv_event* stale = mpv_wait_event(m_mpv, 0);
+        if (!stale || stale->event_id == MPV_EVENT_NONE) break;
+        drained++;
+    }
+    if (drained > 0)
+        brls::Logger::debug("MpvPlayer: dropped {} stale event(s) from the previous session", drained);
+
     std::string normalizedUrl = url;
 
     // Normalize URL scheme to lowercase for http/https (handles Http, HTTP, HtTp, etc.)
@@ -672,6 +688,13 @@ void MpvPlayer::stop() {
 
     const char* cmd[] = {"stop", NULL};
     mpv_command_async(m_mpv, CMD_STOP, cmd);
+
+    // Whatever load was in flight is being abandoned. FILE_LOADED /
+    // PLAYBACK_RESTART would normally clear this, but leaving the player
+    // stops the event pump (PlayerActivity::willDisappear kills the update
+    // timer before calling us), so those events never arrive — and a stale
+    // "pending" makes loadUrl() reject every future load outright.
+    m_commandPending = false;
 
     m_currentUrl.clear();
     m_playbackInfo = MpvPlaybackInfo();
