@@ -69,6 +69,8 @@ static void* mpvSwitchGlGetProcAddress(void* ctx, const char* name) {
 #endif
 
 #include <cstring>
+#include <chrono>
+#include <thread>
 #include <cstdlib>
 #include <clocale>
 #include <mutex>
@@ -687,6 +689,7 @@ void MpvPlayer::stop() {
     brls::Logger::debug("MpvPlayer: Stopping playback");
 
     const char* cmd[] = {"stop", NULL};
+    m_fileUnloaded = false;
     mpv_command_async(m_mpv, CMD_STOP, cmd);
 
     // Whatever load was in flight is being abandoned. FILE_LOADED /
@@ -695,6 +698,32 @@ void MpvPlayer::stop() {
     // timer before calling us), so those events never arrive — and a stale
     // "pending" makes loadUrl() reject every future load outright.
     m_commandPending = false;
+
+    // Settle the unload before returning. `stop` is asynchronous, and our
+    // caller is about to kill the only event pump, so without this the
+    // teardown never completes: mpv keeps the file — and its decoder —
+    // open until the process exits.
+    //
+    // That is fatal on Android specifically. The VO holds a MediaCodec
+    // bound to the Java Surface, and a Surface admits only one codec at a
+    // time, so the NEXT loadfile is accepted (COMMAND_REPLY error=0) and
+    // then stalls forever with no START_FILE — the second video simply
+    // never begins. Platforms with a persistent GL window (Linux/GLFW)
+    // have no such exclusive binding, which is why this reproduces only
+    // on Android.
+    //
+    // Bounded so a wedged core can never hang the UI thread; if the
+    // budget runs out we log it and carry on.
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(600);
+    while (!m_fileUnloaded && std::chrono::steady_clock::now() < deadline) {
+        eventMainLoop();
+        if (m_fileUnloaded) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    if (!m_fileUnloaded)
+        brls::Logger::warning("MpvPlayer: stop() timed out waiting for the file to unload");
+    else
+        brls::Logger::info("MpvPlayer: stop() settled — previous file released");
 
     m_currentUrl.clear();
     m_playbackInfo = MpvPlaybackInfo();
@@ -1143,6 +1172,7 @@ void MpvPlayer::eventMainLoop() {
             case MPV_EVENT_FILE_LOADED:
                 brls::Logger::info("MpvPlayer: EVENT_FILE_LOADED");
                 m_commandPending = false;
+                m_fileUnloaded = false;   // a file is open again
                 // Don't transition to PLAYING yet - wait for PLAYBACK_RESTART
                 break;
 
@@ -1167,6 +1197,9 @@ void MpvPlayer::eventMainLoop() {
                                        (int)end->reason, end->error);
 
                     m_commandPending = false;
+                    // The file (and with it the decoder holding the
+                    // Android surface) is gone — releases stop()'s wait.
+                    m_fileUnloaded = true;
 
                     // MPV_END_FILE_REASON_EOF = 0
                     // MPV_END_FILE_REASON_STOP = 2
@@ -1193,6 +1226,7 @@ void MpvPlayer::eventMainLoop() {
             case MPV_EVENT_IDLE:
                 brls::Logger::debug("MpvPlayer: EVENT_IDLE");
                 m_commandPending = false;
+                m_fileUnloaded = true;
                 if (m_state != MpvPlayerState::ERROR && m_state != MpvPlayerState::ENDED) {
                     setState(MpvPlayerState::IDLE);
                 }
