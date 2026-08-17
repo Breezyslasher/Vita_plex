@@ -287,7 +287,35 @@ jobs:
 
     steps:
       - name: Install build requirements
-        run: apk update && apk add cmake ninja git zstd tar pkgconf
+        # vitasdk/vitasdk:latest is a rolling image and its base distro is not
+        # a fixed contract — it was Alpine (apk) and a rebuild moved it, which
+        # broke this step with "apk: not found". Detect the package manager
+        # instead of assuming one, and treat "already installed" as success so
+        # a future base swap doesn't fail the build again.
+        run: |
+          set -eu
+          pkgs_apk="cmake ninja git zstd tar pkgconf"
+          pkgs_apt="cmake ninja-build git zstd tar pkg-config"
+          if command -v apk >/dev/null 2>&1; then
+            apk update && apk add $pkgs_apk
+          elif command -v apt-get >/dev/null 2>&1; then
+            apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $pkgs_apt
+          elif command -v dnf >/dev/null 2>&1; then
+            dnf install -y cmake ninja-build git zstd tar pkgconf-pkg-config
+          elif command -v pacman >/dev/null 2>&1; then
+            pacman -Sy --noconfirm cmake ninja git zstd tar pkgconf
+          else
+            echo "No supported package manager found; relying on the image's toolchain"
+          fi
+          # wget is used by the dependency step below and is not in every base.
+          if ! command -v wget >/dev/null 2>&1; then
+            if command -v apk >/dev/null 2>&1; then apk add wget
+            elif command -v apt-get >/dev/null 2>&1; then apt-get install -y --no-install-recommends wget
+            fi
+          fi
+          for tool in cmake ninja git wget; do
+            command -v "$tool" >/dev/null 2>&1 || { echo "::error::$tool missing after dependency install"; exit 1; }
+          done
 
       - name: Checkout
         uses: actions/checkout@v4
