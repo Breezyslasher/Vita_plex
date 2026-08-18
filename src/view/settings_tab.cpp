@@ -11,6 +11,7 @@
  */
 
 #include "view/settings_tab.hpp"
+#include "view/livetv_actions.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
 #include "app/plex_palette.hpp"
@@ -1581,9 +1582,9 @@ void SettingsTab::onManageDefaultDvrLibrary(bool forMovies) {
         }
     }
 
-    auto* dropdown = new brls::Dropdown(
+    showOptionPicker(
         forMovies ? "Default Movie Recording Library" : "Default TV Recording Library",
-        options,
+        options, selected,
         [this, eligible, forMovies](int picked) {
             AppSettings& s = Application::getInstance().getSettings();
             std::string* id    = forMovies ? &s.defaultDvrMovieSectionId
@@ -1604,9 +1605,7 @@ void SettingsTab::onManageDefaultDvrLibrary(bool forMovies) {
             if (cell) {
                 cell->setDetailText(id->empty() ? "Server default" : *title);
             }
-        },
-        selected);
-    brls::Application::pushActivity(new brls::Activity(dropdown));
+        });
 }
 
 void SettingsTab::onNetworkTest() {
