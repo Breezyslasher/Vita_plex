@@ -29,6 +29,10 @@ on:
         description: 'Upload artifacts to a GitHub pre-release'
         type: boolean
         default: false
+      publish_pre_release:
+        description: 'Publish the pre-release automatically (off = leave it a draft to edit and publish by hand)'
+        type: boolean
+        default: true
       disable_builtin_nsp:
         description: disable builtin NSP
         type: boolean
@@ -323,7 +327,12 @@ jobs:
           draft: true
           generate_release_notes: true
           files: release/*
+      # Skipped when publish_pre_release is off, which leaves the release a
+      # draft: assets attached, notes editable, yours to publish when the
+      # description reads the way you want. Publishing is what makes it
+      # immutable, so this is the last moment it can be edited freely.
       - name: Publish the pre-release
+        if: ${{ inputs.publish_pre_release }}
         env:
           GH_TOKEN: ${{ github.token }}
         # -F (not -f) so draft is sent as a JSON boolean rather than the
@@ -332,6 +341,11 @@ jobs:
           gh api -X PATCH \
             "repos/${{ github.repository }}/releases/${{ steps.prerelease.outputs.id }}" \
             -F draft=false
+      - name: Note the draft was left unpublished
+        if: ${{ !inputs.publish_pre_release }}
+        run: |
+          echo "::notice::Pre-release left as a draft. Edit the notes, then publish it here:"
+          echo "::notice::${{ steps.prerelease.outputs.url }}"
 
   # ───────────────────────────────────────────────
   # PS Vita — VPK
