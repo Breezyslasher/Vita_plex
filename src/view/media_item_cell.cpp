@@ -69,6 +69,7 @@ MediaItemCell::MediaItemCell()
     m_subtitleLabel = new brls::Label();
     m_subtitleLabel->setFontSize(ic.subtitleFontSize);
     m_subtitleLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+    m_subtitleLabel->setSingleLine(true);
     m_subtitleLabel->setVisibility(brls::Visibility::GONE);
     this->addView(m_subtitleLabel);
 
@@ -76,6 +77,9 @@ MediaItemCell::MediaItemCell()
     m_descriptionLabel = new brls::Label();
     m_descriptionLabel->setFontSize(ic.descriptionFontSize);
     m_descriptionLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+    // One line only: the cell budgets a single line here, and a wrapped
+    // detail would push into the artwork above it.
+    m_descriptionLabel->setSingleLine(true);
     m_descriptionLabel->setVisibility(brls::Visibility::GONE);
     this->addView(m_descriptionLabel);
 
@@ -238,6 +242,8 @@ void MediaItemCell::setItem(const MediaItem& item) {
         } else {
             m_subtitleLabel->setVisibility(brls::Visibility::GONE);
         }
+        m_hasSubtitle =
+            (m_subtitleLabel->getVisibility() == brls::Visibility::VISIBLE);
     }
 
     // Show progress bar only for items with meaningful watch progress
@@ -586,134 +592,70 @@ void MediaItemCell::updateFocusInfo(bool focused) {
         return;
     }
 
-    // For episodes, show extended info on focus
-    if (m_item.mediaType == MediaType::EPISODE) {
-        if (focused) {
-            // Show full title
-            m_titleLabel->setText(m_item.title);
+    // Per-type detail, built as a single line. The cell has room for one
+    // line below the title, so this replaces the subtitle instead of
+    // stacking under it — stacking is what let two texts land on top of
+    // each other, and an episode's "45 min" + summary was two lines on its
+    // own.
+    std::string info;
+    const int minutes = m_item.duration / 60000;
 
-            // Show duration and other info
-            std::string info;
-            if (m_item.duration > 0) {
-                int minutes = m_item.duration / 60000;
-                info = std::to_string(minutes) + " min";
-            }
+    switch (m_item.mediaType) {
+        case MediaType::EPISODE:
+            if (minutes > 0) info = std::to_string(minutes) + " min";
             if (!m_item.summary.empty()) {
-                // Show first 30 chars of summary to avoid overflow
                 std::string summary = m_item.summary;
-                if (summary.length() > 30) {
-                    summary = summary.substr(0, 27) + "...";
-                }
-                if (!info.empty()) info += "\n";
+                if (summary.length() > 30) summary = summary.substr(0, 27) + "...";
+                if (!info.empty()) info += "  \xC2\xB7  ";
                 info += summary;
             }
-            if (!info.empty()) {
-                m_descriptionLabel->setText(info);
-                m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
+            break;
+
+        case MediaType::MOVIE:
+            if (minutes > 0) {
+                info = std::to_string(minutes) + " min";
+                if (m_item.year > 0) info = std::to_string(m_item.year) + " - " + info;
             }
-        } else {
-            // Restore truncated title
-            m_titleLabel->setText(m_originalTitle);
-            m_descriptionLabel->setVisibility(brls::Visibility::GONE);
-        }
-    } else if (m_item.mediaType == MediaType::MOVIE) {
-        // Show runtime for movies on focus
-        if (focused) {
-            if (m_item.duration > 0) {
-                int minutes = m_item.duration / 60000;
-                std::string info = std::to_string(minutes) + " min";
-                if (m_item.year > 0) {
-                    info = std::to_string(m_item.year) + " - " + info;
-                }
-                m_descriptionLabel->setText(info);
-                m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
-            }
-            // Show full title
-            m_titleLabel->setText(m_item.title);
-        } else {
-            m_titleLabel->setText(m_originalTitle);
-            m_descriptionLabel->setVisibility(brls::Visibility::GONE);
-        }
-    } else if (m_item.mediaType == MediaType::SHOW) {
-        // Show year for shows on focus
-        if (focused) {
-            std::string info;
-            if (m_item.year > 0) {
-                info = std::to_string(m_item.year);
-            }
+            break;
+
+        case MediaType::SHOW:
+            if (m_item.year > 0) info = std::to_string(m_item.year);
             if (m_item.leafCount > 0) {
                 if (!info.empty()) info += " - ";
                 info += std::to_string(m_item.leafCount) + " seasons";
             }
-            if (!info.empty()) {
-                m_descriptionLabel->setText(info);
-                m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
-            }
-            m_titleLabel->setText(m_item.title);
-        } else {
-            m_titleLabel->setText(m_originalTitle);
-            m_descriptionLabel->setVisibility(brls::Visibility::GONE);
-        }
-    } else if (m_item.mediaType == MediaType::SEASON) {
-        // Show season info on focus
-        if (focused) {
-            m_titleLabel->setText(m_item.title);
-            std::string info;
-            if (m_item.leafCount > 0) {
-                info = std::to_string(m_item.leafCount) + " episodes";
-            }
-            if (!info.empty()) {
-                m_descriptionLabel->setText(info);
-                m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
-            }
-        } else {
-            m_titleLabel->setText(m_originalTitle);
-            m_descriptionLabel->setVisibility(brls::Visibility::GONE);
-        }
-    } else if (m_item.mediaType == MediaType::MUSIC_ALBUM ||
-               m_item.mediaType == MediaType::MUSIC_ARTIST) {
-        // Show full title and year for music items on focus
-        if (focused) {
-            m_titleLabel->setText(m_item.title);
-            std::string info;
-            if (m_item.year > 0) {
-                info = std::to_string(m_item.year);
-            }
-            if (!info.empty()) {
-                m_descriptionLabel->setText(info);
-                m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
-            }
-        } else {
-            m_titleLabel->setText(m_originalTitle);
-            m_descriptionLabel->setVisibility(brls::Visibility::GONE);
-        }
-    } else if (m_item.type == "playlist") {
-        // Show full title for playlists on focus
-        if (focused) {
-            m_titleLabel->setText(m_item.title);
-        } else {
-            m_titleLabel->setText(m_originalTitle);
-        }
-    } else if (m_item.mediaType == MediaType::CLIP) {
-        // Show full title and duration for extras on focus
-        if (focused) {
-            m_titleLabel->setText(m_item.title);
-            if (m_item.duration > 0) {
-                int minutes = m_item.duration / 60000;
-                std::string info;
-                if (minutes > 0) {
-                    info = std::to_string(minutes) + " min";
-                } else {
-                    int seconds = m_item.duration / 1000;
-                    info = std::to_string(seconds) + " sec";
-                }
-                m_descriptionLabel->setText(info);
-                m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
-            }
-        } else {
-            m_titleLabel->setText(m_originalTitle);
-            m_descriptionLabel->setVisibility(brls::Visibility::GONE);
-        }
+            break;
+
+        case MediaType::SEASON:
+            if (m_item.leafCount > 0) info = std::to_string(m_item.leafCount) + " episodes";
+            break;
+
+        case MediaType::MUSIC_ALBUM:
+        case MediaType::MUSIC_ARTIST:
+            if (m_item.year > 0) info = std::to_string(m_item.year);
+            break;
+
+        case MediaType::CLIP:
+            if (minutes > 0) info = std::to_string(minutes) + " min";
+            else if (m_item.duration > 0) info = std::to_string(m_item.duration / 1000) + " sec";
+            break;
+
+        default:
+            break;   // playlists and the rest just expand their title
+    }
+
+    // Focus expands the title to its untruncated form either way.
+    m_titleLabel->setText(focused ? m_item.title : m_originalTitle);
+
+    if (focused && !info.empty()) {
+        if (m_subtitleLabel) m_subtitleLabel->setVisibility(brls::Visibility::GONE);
+        m_descriptionLabel->setText(info);
+        m_descriptionLabel->setVisibility(brls::Visibility::VISIBLE);
+    } else {
+        m_descriptionLabel->setVisibility(brls::Visibility::GONE);
+        if (m_subtitleLabel)
+            m_subtitleLabel->setVisibility(m_hasSubtitle ? brls::Visibility::VISIBLE
+                                                         : brls::Visibility::GONE);
     }
 }
 
