@@ -322,6 +322,17 @@ jobs:
           echo "Deleting previously published pre-release $TAG (id=$id)"
           gh api -X DELETE "repos/${{ github.repository }}/releases/$id"
 
+          # Deleting a release leaves its tag behind, and the next run's
+          # draft targets a different commit — publishing then fails with
+          # "We weren't able to create the release for you. Make sure you
+          # have a valid tag." Remove the tag so the recreate is clean.
+          if gh api "repos/${{ github.repository }}/git/refs/tags/$TAG" >/dev/null 2>&1; then
+            echo "Deleting tag $TAG left behind by that release"
+            gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/$TAG"
+          else
+            echo "No tag $TAG to remove."
+          fi
+
       # Second, a prerelease publishes as soon as it is created, so its
       # assets would be attaching to something already read-only. Created as
       # a DRAFT on purpose; the publish step below flips it live once every
