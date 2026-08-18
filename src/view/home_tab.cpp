@@ -69,15 +69,6 @@ HomeTab::HomeTab() {
     m_recentChannelsRow->setVisibility(brls::Visibility::GONE);
     m_scrollContent->addView(m_recentChannelsRow);
 
-    // Shows On Now (Live TV) — same deal: revealed only if the provider's
-    // watchnow rail comes back with something.
-    m_showsOnNowHeader = makeSectionHeader("Shows On Now");
-    m_showsOnNowHeader->setVisibility(brls::Visibility::GONE);
-    m_scrollContent->addView(m_showsOnNowHeader);
-    m_showsOnNowRow = createMediaRow();
-    m_showsOnNowRow->setVisibility(brls::Visibility::GONE);
-    m_scrollContent->addView(m_showsOnNowRow);
-
     // Recently Added Movies section
     m_scrollContent->addView(makeSectionHeader("Recently Added Movies"));
     m_moviesRow = createMediaRow();
@@ -92,6 +83,31 @@ HomeTab::HomeTab() {
     m_scrollContent->addView(makeSectionHeader("Recently Added Music"));
     m_musicRow = createMediaRow();
     m_scrollContent->addView(m_musicRow);
+
+    // The "On Now" rails sit at the bottom: they turn over constantly and
+    // are the longest rails on the page, so they read better below the
+    // library content than wedged between it. Each starts hidden and is
+    // revealed only if the provider's rail comes back with something.
+    m_showsOnNowHeader = makeSectionHeader("Shows On Now");
+    m_showsOnNowHeader->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(m_showsOnNowHeader);
+    m_showsOnNowRow = createMediaRow();
+    m_showsOnNowRow->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(m_showsOnNowRow);
+
+    m_moviesOnNowHeader = makeSectionHeader("Movies On Now");
+    m_moviesOnNowHeader->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(m_moviesOnNowHeader);
+    m_moviesOnNowRow = createMediaRow();
+    m_moviesOnNowRow->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(m_moviesOnNowRow);
+
+    m_sportsOnNowHeader = makeSectionHeader("Sports On Now");
+    m_sportsOnNowHeader->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(m_sportsOnNowHeader);
+    m_sportsOnNowRow = createMediaRow();
+    m_sportsOnNowRow->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(m_sportsOnNowRow);
 
     m_scrollView->setContentView(m_scrollContent);
     this->addView(m_scrollView);
@@ -206,13 +222,15 @@ HorizontalScrollRow* HomeTab::createMediaRow() {
     return row;
 }
 
-void HomeTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>& items, bool directPlay) {
+void HomeTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>& items,
+                          bool directPlay, bool preferPoster) {
     if (!row) return;
 
     row->clearViews();
 
     for (const auto& item : items) {
         auto* cell = new MediaItemCell();
+        cell->setPreferPoster(preferPoster);   // before setItem: it picks the shape
         cell->setItem(item);
         cell->setMarginRight(10);
 
@@ -606,24 +624,19 @@ void HomeTab::loadContent() {
 // fetch and competed for the single HTTPS pipe with the Live TV tab.
 static std::vector<MediaItem>     s_recentItemsCache;
 static std::vector<MediaItem>     s_onNowCache;
+static std::vector<MediaItem>     s_moviesOnNowCache;
+static std::vector<MediaItem>     s_sportsOnNowCache;
 static std::vector<LiveTVChannel> s_recentChannelsCache;   // fallback path only
 static time_t s_liveTVCacheAt = 0;
 static std::mutex s_liveTVCacheMutex;
 static constexpr time_t kLiveTVCacheTTL = 300;  // 5 minutes
 
-// Rail titles come from the server and vary in case/wording ("Shows on
-// Now" vs "Shows On Now"), so match loosely on a lowercase needle.
-static bool railTitleHas(const std::string& title, const char* needle) {
-    std::string lower;
-    lower.reserve(title.size());
-    for (char c : title) lower += (char)tolower((unsigned char)c);
-    return lower.find(needle) != std::string::npos;
-}
-
 void HomeTab::loadRecentChannels() {
     asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
         std::vector<MediaItem>     recentItems;
         std::vector<MediaItem>     onNow;
+        std::vector<MediaItem>     moviesOnNow;
+        std::vector<MediaItem>     sportsOnNow;
         std::vector<LiveTVChannel> channels;
 
         bool cached = false;
@@ -632,6 +645,8 @@ void HomeTab::loadRecentChannels() {
             if (s_liveTVCacheAt != 0 && time(nullptr) - s_liveTVCacheAt < kLiveTVCacheTTL) {
                 recentItems = s_recentItemsCache;
                 onNow       = s_onNowCache;
+                moviesOnNow = s_moviesOnNowCache;
+                sportsOnNow = s_sportsOnNowCache;
                 channels    = s_recentChannelsCache;
                 cached      = true;
             }
@@ -648,26 +663,17 @@ void HomeTab::loadRecentChannels() {
                 return;
             }
 
-            // One request fills both rails: the provider's discover
-            // response carries Recent Channels and "… On Now" inline, with
-            // their items. These are the server's own rails — genuinely
-            // the channels this account watched, not a guess from the
-            // lineup.
-            client.fetchLiveTVRecentChannels(channels, &onNow);
-
-            // Servers that don't inline the On Now rail still expose it via
-            // /watchnow. Two extra requests, so only when it's missing.
-            if (onNow.empty()) {
-                std::vector<LiveTVHub> watchNow;
-                if (client.fetchLiveTVWatchNowHubs(watchNow)) {
-                    for (const auto& h : watchNow) {
-                        if (railTitleHas(h.title, "shows on now")) {
-                            client.fetchLiveTVHubItems(h.key, onNow);
-                            break;
-                        }
-                    }
-                }
-            }
+            // One request fills every rail: the provider's discover
+            // response carries Recent Channels and both "… On Now" rails
+            // inline, with their items. These are the server's own rails —
+            // genuinely the channels this account watched, not a guess
+            // from the lineup.
+            PlexClient::LiveTVHomeRails rails;
+            client.fetchLiveTVHomeRails(rails);
+            channels    = std::move(rails.recentChannels);
+            onNow       = std::move(rails.showsOnNow);
+            moviesOnNow = std::move(rails.moviesOnNow);
+            sportsOnNow = std::move(rails.sportsOnNow);
 
             // Deliberately no EPG-grid fallback. Filling the rail with the
             // first channels of the lineup made it look like viewing
@@ -678,7 +684,8 @@ void HomeTab::loadRecentChannels() {
             if (channels.empty())
                 brls::Logger::debug("HomeTab: no recent channels — rail stays hidden");
 
-            if (recentItems.empty() && onNow.empty() && channels.empty()) {
+            if (recentItems.empty() && onNow.empty() && moviesOnNow.empty() &&
+                sportsOnNow.empty() && channels.empty()) {
                 brls::Logger::debug("HomeTab: no live TV content (rails stay hidden)");
                 return;
             }
@@ -686,13 +693,15 @@ void HomeTab::loadRecentChannels() {
             std::lock_guard<std::mutex> lock(s_liveTVCacheMutex);
             s_recentItemsCache    = recentItems;
             s_onNowCache          = onNow;
+            s_moviesOnNowCache    = moviesOnNow;
+            s_sportsOnNowCache    = sportsOnNow;
             s_recentChannelsCache = channels;
             s_liveTVCacheAt       = time(nullptr);
         } else {
             brls::Logger::debug("HomeTab: live TV rails served from cache");
         }
 
-        brls::sync([this, recentItems, onNow, channels, aliveWeak]() {
+        brls::sync([this, recentItems, onNow, moviesOnNow, sportsOnNow, channels, aliveWeak]() {
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
             // Revealing a rail (GONE -> VISIBLE) relayouts and repopulates,
@@ -701,6 +710,8 @@ void HomeTab::loadRecentChannels() {
 
             m_recentChannelItems = recentItems;
             m_showsOnNow         = onNow;
+            m_moviesOnNow        = moviesOnNow;
+            m_sportsOnNow        = sportsOnNow;
             m_recentChannels     = channels;
 
             const bool showRecent = !m_recentChannelItems.empty() || !m_recentChannels.empty();
@@ -722,7 +733,32 @@ void HomeTab::loadRecentChannels() {
             if (m_showsOnNowRow)
                 m_showsOnNowRow->setVisibility(showOnNow ? brls::Visibility::VISIBLE
                                                          : brls::Visibility::GONE);
-            if (showOnNow) populateRow(m_showsOnNowRow, m_showsOnNow);
+            // Shows On Now lists programmes, but reads as a row of shows —
+            // poster art, like the Recently Added rails above it.
+            if (showOnNow) populateRow(m_showsOnNowRow, m_showsOnNow, false, true);
+
+            // Movies On Now items are movie-typed, so they take the poster
+            // shape on their own; the flag is set anyway for the odd entry
+            // the provider types as an episode.
+            const bool showMovies = !m_moviesOnNow.empty();
+            if (m_moviesOnNowHeader)
+                m_moviesOnNowHeader->setVisibility(showMovies ? brls::Visibility::VISIBLE
+                                                              : brls::Visibility::GONE);
+            if (m_moviesOnNowRow)
+                m_moviesOnNowRow->setVisibility(showMovies ? brls::Visibility::VISIBLE
+                                                           : brls::Visibility::GONE);
+            if (showMovies) populateRow(m_moviesOnNowRow, m_moviesOnNow, false, true);
+
+            const bool showSports = !m_sportsOnNow.empty();
+            if (m_sportsOnNowHeader)
+                m_sportsOnNowHeader->setVisibility(showSports ? brls::Visibility::VISIBLE
+                                                              : brls::Visibility::GONE);
+            if (m_sportsOnNowRow)
+                m_sportsOnNowRow->setVisibility(showSports ? brls::Visibility::VISIBLE
+                                                           : brls::Visibility::GONE);
+            // Fixtures without show art keep the landscape cell — see
+            // MediaItemCell::setPreferPoster().
+            if (showSports) populateRow(m_sportsOnNowRow, m_sportsOnNow, false, true);
         });
     });
 }

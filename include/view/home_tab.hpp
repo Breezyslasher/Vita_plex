@@ -39,7 +39,10 @@ private:
 
     // Helper to create a media row with horizontal scrolling
     HorizontalScrollRow* createMediaRow();
-    void populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>& items, bool directPlay = false);
+    // preferPoster renders show posters instead of the landscape stills
+    // an episode-typed item would otherwise get — used by "Shows On Now".
+    void populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>& items,
+                     bool directPlay = false, bool preferPoster = false);
     void populateChannelRow();          // build channel cells into m_recentChannelsRow
     void tuneChannel(const LiveTVChannel& channel);  // same tune path as the Live TV tab
 
@@ -55,11 +58,14 @@ private:
     // Recent Channels (Live TV) section — header + row hidden until channels load.
     brls::Box*           m_recentChannelsHeader = nullptr;
     HorizontalScrollRow* m_recentChannelsRow = nullptr;
-    // "Shows On Now" — the provider's watchnow rail, alongside the one the
-    // official client shows next to Recent Channels. Hidden until the
-    // server actually returns items for it.
+    // The provider's "On Now" rails, at the bottom of the page. All
+    // hidden until the server actually returns items for them.
     brls::Box*           m_showsOnNowHeader = nullptr;
     HorizontalScrollRow* m_showsOnNowRow = nullptr;
+    brls::Box*           m_moviesOnNowHeader = nullptr;
+    HorizontalScrollRow* m_moviesOnNowRow = nullptr;
+    brls::Box*           m_sportsOnNowHeader = nullptr;
+    HorizontalScrollRow* m_sportsOnNowRow = nullptr;
 
     // Recently Added Movies section
     HorizontalScrollRow* m_moviesRow = nullptr;
@@ -80,6 +86,8 @@ private:
     // EPG-grid fallback on servers that don't advertise the hubs.
     std::vector<MediaItem> m_recentChannelItems;
     std::vector<MediaItem> m_showsOnNow;
+    std::vector<MediaItem> m_moviesOnNow;
+    std::vector<MediaItem> m_sportsOnNow;
     bool m_loaded = false;
 
     // Alive flag for crash prevention on quick tab switching
