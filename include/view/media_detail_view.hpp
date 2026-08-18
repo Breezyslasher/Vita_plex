@@ -117,6 +117,17 @@ public:
     static void performTrackActionStatic(const MediaItem& track);
     static void showTrackContextMenuStatic(const MediaItem& track);
 
+    // Whether an item has a context menu at all. Cells ask before
+    // registering the "Options" hint, so it never appears on something
+    // that would do nothing.
+    static bool hasContextMenu(const MediaItem& item);
+    // Open whichever of the menus above fits this item. Every cell
+    // registers its menu twice — once on START, once on long press — and
+    // each view that lists media items had its own copy of the per-type
+    // chain. One dispatcher is what keeps those copies from drifting, as
+    // they did when live programmes were excluded from only one of them.
+    static void showContextMenuFor(const MediaItem& item);
+
     // Shared builder for the compact options popover (artboard "D4a"). Anchors a
     // 320px panel to `anchor` (the focused cell, usually
     // brls::Application::getCurrentFocus()); falls back to a centered bottom

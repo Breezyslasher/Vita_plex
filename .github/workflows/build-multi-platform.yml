@@ -29,6 +29,10 @@ on:
         description: 'Upload artifacts to a GitHub pre-release'
         type: boolean
         default: false
+      publish_pre_release:
+        description: 'Publish the pre-release automatically (off = leave it a draft to edit and publish by hand)'
+        type: boolean
+        default: true
       disable_builtin_nsp:
         description: disable builtin NSP
         type: boolean
@@ -153,6 +157,7 @@ jobs:
             [[ -d $p ]] && 7z a -mx=9 $p.7z ./$p/* && rm -rf $p
           done
       - name: Release and Upload Assets
+        id: release
         uses: softprops/action-gh-release@v2
         with:
           name: VitaPlex ${{ github.ref_name }}
@@ -169,6 +174,17 @@ jobs:
             VitaPlex-Flatpak-*/*
             VitaPlex-aur-*/*.pkg.tar.*
             VitaPlex-android-*/*
+      # draft: true above is what keeps the upload working on a repo with
+      # immutable releases, but nothing published the draft afterwards, so
+      # every tag-triggered release stopped at "Draft" until someone
+      # published it by hand. Same PATCH the pre-release job uses.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PATCH \
+            "repos/${{ github.repository }}/releases/${{ steps.release.outputs.id }}" \
+            -F draft=false
 
   # ───────────────────────────────────────────────
   # Pre-release — manually triggered
@@ -265,18 +281,42 @@ jobs:
 
           echo "Release files:"
           ls -lh release/
-      # Created as a DRAFT on purpose. This repo has immutable releases
-      # enabled, so a release becomes read-only the moment it publishes —
-      # and a prerelease publishes as soon as it is created, which killed
-      # the asset upload partway through:
+      # This repo has immutable releases: a release is read-only the moment
+      # it publishes. Two consequences, and one step each below.
       #
-      #   Error: Cannot upload asset VitaPlex.Beta-2.1.7-switch-opengl.nro
+      # First, a re-run for a version that already published cannot add or
+      # replace assets — which is how re-running to complete a set after one
+      # platform failed to build ends in:
+      #
+      #   Error: Cannot upload asset VitaPlex.Beta-1.2.6-arm64-v8a.apk
       #   to an immutable release.
       #
-      # Uploading into a draft avoids that; the publish step below then
-      # flips it live once every asset is attached. (The tag-triggered
-      # upload-release job above already used draft: true, which is why
-      # only prereleases hit this.)
+      # So clear the previous attempt first. Guarded to pre-releases: a real
+      # release is never deleted by this job.
+      - name: Clear a previously published pre-release for this version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.resolve-version.outputs.version_tag }}
+        run: |
+          id=$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" \
+                 --jq '.id' 2>/dev/null || true)
+          if [[ -z "$id" ]]; then
+            echo "No existing release for $TAG — nothing to clear."
+            exit 0
+          fi
+          prerelease=$(gh api "repos/${{ github.repository }}/releases/$id" --jq '.prerelease')
+          if [[ "$prerelease" != "true" ]]; then
+            echo "::error::Release $TAG already exists and is not a pre-release."
+            echo "::error::Refusing to delete it. Bump the version or remove it by hand."
+            exit 1
+          fi
+          echo "Deleting previously published pre-release $TAG (id=$id)"
+          gh api -X DELETE "repos/${{ github.repository }}/releases/$id"
+
+      # Second, a prerelease publishes as soon as it is created, so its
+      # assets would be attaching to something already read-only. Created as
+      # a DRAFT on purpose; the publish step below flips it live once every
+      # asset is attached.
       - name: Create pre-release
         id: prerelease
         uses: softprops/action-gh-release@v2
@@ -287,7 +327,12 @@ jobs:
           draft: true
           generate_release_notes: true
           files: release/*
+      # Skipped when publish_pre_release is off, which leaves the release a
+      # draft: assets attached, notes editable, yours to publish when the
+      # description reads the way you want. Publishing is what makes it
+      # immutable, so this is the last moment it can be edited freely.
       - name: Publish the pre-release
+        if: ${{ inputs.publish_pre_release }}
         env:
           GH_TOKEN: ${{ github.token }}
         # -F (not -f) so draft is sent as a JSON boolean rather than the
@@ -296,6 +341,11 @@ jobs:
           gh api -X PATCH \
             "repos/${{ github.repository }}/releases/${{ steps.prerelease.outputs.id }}" \
             -F draft=false
+      - name: Note the draft was left unpublished
+        if: ${{ !inputs.publish_pre_release }}
+        run: |
+          echo "::notice::Pre-release left as a draft. Edit the notes, then publish it here:"
+          echo "::notice::${{ steps.prerelease.outputs.url }}"
 
   # ───────────────────────────────────────────────
   # PS Vita — VPK
