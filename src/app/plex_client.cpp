@@ -4188,6 +4188,185 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
     return !channelsWithPrograms.empty();
 }
 
+// ── Live TV discovery rails ────────────────────────────────────────────
+// The server computes these itself (see LiveTVHub). We were synthesising a
+// "recent channels" list from the EPG grid instead, which was really just
+// the first N channels of the lineup in lineup order.
+
+// Collect {title, key, type} from the objects of a named array. Shared by
+// the watchnow response (MediaContainer.Type[]) and a provider's hub
+// response (MediaContainer.Hub[]) — both are arrays of objects carrying a
+// title and a ready-to-fetch key.
+static void collectLiveTVHubs(std::string_view body, std::string_view arrayKey,
+                              std::vector<LiveTVHub>& out) {
+    size_t arrPos = body.find(arrayKey);
+    if (arrPos == std::string_view::npos) return;
+    size_t start = body.find('[', arrPos);
+    if (start == std::string_view::npos) return;
+
+    size_t pos = start + 1;
+    while (pos < body.size()) {
+        while (pos < body.size() && (body[pos] == ' ' || body[pos] == ',' ||
+               body[pos] == '\n' || body[pos] == '\r' || body[pos] == '\t')) {
+            pos++;
+        }
+        if (pos >= body.size() || body[pos] == ']') break;
+        if (body[pos] != '{') { pos++; continue; }
+
+        size_t objStart = pos;
+        int depth = 1;
+        pos++;
+        while (depth > 0 && pos < body.size()) {
+            if (body[pos] == '{') depth++;
+            else if (body[pos] == '}') depth--;
+            pos++;
+        }
+        std::string_view obj = body.substr(objStart, pos - objStart);
+
+        LiveTVHub h;
+        h.title = std::string(jsonFieldView(obj, "\"title\""));
+        h.key   = std::string(jsonFieldView(obj, "\"key\""));
+        h.type  = std::string(jsonFieldView(obj, "\"type\""));
+        if (!h.title.empty() && !h.key.empty()) out.push_back(std::move(h));
+    }
+}
+
+bool PlexClient::fetchLiveTVWatchNowHubs(std::vector<LiveTVHub>& hubs) {
+    hubs.clear();
+    if (m_epgProviderKey.empty()) checkLiveTVAvailability();
+    if (m_epgProviderKey.empty()) return false;
+
+    HttpClient client;
+    HttpRequest req;
+    req.url = buildApiUrl("/" + m_epgProviderKey + "/watchnow");
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    req.timeout = 15;
+
+    HttpResponse resp = client.request(req);
+    if (resp.statusCode != 200 || resp.body.empty()) {
+        brls::Logger::debug("fetchLiveTVWatchNowHubs: HTTP {}", resp.statusCode);
+        return false;
+    }
+
+    collectLiveTVHubs(resp.body, "\"Type\"", hubs);
+    brls::Logger::info("fetchLiveTVWatchNowHubs: {} rails", hubs.size());
+    return !hubs.empty();
+}
+
+bool PlexClient::fetchLiveTVProviderHubs(std::vector<LiveTVHub>& hubs) {
+    hubs.clear();
+    if (m_epgProviderKey.empty()) checkLiveTVAvailability();
+    if (m_epgProviderKey.empty()) return false;
+
+    HttpClient client;
+    HttpRequest req;
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    req.timeout = 15;
+
+    // Providers advertise their discovery hubs through a hubKey on one of
+    // their content directories; the path is per-server, so it has to be
+    // discovered rather than assumed.
+    req.url = buildApiUrl("/media/providers");
+    HttpResponse resp = client.request(req);
+    if (resp.statusCode != 200 || resp.body.empty()) {
+        brls::Logger::debug("fetchLiveTVProviderHubs: /media/providers HTTP {}", resp.statusCode);
+        return false;
+    }
+
+    const size_t provPos = resp.body.find("\"" + m_epgProviderKey + "\"");
+    if (provPos == std::string::npos) {
+        brls::Logger::debug("fetchLiveTVProviderHubs: provider {} not listed", m_epgProviderKey);
+        return false;
+    }
+    // Bound the search to this provider's own object so a hubKey belonging
+    // to the next provider in the list can't be picked up by mistake.
+    const size_t nextProv = resp.body.find("\"identifier\"", provPos + 1);
+    const size_t hubPos = resp.body.find("\"hubKey\"", provPos);
+    if (hubPos == std::string::npos || (nextProv != std::string::npos && hubPos > nextProv)) {
+        brls::Logger::debug("fetchLiveTVProviderHubs: provider advertises no hubKey");
+        return false;
+    }
+
+    const std::string hubKey(jsonFieldView(std::string_view(resp.body).substr(hubPos), "\"hubKey\""));
+    if (hubKey.empty()) return false;
+
+    req.url = buildApiUrl(hubKey);
+    resp = client.request(req);
+    if (resp.statusCode != 200 || resp.body.empty()) {
+        brls::Logger::debug("fetchLiveTVProviderHubs: hubKey HTTP {}", resp.statusCode);
+        return false;
+    }
+
+    collectLiveTVHubs(resp.body, "\"Hub\"", hubs);
+    brls::Logger::info("fetchLiveTVProviderHubs: {} hubs from {}", hubs.size(), hubKey);
+    return !hubs.empty();
+}
+
+bool PlexClient::fetchLiveTVHubItems(const std::string& key, std::vector<MediaItem>& items) {
+    items.clear();
+    if (key.empty()) return false;
+
+    HttpClient client;
+    HttpRequest req;
+    req.url = buildApiUrl(key);   // keys already carry their own query string
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    req.timeout = 20;
+
+    HttpResponse resp = client.request(req);
+    if (resp.statusCode != 200 || resp.body.empty()) {
+        brls::Logger::debug("fetchLiveTVHubItems: HTTP {} for {}", resp.statusCode, key);
+        return false;
+    }
+
+    const std::string_view body(resp.body);
+    size_t pos = 0;
+    while ((pos = resp.body.find("\"ratingKey\"", pos)) != std::string::npos) {
+        size_t objStart = resp.body.rfind('{', pos);
+        if (objStart == std::string::npos) break;
+
+        int depth = 1;
+        size_t objEnd = objStart + 1;
+        while (depth > 0 && objEnd < resp.body.size()) {
+            if (resp.body[objEnd] == '{') depth++;
+            else if (resp.body[objEnd] == '}') depth--;
+            objEnd++;
+        }
+        std::string_view obj = body.substr(objStart, objEnd - objStart);
+
+        MediaItem item;
+        item.ratingKey   = std::string(jsonFieldView(obj, "\"ratingKey\""));
+        item.key         = std::string(jsonFieldView(obj, "\"key\""));
+        item.title       = std::string(jsonFieldView(obj, "\"title\""));
+        item.summary     = std::string(jsonFieldView(obj, "\"summary\""));
+        item.thumb       = std::string(jsonFieldView(obj, "\"thumb\""));
+        if (item.thumb.empty()) item.thumb = std::string(jsonFieldView(obj, "\"grandparentThumb\""));
+        item.art         = std::string(jsonFieldView(obj, "\"art\""));
+        item.type        = std::string(jsonFieldView(obj, "\"type\""));
+        item.mediaType   = parseMediaType(item.type);
+        item.year        = (int)svToInt64(jsonFieldView(obj, "\"year\""));
+        item.duration    = (int)svToInt64(jsonFieldView(obj, "\"duration\""));
+        item.viewOffset  = (int)svToInt64(jsonFieldView(obj, "\"viewOffset\""));
+        // Live TV entries title themselves by episode ("Ick, A Bod") while
+        // the show name sits on grandparentTitle ("Elsbeth"). The official
+        // client's rails lead with the show, so promote it and keep the
+        // episode title alongside.
+        item.grandparentTitle = std::string(jsonFieldView(obj, "\"grandparentTitle\""));
+        if (!item.grandparentTitle.empty()) {
+            item.parentTitle = item.title;
+            item.title = item.grandparentTitle;
+        }
+
+        if (!item.ratingKey.empty() && !item.title.empty()) items.push_back(std::move(item));
+        pos = objEnd;
+    }
+
+    brls::Logger::info("fetchLiveTVHubItems: {} items from {}", items.size(), key);
+    return !items.empty();
+}
+
 bool PlexClient::tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl,
                                    std::string& liveSessionUuid,
                                    const std::string& programMetadataKey) {

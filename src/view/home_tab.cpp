@@ -69,6 +69,15 @@ HomeTab::HomeTab() {
     m_recentChannelsRow->setVisibility(brls::Visibility::GONE);
     m_scrollContent->addView(m_recentChannelsRow);
 
+    // Shows On Now (Live TV) — same deal: revealed only if the provider's
+    // watchnow rail comes back with something.
+    m_showsOnNowHeader = makeSectionHeader("Shows On Now");
+    m_showsOnNowHeader->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(m_showsOnNowHeader);
+    m_showsOnNowRow = createMediaRow();
+    m_showsOnNowRow->setVisibility(brls::Visibility::GONE);
+    m_scrollContent->addView(m_showsOnNowRow);
+
     // Recently Added Movies section
     m_scrollContent->addView(makeSectionHeader("Recently Added Movies"));
     m_moviesRow = createMediaRow();
@@ -563,58 +572,120 @@ void HomeTab::loadContent() {
     brls::Logger::debug("HomeTab: Async content loading started");
 }
 
-// The channel rail's EPG snapshot outlives the tab instance (HomeTab is
-// recreated on every tab switch). Without this, each visit to Home kicks
-// off a full multi-second fetchEPGGrid that competes for the single HTTPS
-// pipe with the Live TV tab's own guide fetch.
-static std::vector<LiveTVChannel> s_recentChannelsCache;
-static time_t s_recentChannelsCacheAt = 0;
-static std::mutex s_recentChannelsCacheMutex;
-static constexpr time_t kRecentChannelsCacheTTL = 300;  // 5 minutes
+// The Live TV rails outlive the tab instance (HomeTab is recreated on
+// every tab switch). Without this, each visit to Home re-ran the whole
+// fetch and competed for the single HTTPS pipe with the Live TV tab.
+static std::vector<MediaItem>     s_recentItemsCache;
+static std::vector<MediaItem>     s_onNowCache;
+static std::vector<LiveTVChannel> s_recentChannelsCache;   // fallback path only
+static time_t s_liveTVCacheAt = 0;
+static std::mutex s_liveTVCacheMutex;
+static constexpr time_t kLiveTVCacheTTL = 300;  // 5 minutes
+
+// Rail titles come from the server and vary in case/wording ("Shows on
+// Now" vs "Shows On Now"), so match loosely on a lowercase needle.
+static bool railTitleHas(const std::string& title, const char* needle) {
+    std::string lower;
+    lower.reserve(title.size());
+    for (char c : title) lower += (char)tolower((unsigned char)c);
+    return lower.find(needle) != std::string::npos;
+}
 
 void HomeTab::loadRecentChannels() {
     asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+        std::vector<MediaItem>     recentItems;
+        std::vector<MediaItem>     onNow;
         std::vector<LiveTVChannel> channels;
+
+        bool cached = false;
         {
-            std::lock_guard<std::mutex> lock(s_recentChannelsCacheMutex);
-            if (!s_recentChannelsCache.empty() &&
-                time(nullptr) - s_recentChannelsCacheAt < kRecentChannelsCacheTTL) {
-                channels = s_recentChannelsCache;
+            std::lock_guard<std::mutex> lock(s_liveTVCacheMutex);
+            if (s_liveTVCacheAt != 0 && time(nullptr) - s_liveTVCacheAt < kLiveTVCacheTTL) {
+                recentItems = s_recentItemsCache;
+                onNow       = s_onNowCache;
+                channels    = s_recentChannelsCache;
+                cached      = true;
             }
         }
 
-        if (channels.empty()) {
-            brls::Logger::debug("HomeTab: Fetching live channels (async)...");
+        if (!cached) {
             PlexClient& client = PlexClient::getInstance();
 
-            // Same data path the Live TV tab uses (fetchEPGGrid). A small window is
-            // enough to surface the now-playing episode preview + tune metadata.
-            if (!client.fetchEPGGrid(channels, 2)) {
-                brls::Logger::debug("HomeTab: no live channels (rail stays hidden)");
+            // Probe the provider's own discovery hubs and report what it
+            // offers. The "Recent Channels" hub carries real watch history
+            // (including per-channel resume progress) which the EPG grid
+            // cannot give us — but its entries are programmes, and the
+            // channel-cell click path needs a *channel* key to tune. Until
+            // that payload has been seen on a real server, the rail keeps
+            // its current EPG-grid source rather than risk dead cells.
+            std::vector<LiveTVHub> hubs;
+            if (client.fetchLiveTVProviderHubs(hubs)) {
+                for (const auto& h : hubs)
+                    brls::Logger::info("HomeTab: provider hub available — \"{}\" -> {}", h.title, h.key);
+            }
+
+            std::vector<LiveTVHub> watchNow;
+            if (client.fetchLiveTVWatchNowHubs(watchNow)) {
+                for (const auto& h : watchNow) {
+                    if (railTitleHas(h.title, "shows on now")) {
+                        client.fetchLiveTVHubItems(h.key, onNow);
+                        break;
+                    }
+                }
+            }
+
+            // Recent Channels keeps the EPG-grid source and its existing
+            // 16:9 channel cells, so tuning on click keeps working.
+            if (recentItems.empty()) {
+                if (client.fetchEPGGrid(channels, 2)) {
+                    if (channels.size() > 10) channels.resize(10);
+                } else {
+                    channels.clear();
+                }
+            }
+
+            if (recentItems.empty() && onNow.empty() && channels.empty()) {
+                brls::Logger::debug("HomeTab: no live TV content (rails stay hidden)");
                 return;
             }
-            if (channels.size() > 10) channels.resize(10);
 
-            std::lock_guard<std::mutex> lock(s_recentChannelsCacheMutex);
+            std::lock_guard<std::mutex> lock(s_liveTVCacheMutex);
+            s_recentItemsCache    = recentItems;
+            s_onNowCache          = onNow;
             s_recentChannelsCache = channels;
-            s_recentChannelsCacheAt = time(nullptr);
+            s_liveTVCacheAt       = time(nullptr);
         } else {
-            brls::Logger::debug("HomeTab: live channels served from cache");
+            brls::Logger::debug("HomeTab: live TV rails served from cache");
         }
 
-        brls::sync([this, channels, aliveWeak]() {
+        brls::sync([this, recentItems, onNow, channels, aliveWeak]() {
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
 
-            m_recentChannels = channels;
-            const bool show = !m_recentChannels.empty();
+            m_recentChannelItems = recentItems;
+            m_showsOnNow         = onNow;
+            m_recentChannels     = channels;
+
+            const bool showRecent = !m_recentChannelItems.empty() || !m_recentChannels.empty();
             if (m_recentChannelsHeader)
-                m_recentChannelsHeader->setVisibility(show ? brls::Visibility::VISIBLE
-                                                           : brls::Visibility::GONE);
+                m_recentChannelsHeader->setVisibility(showRecent ? brls::Visibility::VISIBLE
+                                                                 : brls::Visibility::GONE);
             if (m_recentChannelsRow)
-                m_recentChannelsRow->setVisibility(show ? brls::Visibility::VISIBLE
-                                                        : brls::Visibility::GONE);
-            if (show) populateChannelRow();
+                m_recentChannelsRow->setVisibility(showRecent ? brls::Visibility::VISIBLE
+                                                              : brls::Visibility::GONE);
+            if (showRecent) {
+                if (!m_recentChannelItems.empty()) populateRow(m_recentChannelsRow, m_recentChannelItems);
+                else                               populateChannelRow();
+            }
+
+            const bool showOnNow = !m_showsOnNow.empty();
+            if (m_showsOnNowHeader)
+                m_showsOnNowHeader->setVisibility(showOnNow ? brls::Visibility::VISIBLE
+                                                            : brls::Visibility::GONE);
+            if (m_showsOnNowRow)
+                m_showsOnNowRow->setVisibility(showOnNow ? brls::Visibility::VISIBLE
+                                                         : brls::Visibility::GONE);
+            if (showOnNow) populateRow(m_showsOnNowRow, m_showsOnNow);
         });
     });
 }
