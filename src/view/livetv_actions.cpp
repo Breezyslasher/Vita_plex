@@ -56,6 +56,9 @@ const std::vector<int> kMinQualities   = { 0, 50, 75, 100 };
 const std::vector<std::string> kMinQualityLabels = {
     "Any quality", "480p or better", "720p or better", "1080p or better"
 };
+const std::vector<std::string> kOffsetLabels = {
+    "On time", "1 minute", "2 minutes", "3 minutes", "5 minutes", "10 minutes"
+};
 
 // Translucent host so the screen behind shows through the scrim (same
 // shape as media_detail_view's PopoverActivity, which is file-local there).
@@ -633,20 +636,32 @@ void openRecordOptionsDialog(const MediaItem& item, RecordingTemplate tmpl,
 
     {
         auto stW = st;
-        settingsBox->addView(makeSettingRow("Start early", &st->startRow, [stW](int d) {
-            int i = indexOfOffset(stW->prefs.startOffsetMin) + d;
-            if (i < 0) i = 0;
-            if (i >= (int)kOffsetMinutes.size()) i = (int)kOffsetMinutes.size() - 1;
-            stW->prefs.startOffsetMin = kOffsetMinutes[i];
-            if (stW->refresh) stW->refresh();
-        }));
-        settingsBox->addView(makeSettingRow("End late", &st->endRow, [stW](int d) {
-            int i = indexOfOffset(stW->prefs.endOffsetMin) + d;
-            if (i < 0) i = 0;
-            if (i >= (int)kOffsetMinutes.size()) i = (int)kOffsetMinutes.size() - 1;
-            stW->prefs.endOffsetMin = kOffsetMinutes[i];
-            if (stW->refresh) stW->refresh();
-        }));
+        // Every row picks the same two ways: left/right steps in place,
+        // click opens a dropdown of the whole ladder.
+        auto offsetRow = [&settingsBox, stW](const char* label, const char* pickerTitle,
+                                             SettingRowState* rowState, int RecordingPrefs::*field) {
+            settingsBox->addView(makeSettingRow(label, rowState,
+                [stW, field](int d) {
+                    int i = indexOfOffset(stW->prefs.*field) + d;
+                    if (i < 0) i = 0;
+                    if (i >= (int)kOffsetMinutes.size()) i = (int)kOffsetMinutes.size() - 1;
+                    stW->prefs.*field = kOffsetMinutes[i];
+                    if (stW->refresh) stW->refresh();
+                },
+                [stW, field, pickerTitle]() {
+                    auto* dd = new brls::Dropdown(pickerTitle, kOffsetLabels,
+                        [stW, field](int idx) {
+                            stW->prefs.*field = kOffsetMinutes[(size_t)idx];
+                            if (stW->refresh) stW->refresh();
+                        },
+                        indexOfOffset(stW->prefs.*field));
+                    brls::Application::pushActivity(new brls::Activity(dd));
+                }));
+        };
+        offsetRow("Start early", "Start recording early", &st->startRow,
+                  &RecordingPrefs::startOffsetMin);
+        offsetRow("End late", "End recording late", &st->endRow,
+                  &RecordingPrefs::endOffsetMin);
         settingsBox->addView(makeSettingRow("Min video quality", &st->qualityRow,
             [stW](int d) {
                 int i = indexOfQuality(stW->prefs.minVideoQuality) + d;
