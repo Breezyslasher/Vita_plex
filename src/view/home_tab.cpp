@@ -292,27 +292,30 @@ void HomeTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>
                 });
         }
 
-        // Long press on touch = same as START button options
-        cell->addGestureRecognizer(new LongPressGestureRecognizer(
-            cell, [capturedItem](LongPressGestureStatus status) {
-                if (status.state != brls::GestureState::START) {
-                    return;
-                }
+        // Long press on touch = same as START button options, so it needs
+        // the same exclusion: a live programme has no library ratingKey for
+        // any of these menus to act on, and selecting it already offers the
+        // Watch Now / Record choice that does apply.
+        if (!capturedItem.isLiveTV) {
+            cell->addGestureRecognizer(new LongPressGestureRecognizer(
+                cell, [capturedItem](LongPressGestureStatus status) {
+                    if (status.state != brls::GestureState::START) return;
 
-                if (capturedItem.mediaType == MediaType::MOVIE) {
-                    MediaDetailView::showMovieContextMenuStatic(capturedItem);
-                } else if (capturedItem.mediaType == MediaType::SHOW) {
-                    MediaDetailView::showShowContextMenuStatic(capturedItem);
-                } else if (capturedItem.mediaType == MediaType::SEASON) {
-                    MediaDetailView::showSeasonContextMenuStatic(capturedItem);
-                } else if (capturedItem.mediaType == MediaType::EPISODE) {
-                    MediaDetailView::showEpisodeContextMenu(capturedItem);
-                } else if (capturedItem.mediaType == MediaType::MUSIC_ARTIST) {
-                    MediaDetailView::showArtistContextMenuStatic(capturedItem);
-                } else if (capturedItem.mediaType == MediaType::MUSIC_ALBUM) {
-                    MediaDetailView::showAlbumContextMenuStatic(capturedItem);
-                }
-            }));
+                    if (capturedItem.mediaType == MediaType::MOVIE) {
+                        MediaDetailView::showMovieContextMenuStatic(capturedItem);
+                    } else if (capturedItem.mediaType == MediaType::SHOW) {
+                        MediaDetailView::showShowContextMenuStatic(capturedItem);
+                    } else if (capturedItem.mediaType == MediaType::SEASON) {
+                        MediaDetailView::showSeasonContextMenuStatic(capturedItem);
+                    } else if (capturedItem.mediaType == MediaType::EPISODE) {
+                        MediaDetailView::showEpisodeContextMenu(capturedItem);
+                    } else if (capturedItem.mediaType == MediaType::MUSIC_ARTIST) {
+                        MediaDetailView::showArtistContextMenuStatic(capturedItem);
+                    } else if (capturedItem.mediaType == MediaType::MUSIC_ALBUM) {
+                        MediaDetailView::showAlbumContextMenuStatic(capturedItem);
+                    }
+                }));
+        }
 
         row->addView(cell);
     }
