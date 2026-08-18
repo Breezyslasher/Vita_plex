@@ -611,18 +611,19 @@ void HomeTab::loadRecentChannels() {
         if (!cached) {
             PlexClient& client = PlexClient::getInstance();
 
-            // Probe the provider's own discovery hubs and report what it
-            // offers. The "Recent Channels" hub carries real watch history
-            // (including per-channel resume progress) which the EPG grid
-            // cannot give us — but its entries are programmes, and the
-            // channel-cell click path needs a *channel* key to tune. Until
-            // that payload has been seen on a real server, the rail keeps
-            // its current EPG-grid source rather than risk dead cells.
-            std::vector<LiveTVHub> hubs;
-            if (client.fetchLiveTVProviderHubs(hubs)) {
-                for (const auto& h : hubs)
-                    brls::Logger::info("HomeTab: provider hub available — \"{}\" -> {}", h.title, h.key);
+            // Nothing below is reachable without a DVR, and every call would
+            // otherwise force the availability probe first. Skip the whole
+            // rail load on servers that have no Live TV.
+            if (!client.hasLiveTV() &&
+                !Application::getInstance().getSettings().lastHadLiveTV) {
+                return;
             }
+
+            // The provider's real Recent Channels hub — genuinely the
+            // channels this account watched, in one request. Falls through
+            // to the EPG-grid approximation below if the server has no
+            // such hub.
+            client.fetchLiveTVRecentChannels(channels);
 
             std::vector<LiveTVHub> watchNow;
             if (client.fetchLiveTVWatchNowHubs(watchNow)) {
@@ -634,11 +635,13 @@ void HomeTab::loadRecentChannels() {
                 }
             }
 
-            // Recent Channels keeps the EPG-grid source and its existing
-            // 16:9 channel cells, so tuning on click keeps working.
-            if (recentItems.empty()) {
+            // Fallback only: the first channels of the lineup, which is an
+            // approximation of "recent" and nothing more. Both paths render
+            // through the same 16:9 channel cells and tune on click.
+            if (channels.empty()) {
+                brls::Logger::debug("HomeTab: no Recent Channels hub — approximating from the EPG grid");
                 if (client.fetchEPGGrid(channels, 2)) {
-                    if (channels.size() > 10) channels.resize(10);
+                    if (channels.size() > 8) channels.resize(8);
                 } else {
                     channels.clear();
                 }
