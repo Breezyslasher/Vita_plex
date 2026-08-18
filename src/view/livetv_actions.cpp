@@ -347,7 +347,8 @@ struct SettingRowState {
 };
 
 brls::Box* makeSettingRow(const std::string& label, SettingRowState* state,
-                          std::function<void(int)> step) {
+                          std::function<void(int)> step,
+                          std::function<void()> openPicker = {}) {
     auto* row = new brls::Box();
     row->setAxis(brls::Axis::ROW);
     row->setAlignItems(brls::AlignItems::CENTER);
@@ -385,6 +386,12 @@ brls::Box* makeSettingRow(const std::string& label, SettingRowState* state,
     pill->setBorderThickness(1.0f);
     auto* value = makeLabel("", 12.0f, tok::text());
     pill->addView(value);
+    if (openPicker) {
+        // Chevron marks the rows that open a picker rather than stepping.
+        auto* chev = makeLabel("\xE2\x96\xBE", 10.0f, tok::muted2());
+        chev->setMarginLeft(6.0f);
+        pill->addView(chev);
+    }
     row->addView(pill);
 
     state->value = value;
@@ -394,8 +401,11 @@ brls::Box* makeSettingRow(const std::string& label, SettingRowState* state,
         [step](brls::View*) { if (step) step(-1); return true; }, true);
     row->registerAction("Next", brls::ControllerButton::BUTTON_RIGHT,
         [step](brls::View*) { if (step) step(+1); return true; }, true);
-    row->registerClickAction([step](brls::View*) {
-        if (step) step(+1);
+    row->registerClickAction([step, openPicker](brls::View*) {
+        // Click opens the picker where one exists (quality, library);
+        // steppers keep click-to-advance. Left/right steps either way.
+        if (openPicker) openPicker();
+        else if (step)  step(+1);
         return true;
     });
     row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
@@ -445,6 +455,20 @@ void openRecordOptionsDialog(const MediaItem& item, RecordingTemplate tmpl,
     st->initial    = st->prefs;
     st->scopeIndex = st->tmpl.selectedIndex;
     st->sections   = std::move(sections);
+
+    // The app-wide default library may be the wrong type for this
+    // recording (a TV default while recording a movie). Fall back to the
+    // template's recommendation rather than posting a mismatched section
+    // while the pill claims "Server default".
+    if (!st->prefs.targetSectionId.empty()) {
+        bool known = false;
+        for (const auto& sec : st->sections)
+            if (sec.key == st->prefs.targetSectionId) { known = true; break; }
+        if (!known) {
+            st->prefs.targetSectionId.clear();
+            st->initial.targetSectionId.clear();
+        }
+    }
 
     const bool series = st->tmpl.options.size() >= 2;
 
@@ -622,23 +646,52 @@ void openRecordOptionsDialog(const MediaItem& item, RecordingTemplate tmpl,
             stW->prefs.endOffsetMin = kOffsetMinutes[i];
             if (stW->refresh) stW->refresh();
         }));
-        settingsBox->addView(makeSettingRow("Min video quality", &st->qualityRow, [stW](int d) {
-            int i = indexOfQuality(stW->prefs.minVideoQuality) + d;
-            const int n = (int)kMinQualities.size();
-            i = ((i % n) + n) % n;   // wrap: it's a short cycle, not a range
-            stW->prefs.minVideoQuality = kMinQualities[i];
-            if (stW->refresh) stW->refresh();
-        }));
-        settingsBox->addView(makeSettingRow("Records to", &st->sectionRow, [stW](int d) {
-            // Cycle: template default → each eligible library.
-            const int n = (int)stW->sections.size() + 1;
-            int cur = 0;
-            for (size_t i = 0; i < stW->sections.size(); i++)
-                if (stW->sections[i].key == stW->prefs.targetSectionId) { cur = (int)i + 1; break; }
-            cur = ((cur + d) % n + n) % n;
-            stW->prefs.targetSectionId = (cur == 0) ? "" : stW->sections[cur - 1].key;
-            if (stW->refresh) stW->refresh();
-        }));
+        settingsBox->addView(makeSettingRow("Min video quality", &st->qualityRow,
+            [stW](int d) {
+                int i = indexOfQuality(stW->prefs.minVideoQuality) + d;
+                const int n = (int)kMinQualities.size();
+                i = ((i % n) + n) % n;   // wrap: it's a short cycle, not a range
+                stW->prefs.minVideoQuality = kMinQualities[i];
+                if (stW->refresh) stW->refresh();
+            },
+            [stW]() {
+                auto* dd = new brls::Dropdown("Minimum recording quality",
+                    kMinQualityLabels,
+                    [stW](int idx) {
+                        stW->prefs.minVideoQuality = kMinQualities[(size_t)idx];
+                        if (stW->refresh) stW->refresh();
+                    },
+                    indexOfQuality(stW->prefs.minVideoQuality));
+                brls::Application::pushActivity(new brls::Activity(dd));
+            }));
+        settingsBox->addView(makeSettingRow("Records to", &st->sectionRow,
+            [stW](int d) {
+                // Left/right still cycles: template default → each library.
+                const int n = (int)stW->sections.size() + 1;
+                int cur = 0;
+                for (size_t i = 0; i < stW->sections.size(); i++)
+                    if (stW->sections[i].key == stW->prefs.targetSectionId) { cur = (int)i + 1; break; }
+                cur = ((cur + d) % n + n) % n;
+                stW->prefs.targetSectionId = (cur == 0) ? "" : stW->sections[cur - 1].key;
+                if (stW->refresh) stW->refresh();
+            },
+            [stW]() {
+                std::vector<std::string> options;
+                options.reserve(stW->sections.size() + 1);
+                options.push_back("Server default");
+                for (const auto& sec : stW->sections) options.push_back(sec.title);
+                int cur = 0;
+                for (size_t i = 0; i < stW->sections.size(); i++)
+                    if (stW->sections[i].key == stW->prefs.targetSectionId) { cur = (int)i + 1; break; }
+                auto* dd = new brls::Dropdown("Records to", options,
+                    [stW](int idx) {
+                        stW->prefs.targetSectionId =
+                            (idx == 0) ? "" : stW->sections[(size_t)idx - 1].key;
+                        if (stW->refresh) stW->refresh();
+                    },
+                    cur);
+                brls::Application::pushActivity(new brls::Activity(dd));
+            }));
     }
 
     auto* caption = makeLabel(series
@@ -790,10 +843,21 @@ void showRecordOptions(const MediaItem& item, std::function<void(bool)> onSchedu
         RecordingTemplate tmpl;
         const bool ok = fetchRecordingTemplate(captured.ratingKey, tmpl);
 
+        // Only libraries of the recording's own type: a movie cannot land
+        // in a TV Shows library. The item's mediaType decides; the
+        // template's subscription type (1 = movie) breaks the tie when the
+        // item does not carry one.
+        std::string wantType = "show";
+        if (captured.mediaType == MediaType::MOVIE) wantType = "movie";
+        else if (captured.mediaType == MediaType::UNKNOWN) {
+            for (const auto& o : tmpl.options)
+                if (o.type == "1") { wantType = "movie"; break; }
+        }
+
         std::vector<LibrarySection> all, eligible;
         PlexClient::getInstance().fetchLibrarySections(all);
         for (const auto& s : all)
-            if (s.type == "movie" || s.type == "show") eligible.push_back(s);
+            if (s.type == wantType) eligible.push_back(s);
 
         brls::sync([captured, tmpl, eligible, ok, onScheduled]() {
             if (!ok) {
