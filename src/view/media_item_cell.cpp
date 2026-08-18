@@ -9,6 +9,7 @@
 #include "app/hint_icons.hpp"
 #include "utils/image_loader.hpp"
 #include "platform/platform.hpp"
+#include "utils/air_time.hpp"
 #include <algorithm>
 #include <cmath>
 
@@ -210,9 +211,16 @@ void MediaItemCell::setItem(const MediaItem& item) {
 
     // Set subtitle for episodes
     if (m_subtitleLabel) {
+        // Live TV programmes carry a broadcast window instead of a
+        // season/episode number, and when it is on the air that window is
+        // the useful thing to show.
+        const std::string airWindow = airWindowLabel(item.airStartAt, item.airEndAt);
+        if (!airWindow.empty()) {
+            m_subtitleLabel->setText(airWindow);
+            m_subtitleLabel->setVisibility(brls::Visibility::VISIBLE);
         // Live TV programmes are episodes without a season/episode number,
         // so guard on both rather than labelling them "S00E00".
-        if (item.mediaType == MediaType::EPISODE &&
+        } else if (item.mediaType == MediaType::EPISODE &&
             item.parentIndex > 0 && item.index > 0) {
             char subtitle[32];
             snprintf(subtitle, sizeof(subtitle), "S%02dE%02d",
@@ -236,7 +244,17 @@ void MediaItemCell::setItem(const MediaItem& item) {
     // Require at least 1% watched and at least 30 seconds of viewOffset
     // to avoid showing bars for items that were barely started or have stale data
     if (m_progressBar) {
-        if (item.viewOffset > 30000 && item.duration > 0) {
+        // How much of the broadcast has aired. Distinct from playback
+        // progress below: nothing has been watched, the clock has simply
+        // moved. A sliver is kept visible at the start so a programme that
+        // just began still reads as live.
+        const float aired = airProgress(item.airStartAt, item.airEndAt);
+        if (aired >= 0.0f) {
+            const float barWidth = isEpisode ? (float)ic.landscapeWidth
+                                             : (float)ic.posterWidth;
+            m_progressBar->setWidth(std::min(std::max(barWidth * aired, 2.0f), barWidth));
+            m_progressBar->setVisibility(brls::Visibility::VISIBLE);
+        } else if (item.viewOffset > 30000 && item.duration > 0) {
             float progress = (float)item.viewOffset / (float)item.duration;
             // Only show if between 1% and 95% (fully watched items shouldn't show bar)
             if (progress > 0.01f && progress < 0.95f) {

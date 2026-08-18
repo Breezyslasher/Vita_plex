@@ -64,6 +64,13 @@ struct MediaItem {
     int seasonNumber = 0;
     int episodeNumber = 0;
 
+    // Live TV programmes: the airing window from Media[].beginsAt/endsAt,
+    // in unix seconds. Zero when the item is not a live broadcast. Kept
+    // apart from duration/viewOffset so a rail can show how far through a
+    // broadcast is without those being mistaken for playback progress.
+    int64_t airStartAt = 0;
+    int64_t airEndAt = 0;
+
     // For seasons/albums
     int leafCount = 0;
     int viewedLeafCount = 0;

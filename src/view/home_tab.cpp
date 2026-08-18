@@ -13,6 +13,7 @@
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
 #include "platform/platform.hpp"
+#include "utils/air_time.hpp"
 
 #include <ctime>
 #include <mutex>
@@ -387,9 +388,29 @@ void HomeTab::populateChannelRow() {
         tile->addView(preview);
         if (!tileSrc.empty()) {
             std::string url = client.getThumbnailUrl(tileSrc, ic.landscapeWidth * 2, ic.landscapeHeight * 2);
-            ImageLoader::loadAsync(url, [](brls::Image* img) {
+            // Station logos are PNGs with transparent backgrounds, so the
+            // call-sign placeholder read straight through them. Retire it
+            // once the artwork lands — INVISIBLE rather than GONE, since it
+            // is centred in the tile and dropping it would relayout.
+            ImageLoader::loadAsync(url, [placeholder](brls::Image* img) {
                 if (img) img->setVisibility(brls::Visibility::VISIBLE);
+                if (placeholder) placeholder->setVisibility(brls::Visibility::INVISIBLE);
             }, preview, m_channelImgAlive);
+        }
+
+        // How much of the programme on this channel has aired, along the
+        // bottom edge of the tile.
+        const float aired = airProgress(ch.programStart, ch.programEnd, (int64_t)now);
+        if (aired >= 0.0f) {
+            auto* bar = new brls::Rectangle();
+            bar->setPositionType(brls::PositionType::ABSOLUTE);
+            bar->setPositionBottom(0);
+            bar->setPositionLeft(0);
+            bar->setHeight(3);
+            bar->setWidth(std::min(std::max((float)ic.landscapeWidth * aired, 2.0f),
+                                   (float)ic.landscapeWidth));
+            bar->setColor(hpal::gold());
+            tile->addView(bar);
         }
         cell->addView(tile);
 
@@ -401,9 +422,11 @@ void HomeTab::populateChannelRow() {
         name->setMarginTop(6);
         cell->addView(name);
 
-        // "{number} · {now-playing}" subtitle, if available.
-        std::string sub;
-        if (ch.channelNumber > 0) sub = std::to_string(ch.channelNumber);
+        // "{time} · {now-playing}" subtitle, if available. The airing
+        // window leads because it is short and fixed-width, so the
+        // programme title is the part that truncates on a narrow cell.
+        std::string sub = airWindowLabel(ch.programStart, ch.programEnd);
+        if (sub.empty() && ch.channelNumber > 0) sub = std::to_string(ch.channelNumber);
         if (!nowTitle.empty())
             sub += (sub.empty() ? "" : "  \xC2\xB7  ") + nowTitle;
         if (!sub.empty()) {
