@@ -76,6 +76,11 @@ struct MediaItem {
     // anything carrying this must be tuned, never played.
     std::string liveChannelKey;
     std::string liveChannelTitle;
+    // Set for anything that came from the EPG provider. Not every live
+    // result has a channel — the provider's search returns series too —
+    // but none of them have a library ratingKey, so this is what decides
+    // whether an item may be opened as library content.
+    bool isLiveTV = false;
 
     // For seasons/albums
     int leafCount = 0;

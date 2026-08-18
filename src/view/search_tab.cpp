@@ -12,6 +12,7 @@
 #include "utils/async.hpp"
 #include "platform/platform.hpp"
 #include "utils/air_time.hpp"
+#include "view/livetv_actions.hpp"
 
 #include <atomic>
 #include <cctype>
@@ -114,7 +115,7 @@ std::string cardSub(const MediaItem& it) {
 void wireContextMenu(brls::View* cell, const MediaItem& item) {
     // Every one of these menus acts on a library ratingKey, which an EPG
     // programme does not have.
-    if (!item.liveChannelKey.empty()) return;
+    if (item.isLiveTV) return;
     auto open = [item]() {
         switch (item.mediaType) {
             case MediaType::MOVIE:        MediaDetailView::showMovieContextMenuStatic(item);  break;
@@ -553,20 +554,9 @@ brls::Box* SearchTab::makeCard(const MediaItem& item) {
 void SearchTab::onItemSelected(const MediaItem& item) {
     // Live TV results carry an EPG ratingKey, which /library/metadata 404s
     // on — opening the detail view gives an empty page and playing fails.
-    // On the air, the useful action is to tune the channel it is on;
-    // otherwise all we can honestly offer is when it airs.
-    if (!item.liveChannelKey.empty()) {
-        if (airProgress(item.airStartAt, item.airEndAt) >= 0.0f) {
-            tuneLiveResult(item);
-        } else {
-            std::string when = airWindowLabel(item.airStartAt, item.airEndAt);
-            std::string msg  = item.title;
-            if (!when.empty()) msg += "\nAirs " + when;
-            if (!item.liveChannelTitle.empty()) msg += " on " + item.liveChannelTitle;
-            auto* dialog = new brls::Dialog(msg);
-            dialog->addButton("OK", []() {});
-            dialog->open();
-        }
+    // The guide's choice applies here too: watch it now, or record it.
+    if (item.isLiveTV) {
+        showLiveTVProgramMenu(item);
         return;
     }
 
@@ -577,32 +567,6 @@ void SearchTab::onItemSelected(const MediaItem& item) {
     }
     auto* detailView = new MediaDetailView(item);
     brls::Application::pushActivity(new brls::Activity(detailView));
-}
-
-void SearchTab::tuneLiveResult(const MediaItem& item) {
-    const std::string channelKey  = item.liveChannelKey;
-    const std::string programKey  = item.key;
-    const std::string playerTitle =
-        (item.liveChannelTitle.empty() ? item.title
-                                       : item.liveChannelTitle + " - " + item.title);
-
-    asyncRun([channelKey, programKey, playerTitle]() {
-        PlexClient& client = PlexClient::getInstance();
-        std::string streamUrl, liveSessionUuid;
-        if (client.tuneLiveTVChannel(channelKey, streamUrl, liveSessionUuid, programKey)) {
-            brls::sync([streamUrl, liveSessionUuid, playerTitle]() {
-                Application::getInstance().pushLiveTVPlayerActivity(streamUrl, playerTitle,
-                                                                    liveSessionUuid);
-            });
-        } else {
-            brls::Logger::error("SearchTab: failed to tune {}", playerTitle);
-            brls::sync([playerTitle]() {
-                auto* dialog = new brls::Dialog("Failed to tune: " + playerTitle);
-                dialog->addButton("OK", []() {});
-                dialog->open();
-            });
-        }
-    });
 }
 
 SearchTab::~SearchTab() {

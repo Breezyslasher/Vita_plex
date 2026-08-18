@@ -14,6 +14,7 @@
 #include "utils/async.hpp"
 #include "platform/platform.hpp"
 #include "utils/air_time.hpp"
+#include "view/livetv_actions.hpp"
 
 #include <ctime>
 #include <mutex>
@@ -250,8 +251,9 @@ void HomeTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>
         // Register START button context menus for movies, shows, and seasons.
         // Live programmes are skipped: every one of these menus acts on a
         // library ratingKey, which an EPG item does not have.
-        if (!capturedItem.liveChannelKey.empty()) {
-            // no context menu for live programmes
+        if (capturedItem.isLiveTV) {
+            // no context menu for live programmes — every one of these acts
+            // on a library ratingKey, which an EPG item does not have
         } else if (capturedItem.mediaType == MediaType::MOVIE) {
             cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
                 [capturedItem](brls::View* view) {
@@ -793,24 +795,10 @@ void HomeTab::loadRecentChannels() {
 void HomeTab::onItemSelected(const MediaItem& item) {
     // A Live TV programme's ratingKey is an EPG key, not a library one, so
     // /library/metadata 404s on it and both the detail view and the player
-    // come up empty. What the user wants is the channel it is on, which is
-    // the same thing the Recent Channels rail tunes.
-    if (!item.liveChannelKey.empty()) {
-        LiveTVChannel ch;
-        ch.key           = item.liveChannelKey;
-        ch.title         = item.liveChannelTitle.empty() ? item.title : item.liveChannelTitle;
-        ch.currentProgram = item.title;
-        // tuneChannel() looks for the programme airing now to pass its
-        // metadata key through to the tune; this item is that programme.
-        if (!item.key.empty() && item.airStartAt > 0 && item.airEndAt > item.airStartAt) {
-            ChannelProgram prog;
-            prog.title       = item.title;
-            prog.metadataKey = item.key;
-            prog.startTime   = item.airStartAt;
-            prog.endTime     = item.airEndAt;
-            ch.programs.push_back(std::move(prog));
-        }
-        tuneChannel(ch);
+    // come up empty. Offer what the guide offers instead: watch it now, or
+    // record it.
+    if (item.isLiveTV) {
+        showLiveTVProgramMenu(item);
         return;
     }
 

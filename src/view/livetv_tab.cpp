@@ -9,6 +9,7 @@
  */
 
 #include "view/livetv_tab.hpp"
+#include "view/livetv_actions.hpp"
 #include "app/application.hpp"
 #include "app/plex_palette.hpp"
 #include "utils/async.hpp"
@@ -1026,6 +1027,18 @@ void LiveTVTab::buildHero() {
     m_heroRecordBtn->addView(recTxt);
     m_heroRecordBtn->registerClickAction([this](brls::View*) {
         if (m_heroProgramValid) {
+            // The hero always shows what is on now, so this is always a
+            // partial recording — worth saying when the server would throw
+            // it away rather than scheduling one that vanishes.
+            if (!canRecordAiring(m_heroProgram.startTime)) {
+                brls::Dialog* dialog = new brls::Dialog(
+                    m_heroProgram.title +
+                    "\n\nAlready started — turn on Keep Partial Recordings in "
+                    "Settings to record the rest of a programme.");
+                dialog->addButton("OK", []() {});
+                dialog->open();
+                return true;
+            }
             scheduleRecording(m_heroProgram, m_heroChannel);
         } else {
             brls::Dialog* dialog = new brls::Dialog(
@@ -2178,175 +2191,34 @@ void LiveTVTab::onProgramSelected(const GuideProgram& program, const LiveTVChann
     }
     if (!program.summary.empty()) message += "\n\n" + program.summary;
 
+    // A programme already under way can only be recorded from here on, and
+    // the server keeps that partial only if the user asked it to — see
+    // canRecordAiring().
+    const bool recordable = canRecordAiring(program.startTime);
+    if (!recordable) {
+        message += "\n\nAlready started — turn on Keep Partial Recordings in "
+                   "Settings to record the rest of a programme.";
+    }
+
     brls::Dialog* dialog = new brls::Dialog(message);
     dialog->addButton("Watch Now", [this, channel]() { onChannelSelected(channel); });
-    dialog->addButton("Record", [this, program, channel]() { scheduleRecording(program, channel); });
+    if (recordable)
+        dialog->addButton("Record", [this, program, channel]() { scheduleRecording(program, channel); });
     dialog->addButton("Cancel", []() {});
     dialog->open();
 }
 
 void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChannel& channel) {
     (void)channel;
-
-    if (program.ratingKey.empty()) {
-        brls::Logger::error("LiveTVTab: scheduleRecording: missing program ratingKey");
-        brls::Dialog* dialog = new brls::Dialog("Failed to schedule recording: " + program.title);
-        dialog->addButton("OK", []() {});
-        dialog->open();
-        return;
-    }
-
-    asyncRun([this, program, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
-        PlexClient& client = PlexClient::getInstance();
-        HttpClient httpClient;
-
-        // GET /media/subscriptions/template?guid=<programGuid> returns the
-        // pre-encoded querystring (hints[*] and params[*]) the server
-        // expects, plus the recommended type and target library section.
-        // We paste it verbatim and only layer recording prefs on top.
-        std::string tmplUrl = client.buildApiUrlPublic(
-            "/media/subscriptions/template?guid=" + program.ratingKey);
-
-        HttpRequest tmplReq;
-        tmplReq.url = tmplUrl;
-        tmplReq.method = "GET";
-        tmplReq.headers["Accept"] = "application/json";
-        tmplReq.timeout = 15;
-
-        brls::Logger::debug("LiveTVTab: Recording template URL: {}", redactTokensInUrl(tmplUrl));
-        HttpResponse tmplResp = httpClient.request(tmplReq);
-        if (tmplResp.statusCode != 200 || tmplResp.body.empty()) {
-            brls::Logger::error("LiveTVTab: subscription template failed ({}): {}",
-                                tmplResp.statusCode,
-                                tmplResp.body.empty() ? "(empty)" : tmplResp.body.substr(0, 300));
-            brls::sync([program]() {
-                brls::Dialog* dialog = new brls::Dialog("Failed to schedule recording: " + program.title);
-                dialog->addButton("OK", []() {});
-                dialog->open();
-            });
-            return;
-        }
-
-        const std::string& body = tmplResp.body;
-        size_t pickAt = std::string::npos;
-        {
-            size_t scan = 0;
-            const std::string sel = "\"selected\":true";
-            while (true) {
-                size_t at = body.find(sel, scan);
-                if (at == std::string::npos) break;
-                int depth = 0;
-                for (size_t i = at; i > 0; i--) {
-                    if (body[i] == '}') depth++;
-                    else if (body[i] == '{') {
-                        if (depth == 0) { pickAt = i; break; }
-                        depth--;
-                    }
-                }
-                if (pickAt != std::string::npos) break;
-                scan = at + sel.length();
-            }
-        }
-        if (pickAt == std::string::npos) {
-            size_t msArr = body.find("\"MediaSubscription\"");
-            if (msArr != std::string::npos) pickAt = body.find('{', msArr);
-        }
-        if (pickAt == std::string::npos) {
-            brls::Logger::error("LiveTVTab: subscription template parse failed: {}",
-                                body.substr(0, 300));
-            brls::sync([program]() {
-                brls::Dialog* dialog = new brls::Dialog("Failed to schedule recording: " + program.title);
-                dialog->addButton("OK", []() {});
-                dialog->open();
-            });
-            return;
-        }
-
-        size_t depth = 0;
-        size_t objEnd = pickAt;
-        for (; objEnd < body.length(); objEnd++) {
-            if (body[objEnd] == '{') depth++;
-            else if (body[objEnd] == '}') {
-                if (--depth == 0) { objEnd++; break; }
-            }
-        }
-        std::string ms = body.substr(pickAt, objEnd - pickAt);
-
-        std::string parameters    = client.extractJsonValuePublic(ms, "parameters");
-        std::string typeStr       = client.extractJsonValuePublic(ms, "type");
-        std::string targetSection = client.extractJsonValuePublic(ms, "targetLibrarySectionID");
-
-        // User-configured default DVR library wins over the template's
-        // recommendation. Lets the user route every recording to one
-        // section ("DVR TV Shows") instead of whatever Plex picked for
-        // each individual program.
-        const std::string& userTarget = Application::getInstance()
-                                            .getSettings().defaultDvrSectionId;
-        if (!userTarget.empty()) {
-            brls::Logger::debug("LiveTVTab: overriding targetLibrarySectionID "
-                                "{} → {} (user default)",
-                                targetSection.empty() ? "(none)" : targetSection,
-                                userTarget);
-            targetSection = userTarget;
-        }
-
-        if (parameters.empty() || typeStr.empty()) {
-            brls::Logger::error("LiveTVTab: template missing required fields (parameters={}, type={})",
-                                parameters.empty() ? "(empty)" : "ok",
-                                typeStr.empty() ? "(empty)" : typeStr);
-            brls::sync([program]() {
-                brls::Dialog* dialog = new brls::Dialog("Failed to schedule recording: " + program.title);
-                dialog->addButton("OK", []() {});
-                dialog->open();
-            });
-            return;
-        }
-
-        const AppSettings& settings = Application::getInstance().getSettings();
-
-        std::string post = client.buildApiUrlPublic("/media/subscriptions");
-        post += "&" + parameters;
-        post += "&type=" + typeStr;
-        if (!targetSection.empty()) post += "&targetLibrarySectionID=" + targetSection;
-        post += "&includeGrabs=1";
-        post += "&prefs[oneShot]=true";
-        post += std::string("&prefs[recordPartials]=") + (settings.dvrRecordPartials ? "true" : "false");
-        post += "&prefs[minVideoQuality]=" + std::to_string(settings.dvrMinVideoQuality);
-        post += "&prefs[startOffsetMinutes]=" + std::to_string(settings.dvrStartOffsetMinutes);
-        post += "&prefs[endOffsetMinutes]=" + std::to_string(settings.dvrEndOffsetMinutes);
-
-        HttpRequest req;
-        req.url = post;
-        req.method = "POST";
-        req.headers["Accept"] = "application/json";
-        req.timeout = 15;
-
-        brls::Logger::debug("LiveTVTab: Recording POST URL: {}", post);
-        HttpResponse resp = httpClient.request(req);
-
-        bool success = (resp.statusCode == 200 || resp.statusCode == 201);
-        std::string title = program.title;
-
-        brls::Logger::debug("LiveTVTab: Recording response: {} ({} bytes): {}",
-                            resp.statusCode, resp.body.length(),
-                            resp.body.substr(0, 500));
-
-        brls::sync([this, success, title, aliveWeak]() {
+    // One implementation, shared with the Home rails and search — see
+    // view/livetv_actions.hpp. It reports success itself; all the guide
+    // adds is refreshing its own recordings list afterwards.
+    scheduleLiveTVRecording(program.ratingKey, program.title,
+        [this, aliveWeak = std::weak_ptr<bool>(m_alive)](bool success) {
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
-
-            if (success) {
-                brls::Dialog* dialog = new brls::Dialog("Recording scheduled: " + title);
-                dialog->addButton("OK", []() {});
-                dialog->open();
-                loadRecordings();
-            } else {
-                brls::Dialog* dialog = new brls::Dialog("Failed to schedule recording: " + title);
-                dialog->addButton("OK", []() {});
-                dialog->open();
-            }
+            if (success) loadRecordings();
         });
-    });
 }
 
 void LiveTVTab::cancelRecording(const DVRRecording& recording) {

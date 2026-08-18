@@ -37,8 +37,6 @@ private:
     void addSection(const std::string& title, const std::vector<MediaItem>& items);
     brls::Box* makeCard(const MediaItem& item);
     void onItemSelected(const MediaItem& item);
-    // Tune the channel a live search result is airing on.
-    void tuneLiveResult(const MediaItem& item);
 
     // Left column
     brls::Label* m_queryLabel = nullptr;
