@@ -298,13 +298,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.resolve-version.outputs.version_tag }}
         run: |
-          id=$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" \
-                 --jq '.id' 2>/dev/null || true)
-          if [[ -z "$id" ]]; then
+          set -euo pipefail
+          # The exit status is what says "no such release", not the output:
+          # gh api prints the error body to stdout on a 404, so reading the
+          # output captures {"message":"Not Found",...} and hands it on as
+          # an id. One call, status-checked, parsed locally.
+          if ! release=$(gh api "repos/${{ github.repository }}/releases/tags/$TAG" 2>/dev/null); then
             echo "No existing release for $TAG — nothing to clear."
             exit 0
           fi
-          prerelease=$(gh api "repos/${{ github.repository }}/releases/$id" --jq '.prerelease')
+
+          id=$(jq -r '.id // empty' <<<"$release")
+          prerelease=$(jq -r '.prerelease // false' <<<"$release")
+          if [[ -z "$id" ]]; then
+            echo "No release id for $TAG — nothing to clear."
+            exit 0
+          fi
           if [[ "$prerelease" != "true" ]]; then
             echo "::error::Release $TAG already exists and is not a pre-release."
             echo "::error::Refusing to delete it. Bump the version or remove it by hand."
