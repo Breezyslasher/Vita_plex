@@ -97,7 +97,7 @@ private:
     void onControlsAutoHideChanged(int index);
     void onConnectionTimeoutChanged(int index);
     void onManageHiddenLibraries();
-    void onManageDefaultDvrLibrary();
+    void onManageDefaultDvrLibrary(bool forMovies);
     void onSwitchUser();
 
     // Layout panes
@@ -173,7 +173,8 @@ private:
     brls::BooleanCell* m_backgroundMusicToggle = nullptr;
 
     // Live TV section
-    brls::DetailCell*   m_defaultDvrLibraryCell = nullptr;
+    brls::DetailCell*   m_defaultDvrShowLibraryCell  = nullptr;
+    brls::DetailCell*   m_defaultDvrMovieLibraryCell = nullptr;
     brls::SelectorCell* m_dvrStartOffsetSelector = nullptr;
     brls::SelectorCell* m_dvrEndOffsetSelector   = nullptr;
     brls::BooleanCell*  m_dvrRecordPartialsToggle = nullptr;

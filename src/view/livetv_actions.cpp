@@ -130,13 +130,14 @@ struct RecordingPrefs {
     std::string targetSectionId;   // empty = template's recommendation
 };
 
-RecordingPrefs defaultPrefs() {
+RecordingPrefs defaultPrefs(bool forMovies) {
     const AppSettings& s = Application::getInstance().getSettings();
     RecordingPrefs p;
     p.startOffsetMin  = s.dvrStartOffsetMinutes;
     p.endOffsetMin    = s.dvrEndOffsetMinutes;
     p.minVideoQuality = s.dvrMinVideoQuality;
-    p.targetSectionId = s.defaultDvrSectionId;
+    p.targetSectionId = forMovies ? s.defaultDvrMovieSectionId
+                                  : s.defaultDvrShowSectionId;
     return p;
 }
 
@@ -442,7 +443,7 @@ int indexOfQuality(int q) {
 }
 
 void openRecordOptionsDialog(const MediaItem& item, RecordingTemplate tmpl,
-                             std::vector<LibrarySection> sections,
+                             std::vector<LibrarySection> sections, bool forMovies,
                              std::function<void(bool)> onScheduled) {
     const float screenW = platform::viewportWidth();
     const float screenH = platform::viewportHeight();
@@ -451,15 +452,15 @@ void openRecordOptionsDialog(const MediaItem& item, RecordingTemplate tmpl,
 
     auto st = std::make_shared<RecordDialogState>();
     st->tmpl       = std::move(tmpl);
-    st->prefs      = defaultPrefs();
+    st->prefs      = defaultPrefs(forMovies);
     st->initial    = st->prefs;
     st->scopeIndex = st->tmpl.selectedIndex;
     st->sections   = std::move(sections);
 
-    // The app-wide default library may be the wrong type for this
-    // recording (a TV default while recording a movie). Fall back to the
-    // template's recommendation rather than posting a mismatched section
-    // while the pill claims "Server default".
+    // The per-type default should always be in the filtered list, but a
+    // library deleted on the server (or a stale migrated value) would not
+    // be. Fall back to the template's recommendation rather than posting a
+    // section the pill cannot even name.
     if (!st->prefs.targetSectionId.empty()) {
         bool known = false;
         for (const auto& sec : st->sections)
@@ -859,12 +860,13 @@ void showRecordOptions(const MediaItem& item, std::function<void(bool)> onSchedu
         for (const auto& s : all)
             if (s.type == wantType) eligible.push_back(s);
 
-        brls::sync([captured, tmpl, eligible, ok, onScheduled]() {
+        const bool forMovies = (wantType == "movie");
+        brls::sync([captured, tmpl, eligible, forMovies, ok, onScheduled]() {
             if (!ok) {
                 showOutcome(false, captured.title, onScheduled);
                 return;
             }
-            openRecordOptionsDialog(captured, tmpl, eligible, onScheduled);
+            openRecordOptionsDialog(captured, tmpl, eligible, forMovies, onScheduled);
         });
     });
 }

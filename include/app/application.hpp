@@ -166,8 +166,12 @@ struct AppSettings {
     // /media/subscriptions/template recommended. The title is cached
     // alongside the ID so the settings cell can render it without an
     // extra /library/sections fetch every time the tab opens.
-    std::string defaultDvrSectionId;
-    std::string defaultDvrSectionTitle;
+    // Split by recording type: a movie cannot land in a TV library, so
+    // one default could never serve both. Empty = server's recommendation.
+    std::string defaultDvrShowSectionId;
+    std::string defaultDvrShowSectionTitle;
+    std::string defaultDvrMovieSectionId;
+    std::string defaultDvrMovieSectionTitle;
     // Recording knobs forwarded as /media/subscriptions?prefs[...] on the
     // POST. Defaults mirror what scheduleRecording used to hardcode.
     int  dvrStartOffsetMinutes = 2;    // Pad recording start by this many minutes
