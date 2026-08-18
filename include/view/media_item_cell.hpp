@@ -49,6 +49,9 @@ private:
 
     bool m_pressed = false;  // Touch press feedback overlay
     bool m_preferPoster = false;  // see setPreferPoster()
+    // Whether setItem() left a subtitle on screen. Focus swaps the detail
+    // line in for it, so losing focus needs to know what to put back.
+    bool m_hasSubtitle = false;
 
     MediaItem m_item;
     std::string m_originalTitle;  // Store original truncated title

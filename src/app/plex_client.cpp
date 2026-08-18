@@ -4276,6 +4276,9 @@ static LiveTVChannel parseRecentChannelDirectory(std::string_view dir) {
         ch.currentProgram = std::string(jsonFieldView(meta, "\"grandparentTitle\""));
         if (ch.currentProgram.empty())
             ch.currentProgram = std::string(jsonFieldView(meta, "\"title\""));
+        // Airing window of whatever is on the channel now, from Media[].
+        ch.programStart   = svToInt64(jsonFieldView(meta, "\"beginsAt\""));
+        ch.programEnd     = svToInt64(jsonFieldView(meta, "\"endsAt\""));
     }
     return ch;
 }
@@ -4600,6 +4603,11 @@ MediaItem PlexClient::parseLiveTVHubItem(std::string_view obj) {
     item.viewOffset  = (int)svToInt64(jsonFieldView(obj, "\"viewOffset\""));
     item.index       = (int)svToInt64(jsonFieldView(obj, "\"index\""));
     item.parentIndex = (int)svToInt64(jsonFieldView(obj, "\"parentIndex\""));
+    // Airing window, nested in Media[]. The provider sends these as bare
+    // numbers on some endpoints and quoted strings on others; jsonFieldView
+    // hands back the digits either way.
+    item.airStartAt  = svToInt64(jsonFieldView(obj, "\"beginsAt\""));
+    item.airEndAt    = svToInt64(jsonFieldView(obj, "\"endsAt\""));
     // The show's poster, kept separate from the episode still so a rail
     // can render either shape (see MediaItemCell::setPreferPoster).
     item.grandparentThumb = std::string(jsonFieldView(obj, "\"grandparentThumb\""));
