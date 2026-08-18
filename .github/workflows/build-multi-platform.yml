@@ -265,14 +265,37 @@ jobs:
 
           echo "Release files:"
           ls -lh release/
+      # Created as a DRAFT on purpose. This repo has immutable releases
+      # enabled, so a release becomes read-only the moment it publishes —
+      # and a prerelease publishes as soon as it is created, which killed
+      # the asset upload partway through:
+      #
+      #   Error: Cannot upload asset VitaPlex.Beta-2.1.7-switch-opengl.nro
+      #   to an immutable release.
+      #
+      # Uploading into a draft avoids that; the publish step below then
+      # flips it live once every asset is attached. (The tag-triggered
+      # upload-release job above already used draft: true, which is why
+      # only prereleases hit this.)
       - name: Create pre-release
+        id: prerelease
         uses: softprops/action-gh-release@v2
         with:
           name: VitaPlex ${{ needs.resolve-version.outputs.version }}
           tag_name: ${{ needs.resolve-version.outputs.version_tag }}
           prerelease: true
+          draft: true
           generate_release_notes: true
           files: release/*
+      - name: Publish the pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # -F (not -f) so draft is sent as a JSON boolean rather than the
+        # string "false", which the API would reject.
+        run: |
+          gh api -X PATCH \
+            "repos/${{ github.repository }}/releases/${{ steps.prerelease.outputs.id }}" \
+            -F draft=false
 
   # ───────────────────────────────────────────────
   # PS Vita — VPK
