@@ -648,18 +648,23 @@ void HomeTab::loadRecentChannels() {
                 return;
             }
 
-            // The provider's real Recent Channels hub — genuinely the
-            // channels this account watched, in one request. Falls through
-            // to the EPG-grid approximation below if the server has no
-            // such hub.
-            client.fetchLiveTVRecentChannels(channels);
+            // One request fills both rails: the provider's discover
+            // response carries Recent Channels and "… On Now" inline, with
+            // their items. These are the server's own rails — genuinely
+            // the channels this account watched, not a guess from the
+            // lineup.
+            client.fetchLiveTVRecentChannels(channels, &onNow);
 
-            std::vector<LiveTVHub> watchNow;
-            if (client.fetchLiveTVWatchNowHubs(watchNow)) {
-                for (const auto& h : watchNow) {
-                    if (railTitleHas(h.title, "shows on now")) {
-                        client.fetchLiveTVHubItems(h.key, onNow);
-                        break;
+            // Servers that don't inline the On Now rail still expose it via
+            // /watchnow. Two extra requests, so only when it's missing.
+            if (onNow.empty()) {
+                std::vector<LiveTVHub> watchNow;
+                if (client.fetchLiveTVWatchNowHubs(watchNow)) {
+                    for (const auto& h : watchNow) {
+                        if (railTitleHas(h.title, "shows on now")) {
+                            client.fetchLiveTVHubItems(h.key, onNow);
+                            break;
+                        }
                     }
                 }
             }

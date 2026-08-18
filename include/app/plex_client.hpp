@@ -6,6 +6,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <functional>
 #include <memory>
@@ -522,7 +523,10 @@ public:
     // The provider's real "Recent Channels" hub, returned as channels so
     // the existing rail cells and tuneChannel() work unchanged. One
     // request: /{epgProviderKey}/hubs/discover carries its items inline.
-    bool fetchLiveTVRecentChannels(std::vector<LiveTVChannel>& channels);
+    // That same response also carries the "… On Now" rail, so pass
+    // showsOnNow to fill both Home rails without a second round trip.
+    bool fetchLiveTVRecentChannels(std::vector<LiveTVChannel>& channels,
+                                   std::vector<MediaItem>* showsOnNow = nullptr);
     // Fetch one rail's contents. `key` comes from a LiveTVHub verbatim.
     bool fetchLiveTVHubItems(const std::string& key, std::vector<MediaItem>& items);
     bool tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl,
@@ -571,6 +575,9 @@ private:
 
     std::string buildApiUrl(const std::string& endpoint);
     MediaType parseMediaType(const std::string& typeStr);
+    // One Metadata entry of a Live TV hub -> MediaItem. Shared by the
+    // inline hubs of /hubs/discover and the standalone hub fetch.
+    MediaItem parseLiveTVHubItem(std::string_view obj);
     std::string extractJsonValue(const std::string& json, const std::string& key);
     int extractJsonInt(const std::string& json, const std::string& key);
     float extractJsonFloat(const std::string& json, const std::string& key);
