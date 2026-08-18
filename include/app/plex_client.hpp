@@ -70,6 +70,12 @@ struct MediaItem {
     // broadcast is without those being mistaken for playback progress.
     int64_t airStartAt = 0;
     int64_t airEndAt = 0;
+    // The channel this programme is on, from Media[].channelIdentifier —
+    // the same value tuneLiveTVChannel() resolves. An EPG programme's
+    // ratingKey is not a library key, so /library/metadata 404s on it:
+    // anything carrying this must be tuned, never played.
+    std::string liveChannelKey;
+    std::string liveChannelTitle;
 
     // For seasons/albums
     int leafCount = 0;
@@ -539,6 +545,12 @@ public:
         std::vector<MediaItem>     sportsOnNow;
     };
     bool fetchLiveTVHomeRails(LiveTVHomeRails& rails);
+    // Search the EPG provider. /media/providers advertises this as a
+    // second feature of type "search", separate from the server's
+    // /hubs/search, so library results never include Live TV. Returns
+    // false when nothing has established the provider key yet -- search
+    // runs per keystroke and must not trigger the DVR probe itself.
+    bool searchLiveTV(const std::string& query, std::vector<MediaItem>& results);
     // Fetch one rail's contents. `key` comes from a LiveTVHub verbatim.
     bool fetchLiveTVHubItems(const std::string& key, std::vector<MediaItem>& items);
     bool tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl,

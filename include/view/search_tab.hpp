@@ -37,6 +37,8 @@ private:
     void addSection(const std::string& title, const std::vector<MediaItem>& items);
     brls::Box* makeCard(const MediaItem& item);
     void onItemSelected(const MediaItem& item);
+    // Tune the channel a live search result is airing on.
+    void tuneLiveResult(const MediaItem& item);
 
     // Left column
     brls::Label* m_queryLabel = nullptr;
@@ -53,6 +55,9 @@ private:
     std::vector<MediaItem> m_artists;
     std::vector<MediaItem> m_albums;
     std::vector<MediaItem> m_tracks;
+    // Live TV programmes. The EPG provider has its own search feature,
+    // separate from the server's, so these arrive from a second request.
+    std::vector<MediaItem> m_liveTV;
 
     // Alive flag + generation counter for crash prevention / stale results.
     std::shared_ptr<bool> m_alive = std::make_shared<bool>(true);
