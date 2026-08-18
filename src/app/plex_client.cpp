@@ -4608,6 +4608,8 @@ MediaItem PlexClient::parseLiveTVHubItem(std::string_view obj) {
     // hands back the digits either way.
     item.airStartAt  = svToInt64(jsonFieldView(obj, "\"beginsAt\""));
     item.airEndAt    = svToInt64(jsonFieldView(obj, "\"endsAt\""));
+    item.liveChannelKey   = std::string(jsonFieldView(obj, "\"channelIdentifier\""));
+    item.liveChannelTitle = std::string(jsonFieldView(obj, "\"channelTitle\""));
     // The show's poster, kept separate from the episode still so a rail
     // can render either shape (see MediaItemCell::setPreferPoster).
     item.grandparentThumb = std::string(jsonFieldView(obj, "\"grandparentThumb\""));
@@ -4621,6 +4623,54 @@ MediaItem PlexClient::parseLiveTVHubItem(std::string_view obj) {
         item.title = item.grandparentTitle;
     }
     return item;
+}
+
+bool PlexClient::searchLiveTV(const std::string& query, std::vector<MediaItem>& results) {
+    results.clear();
+    // Deliberately no checkLiveTVAvailability() here: search fires on every
+    // keystroke, and forcing the DVR probe would make every server without
+    // Live TV pay for one per character. Home and the sidebar establish the
+    // provider key soon after launch; until then Live TV is simply absent
+    // from results.
+    if (m_epgProviderKey.empty() || query.empty()) return false;
+
+    HttpClient client;
+    HttpRequest req;
+    req.url = buildApiUrl("/" + m_epgProviderKey + "/hubs/search?query=" +
+                          HttpClient::urlEncode(query) + "&limit=25");
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    req.timeout = 15;
+
+    HttpResponse resp = client.request(req);
+    if (resp.statusCode != 200 || resp.body.empty()) {
+        brls::Logger::debug("searchLiveTV: HTTP {}", resp.statusCode);
+        return false;
+    }
+
+    // Same shape as the discovery rails: MediaContainer.Hub[], each with
+    // its Metadata inline. Programmes are what a search is for, so every
+    // hub's items are flattened into one list; the hub titles are logged
+    // so a provider returning something else is visible rather than
+    // silently dropped.
+    std::vector<std::string> hubTitles;
+    forEachJsonObject(resp.body, "\"Hub\"", [&](std::string_view hub) {
+        hubTitles.push_back(std::string(jsonFieldView(hub, "\"title\"")));
+        forEachJsonObject(hub, "\"Metadata\"", [&](std::string_view obj) {
+            MediaItem item = parseLiveTVHubItem(obj);
+            if (!item.ratingKey.empty() && !item.title.empty())
+                results.push_back(std::move(item));
+        });
+    });
+
+    std::string offered;
+    for (const auto& t : hubTitles) {
+        if (!offered.empty()) offered += ", ";
+        offered += t;
+    }
+    brls::Logger::info("searchLiveTV: {} results for '{}' from hubs: {}",
+                       results.size(), query, offered);
+    return !results.empty();
 }
 
 bool PlexClient::fetchLiveTVHubItems(const std::string& key, std::vector<MediaItem>& items) {

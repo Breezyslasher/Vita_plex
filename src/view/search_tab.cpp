@@ -11,6 +11,7 @@
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
 #include "platform/platform.hpp"
+#include "utils/air_time.hpp"
 
 #include <atomic>
 #include <cctype>
@@ -111,6 +112,9 @@ std::string cardSub(const MediaItem& it) {
 
 // START / long-press context menu wiring, matching the previous row behaviour.
 void wireContextMenu(brls::View* cell, const MediaItem& item) {
+    // Every one of these menus acts on a library ratingKey, which an EPG
+    // programme does not have.
+    if (!item.liveChannelKey.empty()) return;
     auto open = [item]() {
         switch (item.mediaType) {
             case MediaType::MOVIE:        MediaDetailView::showMovieContextMenuStatic(item);  break;
@@ -317,6 +321,7 @@ void SearchTab::performSearch() {
     if (m_query.empty()) {
         m_movies.clear(); m_episodes.clear(); m_shows.clear();
         m_artists.clear(); m_albums.clear(); m_tracks.clear();
+        m_liveTV.clear();
         rebuildResults();
         return;
     }
@@ -328,13 +333,21 @@ void SearchTab::performSearch() {
         std::vector<MediaItem> results;
         bool ok = client.search(q, results);
 
-        brls::sync([this, q, ok, results, gen, aliveWeak]() {
+        // The EPG provider is searched separately (see searchLiveTV). This
+        // runs per keystroke, so hold off until the query is long enough to
+        // mean something -- one or two characters match half the schedule
+        // and cost a request each.
+        std::vector<MediaItem> live;
+        if (q.size() >= 3) client.searchLiveTV(q, live);
+
+        brls::sync([this, q, ok, results, live, gen, aliveWeak]() {
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
             if (gen != m_loadGeneration) return;   // stale
 
             m_movies.clear(); m_episodes.clear(); m_shows.clear();
             m_artists.clear(); m_albums.clear(); m_tracks.clear();
+            m_liveTV = live;
             if (ok) {
                 for (const auto& it : results) {
                     switch (it.mediaType) {
@@ -374,6 +387,9 @@ void SearchTab::rebuildResults() {
     addSection("Artists",  m_artists);
     addSection("Albums",   m_albums);
     addSection("Tracks",   m_tracks);
+    // Last, like the Live TV rails on Home: schedule matches are a
+    // different kind of answer from what is in the library.
+    addSection("Live TV",  m_liveTV);
 
     if (m_resultsContent->getChildren().empty()) {
         auto* empty = new brls::Label();
@@ -535,6 +551,25 @@ brls::Box* SearchTab::makeCard(const MediaItem& item) {
 }
 
 void SearchTab::onItemSelected(const MediaItem& item) {
+    // Live TV results carry an EPG ratingKey, which /library/metadata 404s
+    // on — opening the detail view gives an empty page and playing fails.
+    // On the air, the useful action is to tune the channel it is on;
+    // otherwise all we can honestly offer is when it airs.
+    if (!item.liveChannelKey.empty()) {
+        if (airProgress(item.airStartAt, item.airEndAt) >= 0.0f) {
+            tuneLiveResult(item);
+        } else {
+            std::string when = airWindowLabel(item.airStartAt, item.airEndAt);
+            std::string msg  = item.title;
+            if (!when.empty()) msg += "\nAirs " + when;
+            if (!item.liveChannelTitle.empty()) msg += " on " + item.liveChannelTitle;
+            auto* dialog = new brls::Dialog(msg);
+            dialog->addButton("OK", []() {});
+            dialog->open();
+        }
+        return;
+    }
+
     // Tracks follow the default track action; everything else opens detail.
     if (item.mediaType == MediaType::MUSIC_TRACK) {
         MediaDetailView::performTrackActionStatic(item);
@@ -542,6 +577,32 @@ void SearchTab::onItemSelected(const MediaItem& item) {
     }
     auto* detailView = new MediaDetailView(item);
     brls::Application::pushActivity(new brls::Activity(detailView));
+}
+
+void SearchTab::tuneLiveResult(const MediaItem& item) {
+    const std::string channelKey  = item.liveChannelKey;
+    const std::string programKey  = item.key;
+    const std::string playerTitle =
+        (item.liveChannelTitle.empty() ? item.title
+                                       : item.liveChannelTitle + " - " + item.title);
+
+    asyncRun([channelKey, programKey, playerTitle]() {
+        PlexClient& client = PlexClient::getInstance();
+        std::string streamUrl, liveSessionUuid;
+        if (client.tuneLiveTVChannel(channelKey, streamUrl, liveSessionUuid, programKey)) {
+            brls::sync([streamUrl, liveSessionUuid, playerTitle]() {
+                Application::getInstance().pushLiveTVPlayerActivity(streamUrl, playerTitle,
+                                                                    liveSessionUuid);
+            });
+        } else {
+            brls::Logger::error("SearchTab: failed to tune {}", playerTitle);
+            brls::sync([playerTitle]() {
+                auto* dialog = new brls::Dialog("Failed to tune: " + playerTitle);
+                dialog->addButton("OK", []() {});
+                dialog->open();
+            });
+        }
+    });
 }
 
 SearchTab::~SearchTab() {
