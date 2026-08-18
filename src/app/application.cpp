@@ -473,8 +473,24 @@ bool Application::loadSettings() {
     m_settings.backgroundMusic = extractBool("backgroundMusic", true);
 
     // Live TV / DVR settings
-    m_settings.defaultDvrSectionId    = extractString("defaultDvrSectionId");
-    m_settings.defaultDvrSectionTitle = extractString("defaultDvrSectionTitle");
+    m_settings.defaultDvrShowSectionId     = extractString("defaultDvrShowSectionId");
+    m_settings.defaultDvrShowSectionTitle  = extractString("defaultDvrShowSectionTitle");
+    m_settings.defaultDvrMovieSectionId    = extractString("defaultDvrMovieSectionId");
+    m_settings.defaultDvrMovieSectionTitle = extractString("defaultDvrMovieSectionTitle");
+    // Migrate the old single default into both slots. Its library type
+    // was never recorded, and everything downstream filters by type, so
+    // only the matching slot will ever apply — the other behaves as unset.
+    if (m_settings.defaultDvrShowSectionId.empty() &&
+        m_settings.defaultDvrMovieSectionId.empty()) {
+        const std::string legacyId    = extractString("defaultDvrSectionId");
+        const std::string legacyTitle = extractString("defaultDvrSectionTitle");
+        if (!legacyId.empty()) {
+            m_settings.defaultDvrShowSectionId     = legacyId;
+            m_settings.defaultDvrShowSectionTitle  = legacyTitle;
+            m_settings.defaultDvrMovieSectionId    = legacyId;
+            m_settings.defaultDvrMovieSectionTitle = legacyTitle;
+        }
+    }
     {
         int v = extractInt("dvrStartOffsetMinutes");
         if (v >= 0 && v <= 60) m_settings.dvrStartOffsetMinutes = v;
@@ -594,8 +610,10 @@ bool Application::saveSettings() {
     json += "  \"downloadIncludeSubtitles\": " + b(m_settings.downloadIncludeSubtitles) + ",\n";
     json += "  \"trackDefaultAction\": " + std::to_string(static_cast<int>(m_settings.trackDefaultAction)) + ",\n";
     json += "  \"backgroundMusic\": " + b(m_settings.backgroundMusic) + ",\n";
-    json += "  \"defaultDvrSectionId\": \"" + esc(m_settings.defaultDvrSectionId) + "\",\n";
-    json += "  \"defaultDvrSectionTitle\": \"" + esc(m_settings.defaultDvrSectionTitle) + "\",\n";
+    json += "  \"defaultDvrShowSectionId\": \"" + esc(m_settings.defaultDvrShowSectionId) + "\",\n";
+    json += "  \"defaultDvrShowSectionTitle\": \"" + esc(m_settings.defaultDvrShowSectionTitle) + "\",\n";
+    json += "  \"defaultDvrMovieSectionId\": \"" + esc(m_settings.defaultDvrMovieSectionId) + "\",\n";
+    json += "  \"defaultDvrMovieSectionTitle\": \"" + esc(m_settings.defaultDvrMovieSectionTitle) + "\",\n";
     json += "  \"dvrStartOffsetMinutes\": " + std::to_string(m_settings.dvrStartOffsetMinutes) + ",\n";
     json += "  \"dvrEndOffsetMinutes\": " + std::to_string(m_settings.dvrEndOffsetMinutes) + ",\n";
     json += "  \"dvrRecordPartials\": " + b(m_settings.dvrRecordPartials) + ",\n";

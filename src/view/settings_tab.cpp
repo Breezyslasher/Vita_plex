@@ -1207,19 +1207,32 @@ brls::Box* SettingsTab::createLiveTVSection() {
     AppSettings& settings = Application::getInstance().getSettings();
     brls::Box* box = makeSectionBox();
 
-    m_defaultDvrLibraryCell = new brls::DetailCell();
-    m_defaultDvrLibraryCell->setText("Default DVR Library");
-    m_defaultDvrLibraryCell->setDetailText(
-        settings.defaultDvrSectionId.empty()
-            ? "Server default"
-            : (settings.defaultDvrSectionTitle.empty()
-                   ? ("Library #" + settings.defaultDvrSectionId)
-                   : settings.defaultDvrSectionTitle));
-    m_defaultDvrLibraryCell->registerClickAction([this](brls::View*) {
-        onManageDefaultDvrLibrary();
+    // One default per recording type: recordings can only land in a
+    // library of their own type, so a single default could never serve
+    // both TV and movies.
+    auto detailFor = [](const std::string& id, const std::string& title) {
+        if (id.empty()) return std::string("Server default");
+        return title.empty() ? ("Library #" + id) : title;
+    };
+    m_defaultDvrShowLibraryCell = new brls::DetailCell();
+    m_defaultDvrShowLibraryCell->setText("Default TV Recording Library");
+    m_defaultDvrShowLibraryCell->setDetailText(
+        detailFor(settings.defaultDvrShowSectionId, settings.defaultDvrShowSectionTitle));
+    m_defaultDvrShowLibraryCell->registerClickAction([this](brls::View*) {
+        onManageDefaultDvrLibrary(false);
         return true;
     });
-    box->addView(m_defaultDvrLibraryCell);
+    box->addView(m_defaultDvrShowLibraryCell);
+
+    m_defaultDvrMovieLibraryCell = new brls::DetailCell();
+    m_defaultDvrMovieLibraryCell->setText("Default Movie Recording Library");
+    m_defaultDvrMovieLibraryCell->setDetailText(
+        detailFor(settings.defaultDvrMovieSectionId, settings.defaultDvrMovieSectionTitle));
+    m_defaultDvrMovieLibraryCell->registerClickAction([this](brls::View*) {
+        onManageDefaultDvrLibrary(true);
+        return true;
+    });
+    box->addView(m_defaultDvrMovieLibraryCell);
 
     // Recording padding — most over-the-air programs run 1-2 minutes
     // long; a 0/1/2/3/5/10 ladder covers the realistic range without
@@ -1526,23 +1539,24 @@ void SettingsTab::onManageHiddenLibraries() {
         });
 }
 
-void SettingsTab::onManageDefaultDvrLibrary() {
+void SettingsTab::onManageDefaultDvrLibrary(bool forMovies) {
     AppSettings& settings = Application::getInstance().getSettings();
 
     std::vector<LibrarySection> sections;
     PlexClient::getInstance().fetchLibrarySections(sections);
 
-    // DVR can only target Movies / TV Shows libraries. Filter the rest
-    // out so the user can't pick (e.g.) a music library that the
-    // server will reject when we POST /media/subscriptions.
+    // Only libraries of this default's own type — the record flow filters
+    // the same way, so anything offered here can actually be applied.
+    const std::string wantType = forMovies ? "movie" : "show";
     std::vector<LibrarySection> eligible;
     for (const auto& s : sections) {
-        if (s.type == "movie" || s.type == "show") eligible.push_back(s);
+        if (s.type == wantType) eligible.push_back(s);
     }
 
     if (eligible.empty()) {
         brls::Dialog* dialog = new brls::Dialog(
-            "No Movies or TV Shows libraries were found on this server.");
+            forMovies ? "No Movies libraries were found on this server."
+                      : "No TV Shows libraries were found on this server.");
         dialog->addButton("OK", []() {});
         dialog->open();
         return;
@@ -1554,35 +1568,41 @@ void SettingsTab::onManageDefaultDvrLibrary() {
     options.reserve(eligible.size() + 1);
     options.push_back("Server default");
     for (const auto& s : eligible) {
-        options.push_back(s.title + "  (" + s.type + ")");
+        options.push_back(s.title);
     }
 
+    const std::string& currentId = forMovies ? settings.defaultDvrMovieSectionId
+                                             : settings.defaultDvrShowSectionId;
     int selected = 0;
     for (size_t i = 0; i < eligible.size(); i++) {
-        if (eligible[i].key == settings.defaultDvrSectionId) {
+        if (eligible[i].key == currentId) {
             selected = static_cast<int>(i) + 1;
             break;
         }
     }
 
     auto* dropdown = new brls::Dropdown(
-        "Default DVR Library", options,
-        [this, eligible](int picked) {
+        forMovies ? "Default Movie Recording Library" : "Default TV Recording Library",
+        options,
+        [this, eligible, forMovies](int picked) {
             AppSettings& s = Application::getInstance().getSettings();
+            std::string* id    = forMovies ? &s.defaultDvrMovieSectionId
+                                           : &s.defaultDvrShowSectionId;
+            std::string* title = forMovies ? &s.defaultDvrMovieSectionTitle
+                                           : &s.defaultDvrShowSectionTitle;
             if (picked <= 0 || picked > static_cast<int>(eligible.size())) {
-                s.defaultDvrSectionId.clear();
-                s.defaultDvrSectionTitle.clear();
+                id->clear();
+                title->clear();
             } else {
                 const auto& sec = eligible[picked - 1];
-                s.defaultDvrSectionId    = sec.key;
-                s.defaultDvrSectionTitle = sec.title;
+                *id    = sec.key;
+                *title = sec.title;
             }
             Application::getInstance().saveSettings();
-            if (m_defaultDvrLibraryCell) {
-                m_defaultDvrLibraryCell->setDetailText(
-                    s.defaultDvrSectionId.empty()
-                        ? "Server default"
-                        : s.defaultDvrSectionTitle);
+            brls::DetailCell* cell = forMovies ? m_defaultDvrMovieLibraryCell
+                                               : m_defaultDvrShowLibraryCell;
+            if (cell) {
+                cell->setDetailText(id->empty() ? "Server default" : *title);
             }
         },
         selected);

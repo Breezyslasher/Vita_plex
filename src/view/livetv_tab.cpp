@@ -2184,36 +2184,42 @@ void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {
     });
 }
 
+// A GuideProgram riding a channel, as the MediaItem the shared Live TV
+// dialogs consume. The guide is the only caller that still holds the
+// split representation.
+static MediaItem guideItemFor(const GuideProgram& program, const LiveTVChannel& channel) {
+    MediaItem item;
+    item.ratingKey        = program.ratingKey;
+    item.key              = program.metadataKey;
+    item.title            = program.title;
+    item.summary          = program.summary;
+    item.thumb            = program.thumb.empty() ? channel.thumb : program.thumb;
+    item.airStartAt       = program.startTime;
+    item.airEndAt         = program.endTime;
+    item.liveChannelKey   = !channel.key.empty() ? channel.key : channel.channelIdentifier;
+    item.liveChannelTitle = channel.title;
+    item.isLiveTV         = true;
+    return item;
+}
+
 void LiveTVTab::onProgramSelected(const GuideProgram& program, const LiveTVChannel& channel) {
-    std::string message = program.title;
-    if (program.startTime > 0 && program.endTime > 0) {
-        message += "\n\n" + formatTime(program.startTime) + " - " + formatTime(program.endTime);
-    }
-    if (!program.summary.empty()) message += "\n\n" + program.summary;
-
-    // A programme already under way can only be recorded from here on, and
-    // the server keeps that partial only if the user asked it to — see
-    // canRecordAiring().
-    const bool recordable = canRecordAiring(program.startTime);
-    if (!recordable) {
-        message += "\n\nAlready started — turn on Keep Partial Recordings in "
-                   "Settings to record the rest of a programme.";
-    }
-
-    brls::Dialog* dialog = new brls::Dialog(message);
-    dialog->addButton("Watch Now", [this, channel]() { onChannelSelected(channel); });
-    if (recordable)
-        dialog->addButton("Record", [this, program, channel]() { scheduleRecording(program, channel); });
-    dialog->addButton("Cancel", []() {});
-    dialog->open();
+    // The shared program card (art, air-window progress, Watch Now /
+    // Record) — the same dialog the Home rails and search open, so the
+    // guide cannot drift from them. Refresh the recordings list if a
+    // recording gets scheduled from it.
+    showLiveTVProgramMenu(guideItemFor(program, channel),
+        [this, aliveWeak = std::weak_ptr<bool>(m_alive)](bool success) {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+            if (success) loadRecordings();
+        });
 }
 
 void LiveTVTab::scheduleRecording(const GuideProgram& program, const LiveTVChannel& channel) {
-    (void)channel;
-    // One implementation, shared with the Home rails and search — see
-    // view/livetv_actions.hpp. It reports success itself; all the guide
-    // adds is refreshing its own recordings list afterwards.
-    scheduleLiveTVRecording(program.ratingKey, program.title,
+    // Straight to the record-options dialog (scope + per-recording
+    // settings) — the hero's Record button sits beside Watch live, so the
+    // program card would only repeat the choice the user just made.
+    showRecordOptions(guideItemFor(program, channel),
         [this, aliveWeak = std::weak_ptr<bool>(m_alive)](bool success) {
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
