@@ -20,6 +20,12 @@ public:
     void setItem(const MediaItem& item);
     const MediaItem& getItem() const { return m_item; }
 
+    // Render this cell as a portrait poster even when the item's type
+    // would normally pick a landscape still, preferring the show's poster
+    // art over the episode's own thumbnail. The Live TV "… On Now" rails
+    // carry episodes but read as a row of shows. Call before setItem().
+    void setPreferPoster(bool prefer) { m_preferPoster = prefer; }
+
     // True if this cell's media type shows the start-button hint overlay
     // when focused (movies, shows, seasons, albums, artists, playlists).
     // Episodes / tracks / clips intentionally don't get the hint.
@@ -42,6 +48,7 @@ private:
     void updateFocusInfo(bool focused);
 
     bool m_pressed = false;  // Touch press feedback overlay
+    bool m_preferPoster = false;  // see setPreferPoster()
 
     MediaItem m_item;
     std::string m_originalTitle;  // Store original truncated title

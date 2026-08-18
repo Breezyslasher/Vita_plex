@@ -134,8 +134,15 @@ void MediaItemCell::setItem(const MediaItem& item) {
                     item.mediaType == MediaType::MUSIC_ALBUM ||
                     item.mediaType == MediaType::MUSIC_TRACK ||
                     item.type == "playlist");
-    bool isEpisode = (item.mediaType == MediaType::EPISODE);
-    bool isClip = (item.mediaType == MediaType::CLIP);
+    // m_preferPoster turns off the landscape shapes so the rest of this
+    // function — cover slot, hidden-title height, progress bar width —
+    // follows the portrait path without a second set of branches. Only
+    // when there is poster art to put there: a landscape still letterboxed
+    // into a portrait slot looks worse than the landscape cell it replaced,
+    // and live sports fixtures often have no show poster at all.
+    const bool poster = m_preferPoster && !item.grandparentThumb.empty();
+    bool isEpisode = (item.mediaType == MediaType::EPISODE) && !poster;
+    bool isClip = (item.mediaType == MediaType::CLIP) && !poster;
 
     const auto& ic = platform::getImageConstraints();
 
@@ -203,7 +210,10 @@ void MediaItemCell::setItem(const MediaItem& item) {
 
     // Set subtitle for episodes
     if (m_subtitleLabel) {
-        if (item.mediaType == MediaType::EPISODE) {
+        // Live TV programmes are episodes without a season/episode number,
+        // so guard on both rather than labelling them "S00E00".
+        if (item.mediaType == MediaType::EPISODE &&
+            item.parentIndex > 0 && item.index > 0) {
             char subtitle[32];
             snprintf(subtitle, sizeof(subtitle), "S%02dE%02d",
                      item.parentIndex, item.index);
@@ -254,8 +264,11 @@ void MediaItemCell::loadThumbnail() {
                     m_item.mediaType == MediaType::MUSIC_ALBUM ||
                     m_item.mediaType == MediaType::MUSIC_TRACK ||
                     m_item.type == "playlist");
-    bool isEpisode = (m_item.mediaType == MediaType::EPISODE);
-    bool isClip = (m_item.mediaType == MediaType::CLIP);
+    // Keep this in step with setItem(): the requested image dimensions have
+    // to match the shape the cell laid out.
+    const bool poster = m_preferPoster && !m_item.grandparentThumb.empty();
+    bool isEpisode = (m_item.mediaType == MediaType::EPISODE) && !poster;
+    bool isClip = (m_item.mediaType == MediaType::CLIP) && !poster;
 
     // Request thumbnails sized for the current platform. PSV pulls down
     // tiny 110x165 covers; PS4/desktop pull down 220x330+ posters from the
@@ -277,7 +290,10 @@ void MediaItemCell::loadThumbnail() {
     // For episodes, use episode's own thumb (episode still) - landscape format
     // Fall back to grandparentThumb (show poster) only if episode thumb is missing
     std::string thumbPath = m_item.thumb;
-    if (isEpisode && thumbPath.empty() && !m_item.grandparentThumb.empty()) {
+    if (poster) {
+        // Poster cells want the show's art, not the episode still.
+        thumbPath = m_item.grandparentThumb;
+    } else if (isEpisode && thumbPath.empty() && !m_item.grandparentThumb.empty()) {
         thumbPath = m_item.grandparentThumb;
     }
 

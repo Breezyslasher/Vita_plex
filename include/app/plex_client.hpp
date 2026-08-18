@@ -520,13 +520,18 @@ public:
     // when the server doesn't advertise them, so callers can fall back.
     bool fetchLiveTVWatchNowHubs(std::vector<LiveTVHub>& hubs);
     bool fetchLiveTVProviderHubs(std::vector<LiveTVHub>& hubs);
-    // The provider's real "Recent Channels" hub, returned as channels so
-    // the existing rail cells and tuneChannel() work unchanged. One
-    // request: /{epgProviderKey}/hubs/discover carries its items inline.
-    // That same response also carries the "… On Now" rail, so pass
-    // showsOnNow to fill both Home rails without a second round trip.
-    bool fetchLiveTVRecentChannels(std::vector<LiveTVChannel>& channels,
-                                   std::vector<MediaItem>* showsOnNow = nullptr);
+    // Every Live TV rail Home shows, from one /{epgProviderKey}/hubs/discover
+    // request — that response carries all three with their items inline.
+    // recentChannels comes back as channels so the existing rail cells and
+    // tuneChannel() work unchanged. Returns false when the provider serves
+    // none of them.
+    struct LiveTVHomeRails {
+        std::vector<LiveTVChannel> recentChannels;
+        std::vector<MediaItem>     showsOnNow;
+        std::vector<MediaItem>     moviesOnNow;
+        std::vector<MediaItem>     sportsOnNow;
+    };
+    bool fetchLiveTVHomeRails(LiveTVHomeRails& rails);
     // Fetch one rail's contents. `key` comes from a LiveTVHub verbatim.
     bool fetchLiveTVHubItems(const std::string& key, std::vector<MediaItem>& items);
     bool tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl,

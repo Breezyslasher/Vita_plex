@@ -4387,10 +4387,15 @@ bool PlexClient::fetchLiveTVProviderHubs(std::vector<LiveTVHub>& hubs) {
     return !hubs.empty();
 }
 
-bool PlexClient::fetchLiveTVRecentChannels(std::vector<LiveTVChannel>& channels,
-                                           std::vector<MediaItem>* showsOnNow) {
+bool PlexClient::fetchLiveTVHomeRails(LiveTVHomeRails& rails) {
+    std::vector<LiveTVChannel>& channels    = rails.recentChannels;
+    std::vector<MediaItem>*     showsOnNow  = &rails.showsOnNow;
+    std::vector<MediaItem>*     moviesOnNow = &rails.moviesOnNow;
+    std::vector<MediaItem>*     sportsOnNow = &rails.sportsOnNow;
     channels.clear();
-    if (showsOnNow) showsOnNow->clear();
+    showsOnNow->clear();
+    moviesOnNow->clear();
+    sportsOnNow->clear();
     if (m_epgProviderKey.empty()) checkLiveTVAvailability();
     if (m_epgProviderKey.empty()) return false;
 
@@ -4419,22 +4424,42 @@ bool PlexClient::fetchLiveTVRecentChannels(std::vector<LiveTVChannel>& channels,
 
     HttpResponse resp = client.request(req);
     if (resp.statusCode != 200 || resp.body.empty()) {
-        brls::Logger::debug("fetchLiveTVRecentChannels: HTTP {}", resp.statusCode);
+        brls::Logger::debug("fetchLiveTVHomeRails: HTTP {}", resp.statusCode);
         return false;
     }
 
     // Plex hub responses carry each hub's Metadata inline, so one pass over
-    // MediaContainer.Hub[] fills both Home rails: the channels the account
-    // actually watched, and the "… On Now" programmes beside them.
+    // MediaContainer.Hub[] fills all three Home rails: the channels the
+    // account actually watched, and the shows and movies on now beside them.
     std::vector<std::string> seenTitles;
     std::string recentKey;
     int  recentSize  = 0;
     int  recentTotal = 0;
     bool recentMore  = false;
+    std::string showsKey,  moviesKey,  sportsKey;
+    bool        showsMore = false, moviesMore = false, sportsMore = false;
+
+    auto collectItems = [this](std::string_view hub, std::vector<MediaItem>& out) {
+        forEachJsonObject(hub, "\"Metadata\"", [&](std::string_view item) {
+            MediaItem mi = parseLiveTVHubItem(item);
+            if (!mi.ratingKey.empty() && !mi.title.empty()) out.push_back(std::move(mi));
+        });
+    };
+
     forEachJsonObject(resp.body, "\"Hub\"", [&](std::string_view hub) {
         const std::string title = lowerOf(jsonFieldView(hub, "\"title\""));
         const std::string key   = lowerOf(jsonFieldView(hub, "\"key\""));
         seenTitles.push_back(title);
+
+        // Every "… On Now" rail satisfies the generic on-now test, so a hub
+        // has to be classified before any one rail claims it — otherwise
+        // whichever is checked first swallows the others.
+        const bool isOnNow  = title.find("on now") != std::string::npos ||
+                              key.find("onnow") != std::string::npos;
+        const bool isMovies = title.find("movie") != std::string::npos ||
+                              key.find("onnow/movies") != std::string::npos;
+        const bool isSports = title.find("sport") != std::string::npos ||
+                              key.find("onnow/sports") != std::string::npos;
 
         if (channels.empty() &&
             title.find("recent") != std::string::npos &&
@@ -4450,18 +4475,22 @@ bool PlexClient::fetchLiveTVRecentChannels(std::vector<LiveTVChannel>& channels,
             recentTotal = (int)svToInt64(jsonFieldView(hub, "\"totalSize\""));
             recentMore  = jsonFieldView(hub, "\"more\"") == "true";
             collectRecentChannels(hub, channels);
-            brls::Logger::debug("fetchLiveTVRecentChannels: hub '{}' key={} size={} totalSize={} "
+            brls::Logger::debug("fetchLiveTVHomeRails: hub '{}' key={} size={} totalSize={} "
                                 "more={} parsed={}",
                                 jsonFieldView(hub, "\"title\""), recentKey, recentSize,
                                 recentTotal, recentMore, channels.size());
-        } else if (showsOnNow && showsOnNow->empty() &&
-                   (title.find("on now") != std::string::npos ||
-                    key.find("onnow") != std::string::npos)) {
-            forEachJsonObject(hub, "\"Metadata\"", [&](std::string_view item) {
-                MediaItem mi = parseLiveTVHubItem(item);
-                if (!mi.ratingKey.empty() && !mi.title.empty())
-                    showsOnNow->push_back(std::move(mi));
-            });
+        } else if (isOnNow) {
+            std::vector<MediaItem>* rail = showsOnNow;   // shows is the catch-all
+            std::string*            key  = &showsKey;
+            bool*                   more = &showsMore;
+            if (isMovies)      { rail = moviesOnNow; key = &moviesKey; more = &moviesMore; }
+            else if (isSports) { rail = sportsOnNow; key = &sportsKey; more = &sportsMore; }
+
+            if (rail->empty()) {
+                *key  = std::string(jsonFieldView(hub, "\"key\""));
+                *more = jsonFieldView(hub, "\"more\"") == "true";
+                collectItems(hub, *rail);
+            }
         }
     });
 
@@ -4484,26 +4513,75 @@ bool PlexClient::fetchLiveTVRecentChannels(std::vector<LiveTVChannel>& channels,
         if (hubResp.statusCode == 200 && !hubResp.body.empty())
             collectRecentChannels(hubResp.body, full);
 
-        brls::Logger::debug("fetchLiveTVRecentChannels: refetched {} -> HTTP {}, container size={}, "
+        brls::Logger::debug("fetchLiveTVHomeRails: refetched {} -> HTTP {}, container size={}, "
                             "{} parsed",
                             recentKey, hubResp.statusCode,
                             svToInt64(jsonFieldView(hubResp.body, "\"size\"")), full.size());
         if (full.size() > channels.size()) channels = std::move(full);
     }
 
-    if (channels.empty()) {
+    // count=12 above caps every hub in the discover response, so each On Now
+    // rail arrives as a preview of what is actually broadcasting. Follow the
+    // hub's own key for the whole rail — the same second request the official
+    // client makes right after discover. Keep the preview if the refetch
+    // doesn't do better, so a failure never empties a rail.
+    auto fillRail = [this](const char* what, const std::string& key, bool more,
+                           std::vector<MediaItem>& rail) {
+        if (key.empty() || !more) return;
+        std::vector<MediaItem> everything;
+        fetchLiveTVHubItems(key, everything);
+        brls::Logger::debug("fetchLiveTVHomeRails: {} rail {} preview={} full={}",
+                            what, key, rail.size(), everything.size());
+        if (everything.size() > rail.size()) rail = std::move(everything);
+    };
+    fillRail("shows-on-now",  showsKey,  showsMore,  *showsOnNow);
+    fillRail("movies-on-now", moviesKey, moviesMore, *moviesOnNow);
+    fillRail("sports-on-now", sportsKey, sportsMore, *sportsOnNow);
+
+    // promoted=1 returns only the hubs the provider promotes, which on some
+    // servers is just Recent Channels and Shows On Now. The rest of the
+    // "… On Now" family is enumerated by /watchnow, whose Type[] entries are
+    // ready-to-fetch section queries. Ask for it only when a rail is
+    // actually missing, so a provider that promotes everything pays nothing,
+    // and dropping promoted=1 (14 rails inlined at 12 items each) stays off
+    // the table for the handhelds.
+    if (showsOnNow->empty() || moviesOnNow->empty() || sportsOnNow->empty()) {
+        std::vector<LiveTVHub> watchNow;
+        if (fetchLiveTVWatchNowHubs(watchNow)) {
+            for (const auto& h : watchNow) {
+                const std::string t = lowerOf(h.title);
+                // "All Channels" is a browse view, not an on-now rail.
+                if (t.find("on now") == std::string::npos) continue;
+
+                std::vector<MediaItem>* rail = nullptr;
+                if (t.find("movie") != std::string::npos)      rail = moviesOnNow;
+                else if (t.find("sport") != std::string::npos) rail = sportsOnNow;
+                else                                           rail = showsOnNow;
+
+                if (rail->empty()) fetchLiveTVHubItems(h.key, *rail);
+            }
+        }
+    }
+
+    // Which rails this provider actually serves. Lineups differ by region
+    // and provider, so this is the only way to know what a given server
+    // offers beyond the three Home renders — and it explains a missing
+    // rail without a second round trip.
+    {
         std::string offered;
         for (const auto& t : seenTitles) {
             if (!offered.empty()) offered += ", ";
             offered += t;
         }
-        brls::Logger::debug("fetchLiveTVRecentChannels: no Recent Channels hub; provider offers: {}",
-                            offered);
+        brls::Logger::debug("fetchLiveTVHomeRails: provider offers {} rails: {}",
+                            seenTitles.size(), offered);
     }
 
-    brls::Logger::info("fetchLiveTVRecentChannels: {} channels, {} on-now items",
-                       channels.size(), showsOnNow ? showsOnNow->size() : 0);
-    return !channels.empty();
+    brls::Logger::info("fetchLiveTVHomeRails: {} channels, {} shows, {} movies, {} sports on now",
+                       channels.size(), showsOnNow->size(), moviesOnNow->size(),
+                       sportsOnNow->size());
+    return !channels.empty() || !showsOnNow->empty() ||
+           !moviesOnNow->empty() || !sportsOnNow->empty();
 }
 
 MediaItem PlexClient::parseLiveTVHubItem(std::string_view obj) {
@@ -4520,6 +4598,11 @@ MediaItem PlexClient::parseLiveTVHubItem(std::string_view obj) {
     item.year        = (int)svToInt64(jsonFieldView(obj, "\"year\""));
     item.duration    = (int)svToInt64(jsonFieldView(obj, "\"duration\""));
     item.viewOffset  = (int)svToInt64(jsonFieldView(obj, "\"viewOffset\""));
+    item.index       = (int)svToInt64(jsonFieldView(obj, "\"index\""));
+    item.parentIndex = (int)svToInt64(jsonFieldView(obj, "\"parentIndex\""));
+    // The show's poster, kept separate from the episode still so a rail
+    // can render either shape (see MediaItemCell::setPreferPoster).
+    item.grandparentThumb = std::string(jsonFieldView(obj, "\"grandparentThumb\""));
     // Live TV entries title themselves by episode ("Ick, A Bod") while
     // the show name sits on grandparentTitle ("Elsbeth"). The official
     // client's rails lead with the show, so promote it and keep the
