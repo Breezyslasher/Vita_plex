@@ -30,6 +30,12 @@ void recordingFailed(const std::string& title, std::function<void(bool)> onDone)
 
 }  // namespace
 
+bool canRecordAiring(int64_t airStartAt) {
+    if (airStartAt <= 0) return true;                  // unknown window: let the server decide
+    if ((int64_t)time(nullptr) < airStartAt) return true;   // hasn't started
+    return Application::getInstance().getSettings().dvrRecordPartials;
+}
+
 void scheduleLiveTVRecording(const std::string& guid, const std::string& title,
                              std::function<void(bool)> onDone) {
     if (guid.empty()) {
@@ -200,6 +206,14 @@ void tuneLiveTVProgram(const MediaItem& item) {
 }
 
 void showLiveTVProgramMenu(const MediaItem& item) {
+    // Everything on the On Now rails is already under way, so recording one
+    // can only capture the remainder. With "Keep Partial Recordings" off the
+    // server throws that away, so say so rather than offering a button that
+    // quietly does nothing.
+    const bool recordable = canRecordAiring(item.airStartAt);
+    const bool onAir = !item.liveChannelKey.empty() &&
+                       airProgress(item.airStartAt, item.airEndAt) >= 0.0f;
+
     std::string message = item.title;
     const std::string window = airWindowLabel(item.airStartAt, item.airEndAt);
     if (!window.empty()) {
@@ -207,22 +221,25 @@ void showLiveTVProgramMenu(const MediaItem& item) {
         if (!item.liveChannelTitle.empty()) message += " on " + item.liveChannelTitle;
     }
     if (!item.summary.empty()) message += "\n\n" + item.summary;
+    if (!recordable) {
+        message += "\n\nAlready started — turn on Keep Partial Recordings in "
+                   "Settings to record the rest of a programme.";
+    }
 
     brls::Dialog* dialog = new brls::Dialog(message);
 
     // Watch Now only while it is actually on the air and we know where:
     // tuning a channel for a programme that starts in three hours would
     // hand the user whatever happens to be on instead.
-    const bool onAir = !item.liveChannelKey.empty() &&
-                       airProgress(item.airStartAt, item.airEndAt) >= 0.0f;
     if (onAir) {
         MediaItem captured = item;
         dialog->addButton("Watch Now", [captured]() { tuneLiveTVProgram(captured); });
     }
-
-    const std::string guid = item.ratingKey;
-    const std::string title = item.title;
-    dialog->addButton("Record", [guid, title]() { scheduleLiveTVRecording(guid, title); });
+    if (recordable) {
+        const std::string guid = item.ratingKey;
+        const std::string title = item.title;
+        dialog->addButton("Record", [guid, title]() { scheduleLiveTVRecording(guid, title); });
+    }
     dialog->addButton("Cancel", []() {});
     dialog->open();
 }

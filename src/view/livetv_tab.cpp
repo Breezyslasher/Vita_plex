@@ -1027,6 +1027,18 @@ void LiveTVTab::buildHero() {
     m_heroRecordBtn->addView(recTxt);
     m_heroRecordBtn->registerClickAction([this](brls::View*) {
         if (m_heroProgramValid) {
+            // The hero always shows what is on now, so this is always a
+            // partial recording — worth saying when the server would throw
+            // it away rather than scheduling one that vanishes.
+            if (!canRecordAiring(m_heroProgram.startTime)) {
+                brls::Dialog* dialog = new brls::Dialog(
+                    m_heroProgram.title +
+                    "\n\nAlready started — turn on Keep Partial Recordings in "
+                    "Settings to record the rest of a programme.");
+                dialog->addButton("OK", []() {});
+                dialog->open();
+                return true;
+            }
             scheduleRecording(m_heroProgram, m_heroChannel);
         } else {
             brls::Dialog* dialog = new brls::Dialog(
@@ -2179,9 +2191,19 @@ void LiveTVTab::onProgramSelected(const GuideProgram& program, const LiveTVChann
     }
     if (!program.summary.empty()) message += "\n\n" + program.summary;
 
+    // A programme already under way can only be recorded from here on, and
+    // the server keeps that partial only if the user asked it to — see
+    // canRecordAiring().
+    const bool recordable = canRecordAiring(program.startTime);
+    if (!recordable) {
+        message += "\n\nAlready started — turn on Keep Partial Recordings in "
+                   "Settings to record the rest of a programme.";
+    }
+
     brls::Dialog* dialog = new brls::Dialog(message);
     dialog->addButton("Watch Now", [this, channel]() { onChannelSelected(channel); });
-    dialog->addButton("Record", [this, program, channel]() { scheduleRecording(program, channel); });
+    if (recordable)
+        dialog->addButton("Record", [this, program, channel]() { scheduleRecording(program, channel); });
     dialog->addButton("Cancel", []() {});
     dialog->open();
 }
