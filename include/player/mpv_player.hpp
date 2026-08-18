@@ -215,6 +215,10 @@ private:
     // waits on this so the previous file's decoder is actually released
     // before the caller tears the event pump down — see stop().
     bool m_fileUnloaded = true;
+    // Set on MPV_EVENT_SHUTDOWN. The handle is dead once that arrives:
+    // commands still queue and report success but never execute. loadUrl()
+    // recreates the context instead of loading into the corpse.
+    bool m_coreShutdown = false;
     bool m_audioOnly = false;       // Audio-only mode (no video decoding)
 
     // Static callback for render updates (called from MPV thread)

@@ -228,11 +228,16 @@ bool MpvPlayer::init() {
         // OpenSL ES as fallback.
         mpv_set_option_string(m_mpv, "ao", "audiotrack,opensles");
         // force-window stays no until the surface is attached so mpv
-        // doesn't try to create a window before we hand it one. idle=once
-        // lets mpv settle into idle state instead of exiting when no
-        // file is playing.
+        // doesn't try to create a window before we hand it one.
         mpv_set_option_string(m_mpv, "force-window", "no");
-        mpv_set_option_string(m_mpv, "idle", "once");
+        // NOT idle=once. "once" idles only until the FIRST file ends and
+        // then terminates the core — so stopping video 1 killed mpv, and
+        // every later loadfile queued into a dead handle (accepted,
+        // COMMAND_REPLY error=0, no START_FILE, video never starts). This
+        // block is Android-only, which is why the second-video stall never
+        // reproduced on desktop. idle=yes keeps the core alive between
+        // files, matching the global default set above.
+        mpv_set_option_string(m_mpv, "idle", "yes");
 #else
         // libmpv VO + FBO/NanoVG composite — Vita / PS4 / Switch /
         // desktop. The Android FBO path is intentionally retired:
@@ -544,6 +549,14 @@ void MpvPlayer::setAudioOnly(bool audioOnly) {
 }
 
 bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
+    // A terminated core accepts commands and never runs them, so rebuild
+    // it before loading rather than queueing into a dead handle. init()
+    // re-attaches the Android surface via rebindIfReady().
+    if (m_coreShutdown) {
+        brls::Logger::warning("MpvPlayer: core had shut down — reinitializing before load");
+        shutdown();
+        m_coreShutdown = false;
+    }
     if (!m_mpv) {
         if (!init()) {
             return false;
@@ -1160,7 +1173,13 @@ void MpvPlayer::eventMainLoop() {
             }
 
             case MPV_EVENT_SHUTDOWN:
-                brls::Logger::debug("MpvPlayer: EVENT_SHUTDOWN");
+                // The core is gone. Nothing may be issued on this handle
+                // afterwards — mpv_command_async still returns 0 and even
+                // replies, it just never runs anything. Flag it so the next
+                // load rebuilds the context rather than silently failing.
+                brls::Logger::warning("MpvPlayer: EVENT_SHUTDOWN — core terminated, will reinit on next load");
+                m_coreShutdown = true;
+                m_fileUnloaded = true;
                 setState(MpvPlayerState::IDLE);
                 return;
 
