@@ -107,6 +107,33 @@ static bool homeIsDescendantOf(brls::View* view, brls::View* ancestor) {
     return false;
 }
 
+// Rails finish loading well after the tab is on screen — often while a
+// modal still sits in front of it, the Plex Home user picker at launch
+// being the usual case. Populating a row clears and rebuilds its views,
+// and borealis then hands focus to whatever it can find, which yanks the
+// user out of the picker and into the page behind it.
+//
+// Guard the mutation: if focus wasn't ours to begin with, put it back
+// where it was. Capture and restore happen inside one brls::sync callback
+// with no suspension between them, so the captured view cannot go away
+// underneath us.
+namespace {
+class ForeignFocusGuard {
+public:
+    explicit ForeignFocusGuard(brls::View* self) {
+        m_keep = brls::Application::getCurrentFocus();
+        m_restore = m_keep && self && !homeIsDescendantOf(m_keep, self);
+    }
+    ~ForeignFocusGuard() {
+        if (m_restore && m_keep && brls::Application::getCurrentFocus() != m_keep)
+            brls::Application::giveFocus(m_keep);
+    }
+private:
+    brls::View* m_keep = nullptr;
+    bool m_restore = false;
+};
+}  // namespace
+
 void HomeTab::draw(NVGcontext* vg, float x, float y, float width, float height,
                    brls::Style style, brls::FrameContext* ctx) {
     // Vertical culling: mark rails/headers outside the page viewport
@@ -478,6 +505,7 @@ void HomeTab::loadContent() {
             brls::sync([this, items, aliveWeak]() {
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
+                ForeignFocusGuard focusGuard(this);
                 m_continueWatching = items;
                 populateRow(m_continueWatchingRow, m_continueWatching, true);
             });
@@ -557,6 +585,7 @@ void HomeTab::loadContent() {
         brls::sync([this, movies, shows, music, aliveWeak]() {
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
+            ForeignFocusGuard focusGuard(this);
 
             m_recentMovies = movies;
             m_recentShows = shows;
@@ -664,6 +693,9 @@ void HomeTab::loadRecentChannels() {
         brls::sync([this, recentItems, onNow, channels, aliveWeak]() {
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
+            // Revealing a rail (GONE -> VISIBLE) relayouts and repopulates,
+            // so this is the most likely of the three to pull focus.
+            ForeignFocusGuard focusGuard(this);
 
             m_recentChannelItems = recentItems;
             m_showsOnNow         = onNow;
