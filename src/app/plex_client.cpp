@@ -3408,9 +3408,14 @@ void PlexClient::checkLiveTVAvailability() {
 
     HttpResponse resp = client.request(req);
 
-    m_hasLiveTV = (resp.statusCode == 200);
+    // NOT a proxy for "this server has Live TV": per openapi.json
+    // /livetv/dvrs answers 200 whether or not a DVR exists, and reports
+    // the absence as an empty MediaContainer (size 0, no Dvr array). The
+    // real answer is whether a DVR key falls out of the parse below, so
+    // m_hasLiveTV is decided at the end.
+    const bool dvrEndpointAnswered = (resp.statusCode == 200);
 
-    if (m_hasLiveTV && !resp.body.empty()) {
+    if (dvrEndpointAnswered && !resp.body.empty()) {
         brls::Logger::debug("DVR response (first 1000): {}",
                             resp.body.substr(0, 1000));
 
@@ -3502,6 +3507,10 @@ void PlexClient::checkLiveTVAvailability() {
             }
         }
     }
+
+    // A DVR key is the thing that actually makes Live TV usable — without
+    // one there is no lineup, no EPG provider, and nothing to tune.
+    m_hasLiveTV = !m_dvrId.empty();
 
     brls::Logger::info("Live TV availability check: {} (dvr: {}, devices: {}, lineup: {}, mappings: {}, epg: {})",
                         m_hasLiveTV ? "available" : "not available",

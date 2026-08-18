@@ -664,17 +664,14 @@ void HomeTab::loadRecentChannels() {
                 }
             }
 
-            // Fallback only: the first channels of the lineup, which is an
-            // approximation of "recent" and nothing more. Both paths render
-            // through the same 16:9 channel cells and tune on click.
-            if (channels.empty()) {
-                brls::Logger::debug("HomeTab: no Recent Channels hub — approximating from the EPG grid");
-                if (client.fetchEPGGrid(channels, 2)) {
-                    if (channels.size() > 8) channels.resize(8);
-                } else {
-                    channels.clear();
-                }
-            }
+            // Deliberately no EPG-grid fallback. Filling the rail with the
+            // first channels of the lineup made it look like viewing
+            // history to a user who had never watched a channel, and it
+            // showed the same unchanging list forever. If the provider has
+            // no Recent Channels hub, or the account has watched nothing,
+            // the rail stays hidden — same as the official client.
+            if (channels.empty())
+                brls::Logger::debug("HomeTab: no recent channels — rail stays hidden");
 
             if (recentItems.empty() && onNow.empty() && channels.empty()) {
                 brls::Logger::debug("HomeTab: no live TV content (rails stay hidden)");
