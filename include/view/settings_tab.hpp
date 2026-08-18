@@ -127,7 +127,6 @@ private:
     brls::DetailCell*  m_switchUserCell  = nullptr;
 
     // Interface section
-    brls::SelectorCell* m_themeSelector = nullptr;
     brls::BooleanCell* m_debugLogToggle = nullptr;
     // Manage Hidden Libraries lives here now (was the old Layout section).
     brls::DetailCell* m_hiddenLibrariesCell = nullptr;
@@ -143,23 +142,23 @@ private:
     brls::BooleanCell* m_autoPlayToggle = nullptr;
     brls::BooleanCell* m_resumeToggle = nullptr;
     brls::BooleanCell* m_subtitlesToggle = nullptr;
-    brls::SelectorCell* m_subtitleSizeSelector = nullptr;
-    brls::SelectorCell* m_seekIntervalSelector = nullptr;
-    brls::SelectorCell* m_controlsAutoHideSelector = nullptr;
+    brls::DetailCell*   m_subtitleSizeSelector = nullptr;
+    brls::DetailCell*   m_seekIntervalSelector = nullptr;
+    brls::DetailCell*   m_controlsAutoHideSelector = nullptr;
     brls::BooleanCell* m_autoSkipIntroToggle = nullptr;
     brls::BooleanCell* m_autoSkipCreditsToggle = nullptr;
 
     // Transcode section
-    brls::SelectorCell* m_qualitySelector = nullptr;
+    brls::DetailCell*   m_qualitySelector = nullptr;
     brls::BooleanCell* m_forceTranscodeToggle = nullptr;
     brls::BooleanCell* m_directPlayToggle = nullptr;
 
     // Network section (split out of Transcoding so it gets its own rail
     // row; the cell + handler are unchanged).
-    brls::SelectorCell* m_connectionTimeoutSelector = nullptr;
+    brls::DetailCell*   m_connectionTimeoutSelector = nullptr;
     // HTTP response cache controls live in Network too — keeps all the
     // server-traffic settings in one place.
-    brls::SelectorCell* m_cacheLifetimeSelector = nullptr;
+    brls::DetailCell*   m_cacheLifetimeSelector = nullptr;
     brls::DetailCell*   m_clearCacheCell        = nullptr;
     // Persistent SyncLounge session connect/disconnect cell (shows status).
     brls::DetailCell*   m_syncLoungeSyncCell    = nullptr;
@@ -169,17 +168,17 @@ private:
     brls::DetailCell* m_clearDownloadsCell = nullptr;
 
     // Music section (split out of Playback)
-    brls::SelectorCell* m_trackActionSelector = nullptr;
+    brls::DetailCell*   m_trackActionSelector = nullptr;
     brls::BooleanCell* m_backgroundMusicToggle = nullptr;
 
     // Live TV section
     brls::DetailCell*   m_defaultDvrShowLibraryCell  = nullptr;
     brls::DetailCell*   m_defaultDvrMovieLibraryCell = nullptr;
-    brls::SelectorCell* m_dvrStartOffsetSelector = nullptr;
-    brls::SelectorCell* m_dvrEndOffsetSelector   = nullptr;
+    brls::DetailCell*   m_dvrStartOffsetSelector = nullptr;
+    brls::DetailCell*   m_dvrEndOffsetSelector   = nullptr;
     brls::BooleanCell*  m_dvrRecordPartialsToggle = nullptr;
-    brls::SelectorCell* m_dvrMinQualitySelector  = nullptr;
-    brls::SelectorCell* m_liveTvGuideHoursSelector = nullptr;
+    brls::DetailCell*   m_dvrMinQualitySelector  = nullptr;
+    brls::DetailCell*   m_liveTvGuideHoursSelector = nullptr;
 };
 
 } // namespace vitaplex

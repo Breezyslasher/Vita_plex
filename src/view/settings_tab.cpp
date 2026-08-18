@@ -350,6 +350,31 @@ SettingsTab::~SettingsTab() {
 // Make a fresh column box with the spacing the detail pane expects.
 // Returns a Box ready to hold cells; the caller owns it until the
 // constructor passes it to m_detailContent.
+// A settings row backed by the app's own option picker (livetv_actions'
+// showOptionPicker) instead of brls::SelectorCell, whose stock Dropdown
+// platter looked like a different app next to the custom dialogs. The
+// cell shows the current value as detail text and keeps it fresh itself.
+static brls::DetailCell* makePickerCell(const std::string& title,
+                                        std::vector<std::string> options,
+                                        int selected,
+                                        std::function<void(int)> onPick) {
+    auto* cell = new brls::DetailCell();
+    cell->setText(title);
+    auto current = std::make_shared<int>(selected);
+    if (*current >= 0 && *current < (int)options.size())
+        cell->setDetailText(options[(size_t)*current]);
+    cell->registerClickAction([cell, current, title, options, onPick](brls::View*) {
+        showOptionPicker(title, options, *current,
+            [cell, current, options, onPick](int idx) {
+                *current = idx;
+                cell->setDetailText(options[(size_t)idx]);
+                if (onPick) onPick(idx);
+            });
+        return true;
+    });
+    return cell;
+}
+
 brls::Box* SettingsTab::makeSectionBox() {
     auto* box = new brls::Box();
     box->setAxis(brls::Axis::COLUMN);
@@ -774,8 +799,7 @@ brls::Box* SettingsTab::createPlaybackSection() {
     box->addView(m_subtitlesToggle);
 
     // Subtitle size selector
-    m_subtitleSizeSelector = new brls::SelectorCell();
-    m_subtitleSizeSelector->init("Subtitle Size", {"Small", "Medium", "Large"},
+    m_subtitleSizeSelector = makePickerCell("Subtitle Size", {"Small", "Medium", "Large"},
         static_cast<int>(settings.subtitleSize),
         [this](int index) {
             onSubtitleSizeChanged(index);
@@ -814,8 +838,7 @@ brls::Box* SettingsTab::createPlaybackSection() {
     box->addView(defaultSubLangCell);
 
     // Seek interval selector
-    m_seekIntervalSelector = new brls::SelectorCell();
-    m_seekIntervalSelector->init("Seek Interval",
+    m_seekIntervalSelector = makePickerCell("Seek Interval",
         {"5 seconds", "10 seconds", "15 seconds", "30 seconds", "60 seconds"},
         settings.seekInterval == 5 ? 0 :
         settings.seekInterval == 10 ? 1 :
@@ -827,8 +850,7 @@ brls::Box* SettingsTab::createPlaybackSection() {
     box->addView(m_seekIntervalSelector);
 
     // Controls auto-hide selector
-    m_controlsAutoHideSelector = new brls::SelectorCell();
-    m_controlsAutoHideSelector->init("Controls Auto-Hide",
+    m_controlsAutoHideSelector = makePickerCell("Controls Auto-Hide",
         {"Never", "3 seconds", "5 seconds", "10 seconds", "15 seconds"},
         settings.controlsAutoHideSeconds == 0 ? 0 :
         settings.controlsAutoHideSeconds == 3 ? 1 :
@@ -891,8 +913,7 @@ brls::Box* SettingsTab::createMusicSection() {
     brls::Box* box = makeSectionBox();
 
     // Default track action selector
-    m_trackActionSelector = new brls::SelectorCell();
-    m_trackActionSelector->init("Default Track Action",
+    m_trackActionSelector = makePickerCell("Default Track Action",
         {"Play Next", "Play Now (Replace Current)", "Add to Bottom of Queue", "Play Now (Clear Queue)", "Ask Each Time"},
         static_cast<int>(settings.trackDefaultAction),
         [](int index) {
@@ -927,8 +948,7 @@ brls::Box* SettingsTab::createTranscodeSection() {
     brls::Box* box = makeSectionBox();
 
     // Video quality selector
-    m_qualitySelector = new brls::SelectorCell();
-    m_qualitySelector->init("Video Quality",
+    m_qualitySelector = makePickerCell("Video Quality",
         {"Original (Direct Play)", "1080p (20 Mbps)", "720p (4 Mbps)", "480p (2 Mbps)", "360p (1 Mbps)", "240p (500 Kbps)"},
         static_cast<int>(settings.videoQuality),
         [this](int index) {
@@ -962,8 +982,7 @@ brls::Box* SettingsTab::createNetworkSection() {
 
     // Connection timeout selector — split out from Transcoding so it
     // has its own rail row. Setting + handler are unchanged.
-    m_connectionTimeoutSelector = new brls::SelectorCell();
-    m_connectionTimeoutSelector->init("Connection Timeout",
+    m_connectionTimeoutSelector = makePickerCell("Connection Timeout",
         {"30 seconds", "60 seconds", "120 seconds", "180 seconds", "300 seconds"},
         settings.connectionTimeout == 30 ? 0 :
         settings.connectionTimeout == 60 ? 1 :
@@ -1083,8 +1102,7 @@ brls::Box* SettingsTab::createNetworkSection() {
             break;
         }
     }
-    m_cacheLifetimeSelector = new brls::SelectorCell();
-    m_cacheLifetimeSelector->init("Cache Lifetime", kCacheLabels, cacheIdx,
+    m_cacheLifetimeSelector = makePickerCell("Cache Lifetime", kCacheLabels, cacheIdx,
         [](int idx) {
             AppSettings& s = Application::getInstance().getSettings();
             s.cacheLifetimeMinutes = kCacheMinutes[idx];
@@ -1141,8 +1159,7 @@ brls::Box* SettingsTab::createDownloadsSection() {
     // platforms (fast, no transcode); a lower tier forces a server-side
     // transcode to that size — smaller files, faster on the Vita, plays
     // everywhere. Index maps 1:1 to VideoQuality (0 = Original).
-    auto* dlQualitySelector = new brls::SelectorCell();
-    dlQualitySelector->init("Download Quality",
+    auto* dlQualitySelector = makePickerCell("Download Quality",
         {"Original (no transcode)", "1080p", "720p", "480p", "360p", "240p"},
         static_cast<int>(settings.downloadQuality),
         [&settings](int index) {
@@ -1251,8 +1268,7 @@ brls::Box* SettingsTab::createLiveTVSection() {
         return 2; // default 2 min
     };
 
-    m_dvrStartOffsetSelector = new brls::SelectorCell();
-    m_dvrStartOffsetSelector->init("Recording Start Padding",
+    m_dvrStartOffsetSelector = makePickerCell("Recording Start Padding",
                                    offsetLabels(),
                                    indexOfOffset(settings.dvrStartOffsetMinutes),
         [](int idx) {
@@ -1262,8 +1278,7 @@ brls::Box* SettingsTab::createLiveTVSection() {
         });
     box->addView(m_dvrStartOffsetSelector);
 
-    m_dvrEndOffsetSelector = new brls::SelectorCell();
-    m_dvrEndOffsetSelector->init("Recording End Padding",
+    m_dvrEndOffsetSelector = makePickerCell("Recording End Padding",
                                  offsetLabels(),
                                  indexOfOffset(settings.dvrEndOffsetMinutes),
         [](int idx) {
@@ -1294,8 +1309,7 @@ brls::Box* SettingsTab::createLiveTVSection() {
     for (size_t i = 0; i < kMinQualities.size(); i++) {
         if (kMinQualities[i] == settings.dvrMinVideoQuality) { qIdx = (int)i; break; }
     }
-    m_dvrMinQualitySelector = new brls::SelectorCell();
-    m_dvrMinQualitySelector->init("Minimum Recording Quality",
+    m_dvrMinQualitySelector = makePickerCell("Minimum Recording Quality",
                                   kMinQualityLabels, qIdx,
         [](int idx) {
             AppSettings& s = Application::getInstance().getSettings();
@@ -1315,8 +1329,7 @@ brls::Box* SettingsTab::createLiveTVSection() {
     for (size_t i = 0; i < kGuideHours.size(); i++) {
         if (kGuideHours[i] == settings.liveTvGuideHours) { hIdx = (int)i; break; }
     }
-    m_liveTvGuideHoursSelector = new brls::SelectorCell();
-    m_liveTvGuideHoursSelector->init("Program Guide Window",
+    m_liveTvGuideHoursSelector = makePickerCell("Program Guide Window",
                                      kGuideHourLabels, hIdx,
         [](int idx) {
             AppSettings& s = Application::getInstance().getSettings();
