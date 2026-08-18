@@ -4610,6 +4610,7 @@ MediaItem PlexClient::parseLiveTVHubItem(std::string_view obj) {
     item.airEndAt    = svToInt64(jsonFieldView(obj, "\"endsAt\""));
     item.liveChannelKey   = std::string(jsonFieldView(obj, "\"channelIdentifier\""));
     item.liveChannelTitle = std::string(jsonFieldView(obj, "\"channelTitle\""));
+    item.isLiveTV = true;
     // The show's poster, kept separate from the episode still so a rail
     // can render either shape (see MediaItemCell::setPreferPoster).
     item.grandparentThumb = std::string(jsonFieldView(obj, "\"grandparentThumb\""));
