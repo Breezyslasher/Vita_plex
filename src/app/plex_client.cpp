@@ -4202,42 +4202,137 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
 // "recent channels" list from the EPG grid instead, which was really just
 // the first N channels of the lineup in lineup order.
 
+// Walk the objects of the JSON array introduced by `arrayKey` and hand
+// each object's slice to fn. Shared by every hub walker below.
+//
+// String-aware on purpose: counting braces without tracking string
+// literals means a single '{' inside a title or summary ends the walk
+// early and silently drops every entry after it, and a single '}' closes
+// an entry early so its remaining fields read back empty. Programme
+// metadata is free text from the EPG provider, so both do occur.
+template <typename Fn>
+static void forEachJsonObject(std::string_view body, std::string_view arrayKey, Fn fn) {
+    size_t arrPos = body.find(arrayKey);
+    if (arrPos == std::string_view::npos) return;
+    size_t pos = body.find('[', arrPos);
+    if (pos == std::string_view::npos) return;
+
+    pos++;
+    while (pos < body.size()) {
+        // Between entries there is only whitespace and commas, so this
+        // scan needs no string tracking of its own.
+        while (pos < body.size() && body[pos] != '{' && body[pos] != ']') pos++;
+        if (pos >= body.size() || body[pos] == ']') break;
+
+        size_t objStart = pos;
+        int depth = 0;
+        bool inString = false;
+        for (; pos < body.size(); pos++) {
+            const char c = body[pos];
+            if (inString) {
+                if (c == '\\') { pos++; continue; }   // skip the escaped char
+                if (c == '"') inString = false;
+                continue;
+            }
+            if (c == '"') { inString = true; continue; }
+            if (c == '{') depth++;
+            else if (c == '}' && --depth == 0) { pos++; break; }
+        }
+        fn(body.substr(objStart, pos - objStart));
+    }
+}
+
+static std::string lowerOf(std::string_view s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) out += (char)tolower((unsigned char)c);
+    return out;
+}
+
+// One MediaContainer.Directory[] entry of the Recent Channels hub ->
+// LiveTVChannel. This rail is channel-first: each entry IS a channel
+// (key, title, callSign, thumb, channelVcn) carrying a single Metadata
+// OBJECT for the programme currently on it. That is the opposite of the
+// programme-first shape the other Live TV hubs use (a Metadata ARRAY
+// whose channel fields are nested in Media[]), and walking it as if it
+// were programme-first lands on the first channel's Media[] — one entry,
+// always the same one, however many channels the rail holds.
+static LiveTVChannel parseRecentChannelDirectory(std::string_view dir) {
+    LiveTVChannel ch;
+    ch.key               = std::string(jsonFieldView(dir, "\"key\""));
+    ch.title             = std::string(jsonFieldView(dir, "\"title\""));
+    ch.callSign          = std::string(jsonFieldView(dir, "\"callSign\""));
+    ch.channelIdentifier = std::string(jsonFieldView(dir, "\"channelVcn\""));
+    if (ch.channelIdentifier.empty())
+        ch.channelIdentifier = std::string(jsonFieldView(dir, "\"identifier\""));
+    ch.thumb             = std::string(jsonFieldView(dir, "\"thumb\""));
+
+    // Read the programme from the nested object's own slice, so the
+    // channel's title and key can't shadow the programme's.
+    const size_t metaPos = dir.find("\"Metadata\"");
+    if (metaPos != std::string_view::npos) {
+        const std::string_view meta = dir.substr(metaPos);
+        ch.ratingKey      = std::string(jsonFieldView(meta, "\"ratingKey\""));
+        ch.currentProgram = std::string(jsonFieldView(meta, "\"grandparentTitle\""));
+        if (ch.currentProgram.empty())
+            ch.currentProgram = std::string(jsonFieldView(meta, "\"title\""));
+    }
+    return ch;
+}
+
+// One Metadata entry of a programme-first hub -> LiveTVChannel. The
+// channel fields sit in Media[]; channelIdentifier is the same value as
+// LiveTVChannel::key, which is what tuneChannel() resolves first.
+static LiveTVChannel parseLiveTVChannelEntry(std::string_view item) {
+    LiveTVChannel ch;
+    ch.ratingKey         = std::string(jsonFieldView(item, "\"ratingKey\""));
+    ch.key               = std::string(jsonFieldView(item, "\"channelIdentifier\""));
+    ch.callSign          = std::string(jsonFieldView(item, "\"channelCallSign\""));
+    ch.channelIdentifier = std::string(jsonFieldView(item, "\"channelVcn\""));
+    ch.title             = std::string(jsonFieldView(item, "\"channelTitle\""));
+    if (ch.title.empty()) ch.title = std::string(jsonFieldView(item, "\"channelShortTitle\""));
+    ch.thumb = std::string(jsonFieldView(item, "\"channelThumb\""));
+    if (ch.thumb.empty()) ch.thumb = std::string(jsonFieldView(item, "\"thumb\""));
+
+    // Programme currently on that channel — the rail's caption.
+    ch.currentProgram = std::string(jsonFieldView(item, "\"grandparentTitle\""));
+    if (ch.currentProgram.empty())
+        ch.currentProgram = std::string(jsonFieldView(item, "\"title\""));
+    if (ch.title.empty()) ch.title = ch.currentProgram;
+    return ch;
+}
+
+// Fill channels from a Recent Channels payload, whichever shape it
+// arrives in: channel-first Directory[] as this server sends it, falling
+// back to the programme-first Metadata[] the spec's watchnow example
+// documents.
+static void collectRecentChannels(std::string_view body, std::vector<LiveTVChannel>& out) {
+    forEachJsonObject(body, "\"Directory\"", [&out](std::string_view dir) {
+        LiveTVChannel ch = parseRecentChannelDirectory(dir);
+        if (!ch.key.empty()) out.push_back(std::move(ch));
+    });
+    if (!out.empty()) return;
+
+    forEachJsonObject(body, "\"Metadata\"", [&out](std::string_view item) {
+        LiveTVChannel ch = parseLiveTVChannelEntry(item);
+        if (!ch.key.empty() || !ch.channelIdentifier.empty() || !ch.title.empty())
+            out.push_back(std::move(ch));
+    });
+}
+
 // Collect {title, key, type} from the objects of a named array. Shared by
 // the watchnow response (MediaContainer.Type[]) and a provider's hub
 // response (MediaContainer.Hub[]) — both are arrays of objects carrying a
 // title and a ready-to-fetch key.
 static void collectLiveTVHubs(std::string_view body, std::string_view arrayKey,
                               std::vector<LiveTVHub>& out) {
-    size_t arrPos = body.find(arrayKey);
-    if (arrPos == std::string_view::npos) return;
-    size_t start = body.find('[', arrPos);
-    if (start == std::string_view::npos) return;
-
-    size_t pos = start + 1;
-    while (pos < body.size()) {
-        while (pos < body.size() && (body[pos] == ' ' || body[pos] == ',' ||
-               body[pos] == '\n' || body[pos] == '\r' || body[pos] == '\t')) {
-            pos++;
-        }
-        if (pos >= body.size() || body[pos] == ']') break;
-        if (body[pos] != '{') { pos++; continue; }
-
-        size_t objStart = pos;
-        int depth = 1;
-        pos++;
-        while (depth > 0 && pos < body.size()) {
-            if (body[pos] == '{') depth++;
-            else if (body[pos] == '}') depth--;
-            pos++;
-        }
-        std::string_view obj = body.substr(objStart, pos - objStart);
-
+    forEachJsonObject(body, arrayKey, [&out](std::string_view obj) {
         LiveTVHub h;
         h.title = std::string(jsonFieldView(obj, "\"title\""));
         h.key   = std::string(jsonFieldView(obj, "\"key\""));
         h.type  = std::string(jsonFieldView(obj, "\"type\""));
         if (!h.title.empty() && !h.key.empty()) out.push_back(std::move(h));
-    }
+    });
 }
 
 bool PlexClient::fetchLiveTVWatchNowHubs(std::vector<LiveTVHub>& hubs) {
@@ -4292,14 +4387,32 @@ bool PlexClient::fetchLiveTVProviderHubs(std::vector<LiveTVHub>& hubs) {
     return !hubs.empty();
 }
 
-bool PlexClient::fetchLiveTVRecentChannels(std::vector<LiveTVChannel>& channels) {
+bool PlexClient::fetchLiveTVRecentChannels(std::vector<LiveTVChannel>& channels,
+                                           std::vector<MediaItem>* showsOnNow) {
     channels.clear();
+    if (showsOnNow) showsOnNow->clear();
     if (m_epgProviderKey.empty()) checkLiveTVAvailability();
     if (m_epgProviderKey.empty()) return false;
 
+    // The query string is the whole trick here. A bare /hubs/discover
+    // returns the programme rails only — Recent Channels is opt-in behind
+    // includeRecentChannels=1, which is why our earlier attempts came back
+    // with everything except the one hub we wanted. This is the request
+    // the official web client makes, taken verbatim from the server's own
+    // access log, so the response shape matches what that client renders.
+    const std::string dir = HttpClient::urlEncode(m_epgProviderKey);
+    const std::string path =
+        "/" + m_epgProviderKey + "/hubs/discover"
+        "?promoted=1&includeTypeFirst=1"
+        "&contentDirectoryID=" + dir +
+        "&pinnedContentDirectoryID=" + dir +
+        "&includeMeta=1&excludeFields=summary&count=12"
+        "&includeStations=1&includeLibraryPlaylists=1"
+        "&includeRecentChannels=1&excludeContinueWatching=1";
+
     HttpClient client;
     HttpRequest req;
-    req.url = buildApiUrl("/" + m_epgProviderKey + "/hubs/discover");
+    req.url = buildApiUrl(path);
     req.method = "GET";
     req.headers["Accept"] = "application/json";
     req.timeout = 20;
@@ -4310,88 +4423,113 @@ bool PlexClient::fetchLiveTVRecentChannels(std::vector<LiveTVChannel>& channels)
         return false;
     }
 
-    // Locate the "Recent Channels" hub and keep its object slice; Plex hub
-    // responses carry each hub's Metadata inline, so no second request.
-    const std::string_view body(resp.body);
-    std::string_view hubObj;
-    {
-        size_t pos = body.find("\"Hub\"");
-        if (pos == std::string_view::npos) return false;
-        pos = body.find('[', pos);
-        if (pos == std::string_view::npos) return false;
-        pos++;
-        while (pos < body.size()) {
-            while (pos < body.size() && body[pos] != '{' && body[pos] != ']') pos++;
-            if (pos >= body.size() || body[pos] == ']') break;
-            size_t objStart = pos;
-            int depth = 1;
-            pos++;
-            while (depth > 0 && pos < body.size()) {
-                if (body[pos] == '{') depth++;
-                else if (body[pos] == '}') depth--;
-                pos++;
-            }
-            std::string_view obj = body.substr(objStart, pos - objStart);
-            std::string_view title = jsonFieldView(obj, "\"title\"");
-            std::string lower;
-            for (char c : title) lower += (char)tolower((unsigned char)c);
-            if (lower.find("recent") != std::string::npos && lower.find("channel") != std::string::npos) {
-                hubObj = obj;
-                break;
-            }
+    // Plex hub responses carry each hub's Metadata inline, so one pass over
+    // MediaContainer.Hub[] fills both Home rails: the channels the account
+    // actually watched, and the "… On Now" programmes beside them.
+    std::vector<std::string> seenTitles;
+    std::string recentKey;
+    int  recentSize  = 0;
+    int  recentTotal = 0;
+    bool recentMore  = false;
+    forEachJsonObject(resp.body, "\"Hub\"", [&](std::string_view hub) {
+        const std::string title = lowerOf(jsonFieldView(hub, "\"title\""));
+        const std::string key   = lowerOf(jsonFieldView(hub, "\"key\""));
+        seenTitles.push_back(title);
+
+        if (channels.empty() &&
+            title.find("recent") != std::string::npos &&
+            title.find("channel") != std::string::npos) {
+            // Hub.key is documented as "the key at which all of the
+            // content for this hub can be retrieved"; Hub.more says the
+            // hub holds more than this response carries. Hub.size counts
+            // what this response actually carries, so parsing fewer than
+            // size entries means we dropped some, not that the server
+            // withheld them.
+            recentKey   = std::string(jsonFieldView(hub, "\"key\""));
+            recentSize  = (int)svToInt64(jsonFieldView(hub, "\"size\""));
+            recentTotal = (int)svToInt64(jsonFieldView(hub, "\"totalSize\""));
+            recentMore  = jsonFieldView(hub, "\"more\"") == "true";
+            collectRecentChannels(hub, channels);
+            brls::Logger::debug("fetchLiveTVRecentChannels: hub '{}' key={} size={} totalSize={} "
+                                "more={} parsed={}",
+                                jsonFieldView(hub, "\"title\""), recentKey, recentSize,
+                                recentTotal, recentMore, channels.size());
+        } else if (showsOnNow && showsOnNow->empty() &&
+                   (title.find("on now") != std::string::npos ||
+                    key.find("onnow") != std::string::npos)) {
+            forEachJsonObject(hub, "\"Metadata\"", [&](std::string_view item) {
+                MediaItem mi = parseLiveTVHubItem(item);
+                if (!mi.ratingKey.empty() && !mi.title.empty())
+                    showsOnNow->push_back(std::move(mi));
+            });
         }
-    }
-    if (hubObj.empty()) {
-        brls::Logger::debug("fetchLiveTVRecentChannels: provider has no Recent Channels hub");
-        return false;
+    });
+
+    // /hubs/discover inlines a preview of each hub, not necessarily the
+    // whole rail — which is why the official client follows a hub's own
+    // key right after discover (its /hubs/onnow/shows request in the
+    // server log is exactly that). Do the same when the hub reports more
+    // than this response carried, and keep the inline set if the refetch
+    // doesn't do better.
+    const int recentWant = recentTotal > recentSize ? recentTotal : recentSize;
+    if (!recentKey.empty() && (recentMore || (int)channels.size() < recentWant)) {
+        HttpRequest hubReq;
+        hubReq.url = buildApiUrl(recentKey);
+        hubReq.method = "GET";
+        hubReq.headers["Accept"] = "application/json";
+        hubReq.timeout = 20;
+
+        std::vector<LiveTVChannel> full;
+        HttpResponse hubResp = client.request(hubReq);
+        if (hubResp.statusCode == 200 && !hubResp.body.empty())
+            collectRecentChannels(hubResp.body, full);
+
+        brls::Logger::debug("fetchLiveTVRecentChannels: refetched {} -> HTTP {}, container size={}, "
+                            "{} parsed",
+                            recentKey, hubResp.statusCode,
+                            svToInt64(jsonFieldView(hubResp.body, "\"size\"")), full.size());
+        if (full.size() > channels.size()) channels = std::move(full);
     }
 
-    // Each entry is a programme carrying its channel in Media[]. The
-    // channel fields match what fetchEPGGrid already reads, and
-    // Media.channelIdentifier is the same value as LiveTVChannel::key —
-    // which is exactly what tuneChannel() needs, so the existing cells
-    // keep working.
-    size_t pos = hubObj.find("\"Metadata\"");
-    if (pos == std::string_view::npos) return false;
-    pos = hubObj.find('[', pos);
-    if (pos == std::string_view::npos) return false;
-    pos++;
-
-    while (pos < hubObj.size()) {
-        while (pos < hubObj.size() && hubObj[pos] != '{' && hubObj[pos] != ']') pos++;
-        if (pos >= hubObj.size() || hubObj[pos] == ']') break;
-        size_t objStart = pos;
-        int depth = 1;
-        pos++;
-        while (depth > 0 && pos < hubObj.size()) {
-            if (hubObj[pos] == '{') depth++;
-            else if (hubObj[pos] == '}') depth--;
-            pos++;
+    if (channels.empty()) {
+        std::string offered;
+        for (const auto& t : seenTitles) {
+            if (!offered.empty()) offered += ", ";
+            offered += t;
         }
-        std::string_view item = hubObj.substr(objStart, pos - objStart);
-
-        LiveTVChannel ch;
-        ch.ratingKey       = std::string(jsonFieldView(item, "\"ratingKey\""));
-        ch.key             = std::string(jsonFieldView(item, "\"channelIdentifier\""));
-        ch.callSign        = std::string(jsonFieldView(item, "\"channelCallSign\""));
-        ch.channelIdentifier = std::string(jsonFieldView(item, "\"channelVcn\""));
-        ch.title           = std::string(jsonFieldView(item, "\"channelTitle\""));
-        if (ch.title.empty()) ch.title = std::string(jsonFieldView(item, "\"channelShortTitle\""));
-        ch.thumb           = std::string(jsonFieldView(item, "\"channelThumb\""));
-        if (ch.thumb.empty()) ch.thumb = std::string(jsonFieldView(item, "\"thumb\""));
-
-        // Programme currently on that channel — the rail's caption.
-        ch.currentProgram = std::string(jsonFieldView(item, "\"grandparentTitle\""));
-        if (ch.currentProgram.empty())
-            ch.currentProgram = std::string(jsonFieldView(item, "\"title\""));
-        if (ch.title.empty()) ch.title = ch.currentProgram;
-
-        if (!ch.key.empty() || !ch.channelIdentifier.empty() || !ch.title.empty())
-            channels.push_back(std::move(ch));
+        brls::Logger::debug("fetchLiveTVRecentChannels: no Recent Channels hub; provider offers: {}",
+                            offered);
     }
 
-    brls::Logger::info("fetchLiveTVRecentChannels: {} channels", channels.size());
+    brls::Logger::info("fetchLiveTVRecentChannels: {} channels, {} on-now items",
+                       channels.size(), showsOnNow ? showsOnNow->size() : 0);
     return !channels.empty();
+}
+
+MediaItem PlexClient::parseLiveTVHubItem(std::string_view obj) {
+    MediaItem item;
+    item.ratingKey   = std::string(jsonFieldView(obj, "\"ratingKey\""));
+    item.key         = std::string(jsonFieldView(obj, "\"key\""));
+    item.title       = std::string(jsonFieldView(obj, "\"title\""));
+    item.summary     = std::string(jsonFieldView(obj, "\"summary\""));
+    item.thumb       = std::string(jsonFieldView(obj, "\"thumb\""));
+    if (item.thumb.empty()) item.thumb = std::string(jsonFieldView(obj, "\"grandparentThumb\""));
+    item.art         = std::string(jsonFieldView(obj, "\"art\""));
+    item.type        = std::string(jsonFieldView(obj, "\"type\""));
+    item.mediaType   = parseMediaType(item.type);
+    item.year        = (int)svToInt64(jsonFieldView(obj, "\"year\""));
+    item.duration    = (int)svToInt64(jsonFieldView(obj, "\"duration\""));
+    item.viewOffset  = (int)svToInt64(jsonFieldView(obj, "\"viewOffset\""));
+    // Live TV entries title themselves by episode ("Ick, A Bod") while
+    // the show name sits on grandparentTitle ("Elsbeth"). The official
+    // client's rails lead with the show, so promote it and keep the
+    // episode title alongside.
+    item.grandparentTitle = std::string(jsonFieldView(obj, "\"grandparentTitle\""));
+    if (!item.grandparentTitle.empty()) {
+        item.parentTitle = item.title;
+        item.title = item.grandparentTitle;
+    }
+    return item;
 }
 
 bool PlexClient::fetchLiveTVHubItems(const std::string& key, std::vector<MediaItem>& items) {
@@ -4426,29 +4564,7 @@ bool PlexClient::fetchLiveTVHubItems(const std::string& key, std::vector<MediaIt
         }
         std::string_view obj = body.substr(objStart, objEnd - objStart);
 
-        MediaItem item;
-        item.ratingKey   = std::string(jsonFieldView(obj, "\"ratingKey\""));
-        item.key         = std::string(jsonFieldView(obj, "\"key\""));
-        item.title       = std::string(jsonFieldView(obj, "\"title\""));
-        item.summary     = std::string(jsonFieldView(obj, "\"summary\""));
-        item.thumb       = std::string(jsonFieldView(obj, "\"thumb\""));
-        if (item.thumb.empty()) item.thumb = std::string(jsonFieldView(obj, "\"grandparentThumb\""));
-        item.art         = std::string(jsonFieldView(obj, "\"art\""));
-        item.type        = std::string(jsonFieldView(obj, "\"type\""));
-        item.mediaType   = parseMediaType(item.type);
-        item.year        = (int)svToInt64(jsonFieldView(obj, "\"year\""));
-        item.duration    = (int)svToInt64(jsonFieldView(obj, "\"duration\""));
-        item.viewOffset  = (int)svToInt64(jsonFieldView(obj, "\"viewOffset\""));
-        // Live TV entries title themselves by episode ("Ick, A Bod") while
-        // the show name sits on grandparentTitle ("Elsbeth"). The official
-        // client's rails lead with the show, so promote it and keep the
-        // episode title alongside.
-        item.grandparentTitle = std::string(jsonFieldView(obj, "\"grandparentTitle\""));
-        if (!item.grandparentTitle.empty()) {
-            item.parentTitle = item.title;
-            item.title = item.grandparentTitle;
-        }
-
+        MediaItem item = parseLiveTVHubItem(obj);
         if (!item.ratingKey.empty() && !item.title.empty()) items.push_back(std::move(item));
         pos = objEnd;
     }
