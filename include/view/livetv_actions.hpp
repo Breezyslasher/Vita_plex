@@ -6,23 +6,23 @@
  * it with a MediaItem rather than a GuideProgram, and a live programme's
  * ratingKey is an EPG key that /library/metadata 404s on, so none of them
  * can fall back on the normal detail view.
+ *
+ * Two custom dialogs (design_handoff_epg_menu): the program card —
+ * art, LIVE chip, air-window progress, Watch Now / Record — and the
+ * record-options dialog — This Episode / All Episodes plus per-recording
+ * settings that override the app's DVR defaults for one subscription
+ * without touching them.
  */
 
 #pragma once
 
+#include <cstdint>
 #include <functional>
 #include <string>
 
 #include "app/plex_client.hpp"
 
 namespace vitaplex {
-
-// Schedule a DVR recording. `guid` is the programme's EPG rating key,
-// which /media/subscriptions/template takes verbatim; the template's
-// pre-encoded parameters are posted back with the user's recording prefs
-// layered on. Reports success through a dialog, then calls onDone.
-void scheduleLiveTVRecording(const std::string& guid, const std::string& title,
-                             std::function<void(bool)> onDone = {});
 
 // Tune the channel a programme is airing on and push the live player.
 void tuneLiveTVProgram(const MediaItem& item);
@@ -34,9 +34,21 @@ void tuneLiveTVProgram(const MediaItem& item);
 // have not started yet are always recordable.
 bool canRecordAiring(int64_t airStartAt);
 
-// Watch Now / Record / Cancel for a live programme, the same choice the
-// guide offers. Watch Now appears only while the programme is on the air
-// and the channel it is on is known.
-void showLiveTVProgramMenu(const MediaItem& item);
+// The program card: art, LIVE chip, channel, title, air-window progress,
+// then Watch Now / Record / Cancel. Watch Now appears only while the
+// programme is on the air and the channel it is on is known; Record is
+// disabled (not hidden) with a warning panel when canRecordAiring() says
+// nothing would be kept. Record opens the record-options dialog.
+// onScheduled fires with the outcome if a recording gets scheduled.
+void showLiveTVProgramMenu(const MediaItem& item,
+                           std::function<void(bool)> onScheduled = {});
+
+// The record-options dialog: This Episode / All Episodes (from the
+// server's subscription template; hidden when the template offers a
+// single option, e.g. movies) plus per-recording settings initialised
+// from the app's DVR defaults. Edits apply to this subscription only —
+// AppSettings is never written. Schedule posts the subscription.
+void showRecordOptions(const MediaItem& item,
+                       std::function<void(bool)> onScheduled = {});
 
 }  // namespace vitaplex
