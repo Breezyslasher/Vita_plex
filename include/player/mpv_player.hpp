@@ -211,6 +211,14 @@ private:
     bool m_subtitlesVisible = true;
     std::atomic<bool> m_stopping{false};        // Shutdown in progress (accessed from mpv thread)
     bool m_commandPending = false;  // Async command pending
+    // Set when mpv reports the current file gone (END_FILE / IDLE). stop()
+    // waits on this so the previous file's decoder is actually released
+    // before the caller tears the event pump down — see stop().
+    bool m_fileUnloaded = true;
+    // Set on MPV_EVENT_SHUTDOWN. The handle is dead once that arrives:
+    // commands still queue and report success but never execute. loadUrl()
+    // recreates the context instead of loading into the corpse.
+    bool m_coreShutdown = false;
     bool m_audioOnly = false;       // Audio-only mode (no video decoding)
 
     // Static callback for render updates (called from MPV thread)

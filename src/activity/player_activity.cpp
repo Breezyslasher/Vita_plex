@@ -3957,10 +3957,10 @@ void PlayerActivity::animateGrabLift(bool lifted) {
         row->setShadowType(brls::ShadowType::GENERIC);
         row->setShadowVisibility(true);
         // Overshoot past the seated-out position, then settle: a tactile "pop".
-        m_grabLift.addStep(1.18f, 110, brls::EasingFunction::quadraticOut);
-        m_grabLift.addStep(1.0f, 90, brls::EasingFunction::quadraticOut);
+        m_grabLift.addStep(1.18f, 110, tweeny::easing::quadraticOut);
+        m_grabLift.addStep(1.0f, 90, tweeny::easing::quadraticOut);
     } else {
-        m_grabLift.addStep(0.0f, 140, brls::EasingFunction::quadraticOut);
+        m_grabLift.addStep(0.0f, 140, tweeny::easing::quadraticOut);
         // Drop the shadow and zero the offset only once fully seated again.
         m_grabLift.setEndCallback([this, row](bool) {
             if (m_queueRowData.count(row)) {
