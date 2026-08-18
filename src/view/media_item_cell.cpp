@@ -574,6 +574,18 @@ void MediaItemCell::onFocusLost() {
 void MediaItemCell::updateFocusInfo(bool focused) {
     if (!m_titleLabel || !m_descriptionLabel) return;
 
+    // Live programmes already spend the subtitle line on their airing
+    // window, and a cell's height budget only covers one line below the
+    // title — revealing the focus description on top of it is what put
+    // "1989 - 150 min" over "3:30 - 5:40 PM". When something is on the air,
+    // when it ends beats its year and runtime, so keep the window and drop
+    // the description; the detail view still carries the rest.
+    if (m_item.airStartAt > 0 && m_item.airEndAt > m_item.airStartAt) {
+        m_titleLabel->setText(focused ? m_item.title : m_originalTitle);
+        m_descriptionLabel->setVisibility(brls::Visibility::GONE);
+        return;
+    }
+
     // For episodes, show extended info on focus
     if (m_item.mediaType == MediaType::EPISODE) {
         if (focused) {
