@@ -3723,6 +3723,38 @@ void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
     }
     showOptionsPopover(anchor, contextLine, episode.title, std::move(rows));
 }
+bool MediaDetailView::hasContextMenu(const MediaItem& item) {
+    // A Live TV programme's ratingKey is an EPG key; every menu below acts
+    // on a library one.
+    if (item.isLiveTV) return false;
+    switch (item.mediaType) {
+        case MediaType::MOVIE:
+        case MediaType::SHOW:
+        case MediaType::SEASON:
+        case MediaType::EPISODE:
+        case MediaType::MUSIC_ARTIST:
+        case MediaType::MUSIC_ALBUM:
+        case MediaType::MUSIC_TRACK:
+            return true;
+        default:
+            return false;
+    }
+}
+
+void MediaDetailView::showContextMenuFor(const MediaItem& item) {
+    if (!hasContextMenu(item)) return;
+    switch (item.mediaType) {
+        case MediaType::MOVIE:        showMovieContextMenuStatic(item);  break;
+        case MediaType::SHOW:         showShowContextMenuStatic(item);   break;
+        case MediaType::SEASON:       showSeasonContextMenuStatic(item); break;
+        case MediaType::EPISODE:      showEpisodeContextMenu(item);      break;
+        case MediaType::MUSIC_ARTIST: showArtistContextMenuStatic(item); break;
+        case MediaType::MUSIC_ALBUM:  showAlbumContextMenuStatic(item);  break;
+        case MediaType::MUSIC_TRACK:  showTrackContextMenuStatic(item);  break;
+        default: break;
+    }
+}
+
 void MediaDetailView::showMovieContextMenuStatic(const MediaItem& movie) {
     brls::View* anchor = brls::Application::getCurrentFocus();
 

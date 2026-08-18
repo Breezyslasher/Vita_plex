@@ -111,28 +111,19 @@ std::string cardSub(const MediaItem& it) {
     return "";
 }
 
-// START / long-press context menu wiring, matching the previous row behaviour.
+// START / long-press context menu wiring. Both go through the shared
+// dispatcher so this cannot drift from the other views that list items.
 void wireContextMenu(brls::View* cell, const MediaItem& item) {
-    // Every one of these menus acts on a library ratingKey, which an EPG
-    // programme does not have.
-    if (item.isLiveTV) return;
-    auto open = [item]() {
-        switch (item.mediaType) {
-            case MediaType::MOVIE:        MediaDetailView::showMovieContextMenuStatic(item);  break;
-            case MediaType::SHOW:         MediaDetailView::showShowContextMenuStatic(item);   break;
-            case MediaType::SEASON:       MediaDetailView::showSeasonContextMenuStatic(item); break;
-            case MediaType::EPISODE:      MediaDetailView::showEpisodeContextMenu(item);      break;
-            case MediaType::MUSIC_ARTIST: MediaDetailView::showArtistContextMenuStatic(item); break;
-            case MediaType::MUSIC_ALBUM:  MediaDetailView::showAlbumContextMenuStatic(item);  break;
-            case MediaType::MUSIC_TRACK:  MediaDetailView::showTrackContextMenuStatic(item);  break;
-            default: break;
-        }
-    };
+    if (!MediaDetailView::hasContextMenu(item)) return;
     cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-                         [open](brls::View*) { open(); return true; });
+                         [item](brls::View*) {
+                             MediaDetailView::showContextMenuFor(item);
+                             return true;
+                         });
     cell->addGestureRecognizer(new LongPressGestureRecognizer(
-        cell, [open](LongPressGestureStatus status) {
-            if (status.state == brls::GestureState::START) open();
+        cell, [item](LongPressGestureStatus status) {
+            if (status.state == brls::GestureState::START)
+                MediaDetailView::showContextMenuFor(item);
         }));
 }
 

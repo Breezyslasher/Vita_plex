@@ -196,104 +196,31 @@ void RecyclingGrid::addCellForItem(brls::Box*& currentRow, int& itemsInRow, size
     });
     cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
 
-    // Register START button action for album items
-    if (m_items[index].mediaType == MediaType::MUSIC_ALBUM && m_onItemStartAction) {
-        MediaItem capturedItem = m_items[index];
-        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-            [this, capturedItem](brls::View* view) {
-                if (m_onItemStartAction) {
-                    m_onItemStartAction(capturedItem);
-                }
-                return true;
-            });
-    }
-
-    // Register START button action for movies
-    if (m_items[index].mediaType == MediaType::MOVIE) {
-        MediaItem capturedItem = m_items[index];
-        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-            [capturedItem](brls::View* view) {
-                MediaDetailView::showMovieContextMenuStatic(capturedItem);
-                return true;
-            });
-    }
-
-    // Register START button action for TV shows
-    if (m_items[index].mediaType == MediaType::SHOW) {
-        MediaItem capturedItem = m_items[index];
-        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-            [capturedItem](brls::View* view) {
-                MediaDetailView::showShowContextMenuStatic(capturedItem);
-                return true;
-            });
-    }
-
-    // Register START button action for seasons
-    if (m_items[index].mediaType == MediaType::SEASON) {
-        MediaItem capturedItem = m_items[index];
-        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-            [capturedItem](brls::View* view) {
-                MediaDetailView::showSeasonContextMenuStatic(capturedItem);
-                return true;
-            });
-    }
-
-    // Register START button action for episodes
-    if (m_items[index].mediaType == MediaType::EPISODE) {
-        MediaItem capturedItem = m_items[index];
-        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-            [capturedItem](brls::View* view) {
-                MediaDetailView::showEpisodeContextMenu(capturedItem);
-                return true;
-            });
-    }
-
-    // Register START button action for artists
-    if (m_items[index].mediaType == MediaType::MUSIC_ARTIST) {
-        MediaItem capturedItem = m_items[index];
-        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-            [capturedItem](brls::View* view) {
-                MediaDetailView::showArtistContextMenuStatic(capturedItem);
-                return true;
-            });
-    }
-
-    // Register START button action for playlists
-    if (m_items[index].type == "playlist" && m_onItemStartAction) {
-        MediaItem capturedItem = m_items[index];
-        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-            [this, capturedItem](brls::View* view) {
-                if (m_onItemStartAction) {
-                    m_onItemStartAction(capturedItem);
-                }
-                return true;
-            });
-    }
-
-    // Long press on touch = same as START button options
+    // START and long press open the same menu, so both go through one
+    // place. Albums and playlists belong to whoever owns the grid — the
+    // music tab puts its own queue actions there — and get no menu without
+    // one; everything else takes the shared dispatcher.
     MediaItem capturedItem = m_items[index];
-    cell->addGestureRecognizer(new LongPressGestureRecognizer(
-        cell, [this, capturedItem](LongPressGestureStatus status) {
-            if (status.state != brls::GestureState::START) {
-                return;
-            }
+    const bool ownerHandles =
+        (capturedItem.mediaType == MediaType::MUSIC_ALBUM || capturedItem.type == "playlist");
 
-            if (capturedItem.mediaType == MediaType::MUSIC_ALBUM && m_onItemStartAction) {
-                m_onItemStartAction(capturedItem);
-            } else if (capturedItem.mediaType == MediaType::MOVIE) {
-                MediaDetailView::showMovieContextMenuStatic(capturedItem);
-            } else if (capturedItem.mediaType == MediaType::SHOW) {
-                MediaDetailView::showShowContextMenuStatic(capturedItem);
-            } else if (capturedItem.mediaType == MediaType::SEASON) {
-                MediaDetailView::showSeasonContextMenuStatic(capturedItem);
-            } else if (capturedItem.mediaType == MediaType::EPISODE) {
-                MediaDetailView::showEpisodeContextMenu(capturedItem);
-            } else if (capturedItem.mediaType == MediaType::MUSIC_ARTIST) {
-                MediaDetailView::showArtistContextMenuStatic(capturedItem);
-            } else if (capturedItem.type == "playlist" && m_onItemStartAction) {
-                m_onItemStartAction(capturedItem);
+    if (ownerHandles ? (m_onItemStartAction != nullptr)
+                     : MediaDetailView::hasContextMenu(capturedItem)) {
+        auto openMenu = [this, capturedItem, ownerHandles]() {
+            if (ownerHandles) {
+                if (m_onItemStartAction) m_onItemStartAction(capturedItem);
+            } else {
+                MediaDetailView::showContextMenuFor(capturedItem);
             }
-        }));
+        };
+
+        cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+            [openMenu](brls::View*) { openMenu(); return true; });
+        cell->addGestureRecognizer(new LongPressGestureRecognizer(
+            cell, [openMenu](LongPressGestureStatus status) {
+                if (status.state == brls::GestureState::START) openMenu();
+            }));
+    }
 
     currentRow->addView(cell);
 

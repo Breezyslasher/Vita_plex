@@ -248,72 +248,21 @@ void HomeTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>
         });
         cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
 
-        // Register START button context menus for movies, shows, and seasons.
-        // Live programmes are skipped: every one of these menus acts on a
-        // library ratingKey, which an EPG item does not have.
-        if (capturedItem.isLiveTV) {
-            // no context menu for live programmes — every one of these acts
-            // on a library ratingKey, which an EPG item does not have
-        } else if (capturedItem.mediaType == MediaType::MOVIE) {
+        // START and long press open the same menu, so both go through one
+        // dispatcher — they used to carry separate copies of the per-type
+        // chain, which is how live programmes ended up excluded from only
+        // one of them. hasContextMenu() also keeps the "Options" hint off
+        // items that have no menu, live programmes included.
+        if (MediaDetailView::hasContextMenu(capturedItem)) {
             cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-                [capturedItem](brls::View* view) {
-                    MediaDetailView::showMovieContextMenuStatic(capturedItem);
+                [capturedItem](brls::View*) {
+                    MediaDetailView::showContextMenuFor(capturedItem);
                     return true;
                 });
-        } else if (capturedItem.mediaType == MediaType::SHOW) {
-            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-                [capturedItem](brls::View* view) {
-                    MediaDetailView::showShowContextMenuStatic(capturedItem);
-                    return true;
-                });
-        } else if (capturedItem.mediaType == MediaType::SEASON) {
-            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-                [capturedItem](brls::View* view) {
-                    MediaDetailView::showSeasonContextMenuStatic(capturedItem);
-                    return true;
-                });
-        } else if (capturedItem.mediaType == MediaType::EPISODE) {
-            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-                [capturedItem](brls::View* view) {
-                    MediaDetailView::showEpisodeContextMenu(capturedItem);
-                    return true;
-                });
-        } else if (capturedItem.mediaType == MediaType::MUSIC_ARTIST) {
-            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-                [capturedItem](brls::View* view) {
-                    MediaDetailView::showArtistContextMenuStatic(capturedItem);
-                    return true;
-                });
-        } else if (capturedItem.mediaType == MediaType::MUSIC_ALBUM) {
-            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
-                [capturedItem](brls::View* view) {
-                    MediaDetailView::showAlbumContextMenuStatic(capturedItem);
-                    return true;
-                });
-        }
-
-        // Long press on touch = same as START button options, so it needs
-        // the same exclusion: a live programme has no library ratingKey for
-        // any of these menus to act on, and selecting it already offers the
-        // Watch Now / Record choice that does apply.
-        if (!capturedItem.isLiveTV) {
             cell->addGestureRecognizer(new LongPressGestureRecognizer(
                 cell, [capturedItem](LongPressGestureStatus status) {
-                    if (status.state != brls::GestureState::START) return;
-
-                    if (capturedItem.mediaType == MediaType::MOVIE) {
-                        MediaDetailView::showMovieContextMenuStatic(capturedItem);
-                    } else if (capturedItem.mediaType == MediaType::SHOW) {
-                        MediaDetailView::showShowContextMenuStatic(capturedItem);
-                    } else if (capturedItem.mediaType == MediaType::SEASON) {
-                        MediaDetailView::showSeasonContextMenuStatic(capturedItem);
-                    } else if (capturedItem.mediaType == MediaType::EPISODE) {
-                        MediaDetailView::showEpisodeContextMenu(capturedItem);
-                    } else if (capturedItem.mediaType == MediaType::MUSIC_ARTIST) {
-                        MediaDetailView::showArtistContextMenuStatic(capturedItem);
-                    } else if (capturedItem.mediaType == MediaType::MUSIC_ALBUM) {
-                        MediaDetailView::showAlbumContextMenuStatic(capturedItem);
-                    }
+                    if (status.state == brls::GestureState::START)
+                        MediaDetailView::showContextMenuFor(capturedItem);
                 }));
         }
 
