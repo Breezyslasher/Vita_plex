@@ -31,7 +31,7 @@ public:
 
 private:
     void loadContent();
-    void loadRecentChannels();          // Live TV "Recent Channels" rail
+    void loadRecentChannels();          // Live TV rails: Recent Channels + Shows On Now
     void onItemSelected(const MediaItem& item);
 
     // Section header: gold accent rect + title. Returns the row Box.
@@ -55,6 +55,11 @@ private:
     // Recent Channels (Live TV) section — header + row hidden until channels load.
     brls::Box*           m_recentChannelsHeader = nullptr;
     HorizontalScrollRow* m_recentChannelsRow = nullptr;
+    // "Shows On Now" — the provider's watchnow rail, alongside the one the
+    // official client shows next to Recent Channels. Hidden until the
+    // server actually returns items for it.
+    brls::Box*           m_showsOnNowHeader = nullptr;
+    HorizontalScrollRow* m_showsOnNowRow = nullptr;
 
     // Recently Added Movies section
     HorizontalScrollRow* m_moviesRow = nullptr;
@@ -70,6 +75,11 @@ private:
     std::vector<MediaItem> m_recentShows;
     std::vector<MediaItem> m_recentMusic;
     std::vector<LiveTVChannel> m_recentChannels;
+    // Server-computed rails. When these are populated the corresponding
+    // rail renders from them; m_recentChannels is only used for the
+    // EPG-grid fallback on servers that don't advertise the hubs.
+    std::vector<MediaItem> m_recentChannelItems;
+    std::vector<MediaItem> m_showsOnNow;
     bool m_loaded = false;
 
     // Alive flag for crash prevention on quick tab switching

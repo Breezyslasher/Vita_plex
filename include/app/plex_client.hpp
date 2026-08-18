@@ -232,6 +232,21 @@ struct LiveTVChannel {
     std::vector<ChannelProgram> programs;  // All programs in EPG window, sorted by start time
 };
 
+// A Live TV discovery rail advertised by the server, rather than one we
+// synthesise client-side. Two sources, both documented in openapi.json:
+//   * /{epgProviderKey}/watchnow  — "All Channels", "Movies on Now",
+//     "Shows on Now", "Sports on Now"
+//   * the EPG provider's own hubKey (found via /media/providers) — the
+//     provider's discovery hubs, which is where "Recent Channels" and its
+//     per-channel resume progress come from
+// `key` is a ready-to-fetch path; the section ids inside it differ per
+// server, so it must be used as given and never reconstructed.
+struct LiveTVHub {
+    std::string title;
+    std::string key;
+    std::string type;   // "mixed", "movie", "episode", …
+};
+
 // Genre/Category item with key for filtering
 struct GenreItem {
     std::string title;      // Display name
@@ -497,6 +512,19 @@ public:
     // Live TV
     bool fetchLiveTVChannels(std::vector<LiveTVChannel>& channels);
     bool fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, int hoursAhead = 4);
+
+    // Live TV discovery rails served by the provider (see LiveTVHub).
+    // watchNow covers the "… on Now" family; providerHubs covers the DVR
+    // provider's own hubs, including "Recent Channels". Both return false
+    // when the server doesn't advertise them, so callers can fall back.
+    bool fetchLiveTVWatchNowHubs(std::vector<LiveTVHub>& hubs);
+    bool fetchLiveTVProviderHubs(std::vector<LiveTVHub>& hubs);
+    // The provider's real "Recent Channels" hub, returned as channels so
+    // the existing rail cells and tuneChannel() work unchanged. One
+    // request: /{epgProviderKey}/hubs/discover carries its items inline.
+    bool fetchLiveTVRecentChannels(std::vector<LiveTVChannel>& channels);
+    // Fetch one rail's contents. `key` comes from a LiveTVHub verbatim.
+    bool fetchLiveTVHubItems(const std::string& key, std::vector<MediaItem>& items);
     bool tuneLiveTVChannel(const std::string& channelKey, std::string& streamUrl,
                            std::string& liveSessionUuid,
                            const std::string& programMetadataKey = "");

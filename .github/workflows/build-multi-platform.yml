@@ -265,14 +265,37 @@ jobs:
 
           echo "Release files:"
           ls -lh release/
+      # Created as a DRAFT on purpose. This repo has immutable releases
+      # enabled, so a release becomes read-only the moment it publishes —
+      # and a prerelease publishes as soon as it is created, which killed
+      # the asset upload partway through:
+      #
+      #   Error: Cannot upload asset VitaPlex.Beta-2.1.7-switch-opengl.nro
+      #   to an immutable release.
+      #
+      # Uploading into a draft avoids that; the publish step below then
+      # flips it live once every asset is attached. (The tag-triggered
+      # upload-release job above already used draft: true, which is why
+      # only prereleases hit this.)
       - name: Create pre-release
+        id: prerelease
         uses: softprops/action-gh-release@v2
         with:
           name: VitaPlex ${{ needs.resolve-version.outputs.version }}
           tag_name: ${{ needs.resolve-version.outputs.version_tag }}
           prerelease: true
+          draft: true
           generate_release_notes: true
           files: release/*
+      - name: Publish the pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # -F (not -f) so draft is sent as a JSON boolean rather than the
+        # string "false", which the API would reject.
+        run: |
+          gh api -X PATCH \
+            "repos/${{ github.repository }}/releases/${{ steps.prerelease.outputs.id }}" \
+            -F draft=false
 
   # ───────────────────────────────────────────────
   # PS Vita — VPK
@@ -1204,15 +1227,29 @@ jobs:
         with:
           submodules: recursive
       - name: Install dependencies
+        # Kept minimal: this step dominated the job (3m12s of the deb job's
+        # 4m20s in run 1424), and most of what it named was already coming
+        # in anyway.
+        #
+        # libmpv-dev depends on the whole FFmpeg dev stack (libav*/libsw*),
+        # libass, freetype, harfbuzz, fribidi and libpng, so listing those
+        # again only adds resolution work — verified with `apt-cache
+        # depends --recurse`. libwebp-dev and libmp3lame-dev are NOT among
+        # its dependencies and stay.
+        #
+        # xorg-dev is a metapackage pulling ~173 packages. GLFW names the X
+        # libs it actually needs in its own FATAL_ERROR checks — X11/XKB,
+        # Xrandr, Xinerama, Xcursor, Xi, and Xext for X Shape — which comes
+        # to ~34. The wayland trio stays: GLFW's wayland backend needs
+        # wayland-scanner from libwayland-bin.
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             cmake ninja-build build-essential git pkg-config zstd \
             libcurl4-openssl-dev libmbedtls-dev libmpv-dev \
-            libavcodec-dev libavformat-dev libavfilter-dev libswresample-dev libswscale-dev libavutil-dev \
-            libmp3lame-dev libass-dev libfreetype-dev libharfbuzz-dev libfribidi-dev \
-            libpng-dev libwebp-dev libdbus-1-dev \
-            wayland-protocols libwayland-bin libwayland-dev libxkbcommon-dev xorg-dev
+            libmp3lame-dev libwebp-dev libdbus-1-dev \
+            wayland-protocols libwayland-bin libwayland-dev libxkbcommon-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev
       - name: Build
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON \
@@ -1271,15 +1308,29 @@ jobs:
         with:
           submodules: recursive
       - name: Install dependencies
+        # Kept minimal: this step dominated the job (3m12s of the deb job's
+        # 4m20s in run 1424), and most of what it named was already coming
+        # in anyway.
+        #
+        # libmpv-dev depends on the whole FFmpeg dev stack (libav*/libsw*),
+        # libass, freetype, harfbuzz, fribidi and libpng, so listing those
+        # again only adds resolution work — verified with `apt-cache
+        # depends --recurse`. libwebp-dev and libmp3lame-dev are NOT among
+        # its dependencies and stay.
+        #
+        # xorg-dev is a metapackage pulling ~173 packages. GLFW names the X
+        # libs it actually needs in its own FATAL_ERROR checks — X11/XKB,
+        # Xrandr, Xinerama, Xcursor, Xi, and Xext for X Shape — which comes
+        # to ~34. The wayland trio stays: GLFW's wayland backend needs
+        # wayland-scanner from libwayland-bin.
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             cmake ninja-build build-essential git pkg-config zstd \
             libcurl4-openssl-dev libmbedtls-dev libmpv-dev \
-            libavcodec-dev libavformat-dev libavfilter-dev libswresample-dev libswscale-dev libavutil-dev \
-            libmp3lame-dev libass-dev libfreetype-dev libharfbuzz-dev libfribidi-dev \
-            libpng-dev libwebp-dev libdbus-1-dev \
-            wayland-protocols libwayland-bin libwayland-dev libxkbcommon-dev xorg-dev
+            libmp3lame-dev libwebp-dev libdbus-1-dev \
+            wayland-protocols libwayland-bin libwayland-dev libxkbcommon-dev \
+            libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev
       - name: Build
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON \
