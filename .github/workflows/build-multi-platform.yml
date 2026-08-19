@@ -528,6 +528,16 @@ jobs:
         link-to-sdk: true
     - name: Install dependency
       run: |
+        # The Azure-internal mirror is the fastest choice from these runners
+        # on a healthy day, so keep it first — but let apt's mirror method
+        # fall back to the public archive when a request fails outright,
+        # which is what the Ign:/stall pattern in the logged crawls was.
+        # amd64 only: the arm64 runners use the ports mirror instead.
+        if [ "$(dpkg --print-architecture)" = "amd64" ] && [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+          printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\nhttp://archive.ubuntu.com/ubuntu/\tpriority:2\n' \
+            | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+          sudo sed -i 's|^URIs: .*|URIs: mirror+file:/etc/apt/apt-mirrors.txt|' /etc/apt/sources.list.d/ubuntu.sources
+        fi
         sudo apt-get -o Acquire::Retries=3 update
         sudo apt-get -o Acquire::Retries=3 install -y ninja-build pkg-config meson nasm make zstd
     - name: Cache depends
@@ -622,6 +632,16 @@ jobs:
       - name: Install dependencies
         run: |
           if command -v apt-get >/dev/null 2>&1; then
+            # The Azure-internal mirror is the fastest choice from these runners
+            # on a healthy day, so keep it first — but let apt's mirror method
+            # fall back to the public archive when a request fails outright,
+            # which is what the Ign:/stall pattern in the logged crawls was.
+            # amd64 only: the arm64 runners use the ports mirror instead.
+            if [ "$(dpkg --print-architecture)" = "amd64" ] && [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+              printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\nhttp://archive.ubuntu.com/ubuntu/\tpriority:2\n' \
+                | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+              sudo sed -i 's|^URIs: .*|URIs: mirror+file:/etc/apt/apt-mirrors.txt|' /etc/apt/sources.list.d/ubuntu.sources
+            fi
             mkdir -p apt-deb-cache/partial
             sudo apt-get -o Acquire::Retries=3 update
             # librtmp1 / libssh-4 are Recommends (not Depends) of
@@ -1461,6 +1481,16 @@ jobs:
         # to ~34. The wayland trio stays: GLFW's wayland backend needs
         # wayland-scanner from libwayland-bin.
         run: |
+          # The Azure-internal mirror is the fastest choice from these runners
+          # on a healthy day, so keep it first — but let apt's mirror method
+          # fall back to the public archive when a request fails outright,
+          # which is what the Ign:/stall pattern in the logged crawls was.
+          # amd64 only: the arm64 runners use the ports mirror instead.
+          if [ "$(dpkg --print-architecture)" = "amd64" ] && [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\nhttp://archive.ubuntu.com/ubuntu/\tpriority:2\n' \
+              | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+            sudo sed -i 's|^URIs: .*|URIs: mirror+file:/etc/apt/apt-mirrors.txt|' /etc/apt/sources.list.d/ubuntu.sources
+          fi
           mkdir -p apt-deb-cache/partial
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get -o Acquire::Retries=3 -o Dir::Cache::archives=$PWD/apt-deb-cache \
@@ -1566,6 +1596,16 @@ jobs:
         # to ~34. The wayland trio stays: GLFW's wayland backend needs
         # wayland-scanner from libwayland-bin.
         run: |
+          # The Azure-internal mirror is the fastest choice from these runners
+          # on a healthy day, so keep it first — but let apt's mirror method
+          # fall back to the public archive when a request fails outright,
+          # which is what the Ign:/stall pattern in the logged crawls was.
+          # amd64 only: the arm64 runners use the ports mirror instead.
+          if [ "$(dpkg --print-architecture)" = "amd64" ] && [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
+            printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\nhttp://archive.ubuntu.com/ubuntu/\tpriority:2\n' \
+              | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+            sudo sed -i 's|^URIs: .*|URIs: mirror+file:/etc/apt/apt-mirrors.txt|' /etc/apt/sources.list.d/ubuntu.sources
+          fi
           mkdir -p apt-deb-cache/partial
           sudo apt-get -o Acquire::Retries=3 update
           sudo apt-get -o Acquire::Retries=3 -o Dir::Cache::archives=$PWD/apt-deb-cache \
