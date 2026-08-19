@@ -266,6 +266,7 @@ set(APP_SOURCES
     src/view/settings_tab.cpp
     src/view/livetv_tab.cpp
     src/view/livetv_actions.cpp
+    src/utils/app_update.cpp
     src/view/media_detail_view.cpp
     src/view/media_item_cell.cpp
     src/view/recycling_grid.cpp
@@ -324,6 +325,13 @@ endif()
 # vita_stubs.c only needed on Vita (no-op stdio locks, SDL_OpenURL stub)
 if(PLATFORM_PSV)
     list(APPEND APP_SOURCES src/utils/vita_stubs.c)
+    # In-app self-update: unzip the downloaded VPK (miniz, sceIo-backed)
+    # and promote it in place via ScePromoterUtility.
+    list(APPEND APP_SOURCES src/utils/vita_install.cpp lib/miniz/miniz.c)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/lib/miniz)
+    # miniz without stdio/time: newlib's fopen64/stat64/utime are absent on
+    # Vita, so vita_install.cpp drives it through sceIo callbacks instead.
+    add_definitions(-DMINIZ_NO_STDIO -DMINIZ_NO_TIME)
 endif()
 
 # Switch: userAppInit/userAppExit (romfs, sockets, system services init) +
@@ -680,6 +688,9 @@ if(PLATFORM_PSV)
         SceCodecEngine_stub
         SceAudio_stub
         SceVshBridge_stub
+        # In-app self-update (utils/vita_install): promote the extracted VPK.
+        ScePromoterUtil_stub
+        SceSysmodule_stub
     )
 elseif(PLATFORM_SWITCH)
     # Required for __wrap_pthread_create in src/utils/switch_stubs.c — floors
@@ -1041,6 +1052,13 @@ elseif(PLATFORM_PS4)
     add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}.data)
 
 elseif(PLATFORM_SWITCH)
+    # Which release asset the in-app updater must download (see
+    # utils/app_update.cpp assetSuffix): the deko3d and opengl NROs are
+    # separate assets, and swapping drivers via an update would strand the
+    # user with shaders their build cannot load.
+    if(USE_DEKO3D)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_NRO_DEKO3D)
+    endif()
     # Build NRO with embedded romfs resources (matches switchfin approach).
     # nx_create_nro doesn't embed romfs or set metadata correctly, so we
     # call nacptool + elf2nro manually.

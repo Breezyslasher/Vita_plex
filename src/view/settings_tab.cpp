@@ -12,6 +12,7 @@
 
 #include "view/settings_tab.hpp"
 #include "view/livetv_actions.hpp"
+#include "utils/app_update.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
 #include "app/plex_palette.hpp"
@@ -992,6 +993,25 @@ brls::Box* SettingsTab::createNetworkSection() {
             onConnectionTimeoutChanged(index);
         });
     box->addView(m_connectionTimeoutSelector);
+
+    // In-app updates: manual check now, plus the startup check toggle.
+    auto* checkUpdatesCell = new brls::DetailCell();
+    checkUpdatesCell->setText("Check for Updates");
+    checkUpdatesCell->setDetailText(VITA_PLEX_DISPLAY_VERSION);
+    checkUpdatesCell->registerClickAction([](brls::View*) {
+        app_update::checkForUpdates(true);
+        return true;
+    });
+    box->addView(checkUpdatesCell);
+
+    auto* autoUpdateToggle = new brls::BooleanCell();
+    autoUpdateToggle->init("Check for Updates on Startup", settings.autoCheckUpdates,
+        [](bool value) {
+            AppSettings& s = Application::getInstance().getSettings();
+            s.autoCheckUpdates = value;
+            Application::getInstance().saveSettings();
+        });
+    box->addView(autoUpdateToggle);
 
     // Network diagnostic — opens a dialog showing WiFi info, internet
     // reachability, and Plex server latency. Was previously under the
