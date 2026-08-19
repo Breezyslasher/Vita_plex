@@ -296,7 +296,7 @@ void startInstall(const ReleaseInfo rel) {
             rel.assetUrl,
             [&](const char* data, size_t size) -> bool {
                 if (s_cancel.load()) return false;
-#ifdef __SWITCH__
+#if defined(__SWITCH__) || defined(ANDROID)
                 if (fwrite(data, 1, size, f) != size) return false;
 #else
                 if (sceIoWrite(f, data, size) != (int)size) return false;
