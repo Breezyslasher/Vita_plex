@@ -785,9 +785,11 @@ ParsedNotes parseNotes(const std::string& md) {
 void showNotesSheet(const ReleaseInfo rel) {
     const ParsedNotes notes = parseNotes(rel.notes);
 
+    // Wider than the mock and a typography step up throughout: the sheet
+    // is a reading surface on a TV across the room, not a phone in hand.
     const float screenW = platform::viewportWidth();
     const float screenH = platform::viewportHeight();
-    float panelW = 560.0f;
+    float panelW = 620.0f;
     if (panelW + 80.0f > screenW) panelW = screenW - 80.0f;
     const float panelH = screenH - 76.0f;
 
@@ -817,22 +819,22 @@ void showNotesSheet(const ReleaseInfo rel) {
     header->setPadding(14.0f, 20.0f, 14.0f, 20.0f);
 
     auto* tile = new brls::Box();
-    tile->setWidth(34.0f);
-    tile->setHeight(34.0f);
-    tile->setCornerRadius(9.0f);
+    tile->setWidth(38.0f);
+    tile->setHeight(38.0f);
+    tile->setCornerRadius(10.0f);
     tile->setBackgroundColor(tok::goldTileBg());
     tile->setBorderColor(tok::goldTileBrd());
     tile->setBorderThickness(1.0f);
     tile->setJustifyContent(brls::JustifyContent::CENTER);
     tile->setAlignItems(brls::AlignItems::CENTER);
-    tile->addView(makeLabel("\xE2\x89\xA1", 16.0f, tok::gold()));
+    tile->addView(makeLabel("\xE2\x89\xA1", 18.0f, tok::gold()));
     tile->setMarginRight(12.0f);
     header->addView(tile);
 
     auto* titles = new brls::Box();
     titles->setAxis(brls::Axis::COLUMN);
     titles->setShrink(1.0f);
-    titles->addView(makeLabel(rel.tag, 15.0f, tok::text()));
+    titles->addView(makeLabel(rel.tag, 16.5f, tok::text()));
     {
         std::string caption = notes.date;
         if (caption.empty() && rel.publishedAt.size() >= 10)
@@ -842,7 +844,7 @@ void showNotesSheet(const ReleaseInfo rel) {
         if (!notes.prs.empty())
             caption += (caption.empty() ? "" : " \xC2\xB7 ") + std::string("PRs ") + notes.prs;
         if (!caption.empty()) {
-            auto* cap = makeLabel(caption, 11.0f, tok::disabled());
+            auto* cap = makeLabel(caption, 12.0f, tok::disabled());
             cap->setMarginTop(2.0f);
             titles->addView(cap);
         }
@@ -857,13 +859,13 @@ void showNotesSheet(const ReleaseInfo rel) {
         auto* chip = new brls::Box();
         chip->setAxis(brls::Axis::ROW);
         chip->setAlignItems(brls::AlignItems::CENTER);
-        chip->setHeight(22.0f);
-        chip->setPadding(0.0f, 10.0f, 0.0f, 10.0f);
-        chip->setCornerRadius(11.0f);
+        chip->setHeight(24.0f);
+        chip->setPadding(0.0f, 11.0f, 0.0f, 11.0f);
+        chip->setCornerRadius(12.0f);
         chip->setBackgroundColor(tok::goldTileBg());
         chip->setBorderColor(tok::goldTileBrd());
         chip->setBorderThickness(1.0f);
-        chip->addView(makeLabel("Pre-release", 10.0f, tok::goldBright()));
+        chip->addView(makeLabel("Pre-release", 10.5f, tok::goldBright()));
         chip->setMarginLeft(10.0f);
         header->addView(chip);
     }
@@ -881,10 +883,10 @@ void showNotesSheet(const ReleaseInfo rel) {
 
     auto* content = new brls::Box();
     content->setAxis(brls::Axis::COLUMN);
-    content->setPadding(14.0f, 24.0f, 16.0f, 20.0f);
+    content->setPadding(16.0f, 26.0f, 18.0f, 22.0f);
 
     if (notes.lines.empty()) {
-        auto* empty = makeLabel("No notes for this release.", 12.0f, tok::muted2());
+        auto* empty = makeLabel("No notes for this release.", 13.5f, tok::muted2());
         empty->setMarginTop(40.0f);
         empty->setHorizontalAlign(brls::HorizontalAlign::CENTER);
         content->addView(empty);
@@ -896,29 +898,29 @@ void showNotesSheet(const ReleaseInfo rel) {
             auto* row = new brls::Box();
             row->setAxis(brls::Axis::ROW);
             row->setAlignItems(brls::AlignItems::CENTER);
-            row->setMarginTop(first ? 2.0f : 16.0f);
-            row->setMarginBottom(2.0f);
+            row->setMarginTop(first ? 2.0f : 20.0f);
+            row->setMarginBottom(3.0f);
             auto* tick = new brls::Rectangle();
             tick->setWidth(4.0f);
-            tick->setHeight(14.0f);
+            tick->setHeight(16.0f);
             tick->setCornerRadius(2.0f);
             tick->setColor(tok::gold());
-            tick->setMarginRight(8.0f);
+            tick->setMarginRight(9.0f);
             row->addView(tick);
-            row->addView(makeLabel(n.text, 13.0f, nvgRGB(0xea, 0xea, 0xee)));
+            row->addView(makeLabel(n.text, 15.0f, nvgRGB(0xea, 0xea, 0xee)));
             content->addView(row);
         } else if (n.kind == NoteLine::Bullet) {
             auto* row = new brls::Box();
             row->setAxis(brls::Axis::ROW);
             row->setAlignItems(brls::AlignItems::FLEX_START);
-            row->setMarginTop(7.0f);
+            row->setMarginTop(10.0f);
             auto* dot = new brls::Rectangle();
-            dot->setWidth(4.0f);
-            dot->setHeight(4.0f);
-            dot->setCornerRadius(2.0f);
+            dot->setWidth(5.0f);
+            dot->setHeight(5.0f);
+            dot->setCornerRadius(2.5f);
             dot->setColor(tok::muted2());
-            dot->setMarginTop(6.0f);
-            dot->setMarginRight(8.0f);
+            dot->setMarginTop(7.0f);
+            dot->setMarginRight(10.0f);
             row->addView(dot);
             auto* col = new brls::Box();
             col->setAxis(brls::Axis::COLUMN);
@@ -926,17 +928,19 @@ void showNotesSheet(const ReleaseInfo rel) {
             // A borealis label is single-colour, so the bold lead gets its
             // own line and the description wraps below it.
             if (!n.lead.empty())
-                col->addView(makeLabel(n.lead, 12.0f, nvgRGB(0xe7, 0xe7, 0xea)));
+                col->addView(makeLabel(n.lead, 13.5f, nvgRGB(0xe7, 0xe7, 0xea)));
             if (!n.text.empty()) {
-                auto* t = makeLabel(n.text, 11.5f, tok::muted(), false);
-                if (!n.lead.empty()) t->setMarginTop(1.0f);
+                auto* t = makeLabel(n.text, 12.5f, tok::muted(), false);
+                t->setLineHeight(1.35f);
+                if (!n.lead.empty()) t->setMarginTop(2.0f);
                 col->addView(t);
             }
             row->addView(col);
             content->addView(row);
         } else {
-            auto* p = makeLabel(n.text, 11.5f, tok::muted(), false);
-            p->setMarginTop(6.0f);
+            auto* p = makeLabel(n.text, 12.5f, tok::muted(), false);
+            p->setLineHeight(1.35f);
+            p->setMarginTop(8.0f);
             content->addView(p);
         }
         first = false;
@@ -960,7 +964,7 @@ void showNotesSheet(const ReleaseInfo rel) {
         footer->addView(makeLabel(
             "Scroll for more \xC2\xB7 " + std::to_string(notes.sections) +
             (notes.sections == 1 ? " section" : " sections"),
-            11.0f, tok::disabled()));
+            11.5f, tok::disabled()));
     }
     auto* fspacer = new brls::Box();
     fspacer->setGrow(1.0f);
@@ -1028,9 +1032,9 @@ void showNotesSheet(const ReleaseInfo rel) {
         scroller->setContentOffsetY(y, true);
     };
     scrim->registerAction("Scroll up", brls::ControllerButton::BUTTON_UP,
-        [scrollBy](brls::View*) { scrollBy(-60.0f); return true; }, true);
+        [scrollBy](brls::View*) { scrollBy(-72.0f); return true; }, true);
     scrim->registerAction("Scroll down", brls::ControllerButton::BUTTON_DOWN,
-        [scrollBy](brls::View*) { scrollBy(60.0f); return true; }, true);
+        [scrollBy](brls::View*) { scrollBy(72.0f); return true; }, true);
     scrim->registerAction("Back", brls::ControllerButton::BUTTON_B,
         [](brls::View*) { brls::Application::popActivity(); return true; });
     scrim->addGestureRecognizer(new brls::TapGestureRecognizer(scrim,
