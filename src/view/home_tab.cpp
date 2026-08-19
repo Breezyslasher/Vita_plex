@@ -760,6 +760,14 @@ void HomeTab::onItemSelected(const MediaItem& item) {
         return;
     }
 
+    // Recently Added lists individual episodes: clicking one should play
+    // it, like Continue Watching — the info page is the show's, reached
+    // from the Options menu instead.
+    if (item.mediaType == MediaType::EPISODE) {
+        Application::getInstance().pushPlayerActivity(item.ratingKey);
+        return;
+    }
+
     // Show media detail view for other types
     auto* detailView = new MediaDetailView(item);
     brls::Application::pushActivity(new brls::Activity(detailView));

@@ -688,8 +688,9 @@ if(PLATFORM_PSV)
         SceCodecEngine_stub
         SceAudio_stub
         SceVshBridge_stub
-        # In-app self-update (utils/vita_install): promote the extracted VPK.
-        ScePromoterUtil_stub
+        # sceSysmoduleLoadModule in platform_psv.cpp (NET/SSL/HTTP/IME/PGF).
+        # The updater's restart (sceAppMgrLoadExec) rides the SceAppMgr_stub
+        # already linked above.
         SceSysmodule_stub
     )
 elseif(PLATFORM_SWITCH)

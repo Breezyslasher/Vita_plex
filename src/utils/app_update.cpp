@@ -31,6 +31,7 @@
 #include <filesystem>
 #endif
 #ifdef __PSV__
+#include <psp2/appmgr.h>
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
 #include "utils/vita_install.hpp"
@@ -456,7 +457,7 @@ void startInstall(const ReleaseInfo rel) {
     panel->addView(keepOpen);
 
 #if defined(__PSV__)
-    const char* relaunchLabel = "Relaunch from LiveArea";
+    const char* relaunchLabel = "Restart VitaPlex";
 #elif defined(__SWITCH__)
     const char* relaunchLabel = "Relaunch to apply";
 #else
@@ -500,52 +501,77 @@ void startInstall(const ReleaseInfo rel) {
     asyncRun([rel, ui]() {
 #if defined(__SWITCH__)
         const std::string path = platformPath("update.nro");
-        FILE* f = fopen(path.c_str(), "wb");
-        if (!f) { installFailed("cannot open " + path, ui); s_busy = false; return; }
 #elif defined(ANDROID)
         const std::string path = platformPath("update.apk");
-        FILE* f = fopen(path.c_str(), "wb");
-        if (!f) { installFailed("cannot open " + path, ui); s_busy = false; return; }
 #else
         const std::string path = platformPath("update.vpk");
-        SceUID f = sceIoOpen(path.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
-        if (f < 0) { installFailed("cannot open " + path, ui); s_busy = false; return; }
 #endif
 
         HttpClient client;
         int64_t total = rel.assetSize;
         int64_t got = 0;
-        int lastPct = -1;
-        bool ok = client.downloadFile(
-            rel.assetUrl,
-            [&](const char* data, size_t size) -> bool {
-                if (s_cancel.load()) return false;
+        bool ok = false;
+        std::string dlErr;
+
+        // One automatic retry: a fresh connection routinely clears the
+        // transient failures (a dropped socket, a stale keep-alive).
+        for (int attempt = 0; attempt < 2 && !s_cancel.load(); attempt++) {
+            if (attempt > 0) {
+                brls::Logger::warn("app_update: download failed ({}), retrying", dlErr);
+                brls::sync([ui]() {
+                    if (!ui->dismissed->load())
+                        stepActive(ui->download, "Retrying\xE2\x80\xA6", -1.0f);
+                });
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+            }
+
+            // (Re)open truncating — a failed attempt leaves partial bytes.
 #if defined(__SWITCH__) || defined(ANDROID)
-                if (fwrite(data, 1, size, f) != size) return false;
+            FILE* f = fopen(path.c_str(), "wb");
+            if (!f) { installFailed("cannot open " + path, ui); s_busy = false; return; }
 #else
-                if (sceIoWrite(f, data, size) != (int)size) return false;
+            SceUID f = sceIoOpen(path.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+            if (f < 0) { installFailed("cannot open " + path, ui); s_busy = false; return; }
 #endif
-                got += (int64_t)size;
-                if (total > 0) {
-                    int pct = (int)(got * 100 / total);
-                    if (pct != lastPct) {
-                        lastPct = pct;
-                        brls::sync([ui, pct]() {
-                            if (ui->dismissed->load()) return;
-                            stepActive(ui->download, "Downloading\xE2\x80\xA6 " +
-                                       std::to_string(pct) + "%", (float)pct / 100.0f);
-                        });
+
+            got = 0;
+            int lastPct = -1;
+            dlErr.clear();
+            ok = client.downloadFile(
+                rel.assetUrl,
+                [&](const char* data, size_t size) -> bool {
+                    if (s_cancel.load()) return false;
+#if defined(__SWITCH__) || defined(ANDROID)
+                    if (fwrite(data, 1, size, f) != size) return false;
+#else
+                    if (sceIoWrite(f, data, size) != (int)size) return false;
+#endif
+                    got += (int64_t)size;
+                    if (total > 0) {
+                        int pct = (int)(got * 100 / total);
+                        if (pct != lastPct) {
+                            lastPct = pct;
+                            brls::sync([ui, pct]() {
+                                if (ui->dismissed->load()) return;
+                                stepActive(ui->download, "Downloading\xE2\x80\xA6 " +
+                                           std::to_string(pct) + "%", (float)pct / 100.0f);
+                            });
+                        }
                     }
-                }
-                return true;
-            },
-            [&](int64_t sz) { if (total <= 0) total = sz; });
+                    return true;
+                },
+                [&](int64_t sz) { if (total <= 0) total = sz; },
+                {}, 0, nullptr, &dlErr);
 
 #if defined(__SWITCH__) || defined(ANDROID)
-        fclose(f);
+            fclose(f);
 #else
-        sceIoClose(f);
+            sceIoClose(f);
 #endif
+
+            if (ok && (rel.assetSize <= 0 || got == rel.assetSize)) break;
+            ok = false;
+        }
 
         if (s_cancel.load()) {
 #if defined(__SWITCH__) || defined(ANDROID)
@@ -556,14 +582,21 @@ void startInstall(const ReleaseInfo rel) {
             s_busy = false;
             return;   // user cancellation, not a failure
         }
-        if (!ok || (rel.assetSize > 0 && got != rel.assetSize)) {
+        if (!ok) {
 #if defined(__SWITCH__) || defined(ANDROID)
             remove(path.c_str());
 #else
             sceIoRemove(path.c_str());
 #endif
-            installFailed("incomplete download (" + std::to_string(got) + "/" +
-                          std::to_string(rel.assetSize) + " bytes)", ui);
+            // Lead with the transport error — "0/39856545 bytes" hides the
+            // actual reason (the Switch's applet-mode socket famine was
+            // diagnosed by log only because the dialog didn't carry this).
+            std::string why = dlErr.empty()
+                ? "incomplete download (" + std::to_string(got) + "/" +
+                      std::to_string(rel.assetSize) + " bytes)"
+                : dlErr + " (" + std::to_string(got) + "/" +
+                      std::to_string(rel.assetSize) + " bytes)";
+            installFailed(why, ui);
             s_busy = false;
             return;
         }
@@ -655,8 +688,15 @@ void startInstall(const ReleaseInfo rel) {
             if (!ui->dismissed->load()) stepDone(ui->install, "Installed");
         });
         finishInstall(ui, []() {
-            auto* d = new brls::Dialog("Update installed. VitaPlex will now close - relaunch it from the LiveArea.");
-            d->addButton("OK", []() { brls::Application::quit(); });
+            auto* d = new brls::Dialog("Update installed. Restart VitaPlex to use the new version.");
+            d->addButton("Restart", []() {
+                // Re-executes app0:eboot.bin — freshly read from the files
+                // just written, so the app comes back as the new version.
+                sceAppMgrLoadExec("app0:eboot.bin", NULL, NULL);
+                // Only reached if LoadExec failed: fall back to a plain
+                // quit so the user can relaunch from the LiveArea.
+                brls::Application::quit();
+            });
             d->open();
         });
 #endif
@@ -1146,7 +1186,7 @@ void offerUpdate(const ReleaseInfo rel) {
     if (rel.assetSize > 0) caption = mbLabel(rel.assetSize) + " MB download";
 #if defined(__PSV__)
     caption += (caption.empty() ? "" : " \xC2\xB7 ") +
-               std::string("installs in place \xC2\xB7 relaunch from LiveArea");
+               std::string("installs in place \xC2\xB7 restarts to apply");
 #elif defined(__SWITCH__)
     caption += (caption.empty() ? "" : " \xC2\xB7 ") +
                std::string("installs in place \xC2\xB7 relaunch to apply");
