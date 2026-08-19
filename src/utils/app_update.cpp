@@ -257,6 +257,10 @@ brls::Box* makeButton(const std::string& text, BtnStyle style,
     b->setCornerRadius(10.0f);
     b->setFocusable(true);
     b->setHighlightCornerRadius(10.0f);
+    // Focus = the warm halo ring only. The highlight fill borealis paints
+    // behind a focused view washes out a gold-filled button (same fix as
+    // the guide hero buttons / downloads_tab).
+    b->setHideHighlightBackground(true);
 
     NVGcolor fg = tok::text();
     if (style == BtnStyle::Gold) {
