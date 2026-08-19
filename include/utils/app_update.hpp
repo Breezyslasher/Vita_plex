@@ -16,8 +16,10 @@
  *   Android  — downloads the .apk and hands it to the system package
  *              installer (content:// via ApkProvider — no browser
  *              involved, so Android TV works too).
+ *   PS4      — downloads the .pkg and registers it with the system
+ *              installer (BGFT, utils/ps4_install); the user exits and
+ *              the console finishes the install with its own progress.
  *   Desktop  — opens the release asset in the browser.
- *   PS4      — shows the release URL; there is no browser to open.
  *
  * VitaPlex publishes pre-releases, which GitHub's /releases/latest never
  * returns — the check reads /releases and takes the newest non-draft

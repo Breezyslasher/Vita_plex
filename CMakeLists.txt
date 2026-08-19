@@ -309,6 +309,8 @@ if(PLATFORM_PSV)
     list(APPEND APP_SOURCES src/platform/platform_psv.cpp)
 elseif(PLATFORM_PS4)
     list(APPEND APP_SOURCES src/platform/platform_ps4.cpp)
+    # In-app self-update: hand the downloaded PKG to the system installer.
+    list(APPEND APP_SOURCES src/utils/ps4_install.cpp)
 elseif(PLATFORM_SWITCH)
     list(APPEND APP_SOURCES src/platform/platform_switch.cpp)
 elseif(PLATFORM_ANDROID)
@@ -326,7 +328,7 @@ endif()
 if(PLATFORM_PSV)
     list(APPEND APP_SOURCES src/utils/vita_stubs.c)
     # In-app self-update: unzip the downloaded VPK (miniz, sceIo-backed)
-    # and promote it in place via ScePromoterUtility.
+    # and overwrite the installed app in place.
     list(APPEND APP_SOURCES src/utils/vita_install.cpp lib/miniz/miniz.c)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/lib/miniz)
     # miniz without stdio/time: newlib's fopen64/stat64/utime are absent on
@@ -710,6 +712,10 @@ elseif(PLATFORM_SWITCH)
 elseif(PLATFORM_PS4)
     target_link_libraries(${PROJECT_NAME}
         SceNet
+        # In-app self-update (utils/ps4_install): BGFT registers the PKG
+        # install; AppInstUtil is initialised alongside it.
+        SceBgft
+        SceAppInstUtil
     )
 elseif(PLATFORM_IOS OR PLATFORM_TVOS)
     # System frameworks that mpv + SDL2 + borealis need on iOS/tvOS.

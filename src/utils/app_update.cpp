@@ -40,6 +40,9 @@
 #include <SDL2/SDL.h>
 #include <jni.h>
 #endif
+#ifdef __PS4__
+#include "utils/ps4_install.hpp"
+#endif
 
 namespace vitaplex {
 namespace app_update {
@@ -183,6 +186,8 @@ std::string assetSuffix() {
 #else
     return "-armeabi-v7a.apk";
 #endif
+#elif defined(__PS4__)
+    return "-ps4.pkg";
 #else
     return {};
 #endif
@@ -290,8 +295,8 @@ std::string mbLabel(int64_t bytes) {
     return buf;
 }
 
-// ── The in-place installers (Switch / Vita / Android) ───────────────────
-#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID)
+// ── The in-place installers (Switch / Vita / Android / PS4) ─────────────
+#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__)
 
 // One row of the progress checklist (design_handoff_update, dialog C):
 // a 26px state circle — hairline when pending, spinner while active, green
@@ -460,6 +465,8 @@ void startInstall(const ReleaseInfo rel) {
     const char* relaunchLabel = "Restart VitaPlex";
 #elif defined(__SWITCH__)
     const char* relaunchLabel = "Relaunch to apply";
+#elif defined(__PS4__)
+    const char* relaunchLabel = "Exit while the system installs";
 #else
     const char* relaunchLabel = "System installer opens";
 #endif
@@ -503,6 +510,8 @@ void startInstall(const ReleaseInfo rel) {
         const std::string path = platformPath("update.nro");
 #elif defined(ANDROID)
         const std::string path = platformPath("update.apk");
+#elif defined(__PS4__)
+        const std::string path = platformPath("update.pkg");
 #else
         const std::string path = platformPath("update.vpk");
 #endif
@@ -526,7 +535,7 @@ void startInstall(const ReleaseInfo rel) {
             }
 
             // (Re)open truncating — a failed attempt leaves partial bytes.
-#if defined(__SWITCH__) || defined(ANDROID)
+#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
             FILE* f = fopen(path.c_str(), "wb");
             if (!f) { installFailed("cannot open " + path, ui); s_busy = false; return; }
 #else
@@ -541,7 +550,7 @@ void startInstall(const ReleaseInfo rel) {
                 rel.assetUrl,
                 [&](const char* data, size_t size) -> bool {
                     if (s_cancel.load()) return false;
-#if defined(__SWITCH__) || defined(ANDROID)
+#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
                     if (fwrite(data, 1, size, f) != size) return false;
 #else
                     if (sceIoWrite(f, data, size) != (int)size) return false;
@@ -563,7 +572,7 @@ void startInstall(const ReleaseInfo rel) {
                 [&](int64_t sz) { if (total <= 0) total = sz; },
                 {}, 0, nullptr, &dlErr);
 
-#if defined(__SWITCH__) || defined(ANDROID)
+#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
             fclose(f);
 #else
             sceIoClose(f);
@@ -574,7 +583,7 @@ void startInstall(const ReleaseInfo rel) {
         }
 
         if (s_cancel.load()) {
-#if defined(__SWITCH__) || defined(ANDROID)
+#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
             remove(path.c_str());
 #else
             sceIoRemove(path.c_str());
@@ -583,7 +592,7 @@ void startInstall(const ReleaseInfo rel) {
             return;   // user cancellation, not a failure
         }
         if (!ok) {
-#if defined(__SWITCH__) || defined(ANDROID)
+#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
             remove(path.c_str());
 #else
             sceIoRemove(path.c_str());
@@ -611,7 +620,7 @@ void startInstall(const ReleaseInfo rel) {
             // Disabled, not hidden: it keeps focus (nothing else here takes
             // it), and the phase guard already makes it inert.
             ui->cancel->setAlpha(0.45f);
-#if defined(ANDROID)
+#if defined(ANDROID) || defined(__PS4__)
             stepActive(ui->install, "Handing to system installer\xE2\x80\xA6", -1.0f);
 #else
             stepActive(ui->install, "Installing\xE2\x80\xA6", -1.0f);
@@ -636,6 +645,29 @@ void startInstall(const ReleaseInfo rel) {
                 env->DeleteLocalRef(jpath);
             }
             env->DeleteLocalRef(utils);
+        });
+#elif defined(__PS4__)
+        // Register the PKG with the system installer (BGFT): the console
+        // shows its own progress notification. The install replaces this
+        // app, so the confirmation asks the user to exit.
+        {
+            std::string err;
+            if (ps4::installPkg(path, "VitaPlex " + rel.tag, err) != 0) {
+                installFailed(err, ui);
+                s_busy = false;
+                return;
+            }
+        }
+        brls::sync([ui]() {
+            if (!ui->dismissed->load()) stepDone(ui->install, "Handed to system installer");
+        });
+        finishInstall(ui, []() {
+            auto* d = new brls::Dialog(
+                "The PS4 is installing the update - its progress shows as a "
+                "system notification. Exit VitaPlex to let it finish, then "
+                "launch the new version.");
+            d->addButton("Exit VitaPlex", []() { brls::Application::quit(); });
+            d->open();
         });
 #elif defined(__SWITCH__)
         // The romfs is mapped from the running NRO: unmount before
@@ -703,7 +735,7 @@ void startInstall(const ReleaseInfo rel) {
         s_busy = false;
     });
 }
-#endif  // __SWITCH__ || __PSV__ || ANDROID
+#endif  // __SWITCH__ || __PSV__ || ANDROID || __PS4__
 
 // ── Release notes → sheet lines (design_handoff_notes_A) ─────────────────
 // VitaPlex notes are hand-written markdown with a fixed shape: an H1
@@ -1013,7 +1045,7 @@ void showNotesSheet(const ReleaseInfo rel) {
     // The primary mirrors the offer's action so the user can act from
     // here without going back.
     brls::Box* primary = nullptr;
-#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID)
+#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__)
     if (!rel.assetUrl.empty()) {
         primary = makeButton("\xE2\x86\x93  Update Now", BtnStyle::Gold, [rel]() {
             // Pop the sheet, then the offer beneath it, then install.
@@ -1030,13 +1062,6 @@ void showNotesSheet(const ReleaseInfo rel) {
                 []() { brls::Application::popActivity(); });
         });
     }
-#elif defined(__PS4__)
-    primary = makeButton("Open release page", BtnStyle::Gold, [rel]() {
-        brls::Application::getPlatform()->openBrowser(rel.pageUrl);
-        s_busy = false;
-        brls::Application::popActivity(brls::TransitionAnimation::NONE,
-            []() { brls::Application::popActivity(); });
-    });
 #else
     {
         std::string url = !rel.assetUrl.empty() ? rel.assetUrl : rel.pageUrl;
@@ -1194,9 +1219,8 @@ void offerUpdate(const ReleaseInfo rel) {
     caption += (caption.empty() ? "" : " \xC2\xB7 ") +
                std::string("system installer opens when ready");
 #elif defined(__PS4__)
-    // The release page is the way to get it; keep the address visible in
-    // case the browser hand-off fails silently.
-    caption += (caption.empty() ? "" : " \xC2\xB7 ") + rel.pageUrl;
+    caption += (caption.empty() ? "" : " \xC2\xB7 ") +
+               std::string("installs via the PS4 installer \xC2\xB7 exit to finish");
 #else
     caption += (caption.empty() ? "" : " \xC2\xB7 ") +
                std::string("opens the release page in your browser");
@@ -1228,7 +1252,7 @@ void offerUpdate(const ReleaseInfo rel) {
     buttons->setPadding(14.0f, 18.0f, 16.0f, 18.0f);
 
     brls::Box* primary = nullptr;
-#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID)
+#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__)
     // These install in place; the notes sheet is the secondary action.
     if (!rel.assetUrl.empty()) {
         primary = makeButton("\xE2\x86\x93  Update", BtnStyle::Gold, [rel]() {
@@ -1251,11 +1275,6 @@ void offerUpdate(const ReleaseInfo rel) {
         primary->setGrow(1.0f);
         buttons->addView(primary);
     }
-#elif defined(__PS4__)
-    primary = makeButton("What's New", BtnStyle::Gold,
-                         [rel]() { showNotesSheet(rel); });
-    primary->setGrow(1.0f);
-    buttons->addView(primary);
 #else
     // Desktop: the browser handles download + install, so the primary IS
     // the release page (the asset directly when one matched).
