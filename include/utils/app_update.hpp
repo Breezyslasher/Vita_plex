@@ -4,8 +4,9 @@
  * Checks the GitHub releases feed and, where the platform allows it,
  * installs the update in place. Modelled on pleNx's updater
  * (thcolin/gamepad-media-center-aggregator, app/src/utils/version.cpp):
- * the same check → notes dialog → per-platform install flow, adapted to
- * VitaPlex's HttpClient and release layout.
+ * the same check → offer dialog → per-platform install flow, adapted to
+ * VitaPlex's HttpClient and release layout. The offer names the new and
+ * current versions only — release notes stay on the GitHub page.
  *
  *   Switch   — downloads the matching .nro and replaces the running one
  *              (path captured from argv[0]); relaunch applies it.

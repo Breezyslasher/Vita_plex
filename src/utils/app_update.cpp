@@ -163,42 +163,6 @@ bool isNewer(const std::string& tag, const std::string& current) {
     return false;
 }
 
-// ── Release notes → plain text ───────────────────────────────────────────
-std::string cleanNotes(const std::string& md) {
-    std::string out;
-    out.reserve(md.size());
-    bool lineStart = true;
-    for (size_t i = 0; i < md.size(); i++) {
-        char c = md[i];
-        if (lineStart && (c == '#' || c == '>')) continue;
-        if (lineStart && (c == '-' || c == '*') && i + 1 < md.size() && md[i + 1] == ' ') {
-            out += "\xE2\x80\xA2";   // bullet
-            continue;
-        }
-        if (c == '`' || c == '*') continue;
-        if (c == '[') {   // [text](url) -> text
-            size_t close = md.find(']', i);
-            size_t paren = close == std::string::npos ? std::string::npos : md.find('(', close);
-            if (close != std::string::npos && paren == close + 1) {
-                size_t end = md.find(')', paren);
-                if (end != std::string::npos) {
-                    out += md.substr(i + 1, close - i - 1);
-                    i = end;
-                    continue;
-                }
-            }
-        }
-        out += c;
-        lineStart = (c == '\n');
-    }
-    size_t a = out.find_first_not_of("\n \t");
-    size_t z = out.find_last_not_of("\n \t");
-    if (a == std::string::npos) return {};
-    out = out.substr(a, z - a + 1);
-    if (out.size() > 700) out = out.substr(0, 697) + "...";
-    return out;
-}
-
 // ── Platform asset choice ────────────────────────────────────────────────
 // Release assets follow "VitaPlex.<tag>-<platform>…"; the suffix decides.
 // Empty = this platform has no single downloadable asset (browser-only).
@@ -224,7 +188,6 @@ std::string assetSuffix() {
 
 struct ReleaseInfo {
     std::string tag;
-    std::string notes;
     std::string pageUrl;
     std::string assetUrl;
     int64_t     assetSize = 0;
@@ -407,9 +370,10 @@ void startInstall(const ReleaseInfo rel) {
 #endif  // __SWITCH__ || __PSV__
 
 void offerUpdate(const ReleaseInfo rel) {
-    std::string text = "Update available: " + rel.tag + "\n(current: " +
-                       std::string(VITA_PLEX_DISPLAY_VERSION) + ")";
-    if (!rel.notes.empty()) text += "\n\n" + rel.notes;
+    // Just the two version numbers — release notes are markdown written
+    // for the GitHub page and render as garbage in a dialog label.
+    std::string text = "A new version of VitaPlex is available.\n\nNew version: " + rel.tag +
+                       "\nCurrent version: " + std::string(VITA_PLEX_DISPLAY_VERSION);
 
     auto* dialog = new brls::Dialog(text);
     dialog->addButton("Later", [rel]() {
@@ -487,7 +451,6 @@ void checkForUpdates(bool manual) {
         forEachTopLevelObject(resp.body, [&rel](const std::string& obj) {
             if (jsonBool(obj, "draft")) return true;   // keep looking
             rel.tag     = jsonString(obj, "tag_name");
-            rel.notes   = cleanNotes(jsonString(obj, "body"));
             rel.pageUrl = jsonString(obj, "html_url");
 
             const std::string want = assetSuffix();
