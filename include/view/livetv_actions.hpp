@@ -19,10 +19,19 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 #include "app/plex_client.hpp"
 
 namespace vitaplex {
+
+// A value picker in the app's own dialog language — scrim, dark panel,
+// focusable rows, gold dot on the current value — used by the record
+// dialog's rows and the settings pickers in place of brls::Dropdown.
+// onPick fires with the chosen index after the picker closes; cancelling
+// (B / tap outside) fires nothing.
+void showOptionPicker(const std::string& title, const std::vector<std::string>& options,
+                      int selected, std::function<void(int)> onPick);
 
 // Tune the channel a programme is airing on and push the live player.
 void tuneLiveTVProgram(const MediaItem& item);

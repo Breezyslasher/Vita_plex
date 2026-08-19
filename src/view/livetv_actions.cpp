@@ -340,105 +340,6 @@ brls::Box* makeProgressBar(float width, float fraction) {
     return trackBox;
 }
 
-// ── Option picker ────────────────────────────────────────────────────────
-// A value picker in the same visual language as the two dialogs — scrim,
-// dark panel, focusable rows, gold mark on the current value — replacing
-// brls::Dropdown, whose full-screen platter looked like a different app.
-void showOptionPicker(const std::string& title, const std::vector<std::string>& options,
-                      int selected, std::function<void(int)> onPick) {
-    const float screenW = platform::viewportWidth();
-    const float screenH = platform::viewportHeight();
-    float panelW = 320.0f;
-    if (panelW + 80.0f > screenW) panelW = screenW - 80.0f;
-
-    auto* scrim = new brls::Box();
-    scrim->setAxis(brls::Axis::COLUMN);
-    scrim->setWidthPercentage(100.0f);
-    scrim->setHeightPercentage(100.0f);
-    scrim->setJustifyContent(brls::JustifyContent::CENTER);
-    scrim->setAlignItems(brls::AlignItems::CENTER);
-    scrim->setBackgroundColor(tok::scrim());
-
-    auto* panel = new brls::Box();
-    panel->setAxis(brls::Axis::COLUMN);
-    panel->setWidth(panelW);
-    panel->setBackgroundColor(tok::panel());
-    panel->setBorderColor(tok::panelLine());
-    panel->setBorderThickness(1.0f);
-    panel->setCornerRadius(16.0f);
-    panel->setShadowType(brls::ShadowType::GENERIC);
-
-    auto* header = new brls::Box();
-    header->setAxis(brls::Axis::ROW);
-    header->setPadding(14.0f, 18.0f, 12.0f, 18.0f);
-    header->addView(makeLabel(title, 15.0f, tok::text()));
-    panel->addView(header);
-
-    auto* rule = new brls::Rectangle();
-    rule->setHeight(1.0f);
-    rule->setColor(tok::rowSep());
-    panel->addView(rule);
-
-    auto* list = new brls::Box();
-    list->setAxis(brls::Axis::COLUMN);
-    list->setPadding(8.0f, 8.0f, 12.0f, 8.0f);
-
-    brls::View* focusRow = nullptr;
-    for (int i = 0; i < (int)options.size(); i++) {
-        auto* row = new brls::Box();
-        row->setAxis(brls::Axis::ROW);
-        row->setAlignItems(brls::AlignItems::CENTER);
-        row->setHeight(40.0f);
-        row->setPadding(0.0f, 10.0f, 0.0f, 10.0f);
-        row->setCornerRadius(8.0f);
-        row->setFocusable(true);
-        row->setHighlightCornerRadius(8.0f);
-
-        const bool cur = (i == selected);
-        // Gold dot marks the current value — the same mark the scope rows
-        // and changed-value dots use, rather than a checkmark glyph the
-        // fonts may not carry on every platform.
-        auto* dot = new brls::Rectangle();
-        dot->setWidth(6.0f);
-        dot->setHeight(6.0f);
-        dot->setCornerRadius(3.0f);
-        dot->setColor(tok::gold());
-        dot->setMarginRight(10.0f);
-        dot->setVisibility(cur ? brls::Visibility::VISIBLE : brls::Visibility::INVISIBLE);
-        row->addView(dot);
-
-        row->addView(makeLabel(options[(size_t)i], 13.0f, cur ? tok::text() : tok::muted()));
-
-        row->registerClickAction([i, onPick](brls::View*) {
-            brls::Application::popActivity(brls::TransitionAnimation::FADE,
-                                           [i, onPick]() { if (onPick) onPick(i); });
-            return true;
-        });
-        row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
-
-        if (cur) focusRow = row;
-        list->addView(row);
-    }
-    panel->addView(list);
-    scrim->addView(panel);
-
-    // Cap the panel so a long library list scrolls the screen's worth it
-    // has rather than growing past the viewport.
-    if (44.0f * (float)options.size() + 60.0f > screenH - 80.0f) {
-        panel->setHeight(screenH - 80.0f);
-    }
-
-    scrim->registerAction("Back", brls::ControllerButton::BUTTON_B,
-        [](brls::View*) { brls::Application::popActivity(); return true; });
-    scrim->addGestureRecognizer(new brls::TapGestureRecognizer(scrim,
-        []() { brls::Application::popActivity(); }));
-
-    brls::Application::pushActivity(new OverlayActivity(scrim));
-    if (focusRow) {
-        brls::sync([focusRow]() { brls::Application::giveFocus(focusRow); });
-    }
-}
-
 // ── Record options dialog ────────────────────────────────────────────────
 
 // One settings row: icon slot, label, gold changed-dot, value pill.
@@ -903,6 +804,106 @@ void openRecordOptionsDialog(const MediaItem& item, RecordingTemplate tmpl,
 }
 
 }  // namespace
+
+// ── Option picker ────────────────────────────────────────────────────────
+// A value picker in the same visual language as the two dialogs — scrim,
+// dark panel, focusable rows, gold mark on the current value — replacing
+// brls::Dropdown, whose full-screen platter looked like a different app.
+void showOptionPicker(const std::string& title, const std::vector<std::string>& options,
+                      int selected, std::function<void(int)> onPick) {
+    const float screenW = platform::viewportWidth();
+    const float screenH = platform::viewportHeight();
+    float panelW = 320.0f;
+    if (panelW + 80.0f > screenW) panelW = screenW - 80.0f;
+
+    auto* scrim = new brls::Box();
+    scrim->setAxis(brls::Axis::COLUMN);
+    scrim->setWidthPercentage(100.0f);
+    scrim->setHeightPercentage(100.0f);
+    scrim->setJustifyContent(brls::JustifyContent::CENTER);
+    scrim->setAlignItems(brls::AlignItems::CENTER);
+    scrim->setBackgroundColor(tok::scrim());
+
+    auto* panel = new brls::Box();
+    panel->setAxis(brls::Axis::COLUMN);
+    panel->setWidth(panelW);
+    panel->setBackgroundColor(tok::panel());
+    panel->setBorderColor(tok::panelLine());
+    panel->setBorderThickness(1.0f);
+    panel->setCornerRadius(16.0f);
+    panel->setShadowType(brls::ShadowType::GENERIC);
+
+    auto* header = new brls::Box();
+    header->setAxis(brls::Axis::ROW);
+    header->setPadding(14.0f, 18.0f, 12.0f, 18.0f);
+    header->addView(makeLabel(title, 15.0f, tok::text()));
+    panel->addView(header);
+
+    auto* rule = new brls::Rectangle();
+    rule->setHeight(1.0f);
+    rule->setColor(tok::rowSep());
+    panel->addView(rule);
+
+    auto* list = new brls::Box();
+    list->setAxis(brls::Axis::COLUMN);
+    list->setPadding(8.0f, 8.0f, 12.0f, 8.0f);
+
+    brls::View* focusRow = nullptr;
+    for (int i = 0; i < (int)options.size(); i++) {
+        auto* row = new brls::Box();
+        row->setAxis(brls::Axis::ROW);
+        row->setAlignItems(brls::AlignItems::CENTER);
+        row->setHeight(40.0f);
+        row->setPadding(0.0f, 10.0f, 0.0f, 10.0f);
+        row->setCornerRadius(8.0f);
+        row->setFocusable(true);
+        row->setHighlightCornerRadius(8.0f);
+
+        const bool cur = (i == selected);
+        // Gold dot marks the current value — the same mark the scope rows
+        // and changed-value dots use, rather than a checkmark glyph the
+        // fonts may not carry on every platform.
+        auto* dot = new brls::Rectangle();
+        dot->setWidth(6.0f);
+        dot->setHeight(6.0f);
+        dot->setCornerRadius(3.0f);
+        dot->setColor(tok::gold());
+        dot->setMarginRight(10.0f);
+        dot->setVisibility(cur ? brls::Visibility::VISIBLE : brls::Visibility::INVISIBLE);
+        row->addView(dot);
+
+        row->addView(makeLabel(options[(size_t)i], 13.0f, cur ? tok::text() : tok::muted()));
+
+        row->registerClickAction([i, onPick](brls::View*) {
+            brls::Application::popActivity(brls::TransitionAnimation::FADE,
+                                           [i, onPick]() { if (onPick) onPick(i); });
+            return true;
+        });
+        row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
+
+        if (cur) focusRow = row;
+        list->addView(row);
+    }
+    panel->addView(list);
+    scrim->addView(panel);
+
+    // Cap the panel so a long library list scrolls the screen's worth it
+    // has rather than growing past the viewport.
+    if (44.0f * (float)options.size() + 60.0f > screenH - 80.0f) {
+        panel->setHeight(screenH - 80.0f);
+    }
+
+    scrim->registerAction("Back", brls::ControllerButton::BUTTON_B,
+        [](brls::View*) { brls::Application::popActivity(); return true; });
+    scrim->addGestureRecognizer(new brls::TapGestureRecognizer(scrim,
+        []() { brls::Application::popActivity(); }));
+
+    brls::Application::pushActivity(new OverlayActivity(scrim));
+    if (focusRow) {
+        brls::sync([focusRow]() { brls::Application::giveFocus(focusRow); });
+    }
+}
+
 
 // ── Public API ───────────────────────────────────────────────────────────
 
