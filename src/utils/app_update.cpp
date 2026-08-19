@@ -192,6 +192,9 @@ struct ReleaseInfo {
     std::string pageUrl;
     std::string assetUrl;
     int64_t     assetSize = 0;
+    std::string notes;         // raw markdown body, rendered by the sheet
+    std::string publishedAt;   // ISO timestamp; date fallback for the sheet
+    bool        prerelease = false;
 };
 
 // ── Dialog building blocks ───────────────────────────────────────────────
@@ -658,10 +661,385 @@ void startInstall(const ReleaseInfo rel) {
 }
 #endif  // __SWITCH__ || __PSV__ || ANDROID
 
+// ── Release notes → sheet lines (design_handoff_notes_A) ─────────────────
+// VitaPlex notes are hand-written markdown with a fixed shape: an H1
+// title, **Date:**/**Status:**/**PRs:** meta lines, a blockquote
+// screenshots note, then `---`-separated `## Section`s of
+// `- **Lead** — description` bullets with optional intro paragraphs.
+
+struct NoteLine {
+    enum Kind { Section, Bullet, Para } kind;
+    std::string lead;   // bullets only: the bold lead, may be empty
+    std::string text;
+};
+
+struct ParsedNotes {
+    std::string date;   // "June 2026" from the meta lines
+    std::string prs;    // "#317–#346"
+    std::vector<NoteLine> lines;
+    int sections = 0;
+};
+
+// Collapse [text](url) → text and strip stray **/` pairs.
+std::string cleanInline(const std::string& in) {
+    std::string s = in;
+    for (size_t i = 0; (i = s.find('[', i)) != std::string::npos;) {
+        size_t close = s.find(']', i);
+        if (close == std::string::npos) break;
+        if (close + 1 < s.size() && s[close + 1] == '(') {
+            size_t end = s.find(')', close);
+            if (end != std::string::npos) {
+                s = s.substr(0, i) + s.substr(i + 1, close - i - 1) + s.substr(end + 1);
+                continue;
+            }
+        }
+        i = close + 1;
+    }
+    std::string out;
+    out.reserve(s.size());
+    for (size_t i = 0; i < s.size(); i++) {
+        if (s[i] == '`') continue;
+        if (s[i] == '*' && i + 1 < s.size() && s[i + 1] == '*') { i++; continue; }
+        out += s[i];
+    }
+    return out;
+}
+
+ParsedNotes parseNotes(const std::string& md) {
+    ParsedNotes out;
+    size_t pos = 0;
+    while (pos <= md.size()) {
+        size_t eol = md.find('\n', pos);
+        std::string line = md.substr(pos, eol == std::string::npos ? std::string::npos
+                                                                   : eol - pos);
+        pos = (eol == std::string::npos) ? md.size() + 1 : eol + 1;
+
+        while (!line.empty() && (line.back() == ' ' || line.back() == '\r')) line.pop_back();
+        size_t at = line.find_first_not_of(' ');
+        if (at == std::string::npos) continue;
+        line = line.substr(at);
+
+        // Meta lines fold into the sheet's header caption; the Status line
+        // is skipped — the Pre-release chip comes from the release JSON.
+        if (line.compare(0, 9, "**Date:**") == 0) {
+            out.date = cleanInline(line.substr(9));
+            size_t a = out.date.find_first_not_of(' ');
+            if (a != std::string::npos) out.date = out.date.substr(a);
+            continue;
+        }
+        if (line.compare(0, 8, "**PRs:**") == 0) {
+            out.prs = cleanInline(line.substr(8));
+            size_t a = out.prs.find_first_not_of(' ');
+            if (a != std::string::npos) out.prs = out.prs.substr(a);
+            continue;
+        }
+        if (line.compare(0, 11, "**Status:**") == 0) continue;
+
+        // The H1 repeats the tag; blockquotes link to the repo (useless
+        // without a browser); rules just separate sections.
+        if (line.compare(0, 3, "## ") == 0) {
+            out.lines.push_back({NoteLine::Section, "", cleanInline(line.substr(3))});
+            out.sections++;
+            continue;
+        }
+        if (line[0] == '#' || line[0] == '>' || line.compare(0, 3, "---") == 0) continue;
+
+        if (line.compare(0, 2, "- ") == 0 || line.compare(0, 2, "* ") == 0) {
+            std::string body = line.substr(2);
+            NoteLine n{NoteLine::Bullet, "", ""};
+            if (body.compare(0, 2, "**") == 0) {
+                size_t close = body.find("**", 2);
+                if (close != std::string::npos) {
+                    n.lead = cleanInline(body.substr(2, close - 2));
+                    std::string rest = body.substr(close + 2);
+                    // The lead line stands alone, so the " — " joiner would
+                    // dangle at the start of the description.
+                    size_t r = 0;
+                    while (r < rest.size() &&
+                           (rest[r] == ' ' || rest[r] == '-' ||
+                            rest.compare(r, 3, "\xE2\x80\x94") == 0)) {
+                        r += (rest[r] == ' ' || rest[r] == '-') ? 1 : 3;
+                    }
+                    n.text = cleanInline(rest.substr(r));
+                }
+            }
+            if (n.lead.empty()) n.text = cleanInline(body);
+            out.lines.push_back(std::move(n));
+            continue;
+        }
+
+        out.lines.push_back({NoteLine::Para, "", cleanInline(line)});
+    }
+    return out;
+}
+
+// ── The What's New sheet (design_handoff_notes_A) ────────────────────────
+// Pushed on top of the offer dialog; B returns to it. Header carries tag,
+// date, size and PR range plus a Pre-release chip; the notes scroll with
+// up/down while focus stays on the footer buttons; Update Now acts
+// without going back to the offer.
+void showNotesSheet(const ReleaseInfo rel) {
+    const ParsedNotes notes = parseNotes(rel.notes);
+
+    const float screenW = platform::viewportWidth();
+    const float screenH = platform::viewportHeight();
+    float panelW = 560.0f;
+    if (panelW + 80.0f > screenW) panelW = screenW - 80.0f;
+    const float panelH = screenH - 76.0f;
+
+    auto* scrim = new brls::Box();
+    scrim->setAxis(brls::Axis::COLUMN);
+    scrim->setWidthPercentage(100.0f);
+    scrim->setHeightPercentage(100.0f);
+    scrim->setJustifyContent(brls::JustifyContent::CENTER);
+    scrim->setAlignItems(brls::AlignItems::CENTER);
+    scrim->setBackgroundColor(tok::scrim());
+
+    auto* panel = new brls::Box();
+    panel->setAxis(brls::Axis::COLUMN);
+    panel->setWidth(panelW);
+    panel->setHeight(panelH);
+    panel->setBackgroundColor(tok::panel());
+    panel->setBorderColor(tok::panelLine());
+    panel->setBorderThickness(1.0f);
+    panel->setCornerRadius(16.0f);
+    panel->setShadowType(brls::ShadowType::GENERIC);
+    panel->setClipsToBounds(true);
+
+    // ── Header ──────────────────────────────────────────────────────────
+    auto* header = new brls::Box();
+    header->setAxis(brls::Axis::ROW);
+    header->setAlignItems(brls::AlignItems::CENTER);
+    header->setPadding(14.0f, 20.0f, 14.0f, 20.0f);
+
+    auto* tile = new brls::Box();
+    tile->setWidth(34.0f);
+    tile->setHeight(34.0f);
+    tile->setCornerRadius(9.0f);
+    tile->setBackgroundColor(tok::goldTileBg());
+    tile->setBorderColor(tok::goldTileBrd());
+    tile->setBorderThickness(1.0f);
+    tile->setJustifyContent(brls::JustifyContent::CENTER);
+    tile->setAlignItems(brls::AlignItems::CENTER);
+    tile->addView(makeLabel("\xE2\x89\xA1", 16.0f, tok::gold()));
+    tile->setMarginRight(12.0f);
+    header->addView(tile);
+
+    auto* titles = new brls::Box();
+    titles->setAxis(brls::Axis::COLUMN);
+    titles->setShrink(1.0f);
+    titles->addView(makeLabel(rel.tag, 15.0f, tok::text()));
+    {
+        std::string caption = notes.date;
+        if (caption.empty() && rel.publishedAt.size() >= 10)
+            caption = rel.publishedAt.substr(0, 10);
+        if (rel.assetSize > 0)
+            caption += (caption.empty() ? "" : " \xC2\xB7 ") + mbLabel(rel.assetSize) + " MB";
+        if (!notes.prs.empty())
+            caption += (caption.empty() ? "" : " \xC2\xB7 ") + std::string("PRs ") + notes.prs;
+        if (!caption.empty()) {
+            auto* cap = makeLabel(caption, 11.0f, tok::disabled());
+            cap->setMarginTop(2.0f);
+            titles->addView(cap);
+        }
+    }
+    header->addView(titles);
+
+    auto* hspacer = new brls::Box();
+    hspacer->setGrow(1.0f);
+    header->addView(hspacer);
+
+    if (rel.prerelease) {
+        auto* chip = new brls::Box();
+        chip->setAxis(brls::Axis::ROW);
+        chip->setAlignItems(brls::AlignItems::CENTER);
+        chip->setHeight(22.0f);
+        chip->setPadding(0.0f, 10.0f, 0.0f, 10.0f);
+        chip->setCornerRadius(11.0f);
+        chip->setBackgroundColor(tok::goldTileBg());
+        chip->setBorderColor(tok::goldTileBrd());
+        chip->setBorderThickness(1.0f);
+        chip->addView(makeLabel("Pre-release", 10.0f, tok::goldBright()));
+        chip->setMarginLeft(10.0f);
+        header->addView(chip);
+    }
+    panel->addView(header);
+
+    auto* headerRule = new brls::Box();
+    headerRule->setHeight(1.0f);
+    headerRule->setAlignSelf(brls::AlignSelf::STRETCH);
+    headerRule->setBackgroundColor(tok::hairline());
+    panel->addView(headerRule);
+
+    // ── Notes area ──────────────────────────────────────────────────────
+    auto* scroller = new brls::ScrollingFrame();
+    scroller->setGrow(1.0f);
+
+    auto* content = new brls::Box();
+    content->setAxis(brls::Axis::COLUMN);
+    content->setPadding(14.0f, 24.0f, 16.0f, 20.0f);
+
+    if (notes.lines.empty()) {
+        auto* empty = makeLabel("No notes for this release.", 12.0f, tok::muted2());
+        empty->setMarginTop(40.0f);
+        empty->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+        content->addView(empty);
+    }
+
+    bool first = true;
+    for (const NoteLine& n : notes.lines) {
+        if (n.kind == NoteLine::Section) {
+            auto* row = new brls::Box();
+            row->setAxis(brls::Axis::ROW);
+            row->setAlignItems(brls::AlignItems::CENTER);
+            row->setMarginTop(first ? 2.0f : 16.0f);
+            row->setMarginBottom(2.0f);
+            auto* tick = new brls::Rectangle();
+            tick->setWidth(4.0f);
+            tick->setHeight(14.0f);
+            tick->setCornerRadius(2.0f);
+            tick->setColor(tok::gold());
+            tick->setMarginRight(8.0f);
+            row->addView(tick);
+            row->addView(makeLabel(n.text, 13.0f, nvgRGB(0xea, 0xea, 0xee)));
+            content->addView(row);
+        } else if (n.kind == NoteLine::Bullet) {
+            auto* row = new brls::Box();
+            row->setAxis(brls::Axis::ROW);
+            row->setAlignItems(brls::AlignItems::FLEX_START);
+            row->setMarginTop(7.0f);
+            auto* dot = new brls::Rectangle();
+            dot->setWidth(4.0f);
+            dot->setHeight(4.0f);
+            dot->setCornerRadius(2.0f);
+            dot->setColor(tok::muted2());
+            dot->setMarginTop(6.0f);
+            dot->setMarginRight(8.0f);
+            row->addView(dot);
+            auto* col = new brls::Box();
+            col->setAxis(brls::Axis::COLUMN);
+            col->setShrink(1.0f);
+            // A borealis label is single-colour, so the bold lead gets its
+            // own line and the description wraps below it.
+            if (!n.lead.empty())
+                col->addView(makeLabel(n.lead, 12.0f, nvgRGB(0xe7, 0xe7, 0xea)));
+            if (!n.text.empty()) {
+                auto* t = makeLabel(n.text, 11.5f, tok::muted(), false);
+                if (!n.lead.empty()) t->setMarginTop(1.0f);
+                col->addView(t);
+            }
+            row->addView(col);
+            content->addView(row);
+        } else {
+            auto* p = makeLabel(n.text, 11.5f, tok::muted(), false);
+            p->setMarginTop(6.0f);
+            content->addView(p);
+        }
+        first = false;
+    }
+    scroller->setContentView(content);
+    panel->addView(scroller);
+
+    auto* footerRule = new brls::Box();
+    footerRule->setHeight(1.0f);
+    footerRule->setAlignSelf(brls::AlignSelf::STRETCH);
+    footerRule->setBackgroundColor(tok::hairline());
+    panel->addView(footerRule);
+
+    // ── Footer ──────────────────────────────────────────────────────────
+    auto* footer = new brls::Box();
+    footer->setAxis(brls::Axis::ROW);
+    footer->setAlignItems(brls::AlignItems::CENTER);
+    footer->setPadding(12.0f, 20.0f, 13.0f, 20.0f);
+
+    if (notes.sections > 0) {
+        footer->addView(makeLabel(
+            "Scroll for more \xC2\xB7 " + std::to_string(notes.sections) +
+            (notes.sections == 1 ? " section" : " sections"),
+            11.0f, tok::disabled()));
+    }
+    auto* fspacer = new brls::Box();
+    fspacer->setGrow(1.0f);
+    footer->addView(fspacer);
+
+    // The primary mirrors the offer's action so the user can act from
+    // here without going back.
+    brls::Box* primary = nullptr;
+#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID)
+    if (!rel.assetUrl.empty()) {
+        primary = makeButton("\xE2\x86\x93  Update Now", BtnStyle::Gold, [rel]() {
+            // Pop the sheet, then the offer beneath it, then install.
+            brls::Application::popActivity(brls::TransitionAnimation::NONE, [rel]() {
+                brls::Application::popActivity(brls::TransitionAnimation::FADE,
+                                               [rel]() { startInstall(rel); });
+            });
+        });
+    } else {
+        primary = makeButton("Open release page", BtnStyle::Gold, [rel]() {
+            brls::Application::getPlatform()->openBrowser(rel.pageUrl);
+            s_busy = false;
+            brls::Application::popActivity(brls::TransitionAnimation::NONE,
+                []() { brls::Application::popActivity(); });
+        });
+    }
+#elif defined(__PS4__)
+    primary = makeButton("Open release page", BtnStyle::Gold, [rel]() {
+        brls::Application::getPlatform()->openBrowser(rel.pageUrl);
+        s_busy = false;
+        brls::Application::popActivity(brls::TransitionAnimation::NONE,
+            []() { brls::Application::popActivity(); });
+    });
+#else
+    {
+        std::string url = !rel.assetUrl.empty() ? rel.assetUrl : rel.pageUrl;
+        primary = makeButton("Download", BtnStyle::Gold, [url]() {
+            brls::Application::getPlatform()->openBrowser(url);
+            s_busy = false;
+            brls::Application::popActivity(brls::TransitionAnimation::NONE,
+                []() { brls::Application::popActivity(); });
+        });
+    }
+#endif
+    primary->setWidth(170.0f);
+    footer->addView(primary);
+
+    auto* back = makeButton("Back", BtnStyle::Ghost, []() {
+        brls::Application::popActivity();
+    });
+    back->setWidth(84.0f);
+    back->setMarginLeft(8.0f);
+    footer->addView(back);
+    panel->addView(footer);
+
+    scrim->addView(panel);
+
+    // Up/down scrolls the notes directly — focus stays on the footer
+    // buttons (per the handoff: no row selection, no scrollIntoView).
+    auto scrollBy = [scroller, content](float delta) {
+        float maxY = content->getHeight() - scroller->getHeight();
+        if (maxY < 0.0f) maxY = 0.0f;
+        float y = scroller->getContentOffsetY() + delta;
+        if (y < 0.0f) y = 0.0f;
+        if (y > maxY) y = maxY;
+        scroller->setContentOffsetY(y, true);
+    };
+    scrim->registerAction("Scroll up", brls::ControllerButton::BUTTON_UP,
+        [scrollBy](brls::View*) { scrollBy(-60.0f); return true; }, true);
+    scrim->registerAction("Scroll down", brls::ControllerButton::BUTTON_DOWN,
+        [scrollBy](brls::View*) { scrollBy(60.0f); return true; }, true);
+    scrim->registerAction("Back", brls::ControllerButton::BUTTON_B,
+        [](brls::View*) { brls::Application::popActivity(); return true; });
+    scrim->addGestureRecognizer(new brls::TapGestureRecognizer(scrim,
+        []() { brls::Application::popActivity(); }));
+
+    brls::Application::pushActivity(new OverlayActivity(scrim));
+    brls::Application::giveFocus(primary);
+}
+
 // The offer dialog (design_handoff_update, dialog B): gold strip, icon
 // tile, current → new version cards, size/platform caption, then the
-// per-platform actions. Release notes stay on the GitHub page — the
-// View on GitHub button opens it where the platform has a browser.
+// per-platform actions. Release notes render in-app — the What's New
+// button opens the notes sheet above.
 void offerUpdate(const ReleaseInfo rel) {
     const float screenW = platform::viewportWidth();
     float panelW = 428.0f;
@@ -803,7 +1181,7 @@ void offerUpdate(const ReleaseInfo rel) {
 
     brls::Box* primary = nullptr;
 #if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID)
-    // These install in place; the GitHub page stays a secondary action.
+    // These install in place; the notes sheet is the secondary action.
     if (!rel.assetUrl.empty()) {
         primary = makeButton("\xE2\x86\x93  Update", BtnStyle::Gold, [rel]() {
             brls::Application::popActivity(brls::TransitionAnimation::FADE,
@@ -812,25 +1190,22 @@ void offerUpdate(const ReleaseInfo rel) {
         primary->setGrow(1.0f);
         buttons->addView(primary);
 
-        auto* gh = makeButton("View on GitHub", BtnStyle::Gray, [rel]() {
-            brls::Application::getPlatform()->openBrowser(rel.pageUrl);
-        });
-        gh->setWidth(148.0f);
-        gh->setMarginLeft(8.0f);
-        buttons->addView(gh);
+        auto* whatsNew = makeButton("What's New", BtnStyle::Gray,
+                                    [rel]() { showNotesSheet(rel); });
+        whatsNew->setWidth(128.0f);
+        whatsNew->setMarginLeft(8.0f);
+        buttons->addView(whatsNew);
     } else {
         // The release carries no asset for this platform/flavour — the
-        // page is all there is.
-        primary = makeButton("View on GitHub", BtnStyle::Gold, [rel]() {
-            brls::Application::getPlatform()->openBrowser(rel.pageUrl);
-        });
+        // notes (whose sheet links out to the page) are all there is.
+        primary = makeButton("What's New", BtnStyle::Gold,
+                             [rel]() { showNotesSheet(rel); });
         primary->setGrow(1.0f);
         buttons->addView(primary);
     }
 #elif defined(__PS4__)
-    primary = makeButton("View on GitHub", BtnStyle::Gold, [rel]() {
-        brls::Application::getPlatform()->openBrowser(rel.pageUrl);
-    });
+    primary = makeButton("What's New", BtnStyle::Gold,
+                         [rel]() { showNotesSheet(rel); });
     primary->setGrow(1.0f);
     buttons->addView(primary);
 #else
@@ -844,6 +1219,12 @@ void offerUpdate(const ReleaseInfo rel) {
         });
         primary->setGrow(1.0f);
         buttons->addView(primary);
+
+        auto* whatsNew = makeButton("What's New", BtnStyle::Gray,
+                                    [rel]() { showNotesSheet(rel); });
+        whatsNew->setWidth(128.0f);
+        whatsNew->setMarginLeft(8.0f);
+        buttons->addView(whatsNew);
     }
 #endif
 
@@ -902,8 +1283,11 @@ void checkForUpdates(bool manual) {
         ReleaseInfo rel;
         forEachTopLevelObject(resp.body, [&rel](const std::string& obj) {
             if (jsonBool(obj, "draft")) return true;   // keep looking
-            rel.tag     = jsonString(obj, "tag_name");
-            rel.pageUrl = jsonString(obj, "html_url");
+            rel.tag         = jsonString(obj, "tag_name");
+            rel.pageUrl     = jsonString(obj, "html_url");
+            rel.notes       = jsonString(obj, "body");
+            rel.publishedAt = jsonString(obj, "published_at");
+            rel.prerelease  = jsonBool(obj, "prerelease");
 
             const std::string want = assetSuffix();
             size_t assetsAt = obj.find("\"assets\"");
