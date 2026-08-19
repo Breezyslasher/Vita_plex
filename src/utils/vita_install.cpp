@@ -1,18 +1,20 @@
 /*
-    VitaPlex — PS Vita in-app self-update
+    VitaPlex — PS Vita in-app self-update (ported from pleNx, thcolin/gamepad-media-center-aggregator)
 
-    Installs a downloaded VPK over the running app, the way VitaShell's own
-    self-updater does it: extract the ZIP to a scratch directory (validating
-    every entry before anything is touched), then overwrite the installed
-    files at ux0:app/<TITLE_ID>/ directly and let the caller restart the app.
+    Installs a homebrew VPK from within the running app: extract the ZIP, forge
+    a fake-package `sce_sys/package/head.bin`, then promote the directory with
+    ScePromoterUtility (the HENkaku-patched promoter accepts self-signed
+    packages on every hacked Vita).
 
-    The first version of this file promoted the extracted package through
-    ScePromoterUtility (the VitaShell/pleNx install path for OTHER apps).
-    That can never work for self-update: promoting a title that is currently
-    running fails with 0x80101114 — the promoter refuses to replace the
-    running app. Overwriting ux0:app/<id> in place is the established
-    homebrew answer (HENkaku's unsafe-homebrew mode grants the IO access;
-    the running eboot executes from RAM, so replacing its file is safe).
+    The fake-package technique — the `head.bin` template and the `fpkg_hmac`
+    key derivation — is the de-facto interoperability standard shared by every
+    Vita homebrew installer. It originates from the HENkaku / molecularShell
+    lineage; VitaShell (TheOfficialFloW, GPLv3) is the canonical reference for
+    `makeHeadBin`/`promoteApp`. The `head.bin` bytes embedded in
+    `vita_head_bin.h` come from VitaShell's `resources/head.bin`; the code below
+    is an independent reimplementation. The Vita build already links a GPL
+    libmpv, so the distributed VitaPlex.vpk is likewise a GPL combined work (Vita build links GPL libmpv) and this reuse
+    is licence-compatible. See NOTICE and issue #14.
 */
 
 #ifdef __PSV__
@@ -22,11 +24,16 @@
 #include <psp2/io/fcntl.h>
 #include <psp2/io/dirent.h>
 #include <psp2/io/stat.h>
+#include <psp2/promoterutil.h>
+#include <psp2/sysmodule.h>
+
+#include <mbedtls/sha1.h>
 
 #include <borealis/core/logger.hpp>
 #include <fmt/format.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -36,10 +43,14 @@
 // newlib stdio quirks (fopen64/stat64/utime.h).
 #include "miniz.h"
 
+// Fake-package header template (VITA_HEAD_BIN / VITA_HEAD_BIN_SIZE). Included at
+// file scope: it pulls <cstddef>/<cstdint> and must not land inside a namespace.
+#include "vita_head_bin.h"
+
 namespace {
 
 // ---------------------------------------------------------------------------
-// sceIo helpers
+// Small sceIo filesystem helpers
 // ---------------------------------------------------------------------------
 
 bool fileExists(const std::string& path) {
@@ -100,61 +111,19 @@ bool readFile(const std::string& path, std::vector<uint8_t>& out) {
     return r == static_cast<int>(size);
 }
 
-// Buffered sceIo file copy, overwriting the destination.
-bool copyFile(const std::string& src, const std::string& dst) {
-    SceUID in = sceIoOpen(src.c_str(), SCE_O_RDONLY, 0);
-    if (in < 0) return false;
-    SceUID out = sceIoOpen(dst.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
-    if (out < 0) { sceIoClose(in); return false; }
-
-    static std::vector<uint8_t> buf(64 * 1024);
+bool writeFile(const std::string& path, const void* data, size_t size) {
+    SceUID fd = sceIoOpen(path.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+    if (fd < 0) return false;
+    const uint8_t* p = static_cast<const uint8_t*>(data);
+    size_t left = size;
     bool ok = true;
-    for (;;) {
-        int r = sceIoRead(in, buf.data(), static_cast<SceSize>(buf.size()));
-        if (r < 0) { ok = false; break; }
-        if (r == 0) break;
-        const uint8_t* p = buf.data();
-        int left = r;
-        while (left > 0) {
-            int w = sceIoWrite(out, p, static_cast<SceSize>(left));
-            if (w <= 0) { ok = false; break; }
-            p += w;
-            left -= w;
-        }
-        if (!ok) break;
+    while (left) {
+        int w = sceIoWrite(fd, p, static_cast<SceSize>(left));
+        if (w <= 0) { ok = false; break; }
+        p += w;
+        left -= static_cast<size_t>(w);
     }
-    sceIoClose(in);
-    sceIoClose(out);
-    return ok;
-}
-
-// Recursively copy src/* over dst/*, creating directories as needed and
-// overwriting files in place.
-bool copyTree(const std::string& src, const std::string& dst, std::string& err) {
-    SceUID d = sceIoDopen(src.c_str());
-    if (d < 0) {
-        err = "cannot open " + src;
-        return false;
-    }
-    mkdirs(dst);
-    SceIoDirent ent;
-    std::memset(&ent, 0, sizeof(ent));
-    bool ok = true;
-    while (ok && sceIoDread(d, &ent) > 0) {
-        std::string name = ent.d_name;
-        if (name != "." && name != "..") {
-            std::string from = src + "/" + name;
-            std::string to   = dst + "/" + name;
-            if (SCE_S_ISDIR(ent.d_stat.st_mode)) {
-                ok = copyTree(from, to, err);
-            } else if (!copyFile(from, to)) {
-                err = "cannot write " + to;
-                ok = false;
-            }
-        }
-        std::memset(&ent, 0, sizeof(ent));
-    }
-    sceIoDclose(d);
+    sceIoClose(fd);
     return ok;
 }
 
@@ -194,14 +163,86 @@ bool sfoGetString(const std::vector<uint8_t>& sfo, const char* key, char* out, s
     return false;
 }
 
-// The TITLE_ID of the running app, read from its own mounted param.sfo —
-// this is what names the install directory under ux0:app/.
-std::string runningTitleId() {
+// ---------------------------------------------------------------------------
+// Fake-package head.bin forging
+// ---------------------------------------------------------------------------
+
+// Big-endian u32 read at a byte offset inside the head.bin buffer.
+uint32_t be32(const uint8_t* p) {
+    return (static_cast<uint32_t>(p[0]) << 24) | (static_cast<uint32_t>(p[1]) << 16) |
+           (static_cast<uint32_t>(p[2]) << 8) | static_cast<uint32_t>(p[3]);
+}
+
+// The fake-package HMAC: an obfuscated fold of a plain SHA-1 digest. This is a
+// fixed functional derivation dictated by the promoter, not a keyed HMAC.
+void fpkgHmac(const uint8_t* data, uint32_t len, uint8_t hmac[16]) {
+    uint8_t sha1[20];
+    uint8_t buf[64];
+    mbedtls_sha1(data, len, sha1);
+    std::memset(buf, 0, sizeof(buf));
+    std::memcpy(&buf[0], &sha1[4], 8);
+    std::memcpy(&buf[8], &sha1[4], 8);
+    std::memcpy(&buf[16], &sha1[12], 4);
+    buf[20] = sha1[16];
+    buf[21] = sha1[1];
+    buf[22] = sha1[2];
+    buf[23] = sha1[3];
+    std::memcpy(&buf[24], &buf[16], 8);
+    mbedtls_sha1(buf, sizeof(buf), sha1);
+    std::memcpy(hmac, sha1, 16);
+}
+
+int makeHeadBin(const std::string& pkgDir, std::string& err) {
     std::vector<uint8_t> sfo;
-    if (!readFile("app0:sce_sys/param.sfo", sfo)) return {};
+    if (!readFile(pkgDir + "/sce_sys/param.sfo", sfo)) {
+        err = "param.sfo not found";
+        return -1;
+    }
+
     char titleid[12] = {0};
-    if (!sfoGetString(sfo, "TITLE_ID", titleid, sizeof(titleid))) return {};
-    return titleid;
+    char contentid[48] = {0};
+    if (!sfoGetString(sfo, "TITLE_ID", titleid, sizeof(titleid))) {
+        err = "TITLE_ID missing from param.sfo";
+        return -1;
+    }
+    sfoGetString(sfo, "CONTENT_ID", contentid, sizeof(contentid));  // optional
+
+    std::vector<uint8_t> head(VITA_HEAD_BIN, VITA_HEAD_BIN + VITA_HEAD_BIN_SIZE);
+
+    // content id at 0x30 (48 bytes, zero-padded); fall back to a synthetic one
+    // when param.sfo carries none, exactly like every homebrew installer.
+    char fallback[48];
+    std::snprintf(fallback, sizeof(fallback), "EP9000-%s_00-0000000000000000", titleid);
+    std::memset(&head[0x30], 0, 48);
+    const char* cid = contentid[0] ? contentid : fallback;
+    std::strncpy(reinterpret_cast<char*>(&head[0x30]), cid, 48);
+
+    uint8_t hmac[16];
+    uint32_t off, len, out;
+
+    // hmac of the pkg header
+    len = be32(&head[0xD0]);
+    fpkgHmac(&head[0], len, hmac);
+    std::memcpy(&head[len], hmac, 16);
+
+    // hmac of the pkg info
+    off = be32(&head[0x8]);
+    len = be32(&head[0x10]);
+    out = be32(&head[0xD4]);
+    fpkgHmac(&head[off], len - 64, hmac);
+    std::memcpy(&head[out], hmac, 16);
+
+    // hmac of everything
+    len = be32(&head[0xE8]);
+    fpkgHmac(&head[0], len, hmac);
+    std::memcpy(&head[len], hmac, 16);
+
+    mkdirs(pkgDir + "/sce_sys/package");
+    if (!writeFile(pkgDir + "/sce_sys/package/head.bin", head.data(), head.size())) {
+        err = "cannot write head.bin";
+        return -1;
+    }
+    return 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -305,6 +346,59 @@ int extractVpk(const std::string& vpk, const std::string& dest, std::string& err
     return result;
 }
 
+// ---------------------------------------------------------------------------
+// ScePromoterUtility promotion
+// ---------------------------------------------------------------------------
+
+int loadScePaf() {
+    static uint32_t argp[] = {0x180000, 0xFFFFFFFFu, 0xFFFFFFFFu, 1, 0xFFFFFFFFu, 0xFFFFFFFFu};
+    int result = -1;
+    SceSysmoduleOpt opt;
+    std::memset(&opt, 0, sizeof(opt));
+    opt.flags = sizeof(opt);
+    opt.result = &result;
+    opt.unused[0] = -1;
+    opt.unused[1] = -1;
+    return sceSysmoduleLoadModuleInternalWithArg(SCE_SYSMODULE_INTERNAL_PAF, sizeof(argp), argp, &opt);
+}
+
+int unloadScePaf() {
+    SceSysmoduleOpt opt;
+    std::memset(&opt, 0, sizeof(opt));
+    return sceSysmoduleUnloadModuleInternalWithArg(SCE_SYSMODULE_INTERNAL_PAF, 0, nullptr, &opt);
+}
+
+int promoteApp(const std::string& path, std::string& err) {
+    int res = loadScePaf();
+    if (res < 0) {
+        err = fmt::format("cannot load ScePaf (0x{:08X})", static_cast<unsigned>(res));
+        return res;
+    }
+
+    res = sceSysmoduleLoadModuleInternal(SCE_SYSMODULE_INTERNAL_PROMOTER_UTIL);
+    if (res < 0) {
+        err = fmt::format("cannot load the promoter (0x{:08X})", static_cast<unsigned>(res));
+        unloadScePaf();
+        return res;
+    }
+
+    res = scePromoterUtilityInit();
+    if (res >= 0) {
+        int pres = scePromoterUtilityPromotePkgWithRif(path.c_str(), 1);
+        if (pres < 0) {
+            err = fmt::format("the system installer rejected the package (0x{:08X})", static_cast<unsigned>(pres));
+            res = pres;
+        }
+        scePromoterUtilityExit();
+    } else {
+        err = fmt::format("cannot start the promoter (0x{:08X})", static_cast<unsigned>(res));
+    }
+
+    sceSysmoduleUnloadModuleInternal(SCE_SYSMODULE_INTERNAL_PROMOTER_UTIL);
+    unloadScePaf();
+    return res;
+}
+
 }  // namespace
 
 namespace vita {
@@ -316,9 +410,6 @@ int installVpk(const std::string& vpkPath, const std::string& workDir, std::stri
     removePath(workDir);
     mkdirs(workDir);
 
-    // Extract fully to scratch first: every entry is decompressed and CRC
-    // checked by miniz before a single installed file is touched, so a
-    // corrupt download can never leave the app half-replaced.
     if (extractVpk(vpkPath, workDir, err, onProgress) != 0) {
         brls::Logger::error("vita: extract failed: {}", err);
         removePath(workDir);
@@ -333,34 +424,22 @@ int installVpk(const std::string& vpkPath, const std::string& workDir, std::stri
         return -1;
     }
 
-    const std::string titleId = runningTitleId();
-    if (titleId.empty()) {
-        err = "cannot read the running app's TITLE_ID";
-        brls::Logger::error("vita: {}", err);
+    if (makeHeadBin(workDir, err) != 0) {
+        brls::Logger::error("vita: makeHeadBin failed: {}", err);
         removePath(workDir);
         return -1;
     }
 
-    const std::string appDir = "ux0:app/" + titleId;
-    if (!fileExists(appDir + "/eboot.bin")) {
-        // Writing needs HENkaku's unsafe-homebrew mode, and the install must
-        // live on ux0 (every VitaShell install does).
-        err = "installed app not found at " + appDir;
-        brls::Logger::error("vita: {}", err);
+    if (promoteApp(workDir, err) < 0) {
+        brls::Logger::error("vita: promote failed: {}", err);
         removePath(workDir);
         return -1;
     }
 
-    std::string copyErr;
-    if (!copyTree(workDir, appDir, copyErr)) {
-        err = copyErr + " (is HENkaku's unsafe homebrew enabled?)";
-        brls::Logger::error("vita: overwrite failed: {}", err);
-        removePath(workDir);
-        return -1;
-    }
-
+    // Promotion is synchronous (sync=1): the bubble is updated, the scratch
+    // directory can go.
     removePath(workDir);
-    brls::Logger::info("vita: install succeeded ({} updated in place)", appDir);
+    brls::Logger::info("vita: install succeeded");
     return 0;
 }
 

@@ -31,7 +31,6 @@
 #include <filesystem>
 #endif
 #ifdef __PSV__
-#include <psp2/appmgr.h>
 #include <psp2/io/fcntl.h>
 #include <psp2/io/stat.h>
 #include "utils/vita_install.hpp"
@@ -465,7 +464,7 @@ void startInstall(const ReleaseInfo rel) {
     panel->addView(keepOpen);
 
 #if defined(__PSV__)
-    const char* relaunchLabel = "Restart VitaPlex";
+    const char* relaunchLabel = "Relaunch from LiveArea";
 #elif defined(__SWITCH__)
     const char* relaunchLabel = "Relaunch to apply";
 #elif defined(__PS4__)
@@ -713,25 +712,22 @@ void startInstall(const ReleaseInfo rel) {
                                     std::to_string(pct) + "%", (float)pct / 100.0f);
                 });
             });
-        sceIoRemove(path.c_str());
         if (rc != 0) {
-            installFailed(err, ui);
+            // Keep the downloaded VPK so the user has a guaranteed path even
+            // when the promoter refuses (the running title can be a hard no
+            // on some setups): it's a normal VitaShell-installable VPK.
+            installFailed(err + "\n\nThe update was saved to " + path +
+                          " - you can install it with VitaShell.", ui);
             s_busy = false;
             return;
         }
+        sceIoRemove(path.c_str());
         brls::sync([ui]() {
             if (!ui->dismissed->load()) stepDone(ui->install, "Installed");
         });
         finishInstall(ui, []() {
-            auto* d = new brls::Dialog("Update installed. Restart VitaPlex to use the new version.");
-            d->addButton("Restart", []() {
-                // Re-executes app0:eboot.bin — freshly read from the files
-                // just written, so the app comes back as the new version.
-                sceAppMgrLoadExec("app0:eboot.bin", NULL, NULL);
-                // Only reached if LoadExec failed: fall back to a plain
-                // quit so the user can relaunch from the LiveArea.
-                brls::Application::quit();
-            });
+            auto* d = new brls::Dialog("Update installed. VitaPlex will now close - relaunch it from the LiveArea.");
+            d->addButton("OK", []() { brls::Application::quit(); });
             d->open();
         });
 #endif
@@ -1218,7 +1214,7 @@ void offerUpdate(const ReleaseInfo rel) {
     if (rel.assetSize > 0) caption = mbLabel(rel.assetSize) + " MB download";
 #if defined(__PSV__)
     caption += (caption.empty() ? "" : " \xC2\xB7 ") +
-               std::string("installs in place \xC2\xB7 restarts to apply");
+               std::string("installs in place \xC2\xB7 relaunch from LiveArea");
 #elif defined(__SWITCH__)
     caption += (caption.empty() ? "" : " \xC2\xB7 ") +
                std::string("installs in place \xC2\xB7 relaunch to apply");

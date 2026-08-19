@@ -125,7 +125,10 @@ int installPkg(const std::string& pkgPath, const std::string& contentName, std::
     params.option           = kOptDisableCdnQueryParam;
     params.playgoScenarioId = "0";
     params.releaseDate      = "";
-    params.packageType      = "";
+    // A PS4 application package: "PS4GD" is the game-data type every local
+    // installer registers. An empty packageType is rejected up front with
+    // SCE_BGFT_ERROR_INVALID_ARGUMENT (0x80990004).
+    params.packageType      = "PS4GD";
     params.packageSubType   = "";
     params.packageSize      = 0;
 

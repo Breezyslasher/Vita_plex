@@ -328,7 +328,7 @@ endif()
 if(PLATFORM_PSV)
     list(APPEND APP_SOURCES src/utils/vita_stubs.c)
     # In-app self-update: unzip the downloaded VPK (miniz, sceIo-backed)
-    # and overwrite the installed app in place.
+    # and promote it in place via ScePromoterUtility.
     list(APPEND APP_SOURCES src/utils/vita_install.cpp lib/miniz/miniz.c)
     include_directories(${CMAKE_CURRENT_SOURCE_DIR}/lib/miniz)
     # miniz without stdio/time: newlib's fopen64/stat64/utime are absent on
@@ -690,9 +690,9 @@ if(PLATFORM_PSV)
         SceCodecEngine_stub
         SceAudio_stub
         SceVshBridge_stub
-        # sceSysmoduleLoadModule in platform_psv.cpp (NET/SSL/HTTP/IME/PGF).
-        # The updater's restart (sceAppMgrLoadExec) rides the SceAppMgr_stub
-        # already linked above.
+        # sceSysmoduleLoadModule in platform_psv.cpp (NET/SSL/HTTP/IME/PGF)
+        # and the in-app self-update promoter (utils/vita_install).
+        ScePromoterUtil_stub
         SceSysmodule_stub
     )
 elseif(PLATFORM_SWITCH)
