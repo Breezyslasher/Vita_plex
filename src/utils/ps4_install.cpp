@@ -58,12 +58,6 @@ int sceAppInstUtilInitialize(void);
 
 namespace {
 
-// Internal sysmodule ids (firmware-stable; <orbis/Sysmodule.h> names only
-// a subset, so the raw values are used the way Remote Package Installer
-// does).
-constexpr int kModuleAppInstUtil = 0x80000014;
-constexpr int kModuleBgft        = 0x8000002A;
-
 // BGFT wants a caller-provided service heap.
 constexpr size_t kBgftHeapSize = 1 * 1024 * 1024;
 
@@ -98,8 +92,9 @@ int installPkg(const std::string& pkgPath, const std::string& contentName, std::
         return -1;
     }
 
-    if (sceSysmoduleLoadModuleInternal(kModuleAppInstUtil) < 0 ||
-        sceSysmoduleLoadModuleInternal(kModuleBgft) < 0) {
+    // Returns uint32_t: 0 on success, an 0x8xxxxxxx error code otherwise.
+    if (sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_APP_INST_UTIL) != 0 ||
+        sceSysmoduleLoadModuleInternal(ORBIS_SYSMODULE_INTERNAL_BGFT) != 0) {
         err = "cannot load the system installer modules";
         brls::Logger::error("ps4: {}", err);
         return -1;
