@@ -529,7 +529,7 @@ void startInstall(const ReleaseInfo rel) {
         // transient failures (a dropped socket, a stale keep-alive).
         for (int attempt = 0; attempt < 2 && !s_cancel.load(); attempt++) {
             if (attempt > 0) {
-                brls::Logger::warn("app_update: download failed ({}), retrying", dlErr);
+                brls::Logger::warning("app_update: download failed ({}), retrying", dlErr);
                 brls::sync([ui]() {
                     if (!ui->dismissed->load())
                         stepActive(ui->download, "Retrying\xE2\x80\xA6", -1.0f);
