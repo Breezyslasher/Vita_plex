@@ -1263,12 +1263,26 @@ jobs:
           </plist>
           PLIST
 
-          hdiutil create \
-            -volname "VitaPlex" \
-            -srcfolder "$APP_ROOT" \
-            -ov \
-            -format UDZO \
-            "build/VitaPlex-${{ matrix.tag }}.dmg"
+          # hdiutil intermittently loses a race against macOS's own
+          # disk-image helper / XProtect scanning the fresh .app and fails
+          # with "Resource busy" — a known runner flake, unrelated to the
+          # build. Retry with a pause; it clears within an attempt or two.
+          for attempt in 1 2 3 4 5; do
+            if hdiutil create \
+              -volname "VitaPlex" \
+              -srcfolder "$APP_ROOT" \
+              -ov \
+              -format UDZO \
+              "build/VitaPlex-${{ matrix.tag }}.dmg"; then
+              break
+            fi
+            if [ "$attempt" = 5 ]; then
+              echo "hdiutil create failed after 5 attempts"
+              exit 1
+            fi
+            echo "hdiutil create failed (attempt $attempt) — retrying in 10s"
+            sleep 10
+          done
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
