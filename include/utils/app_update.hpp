@@ -13,9 +13,11 @@
  *   PS Vita  — downloads the .vpk and promotes it in place via
  *              ScePromoterUtility (utils/vita_install); the app quits to
  *              the LiveArea and the user relaunches the new bubble.
- *   Others   — shows the release notes and opens the release page in the
- *              browser (Android/desktop), or shows the URL where no
- *              browser can be opened (PS4).
+ *   Android  — downloads the .apk and hands it to the system package
+ *              installer (content:// via ApkProvider — no browser
+ *              involved, so Android TV works too).
+ *   Desktop  — opens the release asset in the browser.
+ *   PS4      — shows the release URL; there is no browser to open.
  *
  * VitaPlex publishes pre-releases, which GitHub's /releases/latest never
  * returns — the check reads /releases and takes the newest non-draft
