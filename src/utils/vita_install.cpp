@@ -281,7 +281,8 @@ size_t zipWriteCb(void* opaque, mz_uint64 /*ofs*/, const void* buf, size_t n) {
     return n;
 }
 
-int extractVpk(const std::string& vpk, const std::string& dest, std::string& err) {
+int extractVpk(const std::string& vpk, const std::string& dest, std::string& err,
+               const std::function<void(int, int)>& onProgress) {
     SceUID fd = sceIoOpen(vpk.c_str(), SCE_O_RDONLY, 0);
     if (fd < 0) {
         err = "ouverture du VPK impossible";
@@ -337,6 +338,7 @@ int extractVpk(const std::string& vpk, const std::string& dest, std::string& err
             result = -1;
             break;
         }
+        if (onProgress) onProgress((int)i + 1, (int)total);
     }
 
     mz_zip_reader_end(&zip);
@@ -401,13 +403,14 @@ int promoteApp(const std::string& path, std::string& err) {
 
 namespace vita {
 
-int installVpk(const std::string& vpkPath, const std::string& workDir, std::string& err) {
+int installVpk(const std::string& vpkPath, const std::string& workDir, std::string& err,
+               std::function<void(int done, int total)> onProgress) {
     brls::Logger::info("vita: installing {} via {}", vpkPath, workDir);
 
     removePath(workDir);
     mkdirs(workDir);
 
-    if (extractVpk(vpkPath, workDir, err) != 0) {
+    if (extractVpk(vpkPath, workDir, err, onProgress) != 0) {
         brls::Logger::error("vita: extract failed: {}", err);
         removePath(workDir);
         return -1;
