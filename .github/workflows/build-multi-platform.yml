@@ -420,6 +420,19 @@ jobs:
         with:
           submodules: recursive
 
+      # The pinned portlibs are identical between runs, so fetch them once
+      # and cache the files — the key IS the pin list, so bumping a version
+      # naturally misses and refetches. The fetch itself aborts any
+      # transfer that crawls below 100 KB/s for 30s and retries: GitHub's
+      # release-asset CDN intermittently serves an edge at dial-up speed,
+      # and a retry lands on a healthy one instead of waiting it out.
+      - name: Cache Vita portlibs
+        id: cache-vita-portlibs
+        uses: actions/cache@v4
+        with:
+          path: portlib-cache
+          key: vita-portlibs-mbedtls-3.6.7-1_curl-8.16.0-3_ffmpeg-n6.0-3_mpv-0.36.0-3
+
       - name: Install Vita dependencies
         env:
           BASE_URL: https://github.com/dragonflylee/switchfin/releases/download/vita-packages
@@ -434,9 +447,20 @@ jobs:
           # "missing package metadata ... invalid or corrupted package". The
           # -vita.pkg.tar.xz assets are real pacman packages.
           set -eu
+          fetch() {
+            if command -v curl >/dev/null 2>&1; then
+              curl -fL --retry 4 --retry-all-errors \
+                   --speed-limit 102400 --speed-time 30 -o "$2" "$1"
+            else
+              wget --tries=4 --read-timeout=30 -O "$2" "$1"
+            fi
+          }
+          mkdir -p portlib-cache
           for pkg in mbedtls-3.6.7-1 curl-8.16.0-3 ffmpeg-n6.0-3 mpv-0.36.0-3; do
-            wget "$BASE_URL/${pkg}-vita.pkg.tar.xz"
+            f="portlib-cache/${pkg}-vita.pkg.tar.xz"
+            [ -s "$f" ] || fetch "$BASE_URL/${pkg}-vita.pkg.tar.xz" "$f"
           done
+          cp portlib-cache/*-vita.pkg.tar.xz .
 
           # Packages carried by the VitaSDK repo go in by name.
           VDPM_NONINTERACTIVE=1 vdpm libass harfbuzz fribidi freetype libpng libwebp
@@ -627,6 +651,15 @@ jobs:
           else
             echo "No supported package manager found; assuming container image already has required build dependencies"
           fi
+      # Every desktop build FetchContents GLFW (switchfin fork tarball) from
+      # GitHub at configure time — the same codeload CDN that intermittently
+      # crawls. Cache the fetched sources; the key is the borealis pin, since
+      # that submodule owns the FetchContent URLs.
+      - name: Cache FetchContent sources
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: fetchcontent-${{ runner.os }}-${{ runner.arch }}-${{ matrix.driver }}-${{ hashFiles('lib/borealis/library/CMakeLists.txt') }}
       - name: Build desktop target in flatpak container
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON -DUSE_GLES2=${{ matrix.gles2 }} \
@@ -764,9 +797,32 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      # Same caching + slow-edge-abort treatment as the Vita job; the mpv
+      # package differs per matrix leg, so it is part of the key.
+      - name: Cache Switch portlibs
+        uses: actions/cache@v4
+        with:
+          path: portlib-cache
+          key: switch-portlibs-hacBrewPack-3.05-1_libuam-master-1_dav1d-1.5.3-1_mbedtls-3.6.7-1_libssh2-1.11.1-1_ffmpeg-7.1.5-5_${{ matrix.mpv_pkg }}
+
       - name: Install switchfin portlibs
         run: |
           BASE_URL="https://github.com/dragonflylee/switchfin/releases/download/switch-portlibs"
+          set -eu
+          fetch() {
+            curl -fL --retry 4 --retry-all-errors \
+                 --speed-limit 102400 --speed-time 30 -o "$2" "$1"
+          }
+          mkdir -p portlib-cache
+          for pkg in hacBrewPack-3.05-1-x86_64.pkg.tar.zst \
+                     libuam-master-1-any.pkg.tar.zst \
+                     switch-dav1d-1.5.3-1-any.pkg.tar.zst \
+                     switch-mbedtls-3.6.7-1-any.pkg.tar.zst \
+                     switch-libssh2-1.11.1-1-any.pkg.tar.zst \
+                     switch-ffmpeg-7.1.5-5-any.pkg.tar.zst \
+                     ${{ matrix.mpv_pkg }}; do
+            [ -s "portlib-cache/$pkg" ] || fetch "$BASE_URL/$pkg" "portlib-cache/$pkg"
+          done
           dkp-pacman --noconfirm -Rdd switch-libmpv || true
           dkp-pacman --noconfirm -Rdd switch-libmpv-deko3d || true
           # CRITICAL: install switchfin's ffmpeg too. switch-libmpv-0.36.0-5 was
@@ -780,14 +836,7 @@ jobs:
           # switch-ffmpeg-7.1.5-5 is built with the mbedtls + libssh2 protocols,
           # so it needs those exact libs to link. Pull switchfin's matching
           # mbedtls / libssh2 so the whole mpv→ffmpeg→tls stack is ABI-consistent.
-          dkp-pacman --noconfirm -U \
-            $BASE_URL/hacBrewPack-3.05-1-x86_64.pkg.tar.zst \
-            $BASE_URL/libuam-master-1-any.pkg.tar.zst \
-            $BASE_URL/switch-dav1d-1.5.3-1-any.pkg.tar.zst \
-            $BASE_URL/switch-mbedtls-3.6.7-1-any.pkg.tar.zst \
-            $BASE_URL/switch-libssh2-1.11.1-1-any.pkg.tar.zst \
-            $BASE_URL/switch-ffmpeg-7.1.5-5-any.pkg.tar.zst \
-            $BASE_URL/${{ matrix.mpv_pkg }}
+          dkp-pacman --noconfirm -U portlib-cache/*.pkg.tar.zst
       - name: Build
         run: |
           cmake -B build -G Ninja \
@@ -910,7 +959,19 @@ jobs:
         # borealis's iOS / tvOS toolchain requires this generator to be
         # built ahead of configure (it embeds resources/ via libromfs).
         run: ${{ github.workspace }}/lib/borealis/build_libromfs_generator.sh
+      # The 28 xcframeworks total hundreds of MB of GitHub release assets —
+      # the largest download in the workflow. Cache the staged directory;
+      # bump the -v1 suffix if the framework list below changes without
+      # MPVKIT_VERSION moving.
+      - name: Cache MPVKit xcframeworks
+        id: cache-mpvkit
+        uses: actions/cache@v4
+        with:
+          path: mpv-frameworks
+          key: mpvkit-${{ env.MPVKIT_VERSION }}-${{ matrix.target }}-v1
+
       - name: Download MPVKit xcframeworks
+        if: steps.cache-mpvkit.outputs.cache-hit != 'true' 
         # MPVKit does NOT statically fold its optional dependencies into
         # Libmpv.xcframework — libass / freetype / harfbuzz / fribidi /
         # uchardet / dav1d / libplacebo / MoltenVK / OpenSSL / gnutls / …
@@ -962,7 +1023,8 @@ jobs:
           for url in "${FRAMEWORKS[@]}"; do
             name=$(basename "$url")
             echo "Fetching ${name}"
-            curl -fL --retry 4 --retry-delay 2 -o "/tmp/${name}" "$url"
+            curl -fL --retry 4 --retry-all-errors --retry-delay 2 \
+                 --speed-limit 102400 --speed-time 30 -o "/tmp/${name}" "$url"
             unzip -qo "/tmp/${name}" -d "$FW_DIR"
             rm "/tmp/${name}"
           done
@@ -1012,13 +1074,28 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      # Same caching + slow-edge-abort treatment as the Vita/Switch jobs.
+      - name: Cache PS4 portlibs
+        uses: actions/cache@v4
+        with:
+          path: portlib-cache
+          key: ps4-portlibs-musl-1.5-3_mbedtls-2.28.10-2_sdl2-2.0.18-19_libcurl-7.80.0-5
+
       - name: Install PS4 portlibs
         env:
           BASE_URL: https://github.com/dragonflylee/switchfin/releases/download/pacbrew
         run: |
+          set -eu
+          fetch() {
+            curl -fL --retry 4 --retry-all-errors \
+                 --speed-limit 102400 --speed-time 30 -o "$2" "$1"
+          }
+          mkdir -p portlib-cache
           for pkg in musl-1.5-3 mbedtls-2.28.10-2 sdl2-2.0.18-19 libcurl-7.80.0-5; do
-            pacman --noconfirm -U "$BASE_URL/ps4-openorbis-${pkg}-any.pkg.tar.gz"
+            f="portlib-cache/ps4-openorbis-${pkg}-any.pkg.tar.gz"
+            [ -s "$f" ] || fetch "$BASE_URL/ps4-openorbis-${pkg}-any.pkg.tar.gz" "$f"
           done
+          pacman --noconfirm -U portlib-cache/*.pkg.tar.gz
       - name: Build
         env:
           OPENORBIS: /opt/pacbrew/ps4/openorbis
@@ -1054,8 +1131,25 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      # Bottle downloads are the slow half of brew install; cache brew's
+      # download dir so a rerun only unpacks. Keyed per runner arch — the
+      # bottles differ — and refreshed when the formula list changes.
+      - name: Cache Homebrew downloads
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/Homebrew/downloads
+          key: brew-${{ matrix.tag }}-cmake-ninja-pkgconfig-curl-mbedtls-mpv-libass-freetype-harfbuzz-fribidi-libpng-webp-zstd-glfw
       - name: Install deps
         run: brew install cmake ninja pkg-config curl mbedtls mpv libass freetype harfbuzz fribidi libpng webp zstd glfw
+      # Every desktop build FetchContents GLFW (switchfin fork tarball) from
+      # GitHub at configure time — the same codeload CDN that intermittently
+      # crawls. Cache the fetched sources; the key is the borealis pin, since
+      # that submodule owns the FetchContent URLs.
+      - name: Cache FetchContent sources
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: fetchcontent-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lib/borealis/library/CMakeLists.txt') }}
       - name: Build
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON \
@@ -1213,7 +1307,8 @@ jobs:
         with:
           msystem: ${{ matrix.sys }}
           path-type: inherit
-          cache: false
+          # Caches the msys2 base + installed packages between runs.
+          cache: true
           release: ${{ contains(matrix.sys, 'arm64') }}
           install: >-
             mingw-w64-${{ matrix.env }}-ninja
@@ -1223,12 +1318,26 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      # Same caching + slow-edge-abort treatment as the console jobs: the
+      # pins are the key, and a transfer below 100 KB/s for 30s is aborted
+      # and retried onto a healthy CDN edge.
+      - name: Cache MinGW portlibs
+        uses: actions/cache@v4
+        with:
+          path: portlib-cache
+          key: mingw-portlibs-${{ matrix.env }}-glfw-3.5.0-1_curl-8.16.0-1_mpv-0.41.0-1_libwebp-1.6.0-1
+
       - name: Install dependency
         run: |
+          set -eu
+          mkdir -p portlib-cache
           for pkg in glfw-3.5.0-1 curl-8.16.0-1 mpv-0.41.0-1 libwebp-1.6.0-1; do
-            curl -sLO https://github.com/dragonflylee/switchfin/releases/download/mingw-packages/${MINGW_PACKAGE_PREFIX}-${pkg}-any.pkg.tar.zst
+            f="portlib-cache/${MINGW_PACKAGE_PREFIX}-${pkg}-any.pkg.tar.zst"
+            [ -s "$f" ] || curl -fL --retry 4 --retry-all-errors \
+                 --speed-limit 102400 --speed-time 30 -o "$f" \
+                 "https://github.com/dragonflylee/switchfin/releases/download/mingw-packages/${MINGW_PACKAGE_PREFIX}-${pkg}-any.pkg.tar.zst"
           done
-          pacman -U --noconfirm *.pkg.tar.zst
+          pacman -U --noconfirm portlib-cache/*.pkg.tar.zst
       - name: Build
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON -DUSE_SYSTEM_GLFW=ON -DUSE_D3D11=ON \
@@ -1320,6 +1429,15 @@ jobs:
             libmp3lame-dev libwebp-dev libdbus-1-dev \
             wayland-protocols libwayland-bin libwayland-dev libxkbcommon-dev \
             libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev
+      # Every desktop build FetchContents GLFW (switchfin fork tarball) from
+      # GitHub at configure time — the same codeload CDN that intermittently
+      # crawls. Cache the fetched sources; the key is the borealis pin, since
+      # that submodule owns the FetchContent URLs.
+      - name: Cache FetchContent sources
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: fetchcontent-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lib/borealis/library/CMakeLists.txt') }}
       - name: Build
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON \
@@ -1401,6 +1519,15 @@ jobs:
             libmp3lame-dev libwebp-dev libdbus-1-dev \
             wayland-protocols libwayland-bin libwayland-dev libxkbcommon-dev \
             libx11-dev libxrandr-dev libxinerama-dev libxcursor-dev libxi-dev libxext-dev
+      # Every desktop build FetchContents GLFW (switchfin fork tarball) from
+      # GitHub at configure time — the same codeload CDN that intermittently
+      # crawls. Cache the fetched sources; the key is the borealis pin, since
+      # that submodule owns the FetchContent URLs.
+      - name: Cache FetchContent sources
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: fetchcontent-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lib/borealis/library/CMakeLists.txt') }}
       - name: Build
         run: |
           cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON \

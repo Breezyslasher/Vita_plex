@@ -403,6 +403,8 @@ bool Application::loadSettings() {
     m_settings.librarySortPrefs = extractString("librarySortPrefs");
     m_settings.localServerMode = extractBool("localServerMode", false);
     m_settings.lastHadLiveTV = extractBool("lastHadLiveTV", false);
+    m_settings.autoCheckUpdates = extractBool("autoCheckUpdates", true);
+    m_settings.skippedUpdateVersion = extractString("skippedUpdateVersion");
 
     // Content display settings
     m_settings.showCollections  = extractBool("showCollections", true);
@@ -582,6 +584,8 @@ bool Application::saveSettings() {
     json += "  \"librarySortPrefs\": \"" + esc(m_settings.librarySortPrefs) + "\",\n";
     json += "  \"localServerMode\": " + b(m_settings.localServerMode) + ",\n";
     json += "  \"lastHadLiveTV\": " + b(m_settings.lastHadLiveTV) + ",\n";
+    json += "  \"autoCheckUpdates\": " + b(m_settings.autoCheckUpdates) + ",\n";
+    json += "  \"skippedUpdateVersion\": \"" + esc(m_settings.skippedUpdateVersion) + "\",\n";
     json += "  \"showCollections\": " + b(m_settings.showCollections) + ",\n";
     json += "  \"showPlaylists\": " + b(m_settings.showPlaylists) + ",\n";
     json += "  \"showGenres\": " + b(m_settings.showGenres) + ",\n";

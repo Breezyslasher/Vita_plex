@@ -16,6 +16,7 @@
 
 #include <borealis.hpp>
 #include "app/application.hpp"
+#include "utils/app_update.hpp"
 #include "app/plex_client.hpp"
 #include "view/media_item_cell.hpp"
 #include "view/recycling_grid.hpp"
@@ -35,8 +36,8 @@ static void registerCustomViews() {
 // Shared entry point used by main() on every platform and by SDL_main() on
 // Android (which lives in src/platform/platform_android.cpp).
 extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
-    (void)argc;
-    (void)argv;
+    // Where our own executable lives — on Switch the updater replaces it.
+    if (argc > 0) vitaplex::app_update::setSelfPath(argv[0]);
 
     brls::Logger::setLogLevel(brls::LogLevel::LOG_DEBUG);
 

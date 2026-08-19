@@ -3,6 +3,7 @@
  */
 
 #include "activity/main_activity.hpp"
+#include "utils/app_update.hpp"
 #include "view/home_tab.hpp"
 #include "view/library_section_tab.hpp"
 #include "view/search_tab.hpp"
@@ -92,6 +93,11 @@ void MainActivity::applySidebarSizingForViewport() {
 
 void MainActivity::onContentAvailable() {
     brls::Logger::debug("MainActivity content available");
+
+    // Startup update check — the module delays itself so login and the
+    // first content fetches get the pipe first.
+    if (Application::getInstance().getSettings().autoCheckUpdates)
+        app_update::checkForUpdates(false);
 
 #if defined(__ANDROID__)
     // Android TV remotes have no Menu/Guide hardware button, and the

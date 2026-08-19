@@ -97,6 +97,11 @@ struct AppSettings {
                                           // isLoggedIn() is token-based, so without this flag a
                                           // token-less session would bounce back to the login
                                           // screen on the next launch.
+    // In-app updates: check GitHub on startup, and the release the user
+    // said "Later" to (startup checks stop offering it; manual re-offers).
+    bool autoCheckUpdates = true;
+    std::string skippedUpdateVersion;
+
     bool lastHadLiveTV = false;           // Server had a Live TV DVR last session. The sidebar is
                                           // built from this before the async /livetv/dvrs probe
                                           // lands (the probe no longer blocks app launch), then
