@@ -638,7 +638,8 @@ static size_t downloadHeaderCallback(void* contents, size_t size, size_t nmemb, 
 bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallback, SizeCallback sizeCallback,
                               const std::map<std::string, std::string>& headers,
                               int64_t resumeOffset,
-                              DownloadStartCallback startCallback) {
+                              DownloadStartCallback startCallback,
+                              std::string* errorOut) {
     if (!m_curl) {
         brls::Logger::error("CURL not initialized for download");
         return false;
@@ -747,16 +748,19 @@ bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallbac
                     return true;
                 }
                 brls::Logger::error("HttpClient: Partial file with no data received");
+                if (errorOut) *errorOut = "connection closed before any data";
                 return false;
             }
             brls::Logger::info("HttpClient: Download completed successfully");
             return true;
         } else {
             brls::Logger::error("HttpClient: Download failed with HTTP {}", httpCode);
+            if (errorOut) *errorOut = "HTTP " + std::to_string(httpCode);
             return false;
         }
     } else {
         brls::Logger::error("HttpClient: Download failed: {}", curl_easy_strerror(res));
+        if (errorOut) *errorOut = curl_easy_strerror(res);
         return false;
     }
 }

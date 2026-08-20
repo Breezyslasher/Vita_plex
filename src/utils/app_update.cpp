@@ -39,6 +39,9 @@
 #include <SDL2/SDL.h>
 #include <jni.h>
 #endif
+#ifdef __PS4__
+#include "utils/ps4_install.hpp"
+#endif
 
 namespace vitaplex {
 namespace app_update {
@@ -182,6 +185,8 @@ std::string assetSuffix() {
 #else
     return "-armeabi-v7a.apk";
 #endif
+#elif defined(__PS4__)
+    return "-ps4.pkg";
 #else
     return {};
 #endif
@@ -257,6 +262,10 @@ brls::Box* makeButton(const std::string& text, BtnStyle style,
     b->setCornerRadius(10.0f);
     b->setFocusable(true);
     b->setHighlightCornerRadius(10.0f);
+    // Focus = the warm halo ring only. The highlight fill borealis paints
+    // behind a focused view washes out a gold-filled button (same fix as
+    // the guide hero buttons / downloads_tab).
+    b->setHideHighlightBackground(true);
 
     NVGcolor fg = tok::text();
     if (style == BtnStyle::Gold) {
@@ -285,8 +294,8 @@ std::string mbLabel(int64_t bytes) {
     return buf;
 }
 
-// ── The in-place installers (Switch / Vita / Android) ───────────────────
-#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID)
+// ── The in-place installers (Switch / Vita / Android / PS4) ─────────────
+#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__)
 
 // One row of the progress checklist (design_handoff_update, dialog C):
 // a 26px state circle — hairline when pending, spinner while active, green
@@ -424,7 +433,10 @@ void startInstall(const ReleaseInfo rel) {
 
     const float screenW = platform::viewportWidth();
     float panelW = 388.0f;
-    if (panelW + 80.0f > screenW) panelW = screenW - 80.0f;
+    // Portrait phones: the viewport is design-width (narrow) and tall, so a
+    // fixed-width panel reads as a skinny floating column — take the width.
+    if (platform::isPortrait()) panelW = screenW - 90.0f;
+    else if (panelW + 80.0f > screenW) panelW = screenW - 80.0f;
     const float barW = panelW - 36.0f - 38.0f;   // panel padding + icon column
 
     auto* scrim = new brls::Box();
@@ -452,9 +464,11 @@ void startInstall(const ReleaseInfo rel) {
     panel->addView(keepOpen);
 
 #if defined(__PSV__)
-    const char* relaunchLabel = "Relaunch from LiveArea";
+    const char* relaunchLabel = "Reopens automatically";
 #elif defined(__SWITCH__)
     const char* relaunchLabel = "Relaunch to apply";
+#elif defined(__PS4__)
+    const char* relaunchLabel = "Exit while the system installs";
 #else
     const char* relaunchLabel = "System installer opens";
 #endif
@@ -496,55 +510,82 @@ void startInstall(const ReleaseInfo rel) {
     asyncRun([rel, ui]() {
 #if defined(__SWITCH__)
         const std::string path = platformPath("update.nro");
-        FILE* f = fopen(path.c_str(), "wb");
-        if (!f) { installFailed("cannot open " + path, ui); s_busy = false; return; }
 #elif defined(ANDROID)
         const std::string path = platformPath("update.apk");
-        FILE* f = fopen(path.c_str(), "wb");
-        if (!f) { installFailed("cannot open " + path, ui); s_busy = false; return; }
+#elif defined(__PS4__)
+        const std::string path = platformPath("update.pkg");
 #else
         const std::string path = platformPath("update.vpk");
-        SceUID f = sceIoOpen(path.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
-        if (f < 0) { installFailed("cannot open " + path, ui); s_busy = false; return; }
 #endif
 
         HttpClient client;
         int64_t total = rel.assetSize;
         int64_t got = 0;
-        int lastPct = -1;
-        bool ok = client.downloadFile(
-            rel.assetUrl,
-            [&](const char* data, size_t size) -> bool {
-                if (s_cancel.load()) return false;
-#if defined(__SWITCH__) || defined(ANDROID)
-                if (fwrite(data, 1, size, f) != size) return false;
-#else
-                if (sceIoWrite(f, data, size) != (int)size) return false;
-#endif
-                got += (int64_t)size;
-                if (total > 0) {
-                    int pct = (int)(got * 100 / total);
-                    if (pct != lastPct) {
-                        lastPct = pct;
-                        brls::sync([ui, pct]() {
-                            if (ui->dismissed->load()) return;
-                            stepActive(ui->download, "Downloading\xE2\x80\xA6 " +
-                                       std::to_string(pct) + "%", (float)pct / 100.0f);
-                        });
-                    }
-                }
-                return true;
-            },
-            [&](int64_t sz) { if (total <= 0) total = sz; });
+        bool ok = false;
+        std::string dlErr;
 
-#if defined(__SWITCH__) || defined(ANDROID)
-        fclose(f);
+        // One automatic retry: a fresh connection routinely clears the
+        // transient failures (a dropped socket, a stale keep-alive).
+        for (int attempt = 0; attempt < 2 && !s_cancel.load(); attempt++) {
+            if (attempt > 0) {
+                brls::Logger::warning("app_update: download failed ({}), retrying", dlErr);
+                brls::sync([ui]() {
+                    if (!ui->dismissed->load())
+                        stepActive(ui->download, "Retrying\xE2\x80\xA6", -1.0f);
+                });
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+            }
+
+            // (Re)open truncating — a failed attempt leaves partial bytes.
+#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
+            FILE* f = fopen(path.c_str(), "wb");
+            if (!f) { installFailed("cannot open " + path, ui); s_busy = false; return; }
 #else
-        sceIoClose(f);
+            SceUID f = sceIoOpen(path.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+            if (f < 0) { installFailed("cannot open " + path, ui); s_busy = false; return; }
 #endif
+
+            got = 0;
+            int lastPct = -1;
+            dlErr.clear();
+            ok = client.downloadFile(
+                rel.assetUrl,
+                [&](const char* data, size_t size) -> bool {
+                    if (s_cancel.load()) return false;
+#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
+                    if (fwrite(data, 1, size, f) != size) return false;
+#else
+                    if (sceIoWrite(f, data, size) != (int)size) return false;
+#endif
+                    got += (int64_t)size;
+                    if (total > 0) {
+                        int pct = (int)(got * 100 / total);
+                        if (pct != lastPct) {
+                            lastPct = pct;
+                            brls::sync([ui, pct]() {
+                                if (ui->dismissed->load()) return;
+                                stepActive(ui->download, "Downloading\xE2\x80\xA6 " +
+                                           std::to_string(pct) + "%", (float)pct / 100.0f);
+                            });
+                        }
+                    }
+                    return true;
+                },
+                [&](int64_t sz) { if (total <= 0) total = sz; },
+                {}, 0, nullptr, &dlErr);
+
+#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
+            fclose(f);
+#else
+            sceIoClose(f);
+#endif
+
+            if (ok && (rel.assetSize <= 0 || got == rel.assetSize)) break;
+            ok = false;
+        }
 
         if (s_cancel.load()) {
-#if defined(__SWITCH__) || defined(ANDROID)
+#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
             remove(path.c_str());
 #else
             sceIoRemove(path.c_str());
@@ -552,14 +593,21 @@ void startInstall(const ReleaseInfo rel) {
             s_busy = false;
             return;   // user cancellation, not a failure
         }
-        if (!ok || (rel.assetSize > 0 && got != rel.assetSize)) {
-#if defined(__SWITCH__) || defined(ANDROID)
+        if (!ok) {
+#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
             remove(path.c_str());
 #else
             sceIoRemove(path.c_str());
 #endif
-            installFailed("incomplete download (" + std::to_string(got) + "/" +
-                          std::to_string(rel.assetSize) + " bytes)", ui);
+            // Lead with the transport error — "0/39856545 bytes" hides the
+            // actual reason (the Switch's applet-mode socket famine was
+            // diagnosed by log only because the dialog didn't carry this).
+            std::string why = dlErr.empty()
+                ? "incomplete download (" + std::to_string(got) + "/" +
+                      std::to_string(rel.assetSize) + " bytes)"
+                : dlErr + " (" + std::to_string(got) + "/" +
+                      std::to_string(rel.assetSize) + " bytes)";
+            installFailed(why, ui);
             s_busy = false;
             return;
         }
@@ -574,7 +622,7 @@ void startInstall(const ReleaseInfo rel) {
             // Disabled, not hidden: it keeps focus (nothing else here takes
             // it), and the phase guard already makes it inert.
             ui->cancel->setAlpha(0.45f);
-#if defined(ANDROID)
+#if defined(ANDROID) || defined(__PS4__)
             stepActive(ui->install, "Handing to system installer\xE2\x80\xA6", -1.0f);
 #else
             stepActive(ui->install, "Installing\xE2\x80\xA6", -1.0f);
@@ -600,6 +648,29 @@ void startInstall(const ReleaseInfo rel) {
             }
             env->DeleteLocalRef(utils);
         });
+#elif defined(__PS4__)
+        // Register the PKG with the system installer (BGFT): the console
+        // shows its own progress notification. The install replaces this
+        // app, so the confirmation asks the user to exit.
+        {
+            std::string err;
+            if (ps4::installPkg(path, "VitaPlex " + rel.tag, err) != 0) {
+                installFailed(err, ui);
+                s_busy = false;
+                return;
+            }
+        }
+        brls::sync([ui]() {
+            if (!ui->dismissed->load()) stepDone(ui->install, "Handed to system installer");
+        });
+        finishInstall(ui, []() {
+            auto* d = new brls::Dialog(
+                "The PS4 is installing the update - its progress shows as a "
+                "system notification. Exit VitaPlex to let it finish, then "
+                "launch the new version.");
+            d->addButton("Exit VitaPlex", []() { brls::Application::quit(); });
+            d->open();
+        });
 #elif defined(__SWITCH__)
         // The romfs is mapped from the running NRO: unmount before
         // replacing the file, exactly as pleNx does.
@@ -624,42 +695,60 @@ void startInstall(const ReleaseInfo rel) {
             d->open();
         });
 #else
+        // VitaPlex can't promote over itself while it is the running title
+        // (the installer returns 0x80101114 "in use"), so hand the install
+        // to a tiny bundled stub app — the AutoPlugin2 technique. VitaPlex
+        // installs the stub (the stub isn't running, so promoting IT is
+        // fine), launches it, and quits; with VitaPlex closed the stub
+        // promotes the downloaded update.vpk and relaunches VitaPlex.
+        brls::sync([ui]() {
+            if (!ui->dismissed->load())
+                stepActive(ui->install, "Preparing installer\xE2\x80\xA6", -1.0f);
+        });
+        // Hand the target version to the stub's progress screen (best-effort;
+        // the stub omits the version clause if this file is absent).
+        {
+            std::string vpath = platformPath("update_version.txt");
+            SceUID vf = sceIoOpen(vpath.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+            if (vf >= 0) { sceIoWrite(vf, rel.tag.c_str(), rel.tag.size()); sceIoClose(vf); }
+        }
         std::string err;
-        int lastInstallPct = -1;
-        int rc = vita::installVpk(path, platformPath("update"), err,
-            [ui, &lastInstallPct](int done, int totalFiles) {
-                if (totalFiles <= 0) return;
-                int pct = done * 100 / totalFiles;
-                if (pct == lastInstallPct) return;
-                lastInstallPct = pct;
-                brls::sync([ui, pct]() {
-                    if (ui->dismissed->load()) return;
-                    // Extraction is the long part; the promotion after the
-                    // last file reports nothing, so 100% reads "Finishing".
-                    if (pct >= 100) stepActive(ui->install, "Finishing\xE2\x80\xA6", 1.0f);
-                    else stepActive(ui->install, "Installing\xE2\x80\xA6 " +
-                                    std::to_string(pct) + "%", (float)pct / 100.0f);
-                });
-            });
-        sceIoRemove(path.c_str());
+        int rc = vita::installVpk("app0:updater.vpk", platformPath("updater_stage"), err);
         if (rc != 0) {
-            installFailed(err, ui);
+            // Couldn't stage the stub — fall back to the manual VitaShell
+            // path so the download isn't wasted. update.vpk is kept.
+            brls::sync([ui]() {
+                if (!ui->dismissed->load()) stepDone(ui->install, "Downloaded");
+            });
+            finishInstall(ui, [path]() {
+                auto* d = new brls::Dialog(
+                    "Update downloaded.\n\nThe in-app installer couldn't start, so "
+                    "open VitaShell and install this file to finish:\n\n" + path);
+                d->addButton("OK", []() {});
+                d->open();
+            });
             s_busy = false;
             return;
         }
+        // Stub installed. Launch it and quit — it takes over from here.
         brls::sync([ui]() {
-            if (!ui->dismissed->load()) stepDone(ui->install, "Installed");
+            if (!ui->dismissed->load()) stepActive(ui->relaunch, "Installing update\xE2\x80\xA6", -1.0f);
         });
         finishInstall(ui, []() {
-            auto* d = new brls::Dialog("Update installed. VitaPlex will now close - relaunch it from the LiveArea.");
-            d->addButton("OK", []() { brls::Application::quit(); });
+            auto* d = new brls::Dialog(
+                "Installing the update.\n\nVitaPlex will close and reopen on its own "
+                "in a few seconds. If it doesn't, relaunch it from the LiveArea.");
+            d->addButton("OK", []() {
+                vita::launchTitle("VPLXUPD01");
+                brls::Application::quit();
+            });
             d->open();
         });
 #endif
         s_busy = false;
     });
 }
-#endif  // __SWITCH__ || __PSV__ || ANDROID
+#endif  // __SWITCH__ || __PSV__ || ANDROID || __PS4__
 
 // ── Release notes → sheet lines (design_handoff_notes_A) ─────────────────
 // VitaPlex notes are hand-written markdown with a fixed shape: an H1
@@ -781,10 +870,14 @@ ParsedNotes parseNotes(const std::string& md) {
 void showNotesSheet(const ReleaseInfo rel) {
     const ParsedNotes notes = parseNotes(rel.notes);
 
+    // Wider than the mock and a typography step up throughout: the sheet
+    // is a reading surface on a TV across the room, not a phone in hand.
     const float screenW = platform::viewportWidth();
     const float screenH = platform::viewportHeight();
-    float panelW = 560.0f;
-    if (panelW + 80.0f > screenW) panelW = screenW - 80.0f;
+    float panelW = 620.0f;
+    // Portrait phones: near full width (see startInstall).
+    if (platform::isPortrait()) panelW = screenW - 90.0f;
+    else if (panelW + 80.0f > screenW) panelW = screenW - 80.0f;
     const float panelH = screenH - 76.0f;
 
     auto* scrim = new brls::Box();
@@ -813,22 +906,22 @@ void showNotesSheet(const ReleaseInfo rel) {
     header->setPadding(14.0f, 20.0f, 14.0f, 20.0f);
 
     auto* tile = new brls::Box();
-    tile->setWidth(34.0f);
-    tile->setHeight(34.0f);
-    tile->setCornerRadius(9.0f);
+    tile->setWidth(38.0f);
+    tile->setHeight(38.0f);
+    tile->setCornerRadius(10.0f);
     tile->setBackgroundColor(tok::goldTileBg());
     tile->setBorderColor(tok::goldTileBrd());
     tile->setBorderThickness(1.0f);
     tile->setJustifyContent(brls::JustifyContent::CENTER);
     tile->setAlignItems(brls::AlignItems::CENTER);
-    tile->addView(makeLabel("\xE2\x89\xA1", 16.0f, tok::gold()));
+    tile->addView(makeLabel("\xE2\x89\xA1", 18.0f, tok::gold()));
     tile->setMarginRight(12.0f);
     header->addView(tile);
 
     auto* titles = new brls::Box();
     titles->setAxis(brls::Axis::COLUMN);
     titles->setShrink(1.0f);
-    titles->addView(makeLabel(rel.tag, 15.0f, tok::text()));
+    titles->addView(makeLabel(rel.tag, 16.5f, tok::text()));
     {
         std::string caption = notes.date;
         if (caption.empty() && rel.publishedAt.size() >= 10)
@@ -838,7 +931,7 @@ void showNotesSheet(const ReleaseInfo rel) {
         if (!notes.prs.empty())
             caption += (caption.empty() ? "" : " \xC2\xB7 ") + std::string("PRs ") + notes.prs;
         if (!caption.empty()) {
-            auto* cap = makeLabel(caption, 11.0f, tok::disabled());
+            auto* cap = makeLabel(caption, 12.0f, tok::disabled());
             cap->setMarginTop(2.0f);
             titles->addView(cap);
         }
@@ -853,13 +946,13 @@ void showNotesSheet(const ReleaseInfo rel) {
         auto* chip = new brls::Box();
         chip->setAxis(brls::Axis::ROW);
         chip->setAlignItems(brls::AlignItems::CENTER);
-        chip->setHeight(22.0f);
-        chip->setPadding(0.0f, 10.0f, 0.0f, 10.0f);
-        chip->setCornerRadius(11.0f);
+        chip->setHeight(24.0f);
+        chip->setPadding(0.0f, 11.0f, 0.0f, 11.0f);
+        chip->setCornerRadius(12.0f);
         chip->setBackgroundColor(tok::goldTileBg());
         chip->setBorderColor(tok::goldTileBrd());
         chip->setBorderThickness(1.0f);
-        chip->addView(makeLabel("Pre-release", 10.0f, tok::goldBright()));
+        chip->addView(makeLabel("Pre-release", 10.5f, tok::goldBright()));
         chip->setMarginLeft(10.0f);
         header->addView(chip);
     }
@@ -877,10 +970,10 @@ void showNotesSheet(const ReleaseInfo rel) {
 
     auto* content = new brls::Box();
     content->setAxis(brls::Axis::COLUMN);
-    content->setPadding(14.0f, 24.0f, 16.0f, 20.0f);
+    content->setPadding(16.0f, 26.0f, 18.0f, 22.0f);
 
     if (notes.lines.empty()) {
-        auto* empty = makeLabel("No notes for this release.", 12.0f, tok::muted2());
+        auto* empty = makeLabel("No notes for this release.", 13.5f, tok::muted2());
         empty->setMarginTop(40.0f);
         empty->setHorizontalAlign(brls::HorizontalAlign::CENTER);
         content->addView(empty);
@@ -892,29 +985,29 @@ void showNotesSheet(const ReleaseInfo rel) {
             auto* row = new brls::Box();
             row->setAxis(brls::Axis::ROW);
             row->setAlignItems(brls::AlignItems::CENTER);
-            row->setMarginTop(first ? 2.0f : 16.0f);
-            row->setMarginBottom(2.0f);
+            row->setMarginTop(first ? 2.0f : 20.0f);
+            row->setMarginBottom(3.0f);
             auto* tick = new brls::Rectangle();
             tick->setWidth(4.0f);
-            tick->setHeight(14.0f);
+            tick->setHeight(16.0f);
             tick->setCornerRadius(2.0f);
             tick->setColor(tok::gold());
-            tick->setMarginRight(8.0f);
+            tick->setMarginRight(9.0f);
             row->addView(tick);
-            row->addView(makeLabel(n.text, 13.0f, nvgRGB(0xea, 0xea, 0xee)));
+            row->addView(makeLabel(n.text, 15.0f, nvgRGB(0xea, 0xea, 0xee)));
             content->addView(row);
         } else if (n.kind == NoteLine::Bullet) {
             auto* row = new brls::Box();
             row->setAxis(brls::Axis::ROW);
             row->setAlignItems(brls::AlignItems::FLEX_START);
-            row->setMarginTop(7.0f);
+            row->setMarginTop(10.0f);
             auto* dot = new brls::Rectangle();
-            dot->setWidth(4.0f);
-            dot->setHeight(4.0f);
-            dot->setCornerRadius(2.0f);
+            dot->setWidth(5.0f);
+            dot->setHeight(5.0f);
+            dot->setCornerRadius(2.5f);
             dot->setColor(tok::muted2());
-            dot->setMarginTop(6.0f);
-            dot->setMarginRight(8.0f);
+            dot->setMarginTop(7.0f);
+            dot->setMarginRight(10.0f);
             row->addView(dot);
             auto* col = new brls::Box();
             col->setAxis(brls::Axis::COLUMN);
@@ -922,17 +1015,19 @@ void showNotesSheet(const ReleaseInfo rel) {
             // A borealis label is single-colour, so the bold lead gets its
             // own line and the description wraps below it.
             if (!n.lead.empty())
-                col->addView(makeLabel(n.lead, 12.0f, nvgRGB(0xe7, 0xe7, 0xea)));
+                col->addView(makeLabel(n.lead, 13.5f, nvgRGB(0xe7, 0xe7, 0xea)));
             if (!n.text.empty()) {
-                auto* t = makeLabel(n.text, 11.5f, tok::muted(), false);
-                if (!n.lead.empty()) t->setMarginTop(1.0f);
+                auto* t = makeLabel(n.text, 12.5f, tok::muted(), false);
+                t->setLineHeight(1.35f);
+                if (!n.lead.empty()) t->setMarginTop(2.0f);
                 col->addView(t);
             }
             row->addView(col);
             content->addView(row);
         } else {
-            auto* p = makeLabel(n.text, 11.5f, tok::muted(), false);
-            p->setMarginTop(6.0f);
+            auto* p = makeLabel(n.text, 12.5f, tok::muted(), false);
+            p->setLineHeight(1.35f);
+            p->setMarginTop(8.0f);
             content->addView(p);
         }
         first = false;
@@ -956,7 +1051,7 @@ void showNotesSheet(const ReleaseInfo rel) {
         footer->addView(makeLabel(
             "Scroll for more \xC2\xB7 " + std::to_string(notes.sections) +
             (notes.sections == 1 ? " section" : " sections"),
-            11.0f, tok::disabled()));
+            11.5f, tok::disabled()));
     }
     auto* fspacer = new brls::Box();
     fspacer->setGrow(1.0f);
@@ -965,7 +1060,7 @@ void showNotesSheet(const ReleaseInfo rel) {
     // The primary mirrors the offer's action so the user can act from
     // here without going back.
     brls::Box* primary = nullptr;
-#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID)
+#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__)
     if (!rel.assetUrl.empty()) {
         primary = makeButton("\xE2\x86\x93  Update Now", BtnStyle::Gold, [rel]() {
             // Pop the sheet, then the offer beneath it, then install.
@@ -982,13 +1077,6 @@ void showNotesSheet(const ReleaseInfo rel) {
                 []() { brls::Application::popActivity(); });
         });
     }
-#elif defined(__PS4__)
-    primary = makeButton("Open release page", BtnStyle::Gold, [rel]() {
-        brls::Application::getPlatform()->openBrowser(rel.pageUrl);
-        s_busy = false;
-        brls::Application::popActivity(brls::TransitionAnimation::NONE,
-            []() { brls::Application::popActivity(); });
-    });
 #else
     {
         std::string url = !rel.assetUrl.empty() ? rel.assetUrl : rel.pageUrl;
@@ -1024,9 +1112,9 @@ void showNotesSheet(const ReleaseInfo rel) {
         scroller->setContentOffsetY(y, true);
     };
     scrim->registerAction("Scroll up", brls::ControllerButton::BUTTON_UP,
-        [scrollBy](brls::View*) { scrollBy(-60.0f); return true; }, true);
+        [scrollBy](brls::View*) { scrollBy(-72.0f); return true; }, true);
     scrim->registerAction("Scroll down", brls::ControllerButton::BUTTON_DOWN,
-        [scrollBy](brls::View*) { scrollBy(60.0f); return true; }, true);
+        [scrollBy](brls::View*) { scrollBy(72.0f); return true; }, true);
     scrim->registerAction("Back", brls::ControllerButton::BUTTON_B,
         [](brls::View*) { brls::Application::popActivity(); return true; });
     scrim->addGestureRecognizer(new brls::TapGestureRecognizer(scrim,
@@ -1043,7 +1131,9 @@ void showNotesSheet(const ReleaseInfo rel) {
 void offerUpdate(const ReleaseInfo rel) {
     const float screenW = platform::viewportWidth();
     float panelW = 428.0f;
-    if (panelW + 80.0f > screenW) panelW = screenW - 80.0f;
+    // Portrait phones: near full width (see startInstall).
+    if (platform::isPortrait()) panelW = screenW - 90.0f;
+    else if (panelW + 80.0f > screenW) panelW = screenW - 80.0f;
 
     auto* scrim = new brls::Box();
     scrim->setAxis(brls::Axis::COLUMN);
@@ -1138,7 +1228,7 @@ void offerUpdate(const ReleaseInfo rel) {
     if (rel.assetSize > 0) caption = mbLabel(rel.assetSize) + " MB download";
 #if defined(__PSV__)
     caption += (caption.empty() ? "" : " \xC2\xB7 ") +
-               std::string("installs in place \xC2\xB7 relaunch from LiveArea");
+               std::string("installs in place \xC2\xB7 reopens automatically");
 #elif defined(__SWITCH__)
     caption += (caption.empty() ? "" : " \xC2\xB7 ") +
                std::string("installs in place \xC2\xB7 relaunch to apply");
@@ -1146,9 +1236,8 @@ void offerUpdate(const ReleaseInfo rel) {
     caption += (caption.empty() ? "" : " \xC2\xB7 ") +
                std::string("system installer opens when ready");
 #elif defined(__PS4__)
-    // The release page is the way to get it; keep the address visible in
-    // case the browser hand-off fails silently.
-    caption += (caption.empty() ? "" : " \xC2\xB7 ") + rel.pageUrl;
+    caption += (caption.empty() ? "" : " \xC2\xB7 ") +
+               std::string("installs via the PS4 installer \xC2\xB7 exit to finish");
 #else
     caption += (caption.empty() ? "" : " \xC2\xB7 ") +
                std::string("opens the release page in your browser");
@@ -1180,7 +1269,7 @@ void offerUpdate(const ReleaseInfo rel) {
     buttons->setPadding(14.0f, 18.0f, 16.0f, 18.0f);
 
     brls::Box* primary = nullptr;
-#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID)
+#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__)
     // These install in place; the notes sheet is the secondary action.
     if (!rel.assetUrl.empty()) {
         primary = makeButton("\xE2\x86\x93  Update", BtnStyle::Gold, [rel]() {
@@ -1203,11 +1292,6 @@ void offerUpdate(const ReleaseInfo rel) {
         primary->setGrow(1.0f);
         buttons->addView(primary);
     }
-#elif defined(__PS4__)
-    primary = makeButton("What's New", BtnStyle::Gold,
-                         [rel]() { showNotesSheet(rel); });
-    primary->setGrow(1.0f);
-    buttons->addView(primary);
 #else
     // Desktop: the browser handles download + install, so the primary IS
     // the release page (the asset directly when one matched).

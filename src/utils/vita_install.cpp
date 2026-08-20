@@ -21,17 +21,17 @@
 
 #include "utils/vita_install.hpp"
 
+#include <psp2/appmgr.h>
 #include <psp2/io/fcntl.h>
 #include <psp2/io/dirent.h>
 #include <psp2/io/stat.h>
+#include <psp2/kernel/threadmgr.h>
 #include <psp2/promoterutil.h>
 #include <psp2/sysmodule.h>
 
 #include <mbedtls/sha1.h>
 
-#include <borealis/core/logger.hpp>
-#include <fmt/format.h>
-
+#include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -48,6 +48,31 @@
 #include "vita_head_bin.h"
 
 namespace {
+
+// Self-contained logging + string formatting — this file is linked into BOTH
+// VitaPlex (which has borealis) and the tiny updater-stub app (which does not),
+// so it cannot depend on brls::Logger or fmt. Logs append to a file both
+// processes can share, which doubles as the on-device diagnostic trail.
+void vlog(const char* fmt, ...) {
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(buf, sizeof(buf) - 1, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if (n > (int)sizeof(buf) - 1) n = sizeof(buf) - 1;
+    buf[n] = '\n';
+    SceUID fd = sceIoOpen("ux0:data/VitaPlex/updater.log",
+                          SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0777);
+    if (fd >= 0) { sceIoWrite(fd, buf, n + 1); sceIoClose(fd); }
+}
+
+// "0x%08X"-style hex for the error strings surfaced to the UI.
+std::string hex(unsigned v) {
+    char b[16];
+    snprintf(b, sizeof(b), "0x%08X", v);
+    return b;
+}
 
 // ---------------------------------------------------------------------------
 // Small sceIo filesystem helpers
@@ -195,14 +220,14 @@ void fpkgHmac(const uint8_t* data, uint32_t len, uint8_t hmac[16]) {
 int makeHeadBin(const std::string& pkgDir, std::string& err) {
     std::vector<uint8_t> sfo;
     if (!readFile(pkgDir + "/sce_sys/param.sfo", sfo)) {
-        err = "param.sfo introuvable";
+        err = "param.sfo not found";
         return -1;
     }
 
     char titleid[12] = {0};
     char contentid[48] = {0};
     if (!sfoGetString(sfo, "TITLE_ID", titleid, sizeof(titleid))) {
-        err = "TITLE_ID absent de param.sfo";
+        err = "TITLE_ID missing from param.sfo";
         return -1;
     }
     sfoGetString(sfo, "CONTENT_ID", contentid, sizeof(contentid));  // optional
@@ -239,7 +264,7 @@ int makeHeadBin(const std::string& pkgDir, std::string& err) {
 
     mkdirs(pkgDir + "/sce_sys/package");
     if (!writeFile(pkgDir + "/sce_sys/package/head.bin", head.data(), head.size())) {
-        err = "écriture de head.bin impossible";
+        err = "cannot write head.bin";
         return -1;
     }
     return 0;
@@ -285,7 +310,7 @@ int extractVpk(const std::string& vpk, const std::string& dest, std::string& err
                const std::function<void(int, int)>& onProgress) {
     SceUID fd = sceIoOpen(vpk.c_str(), SCE_O_RDONLY, 0);
     if (fd < 0) {
-        err = "ouverture du VPK impossible";
+        err = "cannot open the downloaded VPK";
         return -1;
     }
     SceOff size = sceIoLseek(fd, 0, SCE_SEEK_END);
@@ -299,7 +324,7 @@ int extractVpk(const std::string& vpk, const std::string& dest, std::string& err
 
     if (!mz_zip_reader_init(&zip, static_cast<mz_uint64>(size), 0)) {
         sceIoClose(fd);
-        err = "VPK illisible (archive ZIP invalide)";
+        err = "unreadable VPK (invalid ZIP archive)";
         return -1;
     }
 
@@ -308,7 +333,7 @@ int extractVpk(const std::string& vpk, const std::string& dest, std::string& err
     for (mz_uint i = 0; i < total; i++) {
         mz_zip_archive_file_stat st;
         if (!mz_zip_reader_file_stat(&zip, i, &st)) {
-            err = "lecture d'une entrée du VPK impossible";
+            err = "cannot read a VPK entry";
             result = -1;
             break;
         }
@@ -326,7 +351,7 @@ int extractVpk(const std::string& vpk, const std::string& dest, std::string& err
         mkdirs(parentDir(outpath));
         SceUID out = sceIoOpen(outpath.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
         if (out < 0) {
-            err = fmt::format("écriture impossible : {}", rel);
+            err = "cannot write " + rel;
             result = -1;
             break;
         }
@@ -334,7 +359,7 @@ int extractVpk(const std::string& vpk, const std::string& dest, std::string& err
         mz_bool ok = mz_zip_reader_extract_to_callback(&zip, i, zipWriteCb, &w, 0);
         sceIoClose(out);
         if (!ok || !w.ok) {
-            err = fmt::format("extraction impossible : {}", rel);
+            err = "cannot extract " + rel;
             result = -1;
             break;
         }
@@ -368,30 +393,60 @@ int unloadScePaf() {
     return sceSysmoduleUnloadModuleInternalWithArg(SCE_SYSMODULE_INTERNAL_PAF, 0, nullptr, &opt);
 }
 
-int promoteApp(const std::string& path, std::string& err) {
+int promoteApp(const std::string& path, std::string& err,
+               const std::function<void(int tick)>& onPoll) {
     int res = loadScePaf();
     if (res < 0) {
-        err = fmt::format("chargement de ScePaf impossible (0x{:08X})", static_cast<unsigned>(res));
+        err = "cannot load ScePaf (" + hex((unsigned)res) + ")";
         return res;
     }
 
     res = sceSysmoduleLoadModuleInternal(SCE_SYSMODULE_INTERNAL_PROMOTER_UTIL);
     if (res < 0) {
-        err = fmt::format("chargement du promoter impossible (0x{:08X})", static_cast<unsigned>(res));
+        err = "cannot load the promoter (" + hex((unsigned)res) + ")";
         unloadScePaf();
         return res;
     }
 
     res = scePromoterUtilityInit();
     if (res >= 0) {
-        int pres = scePromoterUtilityPromotePkgWithRif(path.c_str(), 1);
+        // VitaPlex ships with an empty CONTENT_ID (free homebrew, no
+        // license): scePromoterUtilityPromotePkgWithRif wants a rif keyed
+        // to a real content-id and rejects it up front with 0x80101114, so
+        // use the no-license scePromoterUtilityPromotePkg. Drive it
+        // asynchronously (sync=0) and poll GetState to completion, then
+        // read the real outcome from GetResult — the pattern pkgj and
+        // ONElua's game.install use. (sync=1 on this call blocked forever.)
+        int pres = scePromoterUtilityPromotePkg(path.c_str(), 0);
         if (pres < 0) {
-            err = fmt::format("promotion du paquet impossible (0x{:08X})", static_cast<unsigned>(pres));
+            err = "the system installer would not start (" + hex((unsigned)pres) + ")";
             res = pres;
+        } else {
+            // Poll until idle. ~5 minutes at 100 ms — a large eboot takes a
+            // while — after which we give up rather than hang forever.
+            int state = 1;
+            int guard = 0;
+            const int kMaxPolls = 3000;
+            while (guard++ < kMaxPolls) {
+                if (scePromoterUtilityGetState(&state) < 0) { state = 0; break; }
+                if (state == 0) break;   // idle => finished
+                if (onPoll) onPoll(guard);   // drives the UI spinner
+                sceKernelDelayThread(100 * 1000);
+            }
+            int result = 0;
+            if (guard >= kMaxPolls) {
+                err = "the system installer timed out";
+                res = -1;
+            } else if (scePromoterUtilityGetResult(&result) < 0 || result < 0) {
+                err = "the system installer rejected the package (" + hex((unsigned)result) + ")";
+                res = result ? result : -1;
+            } else {
+                res = 0;   // promoted
+            }
         }
         scePromoterUtilityExit();
     } else {
-        err = fmt::format("initialisation du promoter impossible (0x{:08X})", static_cast<unsigned>(res));
+        err = "cannot start the promoter (" + hex((unsigned)res) + ")";
     }
 
     sceSysmoduleUnloadModuleInternal(SCE_SYSMODULE_INTERNAL_PROMOTER_UTIL);
@@ -404,34 +459,45 @@ int promoteApp(const std::string& path, std::string& err) {
 namespace vita {
 
 int installVpk(const std::string& vpkPath, const std::string& workDir, std::string& err,
-               std::function<void(int done, int total)> onProgress) {
-    brls::Logger::info("vita: installing {} via {}", vpkPath, workDir);
+               std::function<void(int phase, int done, int total)> onProgress) {
+    vlog("vita: installing %s via %s", vpkPath.c_str(), workDir.c_str());
 
     removePath(workDir);
     mkdirs(workDir);
 
-    if (extractVpk(vpkPath, workDir, err, onProgress) != 0) {
-        brls::Logger::error("vita: extract failed: {}", err);
+    // Extract → phase 0, per archive entry.
+    auto extractCb = [&onProgress](int done, int total) {
+        if (onProgress) onProgress(PHASE_EXTRACT, done, total);
+    };
+    if (extractVpk(vpkPath, workDir, err, extractCb) != 0) {
+        vlog("vita: extract failed: %s", err.c_str());
         removePath(workDir);
         return -1;
     }
 
     // A valid VPK must at least carry the executable and its metadata.
     if (!fileExists(workDir + "/eboot.bin") || !fileExists(workDir + "/sce_sys/param.sfo")) {
-        err = "VPK invalide (eboot.bin ou param.sfo manquant)";
-        brls::Logger::error("vita: {}", err);
+        err = "invalid VPK (eboot.bin or param.sfo missing)";
+        vlog("vita: %s", err.c_str());
         removePath(workDir);
         return -1;
     }
 
+    // Verify → phase 1, the head.bin forge.
+    if (onProgress) onProgress(PHASE_VERIFY, 0, 1);
     if (makeHeadBin(workDir, err) != 0) {
-        brls::Logger::error("vita: makeHeadBin failed: {}", err);
+        vlog("vita: makeHeadBin failed: %s", err.c_str());
         removePath(workDir);
         return -1;
     }
+    if (onProgress) onProgress(PHASE_VERIFY, 1, 1);
 
-    if (promoteApp(workDir, err) < 0) {
-        brls::Logger::error("vita: promote failed: {}", err);
+    // Install → phase 2, the promoter (poll ticks drive the spinner).
+    auto pollCb = [&onProgress](int tick) {
+        if (onProgress) onProgress(PHASE_INSTALL, tick, 0);
+    };
+    if (promoteApp(workDir, err, pollCb) < 0) {
+        vlog("vita: promote failed: %s", err.c_str());
         removePath(workDir);
         return -1;
     }
@@ -439,8 +505,15 @@ int installVpk(const std::string& vpkPath, const std::string& workDir, std::stri
     // Promotion is synchronous (sync=1): the bubble is updated, the scratch
     // directory can go.
     removePath(workDir);
-    brls::Logger::info("vita: install succeeded");
+    vlog("vita: install succeeded");
     return 0;
+}
+
+void launchTitle(const std::string& titleId) {
+    std::string uri = "psgm:play?titleid=" + titleId;
+    // 0xFFFFF is the flag homebrew launchers pass to sceAppMgrLaunchAppByUri.
+    sceAppMgrLaunchAppByUri(0xFFFFF, const_cast<char*>(uri.c_str()));
+    sceKernelDelayThread(200 * 1000);
 }
 
 }  // namespace vita

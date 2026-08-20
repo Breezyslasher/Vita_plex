@@ -15,6 +15,10 @@
  */
 
 #include <borealis.hpp>
+#ifdef __SWITCH__
+#include <switch.h>
+#include <cstdio>
+#endif
 #include "app/application.hpp"
 #include "utils/app_update.hpp"
 #include "app/plex_client.hpp"
@@ -36,6 +40,35 @@ static void registerCustomViews() {
 // Shared entry point used by main() on every platform and by SDL_main() on
 // Android (which lives in src/platform/platform_android.cpp).
 extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
+#ifdef __SWITCH__
+    // Refuse applet-mode launches (opening the homebrew menu from the album
+    // instead of over a title). Applets get a fraction of the RAM — video
+    // playback dies — and only 2 BSD socket sessions, so any concurrent
+    // network use fails with "couldn't connect" (the in-app updater's
+    // download was the reproducible victim).
+    {
+        AppletType at = appletGetAppletType();
+        if (at != AppletType_Application && at != AppletType_SystemApplication) {
+            consoleInit(NULL);
+            printf("\n  VitaPlex needs full memory to run.\n");
+            printf("\n  Launch it with title override: hold R while\n");
+            printf("  opening any game, then start VitaPlex from\n");
+            printf("  the homebrew menu.\n");
+            printf("\n  Press + to exit.\n");
+            padConfigureInput(1, HidNpadStyleSet_NpadStandard);
+            PadState pad;
+            padInitializeDefault(&pad);
+            while (appletMainLoop()) {
+                padUpdate(&pad);
+                if (padGetButtonsDown(&pad) & HidNpadButton_Plus) break;
+                consoleUpdate(NULL);
+            }
+            consoleExit(NULL);
+            return 0;
+        }
+    }
+#endif
+
     // Where our own executable lives — on Switch the updater replaces it.
     if (argc > 0) vitaplex::app_update::setSelfPath(argv[0]);
 

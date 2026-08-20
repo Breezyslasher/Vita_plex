@@ -105,10 +105,13 @@ public:
     // resumeOffset > 0 asks the server to continue from that byte (HTTP Range /
     // CURLOPT_RESUME_FROM). The server answers 206 (honoured) or 200 (full file)
     // — inspect statusCode in startCallback to decide append vs truncate.
+    // errorOut, when given, receives why a failed download failed (curl error
+    // text or "HTTP <code>") so callers can show the reason, not just bytes.
     bool downloadFile(const std::string& url, WriteCallback writeCallback, SizeCallback sizeCallback = nullptr,
                       const std::map<std::string, std::string>& headers = {},
                       int64_t resumeOffset = 0,
-                      DownloadStartCallback startCallback = nullptr);
+                      DownloadStartCallback startCallback = nullptr,
+                      std::string* errorOut = nullptr);
 
     // URL encoding
     static std::string urlEncode(const std::string& str);

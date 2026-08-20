@@ -10,14 +10,20 @@
  *
  *   Switch   — downloads the matching .nro and replaces the running one
  *              (path captured from argv[0]); relaunch applies it.
- *   PS Vita  — downloads the .vpk and promotes it in place via
- *              ScePromoterUtility (utils/vita_install); the app quits to
- *              the LiveArea and the user relaunches the new bubble.
+ *   PS Vita  — downloads the .vpk. A title can't promote over itself
+ *              (0x80101114 = in use), so VitaPlex installs and launches a
+ *              tiny bundled updater stub (VPLXUPD01) and quits; with
+ *              VitaPlex closed the stub promotes the .vpk and relaunches
+ *              VitaPlex (the AutoPlugin2 technique, utils/vita_install +
+ *              src/updater_stub). Falls back to a VitaShell install if the
+ *              stub can't be staged.
  *   Android  — downloads the .apk and hands it to the system package
  *              installer (content:// via ApkProvider — no browser
  *              involved, so Android TV works too).
+ *   PS4      — downloads the .pkg and registers it with the system
+ *              installer (BGFT, utils/ps4_install); the user exits and
+ *              the console finishes the install with its own progress.
  *   Desktop  — opens the release asset in the browser.
- *   PS4      — shows the release URL; there is no browser to open.
  *
  * VitaPlex publishes pre-releases, which GitHub's /releases/latest never
  * returns — the check reads /releases and takes the newest non-draft
