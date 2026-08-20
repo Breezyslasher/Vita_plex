@@ -975,10 +975,13 @@ if(PLATFORM_PSV)
         SceIofilemgr_stub
         SceLibKernel_stub)
     vita_create_self(vitaplex_updater.self vitaplex_updater UNSAFE NOASLR)
+    # No FILE args: vita_create_vpk accumulates them in a variable it does
+    # not clear between calls, so any file listed here leaks into the main
+    # VitaPlex.vpk below and gets packed twice. The stub is headless (no
+    # LiveArea icon needed), so it ships with just its eboot + param.sfo.
     vita_create_vpk(vitaplex_updater.vpk VPLXUPD01 vitaplex_updater.self
         VERSION 01.00
-        NAME "VitaPlex Updater"
-        FILE app/platform/psv/sce_sys/icon0.png sce_sys/icon0.png)
+        NAME "VitaPlex Updater")
 
     vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME} UNSAFE NOASLR)
 
