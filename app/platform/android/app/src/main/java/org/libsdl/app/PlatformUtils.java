@@ -112,6 +112,20 @@ public class PlatformUtils {
             intent.setDataAndType(uri, "application/vnd.android.package-archive");
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             context.startActivity(intent);
+
+            // Stop our own (old) process shortly after the installer takes
+            // the foreground. Android updates the package while the old app
+            // is still running, so without this the user has to force-close
+            // VitaPlex for the new version to take effect; killing the stale
+            // process means reopening after the install lands the update.
+            // 1.5s lets the installer come to the front first, so the kill
+            // is invisible behind it.
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+                new Runnable() {
+                    @Override public void run() {
+                        android.os.Process.killProcess(android.os.Process.myPid());
+                    }
+                }, 1500);
         } catch (Exception e) {
             android.util.Log.e("VitaPlex", "installApk failed", e);
         }
