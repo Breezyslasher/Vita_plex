@@ -48,6 +48,7 @@ jobs:
       version: ${{ steps.resolve.outputs.version }}
       version_number: ${{ steps.resolve.outputs.version_number }}
       version_tag: ${{ steps.resolve.outputs.version_tag }}
+      version_code: ${{ steps.resolve.outputs.version_code }}
     steps:
       - uses: actions/checkout@v4
       - name: Resolve build version
@@ -108,11 +109,29 @@ jobs:
           fi
           # Filename/tag-safe version (spaces → hyphens)
           TAG="${V// /-}"
+
+          # Android versionCode, derived from the numeric version so it moves
+          # in lockstep with the version the in-app updater compares. It used
+          # to be github.run_number, which grows on EVERY push - so a dev
+          # build from a later run outranked a newer release, and Android
+          # refused the update as a downgrade ("App not installed") even
+          # though the updater offered it by version string. Encode
+          # major.minor.patch.build as M*10^8 + m*10^6 + p*10^4 + (build%10^4).
+          # The 10^8 base clears the old run-number codes (~32M today), so a
+          # build with this scheme supersedes any run-number install without
+          # a manual reinstall; monotonic with version thereafter.
+          IFS='.' read -r VC_MAJ VC_MIN VC_PAT VC_BLD <<< "${NUM}"
+          VC_MAJ=$((10#${VC_MAJ:-0})); VC_MIN=$((10#${VC_MIN:-0}))
+          VC_PAT=$((10#${VC_PAT:-0})); VC_BLD=$((10#${VC_BLD:-0} % 10000))
+          VERSION_CODE=$((VC_MAJ*100000000 + VC_MIN*1000000 + VC_PAT*10000 + VC_BLD))
+
           echo "version=${V}" >> "$GITHUB_OUTPUT"
           echo "version_number=${NUM}" >> "$GITHUB_OUTPUT"
           echo "version_tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "version_code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
           echo "Display version: ${V}"
           echo "Numeric version: ${NUM}"
+          echo "Android versionCode: ${VERSION_CODE}"
           echo "Tag/filename version: ${TAG}"
 
   # ───────────────────────────────────────────────
@@ -558,7 +577,7 @@ jobs:
       uses: chkfung/android-version-actions@v1.2.2
       with:
         gradlePath: app/platform/android/app/build.gradle
-        versionCode: ${{ github.run_number }}
+        versionCode: ${{ needs.resolve-version.outputs.version_code }}
         versionName: ${{ needs.resolve-version.outputs.version }}
     - name: Prepare Android sources and native dependencies
       run: |

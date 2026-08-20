@@ -448,7 +448,13 @@ void startInstall(const ReleaseInfo rel) {
     float panelW = 388.0f;
     // Portrait phones: the viewport is design-width (narrow) and tall, so a
     // fixed-width panel reads as a skinny floating column — take the width.
-    if (platform::isPortrait()) panelW = screenW - 90.0f;
+    if (platform::isPortrait()) {
+        // Near-full-width on a phone so it isn't a skinny column, but capped
+        // so it doesn't stretch across a big foldable/tablet inner screen.
+        float wide = screenW - 90.0f;
+        float cap  = panelW + 180.0f;
+        panelW = wide < cap ? wide : cap;
+    }
     else if (panelW + 80.0f > screenW) panelW = screenW - 80.0f;
     const float barW = panelW - 36.0f - 38.0f;   // panel padding + icon column
 
@@ -889,7 +895,13 @@ void showNotesSheet(const ReleaseInfo rel) {
     const float screenH = platform::viewportHeight();
     float panelW = 620.0f;
     // Portrait phones: near full width (see startInstall).
-    if (platform::isPortrait()) panelW = screenW - 90.0f;
+    if (platform::isPortrait()) {
+        // Near-full-width on a phone so it isn't a skinny column, but capped
+        // so it doesn't stretch across a big foldable/tablet inner screen.
+        float wide = screenW - 90.0f;
+        float cap  = panelW + 180.0f;
+        panelW = wide < cap ? wide : cap;
+    }
     else if (panelW + 80.0f > screenW) panelW = screenW - 80.0f;
     const float panelH = screenH - 76.0f;
 
@@ -1145,7 +1157,13 @@ void offerUpdate(const ReleaseInfo rel) {
     const float screenW = platform::viewportWidth();
     float panelW = 428.0f;
     // Portrait phones: near full width (see startInstall).
-    if (platform::isPortrait()) panelW = screenW - 90.0f;
+    if (platform::isPortrait()) {
+        // Near-full-width on a phone so it isn't a skinny column, but capped
+        // so it doesn't stretch across a big foldable/tablet inner screen.
+        float wide = screenW - 90.0f;
+        float cap  = panelW + 180.0f;
+        panelW = wide < cap ? wide : cap;
+    }
     else if (panelW + 80.0f > screenW) panelW = screenW - 80.0f;
 
     auto* scrim = new brls::Box();
