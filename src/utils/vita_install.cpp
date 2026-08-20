@@ -385,13 +385,14 @@ int promoteApp(const std::string& path, std::string& err) {
 
     res = scePromoterUtilityInit();
     if (res >= 0) {
-        // Kick the promotion asynchronously (sync=0) and poll GetState to
-        // completion, then read the real outcome from GetResult — the
-        // pattern pkgj and ONElua's game.install use. Calling with sync=1
-        // instead returned 0x80101114 up front (a "busy/queued" status,
-        // not the install result) and the no-rif variant hung; driving it
-        // async and reading GetResult is what actually completes.
-        int pres = scePromoterUtilityPromotePkgWithRif(path.c_str(), 0);
+        // VitaPlex ships with an empty CONTENT_ID (free homebrew, no
+        // license): scePromoterUtilityPromotePkgWithRif wants a rif keyed
+        // to a real content-id and rejects it up front with 0x80101114, so
+        // use the no-license scePromoterUtilityPromotePkg. Drive it
+        // asynchronously (sync=0) and poll GetState to completion, then
+        // read the real outcome from GetResult — the pattern pkgj and
+        // ONElua's game.install use. (sync=1 on this call blocked forever.)
+        int pres = scePromoterUtilityPromotePkg(path.c_str(), 0);
         if (pres < 0) {
             err = fmt::format("the system installer would not start (0x{:08X})",
                               static_cast<unsigned>(pres));
