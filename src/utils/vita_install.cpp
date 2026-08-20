@@ -384,10 +384,24 @@ int promoteApp(const std::string& path, std::string& err) {
 
     res = scePromoterUtilityInit();
     if (res >= 0) {
-        int pres = scePromoterUtilityPromotePkgWithRif(path.c_str(), 1);
+        // VitaPlex is a free homebrew package with no license (work.bin /
+        // rif). scePromoterUtilityPromotePkg is the entry point for
+        // no-license packages; PromotePkgWithRif expects a rif and returned
+        // 0x80101114 on the real device. Try the correct (no-rif) call
+        // first and fall back to the rif variant, so whichever the
+        // installed firmware honours wins. Second arg is sync (1).
+        int pres = scePromoterUtilityPromotePkg(path.c_str(), 1);
         if (pres < 0) {
-            err = fmt::format("the system installer rejected the package (0x{:08X})", static_cast<unsigned>(pres));
-            res = pres;
+            brls::Logger::warning("vita: PromotePkg failed (0x{:08X}), trying PromotePkgWithRif",
+                                  static_cast<unsigned>(pres));
+            int pres2 = scePromoterUtilityPromotePkgWithRif(path.c_str(), 1);
+            if (pres2 < 0) {
+                err = fmt::format("the system installer rejected the package (0x{:08X})",
+                                  static_cast<unsigned>(pres));
+                res = pres;
+            } else {
+                res = 0;   // rif variant succeeded
+            }
         }
         scePromoterUtilityExit();
     } else {
