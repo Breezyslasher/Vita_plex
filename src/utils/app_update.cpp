@@ -705,6 +705,13 @@ void startInstall(const ReleaseInfo rel) {
             if (!ui->dismissed->load())
                 stepActive(ui->install, "Preparing installer\xE2\x80\xA6", -1.0f);
         });
+        // Hand the target version to the stub's progress screen (best-effort;
+        // the stub omits the version clause if this file is absent).
+        {
+            std::string vpath = platformPath("update_version.txt");
+            SceUID vf = sceIoOpen(vpath.c_str(), SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0777);
+            if (vf >= 0) { sceIoWrite(vf, rel.tag.c_str(), rel.tag.size()); sceIoClose(vf); }
+        }
         std::string err;
         int rc = vita::installVpk("app0:updater.vpk", platformPath("updater_stage"), err);
         if (rc != 0) {

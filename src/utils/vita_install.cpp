@@ -393,7 +393,8 @@ int unloadScePaf() {
     return sceSysmoduleUnloadModuleInternalWithArg(SCE_SYSMODULE_INTERNAL_PAF, 0, nullptr, &opt);
 }
 
-int promoteApp(const std::string& path, std::string& err) {
+int promoteApp(const std::string& path, std::string& err,
+               const std::function<void(int tick)>& onPoll) {
     int res = loadScePaf();
     if (res < 0) {
         err = "cannot load ScePaf (" + hex((unsigned)res) + ")";
@@ -429,6 +430,7 @@ int promoteApp(const std::string& path, std::string& err) {
             while (guard++ < kMaxPolls) {
                 if (scePromoterUtilityGetState(&state) < 0) { state = 0; break; }
                 if (state == 0) break;   // idle => finished
+                if (onPoll) onPoll(guard);   // drives the UI spinner
                 sceKernelDelayThread(100 * 1000);
             }
             int result = 0;
@@ -457,13 +459,17 @@ int promoteApp(const std::string& path, std::string& err) {
 namespace vita {
 
 int installVpk(const std::string& vpkPath, const std::string& workDir, std::string& err,
-               std::function<void(int done, int total)> onProgress) {
+               std::function<void(int phase, int done, int total)> onProgress) {
     vlog("vita: installing %s via %s", vpkPath.c_str(), workDir.c_str());
 
     removePath(workDir);
     mkdirs(workDir);
 
-    if (extractVpk(vpkPath, workDir, err, onProgress) != 0) {
+    // Extract → phase 0, per archive entry.
+    auto extractCb = [&onProgress](int done, int total) {
+        if (onProgress) onProgress(PHASE_EXTRACT, done, total);
+    };
+    if (extractVpk(vpkPath, workDir, err, extractCb) != 0) {
         vlog("vita: extract failed: %s", err.c_str());
         removePath(workDir);
         return -1;
@@ -477,13 +483,20 @@ int installVpk(const std::string& vpkPath, const std::string& workDir, std::stri
         return -1;
     }
 
+    // Verify → phase 1, the head.bin forge.
+    if (onProgress) onProgress(PHASE_VERIFY, 0, 1);
     if (makeHeadBin(workDir, err) != 0) {
         vlog("vita: makeHeadBin failed: %s", err.c_str());
         removePath(workDir);
         return -1;
     }
+    if (onProgress) onProgress(PHASE_VERIFY, 1, 1);
 
-    if (promoteApp(workDir, err) < 0) {
+    // Install → phase 2, the promoter (poll ticks drive the spinner).
+    auto pollCb = [&onProgress](int tick) {
+        if (onProgress) onProgress(PHASE_INSTALL, tick, 0);
+    };
+    if (promoteApp(workDir, err, pollCb) < 0) {
         vlog("vita: promote failed: %s", err.c_str());
         removePath(workDir);
         return -1;
