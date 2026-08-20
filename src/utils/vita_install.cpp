@@ -24,6 +24,7 @@
 #include <psp2/io/fcntl.h>
 #include <psp2/io/dirent.h>
 #include <psp2/io/stat.h>
+#include <psp2/kernel/threadmgr.h>
 #include <psp2/promoterutil.h>
 #include <psp2/sysmodule.h>
 
@@ -384,23 +385,38 @@ int promoteApp(const std::string& path, std::string& err) {
 
     res = scePromoterUtilityInit();
     if (res >= 0) {
-        // VitaPlex is a free homebrew package with no license (work.bin /
-        // rif). scePromoterUtilityPromotePkg is the entry point for
-        // no-license packages; PromotePkgWithRif expects a rif and returned
-        // 0x80101114 on the real device. Try the correct (no-rif) call
-        // first and fall back to the rif variant, so whichever the
-        // installed firmware honours wins. Second arg is sync (1).
-        int pres = scePromoterUtilityPromotePkg(path.c_str(), 1);
+        // Kick the promotion asynchronously (sync=0) and poll GetState to
+        // completion, then read the real outcome from GetResult — the
+        // pattern pkgj and ONElua's game.install use. Calling with sync=1
+        // instead returned 0x80101114 up front (a "busy/queued" status,
+        // not the install result) and the no-rif variant hung; driving it
+        // async and reading GetResult is what actually completes.
+        int pres = scePromoterUtilityPromotePkgWithRif(path.c_str(), 0);
         if (pres < 0) {
-            brls::Logger::warning("vita: PromotePkg failed (0x{:08X}), trying PromotePkgWithRif",
-                                  static_cast<unsigned>(pres));
-            int pres2 = scePromoterUtilityPromotePkgWithRif(path.c_str(), 1);
-            if (pres2 < 0) {
+            err = fmt::format("the system installer would not start (0x{:08X})",
+                              static_cast<unsigned>(pres));
+            res = pres;
+        } else {
+            // Poll until idle. ~5 minutes at 100 ms — a large eboot takes a
+            // while — after which we give up rather than hang forever.
+            int state = 1;
+            int guard = 0;
+            const int kMaxPolls = 3000;
+            while (guard++ < kMaxPolls) {
+                if (scePromoterUtilityGetState(&state) < 0) { state = 0; break; }
+                if (state == 0) break;   // idle => finished
+                sceKernelDelayThread(100 * 1000);
+            }
+            int result = 0;
+            if (guard >= kMaxPolls) {
+                err = "the system installer timed out";
+                res = -1;
+            } else if (scePromoterUtilityGetResult(&result) < 0 || result < 0) {
                 err = fmt::format("the system installer rejected the package (0x{:08X})",
-                                  static_cast<unsigned>(pres));
-                res = pres;
+                                  static_cast<unsigned>(result));
+                res = result ? result : -1;
             } else {
-                res = 0;   // rif variant succeeded
+                res = 0;   // promoted
             }
         }
         scePromoterUtilityExit();
