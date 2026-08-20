@@ -969,6 +969,17 @@ if(PLATFORM_PSV)
     target_compile_definitions(vitaplex_updater PRIVATE __PSV__ MINIZ_NO_STDIO MINIZ_NO_TIME)
     target_link_libraries(vitaplex_updater
         mbedcrypto            # mbedtls_sha1 for the fpkg hmac
+        # vita2d + its stack, for the tiny progress screen (system PGF font).
+        vita2d
+        freetype
+        png
+        z
+        SceGxm_stub
+        SceDisplay_stub
+        SceCommonDialog_stub
+        ScePgf_stub
+        SceCtrl_stub
+        # self-update + relaunch
         ScePromoterUtil_stub
         SceSysmodule_stub
         SceAppMgr_stub
