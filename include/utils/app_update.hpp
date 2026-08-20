@@ -10,10 +10,11 @@
  *
  *   Switch   — downloads the matching .nro and replaces the running one
  *              (path captured from argv[0]); relaunch applies it.
- *   PS Vita  — downloads the .vpk and promotes it in place via
- *              ScePromoterUtility (utils/vita_install); the app quits to
- *              the LiveArea and the user relaunches the new bubble. If the
- *              promoter refuses, the .vpk is kept for a VitaShell install.
+ *   PS Vita  — downloads the .vpk. The Vita installer refuses to replace
+ *              a title while it is the running app (0x80101114 = in use),
+ *              so a promote is attempted (utils/vita_install) but normally
+ *              can't complete for the running app; the .vpk is kept and
+ *              the user finishes the install from VitaShell.
  *   Android  — downloads the .apk and hands it to the system package
  *              installer (content:// via ApkProvider — no browser
  *              involved, so Android TV works too).

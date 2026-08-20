@@ -464,7 +464,7 @@ void startInstall(const ReleaseInfo rel) {
     panel->addView(keepOpen);
 
 #if defined(__PSV__)
-    const char* relaunchLabel = "Relaunch from LiveArea";
+    const char* relaunchLabel = "Finish in VitaShell";
 #elif defined(__SWITCH__)
     const char* relaunchLabel = "Relaunch to apply";
 #elif defined(__PS4__)
@@ -713,11 +713,24 @@ void startInstall(const ReleaseInfo rel) {
                 });
             });
         if (rc != 0) {
-            // Keep the downloaded VPK so the user has a guaranteed path even
-            // when the promoter refuses (the running title can be a hard no
-            // on some setups): it's a normal VitaShell-installable VPK.
-            installFailed(err + "\n\nThe update was saved to " + path +
-                          " - you can install it with VitaShell.", ui);
+            // The Vita installer refuses to replace a title while that
+            // title is the running app (0x80101114 = in use) - the same
+            // reason you can't install VitaShell from inside VitaShell. So
+            // an in-place self-update can't complete here on any setup. The
+            // download is a normal VitaShell-installable VPK; present that
+            // as the finishing step, not a failure. (rc is logged with the
+            // real code in vita_install for diagnostics.)
+            (void)err;
+            brls::sync([ui]() {
+                if (!ui->dismissed->load()) stepDone(ui->install, "Ready to install");
+            });
+            finishInstall(ui, [path]() {
+                auto* d = new brls::Dialog(
+                    "Update downloaded.\n\nVitaPlex can't replace itself while it's "
+                    "open, so open VitaShell and install this file to finish:\n\n" + path);
+                d->addButton("OK", []() {});
+                d->open();
+            });
             s_busy = false;
             return;
         }
@@ -1214,7 +1227,7 @@ void offerUpdate(const ReleaseInfo rel) {
     if (rel.assetSize > 0) caption = mbLabel(rel.assetSize) + " MB download";
 #if defined(__PSV__)
     caption += (caption.empty() ? "" : " \xC2\xB7 ") +
-               std::string("installs in place \xC2\xB7 relaunch from LiveArea");
+               std::string("downloads here \xC2\xB7 finish in VitaShell");
 #elif defined(__SWITCH__)
     caption += (caption.empty() ? "" : " \xC2\xB7 ") +
                std::string("installs in place \xC2\xB7 relaunch to apply");
