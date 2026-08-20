@@ -38,6 +38,7 @@
 #ifdef ANDROID
 #include <SDL2/SDL.h>
 #include <jni.h>
+#include <sys/system_properties.h>
 #endif
 #ifdef __PS4__
 #include "utils/ps4_install.hpp"
@@ -180,6 +181,18 @@ std::string assetSuffix() {
     return "-switch-opengl.nro";
 #endif
 #elif defined(ANDROID)
+    // Pick the APK by what the DEVICE supports, not the running binary's
+    // ABI: a 64-bit phone must get arm64-v8a even if a 32-bit build was
+    // somehow installed on it (the reported "downloaded the wrong arch"
+    // bug). ro.product.cpu.abilist lists the device ABIs best-first.
+    {
+        char abilist[256] = {0};
+        __system_property_get("ro.product.cpu.abilist", abilist);
+        std::string abis = abilist;
+        if (abis.find("arm64-v8a") != std::string::npos)   return "-arm64-v8a.apk";
+        if (abis.find("armeabi-v7a") != std::string::npos) return "-armeabi-v7a.apk";
+    }
+    // Fallback: the running binary's own ABI.
 #if defined(__aarch64__)
     return "-arm64-v8a.apk";
 #else
