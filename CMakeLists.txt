@@ -949,6 +949,37 @@ endif()
 # Platform packaging / post-build
 # ---------------------------------------------------------------------------
 if(PLATFORM_PSV)
+    # ── Updater stub (self-update helper) ───────────────────────────────
+    # A second, tiny Vita app with its own title id (VPLXUPD01). VitaPlex
+    # cannot promote over itself — the installer returns 0x80101114 "in
+    # use" for the running title — so at update time VitaPlex installs and
+    # launches this stub; with VitaPlex now closed, the stub promotes the
+    # downloaded VPK and relaunches VitaPlex. This is the AutoPlugin2
+    # technique. It shares the extract/promote code (utils/vita_install),
+    # which is deliberately free of borealis/fmt so the stub links without
+    # the UI stack. The stub's own .vpk is bundled inside VitaPlex.vpk
+    # (as updater.vpk) so VitaPlex can install it on demand.
+    add_executable(vitaplex_updater
+        src/updater_stub/main.cpp
+        src/utils/vita_install.cpp
+        lib/miniz/miniz.c)
+    target_include_directories(vitaplex_updater PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/miniz)
+    target_compile_definitions(vitaplex_updater PRIVATE __PSV__ MINIZ_NO_STDIO MINIZ_NO_TIME)
+    target_link_libraries(vitaplex_updater
+        mbedcrypto            # mbedtls_sha1 for the fpkg hmac
+        ScePromoterUtil_stub
+        SceSysmodule_stub
+        SceAppMgr_stub
+        SceIofilemgr_stub
+        SceLibKernel_stub)
+    vita_create_self(vitaplex_updater.self vitaplex_updater UNSAFE NOASLR)
+    vita_create_vpk(vitaplex_updater.vpk VPLXUPD01 vitaplex_updater.self
+        VERSION 01.00
+        NAME "VitaPlex Updater"
+        FILE app/platform/psv/sce_sys/icon0.png sce_sys/icon0.png)
+
     vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME} UNSAFE NOASLR)
 
     # App icons, XML layouts and the PSV hint-button art are globbed at
@@ -1001,6 +1032,12 @@ if(PLATFORM_PSV)
         FILE resources/font/switch_font.ttf               resources/font/switch_font.ttf
         FILE resources/font/switch_icons.ttf              resources/font/switch_icons.ttf
         FILE resources/material/MaterialIcons-Regular.ttf resources/material/MaterialIcons-Regular.ttf
+
+        # The bundled updater stub, installed + launched at self-update
+        # time. Listing it as a FILE makes the main vpk's build command
+        # depend on this path, which is the output of the stub's
+        # vita_create_vpk above, so CMake builds the stub vpk first.
+        FILE ${CMAKE_BINARY_DIR}/vitaplex_updater.vpk     updater.vpk
     )
 
 elseif(PLATFORM_PS4)

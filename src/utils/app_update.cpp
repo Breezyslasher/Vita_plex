@@ -464,7 +464,7 @@ void startInstall(const ReleaseInfo rel) {
     panel->addView(keepOpen);
 
 #if defined(__PSV__)
-    const char* relaunchLabel = "Finish in VitaShell";
+    const char* relaunchLabel = "Reopens automatically";
 #elif defined(__SWITCH__)
     const char* relaunchLabel = "Relaunch to apply";
 #elif defined(__PS4__)
@@ -695,52 +695,46 @@ void startInstall(const ReleaseInfo rel) {
             d->open();
         });
 #else
+        // VitaPlex can't promote over itself while it is the running title
+        // (the installer returns 0x80101114 "in use"), so hand the install
+        // to a tiny bundled stub app — the AutoPlugin2 technique. VitaPlex
+        // installs the stub (the stub isn't running, so promoting IT is
+        // fine), launches it, and quits; with VitaPlex closed the stub
+        // promotes the downloaded update.vpk and relaunches VitaPlex.
+        brls::sync([ui]() {
+            if (!ui->dismissed->load())
+                stepActive(ui->install, "Preparing installer\xE2\x80\xA6", -1.0f);
+        });
         std::string err;
-        int lastInstallPct = -1;
-        int rc = vita::installVpk(path, platformPath("update"), err,
-            [ui, &lastInstallPct](int done, int totalFiles) {
-                if (totalFiles <= 0) return;
-                int pct = done * 100 / totalFiles;
-                if (pct == lastInstallPct) return;
-                lastInstallPct = pct;
-                brls::sync([ui, pct]() {
-                    if (ui->dismissed->load()) return;
-                    // Extraction is the long part; the promotion after the
-                    // last file reports nothing, so 100% reads "Finishing".
-                    if (pct >= 100) stepActive(ui->install, "Finishing\xE2\x80\xA6", 1.0f);
-                    else stepActive(ui->install, "Installing\xE2\x80\xA6 " +
-                                    std::to_string(pct) + "%", (float)pct / 100.0f);
-                });
-            });
+        int rc = vita::installVpk("app0:updater.vpk", platformPath("updater_stage"), err);
         if (rc != 0) {
-            // The Vita installer refuses to replace a title while that
-            // title is the running app (0x80101114 = in use) - the same
-            // reason you can't install VitaShell from inside VitaShell. So
-            // an in-place self-update can't complete here on any setup. The
-            // download is a normal VitaShell-installable VPK; present that
-            // as the finishing step, not a failure. (rc is logged with the
-            // real code in vita_install for diagnostics.)
-            (void)err;
+            // Couldn't stage the stub — fall back to the manual VitaShell
+            // path so the download isn't wasted. update.vpk is kept.
             brls::sync([ui]() {
-                if (!ui->dismissed->load()) stepDone(ui->install, "Ready to install");
+                if (!ui->dismissed->load()) stepDone(ui->install, "Downloaded");
             });
             finishInstall(ui, [path]() {
                 auto* d = new brls::Dialog(
-                    "Update downloaded.\n\nVitaPlex can't replace itself while it's "
-                    "open, so open VitaShell and install this file to finish:\n\n" + path);
+                    "Update downloaded.\n\nThe in-app installer couldn't start, so "
+                    "open VitaShell and install this file to finish:\n\n" + path);
                 d->addButton("OK", []() {});
                 d->open();
             });
             s_busy = false;
             return;
         }
-        sceIoRemove(path.c_str());
+        // Stub installed. Launch it and quit — it takes over from here.
         brls::sync([ui]() {
-            if (!ui->dismissed->load()) stepDone(ui->install, "Installed");
+            if (!ui->dismissed->load()) stepActive(ui->relaunch, "Installing update\xE2\x80\xA6", -1.0f);
         });
         finishInstall(ui, []() {
-            auto* d = new brls::Dialog("Update installed. VitaPlex will now close - relaunch it from the LiveArea.");
-            d->addButton("OK", []() { brls::Application::quit(); });
+            auto* d = new brls::Dialog(
+                "Installing the update.\n\nVitaPlex will close and reopen on its own "
+                "in a few seconds. If it doesn't, relaunch it from the LiveArea.");
+            d->addButton("OK", []() {
+                vita::launchTitle("VPLXUPD01");
+                brls::Application::quit();
+            });
             d->open();
         });
 #endif
@@ -1227,7 +1221,7 @@ void offerUpdate(const ReleaseInfo rel) {
     if (rel.assetSize > 0) caption = mbLabel(rel.assetSize) + " MB download";
 #if defined(__PSV__)
     caption += (caption.empty() ? "" : " \xC2\xB7 ") +
-               std::string("downloads here \xC2\xB7 finish in VitaShell");
+               std::string("installs in place \xC2\xB7 reopens automatically");
 #elif defined(__SWITCH__)
     caption += (caption.empty() ? "" : " \xC2\xB7 ") +
                std::string("installs in place \xC2\xB7 relaunch to apply");

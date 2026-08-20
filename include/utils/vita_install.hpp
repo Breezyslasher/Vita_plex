@@ -30,5 +30,9 @@ namespace vita {
 int installVpk(const std::string& vpkPath, const std::string& workDir, std::string& err,
                std::function<void(int done, int total)> onProgress = {});
 
+/// Launch an installed app by its title id (via a psgm:play URI). Used to hand
+/// off to the updater stub, and by the stub to relaunch VitaPlex afterwards.
+void launchTitle(const std::string& titleId);
+
 }  // namespace vita
 #endif

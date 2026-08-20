@@ -10,11 +10,13 @@
  *
  *   Switch   — downloads the matching .nro and replaces the running one
  *              (path captured from argv[0]); relaunch applies it.
- *   PS Vita  — downloads the .vpk. The Vita installer refuses to replace
- *              a title while it is the running app (0x80101114 = in use),
- *              so a promote is attempted (utils/vita_install) but normally
- *              can't complete for the running app; the .vpk is kept and
- *              the user finishes the install from VitaShell.
+ *   PS Vita  — downloads the .vpk. A title can't promote over itself
+ *              (0x80101114 = in use), so VitaPlex installs and launches a
+ *              tiny bundled updater stub (VPLXUPD01) and quits; with
+ *              VitaPlex closed the stub promotes the .vpk and relaunches
+ *              VitaPlex (the AutoPlugin2 technique, utils/vita_install +
+ *              src/updater_stub). Falls back to a VitaShell install if the
+ *              stub can't be staged.
  *   Android  — downloads the .apk and hands it to the system package
  *              installer (content:// via ApkProvider — no browser
  *              involved, so Android TV works too).
