@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.breezyslasher.VitaPlex</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <!-- TODO: the project has no declared license yet (README: "Add license
+       information here"). Flathub requires a valid project license here before
+       it will accept the app; set this to the real SPDX id once chosen. -->
+  <project_license>LicenseRef-proprietary</project_license>
+  <name>VitaPlex</name>
+  <summary>Native Plex client for desktop and consoles</summary>
+  <description>
+    <p>
+      VitaPlex is a native Plex client built on borealis and libmpv. It browses
+      your Plex libraries and plays movies, shows, music and live TV with a
+      controller-friendly interface.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Direct play and transcoding via libmpv</li>
+      <li>Downloads for offline playback</li>
+      <li>SyncLounge watch-together support</li>
+      <li>Live TV and DVR</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.breezyslasher.VitaPlex.desktop</launchable>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+    <category>Player</category>
+  </categories>
+  <url type="homepage">https://github.com/Breezyslasher/Vita_plex</url>
+  <url type="bugtracker">https://github.com/Breezyslasher/Vita_plex/issues</url>
+  <developer id="io.github.breezyslasher">
+    <name>Breezyslasher</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <!-- Screenshots are required by Flathub; add at least one before submission:
+  <screenshots>
+    <screenshot type="default">
+      <image>https://.../screenshot.png</image>
+    </screenshot>
+  </screenshots>
+  -->
+  <releases>
+    <release version="2.1.8" date="2026-08-21"/>
+  </releases>
+</component>

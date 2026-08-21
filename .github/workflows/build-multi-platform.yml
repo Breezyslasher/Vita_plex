@@ -22,6 +22,7 @@ on:
         - psvita
         - ps4
         - appimage
+        - flatpak
         - android
         - aur
         - deb
@@ -851,6 +852,33 @@ jobs:
         with:
           name: VitaPlex-appimage-${{ matrix.arch }}-${{ github.run_number }}
           path: VitaPlex-${{ matrix.arch }}-${{ github.run_number }}.AppImage
+
+  # ───────────────────────────────────────────────
+  # Flatpak — org.freedesktop.Platform 24.08 (Flathub target)
+  # ───────────────────────────────────────────────
+  build-flatpak:
+    needs: [resolve-version]
+    if: ${{ inputs.platform == 'flatpak' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
+    name: Flatpak
+    runs-on: ubuntu-24.04
+    container:
+      image: bilelmoussaoui/flatpak-github-actions:freedesktop-24.08
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Build Flatpak bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: VitaPlex.flatpak
+          manifest-path: flatpak/io.github.breezyslasher.VitaPlex.yaml
+          cache-key: flatpak-builder-${{ hashFiles('flatpak/io.github.breezyslasher.VitaPlex.yaml') }}
+      - name: Upload Flatpak artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitaPlex-flatpak-${{ github.run_number }}
+          path: VitaPlex.flatpak
 
   # ───────────────────────────────────────────────
   # Nintendo Switch — Matrix (opengl + deko3d)
