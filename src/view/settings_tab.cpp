@@ -117,6 +117,8 @@ static const SectionMeta kSections[] = {
                             "Direct play, quality preset, and forced transcoding." },
     /* SEC_NETWORK     */ { "Network",         "web.png",
                             "Connection timeout for slow links." },
+    /* SEC_SYNCLOUNGE  */ { "SyncLounge",      "refresh.png",
+                            "Watch in sync with a room — party pause and host." },
     /* SEC_DOWNLOADS   */ { "Downloads",       "download.png",
                             "Storage, cleanup, and delete-after-watch." },
     /* SEC_MUSIC       */ { "Music",           "music.png",
@@ -287,6 +289,7 @@ SettingsTab::SettingsTab() {
     m_sectionBoxes[SEC_PLAYBACK]    = createPlaybackSection();
     m_sectionBoxes[SEC_TRANSCODING] = createTranscodeSection();
     m_sectionBoxes[SEC_NETWORK]     = createNetworkSection();
+    m_sectionBoxes[SEC_SYNCLOUNGE]  = createSyncLoungeSection();
     m_sectionBoxes[SEC_DOWNLOADS]   = createDownloadsSection();
     m_sectionBoxes[SEC_MUSIC]       = createMusicSection();
     m_sectionBoxes[SEC_LIVETV]      = createLiveTVSection();
@@ -1025,6 +1028,72 @@ brls::Box* SettingsTab::createNetworkSection() {
     });
     box->addView(networkTestCell);
 
+    auto* infoLabel = new brls::Label();
+    infoLabel->setText("Raise the timeout if you're on a slow or unstable link.");
+    infoLabel->setFontSize(14);
+    infoLabel->setMarginLeft(16);
+    infoLabel->setMarginTop(8);
+    box->addView(infoLabel);
+
+    // HTTP cache controls. Lifetime is a single global TTL applied to
+    // every cached endpoint (library sections, Home hubs, Live TV
+    // channels). "Off" disables both reads and writes so the user gets
+    // fully live data; the other presets cover from "snappy nav" (15
+    // min) to "set and forget" (1 week).
+    static const std::vector<int> kCacheMinutes = { 0, 15, 60, 1440, 10080 };
+    static const std::vector<std::string> kCacheLabels = {
+        "Off", "15 minutes", "1 hour", "1 day", "1 week"
+    };
+    int cacheIdx = 2;  // default 1 hour
+    for (size_t i = 0; i < kCacheMinutes.size(); i++) {
+        if (kCacheMinutes[i] == settings.cacheLifetimeMinutes) {
+            cacheIdx = (int)i;
+            break;
+        }
+    }
+    m_cacheLifetimeSelector = makePickerCell("Cache Lifetime", kCacheLabels, cacheIdx,
+        [](int idx) {
+            AppSettings& s = Application::getInstance().getSettings();
+            s.cacheLifetimeMinutes = kCacheMinutes[idx];
+            Application::getInstance().saveSettings();
+        });
+    box->addView(m_cacheLifetimeSelector);
+
+    // Clear cache button. Detail text shows the live byte count so the
+    // user can see whether the cache is actually doing anything.
+    m_clearCacheCell = new brls::DetailCell();
+    m_clearCacheCell->setText("Clear Cache");
+    {
+        size_t bytes = HttpCache::totalBytes();
+        size_t entries = HttpCache::entryCount();
+        if (entries == 0) {
+            m_clearCacheCell->setDetailText("Empty");
+        } else {
+            char buf[64];
+            if (bytes >= 1024 * 1024) {
+                snprintf(buf, sizeof(buf), "%zu entries, %.1f MB",
+                         entries, bytes / (1024.0 * 1024.0));
+            } else {
+                snprintf(buf, sizeof(buf), "%zu entries, %zu KB",
+                         entries, (bytes + 1023) / 1024);
+            }
+            m_clearCacheCell->setDetailText(buf);
+        }
+    }
+    m_clearCacheCell->registerClickAction([this](brls::View*) {
+        HttpCache::clear();
+        if (m_clearCacheCell) m_clearCacheCell->setDetailText("Empty");
+        brls::Application::notify("Cache cleared");
+        return true;
+    });
+    box->addView(m_clearCacheCell);
+
+    return box;
+}
+
+brls::Box* SettingsTab::createSyncLoungeSection() {
+    brls::Box* box = makeSectionBox();
+
     // Persistent SyncLounge session: while connected, an active player follows
     // the room host's play / pause / seek (receive-only for now). Click to
     // connect (prompts server + room) or, when already connected, disconnect.
@@ -1099,65 +1168,14 @@ brls::Box* SettingsTab::createNetworkSection() {
     });
     box->addView(membersCell);
 
+    // Short explainer for the dedicated tab.
     auto* infoLabel = new brls::Label();
-    infoLabel->setText("Raise the timeout if you're on a slow or unstable link.");
+    infoLabel->setText("Connect to a SyncLounge room to watch together in sync. "
+                       "The host drives playback; Party Members lets you hand off host.");
     infoLabel->setFontSize(14);
     infoLabel->setMarginLeft(16);
     infoLabel->setMarginTop(8);
     box->addView(infoLabel);
-
-    // HTTP cache controls. Lifetime is a single global TTL applied to
-    // every cached endpoint (library sections, Home hubs, Live TV
-    // channels). "Off" disables both reads and writes so the user gets
-    // fully live data; the other presets cover from "snappy nav" (15
-    // min) to "set and forget" (1 week).
-    static const std::vector<int> kCacheMinutes = { 0, 15, 60, 1440, 10080 };
-    static const std::vector<std::string> kCacheLabels = {
-        "Off", "15 minutes", "1 hour", "1 day", "1 week"
-    };
-    int cacheIdx = 2;  // default 1 hour
-    for (size_t i = 0; i < kCacheMinutes.size(); i++) {
-        if (kCacheMinutes[i] == settings.cacheLifetimeMinutes) {
-            cacheIdx = (int)i;
-            break;
-        }
-    }
-    m_cacheLifetimeSelector = makePickerCell("Cache Lifetime", kCacheLabels, cacheIdx,
-        [](int idx) {
-            AppSettings& s = Application::getInstance().getSettings();
-            s.cacheLifetimeMinutes = kCacheMinutes[idx];
-            Application::getInstance().saveSettings();
-        });
-    box->addView(m_cacheLifetimeSelector);
-
-    // Clear cache button. Detail text shows the live byte count so the
-    // user can see whether the cache is actually doing anything.
-    m_clearCacheCell = new brls::DetailCell();
-    m_clearCacheCell->setText("Clear Cache");
-    {
-        size_t bytes = HttpCache::totalBytes();
-        size_t entries = HttpCache::entryCount();
-        if (entries == 0) {
-            m_clearCacheCell->setDetailText("Empty");
-        } else {
-            char buf[64];
-            if (bytes >= 1024 * 1024) {
-                snprintf(buf, sizeof(buf), "%zu entries, %.1f MB",
-                         entries, bytes / (1024.0 * 1024.0));
-            } else {
-                snprintf(buf, sizeof(buf), "%zu entries, %zu KB",
-                         entries, (bytes + 1023) / 1024);
-            }
-            m_clearCacheCell->setDetailText(buf);
-        }
-    }
-    m_clearCacheCell->registerClickAction([this](brls::View*) {
-        HttpCache::clear();
-        if (m_clearCacheCell) m_clearCacheCell->setDetailText("Empty");
-        brls::Application::notify("Cache cleared");
-        return true;
-    });
-    box->addView(m_clearCacheCell);
 
     return box;
 }
