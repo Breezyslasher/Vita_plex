@@ -12,16 +12,20 @@
     /data/VitaPlex is on a different partition and is untouched) and hands the
     downloaded pkg to the system installer (BGFT).
 
-    It hands the pkg to BGFT and exits: the install then completes in the
-    background as a system service, the PS4 shows its own "Installing…" progress
-    in the notifications / Downloads list, and the user reopens VitaPlex once it
-    finishes. It does NOT draw its own progress screen — a helper launched by a
-    quitting app never becomes the foreground/composited process on this
-    hardware, so every SDL draw call succeeds onto a display that keeps showing
-    the black launch splash (confirmed on device across several builds, and
-    against the SDL PS4 fork's own splash handling). The uiInit()/uiFrame()
-    drawing code below is kept but deliberately left uncalled; see the note at
-    the end of main().
+    It hands the downloaded pkg to BGFT, then STAYS ALIVE as the foreground app
+    until the install has actually finished, and only then exits. Waiting is
+    essential: BGFT installs in the background, so exiting early leaves VPLX00002
+    half-written, and launching a half-written title crashes it at startup
+    (CE-36329-3). Holding the foreground until the install completes also means
+    the user can't reopen VitaPlex too soon. It draws NO progress screen — a
+    helper launched by a quitting app never becomes the composited process on
+    this hardware, so every SDL draw call succeeds onto a display that stays
+    black (confirmed on device across many builds, and against the SDL PS4 fork's
+    own splash handling). The uiInit()/uiFrame() drawing code below is kept but
+    deliberately left uncalled; the screen is simply black while we wait. It does
+    NOT relaunch VitaPlex (that too is reported as CE-36329-3) — the user reopens
+    it from the home screen once the black screen clears, by which point the
+    title is whole. See the notes in main().
 
     Everything is fixed by convention so no arguments cross the app boundary:
       - the pkg to install : /data/VitaPlex/update.pkg
@@ -427,9 +431,9 @@ int main(int, char*[]) {
     // NOTE: no progress window is created anywhere in this build. Drawing one
     // was tried across several on-device builds and abandoned — a helper
     // launched by a quitting VitaPlex never becomes the foreground/composited
-    // process here, so every SDL draw succeeded onto a display still showing the
-    // black launch splash. The system's own install UI stands in instead (see
-    // the note at the end of main()).
+    // process here, so every SDL draw succeeded onto a black display. The screen
+    // therefore stays black while we wait out the install at the end of main();
+    // there is nothing to render.
 
     char contentId[40] = {0};
     if (!readContentId(kPkgPath, contentId))
@@ -529,26 +533,69 @@ int main(int, char*[]) {
              kPkgPath);
     }
 
-    // Once BGFT has the task, the install completes in the background as a
-    // system service even after we exit, and the PS4 shows its own install
-    // progress ("Installing..." in the notifications / Downloads list). So we
-    // simply exit here.
+    // Wait here until the install has ACTUALLY finished, THEN exit.
     //
-    // We intentionally do NOT draw a progress screen and do NOT relaunch
-    // VitaPlex, after proving on-device that both fight the platform:
-    //   * A process launched via sceSystemServiceLaunchApp by a quitting app
-    //     never acquires video-out here — every SDL call succeeds but nothing
-    //     reaches the screen (blank). Rendering worked only when the helper was
-    //     launched manually from the home screen.
-    //   * Relaunching VPLX00002 the moment the transfer starts launches a title
-    //     that was just uninstalled and is still being written, which the
-    //     system reports as a crash (CE-36329-3).
-    // The user reopens VitaPlex from the home screen once the install
-    // notification finishes — the same flow every other PS4 homebrew uses.
-    // VitaPlex removes this helper on its next start (ps4::removeUpdaterApp).
-    sleep(2);
-    vlog("ps4 updater: done (install continues in the background; reopen "
-         "VitaPlex when the system notification finishes)");
+    // This is the whole reason VitaPlex was crashing at startup (CE-36329-3) on
+    // the fire-and-forget build: BGFT installs in the background, so if we exit
+    // the instant the task starts, VPLX00002 is still half-written — and
+    // launching a half-written title crashes it during video-out init (its log
+    // died right after "Using platform Ps4", 83ms in). By staying alive until
+    // the install completes we (a) guarantee the title is whole before anything
+    // can launch it and (b) keep the foreground, so the user physically can't
+    // reopen VitaPlex too soon. This is what builds 1580/1581 effectively did,
+    // which is why 2.1.8 booted cleanly then.
+    //
+    // We still draw NOTHING (a helper launched by a quitting app can't acquire
+    // the display — proven across many builds), so this is a black screen while
+    // the system installs. And we do NOT relaunch VitaPlex: launching the
+    // freshly-written title from here is itself reported as CE-36329-3. The user
+    // reopens VitaPlex from the home screen once the black screen clears; by
+    // then the install is done, so it starts clean. VitaPlex removes this helper
+    // on its next start (ps4::removeUpdaterApp).
+    //
+    // Completion is detected the reliable way: the BGFT task is reaped AND the
+    // title reports installed-and-not-installing. Never from "the title exists"
+    // alone — BGFT creates /user/app/<id> up front, so that flips true seconds
+    // into a minute-long install.
+    if (ret == 0 && p_sceBgftServiceDownloadGetProgress) {
+        const Uint32 t0 = SDL_GetTicks();
+        const Uint32 kTimeoutMs = 15u * 60u * 1000u;   // generous; big pkg, slow HDD
+        bool sawTask = false;
+        while (SDL_GetTicks() - t0 < kTimeoutMs) {
+            SDL_Event ev;
+            while (SDL_PollEvent(&ev)) { /* drain so we're not flagged unresponsive */ }
+
+            BgftTaskProgress prog{};
+            int pr = p_sceBgftServiceDownloadGetProgress(taskId, &prog);
+            if (pr == 0) {
+                sawTask = true;
+                if (prog.errorResult != 0) {
+                    vlog("ps4 updater: install failed (0x%08X) — pkg kept at %s",
+                         (unsigned)prog.errorResult, kPkgPath);
+                    break;
+                }
+            } else if (sawTask) {
+                // Task reaped: the transfer is done. Confirm the system has
+                // finished registering the title before we release the screen.
+                int exists = 0;
+                bool present = p_sceAppInstUtilAppExists &&
+                               p_sceAppInstUtilAppExists(kTargetId, &exists) == 0 && exists != 0;
+                bool busy = p_sceAppInstUtilAppIsInInstalling &&
+                            p_sceAppInstUtilAppIsInInstalling(contentId);
+                if (present && !busy) {
+                    vlog("ps4 updater: install finished after %us — safe to reopen",
+                         (unsigned)((SDL_GetTicks() - t0) / 1000));
+                    break;
+                }
+            }
+            SDL_Delay(200);
+        }
+    } else {
+        // Install never started; nothing to wait on. The pkg is kept on disk.
+        sleep(2);
+    }
+
+    vlog("ps4 updater: done");
     return 0;
 }
 
