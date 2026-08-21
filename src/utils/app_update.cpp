@@ -668,28 +668,105 @@ void startInstall(const ReleaseInfo rel) {
             env->DeleteLocalRef(utils);
         });
 #elif defined(__PS4__)
-        // Register the PKG with the system installer (BGFT): the console
-        // shows its own progress notification. The install replaces this
-        // app, so the confirmation asks the user to exit.
+        // A running PS4 title can't be replaced in place (BGFT installs into
+        // the locked /user/app/<titleid>, and uninstalling the running title
+        // kills this process), so hand off to the separate updater helper
+        // (VPLX00003): with VitaPlex closed it uninstalls the old title and
+        // installs the downloaded pkg via BGFT, which shows its own progress.
+        // If the helper isn't installed, keep the pkg and guide a manual
+        // install.
         {
             std::string err;
-            if (ps4::installPkg(path, "VitaPlex " + rel.tag, err) != 0) {
-                installFailed(err, ui);
-                s_busy = false;
-                return;
+            // Check it's installed BEFORE launching: launching a title that
+            // isn't there pops a system "Cannot start the application"
+            // (CE-40841-7) dialog, which the user would see mid-update.
+            if (ps4::isUpdaterInstalled() && ps4::launchUpdater(err) == 0) {
+                brls::sync([ui]() {
+                    if (!ui->dismissed->load()) stepDone(ui->install, "Handed to updater");
+                });
+                finishInstall(ui, []() {
+                    auto* d = new brls::Dialog(
+                        "The VitaPlex Updater is taking over to install the "
+                        "update. VitaPlex will close now - reopen it once the "
+                        "system's install notification finishes.");
+                    d->addButton("Close VitaPlex", []() { brls::Application::quit(); });
+                    d->open();
+                });
+            } else {
+                // The helper isn't installed (it removes itself after each run,
+                // so this is the normal path). Its pkg ships inside VitaPlex's
+                // own pkg — that's why the user only ever installs one app — so
+                // install it now, wait for it to become launchable, and go.
+                // It's a different title, so this isn't blocked by
+                // "already installed".
+                std::string setupErr;
+                if (ps4::installUpdaterApp(setupErr) == 0) {
+                    brls::sync([ui]() {
+                        if (!ui->dismissed->load())
+                            stepActive(ui->install, "Preparing updater", -1.0f);
+                    });
+                    // BGFT installs in the background. Wait by asking whether
+                    // the title is installed yet — NOT by trying to launch it:
+                    // launching a title that isn't ready pops a system "Cannot
+                    // start the application" (CE-40841-7) dialog every attempt.
+                    bool ready = false;
+                    for (int i = 0; i < 60 && !ready; ++i) {
+                        std::this_thread::sleep_for(std::chrono::seconds(2));
+                        ready = ps4::isUpdaterInstalled();
+                    }
+                    // Let the install settle before the one and only launch.
+                    bool launched = false;
+                    if (ready) {
+                        std::this_thread::sleep_for(std::chrono::seconds(3));
+                        std::string tryErr;
+                        launched = ps4::launchUpdater(tryErr) == 0;
+                    }
+                    if (launched) {
+                        brls::sync([ui]() {
+                            if (!ui->dismissed->load()) stepDone(ui->install, "Handed to updater");
+                        });
+                        finishInstall(ui, []() {
+                            auto* d = new brls::Dialog(
+                                "The VitaPlex Updater is taking over to install "
+                                "the update. VitaPlex will close now - reopen it "
+                                "once the system's install notification finishes.");
+                            d->addButton("Close VitaPlex", []() { brls::Application::quit(); });
+                            d->open();
+                        });
+                    } else {
+                        brls::sync([ui]() {
+                            if (!ui->dismissed->load()) stepDone(ui->install, "Downloaded");
+                        });
+                        finishInstall(ui, [path]() {
+                            auto* d = new brls::Dialog(
+                                "Update downloaded to\n" + path + "\n\nThe updater "
+                                "is still installing. Try Update again in a moment, "
+                                "or close VitaPlex and install that .pkg with "
+                                "Itemzflow (or Debug Settings > Install Package).");
+                            d->addButton("OK", []() {});
+                            d->open();
+                        });
+                    }
+                } else {
+                    // Couldn't set the helper up either: the pkg is downloaded,
+                    // so keep it and point the user at a PKG installer.
+                    brls::sync([ui]() {
+                        if (!ui->dismissed->load()) stepDone(ui->install, "Downloaded");
+                    });
+                    finishInstall(ui, [path, setupErr]() {
+                        auto* d = new brls::Dialog(
+                            "Update downloaded to\n" + path + "\n\nThe in-app "
+                            "installer couldn't start (" + setupErr + "). Close "
+                            "VitaPlex and install that .pkg with Itemzflow (or "
+                            "Debug Settings > Install Package) to finish.");
+                        d->addButton("OK", []() {});
+                        d->open();
+                    });
+                }
             }
+            s_busy = false;
+            return;
         }
-        brls::sync([ui]() {
-            if (!ui->dismissed->load()) stepDone(ui->install, "Handed to system installer");
-        });
-        finishInstall(ui, []() {
-            auto* d = new brls::Dialog(
-                "The PS4 is installing the update - its progress shows as a "
-                "system notification. Exit VitaPlex to let it finish, then "
-                "launch the new version.");
-            d->addButton("Exit VitaPlex", []() { brls::Application::quit(); });
-            d->open();
-        });
 #elif defined(__SWITCH__)
         // The romfs is mapped from the running NRO: unmount before
         // replacing the file, exactly as pleNx does.
@@ -1371,6 +1448,17 @@ void checkForUpdates(bool manual) {
     asyncRun([manual]() {
         // At startup, give login and the first content fetches priority.
         if (!manual) std::this_thread::sleep_for(std::chrono::seconds(3));
+
+#ifdef __PS4__
+        // Tidy up the updater helper left over from a completed update. It is
+        // only needed while an update installs, and VitaPlex reinstalls it on
+        // demand from the copy bundled in its own pkg. Doing it from HERE, and
+        // not from the helper itself, is deliberate: a title that uninstalls
+        // itself is killed mid-call and the system reports it as a crash
+        // (CE-36329-3). From VitaPlex it's just another title, so it goes
+        // quietly.
+        ps4::removeUpdaterApp();
+#endif
 
         HttpClient client;
         HttpRequest req;

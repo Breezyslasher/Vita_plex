@@ -713,9 +713,15 @@ elseif(PLATFORM_PS4)
     target_link_libraries(${PROJECT_NAME}
         SceNet
         # In-app self-update (utils/ps4_install): BGFT registers the PKG
-        # install; AppInstUtil is initialised alongside it.
+        # install; AppInstUtil is initialised alongside it, and the
+        # foreground user id (which the register call needs) comes from
+        # SceUserService.
         SceBgft
         SceAppInstUtil
+        SceUserService
+        # sceSystemServiceLaunchApp: hand off to the updater helper (VPLX00003)
+        # at update time, since VitaPlex can't replace its own running title.
+        SceSystemService
     )
 elseif(PLATFORM_IOS OR PLATFORM_TVOS)
     # System frameworks that mpv + SDL2 + borealis need on iOS/tvOS.
@@ -1108,6 +1114,73 @@ elseif(PLATFORM_PS4)
         COMMAND "${CMAKE_COMMAND}" -E copy_directory ${BOREALIS_DIR}/resources/img ${CMAKE_BINARY_DIR}/ps4/resources/img
     )
     add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}.data)
+
+    # ── PS4 updater helper (self-update) ────────────────────────────────
+    # A second, tiny PS4 app with its own title id (VPLX00003). VitaPlex
+    # cannot replace itself in place: BGFT installs into the running
+    # /user/app/VPLX00002 (locked), the installer returns 0x80990088
+    # "already installed", and uninstalling the running title just kills the
+    # process. So at update time VitaPlex launches this helper and quits;
+    # with VitaPlex closed the helper uninstalls VPLX00002 and hands the
+    # downloaded pkg to the system installer (BGFT), which finishes in the
+    # background. Shipped as its own pkg, installed once (like the Vita
+    # updater stub VPLXUPD01). It has no UI, so it needs only the borealis
+    # PS4 base (sce_module + sce_sys) — no app resources.
+    if(PS4)
+        add_executable(vitaplex_updater_ps4 src/updater_ps4/main.cpp)
+        target_compile_definitions(vitaplex_updater_ps4 PRIVATE __PS4__)
+        # stb_image (vendored with borealis's nanovg) decodes the app icon for
+        # the helper's progress screen — it links no other image/font code.
+        target_include_directories(vitaplex_updater_ps4 PRIVATE
+            ${BOREALIS_LIBRARY}/include/borealis/extern/nanovg)
+        # SDL2 is required at RUNTIME, not just to link: the helper calls
+        # SDL_Init(SDL_INIT_VIDEO) before touching any system service, exactly
+        # as borealis's Ps4Platform does ("Initialize here for loading the
+        # system modules"). Without that call every privileged call faults.
+        # Plus the libs whose functions the helper calls: BGFT + AppInstUtil
+        # (+ SceUserService for AppInstUtil's user context). We deliberately do
+        # NOT call SceSysmodule — PS4-Store doesn't either; linking these libs
+        # loads their PRX via the app's NEEDED list.
+        if(NOT TARGET SDL2::SDL2-static)
+            find_package(SDL2 REQUIRED)
+        endif()
+        target_link_libraries(vitaplex_updater_ps4
+            SceBgft SceAppInstUtil SceUserService SDL2::SDL2-static)
+        add_custom_target(vitaplex_updater_ps4.data
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                ${BOREALIS_DIR}/ps4 ${CMAKE_BINARY_DIR}/ps4_updater
+            COMMAND "${CMAKE_COMMAND}" -E copy_directory
+                ${CMAKE_SOURCE_DIR}/app/platform/ps4 ${CMAKE_BINARY_DIR}/ps4_updater
+        )
+        add_dependencies(vitaplex_updater_ps4 vitaplex_updater_ps4.data)
+        add_self(vitaplex_updater_ps4)
+        add_pkg(vitaplex_updater_ps4
+            ${CMAKE_BINARY_DIR}/ps4_updater
+            "VPLX00003"
+            "VitaPlex Updater"
+            "01.00"
+            # Match VitaPlex's SFO attribute (Support PS4 Pro) for consistency.
+            8388608
+        )
+
+        # Bundle the helper's pkg INSIDE VitaPlex's pkg (as /app0/updater.pkg),
+        # so the user only ever installs one app — the same approach the Vita
+        # build uses for its updater stub. When an update needs the helper and
+        # it isn't installed yet, VitaPlex copies this out and installs it
+        # (ps4::installUpdaterApp). The dependency forces the helper's pkg to be
+        # built and copied in BEFORE VitaPlex's pkg is packed.
+        # The pkg tool names its output from the CONTENT_ID
+        # (IV0001-VPLX00003_00-...), not from the target, so the file is located
+        # by glob at build time rather than by a hard-coded path.
+        add_custom_target(vitaplex_updater_ps4.bundle
+            COMMAND "${CMAKE_COMMAND}"
+                -DSRC_DIR=${CMAKE_BINARY_DIR}
+                -DDST=${CMAKE_BINARY_DIR}/ps4/updater.pkg
+                -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/bundle_updater_pkg.cmake
+            DEPENDS vitaplex_updater_ps4_pkg
+        )
+        add_dependencies(${PROJECT_NAME}_pkg vitaplex_updater_ps4.bundle)
+    endif()
 
 elseif(PLATFORM_SWITCH)
     # Which release asset the in-app updater must download (see

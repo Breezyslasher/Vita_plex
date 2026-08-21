@@ -537,6 +537,24 @@ void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float he
             float fcy = m_coverSlot->getY();
             float hintW = (float)s_startHintW;
             float hintH = (float)s_startHintH;
+            // Cap the glyph against the cover it sits on. The hint PNGs are
+            // per-platform and differ a lot in pixel size — PS4's is big enough
+            // that drawing it at native size covered a large part of the art.
+            // Only ever shrink (scale <= 1), so platforms where it already fits
+            // are untouched, and keep the aspect ratio.
+            float coverW = m_coverSlot->getWidth();
+            float coverH = m_coverSlot->getHeight();
+            if (coverW > 0.0f && coverH > 0.0f && hintW > 0.0f && hintH > 0.0f) {
+                float maxH  = coverH * 0.16f;
+                float maxW  = coverW * 0.28f;
+                float scale = 1.0f;
+                if (hintH > maxH) scale = maxH / hintH;
+                if (hintW * scale > maxW) scale = maxW / hintW;
+                if (scale < 1.0f) {
+                    hintW *= scale;
+                    hintH *= scale;
+                }
+            }
             // Top-LEFT corner of the cover with a small inset, so the focus hint
             // no longer sits on top of the top-right rating badge.
             float hx = fcx + 7.0f;
