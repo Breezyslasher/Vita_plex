@@ -34,13 +34,24 @@
     <name>Breezyslasher</name>
   </developer>
   <content_rating type="oars-1.1"/>
-  <!-- Screenshots are required by Flathub; add at least one before submission:
   <screenshots>
     <screenshot type="default">
-      <image>https://.../screenshot.png</image>
+      <caption>Home</caption>
+      <image>https://raw.githubusercontent.com/Breezyslasher/Vita_plex/main/Screenshots/Beta-1.0.0/home_page_new.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Movie details</caption>
+      <image>https://raw.githubusercontent.com/Breezyslasher/Vita_plex/main/Screenshots/Beta-1.0.0/movie_info_page.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>TV show</caption>
+      <image>https://raw.githubusercontent.com/Breezyslasher/Vita_plex/main/Screenshots/Beta-1.0.0/tv_show.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Live TV</caption>
+      <image>https://raw.githubusercontent.com/Breezyslasher/Vita_plex/main/Screenshots/Beta-1.0.0/live_tv.png</image>
     </screenshot>
   </screenshots>
-  -->
   <releases>
     <release version="2.1.8" date="2026-08-21"/>
   </releases>
