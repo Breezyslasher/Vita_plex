@@ -23,7 +23,16 @@
  *   PS4      — downloads the .pkg and registers it with the system
  *              installer (BGFT, utils/ps4_install); the user exits and
  *              the console finishes the install with its own progress.
- *   Desktop  — opens the release asset in the browser.
+ *   Linux    — AppImage replaces itself and relaunches; a .deb / Arch
+ *              package is handed to the system installer (xdg-open).
+ *              Flatpak and unrecognised installs stay browser-only.
+ *   Windows  — downloads the portable .zip and hands a detached, windowless
+ *              cmd a .bat that waits for VitaPlex to exit, unpacks the zip
+ *              over the install folder (tar / Expand-Archive) and relaunches.
+ *   macOS    — downloads the .dmg and, from a detached shell helper, mounts
+ *              it and swaps the running VitaPlex.app bundle, then reopens it.
+ *              A loose (non-.app) binary stays browser-only.
+ *   Other / iOS / tvOS — opens the release asset in the browser.
  *
  * VitaPlex publishes pre-releases, which GitHub's /releases/latest never
  * returns — the check reads /releases and takes the newest non-draft
