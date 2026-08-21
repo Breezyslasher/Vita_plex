@@ -124,4 +124,11 @@ A native Plex client for PlayStation Vita and beyond. Stream movies, TV, music, 
 
 ## License
 
-[Add license information here]
+VitaPlex is licensed under the **Apache License, Version 2.0** — see the
+[LICENSE](LICENSE) file for the full text, and [NOTICE](NOTICE) for
+attributions.
+
+It is derived from [Switchfin](https://github.com/dragonflylee/switchfin) and
+uses the [borealis](https://github.com/dragonflylee/borealis) UI library, both
+Apache-2.0. Media playback is provided by [libmpv](https://mpv.io) (LGPL-2.1+),
+which is linked dynamically.

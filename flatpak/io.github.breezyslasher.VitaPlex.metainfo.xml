@@ -2,10 +2,7 @@
 <component type="desktop-application">
   <id>io.github.breezyslasher.VitaPlex</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <!-- TODO: the project has no declared license yet (README: "Add license
-       information here"). Flathub requires a valid project license here before
-       it will accept the app; set this to the real SPDX id once chosen. -->
-  <project_license>LicenseRef-proprietary</project_license>
+  <project_license>Apache-2.0</project_license>
   <name>VitaPlex</name>
   <summary>Native Plex client for desktop and consoles</summary>
   <description>
