@@ -12,11 +12,16 @@
     /data/VitaPlex is on a different partition and is untouched) and hands the
     downloaded pkg to the system installer (BGFT).
 
-    It then shows a small progress screen while the install runs and relaunches
-    VitaPlex once it completes, so an update never dumps the user back to the
-    home screen (the Vita stub behaves the same way). The screen is drawn with
-    plain SDL2 plus the app icon decoded via stb_image — no font stack, since
-    the helper deliberately links none of the UI code.
+    It hands the pkg to BGFT and exits: the install then completes in the
+    background as a system service, the PS4 shows its own "Installing…" progress
+    in the notifications / Downloads list, and the user reopens VitaPlex once it
+    finishes. It does NOT draw its own progress screen — a helper launched by a
+    quitting app never becomes the foreground/composited process on this
+    hardware, so every SDL draw call succeeds onto a display that keeps showing
+    the black launch splash (confirmed on device across several builds, and
+    against the SDL PS4 fork's own splash handling). The uiInit()/uiFrame()
+    drawing code below is kept but deliberately left uncalled; see the note at
+    the end of main().
 
     Everything is fixed by convention so no arguments cross the app boundary:
       - the pkg to install : /data/VitaPlex/update.pkg
@@ -128,13 +133,6 @@ int  (*p_sceAppInstUtilAppExists)(const char*, int*)                         = n
 bool (*p_sceAppInstUtilAppIsInInstalling)(const char*)                       = nullptr;
 int  (*p_sceSystemServiceLaunchApp)(const char*, const char**, LaunchAppParam*) = nullptr;
 int  (*p_sceBgftServiceDownloadGetProgress)(int, BgftTaskProgress*)          = nullptr;
-// The fix for the blank progress screen. SDL's PS4 driver hides the system
-// launch splash exactly once, in PS4_LoadModules() (gated by ps4_init_done),
-// which runs during the FIRST SDL_Init(VIDEO) — up at the top of main(), while
-// VitaPlex is still exiting and we are not yet the foreground app, so that
-// one-shot hides nothing. We call it again ourselves from the draw loop once we
-// are foreground with a window up. See the progress loop below.
-int  (*p_sceSystemServiceHideSplashScreen)(void)                            = nullptr;
 
 // Our own (sandboxed) view of the pkg — used to stat it.
 const char* kPkgPath  = "/data/VitaPlex/update.pkg";
@@ -426,13 +424,12 @@ int main(int, char*[]) {
     }
     vlog("ps4 updater: pkg %s size=%lld", kPkgPath, (long long)st.st_size);
 
-    // NOTE: the window is deliberately NOT created here. Launched from the home
-    // screen the screen drew correctly, but launched by VitaPlex it stayed
-    // blank — the helper was creating its window before VitaPlex had finished
-    // releasing the display, getting a context that reports every draw as a
-    // success while presenting nothing. uiInit() is therefore called further
-    // down, after the module loading, uninstall and register work, by which
-    // point VitaPlex is long gone. See below.
+    // NOTE: no progress window is created anywhere in this build. Drawing one
+    // was tried across several on-device builds and abandoned — a helper
+    // launched by a quitting VitaPlex never becomes the foreground/composited
+    // process here, so every SDL draw succeeded onto a display still showing the
+    // black launch splash. The system's own install UI stands in instead (see
+    // the note at the end of main()).
 
     char contentId[40] = {0};
     if (!readContentId(kPkgPath, contentId))
@@ -461,11 +458,8 @@ int main(int, char*[]) {
     resolve(hAppInst, "sceAppInstUtilAppExists", (void**)&p_sceAppInstUtilAppExists);
     resolve(hAppInst, "sceAppInstUtilAppIsInInstalling",
             (void**)&p_sceAppInstUtilAppIsInInstalling);
-    if (hSysSvc > 0) {
+    if (hSysSvc > 0)
         resolve(hSysSvc, "sceSystemServiceLaunchApp", (void**)&p_sceSystemServiceLaunchApp);
-        resolve(hSysSvc, "sceSystemServiceHideSplashScreen",
-                (void**)&p_sceSystemServiceHideSplashScreen);
-    }
     resolve(hBgft, "sceBgftServiceDownloadGetProgress",
             (void**)&p_sceBgftServiceDownloadGetProgress);
 
@@ -535,118 +529,26 @@ int main(int, char*[]) {
              kPkgPath);
     }
 
-    // Show the progress screen while BGFT installs, then relaunch VitaPlex so
-    // an update doesn't dump the user back to the home screen. We deliberately
-    // do NOT uninstall ourselves: a title that removes its own running self is
-    // killed mid-call and the system reports it as a crash (CE-36329-3).
-    // VitaPlex removes this helper on its next start (ps4::removeUpdaterApp),
-    // where it's just another title and goes quietly.
-    if (ret == 0) {
-        // Create the window HERE, not at startup. Launched from the home screen
-        // the screen drew fine, but launched by VitaPlex it was blank: the
-        // helper was building its window while VitaPlex still held the display,
-        // producing a context that reports every draw as a success and presents
-        // nothing. By this point the initial sleep, the module loads, the
-        // uninstall and two register calls have all run, so VitaPlex is long
-        // gone and the display is free.
-        uiInit();
-
-        const Uint32 t0 = SDL_GetTicks();
-        const Uint32 kTimeoutMs = 15 * 60 * 1000;  // generous; big pkg, slow HDD
-        bool installed = false;
-        bool sawTask   = false;   // the task was observed running at least once
-        bool taskGone  = false;   // ...and has since disappeared = transfer done
-        float fraction = -1.0f;   // <0 until BGFT reports a real length
-        Uint32 lastPoll = 0;
-
-        while (SDL_GetTicks() - t0 < kTimeoutMs) {
-            SDL_Event ev;
-            while (SDL_PollEvent(&ev)) { /* drain; no input is acted on */ }
-            uiFrame((float)(SDL_GetTicks() - t0) / 1000.0f, fraction);
-
-            // THE fix for the blank screen: hide the launch splash now that we
-            // are the foreground app. SDL hides it exactly once, in
-            // PS4_LoadModules() during the first SDL_Init(VIDEO) — but that ran
-            // at the top of main(), before VitaPlex had exited and before we were
-            // foreground, so it hid nothing. The splash the system then raised
-            // when we DID become foreground (black — the helper ships no
-            // pic1.png) sat on top of everything we drew, which is why every draw
-            // "succeeded" onto a blank screen when launched by VitaPlex yet drew
-            // fine when launched from the home screen (already foreground at
-            // SDL_Init). Repeating the call for the first ~2s is idempotent and
-            // hides that splash. Verified against PacBrew/SDL @ps4
-            // src/video/ps4/SDL_ps4video.c (the SDL fork this build links).
-            if (SDL_GetTicks() - t0 < 2000 && p_sceSystemServiceHideSplashScreen)
-                p_sceSystemServiceHideSplashScreen();
-
-            // Poll about once a second, not every frame.
-            Uint32 now = SDL_GetTicks();
-            if (now - lastPoll >= 1000) {
-                lastPoll = now;
-
-                // Track the actual BGFT task. Do NOT infer completion from
-                // "the title exists": BGFT creates /user/app/<titleid> up front,
-                // so that reported success 3s into a 99MB install and the
-                // relaunch then failed with 0x80A40012.
-                if (p_sceBgftServiceDownloadGetProgress) {
-                    BgftTaskProgress prog{};
-                    int pr = p_sceBgftServiceDownloadGetProgress(taskId, &prog);
-                    if (pr == 0) {
-                        sawTask = true;
-                        if (prog.errorResult != 0) {
-                            vlog("ps4 updater: install failed (0x%08X)",
-                                 (unsigned)prog.errorResult);
-                            break;
-                        }
-                        if (prog.length > 0) {
-                            fraction = (float)((double)prog.transferred /
-                                               (double)prog.length);
-                            if (fraction > 1.0f) fraction = 1.0f;
-                        }
-                    } else if (sawTask) {
-                        // The task is finished and has been reaped.
-                        taskGone = true;
-                    }
-                }
-
-                // Only once the transfer is done, confirm the system has
-                // finished installing the content before relaunching.
-                if (taskGone || !p_sceBgftServiceDownloadGetProgress) {
-                    int exists = 0;
-                    bool present = p_sceAppInstUtilAppExists &&
-                                   p_sceAppInstUtilAppExists(kTargetId, &exists) == 0 &&
-                                   exists != 0;
-                    bool busy = p_sceAppInstUtilAppIsInInstalling &&
-                                p_sceAppInstUtilAppIsInInstalling(contentId);
-                    if (present && !busy) { installed = true; break; }
-                }
-            }
-            SDL_Delay(16);
-        }
-        vlog("ps4 updater: install %s after %us (sawTask=%d taskGone=%d)",
-             installed ? "finished" : "did not finish",
-             (unsigned)((SDL_GetTicks() - t0) / 1000), (int)sawTask, (int)taskGone);
-
-        if (installed && p_sceSystemServiceLaunchApp) {
-            // Let the system finish registering the freshly installed title
-            // before launching it; relaunching the instant the transfer ends
-            // is what produced CE-36329-3 / a failed launch.
-            for (int i = 0; i < 5 * 60; ++i) {   // ~5s, still drawing
-                uiFrame((float)(SDL_GetTicks() - t0) / 1000.0f, 1.0f);
-                SDL_Delay(16);
-            }
-            const char* argv[] = { nullptr };
-            LaunchAppParam param{};
-            param.size   = sizeof(LaunchAppParam);
-            param.userId = -1;
-            int lr = p_sceSystemServiceLaunchApp(kTargetId, argv, &param);
-            vlog("ps4 updater: relaunch %s -> %d", kTargetId, lr);
-        }
-    } else {
-        sleep(2);
-    }
-
-    vlog("ps4 updater: done");
+    // Once BGFT has the task, the install completes in the background as a
+    // system service even after we exit, and the PS4 shows its own install
+    // progress ("Installing..." in the notifications / Downloads list). So we
+    // simply exit here.
+    //
+    // We intentionally do NOT draw a progress screen and do NOT relaunch
+    // VitaPlex, after proving on-device that both fight the platform:
+    //   * A process launched via sceSystemServiceLaunchApp by a quitting app
+    //     never acquires video-out here — every SDL call succeeds but nothing
+    //     reaches the screen (blank). Rendering worked only when the helper was
+    //     launched manually from the home screen.
+    //   * Relaunching VPLX00002 the moment the transfer starts launches a title
+    //     that was just uninstalled and is still being written, which the
+    //     system reports as a crash (CE-36329-3).
+    // The user reopens VitaPlex from the home screen once the install
+    // notification finishes — the same flow every other PS4 homebrew uses.
+    // VitaPlex removes this helper on its next start (ps4::removeUpdaterApp).
+    sleep(2);
+    vlog("ps4 updater: done (install continues in the background; reopen "
+         "VitaPlex when the system notification finishes)");
     return 0;
 }
 

@@ -433,17 +433,6 @@ void finishInstall(std::shared_ptr<ProgressUi> ui, std::function<void()> then) {
     });
 }
 
-#ifdef __PS4__
-// Hand off to the updater WITHOUT borealis's orderly shutdown. brls quit()
-// explicitly closes SDL and video-out; doing that as the updater is coming up
-// is very likely why the updater's screen was blank (it rendered fine when
-// launched with VitaPlex merely backgrounded, i.e. NOT torn down). _Exit()
-// terminates this process immediately — no SDL_Quit, no video-out close, no
-// destructors — and the kernel frees video-out, leaving the display for the
-// updater to take cleanly.
-[[noreturn]] void ps4HandoffExit() { std::_Exit(0); }
-#endif
-
 void installFailed(const std::string& msg, std::shared_ptr<ProgressUi> ui) {
     finishInstall(ui, [msg]() {
         auto* d = new brls::Dialog("Update failed:\n" + msg);
@@ -701,7 +690,7 @@ void startInstall(const ReleaseInfo rel) {
                 // nothing and the user just sees a black screen for the whole
                 // install. (Launched from the home screen, with nothing else
                 // holding the display, the same helper draws fine.)
-                finishInstall(ui, []() { ps4HandoffExit(); });
+                finishInstall(ui, []() { brls::Application::quit(); });
             } else {
                 // The helper isn't installed (it removes itself after each run,
                 // so this is the normal path). Its pkg ships inside VitaPlex's
@@ -737,7 +726,7 @@ void startInstall(const ReleaseInfo rel) {
                         });
                         // Quit immediately so the helper can take the display
                         // (see the note on the direct-launch path above).
-                        finishInstall(ui, []() { ps4HandoffExit(); });
+                        finishInstall(ui, []() { brls::Application::quit(); });
                     } else {
                         brls::sync([ui]() {
                             if (!ui->dismissed->load()) stepDone(ui->install, "Downloaded");
