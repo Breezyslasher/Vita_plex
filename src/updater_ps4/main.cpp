@@ -525,26 +525,103 @@ int main(int, char*[]) {
              kPkgPath);
     }
 
-    // Once BGFT has the task, the install completes in the background as a
-    // system service even after we exit, and the PS4 shows its own install
-    // progress ("Installing..." in the notifications / Downloads list). So we
-    // simply exit here.
-    //
-    // We intentionally do NOT draw a progress screen and do NOT relaunch
-    // VitaPlex, after proving on-device that both fight the platform:
-    //   * A process launched via sceSystemServiceLaunchApp by a quitting app
-    //     never acquires video-out here — every SDL call succeeds but nothing
-    //     reaches the screen (blank). Rendering worked only when the helper was
-    //     launched manually from the home screen.
-    //   * Relaunching VPLX00002 the moment the transfer starts launches a title
-    //     that was just uninstalled and is still being written, which the
-    //     system reports as a crash (CE-36329-3).
-    // The user reopens VitaPlex from the home screen once the install
-    // notification finishes — the same flow every other PS4 homebrew uses.
-    // VitaPlex removes this helper on its next start (ps4::removeUpdaterApp).
-    sleep(2);
-    vlog("ps4 updater: done (install continues in the background; reopen "
-         "VitaPlex when the system notification finishes)");
+    // Show the progress screen while BGFT installs, then relaunch VitaPlex so
+    // an update doesn't dump the user back to the home screen. We deliberately
+    // do NOT uninstall ourselves: a title that removes its own running self is
+    // killed mid-call and the system reports it as a crash (CE-36329-3).
+    // VitaPlex removes this helper on its next start (ps4::removeUpdaterApp),
+    // where it's just another title and goes quietly.
+    if (ret == 0) {
+        // Create the window HERE, not at startup. Launched from the home screen
+        // the screen drew fine, but launched by VitaPlex it was blank: the
+        // helper was building its window while VitaPlex still held the display,
+        // producing a context that reports every draw as a success and presents
+        // nothing. By this point the initial sleep, the module loads, the
+        // uninstall and two register calls have all run, so VitaPlex is long
+        // gone and the display is free.
+        uiInit();
+
+        const Uint32 t0 = SDL_GetTicks();
+        const Uint32 kTimeoutMs = 15 * 60 * 1000;  // generous; big pkg, slow HDD
+        bool installed = false;
+        bool sawTask   = false;   // the task was observed running at least once
+        bool taskGone  = false;   // ...and has since disappeared = transfer done
+        float fraction = -1.0f;   // <0 until BGFT reports a real length
+        Uint32 lastPoll = 0;
+
+        while (SDL_GetTicks() - t0 < kTimeoutMs) {
+            SDL_Event ev;
+            while (SDL_PollEvent(&ev)) { /* drain; no input is acted on */ }
+            uiFrame((float)(SDL_GetTicks() - t0) / 1000.0f, fraction);
+
+            // Poll about once a second, not every frame.
+            Uint32 now = SDL_GetTicks();
+            if (now - lastPoll >= 1000) {
+                lastPoll = now;
+
+                // Track the actual BGFT task. Do NOT infer completion from
+                // "the title exists": BGFT creates /user/app/<titleid> up front,
+                // so that reported success 3s into a 99MB install and the
+                // relaunch then failed with 0x80A40012.
+                if (p_sceBgftServiceDownloadGetProgress) {
+                    BgftTaskProgress prog{};
+                    int pr = p_sceBgftServiceDownloadGetProgress(taskId, &prog);
+                    if (pr == 0) {
+                        sawTask = true;
+                        if (prog.errorResult != 0) {
+                            vlog("ps4 updater: install failed (0x%08X)",
+                                 (unsigned)prog.errorResult);
+                            break;
+                        }
+                        if (prog.length > 0) {
+                            fraction = (float)((double)prog.transferred /
+                                               (double)prog.length);
+                            if (fraction > 1.0f) fraction = 1.0f;
+                        }
+                    } else if (sawTask) {
+                        // The task is finished and has been reaped.
+                        taskGone = true;
+                    }
+                }
+
+                // Only once the transfer is done, confirm the system has
+                // finished installing the content before relaunching.
+                if (taskGone || !p_sceBgftServiceDownloadGetProgress) {
+                    int exists = 0;
+                    bool present = p_sceAppInstUtilAppExists &&
+                                   p_sceAppInstUtilAppExists(kTargetId, &exists) == 0 &&
+                                   exists != 0;
+                    bool busy = p_sceAppInstUtilAppIsInInstalling &&
+                                p_sceAppInstUtilAppIsInInstalling(contentId);
+                    if (present && !busy) { installed = true; break; }
+                }
+            }
+            SDL_Delay(16);
+        }
+        vlog("ps4 updater: install %s after %us (sawTask=%d taskGone=%d)",
+             installed ? "finished" : "did not finish",
+             (unsigned)((SDL_GetTicks() - t0) / 1000), (int)sawTask, (int)taskGone);
+
+        if (installed && p_sceSystemServiceLaunchApp) {
+            // Let the system finish registering the freshly installed title
+            // before launching it; relaunching the instant the transfer ends
+            // is what produced CE-36329-3 / a failed launch.
+            for (int i = 0; i < 5 * 60; ++i) {   // ~5s, still drawing
+                uiFrame((float)(SDL_GetTicks() - t0) / 1000.0f, 1.0f);
+                SDL_Delay(16);
+            }
+            const char* argv[] = { nullptr };
+            LaunchAppParam param{};
+            param.size   = sizeof(LaunchAppParam);
+            param.userId = -1;
+            int lr = p_sceSystemServiceLaunchApp(kTargetId, argv, &param);
+            vlog("ps4 updater: relaunch %s -> %d", kTargetId, lr);
+        }
+    } else {
+        sleep(2);
+    }
+
+    vlog("ps4 updater: done");
     return 0;
 }
 
