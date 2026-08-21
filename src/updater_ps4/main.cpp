@@ -128,6 +128,13 @@ int  (*p_sceAppInstUtilAppExists)(const char*, int*)                         = n
 bool (*p_sceAppInstUtilAppIsInInstalling)(const char*)                       = nullptr;
 int  (*p_sceSystemServiceLaunchApp)(const char*, const char**, LaunchAppParam*) = nullptr;
 int  (*p_sceBgftServiceDownloadGetProgress)(int, BgftTaskProgress*)          = nullptr;
+// The fix for the blank progress screen. SDL's PS4 driver hides the system
+// launch splash exactly once, in PS4_LoadModules() (gated by ps4_init_done),
+// which runs during the FIRST SDL_Init(VIDEO) — up at the top of main(), while
+// VitaPlex is still exiting and we are not yet the foreground app, so that
+// one-shot hides nothing. We call it again ourselves from the draw loop once we
+// are foreground with a window up. See the progress loop below.
+int  (*p_sceSystemServiceHideSplashScreen)(void)                            = nullptr;
 
 // Our own (sandboxed) view of the pkg — used to stat it.
 const char* kPkgPath  = "/data/VitaPlex/update.pkg";
@@ -454,8 +461,11 @@ int main(int, char*[]) {
     resolve(hAppInst, "sceAppInstUtilAppExists", (void**)&p_sceAppInstUtilAppExists);
     resolve(hAppInst, "sceAppInstUtilAppIsInInstalling",
             (void**)&p_sceAppInstUtilAppIsInInstalling);
-    if (hSysSvc > 0)
+    if (hSysSvc > 0) {
         resolve(hSysSvc, "sceSystemServiceLaunchApp", (void**)&p_sceSystemServiceLaunchApp);
+        resolve(hSysSvc, "sceSystemServiceHideSplashScreen",
+                (void**)&p_sceSystemServiceHideSplashScreen);
+    }
     resolve(hBgft, "sceBgftServiceDownloadGetProgress",
             (void**)&p_sceBgftServiceDownloadGetProgress);
 
@@ -553,6 +563,21 @@ int main(int, char*[]) {
             SDL_Event ev;
             while (SDL_PollEvent(&ev)) { /* drain; no input is acted on */ }
             uiFrame((float)(SDL_GetTicks() - t0) / 1000.0f, fraction);
+
+            // THE fix for the blank screen: hide the launch splash now that we
+            // are the foreground app. SDL hides it exactly once, in
+            // PS4_LoadModules() during the first SDL_Init(VIDEO) — but that ran
+            // at the top of main(), before VitaPlex had exited and before we were
+            // foreground, so it hid nothing. The splash the system then raised
+            // when we DID become foreground (black — the helper ships no
+            // pic1.png) sat on top of everything we drew, which is why every draw
+            // "succeeded" onto a blank screen when launched by VitaPlex yet drew
+            // fine when launched from the home screen (already foreground at
+            // SDL_Init). Repeating the call for the first ~2s is idempotent and
+            // hides that splash. Verified against PacBrew/SDL @ps4
+            // src/video/ps4/SDL_ps4video.c (the SDL fork this build links).
+            if (SDL_GetTicks() - t0 < 2000 && p_sceSystemServiceHideSplashScreen)
+                p_sceSystemServiceHideSplashScreen();
 
             // Poll about once a second, not every frame.
             Uint32 now = SDL_GetTicks();
