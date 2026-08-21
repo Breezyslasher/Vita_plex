@@ -43,6 +43,11 @@
 #ifdef __PS4__
 #include "utils/ps4_install.hpp"
 #endif
+#if defined(__linux__) && !defined(ANDROID)
+#include <unistd.h>       // readlink, access, fork, setsid, execl/execlp, _exit
+#include <sys/stat.h>     // chmod (make the replacement AppImage executable)
+#include <filesystem>     // AppImage/self-path maths
+#endif
 
 namespace vitaplex {
 namespace app_update {
@@ -168,6 +173,43 @@ bool isNewer(const std::string& tag, const std::string& current) {
     return false;
 }
 
+#if defined(__linux__) && !defined(ANDROID)
+// ── Linux packaging detection ────────────────────────────────────────────
+// The AppImage, the .deb and the Arch package are the SAME PLATFORM_DESKTOP
+// binary — nothing at build time says which — so we detect the install kind at
+// runtime:
+//   * AppImage : the runtime sets $APPIMAGE to the .AppImage path. It's a
+//                single, user-owned file → we replace it and relaunch.
+//   * Deb      : dpkg lays the binary at /usr/lib/VitaPlex/VitaPlex.
+//   * Arch     : pacman-managed system install under /usr.
+// Flatpak sets $FLATPAK_ID and updates through the software centre, so it (and
+// anything unrecognised) stays browser-only.
+enum class LinuxPkg { None, AppImage, Deb, Arch };
+
+std::string selfExePath() {
+    char buf[4096];
+    ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0) return {};
+    buf[n] = '\0';
+    return std::string(buf);
+}
+
+LinuxPkg linuxPkg() {
+    if (std::getenv("APPIMAGE")) return LinuxPkg::AppImage;
+    if (std::getenv("FLATPAK_ID") || ::access("/.flatpak-info", F_OK) == 0)
+        return LinuxPkg::None;
+
+    const std::string exe = selfExePath();
+    if (exe.rfind("/usr/lib/VitaPlex/", 0) == 0 &&
+        ::access("/var/lib/dpkg/status", F_OK) == 0)
+        return LinuxPkg::Deb;
+    if (!exe.empty() && exe.rfind("/usr/", 0) == 0 &&
+        ::access("/var/lib/pacman", F_OK) == 0)
+        return LinuxPkg::Arch;
+    return LinuxPkg::None;
+}
+#endif
+
 // ── Platform asset choice ────────────────────────────────────────────────
 // Release assets follow "VitaPlex.<tag>-<platform>…"; the suffix decides.
 // Empty = this platform has no single downloadable asset (browser-only).
@@ -200,6 +242,29 @@ std::string assetSuffix() {
 #endif
 #elif defined(__PS4__)
     return "-ps4.pkg";
+#elif defined(__linux__) && !defined(ANDROID)
+    switch (linuxPkg()) {
+        case LinuxPkg::AppImage:
+#if defined(__x86_64__)
+            return "-x86_64.AppImage";
+#elif defined(__aarch64__)
+            return "-aarch64.AppImage";
+#else
+            return {};
+#endif
+        case LinuxPkg::Deb:
+#if defined(__x86_64__)
+            return "-Linux_amd64.deb";
+#elif defined(__aarch64__)
+            return "-Linux_arm64.deb";
+#else
+            return {};
+#endif
+        case LinuxPkg::Arch:
+            return "-Linux.pkg.tar.zst";
+        default:
+            return {};   // Flatpak / unknown → browser-only
+    }
 #else
     return {};
 #endif
@@ -308,7 +373,7 @@ std::string mbLabel(int64_t bytes) {
 }
 
 // ── The in-place installers (Switch / Vita / Android / PS4) ─────────────
-#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__)
+#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__) || (defined(__linux__) && !defined(ANDROID))
 
 // One row of the progress checklist (design_handoff_update, dialog C):
 // a 26px state circle — hairline when pending, spinner while active, green
@@ -548,6 +613,21 @@ void startInstall(const ReleaseInfo rel) {
         const std::string path = platformPath("update.apk");
 #elif defined(__PS4__)
         const std::string path = platformPath("update.pkg");
+#elif defined(__linux__)
+        std::string path;
+        switch (linuxPkg()) {
+            case LinuxPkg::AppImage: {
+                // Download straight next to the running .AppImage so the final
+                // step is an atomic rename over it (no cross-filesystem copy,
+                // and rename doesn't hit ETXTBSY on the running executable).
+                const char* ai = std::getenv("APPIMAGE");
+                path = ai ? (std::string(ai) + ".new") : platformPath("update.AppImage");
+                break;
+            }
+            case LinuxPkg::Deb:  path = platformPath("update.deb"); break;
+            case LinuxPkg::Arch: path = platformPath("update.pkg.tar.zst"); break;
+            default:             path = platformPath("update.bin"); break;
+        }
 #else
         const std::string path = platformPath("update.vpk");
 #endif
@@ -571,7 +651,7 @@ void startInstall(const ReleaseInfo rel) {
             }
 
             // (Re)open truncating — a failed attempt leaves partial bytes.
-#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
+#if !defined(__PSV__)
             FILE* f = fopen(path.c_str(), "wb");
             if (!f) { installFailed("cannot open " + path, ui); s_busy = false; return; }
 #else
@@ -586,7 +666,7 @@ void startInstall(const ReleaseInfo rel) {
                 rel.assetUrl,
                 [&](const char* data, size_t size) -> bool {
                     if (s_cancel.load()) return false;
-#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
+#if !defined(__PSV__)
                     if (fwrite(data, 1, size, f) != size) return false;
 #else
                     if (sceIoWrite(f, data, size) != (int)size) return false;
@@ -608,7 +688,7 @@ void startInstall(const ReleaseInfo rel) {
                 [&](int64_t sz) { if (total <= 0) total = sz; },
                 {}, 0, nullptr, &dlErr);
 
-#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
+#if !defined(__PSV__)
             fclose(f);
 #else
             sceIoClose(f);
@@ -619,7 +699,7 @@ void startInstall(const ReleaseInfo rel) {
         }
 
         if (s_cancel.load()) {
-#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
+#if !defined(__PSV__)
             remove(path.c_str());
 #else
             sceIoRemove(path.c_str());
@@ -628,7 +708,7 @@ void startInstall(const ReleaseInfo rel) {
             return;   // user cancellation, not a failure
         }
         if (!ok) {
-#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
+#if !defined(__PSV__)
             remove(path.c_str());
 #else
             sceIoRemove(path.c_str());
@@ -799,6 +879,56 @@ void startInstall(const ReleaseInfo rel) {
             d->addButton("OK", []() { brls::Application::quit(); });
             d->open();
         });
+#elif defined(__linux__)
+        // Desktop Linux. AppImage self-replaces and relaunches; deb/Arch hand
+        // the downloaded package to the system installer (the user confirms the
+        // install there). Flatpak/unknown never reach here — their
+        // assetSuffix() is empty, so the flow opens the browser instead.
+        if (linuxPkg() == LinuxPkg::AppImage) {
+            const char* aiEnv = std::getenv("APPIMAGE");
+            std::string target = aiEnv ? std::string(aiEnv) : selfExePath();
+            brls::sync([ui]() {
+                if (!ui->dismissed->load()) stepDone(ui->install, "Installed");
+            });
+            // `path` was downloaded to "<target>.new" on the same filesystem, so
+            // rename() atomically swaps it over the running image — the running
+            // process keeps the old inode, and the new file launches on exec.
+            finishInstall(ui, [path, target]() {
+                std::error_code ec;
+                std::filesystem::rename(path, target, ec);
+                if (ec)
+                    std::filesystem::copy_file(path, target,
+                        std::filesystem::copy_options::overwrite_existing, ec);
+                ::chmod(target.c_str(), 0755);
+                pid_t pid = fork();   // relaunch the new image, detached
+                if (pid == 0) {
+                    setsid();
+                    sleep(1);   // let this instance quit and free the window first
+                    execl(target.c_str(), target.c_str(), (char*)nullptr);
+                    _exit(127);
+                }
+                brls::Application::quit();
+            });
+        } else {
+            brls::sync([ui]() {
+                if (!ui->dismissed->load()) stepDone(ui->install, "Downloaded");
+            });
+            finishInstall(ui, [path]() {
+                // Hand the .deb / .pkg.tar.zst to the desktop's package
+                // installer — we run no privileged command ourselves.
+                pid_t pid = fork();
+                if (pid == 0) {
+                    setsid();
+                    execlp("xdg-open", "xdg-open", path.c_str(), (char*)nullptr);
+                    _exit(127);
+                }
+                auto* d = new brls::Dialog(
+                    "Update downloaded.\n\nYour package installer should open — "
+                    "install it there, then reopen VitaPlex.\n\nSaved to:\n" + path);
+                d->addButton("OK", []() {});
+                d->open();
+            });
+        }
 #else
         // VitaPlex can't promote over itself while it is the running title
         // (the installer returns 0x80101114 "in use"), so hand the install
@@ -853,7 +983,7 @@ void startInstall(const ReleaseInfo rel) {
         s_busy = false;
     });
 }
-#endif  // __SWITCH__ || __PSV__ || ANDROID || __PS4__
+#endif  // __SWITCH__ || __PSV__ || ANDROID || __PS4__ || (linux && !ANDROID)
 
 // ── Release notes → sheet lines (design_handoff_notes_A) ─────────────────
 // VitaPlex notes are hand-written markdown with a fixed shape: an H1
@@ -1171,7 +1301,7 @@ void showNotesSheet(const ReleaseInfo rel) {
     // The primary mirrors the offer's action so the user can act from
     // here without going back.
     brls::Box* primary = nullptr;
-#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__)
+#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__) || (defined(__linux__) && !defined(ANDROID))
     if (!rel.assetUrl.empty()) {
         primary = makeButton("\xE2\x86\x93  Update Now", BtnStyle::Gold, [rel]() {
             // Pop the sheet, then the offer beneath it, then install.
@@ -1386,7 +1516,7 @@ void offerUpdate(const ReleaseInfo rel) {
     buttons->setPadding(14.0f, 18.0f, 16.0f, 18.0f);
 
     brls::Box* primary = nullptr;
-#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__)
+#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__) || (defined(__linux__) && !defined(ANDROID))
     // These install in place; the notes sheet is the secondary action.
     if (!rel.assetUrl.empty()) {
         primary = makeButton("\xE2\x86\x93  Update", BtnStyle::Gold, [rel]() {
