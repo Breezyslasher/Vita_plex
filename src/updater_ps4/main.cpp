@@ -12,11 +12,16 @@
     /data/VitaPlex is on a different partition and is untouched) and hands the
     downloaded pkg to the system installer (BGFT).
 
-    It then shows a small progress screen while the install runs and relaunches
-    VitaPlex once it completes, so an update never dumps the user back to the
-    home screen (the Vita stub behaves the same way). The screen is drawn with
-    plain SDL2 plus the app icon decoded via stb_image — no font stack, since
-    the helper deliberately links none of the UI code.
+    It hands the pkg to BGFT and exits: the install then completes in the
+    background as a system service, the PS4 shows its own "Installing…" progress
+    in the notifications / Downloads list, and the user reopens VitaPlex once it
+    finishes. It does NOT draw its own progress screen — a helper launched by a
+    quitting app never becomes the foreground/composited process on this
+    hardware, so every SDL draw call succeeds onto a display that keeps showing
+    the black launch splash (confirmed on device across several builds, and
+    against the SDL PS4 fork's own splash handling). The uiInit()/uiFrame()
+    drawing code below is kept but deliberately left uncalled; see the note at
+    the end of main().
 
     Everything is fixed by convention so no arguments cross the app boundary:
       - the pkg to install : /data/VitaPlex/update.pkg
@@ -419,13 +424,12 @@ int main(int, char*[]) {
     }
     vlog("ps4 updater: pkg %s size=%lld", kPkgPath, (long long)st.st_size);
 
-    // NOTE: the window is deliberately NOT created here. Launched from the home
-    // screen the screen drew correctly, but launched by VitaPlex it stayed
-    // blank — the helper was creating its window before VitaPlex had finished
-    // releasing the display, getting a context that reports every draw as a
-    // success while presenting nothing. uiInit() is therefore called further
-    // down, after the module loading, uninstall and register work, by which
-    // point VitaPlex is long gone. See below.
+    // NOTE: no progress window is created anywhere in this build. Drawing one
+    // was tried across several on-device builds and abandoned — a helper
+    // launched by a quitting VitaPlex never becomes the foreground/composited
+    // process here, so every SDL draw succeeded onto a display still showing the
+    // black launch splash. The system's own install UI stands in instead (see
+    // the note at the end of main()).
 
     char contentId[40] = {0};
     if (!readContentId(kPkgPath, contentId))
