@@ -45,6 +45,7 @@ private:
         SEC_PLAYBACK,
         SEC_TRANSCODING,
         SEC_NETWORK,
+        SEC_SYNCLOUNGE,
         SEC_DOWNLOADS,
         SEC_MUSIC,
         SEC_LIVETV,
@@ -62,6 +63,7 @@ private:
     brls::Box* createPlaybackSection();
     brls::Box* createTranscodeSection();
     brls::Box* createNetworkSection();
+    brls::Box* createSyncLoungeSection();
     brls::Box* createDownloadsSection();
     brls::Box* createMusicSection();
     brls::Box* createLiveTVSection();
@@ -160,7 +162,10 @@ private:
     // server-traffic settings in one place.
     brls::DetailCell*   m_cacheLifetimeSelector = nullptr;
     brls::DetailCell*   m_clearCacheCell        = nullptr;
-    // Persistent SyncLounge session connect/disconnect cell (shows status).
+
+    // SyncLounge section — its own rail tab now. Connect/disconnect cell
+    // (shows status); Party Pause, Room Auto Host and Party Members are built
+    // inline in createSyncLoungeSection().
     brls::DetailCell*   m_syncLoungeSyncCell    = nullptr;
 
     // Downloads section
