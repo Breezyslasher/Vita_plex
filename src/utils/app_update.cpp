@@ -433,6 +433,21 @@ void finishInstall(std::shared_ptr<ProgressUi> ui, std::function<void()> then) {
     });
 }
 
+#ifdef __PS4__
+// Hand off to the updater helper by terminating THIS process immediately.
+// brls::Application::quit() does an orderly shutdown, but VitaPlex keeps live
+// HTTP threads (session/PIN polling, the update check) that don't stop on a
+// dime, so the process can still be alive a few seconds later — exactly when
+// the helper, after its short startup wait, uninstalls VPLX00002. Uninstalling
+// a title whose process is still running is reported as a crash (CE-36329-3),
+// which is what took VitaPlex down on the system-UI build. _Exit() ends the
+// process at once — no destructors, no thread joins, no lingering title — so
+// the helper's uninstall always lands on an already-gone VitaPlex. The update
+// pkg is already on disk and settings were saved before we get here, so there
+// is nothing left worth an orderly teardown.
+[[noreturn]] void ps4HandoffExit() { std::_Exit(0); }
+#endif
+
 void installFailed(const std::string& msg, std::shared_ptr<ProgressUi> ui) {
     finishInstall(ui, [msg]() {
         auto* d = new brls::Dialog("Update failed:\n" + msg);
@@ -684,13 +699,13 @@ void startInstall(const ReleaseInfo rel) {
                 brls::sync([ui]() {
                     if (!ui->dismissed->load()) stepDone(ui->install, "Handed to updater");
                 });
-                // Quit IMMEDIATELY — do not wait on a confirmation dialog. The
-                // helper is already starting, and it can only take the display
-                // once VitaPlex releases it: while we stay up it renders to
-                // nothing and the user just sees a black screen for the whole
-                // install. (Launched from the home screen, with nothing else
-                // holding the display, the same helper draws fine.)
-                finishInstall(ui, []() { brls::Application::quit(); });
+                // Terminate IMMEDIATELY (see ps4HandoffExit), no confirmation
+                // dialog: the helper waits a few seconds and then uninstalls
+                // VPLX00002, so VitaPlex's process must be fully gone by then. An
+                // orderly quit() leaves HTTP threads running, and uninstalling a
+                // title whose process is still alive is killed as a crash
+                // (CE-36329-3) — which is exactly what took VitaPlex down.
+                finishInstall(ui, []() { ps4HandoffExit(); });
             } else {
                 // The helper isn't installed (it removes itself after each run,
                 // so this is the normal path). Its pkg ships inside VitaPlex's
@@ -724,9 +739,9 @@ void startInstall(const ReleaseInfo rel) {
                         brls::sync([ui]() {
                             if (!ui->dismissed->load()) stepDone(ui->install, "Handed to updater");
                         });
-                        // Quit immediately so the helper can take the display
-                        // (see the note on the direct-launch path above).
-                        finishInstall(ui, []() { brls::Application::quit(); });
+                        // Terminate immediately for a clean hand-off, same as
+                        // the direct-launch path above (see ps4HandoffExit).
+                        finishInstall(ui, []() { ps4HandoffExit(); });
                     } else {
                         brls::sync([ui]() {
                             if (!ui->dismissed->load()) stepDone(ui->install, "Downloaded");
