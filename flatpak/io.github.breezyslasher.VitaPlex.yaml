@@ -147,6 +147,8 @@ modules:
       - -DPLATFORM_DESKTOP=ON
     build-commands:
       - install -Dm755 VitaPlex ${FLATPAK_DEST}/lib/VitaPlex/VitaPlex
+      # cp won't create intermediate dirs; make the parent first.
+      - install -d ${FLATPAK_DEST}/share/VitaPlex
       - cp -r resources ${FLATPAK_DEST}/share/VitaPlex/resources
       - |
         install -d ${FLATPAK_DEST}/bin
