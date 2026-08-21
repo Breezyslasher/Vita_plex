@@ -21,7 +21,7 @@ on:
         - nx
         - psvita
         - ps4
-        - flatpak
+        - appimage
         - android
         - aur
         - deb
@@ -162,7 +162,7 @@ jobs:
           git push
 
   upload-release:
-    needs: [ resolve-version, build-mingw, build-nx, build-macos, build-flatpak, build-aur, build-ps4, build-vita, build-android ]
+    needs: [ resolve-version, build-mingw, build-nx, build-macos, build-appimage, build-aur, build-ps4, build-vita, build-android ]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -190,7 +190,7 @@ jobs:
             VitaPlex-nx-*/*.nro
             VitaPlex-ps4-*/*
             VitaPlex-vita-*/*.vpk
-            VitaPlex-Flatpak-*/*
+            VitaPlex-appimage-*/*.AppImage
             VitaPlex-aur-*/*.pkg.tar.*
             VitaPlex-android-*/*
       # draft: true above is what keeps the upload working on a repo with
@@ -209,7 +209,7 @@ jobs:
   # Pre-release — manually triggered
   # ───────────────────────────────────────────────
   upload-prerelease:
-    needs: [resolve-version, build-mingw, build-nx, build-macos, build-flatpak, build-aur, build-ps4, build-vita, build-android, build-deb]
+    needs: [resolve-version, build-mingw, build-nx, build-macos, build-appimage, build-aur, build-ps4, build-vita, build-android, build-deb]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -251,11 +251,11 @@ jobs:
             (cd "$dir" && zip -r "../release/VitaPlex.${FVER}-windows-${arch}.zip" .)
           done
 
-          # Flatpak tarballs
-          for tgz in $(find . -name "VitaPlex-Linux-*.tar.gz"); do
-            base=$(basename "$tgz")
-            info=$(echo "$base" | sed -E 's/VitaPlex-Linux-(.+)-[0-9]+\.tar\.gz/\1/')
-            cp "$tgz" "release/VitaPlex.${FVER}-Flatpak-${info}.tar.gz"
+          # AppImages
+          for ai in $(find . -name "VitaPlex-*.AppImage"); do
+            base=$(basename "$ai")
+            arch=$(echo "$base" | sed -E 's/VitaPlex-(.+)-[0-9]+\.AppImage/\1/')
+            cp "$ai" "release/VitaPlex.${FVER}-${arch}.AppImage"
           done
 
           # Switch NRO. Walk every *.nro the download step pulled
@@ -618,19 +618,18 @@ jobs:
         path: app/platform/android/app/build/outputs/apk/release/*.apk
 
   # ───────────────────────────────────────────────
-  # Flatpak — Linux Matrix (x86_64 + aarch64, OpenGL)
+  # AppImage — portable Linux (x86_64 + aarch64)
   # ───────────────────────────────────────────────
-  build-flatpak:
+  build-appimage:
     needs: [resolve-version]
-    if: ${{ inputs.platform == 'flatpak' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
-    name: Flatpak (${{ matrix.arch }}-${{ matrix.driver }})
+    if: ${{ inputs.platform == 'appimage' || inputs.platform == 'all' || github.event_name != 'workflow_dispatch' }}
+    name: AppImage (${{ matrix.arch }})
     strategy:
       fail-fast: false
       matrix:
         include:
-        - { arch: x86_64, runner: ubuntu-24.04, driver: gl, gles2: "OFF" }
-        - { arch: aarch64, runner: ubuntu-24.04-arm, driver: gl, gles2: "OFF" }
-        - { arch: aarch64, runner: ubuntu-24.04-arm, driver: gles2, gles2: "ON" }
+        - { arch: x86_64, runner: ubuntu-24.04 }
+        - { arch: aarch64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -711,10 +710,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: build/_deps
-          key: fetchcontent-${{ runner.os }}-${{ runner.arch }}-${{ matrix.driver }}-${{ hashFiles('lib/borealis/library/CMakeLists.txt') }}
-      - name: Build desktop target in flatpak container
+          key: fetchcontent-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('lib/borealis/library/CMakeLists.txt') }}
+      - name: Build desktop target
         run: |
-          cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON -DUSE_GLES2=${{ matrix.gles2 }} \
+          cmake -B build -G Ninja -DPLATFORM_DESKTOP=ON \
              -DAPP_VERSION=${{ needs.resolve-version.outputs.version_number }} \
              -DAPP_DISPLAY_VERSION="${{ needs.resolve-version.outputs.version }}"
           cmake --build build
@@ -820,12 +819,38 @@ jobs:
             patchelf --set-rpath '$ORIGIN' "$so" 2>/dev/null || true
           done
 
-          tar -czf VitaPlex-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz -C build VitaPlex resources lib
-      - name: Upload Flatpak artifact
+          # ── Package as an AppImage ──────────────────────────────────────
+          # Reuse the bundle just built: binary in usr/bin, bundled libs in
+          # usr/lib (RPATH re-pointed to $ORIGIN/../lib for the AppDir layout),
+          # resources under usr/share/VitaPlex. AppRun cd's there first so the
+          # desktop RESOURCE_PREFIX="resources/" resolves. appimagetool runs
+          # extracted (--appimage-extract-and-run) because CI runners have no
+          # FUSE.
+          APPDIR=AppDir
+          rm -rf "$APPDIR"
+          mkdir -p "$APPDIR/usr/bin" "$APPDIR/usr/lib" "$APPDIR/usr/share/VitaPlex"
+          cp build/VitaPlex "$APPDIR/usr/bin/VitaPlex"
+          cp -a build/lib/. "$APPDIR/usr/lib/"
+          cp -r build/resources "$APPDIR/usr/share/VitaPlex/resources"
+          patchelf --set-rpath '$ORIGIN/../lib' "$APPDIR/usr/bin/VitaPlex"
+          printf '%s\n' '#!/bin/sh' \
+            'HERE="$(dirname "$(readlink -f "$0")")"' \
+            'cd "$HERE/usr/share/VitaPlex" || exit 1' \
+            'exec "$HERE/usr/bin/VitaPlex" "$@"' > "$APPDIR/AppRun"
+          chmod +x "$APPDIR/AppRun"
+          printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=VitaPlex' \
+            'Comment=Plex desktop client' 'Exec=VitaPlex' 'Icon=VitaPlex' \
+            'Terminal=false' 'Categories=AudioVideo;Video;Network;' > "$APPDIR/VitaPlex.desktop"
+          cp app/platform/icon_desktop.png "$APPDIR/VitaPlex.png"
+          curl -fsSL "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${{ matrix.arch }}.AppImage" -o appimagetool
+          chmod +x appimagetool
+          ARCH=${{ matrix.arch }} ./appimagetool --appimage-extract-and-run "$APPDIR" \
+            "VitaPlex-${{ matrix.arch }}-${{ github.run_number }}.AppImage"
+      - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
         with:
-          name: VitaPlex-Flatpak-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}
-          path: VitaPlex-Linux-${{ matrix.arch }}-${{ matrix.driver }}-${{ github.run_number }}.tar.gz
+          name: VitaPlex-appimage-${{ matrix.arch }}-${{ github.run_number }}
+          path: VitaPlex-${{ matrix.arch }}-${{ github.run_number }}.AppImage
 
   # ───────────────────────────────────────────────
   # Nintendo Switch — Matrix (opengl + deko3d)
