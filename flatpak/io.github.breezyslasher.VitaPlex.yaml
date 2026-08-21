@@ -49,8 +49,8 @@ modules:
       - -DENABLE_PROGRAMS=OFF
     sources:
       - type: archive
-        url: https://github.com/Mbed-TLS/mbedtls/releases/download/v3.6.2/mbedtls-3.6.2.tar.bz2
-        sha256: 8b54fb9bcf4d5a7078028e0520acddefb7900b3e66435427e4d7c3255f31f6ec
+        url: https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.2/mbedtls-3.6.2.tar.bz2
+        sha256: 8b54fb9bcf4d5a7078028e0520acddefb7900b3e66fec7f7175bb5b7d85ccdca
 
   - name: libmpv
     buildsystem: meson
