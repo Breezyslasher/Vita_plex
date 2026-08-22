@@ -1217,19 +1217,19 @@ void startInstall(const ReleaseInfo rel) {
             s_busy = false;
             return;
         }
-        // Stub installed. Launch it and quit — it takes over from here.
+        // Stub installed. Launch it and quit automatically — no OK dialog, so
+        // it closes hands-off like the desktop paths. The progress overlay's
+        // "Installing update…" relaunch step already shows what's happening; the
+        // stub promotes the VPK and reopens VitaPlex. (The Vita OS still shows
+        // its own "application will close" confirmation when one title launches
+        // another — once here, once when the stub relaunches us — that's a
+        // system dialog, not ours.)
         brls::sync([ui]() {
             if (!ui->dismissed->load()) stepActive(ui->relaunch, "Installing update\xE2\x80\xA6", -1.0f);
         });
         finishInstall(ui, []() {
-            auto* d = new brls::Dialog(
-                "Installing the update.\n\nVitaPlex will close and reopen on its own "
-                "in a few seconds. If it doesn't, relaunch it from the LiveArea.");
-            d->addButton("OK", []() {
-                vita::launchTitle("VPLXUPD01");
-                brls::Application::quit();
-            });
-            d->open();
+            vita::launchTitle("VPLXUPD01");
+            brls::Application::quit();
         });
 #endif
         s_busy = false;
