@@ -1,6 +1,9 @@
 name: Cleanup old artifacts
 
-# Frees artifact storage: keeps the newest few artifacts and deletes the rest.
+# Frees artifact storage: keeps every artifact from the newest few workflow
+# RUNS and deletes artifacts from older runs. A single build run uploads one
+# artifact per platform (~15), so keeping "the newest N artifacts" would throw
+# away most of even the latest run — we keep whole runs instead.
 # GitHub recalculates quota usage every 6-12h after deletion.
 
 on:
@@ -18,25 +21,48 @@ jobs:
   cleanup:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete all but the newest 4 artifacts
+      - name: Delete artifacts from all but the newest 4 runs
         uses: actions/github-script@v7
         with:
           script: |
-            const keep = 4;
+            const keepRuns = 4;
             const artifacts = await github.paginate(
               github.rest.actions.listArtifactsForRepo,
               { owner: context.repo.owner, repo: context.repo.repo, per_page: 100 }
             );
-            artifacts.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-            let deleted = 0, freed = 0;
-            for (const a of artifacts.slice(keep)) {
+
+            // Group artifacts by the workflow run that produced them, tracking
+            // each run's newest artifact timestamp so runs can be ranked by
+            // recency (run ids are monotonic, but timestamps are robust either
+            // way).
+            const runNewest = new Map();   // runId -> newest created_at (ms)
+            for (const a of artifacts) {
+              const runId = a.workflow_run && a.workflow_run.id;
+              if (!runId) continue;        // orphan artifact, no run — never auto-deleted
+              const t = new Date(a.created_at).getTime();
+              if (t > (runNewest.get(runId) || 0)) runNewest.set(runId, t);
+            }
+
+            // Keep the newest `keepRuns` runs; delete artifacts from all older runs.
+            const keepRunIds = new Set(
+              [...runNewest.entries()]
+                .sort((x, y) => y[1] - x[1])
+                .slice(0, keepRuns)
+                .map(([id]) => id)
+            );
+            core.info(`Keeping all artifacts from the newest ${keepRunIds.size} run(s): ${[...keepRunIds].join(', ') || '(none)'}`);
+
+            let deleted = 0, freed = 0, kept = 0;
+            for (const a of artifacts) {
+              const runId = a.workflow_run && a.workflow_run.id;
+              if (!runId || keepRunIds.has(runId)) { kept++; continue; }
               try {
                 await github.rest.actions.deleteArtifact({
                   owner: context.repo.owner, repo: context.repo.repo, artifact_id: a.id
                 });
                 deleted++; freed += a.size_in_bytes;
               } catch (e) {
-                core.warning(`Could not delete ${a.name}: ${e.message}`);
+                core.warning(`Could not delete ${a.name} (${a.id}): ${e.message}`);
               }
             }
-            core.info(`Deleted ${deleted} artifacts, freed ${(freed/1024/1024).toFixed(1)} MB`);
+            core.info(`Kept ${kept} artifacts across ${keepRunIds.size} run(s); deleted ${deleted}, freed ${(freed/1024/1024).toFixed(1)} MB`);
