@@ -1014,7 +1014,12 @@ void startInstall(const ReleaseInfo rel) {
             });
             finishInstall(ui, [path]() {
                 // Hand the .deb / .pkg.tar.zst to the desktop's package
-                // installer — we run no privileged command ourselves.
+                // installer — we run no privileged command ourselves. The
+                // installer is fork+setsid'd so it's a detached session and
+                // survives VitaPlex quitting. We MUST quit: dpkg/pacman can't
+                // swap the binary under a live process (the old build just
+                // keeps running otherwise), and the dialog already tells the
+                // user to reopen afterwards.
                 pid_t pid = fork();
                 if (pid == 0) {
                     setsid();
@@ -1022,9 +1027,13 @@ void startInstall(const ReleaseInfo rel) {
                     _exit(127);
                 }
                 auto* d = new brls::Dialog(
-                    "Update downloaded.\n\nYour package installer should open — "
-                    "install it there, then reopen VitaPlex.\n\nSaved to:\n" + path);
-                d->addButton("OK", []() {});
+                    "Update downloaded.\n\nYour package installer will open — "
+                    "install it there, then reopen VitaPlex.\n\nVitaPlex will "
+                    "close now so the new version can replace it.\n\nSaved to:\n" + path);
+                // The one action closes VitaPlex — leaving it open is exactly the
+                // "old build still running after the update" bug. Same
+                // quit-on-button pattern the Switch path uses.
+                d->addButton("Close VitaPlex", []() { brls::Application::quit(); });
                 d->open();
             });
         }
