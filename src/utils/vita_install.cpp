@@ -454,6 +454,59 @@ int promoteApp(const std::string& path, std::string& err,
     return res;
 }
 
+// Uninstall an installed title by id via ScePromoterUtility — the DeletePkg
+// counterpart to promoteApp, with the same module-load + async-poll pattern
+// (DeletePkg runs asynchronously; poll GetState to idle, then read GetResult).
+int deleteTitle(const std::string& titleId, std::string& err) {
+    int res = loadScePaf();
+    if (res < 0) {
+        err = "cannot load ScePaf (" + hex((unsigned)res) + ")";
+        return res;
+    }
+
+    res = sceSysmoduleLoadModuleInternal(SCE_SYSMODULE_INTERNAL_PROMOTER_UTIL);
+    if (res < 0) {
+        err = "cannot load the promoter (" + hex((unsigned)res) + ")";
+        unloadScePaf();
+        return res;
+    }
+
+    res = scePromoterUtilityInit();
+    if (res >= 0) {
+        int dres = scePromoterUtilityDeletePkg(titleId.c_str());
+        if (dres < 0) {
+            err = "the system uninstaller would not start (" + hex((unsigned)dres) + ")";
+            res = dres;
+        } else {
+            int state = 1;
+            int guard = 0;
+            const int kMaxPolls = 3000;   // ~5 min at 100 ms
+            while (guard++ < kMaxPolls) {
+                if (scePromoterUtilityGetState(&state) < 0) { state = 0; break; }
+                if (state == 0) break;   // idle => finished
+                sceKernelDelayThread(100 * 1000);
+            }
+            int result = 0;
+            if (guard >= kMaxPolls) {
+                err = "the system uninstaller timed out";
+                res = -1;
+            } else if (scePromoterUtilityGetResult(&result) < 0 || result < 0) {
+                err = "the system uninstaller failed (" + hex((unsigned)result) + ")";
+                res = result ? result : -1;
+            } else {
+                res = 0;   // uninstalled
+            }
+        }
+        scePromoterUtilityExit();
+    } else {
+        err = "cannot start the promoter (" + hex((unsigned)res) + ")";
+    }
+
+    sceSysmoduleUnloadModuleInternal(SCE_SYSMODULE_INTERNAL_PROMOTER_UTIL);
+    unloadScePaf();
+    return res;
+}
+
 }  // namespace
 
 namespace vita {
@@ -514,6 +567,23 @@ void launchTitle(const std::string& titleId) {
     // 0xFFFFF is the flag homebrew launchers pass to sceAppMgrLaunchAppByUri.
     sceAppMgrLaunchAppByUri(0xFFFFF, const_cast<char*>(uri.c_str()));
     sceKernelDelayThread(200 * 1000);
+}
+
+void removeUpdaterStub() {
+    // The stub's title id — matches the launch in app_update.cpp and the
+    // updater target's param.sfo. The promoter installs to ux0:app (or ur0:app
+    // on some setups); if it isn't there, this is a normal boot with no stub to
+    // clean up, so skip the (module-loading) uninstall entirely.
+    const char* kStubId = "VPLXUPD01";
+    if (!fileExists(std::string("ux0:app/") + kStubId) &&
+        !fileExists(std::string("ur0:app/") + kStubId)) {
+        return;
+    }
+    std::string err;
+    if (deleteTitle(kStubId, err) == 0)
+        vlog("vita: updater stub removed");
+    else
+        vlog("vita: could not remove updater stub: %s", err.c_str());
 }
 
 }  // namespace vita

@@ -15,8 +15,9 @@
  *              tiny bundled updater stub (VPLXUPD01) and quits; with
  *              VitaPlex closed the stub promotes the .vpk and relaunches
  *              VitaPlex (the AutoPlugin2 technique, utils/vita_install +
- *              src/updater_stub). Falls back to a VitaShell install if the
- *              stub can't be staged.
+ *              src/updater_stub). VitaPlex removes the leftover stub on its
+ *              next start (like PS4's helper). Falls back to a VitaShell
+ *              install if the stub can't be staged.
  *   Android  — downloads the .apk and hands it to the system package
  *              installer (content:// via ApkProvider — no browser
  *              involved, so Android TV works too).

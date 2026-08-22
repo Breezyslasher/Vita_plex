@@ -1858,6 +1858,14 @@ void checkForUpdates(bool manual) {
         // quietly.
         ps4::removeUpdaterApp();
 #endif
+#ifdef __PSV__
+        // Same idea on Vita: the updater stub (VPLXUPD01) is installed fresh
+        // from the bundled updater.vpk each update and left on the LiveArea
+        // afterwards. Remove it from HERE (a different title, so it's safe —
+        // a title can't uninstall its own running self), not from the stub.
+        // No-op on a normal boot when the stub isn't installed.
+        vita::removeUpdaterStub();
+#endif
 
         HttpClient client;
         HttpRequest req;
