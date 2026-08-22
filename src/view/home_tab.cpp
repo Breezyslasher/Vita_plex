@@ -252,7 +252,8 @@ void HomeTab::populateRow(HorizontalScrollRow* row, const std::vector<MediaItem>
         // dispatcher — they used to carry separate copies of the per-type
         // chain, which is how live programmes ended up excluded from only
         // one of them. hasContextMenu() also keeps the "Options" hint off
-        // items that have no menu, live programmes included.
+        // items that have no menu; live programmes now have one (their
+        // Watch Now / Record card), so they show the hint too.
         if (MediaDetailView::hasContextMenu(capturedItem)) {
             cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
                 [capturedItem](brls::View*) {
