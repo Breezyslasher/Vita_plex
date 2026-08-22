@@ -1053,6 +1053,14 @@ if(PLATFORM_PSV)
         FILE resources/font/switch_icons.ttf              resources/font/switch_icons.ttf
         FILE resources/material/MaterialIcons-Regular.ttf resources/material/MaterialIcons-Regular.ttf
 
+        # TLS root CA bundle (Mozilla's), so libcurl's mbedtls backend has a
+        # trust anchor for peer verification — CAINFO points here (see
+        # applyCurlSecurityDefaults in http_client.cpp). PS4 copies it into
+        # its pkg and the Switch romfs sweeps the whole resources/ tree, but
+        # the Vita vpk uses an explicit allow-list, so it must be named here
+        # or every HTTPS handshake on Vita fails.
+        FILE resources/cacert.pem                         resources/cacert.pem
+
         # The bundled updater stub, installed + launched at self-update
         # time. Listing it as a FILE makes the main vpk's build command
         # depend on this path, which is the output of the stub's
