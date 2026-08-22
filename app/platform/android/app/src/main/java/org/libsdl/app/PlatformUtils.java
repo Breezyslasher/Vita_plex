@@ -101,6 +101,38 @@ public class PlatformUtils {
     public static void installApk(String path) {
         Context context = SDLActivity.getContext();
         try {
+            // Android 8+ (API 26): installing an APK from outside the store
+            // needs the per-app "install unknown apps" grant. Declaring
+            // REQUEST_INSTALL_PACKAGES in the manifest is necessary but NOT
+            // sufficient — the user must enable this app as a source. On phones
+            // the install intent often auto-prompts; on Android TV it does not,
+            // so without routing the user there they are never asked and the
+            // installer just stages and vanishes. Send them to enable it, then
+            // they press Update again (canRequestPackageInstalls() is true on
+            // the retry and the install proceeds).
+            if (android.os.Build.VERSION.SDK_INT >= 26 &&
+                    !context.getPackageManager().canRequestPackageInstalls()) {
+                Intent grant = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + context.getPackageName()));
+                grant.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                // Some Android TV builds don't expose the per-app source screen;
+                // fall back to the global unknown-sources, then security, screen.
+                if (grant.resolveActivity(context.getPackageManager()) == null) {
+                    grant = new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                }
+                if (grant.resolveActivity(context.getPackageManager()) == null) {
+                    grant = new Intent(Settings.ACTION_SECURITY_SETTINGS)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                }
+                try {
+                    context.startActivity(grant);
+                } catch (Exception e) {
+                    android.util.Log.e("VitaPlex", "cannot open install-permission settings", e);
+                }
+                return;
+            }
+
             Intent intent = new Intent(Intent.ACTION_VIEW);
             Uri uri;
             if (android.os.Build.VERSION.SDK_INT >= 24) {
@@ -113,19 +145,13 @@ public class PlatformUtils {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
             context.startActivity(intent);
 
-            // Stop our own (old) process shortly after the installer takes
-            // the foreground. Android updates the package while the old app
-            // is still running, so without this the user has to force-close
-            // VitaPlex for the new version to take effect; killing the stale
-            // process means reopening after the install lands the update.
-            // 1.5s lets the installer come to the front first, so the kill
-            // is invisible behind it.
-            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
-                new Runnable() {
-                    @Override public void run() {
-                        android.os.Process.killProcess(android.os.Process.myPid());
-                    }
-                }, 1500);
+            // Do NOT kill our own process here. The installer streams the APK
+            // from ApkProvider — a ContentProvider hosted in THIS process —
+            // during "Staging app…"; killing mid-stage tears the provider down
+            // and the install silently aborts (worse on slower Android TV
+            // installers, where staging takes longer than any fixed delay). On
+            // a successful update Android stops the old process itself, so no
+            // manual kill is needed.
         } catch (Exception e) {
             android.util.Log.e("VitaPlex", "installApk failed", e);
         }
