@@ -41,7 +41,7 @@
     <td align="center"><b>Beta 1.1.9</b></td>
   </tr>
   <tr>
-    <td><img src="../Screenshots/Beta-0.6.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
     <td><img src="../Screenshots/Beta-1.0.0/update.png" width="400"/></td>
   </tr>
 </table>
@@ -55,7 +55,7 @@
     <td align="center"><b>Beta 1.1.9</b></td>
   </tr>
   <tr>
-    <td><img src="../Screenshots/Beta-0.6.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
     <td><img src="../Screenshots/Beta-1.0.0/realease notes.png" width="400"/></td>
   </tr>
 </table>
@@ -68,7 +68,7 @@
     <td align="center"><b>Beta 1.1.9</b></td>
   </tr>
   <tr>
-    <td><img src="../Screenshots/Beta-0.6.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
+    <td><img src="../Screenshots/Alpha-0.0.1/Transparent_Square_Tiles_Texture.png" width="400"/></td>
     <td><img src="../Screenshots/Beta-1.0.0/live tv dialog.png" width="400"/></td>
   </tr>
 </table>
