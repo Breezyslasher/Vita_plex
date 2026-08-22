@@ -288,6 +288,7 @@ set(APP_SOURCES
     src/utils/https_proxy.cpp
     src/utils/image_loader.cpp
     src/utils/jwt_auth.cpp
+    src/utils/update_verify.cpp
     src/utils/now_playing.cpp
     src/utils/pip.cpp
 )
@@ -654,6 +655,15 @@ target_link_libraries(${PROJECT_NAME}
     ${APP_FFMPEG_LINK_BLOCK}
     ${APP_RENDER_LIBS}
 )
+
+# Update-signature verification (src/utils/update_verify.cpp) uses mbedcrypto,
+# which is linked on every target that installs updates in place: the consoles
+# (Switch gets it via the ffmpeg --start-group above), Android and desktop
+# Linux/macOS. Windows (Schannel, no mbedcrypto) and iOS/tvOS (browser-only
+# updates) compile the stub. Define the capability macro for the former set.
+if(NOT WIN32 AND NOT PLATFORM_IOS AND NOT PLATFORM_TVOS)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_HAVE_MBEDCRYPTO=1)
+endif()
 
 if(NOT PLATFORM_SWITCH AND NOT PLATFORM_PS4 AND NOT WIN32 AND NOT PLATFORM_ANDROID AND NOT PLATFORM_IOS AND NOT PLATFORM_TVOS)
     target_link_libraries(${PROJECT_NAME} mp3lame)
