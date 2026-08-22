@@ -4,6 +4,7 @@
 
 #include "view/media_detail_view.hpp"
 #include "view/media_item_cell.hpp"
+#include "view/livetv_actions.hpp"
 #include "view/recycling_grid.hpp"
 #include "view/long_press_gesture.hpp"
 #include "view/progress_dialog.hpp"
@@ -3724,9 +3725,11 @@ void MediaDetailView::showEpisodeContextMenu(const MediaItem& episode) {
     showOptionsPopover(anchor, contextLine, episode.title, std::move(rows));
 }
 bool MediaDetailView::hasContextMenu(const MediaItem& item) {
-    // A Live TV programme's ratingKey is an EPG key; every menu below acts
-    // on a library one.
-    if (item.isLiveTV) return false;
+    // A Live TV programme's ratingKey is an EPG key, so the library menus
+    // below don't apply — but a broadcast still has actions (Watch Now /
+    // Record), so it gets its own context menu, routed to
+    // showLiveTVProgramMenu from showContextMenuFor below.
+    if (item.isLiveTV) return true;
     switch (item.mediaType) {
         case MediaType::MOVIE:
         case MediaType::SHOW:
@@ -3743,6 +3746,9 @@ bool MediaDetailView::hasContextMenu(const MediaItem& item) {
 
 void MediaDetailView::showContextMenuFor(const MediaItem& item) {
     if (!hasContextMenu(item)) return;
+    // Live TV: the broadcast menu (Watch Now / Record) rather than a library
+    // menu — the same card the guide, Home rails and search open on select.
+    if (item.isLiveTV) { showLiveTVProgramMenu(item); return; }
     switch (item.mediaType) {
         case MediaType::MOVIE:        showMovieContextMenuStatic(item);  break;
         case MediaType::SHOW:         showShowContextMenuStatic(item);   break;
