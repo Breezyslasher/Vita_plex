@@ -43,6 +43,37 @@
 #ifdef __PS4__
 #include "utils/ps4_install.hpp"
 #endif
+#if defined(__linux__) && !defined(ANDROID)
+#include <unistd.h>       // readlink, access, fork, setsid, execl/execlp, _exit
+#include <sys/stat.h>     // chmod (make the replacement AppImage executable)
+#include <filesystem>     // AppImage/self-path maths
+#endif
+
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+// Desktop macOS only. TARGET_OS_IPHONE is 1 on iOS/tvOS, which keep the
+// browser flow; the Mac (TARGET_OS_IPHONE == 0) gets the in-app .app swap.
+#if defined(__APPLE__) && !TARGET_OS_IPHONE
+#define VITAPLEX_MACOS_DESKTOP 1
+#else
+#define VITAPLEX_MACOS_DESKTOP 0
+#endif
+
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>      // GetModuleFileNameA + CreateProcessA for the relaunch helper
+#endif
+#if VITAPLEX_MACOS_DESKTOP
+#include <unistd.h>       // fork, setsid, execl, getpid, _exit
+#include <sys/stat.h>     // chmod (make the updater script executable)
+#include <mach-o/dyld.h>  // _NSGetExecutablePath (locate the .app bundle)
+#endif
 
 namespace vitaplex {
 namespace app_update {
@@ -168,6 +199,91 @@ bool isNewer(const std::string& tag, const std::string& current) {
     return false;
 }
 
+#if defined(__linux__) && !defined(ANDROID)
+// ── Linux packaging detection ────────────────────────────────────────────
+// The AppImage, the .deb and the Arch package are the SAME PLATFORM_DESKTOP
+// binary — nothing at build time says which — so we detect the install kind at
+// runtime:
+//   * AppImage : the runtime sets $APPIMAGE to the .AppImage path. It's a
+//                single, user-owned file → we replace it and relaunch.
+//   * Deb      : dpkg lays the binary at /usr/lib/VitaPlex/VitaPlex.
+//   * Arch     : pacman-managed system install under /usr.
+// Flatpak sets $FLATPAK_ID and updates through the software centre, so it (and
+// anything unrecognised) stays browser-only.
+enum class LinuxPkg { None, AppImage, Deb, Arch };
+
+std::string selfExePath() {
+    char buf[4096];
+    ssize_t n = ::readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0) return {};
+    buf[n] = '\0';
+    return std::string(buf);
+}
+
+LinuxPkg linuxPkg() {
+    if (std::getenv("APPIMAGE")) return LinuxPkg::AppImage;
+    if (std::getenv("FLATPAK_ID") || ::access("/.flatpak-info", F_OK) == 0)
+        return LinuxPkg::None;
+
+    const std::string exe = selfExePath();
+    if (exe.rfind("/usr/lib/VitaPlex/", 0) == 0 &&
+        ::access("/var/lib/dpkg/status", F_OK) == 0)
+        return LinuxPkg::Deb;
+    if (!exe.empty() && exe.rfind("/usr/", 0) == 0 &&
+        ::access("/var/lib/pacman", F_OK) == 0)
+        return LinuxPkg::Arch;
+    return LinuxPkg::None;
+}
+#endif
+
+#if defined(_WIN32)
+// ── Windows self-update helper ───────────────────────────────────────────
+// The Windows build ships as a portable folder — VitaPlex.exe + its runtime
+// DLLs + resources/ — zipped at the archive root. The running .exe and the
+// loaded DLLs are locked, so the swap can't happen in-process: we download
+// the zip, then hand a tiny .bat to a detached cmd that waits for VitaPlex to
+// exit, unpacks the zip over the install folder and relaunches. Same "hand
+// off, then quit" shape the console/Linux paths already use.
+std::string winInstallDir() {
+    char buf[MAX_PATH];
+    DWORD n = ::GetModuleFileNameA(nullptr, buf, (DWORD)sizeof(buf));
+    if (n == 0 || n >= sizeof(buf)) return {};
+    std::string exe(buf, n);
+    size_t slash = exe.find_last_of("\\/");
+    return slash == std::string::npos ? std::string() : exe.substr(0, slash);
+}
+#endif
+
+#if VITAPLEX_MACOS_DESKTOP
+// ── macOS self-update helpers ────────────────────────────────────────────
+// The macOS build ships as VitaPlex.app inside a .dmg. In-app update mounts
+// the downloaded dmg and swaps the whole .app bundle from a detached helper
+// once VitaPlex has quit, then reopens it — the classic Sparkle shape.
+std::string macExePath() {
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);          // asks for the buffer size
+    if (size == 0) return {};
+    std::string buf(size, '\0');
+    if (_NSGetExecutablePath(&buf[0], &size) != 0) return {};
+    buf.resize(size ? size - 1 : 0);               // drop the trailing NUL
+    return buf;
+}
+
+// The .app bundle root when we're launched from one, else empty — a loose
+// binary can't be swapped as a bundle, so it falls back to the browser.
+std::string macAppBundlePath() {
+    const std::string exe = macExePath();
+    const std::string tail = "/Contents/MacOS/VitaPlex";
+    if (exe.size() > tail.size() &&
+        exe.compare(exe.size() - tail.size(), tail.size(), tail) == 0) {
+        std::string root = exe.substr(0, exe.size() - tail.size());
+        if (root.size() >= 4 && root.compare(root.size() - 4, 4, ".app") == 0)
+            return root;
+    }
+    return {};
+}
+#endif
+
 // ── Platform asset choice ────────────────────────────────────────────────
 // Release assets follow "VitaPlex.<tag>-<platform>…"; the suffix decides.
 // Empty = this platform has no single downloadable asset (browser-only).
@@ -200,6 +316,44 @@ std::string assetSuffix() {
 #endif
 #elif defined(__PS4__)
     return "-ps4.pkg";
+#elif defined(__linux__) && !defined(ANDROID)
+    switch (linuxPkg()) {
+        case LinuxPkg::AppImage:
+#if defined(__x86_64__)
+            return "-x86_64.AppImage";
+#elif defined(__aarch64__)
+            return "-aarch64.AppImage";
+#else
+            return {};
+#endif
+        case LinuxPkg::Deb:
+#if defined(__x86_64__)
+            return "-Linux_amd64.deb";
+#elif defined(__aarch64__)
+            return "-Linux_arm64.deb";
+#else
+            return {};
+#endif
+        case LinuxPkg::Arch:
+            return "-Linux.pkg.tar.zst";
+        default:
+            return {};   // Flatpak / unknown → browser-only
+    }
+#elif defined(_WIN32)
+#if defined(__aarch64__) || defined(_M_ARM64)
+    return "-windows-arm64.zip";
+#else
+    return "-windows-x64.zip";
+#endif
+#elif VITAPLEX_MACOS_DESKTOP
+    // Only when we can actually swap the .app bundle; a loose binary drops
+    // through to the browser.
+    if (macAppBundlePath().empty()) return {};
+#if defined(__aarch64__) || defined(__arm64__)
+    return "-macOS-Silicon.dmg";
+#else
+    return "-macOS-Intel.dmg";
+#endif
 #else
     return {};
 #endif
@@ -308,7 +462,7 @@ std::string mbLabel(int64_t bytes) {
 }
 
 // ── The in-place installers (Switch / Vita / Android / PS4) ─────────────
-#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__)
+#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__) || (defined(__linux__) && !defined(ANDROID)) || defined(_WIN32) || VITAPLEX_MACOS_DESKTOP
 
 // One row of the progress checklist (design_handoff_update, dialog C):
 // a 26px state circle — hairline when pending, spinner while active, green
@@ -503,6 +657,8 @@ void startInstall(const ReleaseInfo rel) {
     const char* relaunchLabel = "Relaunch to apply";
 #elif defined(__PS4__)
     const char* relaunchLabel = "Exit while the system installs";
+#elif defined(_WIN32) || VITAPLEX_MACOS_DESKTOP
+    const char* relaunchLabel = "Reopens automatically";
 #else
     const char* relaunchLabel = "System installer opens";
 #endif
@@ -548,6 +704,29 @@ void startInstall(const ReleaseInfo rel) {
         const std::string path = platformPath("update.apk");
 #elif defined(__PS4__)
         const std::string path = platformPath("update.pkg");
+#elif defined(__linux__)
+        std::string path;
+        switch (linuxPkg()) {
+            case LinuxPkg::AppImage: {
+                // Download straight next to the running .AppImage so the final
+                // step is an atomic rename over it (no cross-filesystem copy,
+                // and rename doesn't hit ETXTBSY on the running executable).
+                const char* ai = std::getenv("APPIMAGE");
+                path = ai ? (std::string(ai) + ".new") : platformPath("update.AppImage");
+                break;
+            }
+            case LinuxPkg::Deb:  path = platformPath("update.deb"); break;
+            case LinuxPkg::Arch: path = platformPath("update.pkg.tar.zst"); break;
+            default:             path = platformPath("update.bin"); break;
+        }
+#elif defined(_WIN32)
+        // Straight into the install folder (absolute, so the detached cmd
+        // resolves it no matter what its working directory ends up being).
+        const std::string dir = winInstallDir();
+        const std::string path = dir.empty() ? platformPath("update.zip")
+                                             : (dir + "\\update.zip");
+#elif VITAPLEX_MACOS_DESKTOP
+        const std::string path = platformPath("update.dmg");
 #else
         const std::string path = platformPath("update.vpk");
 #endif
@@ -571,7 +750,7 @@ void startInstall(const ReleaseInfo rel) {
             }
 
             // (Re)open truncating — a failed attempt leaves partial bytes.
-#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
+#if !defined(__PSV__)
             FILE* f = fopen(path.c_str(), "wb");
             if (!f) { installFailed("cannot open " + path, ui); s_busy = false; return; }
 #else
@@ -586,7 +765,7 @@ void startInstall(const ReleaseInfo rel) {
                 rel.assetUrl,
                 [&](const char* data, size_t size) -> bool {
                     if (s_cancel.load()) return false;
-#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
+#if !defined(__PSV__)
                     if (fwrite(data, 1, size, f) != size) return false;
 #else
                     if (sceIoWrite(f, data, size) != (int)size) return false;
@@ -608,7 +787,7 @@ void startInstall(const ReleaseInfo rel) {
                 [&](int64_t sz) { if (total <= 0) total = sz; },
                 {}, 0, nullptr, &dlErr);
 
-#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
+#if !defined(__PSV__)
             fclose(f);
 #else
             sceIoClose(f);
@@ -619,7 +798,7 @@ void startInstall(const ReleaseInfo rel) {
         }
 
         if (s_cancel.load()) {
-#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
+#if !defined(__PSV__)
             remove(path.c_str());
 #else
             sceIoRemove(path.c_str());
@@ -628,7 +807,7 @@ void startInstall(const ReleaseInfo rel) {
             return;   // user cancellation, not a failure
         }
         if (!ok) {
-#if defined(__SWITCH__) || defined(ANDROID) || defined(__PS4__)
+#if !defined(__PSV__)
             remove(path.c_str());
 #else
             sceIoRemove(path.c_str());
@@ -799,6 +978,209 @@ void startInstall(const ReleaseInfo rel) {
             d->addButton("OK", []() { brls::Application::quit(); });
             d->open();
         });
+#elif defined(__linux__)
+        // Desktop Linux. AppImage self-replaces and relaunches; deb/Arch hand
+        // the downloaded package to the system installer (the user confirms the
+        // install there). Flatpak/unknown never reach here — their
+        // assetSuffix() is empty, so the flow opens the browser instead.
+        if (linuxPkg() == LinuxPkg::AppImage) {
+            const char* aiEnv = std::getenv("APPIMAGE");
+            std::string target = aiEnv ? std::string(aiEnv) : selfExePath();
+            brls::sync([ui]() {
+                if (!ui->dismissed->load()) stepDone(ui->install, "Installed");
+            });
+            // `path` was downloaded to "<target>.new" on the same filesystem, so
+            // rename() atomically swaps it over the running image — the running
+            // process keeps the old inode, and the new file launches on exec.
+            finishInstall(ui, [path, target]() {
+                std::error_code ec;
+                std::filesystem::rename(path, target, ec);
+                if (ec)
+                    std::filesystem::copy_file(path, target,
+                        std::filesystem::copy_options::overwrite_existing, ec);
+                ::chmod(target.c_str(), 0755);
+                pid_t pid = fork();   // relaunch the new image, detached
+                if (pid == 0) {
+                    setsid();
+                    sleep(1);   // let this instance quit and free the window first
+                    execl(target.c_str(), target.c_str(), (char*)nullptr);
+                    _exit(127);
+                }
+                brls::Application::quit();
+            });
+        } else {
+            brls::sync([ui]() {
+                if (!ui->dismissed->load()) stepDone(ui->install, "Handed to installer");
+            });
+            finishInstall(ui, [path]() {
+                // Hand the .deb / .pkg.tar.zst to the desktop's package
+                // installer, then quit automatically — no confirmation button.
+                // The installer is fork+setsid'd (its own session), so it keeps
+                // running after we exit; and we MUST exit, because dpkg/pacman
+                // can't swap the binary under a live process (the old build
+                // would just keep running). AppImage self-relaunches; deb/Arch
+                // can't, so the user reopens VitaPlex once the system install
+                // finishes.
+                pid_t pid = fork();
+                if (pid == 0) {
+                    setsid();
+                    execlp("xdg-open", "xdg-open", path.c_str(), (char*)nullptr);
+                    _exit(127);
+                }
+                brls::Application::quit();
+            });
+        }
+#elif defined(_WIN32)
+        // Windows portable build. The running VitaPlex.exe and its loaded
+        // DLLs are locked, so the swap waits until we exit: write a .bat that
+        // spins until VitaPlex.exe is gone, unpacks the downloaded zip over
+        // the install folder (bsdtar `tar`, bundled since Win10 1803, with
+        // PowerShell Expand-Archive as a fallback) and relaunches — then hand
+        // it to a detached, windowless cmd and quit.
+        {
+            const std::string installDir = winInstallDir();
+            if (installDir.empty()) {
+                installFailed("could not locate the install folder", ui);
+                s_busy = false;
+                return;
+            }
+            auto toWin = [](std::string s) {
+                for (char& c : s) if (c == '/') c = '\\';
+                return s;
+            };
+            const std::string zipWin = toWin(path);
+            const std::string dirWin = toWin(installDir);
+            const std::string batPath = installDir + "\\vitaplex_update.bat";
+
+            FILE* bf = fopen(batPath.c_str(), "wb");
+            if (!bf) {
+                installFailed("could not write the updater script", ui);
+                s_busy = false;
+                return;
+            }
+            // CRLF endings: cmd mishandles bare-LF .bat files.
+            fprintf(bf,
+                "@echo off\r\n"
+                ":waitloop\r\n"
+                "tasklist /FI \"IMAGENAME eq VitaPlex.exe\" 2>nul | find /I \"VitaPlex.exe\" >nul\r\n"
+                "if not errorlevel 1 (\r\n"
+                "  ping -n 2 127.0.0.1 >nul\r\n"
+                "  goto waitloop\r\n"
+                ")\r\n"
+                "where tar >nul 2>&1\r\n"
+                "if not errorlevel 1 (\r\n"
+                "  tar -xf \"%s\" -C \"%s\"\r\n"
+                ") else (\r\n"
+                "  powershell -NoProfile -NonInteractive -Command \"Expand-Archive -LiteralPath '%s' -DestinationPath '%s' -Force\"\r\n"
+                ")\r\n"
+                "start \"\" /D \"%s\" \"%s\\VitaPlex.exe\"\r\n"
+                "del \"%s\" >nul 2>&1\r\n"
+                "del \"%%~f0\" >nul 2>&1\r\n",
+                zipWin.c_str(), dirWin.c_str(),
+                zipWin.c_str(), dirWin.c_str(),
+                dirWin.c_str(), dirWin.c_str(),
+                zipWin.c_str());
+            fclose(bf);
+
+            brls::sync([ui]() {
+                if (!ui->dismissed->load()) stepDone(ui->install, "Installed");
+            });
+            finishInstall(ui, [batPath]() {
+                std::string cmd = "cmd.exe /c \"" + batPath + "\"";
+                std::vector<char> mut(cmd.begin(), cmd.end());
+                mut.push_back('\0');
+                STARTUPINFOA si;
+                ZeroMemory(&si, sizeof(si));
+                si.cb = sizeof(si);
+                PROCESS_INFORMATION pi;
+                ZeroMemory(&pi, sizeof(pi));
+                // Windowless; a CreateProcess child outlives us with no job to
+                // tie it down, so it's free to do the swap once we're gone.
+                if (::CreateProcessA(nullptr, mut.data(), nullptr, nullptr, FALSE,
+                                     CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) {
+                    ::CloseHandle(pi.hThread);
+                    ::CloseHandle(pi.hProcess);
+                }
+                brls::Application::quit();
+            });
+            s_busy = false;
+            return;
+        }
+#elif VITAPLEX_MACOS_DESKTOP
+        // macOS .app swap, run from a detached shell after VitaPlex quits:
+        // wait for the process to die, mount the dmg, ditto its VitaPlex.app
+        // over ours, detach and reopen. The app is unsigned and the dmg came
+        // from our own HTTP client (no quarantine xattr), so no Gatekeeper
+        // prompt is involved.
+        {
+            const std::string bundle = macAppBundlePath();
+            if (bundle.empty()) {
+                // assetSuffix() gates on this, so we normally never land here;
+                // never clobber a loose binary if we somehow do.
+                brls::sync([ui]() {
+                    if (!ui->dismissed->load()) stepDone(ui->install, "Downloaded");
+                });
+                finishInstall(ui, [path]() {
+                    auto* d = new brls::Dialog(
+                        "Update downloaded to\n" + path + "\n\nOpen it to install.");
+                    d->addButton("OK", []() {});
+                    d->open();
+                });
+                s_busy = false;
+                return;
+            }
+            const std::string scriptPath = platformPath("update_apply.sh");
+            FILE* sf = fopen(scriptPath.c_str(), "wb");
+            if (!sf) {
+                installFailed("could not write the updater script", ui);
+                s_busy = false;
+                return;
+            }
+            // VitaPlex data paths carry no single quotes, so single-quoting
+            // each is enough to keep the shell happy.
+            fprintf(sf,
+                "#!/bin/sh\n"
+                "PID=%d\n"
+                "DMG='%s'\n"
+                "APP='%s'\n"
+                "while kill -0 \"$PID\" 2>/dev/null; do sleep 1; done\n"
+                "MNT=\"$(mktemp -d /tmp/vitaplex_dmg.XXXXXX)\"\n"
+                "if hdiutil attach \"$DMG\" -nobrowse -readonly -mountpoint \"$MNT\" >/dev/null 2>&1; then\n"
+                "  if [ -d \"$MNT/VitaPlex.app\" ]; then\n"
+                "    rm -rf \"$APP.old\"\n"
+                "    if mv \"$APP\" \"$APP.old\" 2>/dev/null; then\n"
+                "      if ditto \"$MNT/VitaPlex.app\" \"$APP\"; then\n"
+                "        rm -rf \"$APP.old\"\n"
+                "      else\n"
+                "        rm -rf \"$APP\"; mv \"$APP.old\" \"$APP\" 2>/dev/null\n"
+                "      fi\n"
+                "    fi\n"
+                "  fi\n"
+                "  hdiutil detach \"$MNT\" >/dev/null 2>&1 || hdiutil detach \"$MNT\" -force >/dev/null 2>&1\n"
+                "fi\n"
+                "rmdir \"$MNT\" 2>/dev/null\n"
+                "rm -f \"$DMG\"\n"
+                "open \"$APP\"\n"
+                "rm -f \"$0\"\n",
+                (int)getpid(), path.c_str(), bundle.c_str());
+            fclose(sf);
+            ::chmod(scriptPath.c_str(), 0755);
+
+            brls::sync([ui]() {
+                if (!ui->dismissed->load()) stepDone(ui->install, "Installed");
+            });
+            finishInstall(ui, [scriptPath]() {
+                pid_t pid = fork();
+                if (pid == 0) {
+                    setsid();
+                    execl("/bin/sh", "sh", scriptPath.c_str(), (char*)nullptr);
+                    _exit(127);
+                }
+                brls::Application::quit();
+            });
+            s_busy = false;
+            return;
+        }
 #else
         // VitaPlex can't promote over itself while it is the running title
         // (the installer returns 0x80101114 "in use"), so hand the install
@@ -853,7 +1235,7 @@ void startInstall(const ReleaseInfo rel) {
         s_busy = false;
     });
 }
-#endif  // __SWITCH__ || __PSV__ || ANDROID || __PS4__
+#endif  // __SWITCH__ || __PSV__ || ANDROID || __PS4__ || (linux && !ANDROID) || _WIN32 || macOS
 
 // ── Release notes → sheet lines (design_handoff_notes_A) ─────────────────
 // VitaPlex notes are hand-written markdown with a fixed shape: an H1
@@ -1171,7 +1553,7 @@ void showNotesSheet(const ReleaseInfo rel) {
     // The primary mirrors the offer's action so the user can act from
     // here without going back.
     brls::Box* primary = nullptr;
-#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__)
+#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__) || (defined(__linux__) && !defined(ANDROID)) || defined(_WIN32) || VITAPLEX_MACOS_DESKTOP
     if (!rel.assetUrl.empty()) {
         primary = makeButton("\xE2\x86\x93  Update Now", BtnStyle::Gold, [rel]() {
             // Pop the sheet, then the offer beneath it, then install.
@@ -1355,6 +1737,9 @@ void offerUpdate(const ReleaseInfo rel) {
 #elif defined(__PS4__)
     caption += (caption.empty() ? "" : " \xC2\xB7 ") +
                std::string("installs via the PS4 installer \xC2\xB7 exit to finish");
+#elif defined(_WIN32) || VITAPLEX_MACOS_DESKTOP
+    caption += (caption.empty() ? "" : " \xC2\xB7 ") +
+               std::string("installs in place \xC2\xB7 reopens automatically");
 #else
     caption += (caption.empty() ? "" : " \xC2\xB7 ") +
                std::string("opens the release page in your browser");
@@ -1386,7 +1771,7 @@ void offerUpdate(const ReleaseInfo rel) {
     buttons->setPadding(14.0f, 18.0f, 16.0f, 18.0f);
 
     brls::Box* primary = nullptr;
-#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__)
+#if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__) || (defined(__linux__) && !defined(ANDROID)) || defined(_WIN32) || VITAPLEX_MACOS_DESKTOP
     // These install in place; the notes sheet is the secondary action.
     if (!rel.assetUrl.empty()) {
         primary = makeButton("\xE2\x86\x93  Update", BtnStyle::Gold, [rel]() {

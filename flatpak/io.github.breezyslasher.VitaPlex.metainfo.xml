@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.breezyslasher.VitaPlex</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <name>VitaPlex</name>
+  <summary>Native Plex client for desktop and consoles</summary>
+  <description>
+    <p>
+      VitaPlex is a native Plex client built on borealis and libmpv. It browses
+      your Plex libraries and plays movies, shows, music and live TV with a
+      controller-friendly interface.
+    </p>
+    <p>Features:</p>
+    <ul>
+      <li>Direct play and transcoding via libmpv</li>
+      <li>Downloads for offline playback</li>
+      <li>SyncLounge watch-together support</li>
+      <li>Live TV and DVR</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.breezyslasher.VitaPlex.desktop</launchable>
+  <categories>
+    <category>AudioVideo</category>
+    <category>Video</category>
+    <category>Player</category>
+  </categories>
+  <url type="homepage">https://github.com/Breezyslasher/Vita_plex</url>
+  <url type="bugtracker">https://github.com/Breezyslasher/Vita_plex/issues</url>
+  <developer id="io.github.breezyslasher">
+    <name>Breezyslasher</name>
+  </developer>
+  <content_rating type="oars-1.1"/>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Home</caption>
+      <image>https://raw.githubusercontent.com/Breezyslasher/Vita_plex/main/Screenshots/Beta-1.0.0/home_page_new.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Movie details</caption>
+      <image>https://raw.githubusercontent.com/Breezyslasher/Vita_plex/main/Screenshots/Beta-1.0.0/movie_info_page.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>TV show</caption>
+      <image>https://raw.githubusercontent.com/Breezyslasher/Vita_plex/main/Screenshots/Beta-1.0.0/tv_show.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Live TV</caption>
+      <image>https://raw.githubusercontent.com/Breezyslasher/Vita_plex/main/Screenshots/Beta-1.0.0/live_tv.png</image>
+    </screenshot>
+  </screenshots>
+  <releases>
+    <release version="2.1.8" date="2026-08-21"/>
+  </releases>
+</component>

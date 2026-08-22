@@ -1,0 +1,20 @@
+VitaPlex
+Copyright 2026 The VitaPlex Authors
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this project except in compliance with the License. A copy of the License is
+provided in the LICENSE file, and is also available at:
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+This product is derived from Switchfin
+(https://github.com/dragonflylee/switchfin), Copyright the Switchfin authors,
+licensed under the Apache License, Version 2.0.
+
+This product uses borealis (https://github.com/dragonflylee/borealis, a fork of
+https://github.com/natinusala/borealis), licensed under the Apache License,
+Version 2.0.
+
+This product dynamically links libmpv (https://mpv.io), licensed under the GNU
+Lesser General Public License, version 2.1 or later, and bundles or links
+further third-party libraries under their respective licenses.

@@ -117,7 +117,7 @@ static const SectionMeta kSections[] = {
                             "Direct play, quality preset, and forced transcoding." },
     /* SEC_NETWORK     */ { "Network",         "web.png",
                             "Connection timeout for slow links." },
-    /* SEC_SYNCLOUNGE  */ { "SyncLounge",      "refresh.png",
+    /* SEC_SYNCLOUNGE  */ { "SyncLounge",      "account-group.png",
                             "Watch in sync with a room — party pause and host." },
     /* SEC_DOWNLOADS   */ { "Downloads",       "download.png",
                             "Storage, cleanup, and delete-after-watch." },

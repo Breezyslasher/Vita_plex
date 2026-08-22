@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=VitaPlex
+Comment=Native Plex client
+Exec=VitaPlex
+Icon=io.github.breezyslasher.VitaPlex
+Terminal=false
+Categories=AudioVideo;Video;Player;Network;
+Keywords=Plex;Media;Video;Streaming;
