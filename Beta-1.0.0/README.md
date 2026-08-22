@@ -37,7 +37,7 @@
     <th colspan="2" align="center">Update Dialogy</th>
   </tr>
   <tr>
-    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 0.6.1 Does not exist</b></td>
     <td align="center"><b>Beta 1.1.9</b></td>
   </tr>
   <tr>
@@ -51,7 +51,7 @@
     <th colspan="2" align="center">Realease Notes</th>
   </tr>
   <tr>
-    <td align="center"><b>Beta 0.6.1</b></td>
+    <td align="center"><b>Beta 0.6.1 Does not exist</b></td>
     <td align="center"><b>Beta 1.1.9</b></td>
   </tr>
   <tr>
