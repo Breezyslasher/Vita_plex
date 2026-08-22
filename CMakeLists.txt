@@ -660,9 +660,34 @@ target_link_libraries(${PROJECT_NAME}
 # which is linked on every target that installs updates in place: the consoles
 # (Switch gets it via the ffmpeg --start-group above), Android and desktop
 # Linux/macOS. Windows (Schannel, no mbedcrypto) and iOS/tvOS (browser-only
-# updates) compile the stub. Define the capability macro for the former set.
+# updates) compile the stub instead.
 if(NOT WIN32 AND NOT PLATFORM_IOS AND NOT PLATFORM_TVOS)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_HAVE_MBEDCRYPTO=1)
+    set(_vitaplex_have_mbedcrypto TRUE)
+    if(APPLE)
+        # update_verify.cpp is the ONLY desktop source that includes mbedtls
+        # headers, and Homebrew keeps them in a keg dir (mbedtls is keg-only)
+        # outside the /opt/homebrew/include prefix the other libs use — so the
+        # include path was never needed on macOS before and isn't there. Locate
+        # the header dir and add it (plus the matching keg lib dir); if it can't
+        # be found, fall back to the stub rather than fail the build — the macOS
+        # download is still TLS-verified, so this only drops the extra check.
+        find_path(MBEDTLS_INCLUDE_DIR mbedtls/sha256.h
+            HINTS /opt/homebrew/include /usr/local/include
+                  /opt/homebrew/opt/mbedtls/include /usr/local/opt/mbedtls/include)
+        if(MBEDTLS_INCLUDE_DIR)
+            target_include_directories(${PROJECT_NAME} PRIVATE "${MBEDTLS_INCLUDE_DIR}")
+            target_link_directories(${PROJECT_NAME} PRIVATE
+                /opt/homebrew/opt/mbedtls/lib /usr/local/opt/mbedtls/lib)
+        else()
+            set(_vitaplex_have_mbedcrypto FALSE)
+            message(WARNING "mbedtls headers not found — update signature "
+                            "verification disabled on this macOS build "
+                            "(the download is still TLS-verified)")
+        endif()
+    endif()
+    if(_vitaplex_have_mbedcrypto)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_HAVE_MBEDCRYPTO=1)
+    endif()
 endif()
 
 if(NOT PLATFORM_SWITCH AND NOT PLATFORM_PS4 AND NOT WIN32 AND NOT PLATFORM_ANDROID AND NOT PLATFORM_IOS AND NOT PLATFORM_TVOS)
