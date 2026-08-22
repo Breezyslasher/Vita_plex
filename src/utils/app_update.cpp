@@ -973,10 +973,15 @@ void startInstall(const ReleaseInfo rel) {
         brls::sync([ui]() {
             if (!ui->dismissed->load()) stepDone(ui->install, "Installed");
         });
-        finishInstall(ui, []() {
-            auto* d = new brls::Dialog("Update installed. VitaPlex will now close - relaunch to use the new version.");
-            d->addButton("OK", []() { brls::Application::quit(); });
-            d->open();
+        // Auto-close like the other platforms — no OK dialog. hbmenu can't
+        // reopen the NRO on its own, so where hbloader supports chain-loading
+        // (envHasNextLoad) point the next load at the freshly written NRO so it
+        // relaunches like the desktop paths; otherwise just quit to hbmenu and
+        // the user reopens (the overlay's "Relaunch to apply" step says so).
+        finishInstall(ui, [target]() {
+            if (envHasNextLoad())
+                envSetNextLoad(target.c_str(), target.c_str());
+            brls::Application::quit();
         });
 #elif defined(__linux__)
         // Desktop Linux. AppImage self-replaces and relaunches; deb/Arch hand
