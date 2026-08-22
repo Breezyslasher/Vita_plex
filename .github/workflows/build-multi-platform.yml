@@ -176,6 +176,41 @@ jobs:
           for p in VitaPlex-windows-*; do
             [[ -d $p ]] && 7z a -mx=9 $p.7z ./$p/* && rm -rf $p
           done
+      # Sign every asset so the in-app updater can verify authenticity before
+      # installing (see src/utils/update_verify.cpp): detached ECDSA-P256 /
+      # SHA-256 signatures published beside each asset as "<asset>.sig". No-op
+      # unless the UPDATE_SIGNING_KEY secret (EC private key, PEM) is set, so
+      # forks release normally and client verification stays inert until the
+      # matching public key is compiled in. Signs the same set uploaded below.
+      - name: Sign release assets
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${UPDATE_SIGNING_KEY:-}" ]; then
+            echo "UPDATE_SIGNING_KEY not set — skipping asset signing (verification ships inert)."
+            exit 0
+          fi
+          keyfile="$(mktemp)"
+          trap 'rm -f "$keyfile"' EXIT
+          printf '%s\n' "$UPDATE_SIGNING_KEY" > "$keyfile"
+          shopt -s nullglob
+          signed=0
+          for f in \
+              VitaPlex-windows-*.7z \
+              VitaPlex-macos-*/* \
+              VitaPlex-switch-*/*.nro \
+              VitaPlex-nx-*/*.nro \
+              VitaPlex-ps4-*/* \
+              VitaPlex-vita-*/*.vpk \
+              VitaPlex-appimage-*/*.AppImage; do
+            [ -f "$f" ] || continue
+            case "$f" in *.sig) continue ;; esac
+            openssl dgst -sha256 -sign "$keyfile" -out "$f.sig" "$f"
+            echo "signed $f"
+            signed=$((signed + 1))
+          done
+          echo "Signed $signed asset(s)."
       - name: Release and Upload Assets
         id: release
         uses: softprops/action-gh-release@v2
@@ -186,12 +221,17 @@ jobs:
           draft: true
           files: |
             VitaPlex-windows-*.7z
+            VitaPlex-windows-*.7z.sig
             VitaPlex-macos-*/*
             VitaPlex-switch-*/*.nro
+            VitaPlex-switch-*/*.nro.sig
             VitaPlex-nx-*/*.nro
+            VitaPlex-nx-*/*.nro.sig
             VitaPlex-ps4-*/*
             VitaPlex-vita-*/*.vpk
+            VitaPlex-vita-*/*.vpk.sig
             VitaPlex-appimage-*/*.AppImage
+            VitaPlex-appimage-*/*.AppImage.sig
             VitaPlex-aur-*/*.pkg.tar.*
             VitaPlex-android-*/*
       # draft: true above is what keeps the upload working on a repo with
@@ -352,6 +392,39 @@ jobs:
           else
             echo "No tag $TAG to remove."
           fi
+
+      # Sign every release asset so the in-app updater can verify authenticity
+      # before it installs (see src/utils/update_verify.cpp): detached
+      # ECDSA-P256 / SHA-256 signatures, published beside each asset as
+      # "<asset>.sig". No-op unless the UPDATE_SIGNING_KEY secret (the EC
+      # private key, PEM) is configured, so forks and unconfigured repos still
+      # release normally — and client verification stays inert until the
+      # matching public key is compiled into update_verify.cpp. Runs before
+      # "Create pre-release" so the .sig files are part of the release/* upload.
+      - name: Sign release assets
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${UPDATE_SIGNING_KEY:-}" ]; then
+            echo "UPDATE_SIGNING_KEY not set — skipping asset signing (verification ships inert)."
+            exit 0
+          fi
+          keyfile="$(mktemp)"
+          trap 'rm -f "$keyfile"' EXIT
+          printf '%s\n' "$UPDATE_SIGNING_KEY" > "$keyfile"
+          shopt -s nullglob
+          signed=0
+          for f in release/*; do
+            [ -f "$f" ] || continue
+            case "$f" in *.sig) continue ;; esac
+            # Raw DER ECDSA-Sig-Value (SEQUENCE{r,s}) over SHA-256 — exactly
+            # what mbedtls_pk_verify() consumes on the client.
+            openssl dgst -sha256 -sign "$keyfile" -out "$f.sig" "$f"
+            echo "signed $(basename "$f")"
+            signed=$((signed + 1))
+          done
+          echo "Signed $signed asset(s)."
 
       # Second, a prerelease publishes as soon as it is created, so its
       # assets would be attaching to something already read-only. Created as
