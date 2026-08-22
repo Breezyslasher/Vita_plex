@@ -308,10 +308,12 @@ void HomeTab::populateChannelRow() {
         // station logo only when the current program has no artwork.
         std::string previewThumb;
         std::string nowTitle = ch.currentProgram;
+        const ChannelProgram* nowProg = nullptr;
         for (const auto& prog : ch.programs) {
             if (prog.startTime <= (int64_t)now && prog.endTime > (int64_t)now) {
                 if (!prog.thumb.empty()) previewThumb = prog.thumb;
                 if (nowTitle.empty()) nowTitle = prog.title;
+                nowProg = &prog;
                 break;
             }
         }
@@ -403,6 +405,45 @@ void HomeTab::populateChannelRow() {
             return true;
         });
         cell->addGestureRecognizer(new brls::TapGestureRecognizer(cell));
+
+        // START / long press opens the broadcast menu (Watch Now / Record) for
+        // whatever is on the channel now, the same card the programme rails,
+        // guide and search open — so a recent channel gets the same context
+        // menu as any other Live TV item. These cells are built from a
+        // LiveTVChannel rather than a MediaItem, so the shared dispatcher was
+        // never wired here; assemble the now-playing item the way guideItemFor
+        // does and route it through showContextMenuFor.
+        MediaItem liveItem;
+        liveItem.isLiveTV         = true;
+        liveItem.liveChannelKey   = !ch.key.empty() ? ch.key : ch.channelIdentifier;
+        liveItem.liveChannelTitle = ch.title;
+        if (nowProg) {
+            liveItem.ratingKey  = nowProg->ratingKey;
+            liveItem.key        = nowProg->metadataKey;
+            liveItem.title      = nowProg->title;
+            liveItem.summary    = nowProg->summary;
+            liveItem.thumb      = nowProg->thumb.empty() ? ch.thumb : nowProg->thumb;
+            liveItem.airStartAt = nowProg->startTime;
+            liveItem.airEndAt   = nowProg->endTime;
+        } else {
+            // No EPG entry for the current slot — still tune-able by channel key.
+            liveItem.title      = nowTitle.empty() ? ch.title : nowTitle;
+            liveItem.thumb      = ch.thumb;
+            liveItem.airStartAt = ch.programStart;
+            liveItem.airEndAt   = ch.programEnd;
+        }
+        if (MediaDetailView::hasContextMenu(liveItem)) {
+            cell->registerAction("Options", brls::ControllerButton::BUTTON_START,
+                [liveItem](brls::View*) {
+                    MediaDetailView::showContextMenuFor(liveItem);
+                    return true;
+                });
+            cell->addGestureRecognizer(new LongPressGestureRecognizer(
+                cell, [liveItem](LongPressGestureStatus status) {
+                    if (status.state == brls::GestureState::START)
+                        MediaDetailView::showContextMenuFor(liveItem);
+                }));
+        }
 
         m_recentChannelsRow->addView(cell);
     }
