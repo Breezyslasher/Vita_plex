@@ -873,6 +873,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+      - name: Stamp the CI-resolved version into VERSION
+        # flatpak-builder builds the vitaplex module from this checkout
+        # (source type: dir), and the manifest's cmake reads the VERSION file
+        # for the in-app version — the manifest can't reference CI vars the way
+        # other platforms pass -DAPP_DISPLAY_VERSION. Without this the Flatpak's
+        # Settings version would be the on-disk VERSION (stale on override/tag
+        # builds, missing the build number on dev builds), the same divergence
+        # the Android build had. Stamp the resolved version so they match.
+        run: echo "${{ needs.resolve-version.outputs.version }}" > VERSION
       - name: Build Flatpak bundle
         uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
