@@ -34,11 +34,10 @@ namespace {
 // From then on every in-app update is verified fail-closed on the platforms
 // above.
 const char kUpdatePublicKeyPem[] =
-    -----BEGIN PUBLIC KEY-----
-    MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEOP4AMPm8n/jsPZJm80nt1ga8rFZe
-    PppNk/oTCOJgZogO4wPu3gJM+rtYhHi5pptp757nQeaBbrNOFf0qDhH62A==
-    -----END PUBLIC KEY-----
-    "";
+    "-----BEGIN PUBLIC KEY-----\n"
+    "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEOP4AMPm8n/jsPZJm80nt1ga8rFZe\n"
+    "PppNk/oTCOJgZogO4wPu3gJM+rtYhHi5pptp757nQeaBbrNOFf0qDhH62A==\n"
+    "-----END PUBLIC KEY-----\n";
 
 // SHA-256 the file at `path` into `out`. Vita's newlib fopen is unreliable for
 // the ux0: data paths the download writes to, so read via sceIo there (the
