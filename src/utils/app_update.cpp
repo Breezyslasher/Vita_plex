@@ -25,6 +25,7 @@
 #include "platform/platform.hpp"
 #include "utils/async.hpp"
 #include "utils/http_client.hpp"
+#include "utils/update_verify.hpp"
 
 #ifdef __SWITCH__
 #include <switch.h>
@@ -823,6 +824,46 @@ void startInstall(const ReleaseInfo rel) {
             installFailed(why, ui);
             s_busy = false;
             return;
+        }
+
+        // Authenticity gate. When this build has an update-signing key
+        // compiled in (updateSignatureEnforced()), the downloaded artifact
+        // must carry a matching detached signature before we install it.
+        // Transport is already TLS-verified, so this is defence-in-depth: it
+        // also stops a compromised release host, and it holds even where a
+        // platform's TLS is ever weakened. The signature is published beside
+        // the asset as "<asset>.sig". Still phase 0 here, so a failure just
+        // discards the download like any other — nothing has been installed.
+        // Inert (returns immediately) until signing is activated.
+        if (updateSignatureEnforced()) {
+            brls::sync([ui]() {
+                if (!ui->dismissed->load())
+                    stepActive(ui->download, "Verifying\xE2\x80\xA6", -1.0f);
+            });
+            HttpClient sigClient;
+            HttpRequest sigReq;
+            sigReq.url             = rel.assetUrl + ".sig";
+            sigReq.method          = "GET";
+            sigReq.timeout         = 15;
+            sigReq.followRedirects = true;
+            HttpResponse sigResp = sigClient.request(sigReq);
+
+            std::string vErr;
+            const bool okSig = sigResp.statusCode == 200 && !sigResp.body.empty() &&
+                               verifyUpdateFile(path, sigResp.body, vErr);
+            if (!okSig) {
+#if !defined(__PSV__)
+                remove(path.c_str());
+#else
+                sceIoRemove(path.c_str());
+#endif
+                if (vErr.empty())
+                    vErr = "could not fetch signature (HTTP " +
+                           std::to_string(sigResp.statusCode) + ")";
+                installFailed("update signature check failed: " + vErr, ui);
+                s_busy = false;
+                return;
+            }
         }
 
         // Download done — from here the update is being applied, so Cancel

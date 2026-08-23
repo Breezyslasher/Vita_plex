@@ -99,31 +99,33 @@ static void applyCurlSecurityDefaults(CURL* curl) {
     // so this only blocks a downgrade attack, never a legitimate server.
     curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
 
-#if defined(__vita__) || defined(__PS4__) || defined(__SWITCH__)
-    // Console SSL backends (sceSsl on Vita/PS4, mbedtls on Switch) ship
-    // without a usable CA bundle for libcurl, so peer verification cannot
-    // succeed. Plex traffic on these devices is still confined to the LAN
-    // or a user-chosen relay. If you later bundle a cacert.pem, swap these
-    // to 1L/2L and point CURLOPT_CAINFO at the bundled file.
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-#else
-    // Desktop (Linux/macOS/Windows) and Android: verify both the cert
-    // chain and the hostname — otherwise all traffic to plex.tv (login,
-    // PIN exchange, token refresh) is MITM-able by anyone on the network
-    // path.
+    // Verify the peer certificate chain AND the hostname on every platform.
+    // Without this, all traffic — Plex login, PIN exchange, token refresh,
+    // and the in-app update download from GitHub — is MITM-able by anyone on
+    // the network path. (The consoles previously had verification off; that
+    // left both Plex tokens and the update artifact swappable in transit,
+    // which the update path made a code-execution vector since a downloaded
+    // .vpk/.pkg/.nro is installed/executed. See the audit for details.)
     //
-    // Android in particular ships libcurl built against the NDK with no
-    // configured CA store, so an unqualified VERIFYPEER=1 fails every
-    // HTTPS handshake (which is why "failed to request pin" was the
-    // first symptom on Android). We ship Mozilla's bundle as
-    // resources/cacert.pem and point CAINFO at it. The path resolves
-    // via the platform's RESOURCE_PREFIX, which the Android asset
-    // extractor places under the writable cwd so fopen() can read it.
+    // Verification needs a trust anchor. Several targets have no system CA
+    // store configured, so an unqualified VERIFYPEER=1 would fail every
+    // handshake:
+    //   * Android ships NDK libcurl with no CA store ("failed to request
+    //     pin" was the first symptom).
+    //   * The consoles (Vita/PS4/Switch) link mbedtls as curl's TLS backend
+    //     with no store either — mbedtls honours CAINFO, so a bundled PEM is
+    //     all it needs (the original console-only VERIFYPEER=0 comment
+    //     predates the mbedtls backend and literally asked for this swap).
+    // So we ship Mozilla's bundle as resources/cacert.pem and point CAINFO
+    // at it, resolved via the platform's RESOURCE_PREFIX — the Android asset
+    // extractor drops it under the writable cwd; the consoles pack it into
+    // the vpk / pkg / romfs. iOS/tvOS verify against the system keychain via
+    // Secure Transport, which ignores CAINFO (harmless). A target that can't
+    // read the bundle fails closed (its HTTPS errors out) rather than
+    // silently skipping verification.
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
     curl_easy_setopt(curl, CURLOPT_CAINFO, RESOURCE_PREFIX "cacert.pem");
-#endif
 
     // Never deliver SIGALRM-based timeouts. curl's default timeout path
     // uses signals which are unsafe in a multi-threaded process (the app
