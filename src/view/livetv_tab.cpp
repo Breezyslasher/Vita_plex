@@ -1320,8 +1320,19 @@ void LiveTVTab::refreshCurrentPrograms() {
 }
 
 void LiveTVTab::loadChannels() {
+    // Seed the guide window from the user's setting on EVERY load. The
+    // constructor calls loadChannels() before onFocusGained could apply the
+    // setting, and m_hoursToShow was otherwise only set there — so the guide
+    // always loaded at the 12h default and the Program Guide Window setting
+    // never took effect. Reading it here (main thread, before the worker)
+    // makes the setting drive the fetch and render on the first load too.
+    {
+        int h = Application::getInstance().getSettings().liveTvGuideHours;
+        if (h > 0) m_hoursToShow = h;
+    }
+
     asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
-        brls::Logger::debug("LiveTVTab: Fetching EPG data (async)...");
+        brls::Logger::debug("LiveTVTab: Fetching EPG data (async, {}h window)...", m_hoursToShow);
         PlexClient& client = PlexClient::getInstance();
 
         std::vector<LiveTVChannel> channels;
