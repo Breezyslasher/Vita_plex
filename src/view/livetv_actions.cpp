@@ -244,6 +244,75 @@ bool postRecordingSubscription(const TemplateOption& opt, const RecordingPrefs& 
     return resp.statusCode == 200 || resp.statusCode == 201;
 }
 
+// ── Existing subscription (edit / cancel) ────────────────────────────────
+// Whether the thing being recorded is already a standing subscription, so
+// the dialog can edit it in place (PUT) or cancel it (DELETE) instead of
+// creating a duplicate. Matched by title against /media/subscriptions — a
+// series' guide title is its show title, which is the subscription title.
+struct ExistingSubscription {
+    std::string id;            // media subscription key — empty = none found
+    int newAirings = -1;       // 0/1 from the sub's airingsType, -1 if unknown
+};
+
+bool fetchExistingSubscription(const std::string& title, ExistingSubscription& out) {
+    out = ExistingSubscription{};
+    if (title.empty()) return false;
+
+    PlexClient& client = PlexClient::getInstance();
+    HttpClient httpClient;
+    HttpRequest req;
+    req.url = client.buildApiUrlPublic("/media/subscriptions");
+    req.method = "GET";
+    req.headers["Accept"] = "application/json";
+    req.timeout = 15;
+
+    HttpResponse resp = httpClient.request(req);
+    if (resp.statusCode != 200 || resp.body.empty()) return false;
+
+    forEachObject(resp.body, "\"MediaSubscription\"", [&](const std::string& ms) {
+        if (!out.id.empty()) return;                       // first match wins
+        if (client.extractJsonValuePublic(ms, "title") != title) return;
+        out.id = client.extractJsonValuePublic(ms, "key");
+        // airingsType is a plain enum string on the subscription — read the
+        // current New-only vs New+Repeat without digging into Setting[].
+        std::string at = client.extractJsonValuePublic(ms, "airingsType");
+        if (at == "New Airings Only") out.newAirings = 1;
+        else if (!at.empty())         out.newAirings = 0;
+    });
+    return !out.id.empty();
+}
+
+// PUT /media/subscriptions/{id} with a pre-built "&prefs[...]=..." query — an
+// in-place edit. Only the prefs passed are changed; anything omitted keeps its
+// current value, so callers send just the fields the user actually changed.
+bool putRecordingSubscription(const std::string& id, const std::string& prefsQuery) {
+    if (id.empty() || prefsQuery.empty()) return true;     // nothing to change
+    PlexClient& client = PlexClient::getInstance();
+    HttpClient httpClient;
+    HttpRequest req;
+    req.url = client.buildApiUrlPublic("/media/subscriptions/" + id) + prefsQuery;
+    req.method = "PUT";
+    req.headers["Accept"] = "application/json";
+    req.timeout = 15;
+    HttpResponse resp = httpClient.request(req);
+    brls::Logger::debug("putRecordingSubscription: {} -> {}", redactTokensInUrl(req.url), resp.statusCode);
+    return resp.statusCode == 200 || resp.statusCode == 201;
+}
+
+bool deleteRecordingSubscription(const std::string& id) {
+    if (id.empty()) return false;
+    PlexClient& client = PlexClient::getInstance();
+    HttpClient httpClient;
+    HttpRequest req;
+    req.url = client.buildApiUrlPublic("/media/subscriptions/" + id);
+    req.method = "DELETE";
+    req.headers["Accept"] = "application/json";
+    req.timeout = 15;
+    HttpResponse resp = httpClient.request(req);
+    brls::Logger::debug("deleteRecordingSubscription: {} -> {}", id, resp.statusCode);
+    return resp.statusCode == 200 || resp.statusCode == 204;
+}
+
 // ── Small UI helpers ─────────────────────────────────────────────────────
 
 brls::Label* makeLabel(const std::string& text, float size, NVGcolor color,
@@ -473,6 +542,7 @@ int indexOfQuality(int q) {
 
 void openRecordOptionsDialog(const MediaItem& item, RecordingTemplate tmpl,
                              std::vector<LibrarySection> sections, bool forMovies,
+                             ExistingSubscription existing,
                              std::function<void(bool)> onScheduled) {
     const float screenW = platform::viewportWidth();
     const float screenH = platform::viewportHeight();
@@ -485,6 +555,16 @@ void openRecordOptionsDialog(const MediaItem& item, RecordingTemplate tmpl,
     st->initial    = st->prefs;
     st->scopeIndex = st->tmpl.selectedIndex;
     st->sections   = std::move(sections);
+
+    // Editing an existing subscription: seed the airings choice from its
+    // current value so the row shows what's set now and "changed" is measured
+    // against it (not the app default). The Update PUT then sends only fields
+    // the user actually changes, leaving everything else on the server as-is.
+    const bool editing = !existing.id.empty();
+    if (editing && existing.newAirings >= 0) {
+        st->prefs.newAirings   = existing.newAirings;
+        st->initial.newAirings = existing.newAirings;
+    }
 
     // The per-type default should always be in the filtered list, but a
     // library deleted on the server (or a stale migrated value) would not
@@ -553,6 +633,11 @@ void openRecordOptionsDialog(const MediaItem& item, RecordingTemplate tmpl,
         auto* al = makeLabel(airLine, 11.0f, tok::muted2());
         al->setMarginTop(2.0f);
         header->addView(al);
+    }
+    if (editing) {
+        auto* rec = makeLabel("\xE2\x97\x8F  Already set to record", 11.0f, tok::liveRed());
+        rec->setMarginTop(6.0f);
+        header->addView(rec);
     }
     panel->addView(header);
 
@@ -779,34 +864,96 @@ void openRecordOptionsDialog(const MediaItem& item, RecordingTemplate tmpl,
 
     const std::string title = item.title;
     auto stW = st;
-    auto* schedule = makeButton("Schedule", BtnStyle::Gold, [stW, title, onScheduled]() {
-        const TemplateOption opt = stW->tmpl.options[(size_t)stW->scopeIndex];
-        const RecordingPrefs prefs = stW->prefs;
-        // This Episode records once; All Episodes is a standing series
-        // subscription. The template's type field is the authoritative
-        // signal — type 2 is a show/series subscription (spec example:
-        // "All Episodes" type=2, "This Episode" type=4, movies type=1) —
-        // where row order would be a guess.
-        const bool oneShot = (opt.type != "2");
-        brls::Application::popActivity(brls::TransitionAnimation::FADE,
-            [opt, prefs, oneShot, title, onScheduled]() {
-                asyncRun([opt, prefs, oneShot, title, onScheduled]() {
-                    const bool ok = postRecordingSubscription(opt, prefs, oneShot);
-                    brls::sync([ok, title, onScheduled]() {
-                        showOutcome(ok, title, onScheduled);
+
+    brls::Box* primary;
+    if (editing) {
+        // Edit the existing subscription in place (PUT), sending only the
+        // settings the user actually changed so untouched ones keep their
+        // current server values. `initial` was seeded from the subscription
+        // for the airings row, and from app defaults for the rest.
+        primary = makeButton("Update", BtnStyle::Gold, [stW, title, existing, onScheduled]() {
+            const TemplateOption opt = stW->tmpl.options[(size_t)stW->scopeIndex];
+            const RecordingPrefs p = stW->prefs, in = stW->initial;
+            std::string q;
+            if (p.newAirings != in.newAirings) {
+                // Existing sub already supports airings (read via airingsType),
+                // so onlyNewAirings is the right id if the template didn't name one.
+                std::string aid = opt.newAiringsId.empty() ? std::string("onlyNewAirings")
+                                                           : opt.newAiringsId;
+                q += "&prefs[" + aid + "]=" + std::to_string(p.newAirings);
+            }
+            if (p.minVideoQuality != in.minVideoQuality)
+                q += "&prefs[minVideoQuality]=" + std::to_string(p.minVideoQuality);
+            if (p.startOffsetMin != in.startOffsetMin)
+                q += "&prefs[startOffsetMinutes]=" + std::to_string(p.startOffsetMin);
+            if (p.endOffsetMin != in.endOffsetMin)
+                q += "&prefs[endOffsetMinutes]=" + std::to_string(p.endOffsetMin);
+            const std::string subId = existing.id;
+            brls::Application::popActivity(brls::TransitionAnimation::FADE,
+                [subId, q, title, onScheduled]() {
+                    asyncRun([subId, q, title, onScheduled]() {
+                        const bool ok = putRecordingSubscription(subId, q);
+                        brls::sync([ok, title, onScheduled]() {
+                            showOutcome(ok, title, onScheduled);
+                        });
                     });
                 });
-            });
-    });
-    schedule->setGrow(1.0f);
-    footer->addView(schedule);
+        });
+    } else {
+        primary = makeButton("Schedule", BtnStyle::Gold, [stW, title, onScheduled]() {
+            const TemplateOption opt = stW->tmpl.options[(size_t)stW->scopeIndex];
+            const RecordingPrefs prefs = stW->prefs;
+            // This Episode records once; All Episodes is a standing series
+            // subscription. The template's type field is the authoritative
+            // signal — type 2 is a show/series subscription (spec example:
+            // "All Episodes" type=2, "This Episode" type=4, movies type=1) —
+            // where row order would be a guess.
+            const bool oneShot = (opt.type != "2");
+            brls::Application::popActivity(brls::TransitionAnimation::FADE,
+                [opt, prefs, oneShot, title, onScheduled]() {
+                    asyncRun([opt, prefs, oneShot, title, onScheduled]() {
+                        const bool ok = postRecordingSubscription(opt, prefs, oneShot);
+                        brls::sync([ok, title, onScheduled]() {
+                            showOutcome(ok, title, onScheduled);
+                        });
+                    });
+                });
+        });
+    }
+    primary->setGrow(1.0f);
+    footer->addView(primary);
 
-    auto* cancel = makeButton("Cancel", BtnStyle::Ghost, []() {
-        brls::Application::popActivity();
-    });
-    cancel->setWidth(96.0f);
-    cancel->setMarginLeft(10.0f);
-    footer->addView(cancel);
+    if (editing) {
+        // Cancel the whole subscription (DELETE). B / tap-outside still closes.
+        auto* cancelRec = makeButton("Cancel Recording", BtnStyle::Gray,
+            [existing, onScheduled]() {
+                const std::string subId = existing.id;
+                brls::Application::popActivity(brls::TransitionAnimation::FADE,
+                    [subId, onScheduled]() {
+                        asyncRun([subId, onScheduled]() {
+                            const bool ok = deleteRecordingSubscription(subId);
+                            brls::sync([ok, onScheduled]() {
+                                if (onScheduled) onScheduled(ok);   // refresh recordings
+                                auto* d = new brls::Dialog(
+                                    ok ? "Recording cancelled."
+                                       : "Couldn't cancel the recording.");
+                                d->addButton("OK", []() {});
+                                d->open();
+                            });
+                        });
+                    });
+            });
+        cancelRec->setWidth(150.0f);
+        cancelRec->setMarginLeft(8.0f);
+        footer->addView(cancelRec);
+    } else {
+        auto* cancel = makeButton("Cancel", BtnStyle::Ghost, []() {
+            brls::Application::popActivity();
+        });
+        cancel->setWidth(96.0f);
+        cancel->setMarginLeft(10.0f);
+        footer->addView(cancel);
+    }
     panel->addView(footer);
 
     // ── Refresh: values, changed-dots, scope tint ───────────────────────
@@ -1035,13 +1182,18 @@ void showRecordOptions(const MediaItem& item, std::function<void(bool)> onSchedu
         for (const auto& s : all)
             if (s.type == wantType) eligible.push_back(s);
 
+        // Is this show/movie already a standing subscription? If so the dialog
+        // edits it in place (PUT) / cancels it (DELETE) instead of duplicating.
+        ExistingSubscription existing;
+        fetchExistingSubscription(captured.title, existing);
+
         const bool forMovies = (wantType == "movie");
-        brls::sync([captured, tmpl, eligible, forMovies, ok, onScheduled]() {
+        brls::sync([captured, tmpl, eligible, forMovies, existing, ok, onScheduled]() {
             if (!ok) {
                 showOutcome(false, captured.title, onScheduled);
                 return;
             }
-            openRecordOptionsDialog(captured, tmpl, eligible, forMovies, onScheduled);
+            openRecordOptionsDialog(captured, tmpl, eligible, forMovies, existing, onScheduled);
         });
     });
 }
