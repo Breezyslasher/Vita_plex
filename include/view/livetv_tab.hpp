@@ -270,6 +270,25 @@ private:
     int64_t m_lastFullLoadTime = 0;   // Timestamp of last full channel/EPG load
     int64_t m_lastRefreshTime = 0;    // Timestamp of last "now playing" refresh
 
+    // Process-lifetime snapshot of the parsed guide. borealis' TabFrame
+    // destroys and recreates the entire LiveTVTab every time the Live TV
+    // sidebar item is focused (removeView(activeTab) + creator()), so no
+    // per-instance state survives a tab switch — which is why the guide
+    // otherwise refetches (~1.8MB grid) and reparses (~750 programs) on every
+    // open. This static keeps the last parsed channel list + programs alive
+    // across those rebuilds so a re-open within the staleness window shows the
+    // guide instantly with no network and no reparse. Keyed by server +
+    // window so it invalidates on a server switch or a guide-hours change;
+    // recording dots and now-playing come from separate always-fresh fetches.
+    struct GuideSnapshot {
+        bool valid = false;
+        std::string serverId;                 // machine id — invalidate on server switch
+        int hours = 0;                        // guide window — invalidate on setting change
+        int64_t builtAt = 0;                  // epoch of the underlying grid fetch
+        std::vector<LiveTVChannel> channels;  // parsed channels WITH programs
+    };
+    static GuideSnapshot s_guideSnapshot;
+
     // Per-frame optimisation caches — see draw() / updateCurrentTimeLine().
     // The wall-clock-driven time line and the cross-row scroll sync both
     // produce identical output across most frames; cache the last applied

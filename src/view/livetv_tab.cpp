@@ -177,6 +177,11 @@ static inline int livetvChannelColWidth() {
 static const int64_t FULL_RELOAD_INTERVAL = 300;   // 5 minutes between full EPG reloads
 static const int64_t REFRESH_INTERVAL = 60;         // 1 minute between "now playing" refreshes
 
+// Process-lifetime parsed-guide snapshot (see LiveTVTab::loadChannels). Lives
+// past the tab instance so re-opening Live TV reuses the parsed channels
+// instead of refetching + reparsing the grid.
+LiveTVTab::GuideSnapshot LiveTVTab::s_guideSnapshot;
+
 // Progressive guide build (buildEPGGrid / appendGuideRow /
 // scheduleGuideRowChunk): only the first screenful of rows is built
 // synchronously so the guide paints in ~1.5-2s on Vita; the remaining
@@ -1314,6 +1319,15 @@ void LiveTVTab::refreshCurrentPrograms() {
                 }
 
                 if (!m_channels.empty()) updateHeroForChannel(m_channels.front());
+
+                // Freshen the shared snapshot with the just-refreshed programs
+                // (same server + window only) so the next tab open reuses fresh
+                // data and doesn't immediately kick another background refresh.
+                if (s_guideSnapshot.valid && s_guideSnapshot.hours == m_hoursToShow &&
+                    s_guideSnapshot.serverId == PlexClient::getInstance().getMachineIdentifier()) {
+                    s_guideSnapshot.builtAt  = m_lastRefreshTime;
+                    s_guideSnapshot.channels = m_channels;
+                }
             });
         }
     });
@@ -1329,6 +1343,49 @@ void LiveTVTab::loadChannels() {
     {
         int h = Application::getInstance().getSettings().liveTvGuideHours;
         if (h > 0) m_hoursToShow = h;
+    }
+
+    // Fast path: reuse the process-lifetime parsed snapshot when it matches
+    // the current server + guide window and is still within the staleness
+    // window. This skips the grid refetch (~MBs) and the reparse of hundreds
+    // of programs and paints the guide immediately; the view build still runs
+    // on the UI thread via brls::sync exactly as the network path does.
+    // Recording dots (loadScheduled) and now-playing are refreshed separately
+    // so they stay current even on a cache hit.
+    {
+        const int64_t now = (int64_t)time(nullptr);
+        const std::string serverId = PlexClient::getInstance().getMachineIdentifier();
+        if (s_guideSnapshot.valid && !s_guideSnapshot.channels.empty() &&
+            s_guideSnapshot.hours == m_hoursToShow &&
+            s_guideSnapshot.serverId == serverId &&
+            (now - s_guideSnapshot.builtAt) <= FULL_RELOAD_INTERVAL) {
+            const int64_t age = now - s_guideSnapshot.builtAt;
+            brls::Logger::info(
+                "LiveTVTab: reusing cached guide ({} channels, age={}s, {}h) — no refetch/reparse",
+                s_guideSnapshot.channels.size(), age, m_hoursToShow);
+
+            std::vector<LiveTVChannel> cached = s_guideSnapshot.channels;
+            const int64_t builtAt = s_guideSnapshot.builtAt;
+            brls::sync([this, cached, builtAt, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+                m_channels = cached;
+                if (!m_channels.empty()) updateHeroForChannel(m_channels.front());
+                buildEPGGrid();
+                m_loaded = true;
+                m_lastFullLoadTime = builtAt;              // preserve real data age
+                m_lastRefreshTime = (int64_t)time(nullptr);
+            });
+
+            loadRecordings();
+            loadScheduled();
+
+            // Snapshot older than the now-playing refresh window: update the
+            // current-program column in the background so the hero is accurate,
+            // without blocking the (already instant) tab open.
+            if (age > REFRESH_INTERVAL) refreshCurrentPrograms();
+            return;
+        }
     }
 
     asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
@@ -1367,6 +1424,15 @@ void LiveTVTab::loadChannels() {
                 m_loaded = true;
                 m_lastFullLoadTime = time(nullptr);
                 m_lastRefreshTime = m_lastFullLoadTime;
+
+                // Keep a process-lifetime copy so the next Live TV tab open (a
+                // fresh LiveTVTab — borealis rebuilds the tab each time) reuses
+                // this parsed guide instead of refetching and reparsing it.
+                s_guideSnapshot.valid    = true;
+                s_guideSnapshot.serverId = PlexClient::getInstance().getMachineIdentifier();
+                s_guideSnapshot.hours    = m_hoursToShow;
+                s_guideSnapshot.builtAt  = m_lastFullLoadTime;
+                s_guideSnapshot.channels = m_channels;
             });
         } else {
             brls::Logger::error("LiveTVTab: Failed to fetch EPG data");
