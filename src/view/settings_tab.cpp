@@ -1370,12 +1370,24 @@ brls::Box* SettingsTab::createLiveTVSection() {
         });
     box->addView(m_dvrMinQualitySelector);
 
-    // EPG window. LiveTVTab caps at EPG_GRID_HOURS_VISIBLE internally,
-    // so this is a fetch-size hint as much as a render setting. 6/12/24
-    // are the three Plex-side daily slot boundaries.
-    static const std::vector<int> kGuideHours = { 6, 12, 24 };
+    // EPG window: how far ahead the guide fetches and renders. The value is
+    // hours and drives both the /grid fetch range and the guide's own
+    // guideEndTime, so it takes effect end to end (application.cpp clamps it to
+    // 1..336h = 14 days on load). The Plex grid has no API-enforced max — it
+    // returns whatever EPG data the provider has (commonly up to ~2 weeks) — so
+    // the ceiling here is practical, not a protocol limit. Larger windows fetch
+    // and hold a lot more programme data (heaviest on Vita); the default (12h)
+    // is unchanged, so the long windows are strictly opt-in. All values are
+    // multiples of 6 to keep the time-header slots aligned.
+    static const std::vector<int> kGuideHours = {
+        6, 12, 24,                                     // hours (unchanged)
+        48, 72, 96, 120, 144, 168,                     // 2..7 days
+        192, 216, 240, 264, 288, 312, 336              // 8..14 days
+    };
     static const std::vector<std::string> kGuideHourLabels = {
-        "6 hours", "12 hours", "24 hours"
+        "6 hours", "12 hours", "24 hours",
+        "2 days", "3 days", "4 days", "5 days", "6 days", "7 days",
+        "8 days", "9 days", "10 days", "11 days", "12 days", "13 days", "14 days"
     };
     int hIdx = 1; // default 12
     for (size_t i = 0; i < kGuideHours.size(); i++) {

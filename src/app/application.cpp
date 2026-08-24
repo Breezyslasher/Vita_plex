@@ -509,7 +509,9 @@ bool Application::loadSettings() {
     }
     {
         int v = extractInt("liveTvGuideHours");
-        if (v > 0 && v <= 48) m_settings.liveTvGuideHours = v;
+        // Up to 14 days (336h). The Plex grid has no API-enforced max; this
+        // ceiling is practical (large windows fetch/hold a lot of EPG data).
+        if (v > 0 && v <= 336) m_settings.liveTvGuideHours = v;
     }
     m_settings.autoLoginAsLastUser = extractBool("autoLoginAsLastUser", true);
     {

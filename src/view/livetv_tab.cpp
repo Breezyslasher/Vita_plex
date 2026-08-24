@@ -196,7 +196,7 @@ static const int64_t kStreamBudgetUs = 20000;
 // HScrollingFrame, so cells past the visible width are reachable via the
 // dpad (cf. m_rowProgramScrolls). The render path uses whatever window
 // LiveTVTab::m_hoursToShow holds — seeded from Application::getSettings()
-// .liveTvGuideHours, which is clamped to 1-48 on load.
+// .liveTvGuideHours, which is clamped to 1-336 (up to 14 days) on load.
 
 // Hero dimensions. Smaller than the original so more guide rows are
 // visible below — thumbnail scales down with the hero height, and the
