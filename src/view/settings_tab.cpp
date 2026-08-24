@@ -1336,6 +1336,20 @@ brls::Box* SettingsTab::createLiveTVSection() {
         });
     box->addView(m_dvrRecordPartialsToggle);
 
+    // Series (All Episodes) default: the two choices are Plex's own
+    // onlyNewAirings Setting (0:New and Repeat Airings | 1:New Airings Only).
+    // The record dialog seeds its "Record" selector from this and can still
+    // override it per subscription.
+    auto* dvrNewAiringsSelector = makePickerCell("Series Recordings",
+        { "New & Repeat Airings", "New Airings Only" },
+        settings.dvrNewAiringsOnly ? 1 : 0,
+        [](int idx) {
+            AppSettings& s = Application::getInstance().getSettings();
+            s.dvrNewAiringsOnly = (idx == 1);
+            Application::getInstance().saveSettings();
+        });
+    box->addView(dvrNewAiringsSelector);
+
     // minVideoQuality is a 0-100 threshold on the Plex DVR side; the
     // tuner picks a stream whose advertised quality meets or exceeds it.
     // Expose four bands that cover the practical OTA / cable spread.

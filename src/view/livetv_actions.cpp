@@ -117,6 +117,12 @@ struct TemplateOption {
     std::string type;
     std::string targetSection;
     bool selected = false;
+    // The DVR "new airings only vs new + repeats" Setting this option
+    // advertises, if any — "onlyNewAirings" (current) or "newnessPolicy"
+    // (older). Both are int Settings with 0 = include repeats, 1 = new only,
+    // posted as prefs[<id>]. Empty when the server doesn't offer it (e.g. a
+    // one-off airing), in which case no selector is shown and none is posted.
+    std::string newAiringsId;
 };
 
 struct RecordingTemplate {
@@ -130,6 +136,7 @@ struct RecordingPrefs {
     int startOffsetMin   = 0;
     int endOffsetMin     = 0;
     int minVideoQuality  = 0;
+    int newAirings       = 0;      // 0 = New and Repeat Airings, 1 = New Only
     std::string targetSectionId;   // empty = template's recommendation
 };
 
@@ -139,6 +146,7 @@ RecordingPrefs defaultPrefs(bool forMovies) {
     p.startOffsetMin  = s.dvrStartOffsetMinutes;
     p.endOffsetMin    = s.dvrEndOffsetMinutes;
     p.minVideoQuality = s.dvrMinVideoQuality;
+    p.newAirings      = s.dvrNewAiringsOnly ? 1 : 0;
     p.targetSectionId = forMovies ? s.defaultDvrMovieSectionId
                                   : s.defaultDvrShowSectionId;
     return p;
@@ -175,6 +183,14 @@ bool fetchRecordingTemplate(const std::string& guid, RecordingTemplate& out) {
         opt.type          = client.extractJsonValuePublic(ms, "type");
         opt.targetSection = client.extractJsonValuePublic(ms, "targetLibrarySectionID");
         opt.selected      = ms.find("\"selected\":true") != std::string::npos;
+        // The "new airings only vs new + repeats" Setting, when the server
+        // offers it on this option (the series/All Episodes one). Detect the
+        // id it uses — onlyNewAirings is current, newnessPolicy is the older
+        // name; both are 0 = include repeats, 1 = new only.
+        if (ms.find("\"onlyNewAirings\"") != std::string::npos)
+            opt.newAiringsId = "onlyNewAirings";
+        else if (ms.find("\"newnessPolicy\"") != std::string::npos)
+            opt.newAiringsId = "newnessPolicy";
         if (!opt.parameters.empty() && !opt.type.empty()) {
             if (opt.selected) out.selectedIndex = (int)out.options.size();
             out.options.push_back(std::move(opt));
@@ -209,6 +225,11 @@ bool postRecordingSubscription(const TemplateOption& opt, const RecordingPrefs& 
     post += "&prefs[minVideoQuality]=" + std::to_string(prefs.minVideoQuality);
     post += "&prefs[startOffsetMinutes]=" + std::to_string(prefs.startOffsetMin);
     post += "&prefs[endOffsetMinutes]=" + std::to_string(prefs.endOffsetMin);
+    // Series "new airings only vs new + repeats" — only when the template
+    // advertised the Setting on the chosen (series) option. 0 = include
+    // repeats, 1 = new only. One-off airings carry no id, so nothing is sent.
+    if (!oneShot && !opt.newAiringsId.empty())
+        post += "&prefs[" + opt.newAiringsId + "]=" + std::to_string(prefs.newAirings);
 
     HttpRequest req;
     req.url = post;
@@ -430,7 +451,8 @@ struct RecordDialogState {
 
     std::vector<LibrarySection> sections;   // eligible "Records to" targets
 
-    SettingRowState startRow, endRow, qualityRow, sectionRow;
+    SettingRowState startRow, endRow, qualityRow, sectionRow, newAiringsRow;
+    brls::Box* newAiringsRowBox = nullptr;  // shown only for the series scope
     std::vector<brls::Label*> scopeTitles;  // to re-tint on selection
     std::vector<brls::Rectangle*> scopeMarks;
 
@@ -640,6 +662,30 @@ void openRecordOptionsDialog(const MediaItem& item, RecordingTemplate tmpl,
 
     {
         auto stW = st;
+
+        // "Record": new airings only vs new + repeats. Only meaningful for a
+        // series (All Episodes) subscription, so refresh() hides the row (GONE)
+        // for This Episode / one-offs. Seeded from the DVR default
+        // (Settings → DVR) and overridable here for this subscription. Labels
+        // are Plex's own onlyNewAirings enum (0 = New and Repeat, 1 = New Only).
+        static const std::vector<std::string> kNewAiringsLabels = {
+            "New and Repeat Airings", "New Airings Only"
+        };
+        stW->newAiringsRowBox = makeSettingRow("Airings", &stW->newAiringsRow,
+            [stW](int) {
+                stW->prefs.newAirings = stW->prefs.newAirings ? 0 : 1;  // 2-item cycle
+                if (stW->refresh) stW->refresh();
+            },
+            [stW]() {
+                showOptionPicker("Airings", kNewAiringsLabels,
+                    stW->prefs.newAirings ? 1 : 0,
+                    [stW](int idx) {
+                        stW->prefs.newAirings = (idx == 1) ? 1 : 0;
+                        if (stW->refresh) stW->refresh();
+                    });
+            });
+        settingsBox->addView(stW->newAiringsRowBox);
+
         // Every row picks the same two ways: left/right steps in place,
         // click opens a dropdown of the whole ladder.
         auto offsetRow = [&settingsBox, stW](const char* label, const char* pickerTitle,
@@ -783,6 +829,21 @@ void openRecordOptionsDialog(const MediaItem& item, RecordingTemplate tmpl,
             if (s.key == stW->prefs.targetSectionId) { sectionLabel = s.title; break; }
         setRow(stW->sectionRow, sectionLabel,
                stW->prefs.targetSectionId != stW->initial.targetSectionId);
+
+        // "Record" (new airings) — shown only when the selected scope's
+        // template option advertises the Setting (the series option); hidden
+        // (GONE, so it takes no layout) for This Episode / one-offs.
+        {
+            const int si = stW->scopeIndex;
+            const bool showNew = si >= 0 && si < (int)stW->tmpl.options.size() &&
+                                 !stW->tmpl.options[(size_t)si].newAiringsId.empty();
+            if (stW->newAiringsRowBox)
+                stW->newAiringsRowBox->setVisibility(showNew ? brls::Visibility::VISIBLE
+                                                             : brls::Visibility::GONE);
+            setRow(stW->newAiringsRow,
+                   stW->prefs.newAirings ? "New Airings Only" : "New and Repeat Airings",
+                   stW->prefs.newAirings != stW->initial.newAirings);
+        }
 
         for (size_t i = 0; i < stW->scopeTitles.size(); i++) {
             const bool sel = ((int)i == stW->scopeIndex);

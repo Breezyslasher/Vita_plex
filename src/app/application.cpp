@@ -502,6 +502,7 @@ bool Application::loadSettings() {
         if (v >= 0 && v <= 60) m_settings.dvrEndOffsetMinutes = v;
     }
     m_settings.dvrRecordPartials = extractBool("dvrRecordPartials", true);
+    m_settings.dvrNewAiringsOnly = extractBool("dvrNewAiringsOnly", false);
     {
         int v = extractInt("dvrMinVideoQuality");
         if (v >= 0 && v <= 100) m_settings.dvrMinVideoQuality = v;
@@ -621,6 +622,7 @@ bool Application::saveSettings() {
     json += "  \"dvrStartOffsetMinutes\": " + std::to_string(m_settings.dvrStartOffsetMinutes) + ",\n";
     json += "  \"dvrEndOffsetMinutes\": " + std::to_string(m_settings.dvrEndOffsetMinutes) + ",\n";
     json += "  \"dvrRecordPartials\": " + b(m_settings.dvrRecordPartials) + ",\n";
+    json += "  \"dvrNewAiringsOnly\": " + b(m_settings.dvrNewAiringsOnly) + ",\n";
     json += "  \"dvrMinVideoQuality\": " + std::to_string(m_settings.dvrMinVideoQuality) + ",\n";
     json += "  \"liveTvGuideHours\": " + std::to_string(m_settings.liveTvGuideHours) + ",\n";
     json += "  \"autoLoginAsLastUser\": " + b(m_settings.autoLoginAsLastUser) + ",\n";
