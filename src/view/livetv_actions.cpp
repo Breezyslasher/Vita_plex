@@ -1012,7 +1012,7 @@ void openRecordOptionsDialog(const MediaItem& item, RecordingTemplate tmpl,
     (void)screenH;
 
     brls::Application::pushActivity(new OverlayActivity(scrim));
-    brls::Application::giveFocus(schedule);
+    brls::Application::giveFocus(primary);
 }
 
 }  // namespace
