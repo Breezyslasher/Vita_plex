@@ -183,6 +183,10 @@ struct AppSettings {
     int  dvrEndOffsetMinutes   = 2;    // Pad recording end by this many minutes
     bool dvrRecordPartials     = true; // Keep recordings that didn't fully complete
     int  dvrMinVideoQuality    = 0;    // 0 = any; higher demands better source quality
+    // Series (All Episodes) default: record new airings only vs new + repeats.
+    // Posted as prefs[onlyNewAirings] (the Setting the DVR template advertises;
+    // 0 = New and Repeat Airings, 1 = New Airings Only). false = include repeats.
+    bool dvrNewAiringsOnly     = false;
     // EPG window the Live TV tab fetches and renders. Stays a multiple of
     // 6 so the time-header slots line up; LiveTVTab clamps it on read.
     int  liveTvGuideHours      = 12;
