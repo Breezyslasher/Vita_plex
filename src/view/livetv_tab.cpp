@@ -177,6 +177,11 @@ static inline int livetvChannelColWidth() {
 static const int64_t FULL_RELOAD_INTERVAL = 300;   // 5 minutes between full EPG reloads
 static const int64_t REFRESH_INTERVAL = 60;         // 1 minute between "now playing" refreshes
 
+// Process-lifetime parsed-guide snapshot (see LiveTVTab::loadChannels). Lives
+// past the tab instance so re-opening Live TV reuses the parsed channels
+// instead of refetching + reparsing the grid.
+LiveTVTab::GuideSnapshot LiveTVTab::s_guideSnapshot;
+
 // Progressive guide build (buildEPGGrid / appendGuideRow /
 // scheduleGuideRowChunk): only the first screenful of rows is built
 // synchronously so the guide paints in ~1.5-2s on Vita; the remaining
@@ -196,7 +201,7 @@ static const int64_t kStreamBudgetUs = 20000;
 // HScrollingFrame, so cells past the visible width are reachable via the
 // dpad (cf. m_rowProgramScrolls). The render path uses whatever window
 // LiveTVTab::m_hoursToShow holds — seeded from Application::getSettings()
-// .liveTvGuideHours, which is clamped to 1-48 on load.
+// .liveTvGuideHours, which is clamped to 1-336 (up to 14 days) on load.
 
 // Hero dimensions. Smaller than the original so more guide rows are
 // visible below — thumbnail scales down with the hero height, and the
@@ -622,6 +627,7 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
             float x, y, w, h;   // cell rect (batched background fill)
             float tx, ty;       // text origin
             bool onNow;
+            bool scheduled;     // DVR set to record → red dot, top-right
             const std::string* title;
             const std::string* subtitle;
         };
@@ -672,7 +678,8 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
             v.x = cx; v.y = cy; v.w = cw; v.h = ch;
             v.tx = cx + 8.0f;
             v.ty = cy + (ch - 26.0f) * 0.5f;
-            v.onNow    = info.onNow;
+            v.onNow     = info.onNow;
+            v.scheduled = info.scheduled;
             v.title    = &info.title;
             // Every visible row shows its programmes' start times; the focused
             // row upgrades to the full range (+ "on now"). Cells narrower than
@@ -751,6 +758,19 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
             nvgText(vg, v.tx, v.ty + 16.0f, v.subtitle->c_str(), nullptr);
         }
         nvgTextBatchEnd(vg);
+
+        // Recording dots: one batched red circle at the top-right of every cell
+        // the DVR is set to record. Painted last so it sits above the cell fill
+        // and text.
+        bool anyRec = false;
+        for (const VisibleCell& v : visible) if (v.scheduled) { anyRec = true; break; }
+        if (anyRec) {
+            nvgBeginPath(vg);
+            for (const VisibleCell& v : visible)
+                if (v.scheduled) nvgCircle(vg, v.x + v.w - 7.0f, v.y + 7.0f, 3.5f);
+            nvgFillColor(vg, nvgRGB(0xE5, 0x1E, 0x2A));
+            nvgFill(vg);
+        }
         nvgRestore(vg);
     }();
 
@@ -1299,14 +1319,77 @@ void LiveTVTab::refreshCurrentPrograms() {
                 }
 
                 if (!m_channels.empty()) updateHeroForChannel(m_channels.front());
+
+                // Freshen the shared snapshot with the just-refreshed programs
+                // (same server + window only) so the next tab open reuses fresh
+                // data and doesn't immediately kick another background refresh.
+                if (s_guideSnapshot.valid && s_guideSnapshot.hours == m_hoursToShow &&
+                    s_guideSnapshot.serverId == PlexClient::getInstance().getMachineIdentifier()) {
+                    s_guideSnapshot.builtAt  = m_lastRefreshTime;
+                    s_guideSnapshot.channels = m_channels;
+                }
             });
         }
     });
 }
 
 void LiveTVTab::loadChannels() {
+    // Seed the guide window from the user's setting on EVERY load. The
+    // constructor calls loadChannels() before onFocusGained could apply the
+    // setting, and m_hoursToShow was otherwise only set there — so the guide
+    // always loaded at the 12h default and the Program Guide Window setting
+    // never took effect. Reading it here (main thread, before the worker)
+    // makes the setting drive the fetch and render on the first load too.
+    {
+        int h = Application::getInstance().getSettings().liveTvGuideHours;
+        if (h > 0) m_hoursToShow = h;
+    }
+
+    // Fast path: reuse the process-lifetime parsed snapshot when it matches
+    // the current server + guide window and is still within the staleness
+    // window. This skips the grid refetch (~MBs) and the reparse of hundreds
+    // of programs and paints the guide immediately; the view build still runs
+    // on the UI thread via brls::sync exactly as the network path does.
+    // Recording dots (loadScheduled) and now-playing are refreshed separately
+    // so they stay current even on a cache hit.
+    {
+        const int64_t now = (int64_t)time(nullptr);
+        const std::string serverId = PlexClient::getInstance().getMachineIdentifier();
+        if (s_guideSnapshot.valid && !s_guideSnapshot.channels.empty() &&
+            s_guideSnapshot.hours == m_hoursToShow &&
+            s_guideSnapshot.serverId == serverId &&
+            (now - s_guideSnapshot.builtAt) <= FULL_RELOAD_INTERVAL) {
+            const int64_t age = now - s_guideSnapshot.builtAt;
+            brls::Logger::info(
+                "LiveTVTab: reusing cached guide ({} channels, age={}s, {}h) — no refetch/reparse",
+                s_guideSnapshot.channels.size(), age, m_hoursToShow);
+
+            std::vector<LiveTVChannel> cached = s_guideSnapshot.channels;
+            const int64_t builtAt = s_guideSnapshot.builtAt;
+            brls::sync([this, cached, builtAt, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+                auto alive = aliveWeak.lock();
+                if (!alive || !*alive) return;
+                m_channels = cached;
+                if (!m_channels.empty()) updateHeroForChannel(m_channels.front());
+                buildEPGGrid();
+                m_loaded = true;
+                m_lastFullLoadTime = builtAt;              // preserve real data age
+                m_lastRefreshTime = (int64_t)time(nullptr);
+            });
+
+            loadRecordings();
+            loadScheduled();
+
+            // Snapshot older than the now-playing refresh window: update the
+            // current-program column in the background so the hero is accurate,
+            // without blocking the (already instant) tab open.
+            if (age > REFRESH_INTERVAL) refreshCurrentPrograms();
+            return;
+        }
+    }
+
     asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
-        brls::Logger::debug("LiveTVTab: Fetching EPG data (async)...");
+        brls::Logger::debug("LiveTVTab: Fetching EPG data (async, {}h window)...", m_hoursToShow);
         PlexClient& client = PlexClient::getInstance();
 
         std::vector<LiveTVChannel> channels;
@@ -1341,6 +1424,15 @@ void LiveTVTab::loadChannels() {
                 m_loaded = true;
                 m_lastFullLoadTime = time(nullptr);
                 m_lastRefreshTime = m_lastFullLoadTime;
+
+                // Keep a process-lifetime copy so the next Live TV tab open (a
+                // fresh LiveTVTab — borealis rebuilds the tab each time) reuses
+                // this parsed guide instead of refetching and reparsing it.
+                s_guideSnapshot.valid    = true;
+                s_guideSnapshot.serverId = PlexClient::getInstance().getMachineIdentifier();
+                s_guideSnapshot.hours    = m_hoursToShow;
+                s_guideSnapshot.builtAt  = m_lastFullLoadTime;
+                s_guideSnapshot.channels = m_channels;
             });
         } else {
             brls::Logger::error("LiveTVTab: Failed to fetch EPG data");
@@ -1353,6 +1445,7 @@ void LiveTVTab::loadChannels() {
     });
 
     loadRecordings();
+    loadScheduled();
 }
 
 void LiveTVTab::updateCurrentTimeLine() {
@@ -1658,6 +1751,13 @@ bool LiveTVTab::streamGuideRowCells(GuideRowCursor& cur, int64_t deadlineUs) {
             if (isCurrently) sub += "  ·  on now";
             info.subtitle   = std::move(sub);
             info.startLabel = std::move(startStr);
+            // Red "will record" dot for airings the DVR is scheduled to grab
+            // (painted in the batched draw pass). If the scheduled list hasn't
+            // loaded yet, refreshRecordingDots() flips this once it does; the
+            // keys are kept for that re-check.
+            info.metaKey   = prog.metadataKey;
+            info.progKey   = prog.ratingKey;
+            info.scheduled = isProgramScheduled(prog.metadataKey, prog.ratingKey);
             m_epgCells.push_back(info);
 
             // One shared copy of the program per cell — capturing
@@ -2142,6 +2242,77 @@ void LiveTVTab::loadRecordings() {
             m_recordings = recordings;
         });
     });
+}
+
+bool LiveTVTab::isProgramScheduled(const std::string& metaKey,
+                                   const std::string& progKey) const {
+    if (!metaKey.empty() && m_scheduledKeys.count(metaKey)) return true;
+    if (!progKey.empty() && m_scheduledKeys.count(progKey)) return true;
+    return false;
+}
+
+void LiveTVTab::loadScheduled() {
+    asyncRun([this, aliveWeak = std::weak_ptr<bool>(m_alive)]() {
+        PlexClient& client = PlexClient::getInstance();
+        HttpClient httpClient;
+
+        HttpRequest req;
+        req.url = client.buildApiUrlPublic("/media/subscriptions/scheduled");
+        req.method = "GET";
+        req.headers["Accept"] = "application/json";
+        req.timeout = 15;
+        HttpResponse resp = httpClient.request(req);
+
+        // MediaGrabOperation[] — each a scheduled/active recording carrying a
+        // nested Metadata{key, ratingKey}. Collect both key forms so a guide
+        // airing matches on whichever the EPG grid carried (metadataKey is the
+        // grid "key"; ratingKey is the episode guid).
+        std::set<std::string> keys;
+        if (resp.statusCode == 200 && !resp.body.empty()) {
+            size_t pos = resp.body.find("\"MediaGrabOperation\"");
+            size_t arr = (pos == std::string::npos) ? std::string::npos
+                                                    : resp.body.find('[', pos);
+            size_t p = (arr == std::string::npos) ? std::string::npos : arr + 1;
+            while (p != std::string::npos && p < resp.body.size()) {
+                size_t objStart = resp.body.find('{', p);
+                if (objStart == std::string::npos) break;
+                if (resp.body.substr(p, objStart - p).find(']') != std::string::npos) break;
+                int depth = 1;
+                size_t objEnd = objStart + 1;
+                while (depth > 0 && objEnd < resp.body.size()) {
+                    if (resp.body[objEnd] == '{') depth++;
+                    else if (resp.body[objEnd] == '}') depth--;
+                    objEnd++;
+                }
+                std::string obj = resp.body.substr(objStart, objEnd - objStart);
+                // Restrict to the nested Metadata object so the grab's own
+                // "key" doesn't shadow Metadata.key.
+                size_t md = obj.find("\"Metadata\"");
+                std::string metaObj = (md == std::string::npos) ? obj : obj.substr(md);
+                std::string mk = client.extractJsonValuePublic(metaObj, "key");
+                std::string rk = client.extractJsonValuePublic(metaObj, "ratingKey");
+                if (!mk.empty()) keys.insert(mk);
+                if (!rk.empty()) keys.insert(rk);
+                p = objEnd;
+            }
+        }
+        brls::Logger::info("LiveTVTab: {} scheduled recording key(s)", keys.size());
+
+        brls::sync([this, keys, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+            m_scheduledKeys = keys;
+            refreshRecordingDots();
+        });
+    });
+}
+
+void LiveTVTab::refreshRecordingDots() {
+    // Flip each cell's scheduled flag; the batched draw pass paints (or drops)
+    // its dot next frame. Runs after the scheduled fetch resolves (which may be
+    // after the guide already drew). No view work, no relayout.
+    for (auto& info : m_epgCells)
+        info.scheduled = isProgramScheduled(info.metaKey, info.progKey);
 }
 
 void LiveTVTab::onChannelSelected(const LiveTVChannel& channel) {

@@ -7,6 +7,8 @@
 
 #include <borealis.hpp>
 #include <memory>
+#include <set>
+#include <string>
 #include "app/plex_client.hpp"
 
 namespace vitaplex {
@@ -64,6 +66,13 @@ private:
     void refreshCurrentPrograms();  // Lightweight refresh: only update "now playing" info
     void loadGuide();
     void loadRecordings();
+    // Fetch the DVR's scheduled recordings (GET /media/subscriptions/scheduled)
+    // and, once known, paint a red "will record" dot on the matching guide
+    // cells. Split from loadRecordings so the guide can update its dots
+    // independently of the (now data-only) subscriptions fetch.
+    void loadScheduled();
+    void refreshRecordingDots();   // (re)apply dots to m_epgCells from m_scheduledKeys
+    bool isProgramScheduled(const std::string& metaKey, const std::string& progKey) const;
     void buildEPGGrid();
     // Build ONE fully-detached guide row for `channel` (channel column +
     // lazy RowLogo entry + HScrollingFrame of program cells + all the
@@ -214,6 +223,15 @@ private:
                                        // instead. Rendering the full range everywhere
                                        // cost ~2x the batched text pass, and the start
                                        // time is what makes the grid readable at a glance.
+        // Keys used to match this airing against the DVR's scheduled grabs
+        // (GET /media/subscriptions/scheduled → Metadata.key / ratingKey), kept
+        // so refreshRecordingDots() can re-evaluate after the recordings load
+        // even if the guide drew first. `scheduled` drives the red "will
+        // record" dot, painted in the batched draw pass (a child view would be
+        // overpainted by the batched cell fill).
+        std::string metaKey;
+        std::string progKey;
+        bool scheduled = false;
     };
     std::vector<EpgCellInfo> m_epgCells;
 
@@ -242,11 +260,34 @@ private:
     std::vector<LiveTVChannel> m_channels;
     std::vector<EPGChannel> m_epgChannels;
     std::vector<DVRRecording> m_recordings;
+    // EPG metadata keys + rating keys of airings the DVR is scheduled to
+    // record (from /media/subscriptions/scheduled). A guide cell whose
+    // metadataKey or ratingKey is in here gets the red recording dot.
+    std::set<std::string> m_scheduledKeys;
     int64_t m_guideStartTime = 0;  // Current time rounded to 30 min
     int m_hoursToShow = 12;        // Hours of programming to show (12 hours)
     bool m_loaded = false;
     int64_t m_lastFullLoadTime = 0;   // Timestamp of last full channel/EPG load
     int64_t m_lastRefreshTime = 0;    // Timestamp of last "now playing" refresh
+
+    // Process-lifetime snapshot of the parsed guide. borealis' TabFrame
+    // destroys and recreates the entire LiveTVTab every time the Live TV
+    // sidebar item is focused (removeView(activeTab) + creator()), so no
+    // per-instance state survives a tab switch — which is why the guide
+    // otherwise refetches (~1.8MB grid) and reparses (~750 programs) on every
+    // open. This static keeps the last parsed channel list + programs alive
+    // across those rebuilds so a re-open within the staleness window shows the
+    // guide instantly with no network and no reparse. Keyed by server +
+    // window so it invalidates on a server switch or a guide-hours change;
+    // recording dots and now-playing come from separate always-fresh fetches.
+    struct GuideSnapshot {
+        bool valid = false;
+        std::string serverId;                 // machine id — invalidate on server switch
+        int hours = 0;                        // guide window — invalidate on setting change
+        int64_t builtAt = 0;                  // epoch of the underlying grid fetch
+        std::vector<LiveTVChannel> channels;  // parsed channels WITH programs
+    };
+    static GuideSnapshot s_guideSnapshot;
 
     // Per-frame optimisation caches — see draw() / updateCurrentTimeLine().
     // The wall-clock-driven time line and the cross-row scroll sync both
