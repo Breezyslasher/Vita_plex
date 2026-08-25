@@ -62,6 +62,27 @@
 #include <set>
 #include <thread>
 
+#if defined(ANDROID)
+// Queried once per frame to find out whether a GL draw surface is actually
+// bound — see glSurfaceIsLive(). Must stay at global scope: including it inside
+// namespace brls would give the EGL entry points the wrong linkage.
+#include <EGL/egl.h>
+#endif
+
+#if defined(ANDROID) || defined(IOS)
+// Defined in the patched nanovg.c: re-uploads the whole font atlas to the GPU.
+// Declared here because borealis does not patch nanovg.h.
+struct NVGcontext;
+extern "C" void nvgMarkFontAtlasDirty(NVGcontext* ctx);
+
+// Resource icons (Image::setImageFromRes) are uploaded straight to the GPU and
+// their handle is then kept in TextureCache, so one that was uploaded without a
+// drawing surface would stay blank for the rest of the session. Marking the
+// cache dirty on resume makes the next lookup miss and re-upload — the same
+// mechanism borealis itself uses when the window is resized.
+#include <borealis/core/cache_helper.hpp>
+#endif
+
 #define BUTTOM_REPEAT_TRIGGER 250000 // 250ms
 #define BUTTON_REPEAT_DELAY   100000 // 100 ms
 
@@ -174,16 +195,42 @@ namespace
     bool g_appForeground       = true;  // false between background/foreground
     int  g_resumeWarmupFrames  = 0;     // skip a few draws after resume to let
                                         // SDL recreate the surface first
+    bool g_glWasLive           = true;  // previous iteration's surface state,
+                                        // used to catch the dead->live edge
+
+    // Is a GL draw surface actually bound right now?
+    //
+    // SDL_APP_WILLENTERFOREGROUND — which is what drives g_appForeground — is
+    // fired from Android's onResume(), BEFORE surfaceCreated() hands SDL a new
+    // EGLSurface. Resuming was therefore gated only by a fixed warm-up frame
+    // count, i.e. a guess: whenever the surface took longer than that to come
+    // back, the first frames drew against an unbound context and silently lost
+    // every texture and glyph they uploaded. EGL answers the question exactly —
+    // eglMakeCurrent(NO_SURFACE) is precisely what SDL does on surfaceDestroyed,
+    // and a bound draw surface is precisely the condition under which a GL call
+    // lands — so ask it instead of counting frames.
+    bool glSurfaceIsLive()
+    {
+#if defined(ANDROID)
+        return eglGetCurrentContext() != EGL_NO_CONTEXT &&
+               eglGetCurrentSurface(EGL_DRAW) != EGL_NO_SURFACE;
+#else
+        // iOS/tvOS have no EGL to interrogate; there the lifecycle event plus
+        // the warm-up frames remain the best signal available.
+        return true;
+#endif
+    }
 }
 #endif
 
 bool Application::isWindowForeground()
 {
 #if defined(ANDROID) || defined(IOS)
-    // Report foreground only once the post-resume warm-up is done, i.e. the GL
-    // surface is back and we've actually drawn. Callers use the false->true edge
-    // to retry GL work (cover re-upload), so it must not fire before we can draw.
-    return g_appForeground && g_resumeWarmupFrames == 0;
+    // Report foreground only once the post-resume warm-up is done AND a draw
+    // surface is really bound. Callers use the false->true edge to retry GL work
+    // (cover re-upload, deferred thumbnail textures), so this must never report
+    // true while an upload would still be dropped on the floor.
+    return g_appForeground && g_resumeWarmupFrames == 0 && glSurfaceIsLive();
 #else
     return true;
 #endif
@@ -243,12 +290,39 @@ bool Application::internalMainLoop()
             });
         }
 
-        if (g_appForeground)
+        // Only draw with a surface EGL confirms is bound. The warm-up frames are
+        // kept on top of that as a small settling delay (and are the only gate
+        // on iOS, which has no EGL to query).
+        bool canDraw = g_appForeground && glSurfaceIsLive();
+
+        if (canDraw && g_resumeWarmupFrames > 0)
         {
-            if (g_resumeWarmupFrames > 0)
-                g_resumeWarmupFrames--;
-            else
-                Application::frame();
+            g_resumeWarmupFrames--;
+            canDraw = false;
+        }
+
+        if (canDraw)
+        {
+            if (!g_glWasLive)
+            {
+                // First frame back on a live surface. Anything nanovg tried to
+                // upload while we were unbound was discarded, and fontstash had
+                // already cleared its dirty rect, so those glyphs would render
+                // as blank gaps forever. Re-upload the atlas once to repair it.
+                if (NVGcontext* vg = Application::getNVGContext())
+                    nvgMarkFontAtlasDirty(vg);
+
+                // Same story for resource icons whose texture was created while
+                // we had no surface: drop them from the cache so the next use
+                // re-decodes and re-uploads instead of reusing a blank handle.
+                TextureCache::instance().cache.markAllDirty();
+                g_glWasLive = true;
+            }
+            Application::frame();
+        }
+        else
+        {
+            g_glWasLive = false;
         }
     }
 #else

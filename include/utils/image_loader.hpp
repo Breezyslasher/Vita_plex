@@ -10,6 +10,7 @@
 #include <functional>
 #include <map>
 #include <list>
+#include <vector>
 #include <mutex>
 #include <atomic>
 #include <memory>
@@ -61,6 +62,28 @@ public:
     static size_t getCacheSize();
 
 private:
+    // Texture uploads parked because the app had no GL drawing surface at the
+    // moment they completed (mobile background). Creating a texture then is not
+    // merely wasted work: the GL calls are silently dropped and the image is
+    // left permanently blank, so the upload is replayed instead once a surface
+    // is back. Touched only from the UI thread (brls::sync callbacks, cache
+    // hits, and the run-loop drain), matching the rest of this class.
+    struct DeferredUpload {
+        std::vector<uint8_t> data;
+        LoadCallback imageCallback;   // set when the target is a brls::Image
+        CoverCallback coverCallback;  // set for raw-NVG cover loads
+        brls::Image* target = nullptr;
+        std::shared_ptr<std::atomic<bool>> alive;
+        uint64_t gen = 0;
+    };
+    static std::vector<DeferredUpload> s_deferred;
+
+    // True when a GL upload issued right now would actually reach the GPU.
+    static bool uploadsAreSafe();
+
+    // Park an upload for replay, wiring the run-loop drain on first use.
+    static void deferUpload(DeferredUpload&& pending);
+
     // LRU cache: list stores URL keys in order of recent use (front = most recent)
     // map stores the data + iterator into the list for O(1) promotion
     struct CacheEntry {
