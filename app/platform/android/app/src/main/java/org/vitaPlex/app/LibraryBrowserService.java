@@ -41,12 +41,42 @@ public final class LibraryBrowserService extends MediaBrowserService {
             new SparseArray<>();
     private static int sNextToken = 1;
 
+    private static boolean sNativeReady = false;
+    private static android.content.Context sAppContext;
+
+    private static native void nativeInit(String filesDir);
     private static native void nativeLoadChildren(String parentId, int token);
     private static native void nativePlayFromMediaId(String mediaId);
+
+    /**
+     * Bring the native side up in this process.
+     *
+     * Android Auto, Assistant and watch companions bind this service without
+     * launching the activity, so the process can start with no native library
+     * loaded at all. Load the same libraries VitaPlexActivity does (already-
+     * loaded ones are a no-op) and hand native the Context's files dir, which
+     * is how it locates the saved config when SDL's JNI setup has never run.
+     */
+    private static synchronized boolean ensureNative(android.content.Context ctx) {
+        if (sNativeReady) return true;
+        if (ctx == null) return false;
+        try {
+            System.loadLibrary("curl");
+            System.loadLibrary("SDL2");
+            System.loadLibrary("VitaPlex");
+            nativeInit(ctx.getFilesDir().getAbsolutePath());
+            sNativeReady = true;
+        } catch (Throwable t) {
+            Log.w(TAG, "native bridge unavailable", t);
+        }
+        return sNativeReady;
+    }
 
     @Override
     public void onCreate() {
         super.onCreate();
+        sAppContext = getApplicationContext();
+        ensureNative(this);
         try {
             // A browser binds before anything is playing, so the session must
             // already exist — MediaNotification creates it on demand here.
@@ -75,11 +105,11 @@ public final class LibraryBrowserService extends MediaBrowserService {
         }
 
         try {
+            if (!ensureNative(this)) throw new IllegalStateException("native bridge unavailable");
             nativeLoadChildren(parentId, token);
         } catch (Throwable t) {
-            // UnsatisfiedLinkError when the browser bound us without the app
-            // process having loaded the native library. Say so in the browser
-            // rather than showing an unexplained empty list.
+            // The native library could not be brought up in this process. Say so
+            // in the browser rather than showing an unexplained empty list.
             Log.w(TAG, "nativeLoadChildren unavailable", t);
             deliverChildren(token,
                     new String[] { "__unavailable__" },
@@ -140,7 +170,29 @@ public final class LibraryBrowserService extends MediaBrowserService {
     /** Routed here from MediaNotification's session callback. */
     static void playFromMediaId(String mediaId) {
         if (mediaId == null || mediaId.isEmpty()) return;
+
+        // Browsing works without the UI, but starting playback does not: native
+        // hands the queue to a PlayerActivity on the borealis loop, and that
+        // loop only runs while the app is up. When a browser picks a track cold,
+        // bring the app up — the native request is queued onto the loop and runs
+        // as soon as it starts, so the pick is not lost.
+        if (VitaPlexActivity.getAppContext() == null && sAppContext != null) {
+            try {
+                android.content.Intent launch = sAppContext.getPackageManager()
+                        .getLaunchIntentForPackage(sAppContext.getPackageName());
+                if (launch != null) {
+                    launch.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                    sAppContext.startActivity(launch);
+                }
+            } catch (Throwable t) {
+                // Android restricts background activity starts; if it is refused
+                // the queued request still plays once the user opens the app.
+                Log.w(TAG, "could not launch app for playback", t);
+            }
+        }
+
         try {
+            if (!ensureNative(sAppContext)) return;
             nativePlayFromMediaId(mediaId);
         } catch (Throwable t) {
             Log.w(TAG, "nativePlayFromMediaId unavailable", t);

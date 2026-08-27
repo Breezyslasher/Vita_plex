@@ -24,12 +24,26 @@
 #include <vector>
 
 #include "app/plex_client.hpp"
+#include "app/application.hpp"
 #include "activity/player_activity.hpp"
+#include "platform/paths.hpp"
 #include "utils/async.hpp"
+
+#include <mutex>
 
 using namespace vitaplex;
 
 namespace {
+
+// Cached at nativeInit() time from the service's onCreate, which runs on a Java
+// thread with the app classloader. Worker threads cannot FindClass app classes
+// (an attached native thread gets the system classloader), and going through
+// brls::sync would tie browsing to the borealis main loop — which is exactly
+// what is missing when a browser binds the service cold. Caching the class and
+// method up front lets any thread deliver results with no loop and no lookup.
+JavaVM*   g_vm            = nullptr;
+jclass    g_serviceClass  = nullptr;   // global ref
+jmethodID g_deliverMethod = nullptr;
 
 // android.media.browse.MediaBrowser.MediaItem flags. Keep in sync with Java.
 constexpr int FLAG_BROWSABLE = 1 << 0;
@@ -67,30 +81,55 @@ std::string artUri(PlexClient& client, const std::string& thumb) {
     return client.getThumbnailUrl(thumb, kArtSize, kArtSize);
 }
 
-// Push rows back to Java. Must run where FindClass can see app classes — the
-// borealis main loop thread, which SDL has attached to the JVM.
+// Make the Plex client usable in a process that never started the UI.
+//
+// A cold service bind has no borealis Application and no restored session, so
+// the client has no server or token and every lookup would fail. The saved
+// config already holds both; load it and connect once, guarded so concurrent
+// browse requests don't race. Returns false when there is nothing saved (not
+// signed in yet), which the caller turns into a visible row rather than an
+// unexplained empty list.
+bool ensureClientReady() {
+    static std::mutex mtx;
+    std::lock_guard<std::mutex> lock(mtx);
+
+    PlexClient& client = PlexClient::getInstance();
+    if (!client.getServerUrl().empty()) return true;  // app already connected
+
+    auto& app = vitaplex::Application::getInstance();
+    if (app.getServerUrl().empty()) app.loadSettings();
+    if (app.getServerUrl().empty()) {
+        brls::Logger::warning("MediaBrowser: no saved server, cannot browse cold");
+        return false;
+    }
+
+    client.setAuthToken(app.getAuthToken());
+    const bool ok = client.connectToServer(app.getServerUrl());
+    brls::Logger::info("MediaBrowser: cold client bootstrap {}", ok ? "ok" : "failed");
+    return ok;
+}
+
+// Push rows back to Java. Uses the refs cached by nativeInit, so this works
+// from any worker thread and without the borealis loop running.
 void deliverRows(int token, const std::vector<BrowseRow>& rows) {
-    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
-    if (!env) {
-        brls::Logger::warning("MediaBrowser: no JNIEnv, dropping {} row(s)", rows.size());
+    if (!g_vm || !g_serviceClass || !g_deliverMethod) {
+        brls::Logger::warning("MediaBrowser: JNI not initialised, dropping {} row(s)",
+                              rows.size());
         return;
     }
 
-    jclass cls = env->FindClass("org/VitaPlex/app/LibraryBrowserService");
-    if (!cls) {
-        env->ExceptionClear();
-        brls::Logger::warning("MediaBrowser: LibraryBrowserService not found");
-        return;
+    JNIEnv* env = nullptr;
+    bool attached = false;
+    if (g_vm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+        if (g_vm->AttachCurrentThread(&env, nullptr) != JNI_OK || !env) {
+            brls::Logger::warning("MediaBrowser: AttachCurrentThread failed");
+            return;
+        }
+        attached = true;
     }
 
-    jmethodID mid = env->GetStaticMethodID(
-        cls, "deliverChildren", "(I[Ljava/lang/String;[Ljava/lang/String;"
-                                "[Ljava/lang/String;[Ljava/lang/String;[I)V");
-    if (!mid) {
-        env->ExceptionClear();
-        env->DeleteLocalRef(cls);
-        return;
-    }
+    jclass    cls = g_serviceClass;
+    jmethodID mid = g_deliverMethod;
 
     const jsize n = (jsize)rows.size();
     jclass strCls = env->FindClass("java/lang/String");
@@ -130,7 +169,10 @@ void deliverRows(int token, const std::vector<BrowseRow>& rows) {
     env->DeleteLocalRef(icons);
     env->DeleteLocalRef(flags);
     env->DeleteLocalRef(strCls);
-    env->DeleteLocalRef(cls);
+
+    // Only threads we attached here get detached; the borealis/SDL threads are
+    // owned by SDL and must keep their attachment.
+    if (attached) g_vm->DetachCurrentThread();
 }
 
 // ---------------------------------------------------------------------------
@@ -264,6 +306,38 @@ std::vector<BrowseRow> resolveNode(const std::string& parentId) {
 
 extern "C" {
 
+/**
+ * Called from LibraryBrowserService.onCreate() — a Java thread with the app
+ * classloader, so this is the one place the service class can be looked up
+ * reliably. Caches what deliverRows() needs and seeds the data directory from
+ * the service's Context, which is how a cold process finds the saved config
+ * without SDL's JNI setup having run.
+ */
+JNIEXPORT void JNICALL
+Java_org_VitaPlex_app_LibraryBrowserService_nativeInit(JNIEnv* env, jclass cls,
+                                                       jstring jFilesDir) {
+    if (env->GetJavaVM(&g_vm) != JNI_OK) g_vm = nullptr;
+
+    if (!g_serviceClass) g_serviceClass = (jclass)env->NewGlobalRef(cls);
+    if (!g_deliverMethod) {
+        g_deliverMethod = env->GetStaticMethodID(
+            cls, "deliverChildren", "(I[Ljava/lang/String;[Ljava/lang/String;"
+                                    "[Ljava/lang/String;[Ljava/lang/String;[I)V");
+        if (!g_deliverMethod) env->ExceptionClear();
+    }
+
+    if (jFilesDir) {
+        const char* raw = env->GetStringUTFChars(jFilesDir, nullptr);
+        if (raw) {
+            setAndroidDataDir(raw);
+            env->ReleaseStringUTFChars(jFilesDir, raw);
+        }
+    }
+
+    brls::Logger::info("MediaBrowser: native bridge ready (vm={}, deliver={})",
+                       g_vm != nullptr, g_deliverMethod != nullptr);
+}
+
 JNIEXPORT void JNICALL
 Java_org_VitaPlex_app_LibraryBrowserService_nativeLoadChildren(JNIEnv* env, jclass,
                                                                jstring jParentId, jint token) {
@@ -274,11 +348,19 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativeLoadChildren(JNIEnv* env, jcla
     brls::Logger::debug("MediaBrowser: loadChildren({}) token={}", parentId, (int)token);
 
     // Plex lookups are blocking HTTP, so they must not run on the binder thread
-    // that delivered onLoadChildren. Answer from a worker, then marshal the
-    // reply onto the borealis loop where JNI FindClass sees app classes.
+    // that delivered onLoadChildren. Deliver straight from the worker: the JNI
+    // refs cached in nativeInit make that safe without the borealis loop, which
+    // is what lets browsing work when the service was bound cold.
     asyncRun([parentId, token]() {
-        std::vector<BrowseRow> rows = resolveNode(parentId);
-        brls::sync([token, rows]() { deliverRows((int)token, rows); });
+        if (!ensureClientReady()) {
+            std::vector<BrowseRow> row(1);
+            row[0].id    = "__signed_out__";
+            row[0].title = "Sign in to VitaPlex to browse your library";
+            row[0].flags = 0;  // neither browsable nor playable
+            deliverRows((int)token, row);
+            return;
+        }
+        deliverRows((int)token, resolveNode(parentId));
     });
 }
 
@@ -292,6 +374,8 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromMediaId(JNIEnv* env, j
     brls::Logger::info("MediaBrowser: playFromMediaId({})", mediaId);
 
     asyncRun([mediaId]() {
+        if (!ensureClientReady()) return;
+
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> tracks;
         int startIndex = 0;
