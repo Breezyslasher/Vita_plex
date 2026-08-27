@@ -66,6 +66,18 @@ private:
     // draw() paints the actual cover at its bounds.
     brls::Box*  m_coverSlot = nullptr;
     int         m_nvgCover  = 0;   // NVG image handle, 0 = not loaded
+
+    // Cover-load retry state. A cover request can be dropped for reasons the
+    // cell never hears about: the loader is paused during playback, the app was
+    // backgrounded so the upload had no GL surface, or a tab teardown called
+    // ImageLoader::cancelAll() and invalidated it. loadThumbnail() only runs
+    // from setItem(), so without a retry the cell stays blank until scrolling
+    // happens to re-bind it — which is exactly what a background/resume during
+    // loading used to leave behind. draw() re-arms the request instead.
+    std::string m_coverUrl;          // last requested cover, "" when none
+    int64_t     m_coverRetryAt = 0;  // CPU usec; 0 = no retry pending
+    int         m_coverRetries = 0;  // capped, so missing art can't spin
+
     int         m_coverW    = 0;   // Source image dimensions, used to
     int         m_coverH    = 0;   // letterbox via nvgImagePattern.
 

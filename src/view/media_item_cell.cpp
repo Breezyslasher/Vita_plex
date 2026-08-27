@@ -118,6 +118,12 @@ void MediaItemCell::setItem(const MediaItem& item) {
     m_ratingTextW = -1.0f;  // re-measure the cover badges for the new item
     m_charTextW   = -1.0f;
 
+    // Fresh binding: this cell shows a different item now, so the previous
+    // cover request is irrelevant and the retry budget starts over.
+    m_coverUrl.clear();
+    m_coverRetryAt = 0;
+    m_coverRetries = 0;
+
     // Item-change resets any previously-loaded cover. The grid pass will
     // paint a placeholder rect for this cell until loadThumbnail() fires
     // its callback. We delete the old NVG handle eagerly rather than
@@ -329,6 +335,11 @@ void MediaItemCell::loadThumbnail() {
     // ImageLoader passes the alive flag through; if the cell has been
     // destroyed by the time the load completes, ImageLoader cleans up
     // the NVG handle on our behalf rather than calling the callback.
+    // Remember the request so draw() can re-arm it if this attempt is dropped
+    // (loader paused, no GL surface, or a cancelAll() from a tab teardown).
+    m_coverUrl     = url;
+    m_coverRetryAt = 0;
+
     MediaItemCell* self = this;
     ImageLoader::loadCoverAsync(url,
         [self](int nvgImg, int w, int h) {
@@ -354,6 +365,25 @@ void MediaItemCell::draw(NVGcontext* vg, float x, float y, float width, float he
                           brls::Style style, brls::FrameContext* ctx) {
     // Cell background, labels, progress bar, etc. paint first.
     brls::Box::draw(vg, x, y, width, height, style, ctx);
+
+    // Re-arm a cover request that never landed. loadThumbnail() runs only from
+    // setItem(), so a load dropped afterwards (loader paused during playback,
+    // no GL surface while backgrounded, or a tab teardown's cancelAll()) would
+    // otherwise leave this cell blank until scrolling re-bound it — the
+    // background-during-load case. Only cells actually being drawn retry, and
+    // only a few times, so a genuinely missing artwork can't spin.
+    if (m_nvgCover == 0 && !m_coverUrl.empty() && m_coverRetries < 5) {
+        const int64_t now = brls::getCPUTimeUsec();
+        if (m_coverRetryAt == 0) {
+            // First frame we notice it missing: wait a beat before retrying, so
+            // an in-flight load gets to finish normally.
+            m_coverRetryAt = now + 700 * 1000;
+        } else if (now >= m_coverRetryAt) {
+            m_coverRetryAt = 0;
+            m_coverRetries++;
+            loadThumbnail();
+        }
+    }
 
     // Cover paint lives here (not in the parent) so every place that
     // hosts a MediaItemCell gets the picture, not just RecyclingGrid:
