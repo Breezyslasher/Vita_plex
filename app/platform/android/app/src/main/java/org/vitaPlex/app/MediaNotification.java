@@ -84,6 +84,20 @@ public final class MediaNotification {
 
     private MediaNotification() {}
 
+    /**
+     * Session token for MediaBrowserService.setSessionToken().
+     *
+     * The browser service is bound by Android Auto / Assistant / Wear before any
+     * music is playing, so the session has to exist up front rather than being
+     * created lazily on the first update(). Creating it early is harmless: an
+     * idle MediaSession posts nothing until setActive()/setPlaybackState() run.
+     * Callable from the browser service's onCreate (main looper).
+     */
+    static MediaSession.Token getSessionToken(Context ctx) {
+        ensureSession(ctx);
+        return sSession != null ? sSession.getSessionToken() : null;
+    }
+
     /** Called from native (any thread). Marshals to the main looper. */
     public static void update(final String title, final String artist, final String album,
                               final String artUrl, final long durationMs, final long positionMs,
@@ -249,6 +263,11 @@ public final class MediaNotification {
             @Override public void onStop() { send(CODE_STOP); }
             @Override public void onSeekTo(long pos) {
                 try { nativeMediaSeek(pos); } catch (Throwable t) { Log.w(TAG, "seek", t); }
+            }
+            // A media id picked in Android Auto / Assistant / Wear. The ids come
+            // from LibraryBrowserService's tree, so it owns resolving them.
+            @Override public void onPlayFromMediaId(String mediaId, Bundle extras) {
+                LibraryBrowserService.playFromMediaId(mediaId);
             }
             // Android 13+ media controls fire shuffle/repeat as custom actions
             // (the framework Callback has no onSetRepeatMode/onSetShuffleMode).

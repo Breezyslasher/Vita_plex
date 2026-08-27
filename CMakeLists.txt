@@ -352,6 +352,9 @@ if(PLATFORM_ANDROID)
     # Inert until the Java MpvSurface view + VO-path flip land; see
     # docs/android-direct-surface-playback.md.
     list(APPEND APP_SOURCES src/platform/android_mpv_surface.cpp)
+    # Media browsing bridge (Android Auto / Assistant / Wear) — native half of
+    # org.VitaPlex.app.LibraryBrowserService.
+    list(APPEND APP_SOURCES src/platform/android_media_browser.cpp)
 endif()
 
 
