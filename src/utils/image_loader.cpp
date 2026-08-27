@@ -24,6 +24,19 @@ static void dispatchCoverFromBytes(const std::vector<uint8_t>& bytes,
                                    uint64_t gen,
                                    std::atomic<uint64_t>& generationRef);
 
+// Diagnostics. A dropped load is invisible to the user except as a permanently
+// blank cell: MediaItemCell::setItem() asks for its cover exactly once and never
+// retries, so anything that returns early here leaves that cell empty until it
+// is recycled and re-bound by scrolling. Every skip path therefore names itself
+// in the log — `adb logcat | grep ImageLoader` identifies which gate fired.
+// UI-thread only, like the rest of these paths.
+static void noteSkip(const char* reason) {
+    static std::map<std::string, uint64_t> counts;
+    const uint64_t n = ++counts[reason];
+    if (n == 1 || n % 25 == 0)
+        brls::Logger::warning("ImageLoader: {} load(s) skipped — {}", n, reason);
+}
+
 bool ImageLoader::uploadsAreSafe() {
     // Mobile tears the GL drawing surface down while the app is backgrounded,
     // and the main loop deliberately keeps running there (background audio,
@@ -31,13 +44,19 @@ bool ImageLoader::uploadsAreSafe() {
     // with no surface bound. nvgCreateImageMem would then issue glGenTextures /
     // glTexImage2D into the void: the calls are silently discarded and the
     // texture stays empty, which is why thumbnails came back black after
-    // backgrounding the app mid-load. isWindowForeground() is the authoritative
-    // answer (EGL-backed on Android) and is always true on desktop/console,
-    // where the context survives and this costs nothing.
-    return brls::Application::isWindowForeground();
+    // backgrounding the app mid-load.
+    //
+    // canUploadTextures(), not isWindowForeground(): the latter also waits out
+    // the post-resume warm-up frames, which gate *drawing*, not upload validity.
+    // Always true on desktop/console, where the context survives.
+    return brls::Application::canUploadTextures();
 }
 
 void ImageLoader::deferUpload(DeferredUpload&& pending) {
+    // Not a drop — these are replayed — but knowing whether the surface gate
+    // fired at all is the first thing to check when images fail to appear.
+    noteSkip("no GL surface — upload deferred for replay");
+
     // Drain on the run loop: it fires every iteration, right after the sync
     // tasks that would otherwise have done this work, so a deferred image
     // appears on the first frame after the surface is back.
@@ -56,8 +75,8 @@ void ImageLoader::deferUpload(DeferredUpload&& pending) {
                 // Same liveness rules as the original dispatch: the view may
                 // have been destroyed, or cancelAll() may have moved on, while
                 // we were backgrounded.
-                if (!p.alive || !p.alive->load()) continue;
-                if (p.gen != s_generation.load()) continue;
+                if (!p.alive || !p.alive->load()) { noteSkip("deferred: target destroyed"); continue; }
+                if (p.gen != s_generation.load()) { noteSkip("deferred: cancelAll() raced"); continue; }
 
                 if (p.coverCallback) {
                     dispatchCoverFromBytes(p.data, p.coverCallback, p.alive, p.gen, s_generation);
@@ -70,9 +89,13 @@ void ImageLoader::deferUpload(DeferredUpload&& pending) {
     }
 
     // Bound the queue so a long background stint with a busy grid can't grow it
-    // without limit; the dropped entries simply reload on demand.
-    constexpr size_t kMaxDeferred = 64;
-    if (s_deferred.size() >= kMaxDeferred) s_deferred.erase(s_deferred.begin());
+    // without limit. Evicting is a permanent blank cell, so the cap is generous
+    // enough to hold several screenfuls and an eviction is reported.
+    constexpr size_t kMaxDeferred = 256;
+    if (s_deferred.size() >= kMaxDeferred) {
+        noteSkip("deferred queue full, oldest evicted");
+        s_deferred.erase(s_deferred.begin());
+    }
     s_deferred.push_back(std::move(pending));
 }
 
@@ -103,8 +126,9 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
                             brls::Image* target, std::shared_ptr<std::atomic<bool>> alive) {
     if (url.empty() || !target || !alive) return;
 
-    // Skip new loads while paused (playback in progress)
-    if (s_paused.load()) return;
+    // Skip new loads while paused (playback in progress). Note this is a
+    // permanent drop for the requesting cell, not a delay — see noteSkip().
+    if (s_paused.load()) { noteSkip("loader paused (playback active)"); return; }
 
     // Capture the current generation so stale callbacks are skipped after cancelAll()
     uint64_t gen = s_generation.load();
@@ -230,7 +254,7 @@ static void dispatchCoverFromBytes(const std::vector<uint8_t>& bytes,
 void ImageLoader::loadCoverAsync(const std::string& url, CoverCallback callback,
                                   std::shared_ptr<std::atomic<bool>> alive) {
     if (url.empty() || !alive) return;
-    if (s_paused.load()) return;
+    if (s_paused.load()) { noteSkip("loader paused (playback active)"); return; }
 
     uint64_t gen = s_generation.load();
 

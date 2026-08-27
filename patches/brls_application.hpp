@@ -288,6 +288,14 @@ class Application
     // cover image that silently failed to upload while the app was hidden.
     static bool isWindowForeground();
 
+    // VitaPlex: true when a GL upload issued right now would actually reach the
+    // GPU. Deliberately NOT the same as isWindowForeground(): that one also
+    // waits out the post-resume warm-up frames, which are a *drawing* settling
+    // delay and have nothing to do with whether a texture upload is valid.
+    // Gating uploads on the warm-up would silently drop images for no reason.
+    // Always true on desktop and console.
+    static bool canUploadTextures();
+
     static View* getCurrentFocus();
 
     static std::string getTitle();

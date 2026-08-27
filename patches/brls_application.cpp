@@ -236,6 +236,20 @@ bool Application::isWindowForeground()
 #endif
 }
 
+bool Application::canUploadTextures()
+{
+#if defined(ANDROID) || defined(IOS)
+    // Only the two conditions that actually decide whether a GL call lands: the
+    // app is not backgrounded, and a draw surface is bound. The warm-up frames
+    // are excluded on purpose — they delay *drawing* after a resume, and making
+    // uploads wait for them would drop images that were perfectly safe to
+    // upload.
+    return g_appForeground && glSurfaceIsLive();
+#else
+    return true;
+#endif
+}
+
 bool Application::mainLoop()
 {
     return Application::platform->runLoop(internalMainLoop);
