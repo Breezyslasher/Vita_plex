@@ -243,7 +243,10 @@ std::vector<BrowseRow> loadChildrenOf(PlexClient& client, const std::string& rat
         } else {
             r.id       = "album/" + it.ratingKey;
             r.subtitle = it.year > 0 ? std::to_string(it.year) : std::string();
-            r.flags    = FLAG_BROWSABLE;
+            // Browsable AND playable: tapping opens the track list, while a
+            // client's play action (or "play <album>" by voice) plays the whole
+            // album. Browsable-only would make the album unplayable as a unit.
+            r.flags    = FLAG_BROWSABLE | FLAG_PLAYABLE;
         }
         rows.push_back(std::move(r));
     }
@@ -261,7 +264,9 @@ std::vector<BrowseRow> loadPlaylists(PlexClient& client) {
         r.title    = p.title;
         r.subtitle = p.leafCount > 0 ? std::to_string(p.leafCount) + " tracks" : std::string();
         r.iconUri  = artUri(client, !p.thumb.empty() ? p.thumb : p.composite);
-        r.flags    = FLAG_BROWSABLE;
+        // Open it to pick a track, or play the whole playlist straight from the
+        // list — same reasoning as albums above.
+        r.flags    = FLAG_BROWSABLE | FLAG_PLAYABLE;
         rows.push_back(std::move(r));
     }
     return rows;
@@ -275,7 +280,11 @@ std::vector<BrowseRow> loadPlaylistItems(PlexClient& client, const std::string& 
     for (const auto& pi : items) {
         const MediaItem& t = pi.media;
         BrowseRow r;
-        r.id       = "track/" + t.ratingKey;
+        // Carry the playlist through the id. A browser hands back exactly the id
+        // it was given, and a bare track/<key> would be indistinguishable from
+        // the same track picked in an album — playback would then continue with
+        // the album instead of the rest of the playlist.
+        r.id       = "ptrack/" + playlistId + "/" + t.ratingKey;
         r.title    = t.title;
         r.subtitle = !t.grandparentTitle.empty() ? t.grandparentTitle : t.parentTitle;
         r.iconUri  = artUri(client, !t.thumb.empty() ? t.thumb : t.parentThumb);
@@ -391,7 +400,30 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromMediaId(JNIEnv* env, j
         // enqueue that track, not the album it happens to sit on.
         bool singlePick = false;
 
-        if (startsWith(mediaId, "track/")) {
+        if (startsWith(mediaId, "ptrack/")) {
+            // A track picked inside a playlist: play it with the playlist as
+            // context so the queue continues through the playlist, not the
+            // track's album.
+            singlePick = true;
+            const std::string rest = suffixAfter(mediaId, "ptrack/");
+            const size_t slash = rest.find('/');
+            if (slash == std::string::npos) return;
+            const std::string playlistId = rest.substr(0, slash);
+            const std::string trackKey   = rest.substr(slash + 1);
+
+            std::vector<PlaylistItem> items;
+            if (client.fetchPlaylistItems(playlistId, items)) {
+                for (const auto& pi : items) tracks.push_back(pi.media);
+                for (size_t i = 0; i < tracks.size(); i++) {
+                    if (tracks[i].ratingKey == trackKey) { startIndex = (int)i; break; }
+                }
+            }
+            if (tracks.empty()) {
+                // Playlist fetch failed — fall back to the track on its own.
+                MediaItem track;
+                if (client.fetchMediaDetails(trackKey, track)) tracks.push_back(track);
+            }
+        } else if (startsWith(mediaId, "track/")) {
             singlePick = true;
             // A single track: play it in the context of its album so the queue
             // continues past it, exactly as picking a track in the app does.
