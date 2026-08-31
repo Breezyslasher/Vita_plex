@@ -22,6 +22,21 @@
 
 namespace vitaplex {
 
+// Show a label, or take it out of layout entirely when it has nothing to say.
+//
+// An empty brls::Label is not free: in the login status row it measured to the
+// full width still available on the line, which pushed the status dot and text
+// hundreds of pixels left of centre and stretched the card to fill the window.
+// That is what broke the screen when the code expired and the countdown was
+// blanked — the visible symptom looked like the missing code, but the code had
+// nothing to do with it. GONE drops the label out of the flex line instead.
+static void setLabelOrHide(brls::Label* label, const std::string& text) {
+    if (!label) return;
+    label->setText(text);
+    label->setVisibility(text.empty() ? brls::Visibility::GONE
+                                      : brls::Visibility::VISIBLE);
+}
+
 // Minimal counting semaphore. std::counting_semaphore is C++20 but the
 // project still targets C++17 for Vita / Switch toolchain compatibility,
 // so roll the obvious mutex+condvar version inline here. Only used by
@@ -487,7 +502,7 @@ void LoginActivity::onContentAvailable() {
 
     // ── Initial state ──────────────────────────────────────────────
     if (statusLabel) statusLabel->setText("Requesting code…");
-    if (expiryLabel) expiryLabel->setText("");
+    setLabelOrHide(expiryLabel, "");
     showPinView();
 
     // Auto-start the PIN flow so the code is on screen the instant
@@ -588,7 +603,7 @@ void LoginActivity::updateExpiryCountdown() {
     int secs = remaining % 60;
     char buf[32];
     snprintf(buf, sizeof(buf), "Expires in %d:%02d", mins, secs);
-    expiryLabel->setText(buf);
+    setLabelOrHide(expiryLabel, buf);
 }
 
 void LoginActivity::showServerSelectionDialog(const std::vector<PlexServer>& servers) {
@@ -1374,7 +1389,7 @@ void LoginActivity::onPinLoginPressed() {
             ? "Can't reach plex.tv — check your connection"
             : "Failed to request PIN");
         if (statusDot)   statusDot->setBackgroundColor(nvgRGB(255, 86, 88));
-        if (expiryLabel) expiryLabel->setText("");
+        setLabelOrHide(expiryLabel, "");
         if (getNewCodeRow) getNewCodeRow->setVisibility(brls::Visibility::VISIBLE);
     }
 }
@@ -1403,7 +1418,7 @@ void LoginActivity::checkPinStatus() {
         Application::getInstance().setCurrentHomeUserTitle("");
 
         if (statusLabel) statusLabel->setText("PIN authenticated! Finding servers...");
-        if (expiryLabel) expiryLabel->setText("");
+        setLabelOrHide(expiryLabel, "");
 
         // Auto-detect the account's servers, then let the picker take over.
         std::vector<PlexServer> servers;
@@ -1451,7 +1466,7 @@ void LoginActivity::checkPinStatus() {
             ? "Can't reach plex.tv — check your connection"
             : "Code expired");
         if (statusDot)   statusDot->setBackgroundColor(nvgRGB(255, 86, 88));
-        if (expiryLabel) expiryLabel->setText("");
+        setLabelOrHide(expiryLabel, "");
         if (getNewCodeRow) {
             getNewCodeRow->setVisibility(brls::Visibility::VISIBLE);
             if (pinButton) brls::Application::giveFocus(pinButton);
