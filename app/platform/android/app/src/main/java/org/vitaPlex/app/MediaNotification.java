@@ -10,9 +10,6 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.media.MediaMetadata;
-import android.media.session.MediaSession;
-import android.media.session.PlaybackState;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.os.Build;
@@ -23,17 +20,29 @@ import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.Log;
 
+import android.support.v4.media.MediaMetadataCompat;
+import android.support.v4.media.session.MediaSessionCompat;
+import android.support.v4.media.session.PlaybackStateCompat;
+import androidx.core.app.NotificationCompat;
+
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 
 /**
- * Framework MediaSession + MediaStyle notification for music playback.
+ * MediaSessionCompat + MediaStyle notification for music playback.
  *
  * Driven from native (MusicController) through update()/clear(); transport
  * buttons (lock screen, notification shade, headset) route back to native via
- * nativeMediaAction() / nativeMediaSeek(). No AndroidX — minSdk-21 framework
- * classes only. Everything runs on the main looper; art is fetched off-thread.
+ * nativeMediaAction() / nativeMediaSeek(). Everything runs on the main looper;
+ * art is fetched off-thread.
+ *
+ * Compat rather than the framework MediaSession because MediaSession.Callback
+ * has no onSetShuffleMode/onSetRepeatMode: with it, a remote controller had no
+ * standard way to set those modes and no way to read the current state, leaving
+ * only app-specific PlaybackState custom actions that most clients ignore.
+ * MediaSessionCompat exposes both, so Android Auto head units and watch media
+ * browsers get real shuffle/repeat controls.
  */
 public final class MediaNotification {
     private static final String TAG = "VitaPlexMedia";
@@ -62,10 +71,15 @@ public final class MediaNotification {
 
     private static native void nativeMediaAction(int code);
     private static native void nativeMediaSeek(long positionMs);
+    // Explicit mode setters, used by MediaSessionCompat's onSetRepeatMode /
+    // onSetShuffleMode. Mode ints use this class's own convention (0 off, 1 all,
+    // 2 one) — the same one update() receives — so both directions agree.
+    private static native void nativeSetRepeatMode(int mode);
+    private static native void nativeSetShuffle(boolean on);
 
     private static final Handler sMain = new Handler(Looper.getMainLooper());
 
-    private static MediaSession sSession;
+    private static MediaSessionCompat sSession;
     private static boolean sChannelCreated;
     private static BroadcastReceiver sReceiver;
     private static boolean sServiceStarted;   // MusicService is foregrounding us
@@ -93,7 +107,7 @@ public final class MediaNotification {
      * idle MediaSession posts nothing until setActive()/setPlaybackState() run.
      * Callable from the browser service's onCreate (main looper).
      */
-    static MediaSession.Token getSessionToken(Context ctx) {
+    static MediaSessionCompat.Token getSessionToken(Context ctx) {
         ensureSession(ctx);
         return sSession != null ? sSession.getSessionToken() : null;
     }
@@ -164,43 +178,62 @@ public final class MediaNotification {
         ensureChannel(ctx);
         ensureReceiver(ctx);
 
-        MediaMetadata.Builder meta = new MediaMetadata.Builder()
-            .putString(MediaMetadata.METADATA_KEY_TITLE, sTitle)
-            .putString(MediaMetadata.METADATA_KEY_ARTIST, sArtist)
-            .putString(MediaMetadata.METADATA_KEY_ALBUM, sAlbum)
-            .putLong(MediaMetadata.METADATA_KEY_DURATION, sDurationMs);
+        MediaMetadataCompat.Builder meta = new MediaMetadataCompat.Builder()
+            .putString(MediaMetadataCompat.METADATA_KEY_TITLE, sTitle)
+            .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, sArtist)
+            .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, sAlbum)
+            .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, sDurationMs);
         if (sArtBitmap != null) {
-            meta.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, sArtBitmap);
+            meta.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, sArtBitmap);
         }
         sSession.setMetadata(meta.build());
 
         // Always advertise prev/next so the system media controls keep both
         // buttons visible even at the first/last track (the queue just no-ops
         // there). Gating on hasPrev made the Previous button vanish on track 1.
-        long actions = PlaybackState.ACTION_PLAY_PAUSE | PlaybackState.ACTION_PLAY
-            | PlaybackState.ACTION_PAUSE | PlaybackState.ACTION_SEEK_TO | PlaybackState.ACTION_STOP
-            | PlaybackState.ACTION_SKIP_TO_NEXT | PlaybackState.ACTION_SKIP_TO_PREVIOUS;
-        PlaybackState.Builder psb = new PlaybackState.Builder()
+        long actions = PlaybackStateCompat.ACTION_PLAY_PAUSE | PlaybackStateCompat.ACTION_PLAY
+            | PlaybackStateCompat.ACTION_PAUSE | PlaybackStateCompat.ACTION_SEEK_TO
+            | PlaybackStateCompat.ACTION_STOP
+            | PlaybackStateCompat.ACTION_SKIP_TO_NEXT
+            | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
+            | PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID;
+        // Advertise the mode setters for music so remote controllers render real
+        // shuffle/repeat controls rather than nothing. Without these in the
+        // action mask a client has no way to know the session accepts them.
+        if (sShowModes) {
+            actions |= PlaybackStateCompat.ACTION_SET_SHUFFLE_MODE
+                     | PlaybackStateCompat.ACTION_SET_REPEAT_MODE;
+        }
+        PlaybackStateCompat.Builder psb = new PlaybackStateCompat.Builder()
             .setActions(actions)
-            .setState(sPlaying ? PlaybackState.STATE_PLAYING : PlaybackState.STATE_PAUSED,
+            .setState(sPlaying ? PlaybackStateCompat.STATE_PLAYING
+                               : PlaybackStateCompat.STATE_PAUSED,
                       sPositionMs, 1.0f, SystemClock.elapsedRealtime());
-        // Shuffle/repeat as PlaybackState custom actions so they appear in the
-        // Android 13+ system media controls (which ignore notification actions).
-        // onCustomAction() routes them back; pre-13 uses the notification actions.
+        // Keep the custom actions too: they are what the Android 13+ system
+        // media controls render (those ignore notification actions), and what
+        // clients that don't use the standard mode setters fall back to.
         if (sShowModes) {
             int shufIcon = drawableId(ctx, sShuffle ? "ic_shuffle_on" : "ic_shuffle");
             if (shufIcon != 0) {
-                psb.addCustomAction(new PlaybackState.CustomAction.Builder(
+                psb.addCustomAction(new PlaybackStateCompat.CustomAction.Builder(
                     CUSTOM_SHUFFLE, sShuffle ? "Shuffle on" : "Shuffle off", shufIcon).build());
             }
             int repIcon = drawableId(ctx, sRepeat == 2 ? "ic_repeat_one" : sRepeat == 1 ? "ic_repeat_on" : "ic_repeat");
             if (repIcon != 0) {
                 String rt = sRepeat == 2 ? "Repeat one" : (sRepeat == 1 ? "Repeat all" : "Repeat off");
-                psb.addCustomAction(new PlaybackState.CustomAction.Builder(
+                psb.addCustomAction(new PlaybackStateCompat.CustomAction.Builder(
                     CUSTOM_REPEAT, rt, repIcon).build());
             }
         }
         sSession.setPlaybackState(psb.build());
+        // Publish the modes themselves, so a controller can display the current
+        // state instead of guessing — the other half of what custom actions
+        // could never provide.
+        if (sShowModes) {
+            sSession.setShuffleMode(sShuffle ? PlaybackStateCompat.SHUFFLE_MODE_ALL
+                                             : PlaybackStateCompat.SHUFFLE_MODE_NONE);
+            sSession.setRepeatMode(toCompatRepeat(sRepeat));
+        }
         sSession.setActive(true);
 
         updateLocks(ctx, sPlaying);
@@ -250,12 +283,30 @@ public final class MediaNotification {
         } catch (Throwable ignore) {}
     }
 
+    /** VitaPlex repeat (0 off, 1 all, 2 one) -> PlaybackStateCompat constant. */
+    private static int toCompatRepeat(int vitaRepeat) {
+        if (vitaRepeat == 1) return PlaybackStateCompat.REPEAT_MODE_ALL;
+        if (vitaRepeat == 2) return PlaybackStateCompat.REPEAT_MODE_ONE;
+        return PlaybackStateCompat.REPEAT_MODE_NONE;
+    }
+
+    /** PlaybackStateCompat constant -> VitaPlex repeat. Note the orders differ:
+     *  compat is NONE/ONE/ALL/GROUP, ours is off/all/one. GROUP folds to all. */
+    private static int fromCompatRepeat(int compatRepeat) {
+        switch (compatRepeat) {
+            case PlaybackStateCompat.REPEAT_MODE_ONE:   return 2;
+            case PlaybackStateCompat.REPEAT_MODE_ALL:
+            case PlaybackStateCompat.REPEAT_MODE_GROUP: return 1;
+            default:                                    return 0;
+        }
+    }
+
     private static void ensureSession(Context ctx) {
         if (sSession != null) return;
-        sSession = new MediaSession(ctx, "VitaPlex");
-        sSession.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS
-                          | MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
-        sSession.setCallback(new MediaSession.Callback() {
+        sSession = new MediaSessionCompat(ctx, "VitaPlex");
+        sSession.setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS
+                          | MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS);
+        sSession.setCallback(new MediaSessionCompat.Callback() {
             @Override public void onPlay() { send(CODE_PLAY); }
             @Override public void onPause() { send(CODE_PAUSE); }
             @Override public void onSkipToNext() { send(CODE_NEXT); }
@@ -269,11 +320,25 @@ public final class MediaNotification {
             @Override public void onPlayFromMediaId(String mediaId, Bundle extras) {
                 LibraryBrowserService.playFromMediaId(mediaId);
             }
-            // Android 13+ media controls fire shuffle/repeat as custom actions
-            // (the framework Callback has no onSetRepeatMode/onSetShuffleMode).
+            // Kept for clients (and the Android 13+ system controls) that drive
+            // shuffle/repeat as PlaybackState custom actions. These are toggles
+            // with no target, so they still route to the cycle codes.
             @Override public void onCustomAction(String action, Bundle extras) {
                 if (CUSTOM_SHUFFLE.equals(action))      send(CODE_SHUFFLE);
                 else if (CUSTOM_REPEAT.equals(action))  send(CODE_REPEAT);
+            }
+            // The reason for the compat session: a client can request a specific
+            // mode instead of blindly cycling. Android Auto, Wear and watch media
+            // browsers use these; the framework Callback had no such methods.
+            @Override public void onSetShuffleMode(int shuffleMode) {
+                final boolean on = shuffleMode == PlaybackStateCompat.SHUFFLE_MODE_ALL
+                                || shuffleMode == PlaybackStateCompat.SHUFFLE_MODE_GROUP;
+                try { nativeSetShuffle(on); } catch (Throwable t) { Log.w(TAG, "setShuffle", t); }
+            }
+            @Override public void onSetRepeatMode(int repeatMode) {
+                try {
+                    nativeSetRepeatMode(fromCompatRepeat(repeatMode));
+                } catch (Throwable t) { Log.w(TAG, "setRepeat", t); }
             }
         });
     }
@@ -331,16 +396,13 @@ public final class MediaNotification {
         ensureChannel(ctx);
         if (sSession == null) return null;
 
-        Notification.Builder b;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            b = new Notification.Builder(ctx, CHANNEL_ID);
-        } else {
-            b = new Notification.Builder(ctx);
-        }
+        // NotificationCompat handles the pre-O channel split itself, so the
+        // SDK_INT branch the framework builder needed is gone.
+        NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, CHANNEL_ID);
         b.setContentTitle(sTitle)
          .setContentText(sArtist)
          .setSmallIcon(android.R.drawable.ic_media_play)
-         .setVisibility(Notification.VISIBILITY_PUBLIC)
+         .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
          .setOngoing(sPlaying)
          .setShowWhen(false);
         if (!sAlbum.isEmpty()) b.setSubText(sAlbum);
@@ -383,8 +445,9 @@ public final class MediaNotification {
             idx++;
         }
 
-        Notification.MediaStyle style = new Notification.MediaStyle()
-            .setMediaSession(sSession.getSessionToken());
+        androidx.media.app.NotificationCompat.MediaStyle style =
+            new androidx.media.app.NotificationCompat.MediaStyle()
+                .setMediaSession(sSession.getSessionToken());
         style.setShowActionsInCompactView(prevIdx, toggleIdx, nextIdx);
         b.setStyle(style);
         return b.build();
@@ -424,12 +487,12 @@ public final class MediaNotification {
         sServiceStarted = false;
     }
 
-    private static Notification.Action action(Context ctx, int icon, String title, int code) {
+    private static NotificationCompat.Action action(Context ctx, int icon, String title, int code) {
         Intent i = new Intent(ACTION).setPackage(ctx.getPackageName()).putExtra(EXTRA_CODE, code);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
         PendingIntent pi = PendingIntent.getBroadcast(ctx, code, i, flags);
-        return new Notification.Action.Builder(icon, title, pi).build();
+        return new NotificationCompat.Action.Builder(icon, title, pi).build();
     }
 
     private static void send(int code) {

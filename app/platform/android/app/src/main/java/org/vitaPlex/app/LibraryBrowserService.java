@@ -1,14 +1,15 @@
 package org.VitaPlex.app;
 
-import android.media.MediaDescription;
-import android.media.browse.MediaBrowser;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.service.media.MediaBrowserService;
 import android.util.Log;
 import android.util.SparseArray;
+
+import android.support.v4.media.MediaBrowserCompat;
+import android.support.v4.media.MediaDescriptionCompat;
+import androidx.media.MediaBrowserServiceCompat;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -17,18 +18,18 @@ import java.util.List;
  * Exposes the Plex music library to system media browsers — Android Auto,
  * Google Assistant ("play X on VitaPlex"), Wear, and Android TV.
  *
- * Framework android.service.media.MediaBrowserService (API 21+), not the
- * AndroidX compat class: this module has no AndroidX dependency and the rest of
- * the media code (MediaNotification) is likewise framework-only. The session
- * this advertises is the same MediaSession that drives the notification and lock
- * screen, so a browser client gets working transport controls for free.
+ * MediaBrowserServiceCompat, matching MediaNotification's MediaSessionCompat —
+ * the token types have to agree, and the compat session is what lets a client
+ * set shuffle/repeat at all (the framework MediaSession.Callback has no
+ * onSetShuffleMode/onSetRepeatMode). The session advertised here is that same
+ * session, so a browser client gets working transport controls for free.
  *
  * The library itself lives in native code (PlexClient), so onLoadChildren hands
  * the request to JNI and detaches; native answers asynchronously through
  * deliverChildren(). Requests are matched by an int token because several
  * browsers can expand several nodes at once.
  */
-public final class LibraryBrowserService extends MediaBrowserService {
+public final class LibraryBrowserService extends MediaBrowserServiceCompat {
     private static final String TAG = "VitaPlexBrowse";
 
     /** Root of the browse tree. Keep in sync with android_media_browser.cpp. */
@@ -37,7 +38,7 @@ public final class LibraryBrowserService extends MediaBrowserService {
     private static final Handler sMain = new Handler(Looper.getMainLooper());
 
     // Pending onLoadChildren results, keyed by the token handed to native.
-    private static final SparseArray<Result<List<MediaBrowser.MediaItem>>> sPending =
+    private static final SparseArray<Result<List<MediaBrowserCompat.MediaItem>>> sPending =
             new SparseArray<>();
     private static int sNextToken = 1;
 
@@ -95,7 +96,7 @@ public final class LibraryBrowserService extends MediaBrowserService {
     }
 
     @Override
-    public void onLoadChildren(String parentId, Result<List<MediaBrowser.MediaItem>> result) {
+    public void onLoadChildren(String parentId, Result<List<MediaBrowserCompat.MediaItem>> result) {
         result.detach();
 
         final int token;
@@ -131,19 +132,19 @@ public final class LibraryBrowserService extends MediaBrowserService {
         sMain.post(new Runnable() {
             @Override
             public void run() {
-                Result<List<MediaBrowser.MediaItem>> r;
+                Result<List<MediaBrowserCompat.MediaItem>> r;
                 synchronized (sPending) {
                     r = sPending.get(token);
                     sPending.remove(token);
                 }
                 if (r == null) return;
 
-                List<MediaBrowser.MediaItem> out = new ArrayList<>();
+                List<MediaBrowserCompat.MediaItem> out = new ArrayList<>();
                 if (ids != null) {
                     for (int i = 0; i < ids.length; i++) {
                         if (ids[i] == null) continue;
-                        MediaDescription.Builder d =
-                                new MediaDescription.Builder().setMediaId(ids[i]);
+                        MediaDescriptionCompat.Builder d =
+                                new MediaDescriptionCompat.Builder().setMediaId(ids[i]);
                         if (titles != null && i < titles.length)
                             d.setTitle(titles[i]);
                         if (subtitles != null && i < subtitles.length
@@ -154,7 +155,7 @@ public final class LibraryBrowserService extends MediaBrowserService {
                             d.setIconUri(Uri.parse(iconUris[i]));
 
                         int f = (flags != null && i < flags.length) ? flags[i] : 0;
-                        out.add(new MediaBrowser.MediaItem(d.build(), f));
+                        out.add(new MediaBrowserCompat.MediaItem(d.build(), f));
                     }
                 }
 

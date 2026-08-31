@@ -170,4 +170,12 @@ task syncBorealisResources(type: Copy) {
 
 dependencies {
     implementation fileTree(include: ['*.jar'], dir: 'libs')
+
+    // MediaSessionCompat + MediaBrowserServiceCompat. The framework
+    // MediaSession.Callback has no onSetShuffleMode/onSetRepeatMode, so with it
+    // a remote controller (Android Auto head unit, Pebble/Wear media browser)
+    // has no standard way to set those modes — only app-specific PlaybackState
+    // custom actions, which most clients ignore. The compat session exposes them
+    // properly and lets clients read the current state back.
+    implementation 'androidx.media:media:1.7.0'
 }
