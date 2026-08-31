@@ -504,11 +504,19 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromMediaId(JNIEnv* env, j
                     break;
 
                 case TrackDefaultAction::PLAY_NOW_REPLACE:
-                default:
+                default: {
+                    // Jump to the inserted track by index rather than calling
+                    // playNext(): under RepeatMode::ONE playNext() deliberately
+                    // stays on the current track, so it would report success
+                    // while the pick never played. insertTrackAfterCurrent puts
+                    // the first item at currentIndex + 1 (and keeps the shuffle
+                    // order in step), so that is the target either way.
+                    const int target = queue.getCurrentIndex() + 1;
                     insertAfterCurrent();
-                    if (queue.playNext())
+                    if (queue.playTrack(target))
                         brls::Application::notify("Now playing: " + picked.front().title);
                     break;
+                }
             }
         });
     });
