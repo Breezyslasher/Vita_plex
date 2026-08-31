@@ -164,6 +164,12 @@ struct AppSettings {
     // Music Settings
     TrackDefaultAction trackDefaultAction = TrackDefaultAction::ASK_EACH_TIME;  // Default action for tracks
     bool backgroundMusic = true;       // Allow leaving player without stopping music
+    // Turn shuffle on whenever a new music queue starts. Mainly for remote
+    // controllers: the framework MediaSession this app uses has no
+    // onSetShuffleMode callback, so clients like Android Auto head units and
+    // Pebble media browsers cannot toggle shuffle themselves — this lets the
+    // preference be set once here instead.
+    bool musicShuffleDefault = false;
 
     // Live TV / DVR Settings
     // Library section the user wants new DVR recordings to land in. When

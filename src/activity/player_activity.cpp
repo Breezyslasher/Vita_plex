@@ -121,6 +121,21 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
         queue.setQueue(tracks, startIndex);
     }
 
+    // "Shuffle New Queues": turn shuffle on as a fresh music queue starts.
+    // Applied here, after the queue is populated, because setShuffle() builds
+    // its order around the current track — so the track the user actually
+    // picked still plays first and only the rest is shuffled.
+    //
+    // Music only: shuffling a queue of episodes is never what's meant. Applied
+    // per new queue rather than once per session, since that is what a
+    // "default" is — the user can still turn it off for the queue in hand.
+    if (!tracks.empty() && tracks[0].mediaType == MediaType::MUSIC_TRACK &&
+        Application::getInstance().getSettings().musicShuffleDefault &&
+        !queue.isShuffleEnabled()) {
+        queue.setShuffle(true);
+        brls::Logger::info("PlayerActivity: shuffle on by default for new music queue");
+    }
+
     // Hand transport to the persistent MusicController while this player is
     // alive: the OS media buttons + queue end-of-track route to the rich
     // on-screen methods. On leave it hands back / takes over headlessly.

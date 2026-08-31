@@ -935,6 +935,17 @@ brls::Box* SettingsTab::createMusicSection() {
     });
     box->addView(m_backgroundMusicToggle);
 
+    // Shuffle-by-default toggle. Exists mainly for remote controllers: the
+    // framework MediaSession has no onSetShuffleMode callback, so Android Auto
+    // head units and watch media browsers can't toggle shuffle themselves.
+    m_shuffleDefaultToggle = new brls::BooleanCell();
+    m_shuffleDefaultToggle->init("Shuffle New Queues", settings.musicShuffleDefault,
+        [&settings](bool value) {
+            settings.musicShuffleDefault = value;
+            Application::getInstance().saveSettings();
+        });
+    box->addView(m_shuffleDefaultToggle);
+
     // Info label for music settings
     auto* musicInfoLabel = new brls::Label();
     musicInfoLabel->setText("Background music lets you leave player to add more songs");

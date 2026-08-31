@@ -473,6 +473,7 @@ bool Application::loadSettings() {
         m_settings.trackDefaultAction = static_cast<TrackDefaultAction>(trackAction);
     }
     m_settings.backgroundMusic = extractBool("backgroundMusic", true);
+    m_settings.musicShuffleDefault = extractBool("musicShuffleDefault", false);
 
     // Live TV / DVR settings
     m_settings.defaultDvrShowSectionId     = extractString("defaultDvrShowSectionId");
@@ -617,6 +618,7 @@ bool Application::saveSettings() {
     json += "  \"downloadIncludeSubtitles\": " + b(m_settings.downloadIncludeSubtitles) + ",\n";
     json += "  \"trackDefaultAction\": " + std::to_string(static_cast<int>(m_settings.trackDefaultAction)) + ",\n";
     json += "  \"backgroundMusic\": " + b(m_settings.backgroundMusic) + ",\n";
+    json += "  \"musicShuffleDefault\": " + b(m_settings.musicShuffleDefault) + ",\n";
     json += "  \"defaultDvrShowSectionId\": \"" + esc(m_settings.defaultDvrShowSectionId) + "\",\n";
     json += "  \"defaultDvrShowSectionTitle\": \"" + esc(m_settings.defaultDvrShowSectionTitle) + "\",\n";
     json += "  \"defaultDvrMovieSectionId\": \"" + esc(m_settings.defaultDvrMovieSectionId) + "\",\n";
