@@ -430,6 +430,9 @@ private:
     // GONE box stays focusable and hit-testable, and the highlight lands on a
     // zero-sized view. Called whenever those containers change visibility.
     void syncHiddenFocus();
+    // Inert until onContentAvailable has wired the D-pad routes. See
+    // syncHiddenFocus() for why running it before that point aborts the process.
+    bool m_focusWiringDone = false;
 
     BRLS_BIND(brls::Box, queueOverlay, "player/queue_overlay");
     BRLS_BIND(brls::Box, queueScrim, "player/queue_scrim");

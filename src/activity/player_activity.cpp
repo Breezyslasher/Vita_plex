@@ -565,7 +565,6 @@ void PlayerActivity::onContentAvailable() {
         // Show music-specific UI elements
         if (musicInfo) musicInfo->setVisibility(brls::Visibility::VISIBLE);
         if (musicTransport) musicTransport->setVisibility(brls::Visibility::VISIBLE);
-        syncHiddenFocus();
 
         // Rescale the album cover to fit the current viewport (e.g.
         // make it large on a portrait phone where the XML default of
@@ -659,6 +658,11 @@ void PlayerActivity::onContentAvailable() {
             // Clear is the top of the sheet's focusable content; route UP back to
             // itself so it can't escape to the player's queue button behind the
             // overlay (which is what happens with the default upward traversal).
+            // setCustomNavigationRoute() aborts the process on a receiver whose
+            // focusable flag is already false, and the sheet is hidden at this
+            // point, so assert the flag first — syncHiddenFocus() at the end of
+            // this function puts it back to whatever the overlay's state says.
+            queueClearBtn->setFocusable(true);
             queueClearBtn->setCustomNavigationRoute(brls::FocusDirection::UP, queueClearBtn);
         }
 
@@ -798,7 +802,10 @@ void PlayerActivity::onContentAvailable() {
 
     // Runs for both modes, unlike the music-only block above: the transport
     // starts GONE in XML and is only ever switched on for audio, so in a video
-    // session its buttons would otherwise sit in the focus order unseen.
+    // session its buttons would otherwise sit in the focus order unseen. This is
+    // also where the focus sync becomes live: every call before this point is a
+    // no-op, because the route wiring above cannot survive a cleared flag.
+    m_focusWiringDone = true;
     syncHiddenFocus();
 }
 
@@ -1296,7 +1303,7 @@ void PlayerActivity::loadMedia() {
             // Show music UI, hide video view
             if (musicInfo) musicInfo->setVisibility(brls::Visibility::VISIBLE);
             if (musicTransport) musicTransport->setVisibility(brls::Visibility::VISIBLE);
-        syncHiddenFocus();
+            syncHiddenFocus();
             if (videoView) videoView->setVisibility(brls::Visibility::GONE);
             if (photoImage) photoImage->setVisibility(brls::Visibility::GONE);
         } else {
@@ -1550,6 +1557,14 @@ void PlayerActivity::loadMedia() {
 }
 
 void PlayerActivity::syncHiddenFocus() {
+    // Deliberately inert until onContentAvailable has finished wiring. That
+    // function calls loadFromQueue()/loadMedia() near the top, which reach here
+    // long before the button set-up further down runs, and borealis'
+    // setCustomNavigationRoute() calls fatal() — an uncaught std::logic_error —
+    // when the receiving view's focusable flag is already false. Clearing
+    // queueClearBtn that early aborted the process on every music track.
+    if (!m_focusWiringDone) return;
+
     auto shown = [](brls::View* v) {
         return v && v->getVisibility() == brls::Visibility::VISIBLE;
     };
