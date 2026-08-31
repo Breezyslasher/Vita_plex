@@ -316,6 +316,14 @@ struct ConnectingUI {
     brls::Label* counter = nullptr;
     GradientBar* bar     = nullptr;
     int total            = 0;
+    // Needed to turn the card into a legible failure state. Without these the
+    // only thing that changed when every address failed was the 12.5px dim
+    // counter line, while the heading still read "Connecting to ..." and the
+    // spinner kept spinning — so a failure looked like being dropped back to
+    // the list for no reason.
+    brls::Label* heading = nullptr;
+    brls::Label* where   = nullptr;
+    SpinnerRing* ring    = nullptr;
 };
 
 // Plex reports a long build string ("1.43.2.10687-563d026ea"); show just the
@@ -974,12 +982,14 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
 
     auto* ring = new SpinnerRing();
     ring->setWidth(88); ring->setHeight(88); ring->setMarginBottom(20);
+    ui->ring = ring;
     card->addView(ring);
 
     auto* heading = new brls::Label();
     heading->setText("Connecting to " + server.name);
     heading->setFontSize(21); heading->setTextColor(kWhite);
     heading->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+    ui->heading = heading;
     card->addView(heading);
 
     auto* where = new brls::Label();
@@ -988,6 +998,7 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
                    " in parallel — fastest wins");
     where->setFontSize(14); where->setTextColor(kMuted); where->setMarginTop(6);
     where->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+    ui->where = where;
     card->addView(where);
 
     auto* bar = new GradientBar();
@@ -1267,10 +1278,33 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
         brls::sync([this, ui, server, totalConnections]() {
             if (!ui->alive) return;
             if (ui->bar) ui->bar->setFraction(1.0f);
-            if (ui->counter) ui->counter->setText("Couldn't reach " + server.name);
+
+            // Say it where the user is actually looking. statusLabel below is
+            // the login screen's own line, which this modal covers, so on its
+            // own it told the user nothing.
+            if (ui->heading) {
+                ui->heading->setText("Couldn't reach " + server.name);
+                ui->heading->setTextColor(kRed);
+            }
+            if (ui->where) {
+                ui->where->setText(
+                    totalConnections == 1
+                        ? std::string("Its address didn't respond. Check the server is "
+                                      "powered on and on this network.")
+                        : "None of its " + std::to_string(totalConnections) +
+                          " addresses responded. Check the server is powered on "
+                          "and on this network.");
+                ui->where->setTextColor(kMuted);
+            }
+            // A spinner still turning reads as "still working".
+            if (ui->ring) ui->ring->setVisibility(brls::Visibility::GONE);
+            if (ui->counter) ui->counter->setText("Returning to the server list…");
+
             if (statusLabel) statusLabel->setText("Failed to connect to " + server.name);
             brls::Logger::error("All {} connections failed for {}", totalConnections, server.name);
-            brls::delay(2200, [this, ui]() {
+            // 2.2s was barely enough to notice a dim one-line change, let alone
+            // read it; the message is the point of this state.
+            brls::delay(4200, [this, ui]() {
                 if (!ui->alive) return;
                 ui->alive = false;
                 if (m_returnToList) showServerSelectionContent();
