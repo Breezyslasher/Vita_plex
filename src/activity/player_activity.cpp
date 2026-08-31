@@ -565,6 +565,7 @@ void PlayerActivity::onContentAvailable() {
         // Show music-specific UI elements
         if (musicInfo) musicInfo->setVisibility(brls::Visibility::VISIBLE);
         if (musicTransport) musicTransport->setVisibility(brls::Visibility::VISIBLE);
+        syncHiddenFocus();
 
         // Rescale the album cover to fit the current viewport (e.g.
         // make it large on a portrait phone where the XML default of
@@ -794,6 +795,11 @@ void PlayerActivity::onContentAvailable() {
     if (autoHide > 0 && !m_isPhoto) {
         hideControls();
     }
+
+    // Runs for both modes, unlike the music-only block above: the transport
+    // starts GONE in XML and is only ever switched on for audio, so in a video
+    // session its buttons would otherwise sit in the focus order unseen.
+    syncHiddenFocus();
 }
 
 void PlayerActivity::setBackgroundTransparent(bool transparent) {
@@ -1047,6 +1053,7 @@ void PlayerActivity::loadFromQueue() {
         // Show music UI elements
         if (musicInfo) musicInfo->setVisibility(brls::Visibility::VISIBLE);
         if (musicTransport) musicTransport->setVisibility(brls::Visibility::VISIBLE);
+        syncHiddenFocus();
         if (videoView) videoView->setVisibility(brls::Visibility::GONE);
         if (photoImage) photoImage->setVisibility(brls::Visibility::GONE);
 
@@ -1289,6 +1296,7 @@ void PlayerActivity::loadMedia() {
             // Show music UI, hide video view
             if (musicInfo) musicInfo->setVisibility(brls::Visibility::VISIBLE);
             if (musicTransport) musicTransport->setVisibility(brls::Visibility::VISIBLE);
+        syncHiddenFocus();
             if (videoView) videoView->setVisibility(brls::Visibility::GONE);
             if (photoImage) photoImage->setVisibility(brls::Visibility::GONE);
         } else {
@@ -1539,6 +1547,24 @@ void PlayerActivity::loadMedia() {
 
     brls::Logger::debug("PlayerActivity: loadMedia exiting");
     m_loadingMedia = false;
+}
+
+void PlayerActivity::syncHiddenFocus() {
+    auto shown = [](brls::View* v) {
+        return v && v->getVisibility() == brls::Visibility::VISIBLE;
+    };
+    // The music transport starts GONE in XML and is only ever switched on for
+    // audio, so during video its five buttons would otherwise stay in the focus
+    // order behind the video surface.
+    const bool music = shown(musicTransport);
+    if (musicPlayBtn) musicPlayBtn->setFocusable(music);
+    if (musicPrevBtn) musicPrevBtn->setFocusable(music);
+    if (musicNextBtn) musicNextBtn->setFocusable(music);
+    if (shuffleBtn)   shuffleBtn->setFocusable(music);
+    if (repeatBtn)    repeatBtn->setFocusable(music);
+
+    const bool queue = shown(queueOverlay);
+    if (queueClearBtn) queueClearBtn->setFocusable(queue);
 }
 
 void PlayerActivity::updateProgress() {
@@ -3187,6 +3213,7 @@ void PlayerActivity::showQueueOverlay() {
 
     if (queueOverlay) {
         queueOverlay->setVisibility(brls::Visibility::VISIBLE);
+        syncHiddenFocus();
 
         queueOverlay->registerAction("Back", brls::ControllerButton::BUTTON_B, [this](brls::View* view) {
             // While a track is grabbed, B drops it (keeps the queue open) rather
@@ -3263,6 +3290,7 @@ void PlayerActivity::hideQueueOverlay() {
     m_grabLift.reset(0.0f);      // stop any in-flight pickup animation
     if (queueOverlay) {
         queueOverlay->setVisibility(brls::Visibility::GONE);
+        syncHiddenFocus();
     }
     // Restore focus to queue button (fall back to play button if unavailable)
     if (queueBtn && queueBtn->getVisibility() == brls::Visibility::VISIBLE) {

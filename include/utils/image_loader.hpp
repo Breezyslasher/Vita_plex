@@ -78,6 +78,27 @@ private:
     };
     static std::vector<DeferredUpload> s_deferred;
 
+    // In-flight brls::Image loads, so one that never lands can be re-issued.
+    // A load is dropped without the caller ever hearing about it — the loader
+    // is paused during playback, the upload had no GL surface, or a view
+    // teardown's cancelAll() invalidated it — and nearly every caller requests
+    // its image exactly once, leaving the view blank for good. Keyed by target
+    // so a recycled view's newer request replaces the older one rather than
+    // racing it. MediaItemCell and the detail-view poster do their own retry
+    // from draw(); this covers everything else.
+    struct PendingImage {
+        std::string url;
+        LoadCallback callback;
+        std::shared_ptr<std::atomic<bool>> alive;
+        uint64_t gen = 0;
+        int64_t  nextRetryAt = 0;   // CPU usec
+        int      retries = 0;
+    };
+    static std::map<brls::Image*, PendingImage> s_pendingImages;
+
+    // Subscribe the run-loop worker that drains deferrals and retries images.
+    static void ensureRunLoopHook();
+
     // True when a GL upload issued right now would actually reach the GPU.
     static bool uploadsAreSafe();
 
