@@ -536,11 +536,9 @@ void LoginActivity::renderPinTiles(bool expired) {
         return;
     }
 
-    // An expired code is greyed out rather than removed. Emptying the row left
-    // the card with a tall void where the code had been and pushed the status
-    // line out of place, so all the user got was "Code expired" adrift in blank
-    // space. Keeping the tiles holds the card's shape steady and shows which
-    // code actually died.
+    // An expired code is greyed out rather than removed, so the user can see
+    // which code died instead of being left staring at an empty gap with only
+    // "Code expired" to explain it.
     const NVGcolor accent = expired ? nvgRGB(122, 122, 128) : nvgRGB(229, 160, 13);
     const NVGcolor glow   = expired ? nvgRGBA(122, 122, 128, 20) : nvgRGBA(229, 160, 13, 30);
 
@@ -1471,30 +1469,11 @@ void LoginActivity::checkPinStatus() {
             getNewCodeRow->setVisibility(brls::Visibility::VISIBLE);
             if (pinButton) brls::Application::giveFocus(pinButton);
         }
-        // Grey the tiles rather than removing them: an empty row collapsed the
-        // card and left the status line adrift in the resulting void. The code
-        // stays visible, obviously dead, and the card keeps its shape.
+        // Grey the tiles rather than clearing them, so the user can still see
+        // which code died instead of being left with an empty gap. (The card's
+        // shape is held by the countdown label going GONE rather than empty —
+        // see setLabelOrHide.)
         renderPinTiles(/*expired=*/true);
-
-        // Geometry dump. Greying the tiles did not repair the expired layout on
-        // desktop — the card still stretches and the status line still lands
-        // outside its padding — so record what the views actually measured to
-        // instead of guessing at the cause again. One line, only on expiry.
-        auto rect = [](brls::View* v) -> std::string {
-            if (!v) return "null";
-            char b[64];
-            snprintf(b, sizeof(b), "%.0f,%.0f %.0fx%.0f",
-                     v->getX(), v->getY(), v->getWidth(), v->getHeight());
-            return b;
-        };
-        // A populated tile row measures ~92 high; 0 means the tiles are missing
-        // (empty code), which would point somewhere quite different from a
-        // layout that simply went wrong.
-        brls::Logger::info(
-            "LOGINEXP code='{}' tiles={} status={} dot={} newcode={} pinview={} card={}",
-            m_pinAuth.code,
-            rect(pinTilesBox), rect(statusLabel), rect(statusDot),
-            rect(getNewCodeRow), rect(pinView), rect(cardBox));
     } else if (m_pinAuth.offline) {
         // Still inside the code's lifetime, but plex.tv is unreachable. Without
         // this the screen keeps saying "Waiting for confirmation…" and runs the
