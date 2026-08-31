@@ -345,7 +345,11 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativeLoadChildren(JNIEnv* env, jcla
     std::string parentId = raw ? raw : "";
     if (raw) env->ReleaseStringUTFChars(jParentId, raw);
 
-    brls::Logger::debug("MediaBrowser: loadChildren({}) token={}", parentId, (int)token);
+    // info, not debug: a cold service process never runs the app's
+    // setLogLevel(), so it sits at borealis' LOG_INFO default and a debug line
+    // here would be invisible — exactly when this trace matters most. Browse
+    // requests are user-paced, so this is not a hot path.
+    brls::Logger::info("MediaBrowser: loadChildren({}) token={}", parentId, (int)token);
 
     // Plex lookups are blocking HTTP, so they must not run on the binder thread
     // that delivered onLoadChildren. Deliver straight from the worker: the JNI
@@ -360,7 +364,9 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativeLoadChildren(JNIEnv* env, jcla
             deliverRows((int)token, row);
             return;
         }
-        deliverRows((int)token, resolveNode(parentId));
+        std::vector<BrowseRow> rows = resolveNode(parentId);
+        brls::Logger::info("MediaBrowser: {} -> {} row(s)", parentId, rows.size());
+        deliverRows((int)token, rows);
     });
 }
 
