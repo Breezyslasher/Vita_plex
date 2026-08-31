@@ -345,6 +345,7 @@ bool PlexClient::requestPin(PinAuth& pinAuth) {
     req.body = "strong=false";
 
     HttpResponse resp = client.request(req);
+    pinAuth.offline = (resp.statusCode == 0);
 
     if (resp.statusCode == 201 || resp.statusCode == 200) {
         pinAuth.id = extractJsonInt(resp.body, "id");
@@ -369,6 +370,10 @@ bool PlexClient::checkPin(PinAuth& pinAuth) {
     req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
 
     HttpResponse resp = client.request(req);
+
+    // statusCode 0 means curl never got a response — plex.tv is unreachable,
+    // not "the user has not confirmed yet". Both return false, so record which.
+    pinAuth.offline = (resp.statusCode == 0);
 
     if (resp.statusCode == 200) {
         pinAuth.authToken = extractJsonValue(resp.body, "authToken");

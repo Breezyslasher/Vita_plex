@@ -190,6 +190,11 @@ struct PinAuth {
     bool expired = false;
     int expiresIn = 0;
     bool useJwt = false;  // Whether this PIN uses JWT authentication
+    // True when the last request to plex.tv got no HTTP response at all (DNS,
+    // timeout, no route). Distinct from "the code is not confirmed yet", which
+    // is also a false return — without it the login screen cannot tell a link
+    // that is simply still pending from one it can no longer poll.
+    bool offline = false;
 };
 
 // Plex Home managed user. plex.tv/api/v2/home/users returns the list

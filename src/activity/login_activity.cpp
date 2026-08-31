@@ -1357,7 +1357,9 @@ void LoginActivity::onPinLoginPressed() {
         });
         m_pinTimer.start(2000); // Check every 2 seconds
     } else {
-        if (statusLabel) statusLabel->setText("Failed to request PIN");
+        if (statusLabel) statusLabel->setText(m_pinAuth.offline
+            ? "Can't reach plex.tv — check your connection"
+            : "Failed to request PIN");
         if (statusDot)   statusDot->setBackgroundColor(nvgRGB(255, 86, 88));
         if (expiryLabel) expiryLabel->setText("");
         if (getNewCodeRow) getNewCodeRow->setVisibility(brls::Visibility::VISIBLE);
@@ -1420,7 +1422,13 @@ void LoginActivity::checkPinStatus() {
         // retry without leaving the screen.
         m_pinMode = false;
         m_pinTimer.stop();
-        if (statusLabel) statusLabel->setText("Code expired");
+        // If we never actually reached plex.tv, the code did not necessarily
+        // expire — we just stopped being able to ask. Saying "Code expired"
+        // there sends the user off to fetch another one that will fail the same
+        // way, so name the real problem.
+        if (statusLabel) statusLabel->setText(m_pinAuth.offline
+            ? "Can't reach plex.tv — check your connection"
+            : "Code expired");
         if (statusDot)   statusDot->setBackgroundColor(nvgRGB(255, 86, 88));
         if (expiryLabel) expiryLabel->setText("");
         if (getNewCodeRow) {
@@ -1431,6 +1439,19 @@ void LoginActivity::checkPinStatus() {
         // card and left the status line adrift in the resulting void. The code
         // stays visible, obviously dead, and the card keeps its shape.
         renderPinTiles(/*expired=*/true);
+    } else if (m_pinAuth.offline) {
+        // Still inside the code's lifetime, but plex.tv is unreachable. Without
+        // this the screen keeps saying "Waiting for confirmation…" and runs the
+        // countdown down to zero, so a network outage is indistinguishable from
+        // nobody having entered the code. Polling continues — a blip recovers
+        // on its own through the branch below.
+        if (statusLabel) statusLabel->setText("Can't reach plex.tv — retrying…");
+        if (statusDot)   statusDot->setBackgroundColor(nvgRGB(255, 86, 88));
+    } else {
+        // Reachable and still pending. Also the recovery path: restores the
+        // normal wait state after a transient failure above.
+        if (statusLabel) statusLabel->setText("Waiting for confirmation…");
+        if (statusDot)   statusDot->setBackgroundColor(nvgRGB(229, 160, 13));
     }
 }
 
