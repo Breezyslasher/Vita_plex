@@ -1460,6 +1460,26 @@ void LoginActivity::checkPinStatus() {
         // card and left the status line adrift in the resulting void. The code
         // stays visible, obviously dead, and the card keeps its shape.
         renderPinTiles(/*expired=*/true);
+
+        // Geometry dump. Greying the tiles did not repair the expired layout on
+        // desktop — the card still stretches and the status line still lands
+        // outside its padding — so record what the views actually measured to
+        // instead of guessing at the cause again. One line, only on expiry.
+        auto rect = [](brls::View* v) -> std::string {
+            if (!v) return "null";
+            char b[64];
+            snprintf(b, sizeof(b), "%.0f,%.0f %.0fx%.0f",
+                     v->getX(), v->getY(), v->getWidth(), v->getHeight());
+            return b;
+        };
+        // A populated tile row measures ~92 high; 0 means the tiles are missing
+        // (empty code), which would point somewhere quite different from a
+        // layout that simply went wrong.
+        brls::Logger::info(
+            "LOGINEXP code='{}' tiles={} status={} dot={} newcode={} pinview={} card={}",
+            m_pinAuth.code,
+            rect(pinTilesBox), rect(statusLabel), rect(statusDot),
+            rect(getNewCodeRow), rect(pinView), rect(cardBox));
     } else if (m_pinAuth.offline) {
         // Still inside the code's lifetime, but plex.tv is unreachable. Without
         // this the screen keeps saying "Waiting for confirmation…" and runs the
