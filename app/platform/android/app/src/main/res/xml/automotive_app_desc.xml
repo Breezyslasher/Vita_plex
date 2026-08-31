@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Declares VitaPlex as an Android Auto media app. Referenced from the manifest
+    via the com.google.android.gms.car.application meta-data; without it Auto
+    ignores LibraryBrowserService even though the service is exported correctly.
+-->
+<automotiveApp>
+    <uses name="media" />
+</automotiveApp>

@@ -118,6 +118,11 @@ void fonsGetAtlasSize(FONScontext* s, int* width, int* height);
 int fonsExpandAtlas(FONScontext* s, int width, int height);
 // Resets the whole stash.
 int fonsResetAtlas(FONScontext* stash, int width, int height);
+// Marks the entire atlas dirty so the next fonsValidateTexture() reports the
+// full texture and the renderer re-uploads it. Recovers a GPU atlas whose
+// contents were lost while the glyphs are still valid in stash->texData — see
+// nvgMarkFontAtlasDirty() in nanovg.c.
+void fonsMarkAllDirty(FONScontext* stash);
 
 // Add fonts
 int fonsAddFont(FONScontext* s, const char* name, const char* path, int fontIndex);
@@ -2106,6 +2111,18 @@ int fonsValidateTexture(FONScontext* stash, int* dirty)
 		return 1;
 	}
 	return 0;
+}
+
+void fonsMarkAllDirty(FONScontext* stash)
+{
+	if (stash == NULL) return;
+	// Full-texture dirty rect: the next fonsValidateTexture() hands the whole
+	// atlas back to the renderer, which re-uploads texData over the stale GPU
+	// copy. Cheap and idempotent — only used on a graphics-surface recovery.
+	stash->dirtyRect[0] = 0;
+	stash->dirtyRect[1] = 0;
+	stash->dirtyRect[2] = stash->params.width;
+	stash->dirtyRect[3] = stash->params.height;
 }
 
 void fonsDeleteInternal(FONScontext* stash)

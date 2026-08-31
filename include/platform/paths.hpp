@@ -64,8 +64,35 @@
  * Result is cached after first call. Thread-safe after SDL init.
  * Example: /data/user/0/org.VitaPlex.app/files/VitaPlex
  */
-inline const std::string& getAndroidDataDir() {
+inline std::string& androidDataDirStorage() {
     static std::string s_dataDir;
+    return s_dataDir;
+}
+
+/**
+ * Seed the data directory from a Java-supplied path (Context.getFilesDir()).
+ *
+ * SDL_AndroidGetInternalStoragePath() only answers once SDL's JNI setup has run,
+ * which happens when SDLActivity starts. A process launched *without* the
+ * activity — the media-browser service being bound cold by Android Auto or a
+ * watch companion — has no SDL context, so the lookup below would fall through
+ * to the /sdcard guess and never find the saved config. Java knows the real
+ * path from its Context, so it hands it over before any path is resolved.
+ * No-op once the directory is known.
+ */
+inline void setAndroidDataDir(const std::string& filesDir) {
+    if (filesDir.empty()) return;
+    std::string& dir = androidDataDirStorage();
+    if (dir.empty()) dir = filesDir + "/VitaPlex";
+}
+
+/**
+ * Returns the Android-specific writable data directory (internal storage).
+ * Result is cached after first call. Thread-safe after SDL init.
+ * Example: /data/user/0/org.VitaPlex.app/files/VitaPlex
+ */
+inline const std::string& getAndroidDataDir() {
+    std::string& s_dataDir = androidDataDirStorage();
     if (s_dataDir.empty()) {
         const char* internalPath = SDL_AndroidGetInternalStoragePath();
         if (internalPath && internalPath[0] != '\0') {

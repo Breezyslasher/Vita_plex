@@ -149,6 +149,23 @@
             android:name="org.VitaPlex.app.MusicService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+
+        <!-- Media browsing: lets Android Auto, Google Assistant, Wear and the
+             Android TV media surfaces browse and play the Plex music library.
+             Must be exported with the MediaBrowserService intent-filter, since
+             those clients live in other processes and bind us by action. -->
+        <service
+            android:name="org.VitaPlex.app.LibraryBrowserService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.media.browse.MediaBrowserService" />
+            </intent-filter>
+        </service>
+
+        <!-- Declares the app as an Android Auto media app. -->
+        <meta-data
+            android:name="com.google.android.gms.car.application"
+            android:resource="@xml/automotive_app_desc" />
     </application>
 
 </manifest>

@@ -1159,6 +1159,33 @@ brls::View* MediaDetailView::create() {
     return nullptr; // Factory not used
 }
 
+void MediaDetailView::draw(NVGcontext* vg, float x, float y, float width, float height,
+                           brls::Style style, brls::FrameContext* ctx) {
+    brls::Box::draw(vg, x, y, width, height, style, ctx);
+
+    // Re-arm a poster load that never landed. loadDetails() requests it once, so
+    // a request dropped afterwards (loader paused during playback, no GL surface
+    // while backgrounded, or an ImageLoader::cancelAll() from a tab teardown)
+    // would otherwise leave the poster blank for as long as this view is open —
+    // a tab would have been rebuilt and re-requested, but a pushed detail view
+    // is not. Bounded retries so genuinely missing artwork can't spin.
+    if (m_posterImage && m_posterImage->getTexture() == 0 &&
+        !m_posterUrl.empty() && m_posterRetries < 5) {
+        const int64_t now = brls::getCPUTimeUsec();
+        if (m_posterRetryAt == 0) {
+            // First frame we notice it missing: wait a beat so an in-flight load
+            // gets the chance to finish normally.
+            m_posterRetryAt = now + 700 * 1000;
+        } else if (now >= m_posterRetryAt) {
+            m_posterRetryAt = 0;
+            m_posterRetries++;
+            ImageLoader::loadAsync(m_posterUrl, [](brls::Image* image) {
+                image->setVisibility(brls::Visibility::VISIBLE);
+            }, m_posterImage, m_alive);
+        }
+    }
+}
+
 void MediaDetailView::loadDetails() {
     std::string ratingKey = m_item.ratingKey;
     std::string thumbPath = m_item.thumb;
@@ -1235,6 +1262,11 @@ void MediaDetailView::loadDetails() {
 
                 PlexClient& client = PlexClient::getInstance();
                 std::string url = client.getThumbnailUrl(thumb, width, height);
+                // Remember it so draw() can re-arm if this attempt is dropped
+                // (loader paused, no GL surface, or a cancelAll() elsewhere).
+                m_posterUrl     = url;
+                m_posterRetryAt = 0;
+                m_posterRetries = 0;
                 ImageLoader::loadAsync(url, [](brls::Image* image) {
                     image->setVisibility(brls::Visibility::VISIBLE);
                 }, m_posterImage, m_alive);

@@ -175,6 +175,7 @@ private:
     // Music section (split out of Playback)
     brls::DetailCell*   m_trackActionSelector = nullptr;
     brls::BooleanCell* m_backgroundMusicToggle = nullptr;
+    brls::BooleanCell* m_shuffleDefaultToggle = nullptr;
 
     // Live TV section
     brls::DetailCell*   m_defaultDvrShowLibraryCell  = nullptr;

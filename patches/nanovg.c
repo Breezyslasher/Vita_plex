@@ -2455,6 +2455,21 @@ static void nvg__flushTextTexture(NVGcontext* ctx)
 	}
 }
 
+// VitaPlex: force the whole font atlas to be re-uploaded on the next flush.
+//
+// Mobile platforms tear down the GL/EGL drawing surface while the app is
+// backgrounded. A glyph upload issued while nothing is bound is silently
+// dropped, but fontstash has already cleared its dirty rect by then, so it
+// believes those glyphs are resident on the GPU and never re-sends them — they
+// come back as blank gaps inside otherwise correct text. The glyph bitmaps are
+// still intact in fontstash's CPU-side atlas, so marking the whole atlas dirty
+// repairs the GPU copy on the next frame.
+void nvgMarkFontAtlasDirty(NVGcontext* ctx)
+{
+	if (ctx == NULL) return;
+	fonsMarkAllDirty(ctx->fs);
+}
+
 static int nvg__allocTextAtlas(NVGcontext* ctx)
 {
 	int iw, ih;

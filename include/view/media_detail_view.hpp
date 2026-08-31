@@ -43,6 +43,12 @@ public:
 
     static brls::View* create();
 
+    // Re-arms a poster load that was dropped (see m_posterUrl). Detail views are
+    // pushed rather than rebuilt, so unlike a tab they never re-request on their
+    // own after returning from the background.
+    void draw(NVGcontext* vg, float x, float y, float width, float height,
+              brls::Style style, brls::FrameContext* ctx) override;
+
 private:
     void loadDetails();
     void loadChildren();
@@ -195,6 +201,16 @@ public:
     brls::Label* m_durationLabel = nullptr;
     brls::Label* m_summaryLabel = nullptr;
     brls::Image* m_posterImage = nullptr;
+    // Poster-load retry state. A cover request can be dropped after the fact —
+    // the loader is paused during playback, the app was backgrounded so the
+    // upload had no GL surface, or a tab teardown's ImageLoader::cancelAll()
+    // invalidated it. A tab recovers because it is destroyed and rebuilt on
+    // resume, re-requesting as it goes; a pushed detail view survives, so
+    // without this its poster would stay blank until the user navigates away
+    // and back. Mirrors MediaItemCell's retry.
+    std::string m_posterUrl;          // last requested poster, "" when none
+    int64_t     m_posterRetryAt = 0;  // CPU usec; 0 = no retry pending
+    int         m_posterRetries = 0;  // capped, so missing art can't spin
     brls::Button* m_playButton = nullptr;
     brls::Button* m_resumeButton = nullptr;
     brls::Button* m_downloadButton = nullptr;

@@ -210,4 +210,32 @@ Java_org_VitaPlex_app_MediaNotification_nativeMediaSeek(JNIEnv*, jclass, jlong p
         vitaplex::nowplaying::dispatchSeek((int64_t)positionMs);
     });
 }
+
+// Java -> native: the OS controls requested an explicit repeat mode, rather than
+// the CycleRepeat button above. MediaSessionCompat.Callback.onSetRepeatMode
+// carries a target, so Android can finally use the same explicit path the SMTC
+// (Windows) and MPRIS (Linux) controls already use.
+//
+// The int is MediaNotification's own convention — 0 off, 1 all, 2 one — which is
+// what update() already sends the other way. The compat constants order One
+// before All, so the Java side converts; keeping this end stable means the two
+// directions agree.
+extern "C" JNIEXPORT void JNICALL
+Java_org_VitaPlex_app_MediaNotification_nativeSetRepeatMode(JNIEnv*, jclass, jint mode) {
+    brls::sync([mode]() {
+        using vitaplex::nowplaying::RepeatMode;
+        RepeatMode m = ((int)mode == 1) ? RepeatMode::All
+                     : ((int)mode == 2) ? RepeatMode::One
+                                        : RepeatMode::Off;
+        vitaplex::nowplaying::dispatchSetRepeat(m);
+    });
+}
+
+// Java -> native: the OS controls requested an explicit shuffle state.
+extern "C" JNIEXPORT void JNICALL
+Java_org_VitaPlex_app_MediaNotification_nativeSetShuffle(JNIEnv*, jclass, jboolean on) {
+    brls::sync([on]() {
+        vitaplex::nowplaying::dispatchSetShuffle(on == JNI_TRUE);
+    });
+}
 #endif
