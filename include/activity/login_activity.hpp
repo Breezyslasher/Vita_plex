@@ -74,6 +74,10 @@ private:
     // Swap the card between the PIN view and the credentials sub-view.
     void showPinView();
     void showCredentialsView();
+    // Keep focusability in step with which sub-view is on screen. borealis only
+    // tests a view's own visibility when deciding whether it can take focus, so
+    // buttons inside a hidden container stay reachable without this.
+    void syncFocusability();
     // Update the "Expires in MM:SS" countdown label from m_pinCheckTimer
     // (driven by the existing 2-second poll). Called from checkPinStatus.
     void updateExpiryCountdown();

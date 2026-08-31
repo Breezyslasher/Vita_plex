@@ -574,6 +574,7 @@ void LoginActivity::renderPinTiles(bool expired) {
 void LoginActivity::showPinView() {
     if (pinView)  pinView->setVisibility(brls::Visibility::VISIBLE);
     if (credView) credView->setVisibility(brls::Visibility::GONE);
+    syncFocusability();
     // Default focus lands on "Use credentials" so the user can opt in
     // immediately on a controller. brls picks lastFocusedView on its
     // own when there's history.
@@ -582,9 +583,38 @@ void LoginActivity::showPinView() {
     }
 }
 
+void LoginActivity::syncFocusability() {
+    // borealis does not do this for us: View::isFocusable() tests only the
+    // view's own visibility, so a button inside a GONE container stays
+    // focusable — and hitTest() has the same blind spot, so the mouse finds it
+    // too. A hidden container measures 0x0 at its parent's origin, which is why
+    // focusing one parked the highlight in the corner of the card and why
+    // pressing Up from the secondary buttons, or Down from "Connect to local
+    // server", landed on nothing. Keep every focusable view in step with the
+    // sub-view that holds it.
+    auto shown = [](brls::View* v) {
+        return v && v->getVisibility() == brls::Visibility::VISIBLE;
+    };
+    const bool pin  = shown(pinView);
+    const bool cred = shown(credView);
+    // "Get a new code" only exists for the user once expiry reveals its row.
+    const bool newCode = pin && shown(getNewCodeRow);
+
+    if (pinButton)            pinButton->setFocusable(newCode);
+    if (useCredentialsButton) useCredentialsButton->setFocusable(pin);
+    if (offlineButton)        offlineButton->setFocusable(pin);
+    if (localServerButton)    localServerButton->setFocusable(pin);
+
+    if (usernameLabel)   usernameLabel->setFocusable(cred);
+    if (passwordLabel)   passwordLabel->setFocusable(cred);
+    if (backToPinButton) backToPinButton->setFocusable(cred);
+    if (loginButton)     loginButton->setFocusable(cred);
+}
+
 void LoginActivity::showCredentialsView() {
     if (pinView)  pinView->setVisibility(brls::Visibility::GONE);
     if (credView) credView->setVisibility(brls::Visibility::VISIBLE);
+    syncFocusability();
     if (usernameLabel) {
         brls::Application::giveFocus(usernameLabel);
     }
@@ -1374,6 +1404,7 @@ void LoginActivity::onPinLoginPressed() {
         if (statusLabel) statusLabel->setText("Waiting for confirmation…");
         if (statusDot)   statusDot->setBackgroundColor(nvgRGB(229, 160, 13));
         if (getNewCodeRow) getNewCodeRow->setVisibility(brls::Visibility::GONE);
+        syncFocusability();
 
         // Start checking PIN status using RepeatingTimer
         m_pinCheckTimer = 0;
@@ -1389,6 +1420,7 @@ void LoginActivity::onPinLoginPressed() {
         if (statusDot)   statusDot->setBackgroundColor(nvgRGB(255, 86, 88));
         setLabelOrHide(expiryLabel, "");
         if (getNewCodeRow) getNewCodeRow->setVisibility(brls::Visibility::VISIBLE);
+        syncFocusability();
     }
 }
 
@@ -1467,6 +1499,7 @@ void LoginActivity::checkPinStatus() {
         setLabelOrHide(expiryLabel, "");
         if (getNewCodeRow) {
             getNewCodeRow->setVisibility(brls::Visibility::VISIBLE);
+            syncFocusability();
             if (pinButton) brls::Application::giveFocus(pinButton);
         }
         // Grey the tiles rather than clearing them, so the user can still see
