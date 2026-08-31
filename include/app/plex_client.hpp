@@ -190,6 +190,11 @@ struct PinAuth {
     bool expired = false;
     int expiresIn = 0;
     bool useJwt = false;  // Whether this PIN uses JWT authentication
+    // True when the last request to plex.tv got no HTTP response at all (DNS,
+    // timeout, no route). Distinct from "the code is not confirmed yet", which
+    // is also a false return — without it the login screen cannot tell a link
+    // that is simply still pending from one it can no longer poll.
+    bool offline = false;
 };
 
 // Plex Home managed user. plex.tv/api/v2/home/users returns the list
@@ -323,7 +328,11 @@ public:
     bool requestPin(PinAuth& pinAuth);
     bool checkPin(PinAuth& pinAuth);
     bool refreshToken();  // JWT token refresh (call before 7-day expiry)
-    bool fetchServers(std::vector<PlexServer>& servers);  // Get user's servers from plex.tv
+    // `offline`, when given, reports that plex.tv gave no HTTP response at all
+    // (DNS, timeout, no route) as opposed to answering with an empty list.
+    // Both come back as a failure here, but they mean opposite things to the
+    // user: one is a broken connection, the other an account with no server.
+    bool fetchServers(std::vector<PlexServer>& servers, bool* offline = nullptr);
     bool connectToServer(const std::string& url);
     bool connectToServer(const std::string& url, int timeoutSeconds);
     void logout();

@@ -299,6 +299,7 @@ LibrarySectionTab::LibrarySectionTab(const std::string& sectionKey, const std::s
     m_trackListScroll = new brls::ScrollingFrame();
     m_trackListScroll->setGrow(1.0f);
     m_trackListScroll->setVisibility(brls::Visibility::GONE);
+    syncTrackListFocus();
     m_trackListBox = new brls::Box();
     m_trackListBox->setAxis(brls::Axis::COLUMN);
     m_trackListBox->setPadding(5);
@@ -372,6 +373,17 @@ LibrarySectionTab::~LibrarySectionTab() {
         *m_alive = false;
     }
     brls::Logger::debug("LibrarySectionTab: Destroyed for section {}", m_sectionKey);
+}
+
+void LibrarySectionTab::syncTrackListFocus() {
+    if (!m_trackListScroll || !m_trackListBox) return;
+    const bool shown =
+        m_trackListScroll->getVisibility() == brls::Visibility::VISIBLE;
+    // Every child of the track list is built focusable (rows, and the load-more
+    // button), so the whole set follows the container.
+    for (brls::View* child : m_trackListBox->getChildren()) {
+        if (child) child->setFocusable(shown);
+    }
 }
 
 void LibrarySectionTab::willDisappear(bool resetState) {
@@ -611,6 +623,7 @@ void LibrarySectionTab::reloadAllItems() {
     m_viewMode = LibraryViewMode::ALL_ITEMS;
     m_titleLabel->setText(m_title);
     if (m_trackListScroll) m_trackListScroll->setVisibility(brls::Visibility::GONE);
+    syncTrackListFocus();
     if (m_contentGrid) m_contentGrid->setVisibility(brls::Visibility::VISIBLE);
     updateViewModeButtons();
 
@@ -1135,6 +1148,7 @@ void LibrarySectionTab::showAllItems() {
     m_trackListRendered = 0;
     m_trackListLoadMoreBtn = nullptr;
     m_trackListScroll->setVisibility(brls::Visibility::GONE);
+    syncTrackListFocus();
     m_contentGrid->setVisibility(brls::Visibility::VISIBLE);
     m_contentGrid->setDataSource(m_items);
     m_contentGrid->setHasMore(m_pageOffset < (size_t)m_totalItemCount);
@@ -1155,6 +1169,7 @@ void LibrarySectionTab::showCollections() {
     m_viewMode = LibraryViewMode::COLLECTIONS;
     m_titleLabel->setText(m_title + " - Collections");
     m_trackListScroll->setVisibility(brls::Visibility::GONE);
+    syncTrackListFocus();
     m_contentGrid->setVisibility(brls::Visibility::VISIBLE);
 
     // Show collections in the grid
@@ -1176,6 +1191,7 @@ void LibrarySectionTab::showCategories() {
     m_viewMode = LibraryViewMode::CATEGORIES;
     m_titleLabel->setText(m_title + " - Categories");
     m_trackListScroll->setVisibility(brls::Visibility::GONE);
+    syncTrackListFocus();
     m_contentGrid->setVisibility(brls::Visibility::VISIBLE);
 
     // Convert genres to MediaItem format for the grid
@@ -1381,6 +1397,7 @@ void LibrarySectionTab::onCollectionSelected(const MediaItem& collection) {
                 m_viewMode = LibraryViewMode::FILTERED;
                 m_titleLabel->setText(m_title + " - " + filterTitle);
                 m_trackListScroll->setVisibility(brls::Visibility::GONE);
+                syncTrackListFocus();
                 m_contentGrid->setVisibility(brls::Visibility::VISIBLE);
                 m_contentGrid->setDataSource(items);
                 updateViewModeButtons();
@@ -1429,6 +1446,7 @@ void LibrarySectionTab::onGenreSelected(const GenreItem& genre) {
                 m_viewMode = LibraryViewMode::FILTERED;
                 m_titleLabel->setText(m_title + " - " + filterTitle);
                 m_trackListScroll->setVisibility(brls::Visibility::GONE);
+                syncTrackListFocus();
                 m_contentGrid->setVisibility(brls::Visibility::VISIBLE);
                 m_contentGrid->setDataSource(items);
                 updateViewModeButtons();
@@ -1494,6 +1512,7 @@ void LibrarySectionTab::showPlaylists() {
     m_viewMode = LibraryViewMode::PLAYLISTS;
     m_titleLabel->setText(m_title + " - Playlists");
     m_trackListScroll->setVisibility(brls::Visibility::GONE);
+    syncTrackListFocus();
     m_contentGrid->setVisibility(brls::Visibility::VISIBLE);
 
     // Convert playlists to MediaItem format for the grid
@@ -1573,6 +1592,7 @@ void LibrarySectionTab::showPlaylistTrackList(std::vector<MediaItem>&& tracks,
     // on a grid cell.
     m_contentGrid->setVisibility(brls::Visibility::GONE);
     m_trackListScroll->setVisibility(brls::Visibility::VISIBLE);
+    syncTrackListFocus();
     m_trackListBox->clearViews();
 
     // Render first page of tracks (must come before updateViewModeButtons
@@ -1704,6 +1724,10 @@ void LibrarySectionTab::appendTrackListPage() {
         m_trackListLoadMoreBtn->addGestureRecognizer(new brls::TapGestureRecognizer(m_trackListLoadMoreBtn));
         m_trackListBox->addView(m_trackListLoadMoreBtn);
     }
+
+    // Rows and the load-more button are built focusable. If the list happens to
+    // be hidden right now, they must not join the focus order until it is shown.
+    syncTrackListFocus();
 }
 
 void LibrarySectionTab::performPlaylistTrackAction(size_t trackIndex) {

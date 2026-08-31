@@ -152,6 +152,11 @@ private:
 
     // Track list view (for playlist contents)
     brls::ScrollingFrame* m_trackListScroll = nullptr;
+
+    // Keep the track rows out of the focus order while the list is hidden.
+    // borealis' View::isFocusable() only tests the view's own visibility, so a
+    // focusable row inside a GONE container stays reachable by D-pad and mouse.
+    void syncTrackListFocus();
     brls::Box* m_trackListBox = nullptr;
 
     // Pagination for infinite scroll

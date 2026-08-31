@@ -22,6 +22,21 @@
 
 namespace vitaplex {
 
+// Show a label, or take it out of layout entirely when it has nothing to say.
+//
+// An empty brls::Label is not free: in the login status row it measured to the
+// full width still available on the line, which pushed the status dot and text
+// hundreds of pixels left of centre and stretched the card to fill the window.
+// That is what broke the screen when the code expired and the countdown was
+// blanked — the visible symptom looked like the missing code, but the code had
+// nothing to do with it. GONE drops the label out of the flex line instead.
+static void setLabelOrHide(brls::Label* label, const std::string& text) {
+    if (!label) return;
+    label->setText(text);
+    label->setVisibility(text.empty() ? brls::Visibility::GONE
+                                      : brls::Visibility::VISIBLE);
+}
+
 // Minimal counting semaphore. std::counting_semaphore is C++20 but the
 // project still targets C++17 for Vita / Switch toolchain compatibility,
 // so roll the obvious mutex+condvar version inline here. Only used by
@@ -487,7 +502,7 @@ void LoginActivity::onContentAvailable() {
 
     // ── Initial state ──────────────────────────────────────────────
     if (statusLabel) statusLabel->setText("Requesting code…");
-    if (expiryLabel) expiryLabel->setText("");
+    setLabelOrHide(expiryLabel, "");
     showPinView();
 
     // Auto-start the PIN flow so the code is on screen the instant
@@ -509,20 +524,31 @@ void LoginActivity::onContentAvailable() {
 // Build the digit-tile row from m_pinAuth.code. Each character lives
 // in its own teal-bordered Box with a Label centred inside; codes
 // shorter or longer than 4 chars lay out N tiles instead of clipping.
-void LoginActivity::renderPinTiles() {
+void LoginActivity::renderPinTiles(bool expired) {
     if (!pinTilesBox) return;
     pinTilesBox->clearViews();
 
     const std::string& code = m_pinAuth.code;
-    if (code.empty()) return;
+    if (code.empty()) {
+        // Nothing to lay out, but the row still has to be re-measured — see the
+        // invalidate() at the end.
+        pinTilesBox->invalidate();
+        return;
+    }
+
+    // An expired code is greyed out rather than removed, so the user can see
+    // which code died instead of being left staring at an empty gap with only
+    // "Code expired" to explain it.
+    const NVGcolor accent = expired ? nvgRGB(122, 122, 128) : nvgRGB(229, 160, 13);
+    const NVGcolor glow   = expired ? nvgRGBA(122, 122, 128, 20) : nvgRGBA(229, 160, 13, 30);
 
     for (size_t i = 0; i < code.size(); i++) {
         auto* tile = new brls::Box();
         tile->setWidth(74);
         tile->setHeight(92);
         tile->setCornerRadius(14);
-        tile->setBackgroundColor(nvgRGBA(229, 160, 13, 30));  // soft Plex-yellow glow
-        tile->setBorderColor(nvgRGB(229, 160, 13));
+        tile->setBackgroundColor(glow);
+        tile->setBorderColor(accent);
         tile->setBorderThickness(1);
         tile->setJustifyContent(brls::JustifyContent::CENTER);
         tile->setAlignItems(brls::AlignItems::CENTER);
@@ -532,16 +558,23 @@ void LoginActivity::renderPinTiles() {
         std::string s(1, code[i]);
         digit->setText(s);
         digit->setFontSize(46);
-        digit->setTextColor(nvgRGB(229, 160, 13));
+        digit->setTextColor(accent);
         tile->addView(digit);
 
         pinTilesBox->addView(tile);
     }
+
+    // Force a re-measure after swapping the row's children. Without it the
+    // siblings below kept the frames yoga had computed for the previous
+    // contents, which is how the status line ended up drawn outside the card's
+    // padding when the row changed under it.
+    pinTilesBox->invalidate();
 }
 
 void LoginActivity::showPinView() {
     if (pinView)  pinView->setVisibility(brls::Visibility::VISIBLE);
     if (credView) credView->setVisibility(brls::Visibility::GONE);
+    syncFocusability();
     // Default focus lands on "Use credentials" so the user can opt in
     // immediately on a controller. brls picks lastFocusedView on its
     // own when there's history.
@@ -550,9 +583,38 @@ void LoginActivity::showPinView() {
     }
 }
 
+void LoginActivity::syncFocusability() {
+    // borealis does not do this for us: View::isFocusable() tests only the
+    // view's own visibility, so a button inside a GONE container stays
+    // focusable — and hitTest() has the same blind spot, so the mouse finds it
+    // too. A hidden container measures 0x0 at its parent's origin, which is why
+    // focusing one parked the highlight in the corner of the card and why
+    // pressing Up from the secondary buttons, or Down from "Connect to local
+    // server", landed on nothing. Keep every focusable view in step with the
+    // sub-view that holds it.
+    auto shown = [](brls::View* v) {
+        return v && v->getVisibility() == brls::Visibility::VISIBLE;
+    };
+    const bool pin  = shown(pinView);
+    const bool cred = shown(credView);
+    // "Get a new code" only exists for the user once expiry reveals its row.
+    const bool newCode = pin && shown(getNewCodeRow);
+
+    if (pinButton)            pinButton->setFocusable(newCode);
+    if (useCredentialsButton) useCredentialsButton->setFocusable(pin);
+    if (offlineButton)        offlineButton->setFocusable(pin);
+    if (localServerButton)    localServerButton->setFocusable(pin);
+
+    if (usernameLabel)   usernameLabel->setFocusable(cred);
+    if (passwordLabel)   passwordLabel->setFocusable(cred);
+    if (backToPinButton) backToPinButton->setFocusable(cred);
+    if (loginButton)     loginButton->setFocusable(cred);
+}
+
 void LoginActivity::showCredentialsView() {
     if (pinView)  pinView->setVisibility(brls::Visibility::GONE);
     if (credView) credView->setVisibility(brls::Visibility::VISIBLE);
+    syncFocusability();
     if (usernameLabel) {
         brls::Application::giveFocus(usernameLabel);
     }
@@ -569,7 +631,7 @@ void LoginActivity::updateExpiryCountdown() {
     int secs = remaining % 60;
     char buf[32];
     snprintf(buf, sizeof(buf), "Expires in %d:%02d", mins, secs);
-    expiryLabel->setText(buf);
+    setLabelOrHide(expiryLabel, buf);
 }
 
 void LoginActivity::showServerSelectionDialog(const std::vector<PlexServer>& servers) {
@@ -612,15 +674,20 @@ void LoginActivity::showServerSelectionContent() {
     // Header copy adapts to the no-servers case: when auto-detect turned up
     // nothing this dialog is purely the manual-entry surface.
     const bool empty = m_servers.empty();
+    // An empty list because plex.tv was unreachable is a different story from
+    // an account that genuinely has no server, and needs different advice.
+    const bool unreachable = empty && m_serversOffline;
     auto* title = new brls::Label();
-    title->setText(empty ? std::string("No servers found")
-                         : "We found " + std::to_string(m_servers.size()) + " servers");
+    title->setText(unreachable ? std::string("Can't reach plex.tv")
+                   : empty     ? std::string("No servers found")
+                               : "We found " + std::to_string(m_servers.size()) + " servers");
     title->setFontSize(21); title->setTextColor(kWhite);
     head->addView(title);
 
     auto* sub = new brls::Label();
-    sub->setText(empty ? "Enter your server's address to connect."
-                       : "Pick one to connect — we'll test every address and use the fastest.");
+    sub->setText(unreachable ? "Check your connection and try again, or enter your server's address directly."
+                 : empty     ? "Enter your server's address to connect."
+                             : "Pick one to connect — we'll test every address and use the fastest.");
     sub->setFontSize(13); sub->setTextColor(kDim); sub->setMarginTop(3);
     head->addView(sub);
     card->addView(head);
@@ -1287,7 +1354,8 @@ void LoginActivity::onLoginPressed() {
         // Auto-detect the account's servers, then let the picker take over.
         if (statusLabel) statusLabel->setText("Finding your servers...");
         std::vector<PlexServer> servers;
-        if (client.fetchServers(servers) && !servers.empty()) {
+        bool serversOffline = false;
+        if (client.fetchServers(servers, &serversOffline) && !servers.empty()) {
             if (servers.size() == 1) {
                 // Only one server, connect directly. No list to fall back
                 // to, so the connecting state's Cancel closes the modal
@@ -1304,10 +1372,17 @@ void LoginActivity::onLoginPressed() {
             // server entry (the login page no longer has a Server URL
             // field), so float it as the manual-entry surface and pop the
             // keyboard straight away.
-            if (statusLabel) statusLabel->setText("No servers found");
+            // "No servers found" is only true when plex.tv actually answered
+            // with an empty list. If the request never got a response, the
+            // account may well have servers — we just couldn't ask — and
+            // pushing the user into manual address entry is the wrong advice.
+            m_serversOffline = serversOffline;
+            if (statusLabel) statusLabel->setText(serversOffline
+                ? "Can't reach plex.tv — check your connection"
+                : "No servers found");
             m_servers.clear();
             showServerSelectionContent();
-            onEnterAddressManually();
+            if (!serversOffline) onEnterAddressManually();
         }
     } else {
         if (statusLabel) statusLabel->setText("Login failed - check credentials");
@@ -1329,6 +1404,7 @@ void LoginActivity::onPinLoginPressed() {
         if (statusLabel) statusLabel->setText("Waiting for confirmation…");
         if (statusDot)   statusDot->setBackgroundColor(nvgRGB(229, 160, 13));
         if (getNewCodeRow) getNewCodeRow->setVisibility(brls::Visibility::GONE);
+        syncFocusability();
 
         // Start checking PIN status using RepeatingTimer
         m_pinCheckTimer = 0;
@@ -1338,10 +1414,13 @@ void LoginActivity::onPinLoginPressed() {
         });
         m_pinTimer.start(2000); // Check every 2 seconds
     } else {
-        if (statusLabel) statusLabel->setText("Failed to request PIN");
+        if (statusLabel) statusLabel->setText(m_pinAuth.offline
+            ? "Can't reach plex.tv — check your connection"
+            : "Failed to request PIN");
         if (statusDot)   statusDot->setBackgroundColor(nvgRGB(255, 86, 88));
-        if (expiryLabel) expiryLabel->setText("");
+        setLabelOrHide(expiryLabel, "");
         if (getNewCodeRow) getNewCodeRow->setVisibility(brls::Visibility::VISIBLE);
+        syncFocusability();
     }
 }
 
@@ -1369,11 +1448,12 @@ void LoginActivity::checkPinStatus() {
         Application::getInstance().setCurrentHomeUserTitle("");
 
         if (statusLabel) statusLabel->setText("PIN authenticated! Finding servers...");
-        if (expiryLabel) expiryLabel->setText("");
+        setLabelOrHide(expiryLabel, "");
 
         // Auto-detect the account's servers, then let the picker take over.
         std::vector<PlexServer> servers;
-        if (client.fetchServers(servers) && !servers.empty()) {
+        bool serversOffline = false;
+        if (client.fetchServers(servers, &serversOffline) && !servers.empty()) {
             if (servers.size() == 1) {
                 // Only one server, connect directly. No list to fall back
                 // to, so the connecting state's Cancel closes the modal
@@ -1390,10 +1470,17 @@ void LoginActivity::checkPinStatus() {
             // server entry (the login page no longer has a Server URL
             // field), so float it as the manual-entry surface and pop the
             // keyboard straight away.
-            if (statusLabel) statusLabel->setText("No servers found");
+            // "No servers found" is only true when plex.tv actually answered
+            // with an empty list. If the request never got a response, the
+            // account may well have servers — we just couldn't ask — and
+            // pushing the user into manual address entry is the wrong advice.
+            m_serversOffline = serversOffline;
+            if (statusLabel) statusLabel->setText(serversOffline
+                ? "Can't reach plex.tv — check your connection"
+                : "No servers found");
             m_servers.clear();
             showServerSelectionContent();
-            onEnterAddressManually();
+            if (!serversOffline) onEnterAddressManually();
         }
     } else if (m_pinAuth.expired || m_pinCheckTimer > 150) {
         // PIN expired (5 minutes). Status dot turns red, countdown
@@ -1401,15 +1488,38 @@ void LoginActivity::checkPinStatus() {
         // retry without leaving the screen.
         m_pinMode = false;
         m_pinTimer.stop();
-        if (statusLabel) statusLabel->setText("Code expired");
+        // If we never actually reached plex.tv, the code did not necessarily
+        // expire — we just stopped being able to ask. Saying "Code expired"
+        // there sends the user off to fetch another one that will fail the same
+        // way, so name the real problem.
+        if (statusLabel) statusLabel->setText(m_pinAuth.offline
+            ? "Can't reach plex.tv — check your connection"
+            : "Code expired");
         if (statusDot)   statusDot->setBackgroundColor(nvgRGB(255, 86, 88));
-        if (expiryLabel) expiryLabel->setText("");
+        setLabelOrHide(expiryLabel, "");
         if (getNewCodeRow) {
             getNewCodeRow->setVisibility(brls::Visibility::VISIBLE);
+            syncFocusability();
             if (pinButton) brls::Application::giveFocus(pinButton);
         }
-        // Clear the displayed tiles too — they're no longer valid.
-        if (pinTilesBox) pinTilesBox->clearViews();
+        // Grey the tiles rather than clearing them, so the user can still see
+        // which code died instead of being left with an empty gap. (The card's
+        // shape is held by the countdown label going GONE rather than empty —
+        // see setLabelOrHide.)
+        renderPinTiles(/*expired=*/true);
+    } else if (m_pinAuth.offline) {
+        // Still inside the code's lifetime, but plex.tv is unreachable. Without
+        // this the screen keeps saying "Waiting for confirmation…" and runs the
+        // countdown down to zero, so a network outage is indistinguishable from
+        // nobody having entered the code. Polling continues — a blip recovers
+        // on its own through the branch below.
+        if (statusLabel) statusLabel->setText("Can't reach plex.tv — retrying…");
+        if (statusDot)   statusDot->setBackgroundColor(nvgRGB(255, 86, 88));
+    } else {
+        // Reachable and still pending. Also the recovery path: restores the
+        // normal wait state after a transient failure above.
+        if (statusLabel) statusLabel->setText("Waiting for confirmation…");
+        if (statusDot)   statusDot->setBackgroundColor(nvgRGB(229, 160, 13));
     }
 }
 

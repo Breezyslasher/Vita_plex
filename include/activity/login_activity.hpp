@@ -68,10 +68,16 @@ private:
     // Build a row of digit tiles inside login/pin_tiles from
     // m_pinAuth.code (one tile per character). Called on each
     // successful onPinLoginPressed.
-    void renderPinTiles();
+    // Build the digit tiles. `expired` greys them instead of clearing the row —
+    // see the definition for why an empty row is not an option.
+    void renderPinTiles(bool expired = false);
     // Swap the card between the PIN view and the credentials sub-view.
     void showPinView();
     void showCredentialsView();
+    // Keep focusability in step with which sub-view is on screen. borealis only
+    // tests a view's own visibility when deciding whether it can take focus, so
+    // buttons inside a hidden container stay reachable without this.
+    void syncFocusability();
     // Update the "Expires in MM:SS" countdown label from m_pinCheckTimer
     // (driven by the existing 2-second poll). Called from checkPinStatus.
     void updateExpiryCountdown();
@@ -119,6 +125,11 @@ private:
     brls::Box* m_dialogScrim = nullptr;
     std::vector<PlexServer> m_servers;
     bool m_returnToList = false;
+    // Set when the server list came back empty because plex.tv was unreachable,
+    // rather than because the account has no servers. The picker header reads it
+    // so it can give the right advice instead of telling the user to type in an
+    // address they may not need.
+    bool m_serversOffline = false;
     int  m_overlayMode = 0;  // 0 none, 1 list, 2 connecting (orientation rebuild)
 
     // Process-lifetime orientation callback captures this guard instead of

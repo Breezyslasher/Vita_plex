@@ -425,6 +425,12 @@ private:
     BRLS_BIND(brls::Label, skipLabel, "player/skip_label");
     BRLS_BIND(brls::Box, queueBtn, "player/queue_btn");
     BRLS_BIND(brls::Image, queueIcon, "player/queue_icon");
+    // Keep buttons inside hidden containers out of the focus order. borealis'
+    // View::isFocusable() only tests the view's own visibility, so a button in a
+    // GONE box stays focusable and hit-testable, and the highlight lands on a
+    // zero-sized view. Called whenever those containers change visibility.
+    void syncHiddenFocus();
+
     BRLS_BIND(brls::Box, queueOverlay, "player/queue_overlay");
     BRLS_BIND(brls::Box, queueScrim, "player/queue_scrim");
     BRLS_BIND(brls::Label, queueOverlayTitle, "player/queue_overlay_title");

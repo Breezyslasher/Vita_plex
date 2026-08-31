@@ -16,6 +16,7 @@ std::mutex ImageLoader::s_cacheMutex;
 std::atomic<uint64_t> ImageLoader::s_generation{0};
 std::atomic<bool> ImageLoader::s_paused{false};
 std::vector<ImageLoader::DeferredUpload> ImageLoader::s_deferred;
+std::map<brls::Image*, ImageLoader::PendingImage> ImageLoader::s_pendingImages;
 
 // Defined below; the deferred-upload drain replays cover loads through it.
 static void dispatchCoverFromBytes(const std::vector<uint8_t>& bytes,
@@ -52,25 +53,22 @@ bool ImageLoader::uploadsAreSafe() {
     return brls::Application::canUploadTextures();
 }
 
-void ImageLoader::deferUpload(DeferredUpload&& pending) {
-    // Not a drop — these are replayed — but knowing whether the surface gate
-    // fired at all is the first thing to check when images fail to appear.
-    noteSkip("no GL surface — upload deferred for replay");
+// One run-loop subscriber serving both recovery paths: replaying uploads that
+// were parked with no GL surface, and re-issuing image loads that never landed.
+// It fires every iteration, right after the sync tasks that would otherwise have
+// done the work, so a recovered image appears on the very next frame.
+void ImageLoader::ensureRunLoopHook() {
+    static bool hooked = false;
+    if (hooked) return;
+    hooked = true;
 
-    // Drain on the run loop: it fires every iteration, right after the sync
-    // tasks that would otherwise have done this work, so a deferred image
-    // appears on the first frame after the surface is back.
-    static bool s_drainHooked = false;
-    if (!s_drainHooked) {
-        s_drainHooked = true;
-        brls::Application::getRunLoopEvent()->subscribe([]() {
-            if (s_deferred.empty() || !uploadsAreSafe()) return;
-
+    brls::Application::getRunLoopEvent()->subscribe([]() {
+        // ── Deferred uploads: parked because there was no drawing surface ──
+        if (!s_deferred.empty() && uploadsAreSafe()) {
             std::vector<DeferredUpload> pendingNow;
             pendingNow.swap(s_deferred);
             brls::Logger::info("ImageLoader: replaying {} deferred texture upload(s) after resume",
                                pendingNow.size());
-
             for (auto& p : pendingNow) {
                 // Same liveness rules as the original dispatch: the view may
                 // have been destroyed, or cancelAll() may have moved on, while
@@ -85,8 +83,59 @@ void ImageLoader::deferUpload(DeferredUpload&& pending) {
                     if (p.imageCallback) p.imageCallback(p.target);
                 }
             }
-        });
-    }
+        }
+
+        // ── Image loads that never landed ────────────────────────────────
+        if (s_pendingImages.empty()) return;
+        const int64_t now = brls::getCPUTimeUsec();
+        constexpr int kMaxRetries = 3;
+
+        for (auto it = s_pendingImages.begin(); it != s_pendingImages.end(); ) {
+            PendingImage& p = it->second;
+            brls::Image* target = it->first;
+
+            // Gone, superseded, or satisfied — stop tracking. The alive flag is
+            // the only safe way to know the target still exists, so it is
+            // checked before the pointer is touched.
+            if (!p.alive || !p.alive->load() || p.gen != s_generation.load()) {
+                it = s_pendingImages.erase(it);
+                continue;
+            }
+            if (target->getTexture() != 0) {          // it arrived
+                it = s_pendingImages.erase(it);
+                continue;
+            }
+            if (p.retries >= kMaxRetries) {           // genuinely missing artwork
+                it = s_pendingImages.erase(it);
+                continue;
+            }
+            // Hold, don't drop, while a retry could not succeed: loadAsync()
+            // returns early when paused, which would erase the entry and leave
+            // the view blank for good once playback ends.
+            if (s_paused.load() || !uploadsAreSafe() || now < p.nextRetryAt) { ++it; continue; }
+
+            // Re-issue. loadAsync() replaces this entry for the same target, so
+            // the iterator is finished with before that happens.
+            const std::string url = p.url;
+            const LoadCallback cb = p.callback;
+            auto alive            = p.alive;
+            const int retries     = p.retries + 1;
+            it = s_pendingImages.erase(it);
+
+            noteSkip("image never landed — retrying");
+            loadAsync(url, cb, target, alive);
+            auto again = s_pendingImages.find(target);
+            if (again != s_pendingImages.end()) again->second.retries = retries;
+        }
+    });
+}
+
+void ImageLoader::deferUpload(DeferredUpload&& pending) {
+    // Not a drop — these are replayed — but knowing whether the surface gate
+    // fired at all is the first thing to check when images fail to appear.
+    noteSkip("no GL surface — upload deferred for replay");
+
+    ensureRunLoopHook();
 
     // Bound the queue so a long background stint with a busy grid can't grow it
     // without limit. Evicting is a permanent blank cell, so the cap is generous
@@ -132,6 +181,21 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
 
     // Capture the current generation so stale callbacks are skipped after cancelAll()
     uint64_t gen = s_generation.load();
+
+    // Remember the request. Almost every caller asks once and never retries, so
+    // without this a load dropped after the fact leaves the view blank for as
+    // long as it lives. Keyed by target, so a recycled view's newer request
+    // replaces this one instead of racing it.
+    {
+        PendingImage pending;
+        pending.url         = url;
+        pending.callback    = callback;
+        pending.alive       = alive;
+        pending.gen         = gen;
+        pending.nextRetryAt = brls::getCPUTimeUsec() + 900 * 1000;
+        s_pendingImages[target] = std::move(pending);
+        ensureRunLoopHook();
+    }
 
     // Check cache first
     {
