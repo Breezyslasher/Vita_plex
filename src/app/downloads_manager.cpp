@@ -967,6 +967,7 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         std::string resolution = vc.defaultResolution;
         int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : vc.defaultBitrate;
         switch (settings.downloadQuality) {
+            case VideoQuality::QUALITY_4K:    resolution = "3840x2160"; bitrate = 40000; break;
             case VideoQuality::QUALITY_1080P: resolution = "1920x1080"; bitrate = 20000; break;
             case VideoQuality::QUALITY_720P:  resolution = "1280x720";  bitrate = 4000;  break;
             case VideoQuality::QUALITY_480P:  resolution = "854x480";   bitrate = 2000;  break;
@@ -986,6 +987,8 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         const bool wantSubs = settings.downloadIncludeSubtitles;
         addUrl += wantSubs ? "&subtitles=embedded" : "&subtitles=none";
         const char* subCodec = wantSubs ? "&subtitleCodec=mov_text" : "";
+        int limW = 0, limH = 0;
+        Application::videoLimitFor(settings.downloadQuality, limW, limH);
         char dlProfileBuf[1700];
         snprintf(dlProfileBuf, sizeof(dlProfileBuf),
             // Direct-play profiles say "ship this file untouched" — keep them
@@ -1027,7 +1030,7 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
                 "&type=upperBound&name=video.width&value=%d)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
                 "&type=upperBound&name=video.height&value=%d)",
-            subCodec, subCodec, vc.maxVideoLevel, vc.maxVideoWidth, vc.maxVideoHeight);
+            subCodec, subCodec, vc.maxVideoLevel, limW, limH);
         profileExtra = dlProfileBuf;
     }
 
@@ -1336,6 +1339,8 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
             queryParams += "&subtitles=none";
 
             // HLS with MPEG-TS segments, h264+aac - platform-specific limits
+            int limW = 0, limH = 0;
+            Application::videoLimitFor(settings.videoQuality, limW, limH);
             char streamProfileBuf[512];
             snprintf(streamProfileBuf, sizeof(streamProfileBuf),
                 "add-transcode-target(type=videoProfile"
@@ -1348,7 +1353,7 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                 "&type=upperBound&name=video.width&value=%d)"
                 "+add-limitation(scope=videoCodec&scopeName=h264"
                 "&type=upperBound&name=video.height&value=%d)",
-                vc.maxVideoLevel, vc.maxVideoWidth, vc.maxVideoHeight);
+                vc.maxVideoLevel, limW, limH);
             profileExtra = streamProfileBuf;
         }
 

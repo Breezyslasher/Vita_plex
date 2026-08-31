@@ -327,6 +327,13 @@ void PlayerActivity::onContentAvailable() {
             hideQueueOverlay();
             return true;
         }
+        // OSD up: close it first, same as the two overlays above. Photo and
+        // music modes are excluded because hideControls() is a no-op there —
+        // swallowing Back would leave them with no way out.
+        if (m_controlsVisible && !m_isPhoto && !m_isQueueMode) {
+            hideControls();
+            return true;
+        }
         // In music mode with background music enabled, leave without stopping
         if (m_isQueueMode && Application::getInstance().getSettings().backgroundMusic) {
             m_destroying = false;  // Don't mark as destroying - music continues
@@ -4887,6 +4894,17 @@ void PlayerActivity::updateMpvStatsOverlay() {
         return std::string(buf);
     };
 
+    // mpv reports cache depth to microsecond precision; one decimal is plenty.
+    auto fmtCacheSecs = [&]() -> std::string {
+        std::string raw = p.getProperty("demuxer-cache-time");
+        if (raw.empty()) return "?";
+        try {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%.1f", std::stod(raw));
+            return std::string(buf);
+        } catch (...) { return raw; }
+    };
+
     std::string body;
     body.reserve(256);
 
@@ -4913,7 +4931,7 @@ void PlayerActivity::updateMpvStatsOverlay() {
               + get("audio-out-params/format") + "\n";
     }
 
-    body += "Cache: " + get("demuxer-cache-time") + " s / " + fmtSpeed()
+    body += "Cache: " + fmtCacheSecs() + " s / " + fmtSpeed()
           + " | Paused: " + get("paused-for-cache");
     m_mpvStatsLabel->setText(body);
 }

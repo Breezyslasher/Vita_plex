@@ -3218,6 +3218,9 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
         // Platform-specific limits for resolution and H.264 level come
         // from the platform abstraction layer instead of #defines.
         const auto& vc = platform::getVideoConstraints();
+        int limW = 0, limH = 0;
+        Application::videoLimitFor(
+            Application::getInstance().getSettings().videoQuality, limW, limH);
         char profileBuf[512];
         snprintf(profileBuf, sizeof(profileBuf),
             "add-transcode-target(type=videoProfile"
@@ -3231,7 +3234,7 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
             "&type=upperBound&name=video.width&value=%d)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
             "&type=upperBound&name=video.height&value=%d)",
-            vc.maxVideoLevel, vc.maxVideoWidth, vc.maxVideoHeight);
+            vc.maxVideoLevel, limW, limH);
         profileExtra = profileBuf;
     }
 
@@ -4894,6 +4897,8 @@ bool PlexClient::buildLiveSessionStreamUrl(const std::string& liveSessionId, std
 
     // Profile augmentation matches getTranscodeUrl's video branch so the server
     // picks an h264/aac HLS target the player can handle.
+    int limW = 0, limH = 0;
+    Application::videoLimitFor(settings.videoQuality, limW, limH);
     char profileBuf[512];
     snprintf(profileBuf, sizeof(profileBuf),
         "add-transcode-target(type=videoProfile&context=streaming&protocol=hls"
@@ -4901,7 +4906,7 @@ bool PlexClient::buildLiveSessionStreamUrl(const std::string& liveSessionId, std
         "+add-limitation(scope=videoCodec&scopeName=h264&type=upperBound&name=video.level&value=%d)"
         "+add-limitation(scope=videoCodec&scopeName=h264&type=upperBound&name=video.width&value=%d)"
         "+add-limitation(scope=videoCodec&scopeName=h264&type=upperBound&name=video.height&value=%d)",
-        vc.maxVideoLevel, vc.maxVideoWidth, vc.maxVideoHeight);
+        vc.maxVideoLevel, limW, limH);
     std::string profileExtra = profileBuf;
 
     // Step 1: /decision with X-Plex-* as headers.  X-Plex-Session-Identifier

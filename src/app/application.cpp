@@ -287,9 +287,35 @@ void Application::applyLogLevel() {
     }
 }
 
+bool Application::supports4K() {
+    return platform::getVideoConstraints().maxVideoLevel >= 51;
+}
+
+std::vector<VideoQuality> Application::qualityLadder() {
+    std::vector<VideoQuality> tiers = { VideoQuality::ORIGINAL };
+    if (supports4K()) tiers.push_back(VideoQuality::QUALITY_4K);
+    tiers.insert(tiers.end(), {
+        VideoQuality::QUALITY_1080P, VideoQuality::QUALITY_720P,
+        VideoQuality::QUALITY_480P,  VideoQuality::QUALITY_360P,
+        VideoQuality::QUALITY_240P,
+    });
+    return tiers;
+}
+
+void Application::videoLimitFor(VideoQuality quality, int& outWidth, int& outHeight) {
+    const auto& vc = platform::getVideoConstraints();
+    outWidth  = vc.maxVideoWidth;
+    outHeight = vc.maxVideoHeight;
+    if (quality == VideoQuality::QUALITY_4K && supports4K()) {
+        outWidth  = 3840;
+        outHeight = 2160;
+    }
+}
+
 std::string Application::getQualityString(VideoQuality quality) {
     switch (quality) {
         case VideoQuality::ORIGINAL: return "Original (Direct Play)";
+        case VideoQuality::QUALITY_4K: return "4K (40 Mbps)";
         case VideoQuality::QUALITY_1080P: return "1080p (20 Mbps)";
         case VideoQuality::QUALITY_720P: return "720p (4 Mbps)";
         case VideoQuality::QUALITY_480P: return "480p (2 Mbps)";

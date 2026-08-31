@@ -962,10 +962,14 @@ brls::Box* SettingsTab::createTranscodeSection() {
     AppSettings& settings = app.getSettings();
     brls::Box* box = makeSectionBox();
 
-    // Video quality selector
-    m_qualitySelector = makePickerCell("Video Quality",
-        {"Original (Direct Play)", "1080p (20 Mbps)", "720p (4 Mbps)", "480p (2 Mbps)", "360p (1 Mbps)", "240p (500 Kbps)"},
-        static_cast<int>(settings.videoQuality),
+    // Video quality selector. The ladder is display order (4K first where the
+    // platform can decode it); the enum values behind it are not contiguous, so
+    // the picker index has to be mapped both ways rather than cast.
+    const auto ladder = Application::qualityLadder();
+    std::vector<std::string> qualityLabels;
+    for (VideoQuality q : ladder) qualityLabels.push_back(Application::getQualityString(q));
+    m_qualitySelector = makePickerCell("Video Quality", qualityLabels,
+        qualityLadderIndex(settings.videoQuality),
         [this](int index) {
             onQualityChanged(index);
         });
@@ -1207,12 +1211,26 @@ brls::Box* SettingsTab::createDownloadsSection() {
     // Download quality. Original keeps the source as-is on HEVC-capable
     // platforms (fast, no transcode); a lower tier forces a server-side
     // transcode to that size — smaller files, faster on the Vita, plays
-    // everywhere. Index maps 1:1 to VideoQuality (0 = Original).
-    auto* dlQualitySelector = makePickerCell("Download Quality",
-        {"Original (no transcode)", "1080p", "720p", "480p", "360p", "240p"},
-        static_cast<int>(settings.downloadQuality),
+    // everywhere. Same ladder as Video Quality, so the index needs mapping.
+    static const std::vector<std::string> kDlNames = {
+        "Original (no transcode)", "4K", "1080p", "720p", "480p", "360p", "240p"
+    };
+    std::vector<std::string> dlLabels;
+    for (VideoQuality q : Application::qualityLadder()) {
+        switch (q) {
+            case VideoQuality::ORIGINAL:      dlLabels.push_back(kDlNames[0]); break;
+            case VideoQuality::QUALITY_4K:    dlLabels.push_back(kDlNames[1]); break;
+            case VideoQuality::QUALITY_1080P: dlLabels.push_back(kDlNames[2]); break;
+            case VideoQuality::QUALITY_720P:  dlLabels.push_back(kDlNames[3]); break;
+            case VideoQuality::QUALITY_480P:  dlLabels.push_back(kDlNames[4]); break;
+            case VideoQuality::QUALITY_360P:  dlLabels.push_back(kDlNames[5]); break;
+            case VideoQuality::QUALITY_240P:  dlLabels.push_back(kDlNames[6]); break;
+        }
+    }
+    auto* dlQualitySelector = makePickerCell("Download Quality", dlLabels,
+        qualityLadderIndex(settings.downloadQuality),
         [&settings](int index) {
-            settings.downloadQuality = static_cast<VideoQuality>(index);
+            settings.downloadQuality = qualityAtLadderIndex(index);
             Application::getInstance().saveSettings();
         });
     box->addView(dlQualitySelector);
@@ -1457,16 +1475,32 @@ void SettingsTab::onThemeChanged(int index) {
     app.saveSettings();
 }
 
+int SettingsTab::qualityLadderIndex(VideoQuality quality) {
+    const auto ladder = Application::qualityLadder();
+    for (size_t i = 0; i < ladder.size(); i++)
+        if (ladder[i] == quality) return (int)i;
+    return 0;   // tier not offered here (4K on a Vita) — fall back to Original
+}
+
+VideoQuality SettingsTab::qualityAtLadderIndex(int index) {
+    const auto ladder = Application::qualityLadder();
+    if (index < 0 || index >= (int)ladder.size()) return VideoQuality::ORIGINAL;
+    return ladder[index];
+}
+
 void SettingsTab::onQualityChanged(int index) {
     Application& app = Application::getInstance();
     AppSettings& settings = app.getSettings();
 
-    settings.videoQuality = static_cast<VideoQuality>(index);
+    settings.videoQuality = qualityAtLadderIndex(index);
 
     // Update bitrate based on quality
     switch (settings.videoQuality) {
         case VideoQuality::ORIGINAL:
             settings.maxBitrate = 0;  // No limit
+            break;
+        case VideoQuality::QUALITY_4K:
+            settings.maxBitrate = 40000;
             break;
         case VideoQuality::QUALITY_1080P:
             settings.maxBitrate = 20000;
