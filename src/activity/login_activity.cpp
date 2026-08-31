@@ -509,20 +509,33 @@ void LoginActivity::onContentAvailable() {
 // Build the digit-tile row from m_pinAuth.code. Each character lives
 // in its own teal-bordered Box with a Label centred inside; codes
 // shorter or longer than 4 chars lay out N tiles instead of clipping.
-void LoginActivity::renderPinTiles() {
+void LoginActivity::renderPinTiles(bool expired) {
     if (!pinTilesBox) return;
     pinTilesBox->clearViews();
 
     const std::string& code = m_pinAuth.code;
-    if (code.empty()) return;
+    if (code.empty()) {
+        // Nothing to lay out, but the row still has to be re-measured — see the
+        // invalidate() at the end.
+        pinTilesBox->invalidate();
+        return;
+    }
+
+    // An expired code is greyed out rather than removed. Emptying the row left
+    // the card with a tall void where the code had been and pushed the status
+    // line out of place, so all the user got was "Code expired" adrift in blank
+    // space. Keeping the tiles holds the card's shape steady and shows which
+    // code actually died.
+    const NVGcolor accent = expired ? nvgRGB(122, 122, 128) : nvgRGB(229, 160, 13);
+    const NVGcolor glow   = expired ? nvgRGBA(122, 122, 128, 20) : nvgRGBA(229, 160, 13, 30);
 
     for (size_t i = 0; i < code.size(); i++) {
         auto* tile = new brls::Box();
         tile->setWidth(74);
         tile->setHeight(92);
         tile->setCornerRadius(14);
-        tile->setBackgroundColor(nvgRGBA(229, 160, 13, 30));  // soft Plex-yellow glow
-        tile->setBorderColor(nvgRGB(229, 160, 13));
+        tile->setBackgroundColor(glow);
+        tile->setBorderColor(accent);
         tile->setBorderThickness(1);
         tile->setJustifyContent(brls::JustifyContent::CENTER);
         tile->setAlignItems(brls::AlignItems::CENTER);
@@ -532,11 +545,17 @@ void LoginActivity::renderPinTiles() {
         std::string s(1, code[i]);
         digit->setText(s);
         digit->setFontSize(46);
-        digit->setTextColor(nvgRGB(229, 160, 13));
+        digit->setTextColor(accent);
         tile->addView(digit);
 
         pinTilesBox->addView(tile);
     }
+
+    // Force a re-measure after swapping the row's children. Without it the
+    // siblings below kept the frames yoga had computed for the previous
+    // contents, which is how the status line ended up drawn outside the card's
+    // padding when the row changed under it.
+    pinTilesBox->invalidate();
 }
 
 void LoginActivity::showPinView() {
@@ -1408,8 +1427,10 @@ void LoginActivity::checkPinStatus() {
             getNewCodeRow->setVisibility(brls::Visibility::VISIBLE);
             if (pinButton) brls::Application::giveFocus(pinButton);
         }
-        // Clear the displayed tiles too — they're no longer valid.
-        if (pinTilesBox) pinTilesBox->clearViews();
+        // Grey the tiles rather than removing them: an empty row collapsed the
+        // card and left the status line adrift in the resulting void. The code
+        // stays visible, obviously dead, and the card keeps its shape.
+        renderPinTiles(/*expired=*/true);
     }
 }
 

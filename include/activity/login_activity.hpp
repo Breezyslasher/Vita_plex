@@ -68,7 +68,9 @@ private:
     // Build a row of digit tiles inside login/pin_tiles from
     // m_pinAuth.code (one tile per character). Called on each
     // successful onPinLoginPressed.
-    void renderPinTiles();
+    // Build the digit tiles. `expired` greys them instead of clearing the row —
+    // see the definition for why an empty row is not an option.
+    void renderPinTiles(bool expired = false);
     // Swap the card between the PIN view and the credentials sub-view.
     void showPinView();
     void showCredentialsView();
