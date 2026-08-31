@@ -631,15 +631,20 @@ void LoginActivity::showServerSelectionContent() {
     // Header copy adapts to the no-servers case: when auto-detect turned up
     // nothing this dialog is purely the manual-entry surface.
     const bool empty = m_servers.empty();
+    // An empty list because plex.tv was unreachable is a different story from
+    // an account that genuinely has no server, and needs different advice.
+    const bool unreachable = empty && m_serversOffline;
     auto* title = new brls::Label();
-    title->setText(empty ? std::string("No servers found")
-                         : "We found " + std::to_string(m_servers.size()) + " servers");
+    title->setText(unreachable ? std::string("Can't reach plex.tv")
+                   : empty     ? std::string("No servers found")
+                               : "We found " + std::to_string(m_servers.size()) + " servers");
     title->setFontSize(21); title->setTextColor(kWhite);
     head->addView(title);
 
     auto* sub = new brls::Label();
-    sub->setText(empty ? "Enter your server's address to connect."
-                       : "Pick one to connect — we'll test every address and use the fastest.");
+    sub->setText(unreachable ? "Check your connection and try again, or enter your server's address directly."
+                 : empty     ? "Enter your server's address to connect."
+                             : "Pick one to connect — we'll test every address and use the fastest.");
     sub->setFontSize(13); sub->setTextColor(kDim); sub->setMarginTop(3);
     head->addView(sub);
     card->addView(head);
@@ -1306,7 +1311,8 @@ void LoginActivity::onLoginPressed() {
         // Auto-detect the account's servers, then let the picker take over.
         if (statusLabel) statusLabel->setText("Finding your servers...");
         std::vector<PlexServer> servers;
-        if (client.fetchServers(servers) && !servers.empty()) {
+        bool serversOffline = false;
+        if (client.fetchServers(servers, &serversOffline) && !servers.empty()) {
             if (servers.size() == 1) {
                 // Only one server, connect directly. No list to fall back
                 // to, so the connecting state's Cancel closes the modal
@@ -1323,10 +1329,17 @@ void LoginActivity::onLoginPressed() {
             // server entry (the login page no longer has a Server URL
             // field), so float it as the manual-entry surface and pop the
             // keyboard straight away.
-            if (statusLabel) statusLabel->setText("No servers found");
+            // "No servers found" is only true when plex.tv actually answered
+            // with an empty list. If the request never got a response, the
+            // account may well have servers — we just couldn't ask — and
+            // pushing the user into manual address entry is the wrong advice.
+            m_serversOffline = serversOffline;
+            if (statusLabel) statusLabel->setText(serversOffline
+                ? "Can't reach plex.tv — check your connection"
+                : "No servers found");
             m_servers.clear();
             showServerSelectionContent();
-            onEnterAddressManually();
+            if (!serversOffline) onEnterAddressManually();
         }
     } else {
         if (statusLabel) statusLabel->setText("Login failed - check credentials");
@@ -1394,7 +1407,8 @@ void LoginActivity::checkPinStatus() {
 
         // Auto-detect the account's servers, then let the picker take over.
         std::vector<PlexServer> servers;
-        if (client.fetchServers(servers) && !servers.empty()) {
+        bool serversOffline = false;
+        if (client.fetchServers(servers, &serversOffline) && !servers.empty()) {
             if (servers.size() == 1) {
                 // Only one server, connect directly. No list to fall back
                 // to, so the connecting state's Cancel closes the modal
@@ -1411,10 +1425,17 @@ void LoginActivity::checkPinStatus() {
             // server entry (the login page no longer has a Server URL
             // field), so float it as the manual-entry surface and pop the
             // keyboard straight away.
-            if (statusLabel) statusLabel->setText("No servers found");
+            // "No servers found" is only true when plex.tv actually answered
+            // with an empty list. If the request never got a response, the
+            // account may well have servers — we just couldn't ask — and
+            // pushing the user into manual address entry is the wrong advice.
+            m_serversOffline = serversOffline;
+            if (statusLabel) statusLabel->setText(serversOffline
+                ? "Can't reach plex.tv — check your connection"
+                : "No servers found");
             m_servers.clear();
             showServerSelectionContent();
-            onEnterAddressManually();
+            if (!serversOffline) onEnterAddressManually();
         }
     } else if (m_pinAuth.expired || m_pinCheckTimer > 150) {
         // PIN expired (5 minutes). Status dot turns red, countdown

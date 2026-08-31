@@ -650,8 +650,10 @@ void PlexClient::handleUnauthorized() {
     });
 }
 
-bool PlexClient::fetchServers(std::vector<PlexServer>& servers) {
+bool PlexClient::fetchServers(std::vector<PlexServer>& servers, bool* offline) {
     brls::Logger::info("Fetching user's servers from plex.tv");
+
+    if (offline) *offline = false;
 
     if (m_authToken.empty()) {
         brls::Logger::error("No auth token - please login first");
@@ -672,6 +674,8 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers) {
 
     if (resp.statusCode != 200) {
         brls::Logger::error("Failed to fetch servers: {}", resp.statusCode);
+        // statusCode 0 == no response reached us at all.
+        if (offline) *offline = (resp.statusCode == 0);
         if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
     }

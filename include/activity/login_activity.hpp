@@ -121,6 +121,11 @@ private:
     brls::Box* m_dialogScrim = nullptr;
     std::vector<PlexServer> m_servers;
     bool m_returnToList = false;
+    // Set when the server list came back empty because plex.tv was unreachable,
+    // rather than because the account has no servers. The picker header reads it
+    // so it can give the right advice instead of telling the user to type in an
+    // address they may not need.
+    bool m_serversOffline = false;
     int  m_overlayMode = 0;  // 0 none, 1 list, 2 connecting (orientation rebuild)
 
     // Process-lifetime orientation callback captures this guard instead of
