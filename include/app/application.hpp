@@ -298,7 +298,7 @@ public:
     // Quality tiers in ladder order (best first) for the settings pickers,
     // filtered to what this platform can decode.
     static std::vector<VideoQuality> qualityLadder();
-    // 4K needs H.264 level 5.1; Vita (4.0) and Switch (4.2) top out below it.
+    // Device-level, not port-level — see platform::supports4KDecode().
     static bool supports4K();
     // Decode ceiling to advertise to Plex. The platform's, except when the user
     // has asked for 4K — the server clamps to whatever we claim, so leaving the

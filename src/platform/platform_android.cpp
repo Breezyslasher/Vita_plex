@@ -15,6 +15,8 @@
 #include <cstdio>
 #include <fstream>
 #include <thread>
+#include <jni.h>
+#include <SDL2/SDL.h>
 
 // Forward declaration — defined in src/main.cpp. SDL2's Android backend
 // dispatches into SDL_main() instead of main(), so we have to provide the
@@ -163,6 +165,36 @@ const VideoConstraints& getVideoConstraints() {
         /* supportsHevc     */ true,  // Android devices decode HEVC in hardware
     };
     return v;
+}
+
+bool supports4KDecode() {
+    // Asked of MediaCodec rather than assumed: the same port runs on 4K TV
+    // boxes and on phones whose decoder stops at 1080p. Probed once — walking
+    // the codec list is not free, and the answer can't change while we run.
+    static const bool ok = []() -> bool {
+        JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+        if (!env) return false;
+        jclass cls = env->FindClass("org/VitaPlex/app/VitaPlexActivity");
+        if (!cls) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            return false;
+        }
+        jmethodID mid = env->GetStaticMethodID(cls, "supports4KDecode", "()Z");
+        if (!mid) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            env->DeleteLocalRef(cls);
+            return false;
+        }
+        jboolean res = env->CallStaticBooleanMethod(cls, mid);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            res = JNI_FALSE;
+        }
+        env->DeleteLocalRef(cls);
+        brls::Logger::info("Android 4K decode: {}", res == JNI_TRUE ? "yes" : "no");
+        return res == JNI_TRUE;
+    }();
+    return ok;
 }
 
 bool init() {

@@ -222,6 +222,14 @@ struct VideoConstraints {
 const VideoConstraints& getVideoConstraints();
 
 /**
+ * Whether this device can decode 2160p, gating the 4K transcode tier in
+ * settings. Separate from getVideoConstraints because it is a property of the
+ * hardware, not the port: a PS4 Pro can and a base PS4 cannot, and Android
+ * spans 4K TV boxes and budget phones. Implementations probe once and cache.
+ */
+bool supports4KDecode();
+
+/**
  * Bootstraps platform-specific subsystems before brls::Application::init().
  * Loads native modules, initializes networking / SSL / HTTP, sets clock
  * speeds, opens log files, etc. Returns false on a fatal failure.

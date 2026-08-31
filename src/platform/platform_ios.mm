@@ -221,6 +221,14 @@ const VideoConstraints& getVideoConstraints() {
     return v;
 }
 
+bool supports4KDecode() {
+    // Left off deliberately. Most current iPhones and the Apple TV 4K do decode
+    // 2160p, but the 4th-gen Apple TV does not and this port already caps its
+    // constraints at 1080p pending HEVC decoder negotiation (see above). Turn
+    // this on together with that work, on a device it can be tested against.
+    return false;
+}
+
 bool init() {
     if (!::vitaplex::HttpClient::globalInit()) {
         brls::Logger::error("Failed to initialize curl");

@@ -288,7 +288,7 @@ void Application::applyLogLevel() {
 }
 
 bool Application::supports4K() {
-    return platform::getVideoConstraints().maxVideoLevel >= 51;
+    return platform::supports4KDecode();
 }
 
 std::vector<VideoQuality> Application::qualityLadder() {

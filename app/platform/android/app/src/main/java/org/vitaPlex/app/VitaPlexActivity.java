@@ -14,6 +14,9 @@ import android.app.UiModeManager;
 import android.database.ContentObserver;
 import android.graphics.drawable.Icon;
 import android.graphics.PixelFormat;
+import android.media.MediaCodecInfo;
+import android.media.MediaCodecList;
+import android.media.MediaFormat;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -95,6 +98,36 @@ public class VitaPlexActivity extends SDLActivity
                 Log.w(TAG, "onUserLeaveHint: enterPiP failed", t);
             }
         }
+    }
+
+    /**
+     * Whether anything on this device can decode 2160p. Android spans TV boxes
+     * that handle 4K comfortably and budget phones that don't, so the 4K
+     * transcode tier is offered from the codec list rather than assumed from
+     * the platform. Called once from native (platform_android.cpp).
+     */
+    public static boolean supports4KDecode() {
+        try {
+            MediaCodecList list = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
+            for (MediaCodecInfo info : list.getCodecInfos()) {
+                if (info.isEncoder()) continue;
+                for (String type : info.getSupportedTypes()) {
+                    if (!type.equalsIgnoreCase(MediaFormat.MIMETYPE_VIDEO_AVC)
+                     && !type.equalsIgnoreCase(MediaFormat.MIMETYPE_VIDEO_HEVC)) continue;
+                    MediaCodecInfo.VideoCapabilities caps =
+                        info.getCapabilitiesForType(type).getVideoCapabilities();
+                    if (caps != null && caps.isSizeSupported(3840, 2160)) {
+                        Log.i(TAG, "4K decode available via " + info.getName());
+                        return true;
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            // A vendor codec that throws on query shouldn't cost us the setting
+            // screen; treat an unusable probe as "no 4K".
+            Log.w(TAG, "4K decode probe failed", t);
+        }
+        return false;
     }
 
     /**

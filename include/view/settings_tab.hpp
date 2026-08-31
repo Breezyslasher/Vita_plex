@@ -16,6 +16,7 @@
 
 #include <borealis.hpp>
 #include <vector>
+#include "app/application.hpp"   // VideoQuality, used in the picker helpers below
 
 namespace vitaplex {
 
