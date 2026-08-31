@@ -4898,19 +4898,25 @@ static std::string audioChannelIcon(int channels, const std::string& displayTitl
     }
 }
 
+int MediaDetailView::countAudioStreams() const {
+    int n = 0;
+    for (const auto& s : m_streams)
+        if (s.streamType == 2) n++;
+    return n;
+}
+
 void MediaDetailView::updateStreamRowLabels() {
     // Direction B action-row buttons: a leading icon conveys the type, so the
     // label is just the selected track — no "AUDIO:" / "SUBTITLES:" prefix and
     // no search hint. Prefer the bare language (bounded width) over Plex's
     // longer displayTitle so the four-button row never overflows.
+    const int audioCount = countAudioStreams();
     std::string audioLabel    = "Audio";
     std::string subtitleLabel = "Off";
-    bool hasAudio = false;
     int  audioChannels = 0;          // selected audio track → surround icon
     std::string audioDisplay;        // selected audio displayTitle (Atmos check)
     for (const auto& s : m_streams) {
         if (s.streamType == 2) {
-            hasAudio = true;
             if (s.selected) {
                 audioLabel = !s.language.empty() ? s.language
                            : (s.displayTitle.empty() ? "Audio" : s.displayTitle);
@@ -4928,8 +4934,13 @@ void MediaDetailView::updateStreamRowLabels() {
         m_audioRow->setText(audioLabel);
         if (m_audioIcon)
             m_audioIcon->setImageFromRes(audioChannelIcon(audioChannels, audioDisplay));
-        m_audioRow->setVisibility(hasAudio ? brls::Visibility::VISIBLE
-                                           : brls::Visibility::GONE);
+        // One track is not a choice: the picker would list the stream already
+        // playing. Focusability follows visibility — borealis keeps the two
+        // independent, so a GONE button still answers the D-pad.
+        const bool audioSelectable = audioCount > 1;
+        m_audioRow->setVisibility(audioSelectable ? brls::Visibility::VISIBLE
+                                                  : brls::Visibility::GONE);
+        m_audioRow->setFocusable(audioSelectable);
     }
     if (m_subtitleRow) {
         // Stays visible even with no tracks — it's also the entry point to the
@@ -5206,6 +5217,9 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     if (m_partId <= 0) return;
     namespace pc = pickcol;
 
+    const bool audioSelectable = countAudioStreams() > 1;
+    if (!audioSelectable) defaultTab = 1;
+
     auto alive = m_alive;
 
     // Scrim doubles as the dialog-lifetime sentinel: async closures below
@@ -5268,7 +5282,7 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     titleCol->setGrow(1.0f);
     titleCol->setJustifyContent(brls::JustifyContent::CENTER);
     auto* titleLbl = new brls::Label();
-    titleLbl->setText("Audio & Subtitles");
+    titleLbl->setText(audioSelectable ? "Audio & Subtitles" : "Subtitles");
     titleLbl->setFontSize(21.0f);
     titleLbl->setTextColor(pc::text());
     titleLbl->setSingleLine(true);
@@ -5335,6 +5349,16 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     tabTrack->addView(audioTab.box);
     tabTrack->addView(subsTab.box);
     panel->addView(tabTrack);
+
+    // Subtitles-only: drop the switch rather than leave one dead half. Clearing
+    // focusable keeps the hidden tabs off the D-pad and selectTab(0) — whose
+    // buildAudioList parks focus on the audio tab before clearing the list —
+    // unreachable.
+    if (!audioSelectable) {
+        tabTrack->setVisibility(brls::Visibility::GONE);
+        audioTab.box->setFocusable(false);
+        subsTab.box->setFocusable(false);
+    }
 
     auto activeTab = std::make_shared<int>(defaultTab);
     auto styleTabs = [audioTab, subsTab, activeTab]() {
