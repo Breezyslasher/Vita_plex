@@ -33,7 +33,9 @@ public:
 
 private:
     void onLoginPressed();
-    void onPinLoginPressed();
+    // `isRetry` marks an automatic re-attempt after an unreachable plex.tv, so a
+    // manual "Get a new code" always starts the backoff over.
+    void onPinLoginPressed(bool isRetry = false);
     void onOfflinePressed();
     void checkPinStatus();
     void showServerSelectionDialog(const std::vector<PlexServer>& servers);
@@ -136,6 +138,11 @@ private:
     // a bare `this`; cleared in the destructor so a late rotation after the
     // activity is gone is a no-op rather than a use-after-free.
     std::shared_ptr<std::atomic<bool>> m_alive;
+    // Consecutive failed PIN requests caused by plex.tv being unreachable. The
+    // PIN flow fires ~30ms after the activity opens, which on a machine whose
+    // resolver has not settled yet is early enough to fail outright, and there
+    // was no retry — one blip at launch left the screen permanently stuck.
+    int m_pinRequestAttempts = 0;
 };
 
 } // namespace vitaplex
