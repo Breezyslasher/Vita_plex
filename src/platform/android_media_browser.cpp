@@ -25,6 +25,7 @@
 
 #include "app/plex_client.hpp"
 #include "app/application.hpp"
+#include "app/music_queue.hpp"
 #include "activity/player_activity.hpp"
 #include "platform/paths.hpp"
 #include "utils/async.hpp"
@@ -385,8 +386,13 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromMediaId(JNIEnv* env, j
         PlexClient& client = PlexClient::getInstance();
         std::vector<MediaItem> tracks;
         int startIndex = 0;
+        // Whether the user picked one track or a whole album/playlist. Only
+        // matters for the queue-preserving actions: picking a single track must
+        // enqueue that track, not the album it happens to sit on.
+        bool singlePick = false;
 
         if (startsWith(mediaId, "track/")) {
+            singlePick = true;
             // A single track: play it in the context of its album so the queue
             // continues past it, exactly as picking a track in the app does.
             MediaItem track;
@@ -417,9 +423,61 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromMediaId(JNIEnv* env, j
             return;
         }
 
-        brls::sync([tracks, startIndex]() {
-            brls::Application::pushActivity(
-                PlayerActivity::createWithQueue(tracks, startIndex));
+        brls::sync([tracks, startIndex, singlePick]() {
+            MusicQueue& queue = MusicQueue::getInstance();
+            TrackDefaultAction action =
+                vitaplex::Application::getInstance().getSettings().trackDefaultAction;
+
+            // ASK_EACH_TIME cannot ask — the whole point of browsing from a
+            // watch or head unit is that nobody is at the phone. Fall back to
+            // PLAY_NOW_REPLACE rather than PLAY_NOW_CLEAR: the pick still starts
+            // playing immediately, which is what "play" means in a media
+            // browser, but a queue the user never asked to clear survives.
+            if (action == TrackDefaultAction::ASK_EACH_TIME)
+                action = TrackDefaultAction::PLAY_NOW_REPLACE;
+
+            // Nothing to preserve when the queue is empty, and "clear" wants the
+            // full album/playlist context so playback continues past the pick.
+            // Both need the player activity.
+            if (queue.isEmpty() || action == TrackDefaultAction::PLAY_NOW_CLEAR) {
+                brls::Application::pushActivity(
+                    PlayerActivity::createWithQueue(tracks, startIndex));
+                return;
+            }
+
+            // Queue-preserving actions operate on exactly what was picked.
+            std::vector<MediaItem> picked;
+            if (singlePick && startIndex < (int)tracks.size())
+                picked.push_back(tracks[(size_t)startIndex]);
+            else
+                picked = tracks;
+            if (picked.empty()) return;
+
+            // insertTrackAfterCurrent puts each item directly after the current
+            // track, so inserting back-to-front leaves them in playing order.
+            auto insertAfterCurrent = [&]() {
+                for (size_t i = picked.size(); i-- > 0;)
+                    queue.insertTrackAfterCurrent(picked[i]);
+            };
+
+            switch (action) {
+                case TrackDefaultAction::PLAY_NEXT:
+                    insertAfterCurrent();
+                    brls::Application::notify("Playing next: " + picked.front().title);
+                    break;
+
+                case TrackDefaultAction::ADD_TO_BOTTOM:
+                    queue.addTracks(picked);
+                    brls::Application::notify("Added to queue: " + picked.front().title);
+                    break;
+
+                case TrackDefaultAction::PLAY_NOW_REPLACE:
+                default:
+                    insertAfterCurrent();
+                    if (queue.playNext())
+                        brls::Application::notify("Now playing: " + picked.front().title);
+                    break;
+            }
         });
     });
 }
