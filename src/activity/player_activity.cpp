@@ -4889,14 +4889,30 @@ void PlayerActivity::updateMpvStatsOverlay() {
 
     std::string body;
     body.reserve(256);
-    body += "Codec: " + get("video-codec")  + " | HW: " + get("hwdec-current") + "\n";
-    body += "Source: " + get("width") + "x" + get("height")
-          + " @ " + get("container-fps") + " fps"
-          + " | Bitrate: " + get("video-bitrate") + "\n";
-    body += "Render: " + get("estimated-vf-fps") + " fps"
-          + " | Display: " + get("estimated-display-fps") + " fps\n";
-    body += "Drops: " + get("decoder-frame-drop-count") + " decoder, "
-                     + get("frame-drop-count") + " vo\n";
+
+    // Audio-only leaves every video property unset, which rendered as a column
+    // of "?". Asked of mpv, not m_isQueueMode, so a videoless file reads right.
+    const bool hasVideo = !p.getProperty("video-codec").empty();
+
+    if (hasVideo) {
+        body += "Codec: " + get("video-codec")  + " | HW: " + get("hwdec-current") + "\n";
+        body += "Source: " + get("width") + "x" + get("height")
+              + " @ " + get("container-fps") + " fps"
+              + " | Bitrate: " + get("video-bitrate") + "\n";
+        body += "Render: " + get("estimated-vf-fps") + " fps"
+              + " | Display: " + get("estimated-display-fps") + " fps\n";
+        body += "Drops: " + get("decoder-frame-drop-count") + " decoder, "
+                         + get("frame-drop-count") + " vo\n";
+    } else {
+        body += "Codec: " + get("audio-codec-name") + " | AO: " + get("current-ao") + "\n";
+        body += "Source: " + get("audio-params/samplerate") + " Hz, "
+              + get("audio-params/channels")
+              + " | Bitrate: " + get("audio-bitrate") + "\n";
+        body += "Output: " + get("audio-out-params/samplerate") + " Hz, "
+              + get("audio-out-params/channels") + ", "
+              + get("audio-out-params/format") + "\n";
+    }
+
     body += "Cache: " + get("demuxer-cache-time") + " s / " + fmtSpeed()
           + " | Paused: " + get("paused-for-cache");
     m_mpvStatsLabel->setText(body);
