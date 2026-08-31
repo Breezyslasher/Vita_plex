@@ -309,8 +309,18 @@ void PlayerActivity::onContentAvailable() {
     }
 
     // Register controller actions
+    // A / OK is the centre button on a TV remote. With the OSD down it raises
+    // it, matching how the D-pad already behaves and how most TV players work;
+    // with the OSD up the focused control answers first (borealis dispatches
+    // from the focus outward), so this only runs when nothing else claims it.
+    // Photo and music keep their controls up permanently, so A stays Play/Pause
+    // there rather than becoming a no-op.
     this->registerAction("Play/Pause", brls::ControllerButton::BUTTON_A, [this](brls::View* view) {
         resetControlsIdleTimer();
+        if (!m_controlsVisible && !m_isPhoto && !m_isQueueMode) {
+            showControls();
+            return true;
+        }
         togglePlayPause();
         return true;
     });
@@ -4766,6 +4776,33 @@ void PlayerActivity::skipToMarkerEnd() {
     if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
 }
 
+// Enable/disable the A (click) action on every control in a subtree.
+//
+// hideControls() cannot move focus off the controls — giveFocus() resolves
+// through getDefaultFocus(), which refuses a view that isn't VISIBLE, so the
+// button that had focus keeps it while invisible. borealis dispatches A from
+// the focused view upward and stops at the first handler that consumes it, so
+// that invisible button, not the activity, is what answers the press. Marking
+// its action unavailable lets A fall through to the activity handler, which
+// raises the OSD instead.
+// Only views that actually carry the action are touched: setActionAvailable()
+// fires the global hints-update event whether or not it matched, and this runs
+// on every auto-hide.
+static void setSubtreeClickAvailable(brls::View* v, bool available) {
+    if (!v) return;
+    for (const auto& a : v->getActions()) {
+        if (a->getType() == brls::ActionType::ACTION_GAMEPAD &&
+            a->getButton() == brls::ControllerButton::BUTTON_A) {
+            v->setActionAvailable(brls::ControllerButton::BUTTON_A, available);
+            break;
+        }
+    }
+    if (auto* box = dynamic_cast<brls::Box*>(v)) {
+        for (brls::View* child : box->getChildren())
+            setSubtreeClickAvailable(child, available);
+    }
+}
+
 void PlayerActivity::toggleControls() {
     if (m_controlsVisible) {
         hideControls();
@@ -4781,6 +4818,8 @@ void PlayerActivity::resetControlsIdleTimer() {
 void PlayerActivity::showControls() {
     m_controlsVisible = true;
     resetControlsIdleTimer();
+    setSubtreeClickAvailable(controlsBox, true);
+    setSubtreeClickAvailable(centerControls, true);
     if (controlsBox) {
         controlsBox->setAlpha(1.0f);
         controlsBox->setVisibility(brls::Visibility::VISIBLE);
@@ -4813,6 +4852,11 @@ void PlayerActivity::hideControls() {
         centerControls->setAlpha(0.0f);
         centerControls->setVisibility(brls::Visibility::GONE);
     }
+    // Focus stays on whichever control had it, so hand A back to the activity —
+    // otherwise the press lands on an invisible button (queue, audio, subtitles)
+    // and opens its overlay over a hidden OSD.
+    setSubtreeClickAvailable(controlsBox, false);
+    setSubtreeClickAvailable(centerControls, false);
 }
 
 // ─── MPV stats overlay ─────────────────────────────────────────────────
