@@ -1423,8 +1423,9 @@ void LoginActivity::onLoginPressed() {
     }
 }
 
-void LoginActivity::onPinLoginPressed() {
+void LoginActivity::onPinLoginPressed(bool isRetry) {
     m_pinMode = true;
+    if (!isRetry) m_pinRequestAttempts = 0;   // manual request restarts backoff
 
     PlexClient& client = PlexClient::getInstance();
 
@@ -1448,6 +1449,34 @@ void LoginActivity::onPinLoginPressed() {
         });
         m_pinTimer.start(2000); // Check every 2 seconds
     } else {
+        // A request that never reached plex.tv is usually transient — most often
+        // the resolver simply is not up yet, since this fires ~30ms into the
+        // app's life. Retry a few times with backoff before handing the user a
+        // dead screen and a manual button. A real rejection (any HTTP status)
+        // is not retried: repeating it would not change the answer.
+        constexpr int kMaxPinRetries = 4;
+        if (m_pinAuth.offline && m_pinRequestAttempts < kMaxPinRetries) {
+            const int attempt = ++m_pinRequestAttempts;
+            const int delayMs = 1000 * (1 << (attempt - 1));   // 1s, 2s, 4s, 8s
+            if (statusLabel)
+                statusLabel->setText("Can't reach plex.tv — retrying (" +
+                                     std::to_string(attempt) + "/" +
+                                     std::to_string(kMaxPinRetries) + ")…");
+            if (statusDot) statusDot->setBackgroundColor(nvgRGB(229, 160, 13));
+            setLabelOrHide(expiryLabel, "");
+            brls::Logger::info("PIN request unreachable, retry {}/{} in {}ms",
+                               attempt, kMaxPinRetries, delayMs);
+            auto alive = m_alive;
+            brls::delay(delayMs, [this, alive]() {
+                if (!alive || !*alive) return;
+                // Only if the user is still on the PIN view — they may have
+                // switched to credentials while we waited.
+                if (pinView && pinView->getVisibility() != brls::Visibility::VISIBLE) return;
+                onPinLoginPressed(/*isRetry=*/true);
+            });
+            return;
+        }
+
         if (statusLabel) statusLabel->setText(m_pinAuth.offline
             ? "Can't reach plex.tv — check your connection"
             : "Failed to request PIN");
