@@ -106,6 +106,7 @@ private:
     // automatically when the user finally hits Play.
     void loadStreams();
     void updateStreamRowLabels();
+    int  countAudioStreams() const;
     void showAudioPicker();
     void showSubtitlePicker();
     // Merged audio + subtitle picker (one dialog, two tabs). defaultTab:
