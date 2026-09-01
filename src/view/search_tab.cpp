@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <cctype>
+#include <cstring>
 
 namespace vitaplex {
 
@@ -325,7 +326,11 @@ void SearchTab::buildMobile() {
     field->setBorderColor(spal::fldLine());
     field->setBorderThickness(1.0f);
     field->setPadding(0, 12, 0, 14);
-    field->setFocusable(true);
+    // Only a control in layout A, where tapping it is the only way to type. In
+    // B the docked grid is the input method, so the field is a readout — making
+    // it activatable there just puts borealis' modal EditTextDialog on top of a
+    // keyboard that is already on screen.
+    field->setFocusable(!dock);
     field->setHighlightCornerRadius(12);
 
     auto* fieldIcon = new brls::Image();
@@ -373,10 +378,10 @@ void SearchTab::buildMobile() {
     m_clearButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_clearButton));
     field->addView(m_clearButton);
 
-    // Tapping the field is how you type in layout A; in B it re-opens the IME
-    // as an escape hatch for long queries the grid makes tedious.
-    field->registerClickAction([this](brls::View*) { openIme(); return true; });
-    field->addGestureRecognizer(new brls::TapGestureRecognizer(field));
+    if (!dock) {
+        field->registerClickAction([this](brls::View*) { openIme(); return true; });
+        field->addGestureRecognizer(new brls::TapGestureRecognizer(field));
+    }
 
     topBar->addView(field);
     this->addView(topBar);
@@ -510,16 +515,35 @@ void SearchTab::buildKeyboard(brls::Box* parent, bool dock) {
     kb->addView(sprow);
     grid.push_back(srowKeys);
 
-    // Character rows.
-    static const char* const rows[6] = {
-        "ABCDEF", "GHIJKL", "MNOPQR", "STUVWX", "YZ1234", "567890"
+    // Character rows, QWERTY. Rows are ragged, so keys are sized against the
+    // widest (10) and the short rows are centred by half-width spacers at each
+    // end — letting them grow to fill instead would make ZXCVBNM's keys visibly
+    // fatter than the row above, which no keyboard looks like.
+    static const char* const rows[4] = {
+        "1234567890",
+        "QWERTYUIOP",
+        "ASDFGHJKL",
+        "ZXCVBNM",
     };
-    for (int r = 0; r < 6; r++) {
+    constexpr int kCols = 10;
+    for (int r = 0; r < 4; r++) {
+        const int n = (int)strlen(rows[r]);
         auto* crow = new brls::Box();
         crow->setAxis(brls::Axis::ROW);
-        if (r < 5) crow->setMarginBottom(7);
+        if (r < 3) crow->setMarginBottom(7);
+
+        // Spacers carry the leftover columns, split evenly either side.
+        const float pad = (float)(kCols - n) / 2.0f;
+        auto addSpacer = [&]() {
+            if (pad <= 0.0f) return;
+            auto* sp = new brls::Box();
+            sp->setGrow(pad);
+            crow->addView(sp);
+        };
+
+        addSpacer();
         std::vector<brls::Box*> rowKeys;
-        for (int c = 0; c < 6; c++) {
+        for (int c = 0; c < n; c++) {
             std::string ch(1, rows[r][c]);
             auto* key = makeCharKey(ch, dock);
             if (c > 0) key->setMarginLeft(6);
@@ -528,6 +552,8 @@ void SearchTab::buildKeyboard(brls::Box* parent, bool dock) {
             crow->addView(key);
             rowKeys.push_back(key);
         }
+        addSpacer();
+
         kb->addView(crow);
         grid.push_back(rowKeys);
     }
