@@ -448,20 +448,24 @@ public class VitaPlexActivity extends SDLActivity
             }
         }
 
+        // Media keys from any source — TV remote, USB or Bluetooth keyboard,
+        // headset. Sent straight to mpv for both video and audio/music playback,
+        // whether we are in PiP or fullscreen. Handling them here also settles
+        // who wins: a foreground activity sees media buttons before the media
+        // session does, so this is the single path rather than racing the
+        // MediaSessionCompat callback that serves them when we are backgrounded.
+        Integer mediaAction = mapMediaKeyToMpvAction(keyCode);
+        if (mediaAction != null) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                onPipActionReceived(mediaAction);
+            }
+            // Consume both DOWN and UP so this key never reaches Borealis.
+            return true;
+        }
+
         // For TV remote events, bypass the joystick handler for keys that need
         // keyboard-path mapping or translation to mapped keycodes.
         if (isTvRemoteEvent(event)) {
-            Integer mpvAction = mapMediaKeyToMpvAction(keyCode);
-            if (mpvAction != null) {
-                // Send media controls straight to mpv for both video and audio/music
-                // playback, regardless of whether we are in PiP or fullscreen mode.
-                if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                    onPipActionReceived(mpvAction);
-                }
-                // Consume both DOWN and UP so this key never reaches Borealis.
-                return true;
-            }
-
             int translatedKey = keyCode;
             switch (keyCode) {
                 case KeyEvent.KEYCODE_ENTER:

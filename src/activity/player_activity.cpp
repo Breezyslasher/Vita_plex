@@ -824,6 +824,27 @@ void PlayerActivity::onContentAvailable() {
     // no-op, because the route wiring above cannot survive a cleared flag.
     m_focusWiringDone = true;
     syncHiddenFocus();
+
+    // Space toggles playback. It goes through the raw keyboard event rather
+    // than registerAction because borealis' action system is keyed on
+    // ControllerButton, and Space has no gamepad equivalent to bind to.
+    m_inputManager = brls::Application::getPlatform()
+                         ? brls::Application::getPlatform()->getInputManager() : nullptr;
+    if (m_inputManager) {
+        m_kbSub = m_inputManager->getKeyboardKeyStateChanged()->subscribe(
+            [this](brls::KeyState ks) {
+                if (!ks.pressed || m_destroying) return;
+                if (ks.key != brls::BRLS_KBD_KEY_SPACE) return;
+                // Only when this player is the activity on top: the event is
+                // global, and a Space typed into a search field elsewhere must
+                // not reach playback.
+                const auto stack = brls::Application::getActivitiesStack();
+                if (stack.empty() || stack.back() != this) return;
+                resetControlsIdleTimer();
+                togglePlayPause();
+            });
+        m_kbSubscribed = true;
+    }
 }
 
 void PlayerActivity::setBackgroundTransparent(bool transparent) {
@@ -847,6 +868,12 @@ void PlayerActivity::setBackgroundTransparent(bool transparent) {
 
 void PlayerActivity::willDisappear(bool resetState) {
     brls::Activity::willDisappear(resetState);
+
+    // The keyboard event is owned by the input manager and outlives us.
+    if (m_inputManager && m_kbSubscribed) {
+        m_inputManager->getKeyboardKeyStateChanged()->unsubscribe(m_kbSub);
+        m_kbSubscribed = false;
+    }
 
     // Cancel any pending debounced seek so its commit can't fire after we leave
     // (stop() passes finished=false, which the end callback ignores).
