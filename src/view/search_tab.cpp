@@ -275,10 +275,17 @@ void SearchTab::openIme() {
     // search exists to show. SDL_StartTextInput() is what that dialog calls
     // anyway; going straight to it gets the keyboard and nothing else, typing
     // into the tab's own field.
-    if (m_textInputActive) return;
-    m_textInputActive = true;
-    s_imeTarget = this;
-    SDL_AddEventWatch(&searchTextWatch, this);
+    //
+    // The watch is installed once; SDL_StartTextInput() is re-issued on every
+    // tap. Android gives no event when the user dismisses the keyboard — system
+    // back, or its own hide key — so m_textInputActive cannot mean "the
+    // keyboard is up", only "we are listening". Returning early on it left
+    // every tap after the first dismissal doing nothing.
+    if (!m_textInputActive) {
+        m_textInputActive = true;
+        s_imeTarget = this;
+        SDL_AddEventWatch(&searchTextWatch, this);   // twice would double every keystroke
+    }
     SDL_StartTextInput();
     return;
 #else
