@@ -143,8 +143,10 @@ struct AppSettings {
     // Search layout on phones. The desktop/TV two-column layout puts a 300px
     // keyboard beside the results, which on a phone eats most of the width and
     // leaves keys well under a touch target.
-    //   0 Auto        phone -> native IME, everything else -> two-column
-    //   1 Native IME  no on-screen keyboard; tapping the field opens the system one
+    //   0 Auto        phone -> on-screen, everything else -> two-column
+    //   1 Native IME  no on-screen keyboard; tapping the field opens borealis'
+    //                 EditTextDialog, which is what the SDL platforms give for
+    //                 a "system" keyboard — a modal over the results
     //   2 On-screen   grid keyboard docked along the bottom
     int searchMobileLayout = 0;
 

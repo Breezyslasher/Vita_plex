@@ -148,8 +148,12 @@ SearchTab::Layout SearchTab::resolveLayout() {
     const int setting = Application::getInstance().getSettings().searchMobileLayout;
     if (setting == 1) return Layout::NativeIme;
     if (setting == 2) return Layout::OnScreen;
-    // Auto: the phone gets the IME, everything else keeps today's layout.
-    return isPhoneSized() ? Layout::NativeIme : Layout::TwoColumn;
+    // Auto: the phone gets the docked keyboard, everything else keeps today's
+    // layout. Not the system IME — borealis routes that to its own modal
+    // EditTextDialog rather than the platform keyboard (SDLImeManager::
+    // openForText builds one), so choosing it means typing into a popup that
+    // covers the results. The dock keeps input and results on the same screen.
+    return isPhoneSized() ? Layout::OnScreen : Layout::TwoColumn;
 }
 
 SearchTab::SearchTab() {
@@ -743,21 +747,21 @@ SearchTab::CardMetrics SearchTab::cardMetrics(MediaType type, Layout layout) {
     const bool phoneA = (layout == Layout::NativeIme);
     const bool phoneB = (layout == Layout::OnScreen);
     CardMetrics m { 96, 140, 192, 280 };           // portrait default (movies / shows)
-    if (phoneA)      m = { 144, 216, 288, 432 };
-    else if (phoneB) m = { 132, 198, 264, 396 };
+    if (phoneA)      m = { 180, 270, 360, 540 };
+    else if (phoneB) m = { 168, 252, 336, 504 };
     switch (type) {
         case MediaType::EPISODE:
         case MediaType::CLIP:
             m = { 150, 84, 300, 168 };             // bigger 16:9 still
-            if (phoneA)      m = { 240, 135, 480, 270 };
-            else if (phoneB) m = { 220, 124, 440, 248 };
+            if (phoneA)      m = { 300, 169, 600, 338 };
+            else if (phoneB) m = { 280, 158, 560, 316 };
             break;
         case MediaType::MUSIC_ALBUM:
         case MediaType::MUSIC_TRACK:
         case MediaType::MUSIC_ARTIST:
             m = { 96, 96, 192, 192 };              // square cover
-            if (phoneA)      m = { 144, 144, 288, 288 };
-            else if (phoneB) m = { 132, 132, 264, 264 };
+            if (phoneA)      m = { 180, 180, 360, 360 };
+            else if (phoneB) m = { 168, 168, 336, 336 };
             break;
         default:
             break;
@@ -826,7 +830,7 @@ brls::Box* SearchTab::makeCard(const MediaItem& item) {
     // Title (single line, ellipsised).
     auto* cap = new brls::Label();
     cap->setText(cardTitle(item));
-    cap->setFontSize((phoneA || phoneB) ? 13.0f : 12.0f);
+    cap->setFontSize((phoneA || phoneB) ? 14.5f : 12.0f);
     cap->setTextColor(spal::cap());
     cap->setSingleLine(true);
     cap->setWidth((float)cw);
@@ -837,7 +841,7 @@ brls::Box* SearchTab::makeCard(const MediaItem& item) {
     if (!sub.empty()) {
         auto* s = new brls::Label();
         s->setText(sub);
-        s->setFontSize((phoneA || phoneB) ? 11.5f : 11.0f);
+        s->setFontSize((phoneA || phoneB) ? 12.5f : 11.0f);
         s->setTextColor(spal::muted());
         s->setSingleLine(true);
         s->setWidth((float)cw);

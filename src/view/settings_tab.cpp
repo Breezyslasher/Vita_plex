@@ -668,7 +668,7 @@ brls::Box* SettingsTab::createUISection() {
     // rebuild. Takes effect next time the Search tab is opened, which is every
     // sidebar switch: TabFrame recreates a tab's view each time it is focused.
     auto* searchLayout = makePickerCell("Search Keyboard",
-        {"Auto (phone: system keyboard)", "System keyboard", "On-screen keyboard"},
+        {"Auto (phone: on-screen)", "System keyboard", "On-screen keyboard"},
         (settings.searchMobileLayout >= 0 && settings.searchMobileLayout <= 2)
             ? settings.searchMobileLayout : 0,
         [&settings](int index) {
