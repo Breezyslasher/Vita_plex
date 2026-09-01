@@ -123,7 +123,7 @@ void update(const Info& info) {
     jmethodID mid = env->GetStaticMethodID(
         cls, "update",
         "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
-        "Ljava/lang/String;JJZZZIZZ)V");
+        "Ljava/lang/String;JJZZZIZZF)V");
     if (!mid) {
         if (env->ExceptionCheck()) env->ExceptionClear();
         env->DeleteLocalRef(cls);
@@ -146,7 +146,8 @@ void update(const Info& info) {
                               (jlong)info.durationMs, (jlong)info.positionMs,
                               (jboolean)info.playing, (jboolean)info.hasNext,
                               (jboolean)info.hasPrev, jRepeat,
-                              (jboolean)info.shuffle, jShowModes);
+                              (jboolean)info.shuffle, jShowModes,
+                              (jfloat)info.userRating);
     if (env->ExceptionCheck()) {
         env->ExceptionDescribe();
         env->ExceptionClear();

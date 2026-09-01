@@ -42,6 +42,10 @@ struct Info {
     bool hasPrev = false;
     RepeatMode repeat = RepeatMode::Off;  // current repeat state
     bool shuffle = false;                 // current shuffle state
+    // Viewer's own rating, 0-10, 0 when unrated. Android renders it as the
+    // "liked" heart; -1 means "this item has no rating concept", which keeps
+    // the control off for video.
+    float userRating = -1.0f;
     bool showRepeat = false;   // expose the repeat control (music only, not video)
     bool showShuffle = false;  // expose the shuffle control (music only, not video)
 };

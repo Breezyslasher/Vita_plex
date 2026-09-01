@@ -41,6 +41,17 @@ public final class LibraryBrowserService extends MediaBrowserServiceCompat {
     private static final String KEY_ID = "mediaId", KEY_TITLE = "title";
     private static final String KEY_SUBTITLE = "subtitle", KEY_ART = "art";
 
+    // Android Auto content-style keys. Named here rather than pulled from a
+    // support library because they are a documented Bundle contract, not API.
+    private static final String CONTENT_STYLE_SUPPORTED =
+            "android.media.browse.CONTENT_STYLE_SUPPORTED";
+    private static final String CONTENT_STYLE_BROWSABLE_HINT =
+            "android.media.browse.CONTENT_STYLE_BROWSABLE_HINT";
+    private static final String CONTENT_STYLE_PLAYABLE_HINT =
+            "android.media.browse.CONTENT_STYLE_PLAYABLE_HINT";
+    private static final int CONTENT_STYLE_LIST_ITEM = 1;
+    private static final int CONTENT_STYLE_GRID_ITEM = 2;
+
     private static final Handler sMain = new Handler(Looper.getMainLooper());
 
     // Pending onLoadChildren results, keyed by the token handed to native.
@@ -106,7 +117,17 @@ public final class LibraryBrowserService extends MediaBrowserServiceCompat {
         // Browsing exposes nothing a caller could not already reach through the
         // app itself, and the media ids are useless without the app's own Plex
         // credentials, so every caller gets the same read-only root.
-        return new BrowserRoot(ROOT_ID, null);
+        //
+        // The extras are Android Auto's content-style hints. Without them Auto
+        // renders everything as a plain text list, which is a poor way to show
+        // a music library — artists and albums are cover art first. Browsable
+        // nodes (libraries, artists, albums) get the grid; playable ones
+        // (tracks) stay a list, where the title has room to be read.
+        Bundle extras = new Bundle();
+        extras.putBoolean(CONTENT_STYLE_SUPPORTED, true);
+        extras.putInt(CONTENT_STYLE_BROWSABLE_HINT, CONTENT_STYLE_GRID_ITEM);
+        extras.putInt(CONTENT_STYLE_PLAYABLE_HINT, CONTENT_STYLE_LIST_ITEM);
+        return new BrowserRoot(ROOT_ID, extras);
     }
 
     /**

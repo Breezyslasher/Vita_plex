@@ -218,6 +218,7 @@ void MusicController::publishNowPlaying(int playingOverride) {
     info.hasPrev = q.hasPrevious();
     info.repeat = toBridgeRepeat(q.getRepeatMode());
     info.shuffle = q.isShuffleEnabled();
+    info.userRating = t->userRating;
     info.showRepeat = true;    // music exposes repeat + shuffle (video doesn't)
     info.showShuffle = true;
     // Before update(), so the playback state it builds already carries the
@@ -361,15 +362,50 @@ void MusicController::playQueueIndex(int index) {
 }
 
 void MusicController::setCurrentTrackLiked(bool liked) {
-    const QueueItem* t = MusicQueue::getInstance().getCurrentTrack();
+    MusicQueue& q = MusicQueue::getInstance();
+    const QueueItem* t = q.getCurrentTrack();
     if (!t || t->ratingKey.empty()) return;
     const std::string key = t->ratingKey;
+    // Update our copy immediately: the OS heart flips on the next publish
+    // rather than after a round trip that might not come back.
+    q.setCurrentTrackRating(liked ? 10.0f : 0.0f);
+    publishNowPlaying();
     // The PUT is network I/O; nothing on screen depends on the answer.
     asyncRun([key, liked]() {
         const bool ok = PlexClient::getInstance().rateItem(key, liked ? 10.0f : 0.0f);
         brls::Logger::info("MusicController: rate {} -> {} ({})",
                            key, liked ? "liked" : "cleared", ok ? "ok" : "failed");
     });
+}
+
+void MusicController::startSleepTimer(int minutes) {
+    m_sleepTimer.stop();
+    m_sleepMinutes = minutes > 0 ? minutes : 0;
+    m_sleepSecondsLeft = m_sleepMinutes * 60;
+    if (m_sleepMinutes <= 0) {
+        brls::Logger::info("MusicController: sleep timer cancelled");
+        return;
+    }
+
+    m_sleepTimer.setCallback([this]() {
+        if (m_sleepSecondsLeft > 0) m_sleepSecondsLeft--;
+        if (m_sleepSecondsLeft > 0) return;
+
+        m_sleepTimer.stop();
+        m_sleepMinutes = 0;
+        // Pause rather than stop: the queue and position survive, so picking it
+        // back up in the morning is one press.
+        MpvPlayer& p = MpvPlayer::getInstance();
+        if (p.isInitialized() && p.isPlaying()) playPause(false);
+        brls::Application::notify("Sleep timer - playback paused");
+    });
+    m_sleepTimer.start(1000);
+    brls::Logger::info("MusicController: sleep timer armed for {} min", m_sleepMinutes);
+}
+
+int MusicController::sleepTimerRemaining() const {
+    if (m_sleepMinutes <= 0) return 0;
+    return (m_sleepSecondsLeft + 59) / 60;   // round up, so 1s left still reads "1 min"
 }
 
 void MusicController::seekToMs(long long ms) {

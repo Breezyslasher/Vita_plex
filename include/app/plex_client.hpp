@@ -45,6 +45,10 @@ struct MediaItem {
     int viewOffset = 0;
     float rating = 0.0f;
     float audienceRating = 0.0f;   // Plex audienceRating (RT popcorn / audience score, 0-10)
+    // The viewer's own rating, 0-10, 0 when unrated. Distinct from `rating`,
+    // which is the critic score. Read so the Android media session's heart can
+    // show what is already set instead of always starting empty.
+    float userRating = 0.0f;
     std::string contentRating;
     std::string studio;
     std::vector<std::string> genres;  // populated by fetchMediaDetails (detail view only)
@@ -314,6 +318,10 @@ struct PlexStream {
     bool forced = false;          // Forced subtitle (signs/songs)
     bool hearingImpaired = false; // SDH / hearing-impaired subtitle
     bool external = false;        // Sidecar subtitle (has a key) vs embedded
+    // Server path to fetch the stream itself, for the ones that are a separate
+    // file rather than muxed in — sidecar subtitles and track lyrics. Empty for
+    // embedded streams, which is also what `external` is derived from.
+    std::string key;
 };
 
 /**
@@ -495,6 +503,7 @@ public:
         int index = 0;                 // Track/episode number
         std::string type;              // "track", "episode", "movie", etc.
         MediaType mediaType = MediaType::UNKNOWN;
+        float userRating = 0.0f;       // viewer's own 0-10 rating, 0 when unrated
     };
 
     struct PlayQueueContainer {

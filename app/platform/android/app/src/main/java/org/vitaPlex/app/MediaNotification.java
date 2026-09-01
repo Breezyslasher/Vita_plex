@@ -128,6 +128,9 @@ public final class MediaNotification {
     private static int sRepeat;          // 0 off, 1 all, 2 one
     private static boolean sShuffle;
     private static boolean sShowModes;   // expose repeat/shuffle (music, not video)
+    // Viewer's own 0-10 Plex rating; -1 when the item has no rating concept.
+    // Published as a heart, which is all the Android controls offer.
+    private static float sUserRating = -1f;
     private static String sLoadedArtUrl;   // url whose bitmap is in sArtBitmap
     private static Bitmap sArtBitmap;
     private static boolean sHasState;    // native has pushed a track at least once
@@ -225,7 +228,8 @@ public final class MediaNotification {
                               final String title, final String artist, final String album,
                               final String artUrl, final long durationMs, final long positionMs,
                               final boolean playing, final boolean hasNext, final boolean hasPrev,
-                              final int repeat, final boolean shuffle, final boolean showModes) {
+                              final int repeat, final boolean shuffle, final boolean showModes,
+                              final float userRating) {
         sMain.post(new Runnable() {
             @Override public void run() {
                 sMediaId = mediaId != null ? mediaId : "";
@@ -241,6 +245,7 @@ public final class MediaNotification {
                 sRepeat = repeat;
                 sShuffle = shuffle;
                 sShowModes = showModes;
+                sUserRating = userRating;
                 sHasState = true;
                 // Android 11+ media resumption: the system rebuilds a player
                 // for the last thing that played, long after this process is
@@ -362,6 +367,13 @@ public final class MediaNotification {
             .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, sDurationMs);
         if (sArtBitmap != null) {
             meta.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, sArtBitmap);
+        }
+        // Show the rating that is already set, rather than an empty heart every
+        // session. Negative means the item has no rating concept (video), and
+        // publishing nothing is what keeps the control off there.
+        if (sUserRating >= 0f) {
+            meta.putRating(MediaMetadataCompat.METADATA_KEY_USER_RATING,
+                           RatingCompat.newHeartRating(sUserRating > 0f));
         }
         sSession.setMetadata(meta.build());
 

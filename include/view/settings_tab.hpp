@@ -181,6 +181,7 @@ private:
 
     // Music section (split out of Playback)
     brls::DetailCell*   m_trackActionSelector = nullptr;
+    brls::DetailCell*   m_sleepTimerSelector = nullptr;
     brls::BooleanCell* m_backgroundMusicToggle = nullptr;
     brls::BooleanCell* m_shuffleDefaultToggle = nullptr;
 

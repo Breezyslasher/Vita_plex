@@ -22,6 +22,7 @@
 #include "activity/player_activity.hpp"
 #include "utils/http_client.hpp"
 #include "utils/http_cache.hpp"
+#include "app/music_controller.hpp"
 #include "platform/platform.hpp"
 #include "platform/paths.hpp"
 #include <set>
@@ -926,6 +927,29 @@ brls::Box* SettingsTab::createMusicSection() {
             app.saveSettings();
         });
     box->addView(m_trackActionSelector);
+
+    // Sleep timer. Not a persisted setting — it is a one-shot for tonight, so
+    // it always reads Off on a fresh launch and the cell shows the countdown
+    // while one is armed.
+    {
+        MusicController& mc = MusicController::getInstance();
+        static const int kSleepMinutes[] = {0, 15, 30, 45, 60, 90};
+        int current = 0;
+        for (int i = 0; i < 6; i++)
+            if (kSleepMinutes[i] == mc.sleepTimerMinutes()) current = i;
+
+        m_sleepTimerSelector = makePickerCell("Sleep Timer",
+            {"Off", "15 minutes", "30 minutes", "45 minutes", "60 minutes", "90 minutes"},
+            current,
+            [](int index) {
+                const int mins = (index >= 0 && index < 6) ? kSleepMinutes[index] : 0;
+                MusicController::getInstance().startSleepTimer(mins);
+                brls::Application::notify(mins > 0
+                    ? "Playback will pause in " + std::to_string(mins) + " minutes"
+                    : "Sleep timer off");
+            });
+        box->addView(m_sleepTimerSelector);
+    }
 
     // Background music toggle
     m_backgroundMusicToggle = new brls::BooleanCell();

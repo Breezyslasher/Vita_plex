@@ -83,6 +83,14 @@ public:
     // currently playing track (10 for liked, 0 to clear).
     void setCurrentTrackLiked(bool liked);
 
+    // Sleep timer. Pauses playback after `minutes`; 0 cancels a running one.
+    // Deliberately not persisted — it is a one-shot for tonight, not a setting
+    // that should still be armed next week.
+    void startSleepTimer(int minutes);
+    int sleepTimerMinutes() const { return m_sleepMinutes; }
+    // Whole minutes left, or 0 when nothing is armed. For the settings label.
+    int sleepTimerRemaining() const;
+
     // Repeat / shuffle from the OS controls. set* take an explicit target (SMTC /
     // MPRIS); cycle/toggle advance from the current state (Android custom actions).
     // All update the queue, refresh the on-screen player if attached, and re-publish.
@@ -115,6 +123,12 @@ private:
     uint64_t m_lastQueueSig = 0;
     ForegroundHooks m_fg;
     brls::RepeatingTimer m_pollTimer;  // headless end-of-track watcher
+    // Sleep timer. A repeating one-second tick rather than a single delayed
+    // callback, so the remaining time can be shown and a cancel takes effect
+    // immediately.
+    brls::RepeatingTimer m_sleepTimer;
+    int m_sleepMinutes = 0;            // what the user picked, 0 = off
+    int m_sleepSecondsLeft = 0;
 };
 
 } // namespace vitaplex

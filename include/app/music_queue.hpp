@@ -30,6 +30,8 @@ struct QueueItem {
     int duration = 0;         // Duration in seconds
     int index = 0;            // Position in original queue (for unshuffle)
     int playQueueItemID = 0;  // Server-side play queue item ID (0 = offline/unsynced)
+    float userRating = 0.0f;  // viewer's own 0-10 rating, 0 when unrated; drives
+                              // the "liked" heart in the Android media session
 };
 
 /**
@@ -69,6 +71,9 @@ public:
     // Current state
     int getCurrentIndex() const { return m_currentIndex; }
     const QueueItem* getCurrentTrack() const;
+    // Record a rating written elsewhere (the OS "like" heart), so the next
+    // publish reflects it without waiting for the server round trip.
+    void setCurrentTrackRating(float rating);
     const std::vector<QueueItem>& getQueue() const { return m_queue; }
     int getQueueSize() const { return (int)m_queue.size(); }
     bool isEmpty() const { return m_queue.empty(); }

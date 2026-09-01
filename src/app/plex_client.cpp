@@ -1276,6 +1276,7 @@ bool PlexClient::fetchChildren(const std::string& ratingKey, std::vector<MediaIt
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
         item.contentRating = extractJsonValue(obj, "contentRating");
         item.index = extractJsonInt(obj, "index");
@@ -1330,6 +1331,7 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
     item.duration = extractJsonInt(resp.body, "duration");
     item.viewOffset = extractJsonInt(resp.body, "viewOffset");
     item.rating = extractJsonFloat(resp.body, "rating");
+    item.userRating = extractJsonFloat(resp.body, "userRating");
     item.contentRating = extractJsonValue(resp.body, "contentRating");
     item.studio = extractJsonValue(resp.body, "studio");
     // leafCount = track count for artists, episode count for shows/seasons.
@@ -1540,6 +1542,7 @@ bool PlexClient::fetchByPersonFilter(const std::string& sectionKey, const std::s
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
         // Per-title role for the cast member, when the server includes it in the
         // filtered listing (often absent for actors; present for some credits).
@@ -1611,6 +1614,7 @@ bool PlexClient::fetchRelated(const std::string& ratingKey, std::vector<MediaIte
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         bool playable = (item.mediaType == MediaType::MOVIE ||
@@ -2112,6 +2116,7 @@ bool PlexClient::fetchContinueWatching(std::vector<MediaItem>& items) {
         item.index = extractJsonInt(obj, "index");
         item.parentIndex = extractJsonInt(obj, "parentIndex");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
@@ -2182,6 +2187,7 @@ bool PlexClient::fetchRecentlyAdded(std::vector<MediaItem>& items) {
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
@@ -2277,6 +2283,7 @@ bool PlexClient::fetchRecentlyAddedByType(MediaType type, std::vector<MediaItem>
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
@@ -2354,6 +2361,7 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
         item.parentThumb = extractJsonValue(obj, "parentThumb");
         item.grandparentThumb = extractJsonValue(obj, "grandparentThumb");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
@@ -2673,6 +2681,7 @@ bool PlexClient::fetchByGenre(const std::string& sectionKey, const std::string& 
         item.year = extractJsonInt(obj, "year");
         item.duration = extractJsonInt(obj, "duration");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
@@ -2741,6 +2750,7 @@ bool PlexClient::fetchByGenreKey(const std::string& sectionKey, const std::strin
         item.year = extractJsonInt(obj, "year");
         item.duration = extractJsonInt(obj, "duration");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
@@ -2879,8 +2889,11 @@ bool PlexClient::fetchStreams(const std::string& ratingKey, std::vector<PlexStre
         stream.title = extractJsonValue(obj, "title");
         stream.forced = extractJsonBool(obj, "forced");
         stream.hearingImpaired = extractJsonBool(obj, "hearingImpaired");
-        // External (sidecar) subtitles carry a stream key; embedded don't.
-        stream.external = !extractJsonValue(obj, "key").empty();
+        // External (sidecar) subtitles carry a stream key; embedded don't. Track
+        // lyrics (streamType 4) always do — they are a separate file on the
+        // server, which is how they get loaded rather than transcoded in.
+        stream.key = extractJsonValue(obj, "key");
+        stream.external = !stream.key.empty();
 
         if (stream.id > 0 && stream.streamType > 0) {
             streams.push_back(stream);
@@ -5398,6 +5411,10 @@ static void parsePlayQueueItems(const std::string& json, PlexClient& client,
             item.duration = client.extractJsonIntPublic(obj, "duration");
             item.index = client.extractJsonIntPublic(obj, "index");
             item.type = client.extractJsonValuePublic(obj, "type");
+            // 0-10, 0 when unrated. Server play queues are the usual source for
+            // music, so without this the media session's heart would only be
+            // right for offline / client-side queues.
+            item.userRating = (float)client.extractJsonIntPublic(obj, "userRating");
 
             if (!item.ratingKey.empty()) {
                 result.items.push_back(item);

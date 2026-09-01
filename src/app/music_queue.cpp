@@ -49,8 +49,14 @@ QueueItem MusicQueue::mediaItemToQueueItem(const MediaItem& item, int index) {
     if (qi.thumb.empty()) qi.thumb = item.parentThumb;
     if (qi.thumb.empty()) qi.thumb = item.grandparentThumb;
     qi.duration = item.duration / 1000; // Convert ms to seconds
+    qi.userRating = item.userRating;
     qi.index = index;
     return qi;
+}
+
+void MusicQueue::setCurrentTrackRating(float rating) {
+    if (m_currentIndex < 0 || m_currentIndex >= (int)m_queue.size()) return;
+    m_queue[(size_t)m_currentIndex].userRating = rating;
 }
 
 void MusicQueue::addTrack(const MediaItem& item) {
@@ -568,6 +574,7 @@ void MusicQueue::setFromPlayQueue(const PlexClient::PlayQueueContainer& pq, bool
         if (qi.thumb.empty()) qi.thumb = pqItem.parentThumb;
         if (qi.thumb.empty()) qi.thumb = pqItem.grandparentThumb;
         qi.duration = pqItem.duration / 1000;  // ms to seconds
+        qi.userRating = pqItem.userRating;
         qi.index = (int)i;
         qi.playQueueItemID = pqItem.playQueueItemID;
         m_queue.push_back(qi);

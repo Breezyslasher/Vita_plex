@@ -2513,6 +2513,19 @@ void PlayerActivity::hideTrackOverlay() {
     }
 }
 
+// A stream mpv can load by URL instead of asking the server to switch to it:
+// track lyrics, which are always a separate file. Returns null for anything
+// else, including sidecar subtitles on video — those still go through the
+// transcode path, which is what already works there.
+const PlexStream* PlayerActivity::findSideloadableStream(int trackId) const {
+    for (const auto& ps : m_plexStreams) {
+        if (ps.id != trackId) continue;
+        if (ps.streamType == 4 && !ps.key.empty()) return &ps;
+        return nullptr;
+    }
+    return nullptr;
+}
+
 void PlayerActivity::populateTrackList(TrackSelectMode mode) {
     if (!trackList || !trackOverlayTitle) return;
 
@@ -2996,6 +3009,18 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                         player.loadUrl(newUrl, "");
                     }
                 }
+            } else if (const PlexStream* lyrics = findSideloadableStream(trackId)) {
+                // Lyrics are a separate file on the server, not something the
+                // transcoder muxes in, so they are loaded straight into mpv.
+                // Going through setStreamSelection would restart the audio
+                // stream to no effect.
+                const std::string url =
+                    PlexClient::getInstance().buildApiUrlPublic(lyrics->key);
+                player.loadSubtitleUrl(url);
+                for (auto& ps : m_plexStreams)
+                    if (ps.streamType == 3 || ps.streamType == 4)
+                        ps.selected = (ps.id == trackId);
+                player.showOSD(m_isQueueMode ? "Lyrics on" : "Subtitles on", 1.5);
             } else if (hasPlexStreams && m_partId > 0) {
                 // trackId is a Plex stream ID - tell Plex server to switch subtitle
                 std::string displayTitle = "Subtitle " + std::to_string(trackId);

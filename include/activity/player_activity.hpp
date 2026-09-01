@@ -134,6 +134,9 @@ private:
     void hideQueueOverlay();
     void populateQueueList();       // Build queue list with cover art and titles
     void playFromQueue(int index);  // Play a specific track from queue list
+    // Lyrics streams are loaded into mpv by URL rather than selected on the
+    // server; this identifies them among the picker's entries.
+    const PlexStream* findSideloadableStream(int trackId) const;
     void updateNowPlayingBlock();   // Refresh the "Now Playing" header from the current track
     void clearUpcoming();           // Remove every track after the current one
     void removeFocusedQueueTrack(); // Remove the track for the focused up-next row
