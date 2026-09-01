@@ -109,13 +109,15 @@ void update(const Info& info) {
     }
     jmethodID mid = env->GetStaticMethodID(
         cls, "update",
-        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JJZZZIZZ)V");
+        "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;"
+        "Ljava/lang/String;JJZZZIZZ)V");
     if (!mid) {
         if (env->ExceptionCheck()) env->ExceptionClear();
         env->DeleteLocalRef(cls);
         return;
     }
 
+    jstring jMediaId = env->NewStringUTF(info.mediaId.c_str());
     jstring jTitle = env->NewStringUTF(info.title.c_str());
     jstring jArtist = env->NewStringUTF(info.artist.c_str());
     jstring jAlbum = env->NewStringUTF(info.album.c_str());
@@ -127,7 +129,7 @@ void update(const Info& info) {
     // not video).
     jboolean jShowModes = (info.showRepeat || info.showShuffle) ? JNI_TRUE : JNI_FALSE;
 
-    env->CallStaticVoidMethod(cls, mid, jTitle, jArtist, jAlbum, jArt,
+    env->CallStaticVoidMethod(cls, mid, jMediaId, jTitle, jArtist, jAlbum, jArt,
                               (jlong)info.durationMs, (jlong)info.positionMs,
                               (jboolean)info.playing, (jboolean)info.hasNext,
                               (jboolean)info.hasPrev, jRepeat,
@@ -137,6 +139,7 @@ void update(const Info& info) {
         env->ExceptionClear();
     }
 
+    env->DeleteLocalRef(jMediaId);
     env->DeleteLocalRef(jTitle);
     env->DeleteLocalRef(jArtist);
     env->DeleteLocalRef(jAlbum);

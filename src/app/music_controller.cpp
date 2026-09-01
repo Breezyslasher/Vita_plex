@@ -194,6 +194,7 @@ void MusicController::publishNowPlaying(int playingOverride) {
 
     MpvPlayer& p = MpvPlayer::getInstance();
     nowplaying::Info info;
+    info.mediaId = "track/" + t->ratingKey;   // what media resumption replays
     info.title = t->title;
     info.artist = t->artist;
     info.album = t->album;

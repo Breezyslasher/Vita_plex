@@ -27,6 +27,9 @@ enum class RepeatMode { Off, All, One };
 
 // Snapshot of what's playing, handed to the OS each time it changes.
 struct Info {
+    std::string mediaId;       // browse-tree id of this track ("track/<key>"),
+                               // so the OS can offer it again after a reboot;
+                               // empty for anything not in the music library
     std::string title;
     std::string artist;
     std::string album;

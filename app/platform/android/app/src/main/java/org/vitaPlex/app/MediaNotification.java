@@ -109,6 +109,8 @@ public final class MediaNotification {
     private static WifiManager.WifiLock sWifiLock;    // held only while playing
 
     // Last-known state, so an async art load can re-post without re-plumbing.
+    private static String sMediaId = "";   // browse-tree id of the current track
+    private static String sRememberedMediaId;  // last id written for media resumption
     private static String sTitle = "", sArtist = "", sAlbum = "", sArtUrl = "";
     private static long sDurationMs, sPositionMs;
     private static boolean sPlaying, sHasNext, sHasPrev;
@@ -155,12 +157,14 @@ public final class MediaNotification {
     }
 
     /** Called from native (any thread). Marshals to the main looper. */
-    public static void update(final String title, final String artist, final String album,
+    public static void update(final String mediaId,
+                              final String title, final String artist, final String album,
                               final String artUrl, final long durationMs, final long positionMs,
                               final boolean playing, final boolean hasNext, final boolean hasPrev,
                               final int repeat, final boolean shuffle, final boolean showModes) {
         sMain.post(new Runnable() {
             @Override public void run() {
+                sMediaId = mediaId != null ? mediaId : "";
                 sTitle = title != null ? title : "";
                 sArtist = artist != null ? artist : "";
                 sAlbum = album != null ? album : "";
@@ -174,6 +178,13 @@ public final class MediaNotification {
                 sShuffle = shuffle;
                 sShowModes = showModes;
                 sHasState = true;
+                // Android 11+ media resumption: the system rebuilds a player
+                // for the last thing that played, long after this process is
+                // gone, so it has to be on disk rather than in these statics.
+                if (!sMediaId.isEmpty() && !sMediaId.equals(sRememberedMediaId)) {
+                    sRememberedMediaId = sMediaId;
+                    LibraryBrowserService.rememberRecent(sMediaId, sTitle, sArtist, sArtUrl);
+                }
                 // Drop a stale cover the instant the track changes.
                 if (!sArtUrl.equals(sLoadedArtUrl)) sArtBitmap = null;
                 try { applyUpdate(); } catch (Throwable t) { Log.w(TAG, "update failed", t); }
@@ -278,6 +289,7 @@ public final class MediaNotification {
         ensureReceiver(ctx);
 
         MediaMetadataCompat.Builder meta = new MediaMetadataCompat.Builder()
+            .putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, sMediaId)
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, sTitle)
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, sArtist)
             .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, sAlbum)
@@ -295,7 +307,14 @@ public final class MediaNotification {
             | PlaybackStateCompat.ACTION_STOP
             | PlaybackStateCompat.ACTION_SKIP_TO_NEXT
             | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
-            | PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID;
+            | PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID
+            // Assistant only offers "play X on VitaPlex" when the session says
+            // it can take a search. The prepare variants let a client warm the
+            // session up first, which is most of the latency on a cold bind.
+            | PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH
+            | PlaybackStateCompat.ACTION_PREPARE
+            | PlaybackStateCompat.ACTION_PREPARE_FROM_SEARCH
+            | PlaybackStateCompat.ACTION_PREPARE_FROM_MEDIA_ID;
         // Only offer "jump to this row" once a queue has actually been published.
         if (sQueueSize > 0) actions |= PlaybackStateCompat.ACTION_SKIP_TO_QUEUE_ITEM;
         // Advertise the mode setters for music so remote controllers render real
@@ -565,6 +584,22 @@ public final class MediaNotification {
             // from LibraryBrowserService's tree, so it owns resolving them.
             @Override public void onPlayFromMediaId(String mediaId, Bundle extras) {
                 LibraryBrowserService.playFromMediaId(mediaId);
+            }
+            // Spoken requests: "play <album> on VitaPlex". Prepare-variants are
+            // the same work minus the play, and clients treat a missing
+            // onPrepare* as "this session can't be warmed up" — so answer both.
+            @Override public void onPlayFromSearch(String query, Bundle extras) {
+                LibraryBrowserService.playFromSearch(query);
+            }
+            // Prepare means "get ready", not "start". The expensive part of a
+            // cold request is loading the native library and reconnecting to
+            // the Plex server, so that is what these do — no playback.
+            @Override public void onPrepare() { LibraryBrowserService.prepare(); }
+            @Override public void onPrepareFromSearch(String query, Bundle extras) {
+                LibraryBrowserService.prepare();
+            }
+            @Override public void onPrepareFromMediaId(String mediaId, Bundle extras) {
+                LibraryBrowserService.prepare();
             }
             // A row picked out of the up-next list.
             @Override public void onSkipToQueueItem(long id) {
