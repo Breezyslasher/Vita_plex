@@ -243,6 +243,34 @@ bool displaySupportsHdr() {
     return ok;
 }
 
+int passthroughCodecs() {
+    // Probed once. The answer can change if the user replugs into a different
+    // AVR, but mpv only reads it at init, so re-probing would not be acted on.
+    static const int mask = []() -> int {
+        JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+        if (!env) return 0;
+        jclass cls = env->FindClass("org/VitaPlex/app/VitaPlexActivity");
+        if (!cls) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            return 0;
+        }
+        jmethodID mid = env->GetStaticMethodID(cls, "passthroughCodecs", "()I");
+        if (!mid) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            env->DeleteLocalRef(cls);
+            return 0;
+        }
+        jint res = env->CallStaticIntMethod(cls, mid);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            res = 0;
+        }
+        env->DeleteLocalRef(cls);
+        return (int)res;
+    }();
+    return mask;
+}
+
 bool init() {
     // Borealis on Android loads resources via fopen("resources/...") which
     // can't read APK assets directly, so extract them to internal storage

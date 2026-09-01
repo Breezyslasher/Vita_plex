@@ -536,6 +536,7 @@ bool Application::loadSettings() {
     if (trackAction >= 0 && trackAction <= 4) {
         m_settings.trackDefaultAction = static_cast<TrackDefaultAction>(trackAction);
     }
+    m_settings.audioPassthrough = extractBool("audioPassthrough", false);
     m_settings.backgroundMusic = extractBool("backgroundMusic", true);
     m_settings.musicShuffleDefault = extractBool("musicShuffleDefault", false);
 
@@ -681,6 +682,7 @@ bool Application::saveSettings() {
     json += "  \"downloadKeepOriginalAudio\": " + b(m_settings.downloadKeepOriginalAudio) + ",\n";
     json += "  \"downloadIncludeSubtitles\": " + b(m_settings.downloadIncludeSubtitles) + ",\n";
     json += "  \"trackDefaultAction\": " + std::to_string(static_cast<int>(m_settings.trackDefaultAction)) + ",\n";
+    json += "  \"audioPassthrough\": " + b(m_settings.audioPassthrough) + ",\n";
     json += "  \"backgroundMusic\": " + b(m_settings.backgroundMusic) + ",\n";
     json += "  \"musicShuffleDefault\": " + b(m_settings.musicShuffleDefault) + ",\n";
     json += "  \"defaultDvrShowSectionId\": \"" + esc(m_settings.defaultDvrShowSectionId) + "\",\n";

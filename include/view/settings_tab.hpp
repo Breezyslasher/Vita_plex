@@ -159,6 +159,7 @@ private:
     // Transcode section
     brls::DetailCell*   m_qualitySelector = nullptr;
     brls::BooleanCell* m_forceTranscodeToggle = nullptr;
+    brls::BooleanCell* m_audioPassthroughToggle = nullptr;
     brls::BooleanCell* m_directPlayToggle = nullptr;
 
     // Network section (split out of Transcoding so it gets its own rail

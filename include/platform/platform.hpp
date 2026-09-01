@@ -245,6 +245,20 @@ void setPreferredRefreshRate(float contentFps);
 bool displaySupportsHdr();
 
 /**
+ * Surround codecs the audio output can take as a bitstream, as a bitmask:
+ * 1 AC3, 2 E-AC3, 4 DTS, 8 DTS-HD, 16 TrueHD. Zero means everything has to be
+ * decoded to PCM, which is the answer on every port that has no way to ask.
+ */
+enum PassthroughCodec {
+    PASSTHROUGH_AC3    = 1 << 0,
+    PASSTHROUGH_EAC3   = 1 << 1,
+    PASSTHROUGH_DTS    = 1 << 2,
+    PASSTHROUGH_DTSHD  = 1 << 3,
+    PASSTHROUGH_TRUEHD = 1 << 4,
+};
+int passthroughCodecs();
+
+/**
  * Bootstraps platform-specific subsystems before brls::Application::init().
  * Loads native modules, initializes networking / SSL / HTTP, sets clock
  * speeds, opens log files, etc. Returns false on a fatal failure.

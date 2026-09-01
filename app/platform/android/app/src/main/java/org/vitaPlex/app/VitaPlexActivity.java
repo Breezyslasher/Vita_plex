@@ -238,6 +238,81 @@ public class VitaPlexActivity extends SDLActivity
      * @return true if the PiP request was issued, false if unsupported or
      *         the system refused it.
      */
+    // ---- Audio passthrough ----
+    //
+    // Which surround codecs the current output can take as a bitstream, as a
+    // bitmask: 1 AC3, 2 E-AC3, 4 DTS, 8 DTS-HD, 16 TrueHD. Without this mpv
+    // decodes Dolby/DTS to PCM and downmixes it, so an AVR that could have
+    // rendered 5.1 gets stereo.
+    //
+    // Two probes because the good one is recent: from API 29 AudioTrack can be
+    // asked directly whether an encoding plays back untouched, which is
+    // authoritative. Below that, the union of the encodings the HDMI-ish output
+    // devices advertise is the best the platform offers.
+    public static int passthroughCodecs() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return 0;
+        try {
+            Context ctx = getAppContext();
+            android.media.AudioManager am = ctx != null
+                    ? (android.media.AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE)
+                    : null;
+            if (am == null) return 0;
+
+            final int[] encodings = {
+                android.media.AudioFormat.ENCODING_AC3,
+                android.media.AudioFormat.ENCODING_E_AC3,
+                android.media.AudioFormat.ENCODING_DTS,
+                android.media.AudioFormat.ENCODING_DTS_HD,
+                android.media.AudioFormat.ENCODING_DOLBY_TRUEHD,
+            };
+
+            int mask = 0;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                android.media.AudioAttributes attrs = new android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+                        .build();
+                for (int i = 0; i < encodings.length; i++) {
+                    android.media.AudioFormat fmt = new android.media.AudioFormat.Builder()
+                            .setEncoding(encodings[i])
+                            .setSampleRate(48000)
+                            .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_5POINT1)
+                            .build();
+                    if (android.media.AudioTrack.isDirectPlaybackSupported(fmt, attrs))
+                        mask |= (1 << i);
+                }
+            } else {
+                for (android.media.AudioDeviceInfo dev
+                        : am.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)) {
+                    if (!carriesCompressedAudio(dev.getType())) continue;
+                    int[] devEnc = dev.getEncodings();
+                    if (devEnc == null) continue;
+                    for (int e : devEnc) {
+                        for (int i = 0; i < encodings.length; i++) {
+                            if (e == encodings[i]) mask |= (1 << i);
+                        }
+                    }
+                }
+            }
+            Log.i(TAG, "audio passthrough mask = " + mask);
+            return mask;
+        } catch (Throwable t) {
+            Log.w(TAG, "passthroughCodecs failed", t);
+            return 0;
+        }
+    }
+
+    // Outputs that can carry a compressed bitstream. A speaker or a headset
+    // cannot, and claiming otherwise would hand an AVR stream to a phone.
+    private static boolean carriesCompressedAudio(int type) {
+        if (type == android.media.AudioDeviceInfo.TYPE_HDMI
+            || type == android.media.AudioDeviceInfo.TYPE_HDMI_ARC
+            || type == android.media.AudioDeviceInfo.TYPE_LINE_DIGITAL
+            || type == android.media.AudioDeviceInfo.TYPE_AUX_LINE) return true;
+        // HDMI eARC is API 31; named by value so this still compiles for 23.
+        return Build.VERSION.SDK_INT >= 31 && type == 29;
+    }
+
     // ---- Display mode: match the panel's refresh rate to the content ----
     //
     // A 23.976fps film shown on a 60Hz panel is displayed with a 3:2 pulldown

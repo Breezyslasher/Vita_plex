@@ -231,6 +231,33 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "target-colorspace-hint", "yes");
     }
 
+    // Audio passthrough. Without it mpv decodes Dolby/DTS to PCM and downmixes
+    // it, so a receiver that could have rendered 5.1 gets stereo. The list is
+    // the intersection of what the user asked for and what the audio output
+    // says it accepts, so an unsupported codec still decodes normally instead
+    // of going silent. Ports with no way to ask report nothing and are
+    // unaffected.
+    if (Application::getInstance().getSettings().audioPassthrough) {
+        const int caps = platform::passthroughCodecs();
+        std::string spdif;
+        auto add = [&spdif](const char* name) {
+            if (!spdif.empty()) spdif += ",";
+            spdif += name;
+        };
+        if (caps & platform::PASSTHROUGH_AC3)    add("ac3");
+        if (caps & platform::PASSTHROUGH_EAC3)   add("eac3");
+        if (caps & platform::PASSTHROUGH_DTS)    add("dts");
+        if (caps & platform::PASSTHROUGH_DTSHD)  add("dts-hd");
+        if (caps & platform::PASSTHROUGH_TRUEHD) add("truehd");
+        if (!spdif.empty()) {
+            mpv_set_option_string(m_mpv, "audio-spdif", spdif.c_str());
+            brls::Logger::info("MpvPlayer: audio passthrough enabled for {}", spdif);
+        } else {
+            brls::Logger::info("MpvPlayer: audio passthrough requested but the "
+                               "output accepts no compressed formats");
+        }
+    }
+
 #ifdef __SWITCH__
     // libmpv resolves its config / cache / watch-later / font directories from
     // $HOME / $XDG_* during mpv_initialize. On Switch (libnx) those env vars are

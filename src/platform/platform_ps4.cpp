@@ -130,6 +130,9 @@ bool supports4KDecode() {
 // switches refresh rates nor sees HDR capabilities here, so both stay no-ops.
 void setPreferredRefreshRate(float) {}
 bool displaySupportsHdr() { return false; }
+// No way to ask what the audio sink accepts, so everything is decoded to PCM
+// exactly as before.
+int passthroughCodecs() { return 0; }
 
 bool init() {
     initPs4SysModules();

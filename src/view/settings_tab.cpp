@@ -983,6 +983,23 @@ brls::Box* SettingsTab::createTranscodeSection() {
     });
     box->addView(m_forceTranscodeToggle);
 
+    // Audio passthrough. Only offered where the output actually accepts a
+    // bitstream — on a phone speaker the row would be a switch that does
+    // nothing. It takes effect on the next playback, since mpv reads the
+    // option at init.
+    if (platform::passthroughCodecs() != 0) {
+        m_audioPassthroughToggle = new brls::BooleanCell();
+        m_audioPassthroughToggle->init("Audio Passthrough (Dolby / DTS)",
+            settings.audioPassthrough, [&settings](bool value) {
+                settings.audioPassthrough = value;
+                Application::getInstance().saveSettings();
+                brls::Application::notify(value
+                    ? "Passthrough on - takes effect on the next video"
+                    : "Passthrough off - takes effect on the next video");
+            });
+        box->addView(m_audioPassthroughToggle);
+    }
+
     // Direct play toggle
     m_directPlayToggle = new brls::BooleanCell();
     m_directPlayToggle->init("Try Direct Play First", settings.directPlay, [&settings](bool value) {
