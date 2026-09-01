@@ -712,7 +712,7 @@ void SearchTab::addSection(const std::string& title, const std::vector<MediaItem
     // One horizontal scrolling carousel of cards, like the home screen. The row
     // height fits this type's poster + labels; HorizontalScrollRow handles
     // LEFT/RIGHT + hands focus back to the keyboard / next section at its edges.
-    int posterH = 140;                       // portrait (movies / shows)
+    int posterH = 140;                       // portrait (movies / shows); carousel only
     switch (items[0].mediaType) {
         case MediaType::EPISODE:
         case MediaType::CLIP:          posterH = 84; break;   // 16:9
@@ -721,15 +721,89 @@ void SearchTab::addSection(const std::string& title, const std::vector<MediaItem
         case MediaType::MUSIC_ARTIST:  posterH = 96; break;   // square
         default: break;
     }
-    auto* row = new HorizontalScrollRow();
-    row->setHeight((float)(posterH + 44));
-    for (const auto& it : items) {
-        auto* card = makeCard(it);
-        card->setMarginRight(14);
-        row->addView(card);
+    if (phone) {
+        // Grid, not a carousel: one screen of a sideways row shows a sliver of
+        // each poster and hides the rest behind a swipe. borealis has no
+        // flex-wrap, so the rows are built explicitly.
+        const int cols = gridColumns(items[0].mediaType);
+        auto* grid = new brls::Box();
+        grid->setAxis(brls::Axis::COLUMN);
+        grid->setAlignItems(brls::AlignItems::STRETCH);
+        grid->setPadding(0, 16, 0, 16);
+
+        brls::Box* row = nullptr;
+        for (size_t i = 0; i < items.size(); i++) {
+            if (i % (size_t)cols == 0) {
+                row = new brls::Box();
+                row->setAxis(brls::Axis::ROW);
+                row->setAlignItems(brls::AlignItems::FLEX_START);
+                if (i > 0) row->setMarginTop(14);
+                grid->addView(row);
+            }
+            auto* card = makeCard(items[i]);
+            if (i % (size_t)cols != 0) card->setMarginLeft(12);
+            row->addView(card);
+        }
+        section->addView(grid);
+    } else {
+        auto* row = new HorizontalScrollRow();
+        row->setHeight((float)(posterH + 44));
+        for (const auto& it : items) {
+            auto* card = makeCard(it);
+            card->setMarginRight(14);
+            row->addView(card);
+        }
+        section->addView(row);
     }
-    section->addView(row);
     m_resultsContent->addView(section);
+}
+
+// Poster aspect (and width) match the media type so square covers and landscape
+// stills aren't cropped into a portrait frame. Episodes get a larger 16:9 card;
+// movies/shows portrait, albums/tracks/artists square. Phone cards run larger
+// than the desktop's — a 96px poster is unreadable at arm's length on a
+// handset. B is a touch smaller than A because its keyboard dock takes the
+// bottom of the screen. Thumb requests stay at 2x the drawn size.
+//
+// Shared with addSection, which divides the row width by cw to decide how many
+// columns fit; the two must not drift.
+// Cards per row on the phone grid. Wide 16:9 stills take two; portrait posters
+// and square covers take three, which at phone width leaves each one big enough
+// to read the artwork rather than the strip of thumbnails the carousel gave.
+int SearchTab::gridColumns(MediaType type) {
+    switch (type) {
+        case MediaType::EPISODE:
+        case MediaType::CLIP:
+            return 2;
+        default:
+            return 3;
+    }
+}
+
+SearchTab::CardMetrics SearchTab::cardMetrics(MediaType type, Layout layout) {
+    const bool phoneA = (layout == Layout::NativeIme);
+    const bool phoneB = (layout == Layout::OnScreen);
+    CardMetrics m { 96, 140, 192, 280 };           // portrait default (movies / shows)
+    if (phoneA)      m = { 116, 170, 232, 340 };
+    else if (phoneB) m = { 104, 152, 208, 304 };
+    switch (type) {
+        case MediaType::EPISODE:
+        case MediaType::CLIP:
+            m = { 150, 84, 300, 168 };             // bigger 16:9 still
+            if (phoneA)      m = { 190, 107, 380, 214 };
+            else if (phoneB) m = { 172, 97,  344, 194 };
+            break;
+        case MediaType::MUSIC_ALBUM:
+        case MediaType::MUSIC_TRACK:
+        case MediaType::MUSIC_ARTIST:
+            m = { 96, 96, 192, 192 };              // square cover
+            if (phoneA)      m = { 116, 116, 232, 232 };
+            else if (phoneB) m = { 104, 104, 208, 208 };
+            break;
+        default:
+            break;
+    }
+    return m;
 }
 
 brls::Box* SearchTab::makeCard(const MediaItem& item) {
@@ -738,35 +812,10 @@ brls::Box* SearchTab::makeCard(const MediaItem& item) {
     card->setCornerRadius(6);
     card->setFocusable(true);
 
-    // Poster aspect (and width) match the media type so square covers and
-    // landscape stills aren't cropped into a portrait frame. Episodes get a
-    // larger 16:9 card; movies/shows portrait, albums/tracks/artists square.
-    // Phone cards run larger than the desktop's — a 96px poster is unreadable
-    // at arm's length on a handset. B is a touch smaller than A because its
-    // keyboard dock takes the bottom of the screen. Thumb requests stay at 2x
-    // the drawn size.
     const bool phoneA = (m_layout == Layout::NativeIme);
     const bool phoneB = (m_layout == Layout::OnScreen);
-    int cw = 96, ph = 140, rw = 192, rh = 280;     // portrait default (movies / shows)
-    if (phoneA)      { cw = 116; ph = 170; rw = 232; rh = 340; }
-    else if (phoneB) { cw = 104; ph = 152; rw = 208; rh = 304; }
-    switch (item.mediaType) {
-        case MediaType::EPISODE:
-        case MediaType::CLIP:
-            cw = 150; ph = 84;  rw = 300; rh = 168; // bigger 16:9 still
-            if (phoneA)      { cw = 190; ph = 107; rw = 380; rh = 214; }
-            else if (phoneB) { cw = 172; ph = 97;  rw = 344; rh = 194; }
-            break;
-        case MediaType::MUSIC_ALBUM:
-        case MediaType::MUSIC_TRACK:
-        case MediaType::MUSIC_ARTIST:
-            cw = 96;  ph = 96;  rw = 192; rh = 192; // square cover
-            if (phoneA)      { cw = 116; ph = 116; rw = 232; rh = 232; }
-            else if (phoneB) { cw = 104; ph = 104; rw = 208; rh = 208; }
-            break;
-        default:
-            break;
-    }
+    const CardMetrics m = cardMetrics(item.mediaType, m_layout);
+    const int cw = m.cw, ph = m.ph, rw = m.rw, rh = m.rh;
     card->setWidth((float)cw);
 
     auto* poster = new brls::Box();

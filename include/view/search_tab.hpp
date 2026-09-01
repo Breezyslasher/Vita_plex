@@ -34,6 +34,12 @@ public:
     };
 
 private:
+    // Drawn card size and the thumbnail size to request for it (2x drawn).
+    struct CardMetrics { int cw, ph, rw, rh; };
+    static CardMetrics cardMetrics(MediaType type, Layout layout);
+    // Cards per row in the phone grid, by poster aspect.
+    static int gridColumns(MediaType type);
+
     // Resolve the layout from the setting and the current screen. Re-read on
     // rebuild so a rotation or a setting change lands.
     static Layout resolveLayout();
