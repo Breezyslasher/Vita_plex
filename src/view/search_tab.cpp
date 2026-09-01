@@ -17,6 +17,9 @@
 #include <atomic>
 #include <cctype>
 #include <cstring>
+#if defined(ANDROID)
+#include <SDL2/SDL.h>
+#endif
 
 namespace vitaplex {
 
@@ -171,6 +174,10 @@ SearchTab::SearchTab() {
         m_kbSub = m_inputManager->getKeyboardKeyStateChanged()->subscribe(
             [this](brls::KeyState ks) {
                 if (!ks.pressed) return;
+                // Native text input delivers the same keystroke as an
+                // SDL_TEXTINPUT, so taking it here too would double every
+                // character typed on a hardware keyboard.
+                if (m_textInputActive) return;
                 brls::View* f = brls::Application::getCurrentFocus();
                 bool inSearch = false;
                 for (brls::View* v = f; v != nullptr; v = v->getParent())
@@ -209,6 +216,7 @@ void SearchTab::buildLayout() {
 
 void SearchTab::switchMobileLayout(Layout to) {
     if (to == m_layout) return;
+    endNativeTextInput();
     m_layout = to;
 
     // Park focus outside the subtree before deleting it. ~View() tries to clear
@@ -224,7 +232,80 @@ void SearchTab::switchMobileLayout(Layout to) {
     brls::Application::giveFocus(this);
 }
 
+#if defined(ANDROID)
+// The SearchTab currently collecting native text input, and the SDL watch that
+// feeds it. File-static so the header needn't pull in SDL.
+static SearchTab* s_imeTarget = nullptr;
+
+static int SDLCALL searchTextWatch(void* userdata, SDL_Event* e) {
+    auto* self = static_cast<SearchTab*>(userdata);
+    if (!self || self != s_imeTarget) return 0;
+    self->onNativeTextEvent(e);
+    return 0;   // watch only; the event still reaches borealis
+}
+#endif
+
+void SearchTab::endNativeTextInput() {
+#if defined(ANDROID)
+    if (!m_textInputActive) return;
+    m_textInputActive = false;
+    s_imeTarget = nullptr;
+    SDL_DelEventWatch(&searchTextWatch, this);
+    SDL_StopTextInput();
+#endif
+}
+
+#if defined(ANDROID)
+void SearchTab::onNativeTextEvent(void* ev) {
+    auto* e = static_cast<SDL_Event*>(ev);
+    std::weak_ptr<bool> aliveWeak = m_alive;
+    // The watch runs inside SDL_PumpEvents on the UI thread, but rebuilding the
+    // result views from underneath the event pump is asking for trouble — take
+    // the text now, do the view work on the next frame.
+    auto refresh = [this, aliveWeak]() {
+        brls::sync([this, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+            updateField();
+            performSearch();
+        });
+    };
+    switch (e->type) {
+        case SDL_TEXTINPUT:
+            m_query += e->text.text;
+            refresh();
+            break;
+        case SDL_KEYDOWN:
+            if (e->key.keysym.sym == SDLK_BACKSPACE) {
+                if (!m_query.empty()) m_query.pop_back();
+                refresh();
+            } else if (e->key.keysym.sym == SDLK_RETURN ||
+                       e->key.keysym.sym == SDLK_KP_ENTER) {
+                endNativeTextInput();
+            }
+            break;
+        default:
+            break;
+    }
+}
+#endif
+
 void SearchTab::openIme() {
+#if defined(ANDROID)
+    // Raise the platform keyboard directly rather than through
+    // Application::getImeManager(). On the SDL platforms that manager *is*
+    // borealis' EditTextDialog — SDLImeManager::openForText builds one — so
+    // asking it for a "system" keyboard puts a modal over the results the
+    // search exists to show. SDL_StartTextInput() is what that dialog calls
+    // anyway; going straight to it gets the keyboard and nothing else, typing
+    // into the tab's own field.
+    if (m_textInputActive) return;
+    m_textInputActive = true;
+    s_imeTarget = this;
+    SDL_AddEventWatch(&searchTextWatch, this);
+    SDL_StartTextInput();
+    return;
+#else
     auto* ime = brls::Application::getImeManager();
     if (!ime) return;
     std::weak_ptr<bool> aliveWeak = m_alive;
@@ -240,6 +321,7 @@ void SearchTab::openIme() {
             performSearch();
         },
         "Search", "", 64, m_query);
+#endif
 }
 
 void SearchTab::buildTwoColumn() {
@@ -875,6 +957,8 @@ void SearchTab::onItemSelected(const MediaItem& item) {
 }
 
 SearchTab::~SearchTab() {
+    // The SDL watch holds a raw `this`; it must not outlive the tab.
+    endNativeTextInput();
     if (m_alive) *m_alive = false;
     if (m_imgAlive) *m_imgAlive = false;
     if (m_inputManager && m_kbSubscribed)
@@ -883,6 +967,9 @@ SearchTab::~SearchTab() {
 
 void SearchTab::willDisappear(bool resetState) {
     brls::Box::willDisappear(resetState);
+    // Leaving the tab with the keyboard still up would keep it on screen over
+    // whatever comes next.
+    endNativeTextInput();
     if (m_alive) *m_alive = false;
     if (m_imgAlive) *m_imgAlive = false;
     m_loadGeneration++;

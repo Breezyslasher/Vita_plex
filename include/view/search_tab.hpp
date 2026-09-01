@@ -37,9 +37,6 @@ private:
     // Drawn card size and the thumbnail size to request for it (2x drawn).
     struct CardMetrics { int cw, ph, rw, rh; };
     static CardMetrics cardMetrics(MediaType type, Layout layout);
-    // Cards per row in the phone grid, by poster aspect.
-    static int gridColumns(MediaType type);
-
     // Resolve the layout from the setting and the current screen. Re-read on
     // rebuild so a rotation or a setting change lands.
     static Layout resolveLayout();
@@ -56,9 +53,20 @@ private:
     // Swap between the two mobile layouts for this session only — the FAB in A
     // and "Hide" in B. Does not write the setting.
     void switchMobileLayout(Layout to);
-    // Open the platform IME on the query. The callback returns the finished
-    // string, so results refresh on commit rather than per character.
+    // Bring up the keyboard for the query. On Android this starts SDL text
+    // input directly, so the platform keyboard appears with no borealis dialog
+    // and characters land in the tab's own field; elsewhere it falls back to
+    // ImeManager, whose callback returns the finished string on commit.
     void openIme();
+
+public:
+    // Called from the SDL event watch while native input is running. void* so
+    // the header needn't include SDL; it is an SDL_Event*.
+    void onNativeTextEvent(void* ev);
+
+private:
+    void endNativeTextInput();
+    bool m_textInputActive = false;
 
     // Query editing (each mutation refreshes the field + live results).
     void appendChar(const std::string& c);
