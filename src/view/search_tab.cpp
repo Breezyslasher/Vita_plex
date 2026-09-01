@@ -16,7 +16,6 @@
 
 #include <atomic>
 #include <cctype>
-#include <cstring>
 #if defined(ANDROID)
 #include <SDL2/SDL.h>
 #endif
@@ -494,35 +493,19 @@ void SearchTab::buildKeyboard(brls::Box* parent) {
     kb->addView(sprow);
     grid.push_back(srowKeys);
 
-    // Character rows, QWERTY. Rows are ragged, so keys are sized against the
-    // widest (10) and the short rows are centred by half-width spacers at each
-    // end — letting them grow to fill instead would make ZXCVBNM's keys visibly
-    // fatter than the row above, which no keyboard looks like.
-    static const char* const rows[4] = {
-        "1234567890",
-        "QWERTYUIOP",
-        "ASDFGHJKL",
-        "ZXCVBNM",
+    // Character rows, alphabetical in a uniform 6x6. This keyboard is only
+    // reached on desktop and TV now — phones raise the platform keyboard — and
+    // a D-pad reads a regular grid far better than QWERTY, whose ragged rows
+    // make every vertical move a guess about which key you land on.
+    static const char* const rows[6] = {
+        "ABCDEF", "GHIJKL", "MNOPQR", "STUVWX", "YZ1234", "567890"
     };
-    constexpr int kCols = 10;
-    for (int r = 0; r < 4; r++) {
-        const int n = (int)strlen(rows[r]);
+    for (int r = 0; r < 6; r++) {
         auto* crow = new brls::Box();
         crow->setAxis(brls::Axis::ROW);
-        if (r < 3) crow->setMarginBottom(7);
-
-        // Spacers carry the leftover columns, split evenly either side.
-        const float pad = (float)(kCols - n) / 2.0f;
-        auto addSpacer = [&]() {
-            if (pad <= 0.0f) return;
-            auto* sp = new brls::Box();
-            sp->setGrow(pad);
-            crow->addView(sp);
-        };
-
-        addSpacer();
+        if (r < 5) crow->setMarginBottom(7);
         std::vector<brls::Box*> rowKeys;
-        for (int c = 0; c < n; c++) {
+        for (int c = 0; c < 6; c++) {
             std::string ch(1, rows[r][c]);
             auto* key = makeCharKey(ch);
             if (c > 0) key->setMarginLeft(6);
@@ -531,8 +514,6 @@ void SearchTab::buildKeyboard(brls::Box* parent) {
             crow->addView(key);
             rowKeys.push_back(key);
         }
-        addSpacer();
-
         kb->addView(crow);
         grid.push_back(rowKeys);
     }
