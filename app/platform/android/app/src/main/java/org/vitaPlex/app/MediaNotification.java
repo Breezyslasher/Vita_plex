@@ -5,6 +5,7 @@ import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.BroadcastReceiver;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
@@ -27,6 +28,7 @@ import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
 import androidx.core.app.NotificationCompat;
+import androidx.media.session.MediaButtonReceiver;
 
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -92,6 +94,12 @@ public final class MediaNotification {
     private static boolean sHasFocus;
     private static boolean sPausedByFocusLoss;   // only resume what focus loss paused
 
+    // Headphones pulled, or Bluetooth gone. Not the same as losing audio focus —
+    // nothing takes focus when a jack is removed — so this is the only thing
+    // that stops music blaring out of the speaker.
+    private static BroadcastReceiver sNoisyReceiver;
+    private static boolean sNoisyRegistered;
+
     private static PowerManager.WakeLock sWakeLock;   // held only while playing
     private static WifiManager.WifiLock sWifiLock;    // held only while playing
 
@@ -104,6 +112,7 @@ public final class MediaNotification {
     private static boolean sShowModes;   // expose repeat/shuffle (music, not video)
     private static String sLoadedArtUrl;   // url whose bitmap is in sArtBitmap
     private static Bitmap sArtBitmap;
+    private static boolean sHasState;    // native has pushed a track at least once
 
     private MediaNotification() {}
 
@@ -119,6 +128,23 @@ public final class MediaNotification {
     static MediaSessionCompat.Token getSessionToken(Context ctx) {
         ensureSession(ctx);
         return sSession != null ? sSession.getSessionToken() : null;
+    }
+
+    /**
+     * The live session, for MusicService to feed media-button intents into.
+     * Creates one if needed: a media key can arrive before any update() has,
+     * and the session is what decodes the key event into a transport callback.
+     */
+    static MediaSessionCompat getSession(Context ctx) {
+        ensureSession(ctx);
+        return sSession;
+    }
+
+    /** PendingIntent flags with the mutability bit Android 12+ demands. */
+    private static int pendingIntentFlags(int extra) {
+        int f = PendingIntent.FLAG_UPDATE_CURRENT | extra;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) f |= PendingIntent.FLAG_IMMUTABLE;
+        return f;
     }
 
     /** Called from native (any thread). Marshals to the main looper. */
@@ -140,6 +166,7 @@ public final class MediaNotification {
                 sRepeat = repeat;
                 sShuffle = shuffle;
                 sShowModes = showModes;
+                sHasState = true;
                 // Drop a stale cover the instant the track changes.
                 if (!sArtUrl.equals(sLoadedArtUrl)) sArtBitmap = null;
                 try { applyUpdate(); } catch (Throwable t) { Log.w(TAG, "update failed", t); }
@@ -157,6 +184,7 @@ public final class MediaNotification {
                     abandonAudioFocus();
                     Context ctx = VitaPlexActivity.getAppContext();
                     if (ctx != null) {
+                        updateNoisyReceiver(ctx, false);
                         stopService(ctx);  // drop the foreground service first
                         NotificationManager nm = (NotificationManager)
                             ctx.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -173,6 +201,7 @@ public final class MediaNotification {
                     }
                     sArtBitmap = null;
                     sLoadedArtUrl = null;
+                    sHasState = false;
                 } catch (Throwable t) {
                     Log.w(TAG, "clear failed", t);
                 }
@@ -218,7 +247,10 @@ public final class MediaNotification {
             .setActions(actions)
             .setState(sPlaying ? PlaybackStateCompat.STATE_PLAYING
                                : PlaybackStateCompat.STATE_PAUSED,
-                      sPositionMs, 1.0f, SystemClock.elapsedRealtime());
+                      // Rate 0 while paused. At 1.0 a controller extrapolates
+                      // from the timestamp and its scrubber keeps advancing over
+                      // a track that is not moving.
+                      sPositionMs, sPlaying ? 1.0f : 0.0f, SystemClock.elapsedRealtime());
         // Keep the custom actions too: they are what the Android 13+ system
         // media controls render (those ignore notification actions), and what
         // clients that don't use the standard mode setters fall back to.
@@ -248,6 +280,7 @@ public final class MediaNotification {
 
         updateLocks(ctx, sPlaying);
         updateAudioFocus(ctx, sPlaying);
+        updateNoisyReceiver(ctx, sPlaying);
         postNotification(ctx);
     }
 
@@ -378,6 +411,36 @@ public final class MediaNotification {
         sPausedByFocusLoss = false;
     }
 
+    private static void updateNoisyReceiver(Context ctx, boolean playing) {
+        try {
+            if (playing && !sNoisyRegistered) {
+                if (sNoisyReceiver == null) {
+                    sNoisyReceiver = new BroadcastReceiver() {
+                        @Override public void onReceive(Context c, Intent i) {
+                            if (AudioManager.ACTION_AUDIO_BECOMING_NOISY.equals(i.getAction())
+                                && sPlaying) {
+                                send(CODE_PAUSE);
+                            }
+                        }
+                    };
+                }
+                IntentFilter f = new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    ctx.getApplicationContext().registerReceiver(
+                        sNoisyReceiver, f, Context.RECEIVER_NOT_EXPORTED);
+                } else {
+                    ctx.getApplicationContext().registerReceiver(sNoisyReceiver, f);
+                }
+                sNoisyRegistered = true;
+            } else if (!playing && sNoisyRegistered) {
+                ctx.getApplicationContext().unregisterReceiver(sNoisyReceiver);
+                sNoisyRegistered = false;
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "noisy receiver update failed", t);
+        }
+    }
+
     private static void releaseLocks() {
         try {
             if (sWifiLock != null && sWifiLock.isHeld()) sWifiLock.release();
@@ -405,9 +468,25 @@ public final class MediaNotification {
 
     private static void ensureSession(Context ctx) {
         if (sSession != null) return;
-        sSession = new MediaSessionCompat(ctx, "VitaPlex");
+        // Bind the session to the manifest's MediaButtonReceiver. Without a
+        // receiver component the session only sees media keys while the app is
+        // in the foreground; with one, headset and Bluetooth buttons reach us
+        // from the background too (they arrive as a broadcast that the receiver
+        // forwards to MusicService, which hands them back here).
+        ComponentName mbr = new ComponentName(ctx, MediaButtonReceiver.class);
+        Intent mbIntent = new Intent(Intent.ACTION_MEDIA_BUTTON).setComponent(mbr);
+        sSession = new MediaSessionCompat(ctx, "VitaPlex", mbr,
+            PendingIntent.getBroadcast(ctx, 0, mbIntent, pendingIntentFlags(0)));
         sSession.setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS
                           | MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS);
+        // What a controller opens when its "now playing" card is tapped: the
+        // lock screen, Android Auto, Wear and the Android 13+ system controls
+        // all use this. Unset, those surfaces have no way back into the app.
+        Intent open = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
+        if (open != null) {
+            sSession.setSessionActivity(
+                PendingIntent.getActivity(ctx, 101, open, pendingIntentFlags(0)));
+        }
         sSession.setCallback(new MediaSessionCompat.Callback() {
             @Override public void onPlay() { send(CODE_PLAY); }
             @Override public void onPause() { send(CODE_PAUSE); }
@@ -491,12 +570,13 @@ public final class MediaNotification {
     /**
      * Build the current MediaStyle notification. Package-visible: MusicService
      * calls this to obtain the notification it foregrounds with. Returns null
-     * before a session exists.
+     * when there is no track to show — a media key can start the service from a
+     * cold process, and an empty notification is worse than none.
      */
     static Notification buildNotification(Context ctx) {
         ensureSession(ctx);
         ensureChannel(ctx);
-        if (sSession == null) return null;
+        if (sSession == null || !sHasState) return null;
 
         // NotificationCompat handles the pre-O channel split itself, so the
         // SDK_INT branch the framework builder needed is gone.
@@ -512,9 +592,7 @@ public final class MediaNotification {
 
         Intent open = ctx.getPackageManager().getLaunchIntentForPackage(ctx.getPackageName());
         if (open != null) {
-            int piFlags = PendingIntent.FLAG_UPDATE_CURRENT;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) piFlags |= PendingIntent.FLAG_IMMUTABLE;
-            b.setContentIntent(PendingIntent.getActivity(ctx, 100, open, piFlags));
+            b.setContentIntent(PendingIntent.getActivity(ctx, 100, open, pendingIntentFlags(0)));
         }
 
         // Order: shuffle, prev, play/pause, next, repeat. Compact view keeps
@@ -591,9 +669,7 @@ public final class MediaNotification {
 
     private static NotificationCompat.Action action(Context ctx, int icon, String title, int code) {
         Intent i = new Intent(ACTION).setPackage(ctx.getPackageName()).putExtra(EXTRA_CODE, code);
-        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
-        PendingIntent pi = PendingIntent.getBroadcast(ctx, code, i, flags);
+        PendingIntent pi = PendingIntent.getBroadcast(ctx, code, i, pendingIntentFlags(0));
         return new NotificationCompat.Action.Builder(icon, title, pi).build();
     }
 
