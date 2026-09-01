@@ -3174,7 +3174,10 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
 
         const auto& vc = platform::getVideoConstraints();
         int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : vc.defaultBitrate;
-        const char* resolution = vc.defaultResolution;
+        // Follows the chosen tier. It used to be the platform default always,
+        // so the quality picker moved the bitrate but never the frame size —
+        // picking 480p asked for 1080p at 2 Mbps, and 4K asked for 1080p at 40.
+        const char* resolution = Application::resolutionFor(settings.videoQuality);
 
         snprintf(buf, sizeof(buf), "&videoBitrate=%d", bitrate);
         queryParams += buf;
@@ -4889,7 +4892,8 @@ bool PlexClient::buildLiveSessionStreamUrl(const std::string& liveSessionId, std
     q += "&directPlay=0&directStream=0&directStreamAudio=1";
     q += "&protocol=hls&fastSeek=1&hasMDE=1&location=lan&audioBoost=100";
     snprintf(buf, sizeof(buf), "&videoBitrate=%d", bitrate); q += buf;
-    snprintf(buf, sizeof(buf), "&videoResolution=%s", vc.defaultResolution); q += buf;
+    snprintf(buf, sizeof(buf), "&videoResolution=%s",
+             Application::resolutionFor(settings.videoQuality)); q += buf;
     q += "&videoQuality=100";
     q += settings.showSubtitles ? "&subtitles=auto" : "&subtitles=none";
     q += "&session=" + sessionId;

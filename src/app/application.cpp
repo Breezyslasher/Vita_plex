@@ -312,6 +312,21 @@ void Application::videoLimitFor(VideoQuality quality, int& outWidth, int& outHei
     }
 }
 
+const char* Application::resolutionFor(VideoQuality quality) {
+    switch (quality) {
+        case VideoQuality::QUALITY_4K:
+            if (supports4K()) return "3840x2160";
+            break;                                  // else the default below
+        case VideoQuality::QUALITY_1080P: return "1920x1080";
+        case VideoQuality::QUALITY_720P:  return "1280x720";
+        case VideoQuality::QUALITY_480P:  return "854x480";
+        case VideoQuality::QUALITY_360P:  return "640x360";
+        case VideoQuality::QUALITY_240P:  return "426x240";
+        case VideoQuality::ORIGINAL:      break;
+    }
+    return platform::getVideoConstraints().defaultResolution;
+}
+
 std::string Application::getQualityString(VideoQuality quality) {
     switch (quality) {
         case VideoQuality::ORIGINAL: return "Original (Direct Play)";

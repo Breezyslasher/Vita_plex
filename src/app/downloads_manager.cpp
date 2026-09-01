@@ -964,15 +964,17 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         // keeps the platform's ceiling (and, with directPlay above, ships an
         // already-compatible source untouched); a specific tier yields a smaller
         // file that also encodes faster.
-        std::string resolution = vc.defaultResolution;
+        // Frame size comes from the shared table so the download and streaming
+        // paths cannot disagree about what a tier means.
+        std::string resolution = Application::resolutionFor(settings.downloadQuality);
         int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : vc.defaultBitrate;
         switch (settings.downloadQuality) {
-            case VideoQuality::QUALITY_4K:    resolution = "3840x2160"; bitrate = 40000; break;
-            case VideoQuality::QUALITY_1080P: resolution = "1920x1080"; bitrate = 20000; break;
-            case VideoQuality::QUALITY_720P:  resolution = "1280x720";  bitrate = 4000;  break;
-            case VideoQuality::QUALITY_480P:  resolution = "854x480";   bitrate = 2000;  break;
-            case VideoQuality::QUALITY_360P:  resolution = "640x360";   bitrate = 1000;  break;
-            case VideoQuality::QUALITY_240P:  resolution = "426x240";   bitrate = 500;   break;
+            case VideoQuality::QUALITY_4K:    bitrate = 40000; break;
+            case VideoQuality::QUALITY_1080P: bitrate = 20000; break;
+            case VideoQuality::QUALITY_720P:  bitrate = 4000;  break;
+            case VideoQuality::QUALITY_480P:  bitrate = 2000;  break;
+            case VideoQuality::QUALITY_360P:  bitrate = 1000;  break;
+            case VideoQuality::QUALITY_240P:  bitrate = 500;   break;
             case VideoQuality::ORIGINAL: default: break;  // keep the platform default
         }
         char bitrateStr[64];
@@ -1334,7 +1336,7 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
             snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
             queryParams += bitrateStr;
             queryParams += "&videoResolution=";
-            queryParams += vc.defaultResolution;
+            queryParams += Application::resolutionFor(settings.videoQuality);
             queryParams += "&videoQuality=100";
             queryParams += "&subtitles=none";
 

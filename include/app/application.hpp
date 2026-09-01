@@ -304,6 +304,9 @@ public:
     // has asked for 4K — the server clamps to whatever we claim, so leaving the
     // 1080p bound in place would make the tier do nothing.
     static void videoLimitFor(VideoQuality quality, int& outWidth, int& outHeight);
+    // Frame size to ask Plex to transcode to. ORIGINAL, and any tier this
+    // device cannot decode, fall back to the platform default.
+    static const char* resolutionFor(VideoQuality quality);
 
 private:
     Application() = default;
