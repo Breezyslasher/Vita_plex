@@ -699,14 +699,14 @@ void PlayerActivity::onContentAvailable() {
         int seekSec = Application::getInstance().getSettings().seekInterval;
         std::string rewindRes = "icons/rewind-" + std::to_string(seekSec) + ".png";
         std::string fwdRes = "icons/fast-forward-" + std::to_string(seekSec) + ".png";
-        if (rewindIcon) rewindIcon->setImageFromRes(rewindRes);
-        if (forwardIcon) forwardIcon->setImageFromRes(fwdRes);
+        setIconRes(rewindIcon, rewindRes);
+        setIconRes(forwardIcon, fwdRes);
 
         // Audio track button - shows track selection overlay
         if (audioBtn) {
             audioBtn->setVisibility(brls::Visibility::VISIBLE);
             if (audioIcon) {
-                audioIcon->setImageFromRes("icons/translate.png");
+                setIconRes(audioIcon, "icons/translate.png");
             }
             audioBtn->registerClickAction([this](brls::View* view) {
                 showTrackOverlay(TrackSelectMode::AUDIO);
@@ -719,7 +719,7 @@ void PlayerActivity::onContentAvailable() {
         if (subBtn) {
             subBtn->setVisibility(brls::Visibility::VISIBLE);
             if (subtitleIcon) {
-                subtitleIcon->setImageFromRes("icons/subtitles.png");
+                setIconRes(subtitleIcon, "icons/subtitles.png");
             }
             subBtn->registerClickAction([this](brls::View* view) {
                 showTrackOverlay(TrackSelectMode::SUBTITLE);
@@ -732,7 +732,7 @@ void PlayerActivity::onContentAvailable() {
         if (videoBtn) {
             videoBtn->setVisibility(brls::Visibility::VISIBLE);
             if (videoIcon) {
-                videoIcon->setImageFromRes("icons/video-image.png");
+                setIconRes(videoIcon, "icons/video-image.png");
             }
             videoBtn->registerClickAction([this](brls::View* view) {
                 showTrackOverlay(TrackSelectMode::VIDEO);
@@ -782,10 +782,9 @@ void PlayerActivity::onContentAvailable() {
         // again, re-issue the current track's cover load so it uploads cleanly.
         // (The bytes are still in the ImageLoader cache, so this is a cheap re-
         // upload, not a re-download.)
-        // Icons parked while there was no GL surface. Not gated on the
-        // foreground edge: the surface can come back a frame or two after the
-        // window does, and this is a no-op once the map is empty.
-        flushPendingIcons();
+        // Icons dropped or invalidated while there was no GL surface. Driven by
+        // the surface, not the window: the two can be a frame or two apart.
+        reapplyIcons();
 
         bool fg = brls::Application::isWindowForeground();
         if (m_isQueueMode && fg && !m_wasForeground && albumArt && !m_destroying) {
@@ -830,6 +829,7 @@ void PlayerActivity::onContentAvailable() {
     // no-op, because the route wiring above cannot survive a cleared flag.
     m_focusWiringDone = true;
     syncHiddenFocus();
+    registerIcons();
 
     // Space and the media keys. These go through the raw keyboard event rather
     // than registerAction because borealis' action system is keyed on
@@ -2319,18 +2319,45 @@ void PlayerActivity::syncLoungeReportUserAction(const std::string& state, double
 // and repeat while exactly that is true.
 void PlayerActivity::setIconRes(brls::Image* img, const std::string& res) {
     if (!img) return;
-    if (!brls::Application::canUploadTextures()) {
-        m_pendingIcons[img] = res;
-        return;
-    }
-    img->setImageFromRes(res);
-    m_pendingIcons.erase(img);
+    m_iconRes[img] = res;   // remembered whether or not the upload lands
+    if (brls::Application::canUploadTextures()) img->setImageFromRes(res);
 }
 
-void PlayerActivity::flushPendingIcons() {
-    if (m_pendingIcons.empty() || !brls::Application::canUploadTextures()) return;
-    for (const auto& [img, res] : m_pendingIcons) img->setImageFromRes(res);
-    m_pendingIcons.clear();
+// What the XML loads at inflation. Recorded rather than re-set: the textures
+// are already good at this point, and these are the paths reapplyIcons() needs
+// if the context is later lost. Kept beside player.xml's image= attributes.
+void PlayerActivity::registerIcons() {
+    auto note = [this](brls::Image* img, const char* res) {
+        // Only if nothing has set one already — the video branch picks
+        // seek-interval icons above, and those are the real resources.
+        if (img && m_iconRes.find(img) == m_iconRes.end()) m_iconRes[img] = res;
+    };
+    note(shuffleIcon,     "icons/shuffle-disabled.png");
+    note(musicPrevIcon,   "icons/skip-previous.png");
+    note(musicPlayIcon,   "icons/pause.png");
+    note(musicNextIcon,   "icons/skip-next.png");
+    note(repeatIcon,      "icons/repeat-off.png");
+    note(rewindIcon,      "icons/rewind-10.png");
+    note(playPauseIcon,   "icons/pause.png");
+    note(forwardIcon,     "icons/fast-forward-10.png");
+    note(audioIcon,       "icons/translate.png");
+    note(subtitleIcon,    "icons/subtitles.png");
+    note(videoIcon,       "icons/video-image.png");
+    note(pipIcon,         "icons/video-image.png");
+    note(queueIcon,       "icons/format-list-group.png");
+}
+
+// Re-upload every icon. Called on the edge where uploads become possible again,
+// which covers both a swap that was dropped while hidden and a texture the lost
+// EGL context invalidated — from here the two are indistinguishable, and
+// re-issuing a good icon costs a cache lookup.
+void PlayerActivity::reapplyIcons() {
+    const bool safe = brls::Application::canUploadTextures();
+    if (safe && !m_uploadsWereSafe) {
+        for (const auto& [img, res] : m_iconRes)
+            if (img) img->setImageFromRes(res);
+    }
+    m_uploadsWereSafe = safe;
 }
 
 void PlayerActivity::updatePlayPauseLabel() {

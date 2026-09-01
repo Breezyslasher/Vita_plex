@@ -431,14 +431,24 @@ private:
     // GONE box stays focusable and hit-testable, and the highlight lands on a
     // zero-sized view. Called whenever those containers change visibility.
     void syncHiddenFocus();
-    // Icon swaps that could not upload because the app had no GL surface.
-    // Image::setImageFromRes() uploads there and then, so a swap made while
-    // backgrounded — an OS notification toggling play/pause, shuffle or repeat —
-    // is silently dropped and the icon renders blank for the rest of the
-    // session. Replayed by flushPendingIcons() once a surface is back.
-    std::map<brls::Image*, std::string> m_pendingIcons;
+    // Every icon in the player and the resource behind it. Two problems need
+    // this, both of them Android backgrounding:
+    //
+    //   - Image::setImageFromRes() uploads there and then, so a swap made with
+    //     no GL surface (an OS notification toggling play/pause, shuffle or
+    //     repeat) is silently dropped and the icon stays blank.
+    //   - Icons the XML loaded once already have textures, and losing the EGL
+    //     context invalidates them. Image keeps no copy of its path, so nothing
+    //     can ask it to reload; the path has to be remembered here.
+    //
+    // registerIcons() seeds the map with what the XML set, setIconRes() keeps
+    // it current, and reapplyIcons() re-issues the lot when uploads become
+    // possible again.
+    std::map<brls::Image*, std::string> m_iconRes;
+    bool m_uploadsWereSafe = true;
+    void registerIcons();
     void setIconRes(brls::Image* img, const std::string& res);
-    void flushPendingIcons();
+    void reapplyIcons();
 
     // Raw keyboard hook, for keys borealis has no gamepad equivalent for:
     // Space toggles playback. Subscribed in onContentAvailable, dropped in
@@ -472,6 +482,10 @@ private:
     BRLS_BIND(brls::Box, musicTransport, "player/music_transport");
     BRLS_BIND(brls::Box, musicPlayBtn, "player/music_play_btn");
     BRLS_BIND(brls::Image, musicPlayIcon, "player/music_play_icon");
+    // Bound only so their resource can be re-applied after a lost GL context;
+    // neither is ever swapped at runtime.
+    BRLS_BIND(brls::Image, musicPrevIcon, "player/music_prev_icon");
+    BRLS_BIND(brls::Image, musicNextIcon, "player/music_next_icon");
     BRLS_BIND(brls::Box, musicPrevBtn, "player/music_prev_btn");
     BRLS_BIND(brls::Box, musicNextBtn, "player/music_next_btn");
     // lyrics button removed
