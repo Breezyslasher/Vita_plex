@@ -24,6 +24,7 @@ import android.os.PowerManager;
 import android.os.SystemClock;
 import android.util.Log;
 
+import android.support.v4.media.MediaDescriptionCompat;
 import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
@@ -33,6 +34,8 @@ import androidx.media.session.MediaButtonReceiver;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * MediaSessionCompat + MediaStyle notification for music playback.
@@ -81,6 +84,8 @@ public final class MediaNotification {
     // 2 one) — the same one update() receives — so both directions agree.
     private static native void nativeSetRepeatMode(int mode);
     private static native void nativeSetShuffle(boolean on);
+    // A row picked out of the published queue; the long is the id we published.
+    private static native void nativeSkipToQueueItem(long id);
 
     private static final Handler sMain = new Handler(Looper.getMainLooper());
 
@@ -113,6 +118,8 @@ public final class MediaNotification {
     private static String sLoadedArtUrl;   // url whose bitmap is in sArtBitmap
     private static Bitmap sArtBitmap;
     private static boolean sHasState;    // native has pushed a track at least once
+    private static int sQueueSize;       // rows currently published to the session
+    private static long sActiveQueueId = MediaSessionCompat.QueueItem.UNKNOWN_ID;
 
     private MediaNotification() {}
 
@@ -175,6 +182,57 @@ public final class MediaNotification {
         });
     }
 
+    /**
+     * Called from native (any thread). Publishes the play queue and which row is
+     * playing, so Android Auto / Assistant / Wear can show an up-next list and
+     * jump straight to a track instead of pressing Next repeatedly.
+     *
+     * Arrays are parallel; ids are opaque handles that come back through
+     * onSkipToQueueItem. The caller sends a window around the current track —
+     * the whole list crosses a Binder transaction.
+     */
+    public static void setQueue(final long[] ids, final String[] mediaIds,
+                                final String[] titles, final String[] artists,
+                                final String[] artUrls, final long activeId) {
+        sMain.post(new Runnable() {
+            @Override public void run() {
+                try {
+                    Context ctx = VitaPlexActivity.getAppContext();
+                    if (ctx == null) return;
+                    ensureSession(ctx);
+                    if (sSession == null) return;
+
+                    final int n = ids != null ? ids.length : 0;
+                    if (n == 0) {
+                        sSession.setQueue(null);
+                        sQueueSize = 0;
+                        sActiveQueueId = MediaSessionCompat.QueueItem.UNKNOWN_ID;
+                        return;
+                    }
+                    List<MediaSessionCompat.QueueItem> q = new ArrayList<>(n);
+                    for (int i = 0; i < n; i++) {
+                        MediaDescriptionCompat.Builder d = new MediaDescriptionCompat.Builder()
+                            .setMediaId(str(mediaIds, i))
+                            .setTitle(str(titles, i))
+                            .setSubtitle(str(artists, i));
+                        String art = str(artUrls, i);
+                        if (!art.isEmpty()) d.setIconUri(Uri.parse(art));
+                        q.add(new MediaSessionCompat.QueueItem(d.build(), ids[i]));
+                    }
+                    sSession.setQueue(q);
+                    sQueueSize = n;
+                    sActiveQueueId = activeId;
+                } catch (Throwable t) {
+                    Log.w(TAG, "setQueue failed", t);
+                }
+            }
+        });
+    }
+
+    private static String str(String[] a, int i) {
+        return (a != null && i < a.length && a[i] != null) ? a[i] : "";
+    }
+
     /** Called from native (any thread). Tears down the session + notification. */
     public static void clear() {
         sMain.post(new Runnable() {
@@ -202,6 +260,8 @@ public final class MediaNotification {
                     sArtBitmap = null;
                     sLoadedArtUrl = null;
                     sHasState = false;
+                    sQueueSize = 0;
+                    sActiveQueueId = MediaSessionCompat.QueueItem.UNKNOWN_ID;
                 } catch (Throwable t) {
                     Log.w(TAG, "clear failed", t);
                 }
@@ -236,6 +296,8 @@ public final class MediaNotification {
             | PlaybackStateCompat.ACTION_SKIP_TO_NEXT
             | PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
             | PlaybackStateCompat.ACTION_PLAY_FROM_MEDIA_ID;
+        // Only offer "jump to this row" once a queue has actually been published.
+        if (sQueueSize > 0) actions |= PlaybackStateCompat.ACTION_SKIP_TO_QUEUE_ITEM;
         // Advertise the mode setters for music so remote controllers render real
         // shuffle/repeat controls rather than nothing. Without these in the
         // action mask a client has no way to know the session accepts them.
@@ -250,7 +312,10 @@ public final class MediaNotification {
                       // Rate 0 while paused. At 1.0 a controller extrapolates
                       // from the timestamp and its scrubber keeps advancing over
                       // a track that is not moving.
-                      sPositionMs, sPlaying ? 1.0f : 0.0f, SystemClock.elapsedRealtime());
+                      sPositionMs, sPlaying ? 1.0f : 0.0f, SystemClock.elapsedRealtime())
+            // Which published row is playing — this is what highlights the
+            // current track in an up-next list.
+            .setActiveQueueItemId(sActiveQueueId);
         // Keep the custom actions too: they are what the Android 13+ system
         // media controls render (those ignore notification actions), and what
         // clients that don't use the standard mode setters fall back to.
@@ -500,6 +565,11 @@ public final class MediaNotification {
             // from LibraryBrowserService's tree, so it owns resolving them.
             @Override public void onPlayFromMediaId(String mediaId, Bundle extras) {
                 LibraryBrowserService.playFromMediaId(mediaId);
+            }
+            // A row picked out of the up-next list.
+            @Override public void onSkipToQueueItem(long id) {
+                try { nativeSkipToQueueItem(id); }
+                catch (Throwable t) { Log.w(TAG, "skipToQueueItem", t); }
             }
             // Kept for clients (and the Android 13+ system controls) that drive
             // shuffle/repeat as PlaybackState custom actions. These are toggles

@@ -22,6 +22,20 @@ nowplaying::RepeatMode toBridgeRepeat(RepeatMode m) {
         case RepeatMode::OFF: default: return nowplaying::RepeatMode::Off;
     }
 }
+// FNV-1a over the queue window we're about to publish. publishNowPlaying() runs
+// once a second; without a fingerprint the whole list would cross JNI (and a
+// Binder transaction) every tick for a queue that hasn't changed.
+void hashMix(uint64_t& h, const std::string& s) {
+    for (char c : s) { h ^= (unsigned char)c; h *= 1099511628211ULL; }
+    h ^= 0xffu; h *= 1099511628211ULL;   // separator, so "ab"+"c" != "a"+"bc"
+}
+void hashMix(uint64_t& h, long long v) {
+    for (int i = 0; i < 8; i++) {
+        h ^= (uint64_t)((v >> (i * 8)) & 0xff);
+        h *= 1099511628211ULL;
+    }
+}
+
 RepeatMode fromBridgeRepeat(nowplaying::RepeatMode m) {
     switch (m) {
         case nowplaying::RepeatMode::All: return RepeatMode::ALL;
@@ -91,7 +105,8 @@ void MusicController::registerOsHandler() {
         },
         [](long long ms) { MusicController::getInstance().seekToMs(ms); },
         [](nowplaying::RepeatMode m) { MusicController::getInstance().setRepeatMode(fromBridgeRepeat(m)); },
-        [](bool on) { MusicController::getInstance().setShuffleMode(on); });
+        [](bool on) { MusicController::getInstance().setShuffleMode(on); },
+        [](long long id) { MusicController::getInstance().playQueueIndex((int)id); });
 }
 
 void MusicController::attachForeground(ForegroundHooks hooks) {
@@ -202,20 +217,92 @@ void MusicController::publishNowPlaying(int playingOverride) {
     info.shuffle = q.isShuffleEnabled();
     info.showRepeat = true;    // music exposes repeat + shuffle (video doesn't)
     info.showShuffle = true;
+    // Before update(), so the playback state it builds already carries the
+    // skip-to-item action and the active row id.
+    publishQueue();
     nowplaying::update(info);
 
     m_lastPublishedPlaying = info.playing;
     m_sessionActive = true;
 }
 
+void MusicController::publishQueue() {
+    MusicQueue& q = MusicQueue::getInstance();
+    const std::vector<QueueItem>& tracks = q.getQueue();
+    if (tracks.empty()) {
+        if (m_lastQueueSig != 0) {
+            nowplaying::setQueue({}, -1);
+            m_lastQueueSig = 0;
+        }
+        return;
+    }
+
+    // Publish in play order, so a shuffled queue reads shuffled in the OS list.
+    // Entries carry the ABSOLUTE queue index as their id, which is what comes
+    // back on skip-to-item — the shuffle mapping stays our problem, not theirs.
+    std::vector<int> order;
+    int pos;
+    const std::vector<int>& shuffled = q.getShuffleOrder();
+    if (q.isShuffleEnabled() && shuffled.size() == tracks.size()) {
+        order = shuffled;
+        pos = q.getShufflePosition();
+    } else {
+        order.resize(tracks.size());
+        for (size_t i = 0; i < order.size(); i++) order[i] = (int)i;
+        pos = q.getCurrentIndex();
+    }
+    if (pos < 0 || pos >= (int)order.size()) pos = 0;
+
+    // The list crosses a Binder transaction, so a thousand-track queue can't go
+    // over whole. Send a window around the current track: enough to scroll
+    // through in Android Auto, small enough to fit.
+    constexpr int kWindow = 200, kBefore = 25;
+    int first = pos > kBefore ? pos - kBefore : 0;
+    int last = first + kWindow;
+    if (last > (int)order.size()) {
+        last = (int)order.size();
+        first = last > kWindow ? last - kWindow : 0;
+    }
+
+    // Fingerprint first, build second: this runs on the per-second timers, and
+    // hashing a few hundred rating keys is far cheaper than composing the same
+    // number of thumbnail URLs for a queue that hasn't moved.
+    const int64_t activeId = order[pos];
+    uint64_t sig = 14695981039346656037ULL;
+    for (int i = first; i < last; i++) hashMix(sig, tracks[(size_t)order[i]].ratingKey);
+    hashMix(sig, (long long)activeId);
+    if (sig == 0) sig = 1;   // 0 means "nothing published"
+    if (sig == m_lastQueueSig) return;
+    m_lastQueueSig = sig;
+
+    PlexClient& plex = PlexClient::getInstance();
+    std::vector<nowplaying::QueueEntry> entries;
+    entries.reserve((size_t)(last - first));
+    for (int i = first; i < last; i++) {
+        const QueueItem& t = tracks[(size_t)order[i]];
+        nowplaying::QueueEntry e;
+        e.id = order[i];
+        e.mediaId = "track/" + t.ratingKey;   // matches the browse tree's ids
+        e.title = t.title;
+        e.artist = t.artist;
+        if (!t.thumb.empty()) e.artUrl = plex.getThumbnailUrl(t.thumb, 256, 256);
+        entries.push_back(std::move(e));
+    }
+    nowplaying::setQueue(entries, activeId);
+}
+
 void MusicController::stopSession() {
     stopPolling();
     nowplaying::clear();
+    m_lastQueueSig = 0;   // clear() drops the session's queue with everything else
     m_sessionActive = false;
 }
 
 void MusicController::syncSessionState() {
     if (!m_sessionActive) return;
+    // Catch queue edits (reorder, add, remove) that don't go through a publish:
+    // cheap, since it fingerprints the window and returns when nothing moved.
+    publishQueue();
     MpvPlayer& p = MpvPlayer::getInstance();
     if (!p.isInitialized()) return;
     // Only react to a settled play/pause that disagrees with the last publish;
@@ -257,6 +344,17 @@ void MusicController::previous() {
         loadCurrentHeadless();
         publishNowPlaying(1);
     }
+}
+
+void MusicController::playQueueIndex(int index) {
+    MusicQueue& q = MusicQueue::getInstance();
+    if (index < 0 || index >= q.getQueueSize()) return;
+    // Picking the row that's already playing means "resume it", not "reload it".
+    if (index == q.getCurrentIndex()) { playPause(true); return; }
+    if (m_hasForeground && m_fg.onPlayIndex) { m_fg.onPlayIndex(index); return; }
+    if (!q.playTrack(index)) return;
+    loadCurrentHeadless();
+    publishNowPlaying(1);
 }
 
 void MusicController::seekToMs(long long ms) {

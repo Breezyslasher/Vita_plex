@@ -25,18 +25,21 @@ std::function<void(Transport)> g_onTransport;
 std::function<void(int64_t)> g_onSeek;
 std::function<void(RepeatMode)> g_onSetRepeat;
 std::function<void(bool)> g_onSetShuffle;
+std::function<void(int64_t)> g_onSkipToQueueItem;
 
 } // namespace
 
 void setHandler(std::function<void(Transport)> onTransport,
                 std::function<void(int64_t)> onSeekMs,
                 std::function<void(RepeatMode)> onSetRepeat,
-                std::function<void(bool)> onSetShuffle) {
+                std::function<void(bool)> onSetShuffle,
+                std::function<void(int64_t)> onSkipToQueueItem) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_onTransport = std::move(onTransport);
     g_onSeek = std::move(onSeekMs);
     g_onSetRepeat = std::move(onSetRepeat);
     g_onSetShuffle = std::move(onSetShuffle);
+    g_onSkipToQueueItem = std::move(onSkipToQueueItem);
 }
 
 void clearHandler() {
@@ -45,6 +48,7 @@ void clearHandler() {
     g_onSeek = nullptr;
     g_onSetRepeat = nullptr;
     g_onSetShuffle = nullptr;
+    g_onSkipToQueueItem = nullptr;
 }
 
 void dispatchTransport(Transport t) {
@@ -81,6 +85,15 @@ void dispatchSetShuffle(bool on) {
         fn = g_onSetShuffle;
     }
     if (fn) fn(on);
+}
+
+void dispatchSkipToQueueItem(int64_t id) {
+    std::function<void(int64_t)> fn;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        fn = g_onSkipToQueueItem;
+    }
+    if (fn) fn(id);
 }
 
 #ifdef __ANDROID__
@@ -131,6 +144,76 @@ void update(const Info& info) {
     env->DeleteLocalRef(cls);
 }
 
+void setQueue(const std::vector<QueueEntry>& items, int64_t activeId) {
+    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
+    if (!env) return;
+
+    jclass cls = env->FindClass("org/VitaPlex/app/MediaNotification");
+    if (!cls) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return;
+    }
+    jmethodID mid = env->GetStaticMethodID(
+        cls, "setQueue",
+        "([J[Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;[Ljava/lang/String;J)V");
+    if (!mid) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(cls);
+        return;
+    }
+
+    jclass strCls = env->FindClass("java/lang/String");
+    const jsize n = (jsize)items.size();
+    jlongArray jIds = env->NewLongArray(n);
+    jobjectArray jMediaIds = env->NewObjectArray(n, strCls, nullptr);
+    jobjectArray jTitles = env->NewObjectArray(n, strCls, nullptr);
+    jobjectArray jArtists = env->NewObjectArray(n, strCls, nullptr);
+    jobjectArray jArts = env->NewObjectArray(n, strCls, nullptr);
+    if (!jIds || !jMediaIds || !jTitles || !jArtists || !jArts) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        env->DeleteLocalRef(strCls);
+        env->DeleteLocalRef(cls);
+        return;
+    }
+
+    // Each string is released as soon as it's stored: a few hundred live local
+    // refs would blow the default JNI local-reference table.
+    std::vector<jlong> ids((size_t)n);
+    for (jsize i = 0; i < n; i++) {
+        const QueueEntry& e = items[(size_t)i];
+        ids[(size_t)i] = (jlong)e.id;
+        jstring s;
+        s = env->NewStringUTF(e.mediaId.c_str());
+        env->SetObjectArrayElement(jMediaIds, i, s);
+        env->DeleteLocalRef(s);
+        s = env->NewStringUTF(e.title.c_str());
+        env->SetObjectArrayElement(jTitles, i, s);
+        env->DeleteLocalRef(s);
+        s = env->NewStringUTF(e.artist.c_str());
+        env->SetObjectArrayElement(jArtists, i, s);
+        env->DeleteLocalRef(s);
+        s = env->NewStringUTF(e.artUrl.c_str());
+        env->SetObjectArrayElement(jArts, i, s);
+        env->DeleteLocalRef(s);
+    }
+    if (n > 0) env->SetLongArrayRegion(jIds, 0, n, ids.data());
+
+    env->CallStaticVoidMethod(cls, mid, jIds, jMediaIds, jTitles, jArtists, jArts,
+                              (jlong)activeId);
+    if (env->ExceptionCheck()) {
+        env->ExceptionDescribe();
+        env->ExceptionClear();
+    }
+
+    env->DeleteLocalRef(jArts);
+    env->DeleteLocalRef(jArtists);
+    env->DeleteLocalRef(jTitles);
+    env->DeleteLocalRef(jMediaIds);
+    env->DeleteLocalRef(jIds);
+    env->DeleteLocalRef(strCls);
+    env->DeleteLocalRef(cls);
+}
+
 void clear() {
     JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
     if (!env) return;
@@ -157,6 +240,7 @@ void mprisClear();
 }
 void update(const Info& info) { detail::mprisUpdate(info); }
 void clear() { detail::mprisClear(); }
+void setQueue(const std::vector<QueueEntry>&, int64_t) {}
 
 #elif defined(VITAPLEX_SMTC)  // ---- Windows desktop: System Media Transport Controls ----
 
@@ -167,11 +251,13 @@ void smtcClear();
 }
 void update(const Info& info) { detail::smtcUpdate(info); }
 void clear() { detail::smtcClear(); }
+void setQueue(const std::vector<QueueEntry>&, int64_t) {}
 
 #else  // ---- other platforms: no OS media session ----
 
 void update(const Info&) {}
 void clear() {}
+void setQueue(const std::vector<QueueEntry>&, int64_t) {}
 
 #endif
 
@@ -236,6 +322,15 @@ extern "C" JNIEXPORT void JNICALL
 Java_org_VitaPlex_app_MediaNotification_nativeSetShuffle(JNIEnv*, jclass, jboolean on) {
     brls::sync([on]() {
         vitaplex::nowplaying::dispatchSetShuffle(on == JNI_TRUE);
+    });
+}
+
+// Java -> native: a row was picked out of the published queue. The id is the
+// QueueEntry id we sent — VitaPlex's absolute queue index.
+extern "C" JNIEXPORT void JNICALL
+Java_org_VitaPlex_app_MediaNotification_nativeSkipToQueueItem(JNIEnv*, jclass, jlong id) {
+    brls::sync([id]() {
+        vitaplex::nowplaying::dispatchSkipToQueueItem((int64_t)id);
     });
 }
 #endif

@@ -145,7 +145,8 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
         [activity]() { activity->playPrevious(); },
         [activity](const QueueItem* nextTrack) { activity->onTrackEnded(nextTrack); },
         [activity](bool on) { activity->setShuffleFromOs(on); },
-        [activity](RepeatMode m) { activity->setRepeatFromOs(m); }
+        [activity](RepeatMode m) { activity->setRepeatFromOs(m); },
+        [activity](int index) { activity->playFromQueue(index); }
     });
 
     brls::Logger::info("PlayerActivity created with queue of {} tracks, starting at {} (server={})",
@@ -167,7 +168,8 @@ PlayerActivity* PlayerActivity::createResumeQueue() {
         [activity]() { activity->playPrevious(); },
         [activity](const QueueItem* nextTrack) { activity->onTrackEnded(nextTrack); },
         [activity](bool on) { activity->setShuffleFromOs(on); },
-        [activity](RepeatMode m) { activity->setRepeatFromOs(m); }
+        [activity](RepeatMode m) { activity->setRepeatFromOs(m); },
+        [activity](int index) { activity->playFromQueue(index); }
     });
 
     brls::Logger::info("PlayerActivity resumed existing queue at index {}", queue.getCurrentIndex());
@@ -4730,8 +4732,10 @@ void PlayerActivity::playFromQueue(int index) {
 
     MusicQueue& queue = MusicQueue::getInstance();
     if (queue.playTrack(index)) {
-        // Hide queue overlay first (safe - just changes visibility)
-        hideQueueOverlay();
+        // Hide queue overlay first (safe - just changes visibility). Only when
+        // it's actually up: this also runs for a row picked in the OS up-next
+        // list, and hideQueueOverlay() moves focus.
+        if (m_queueOverlayVisible) hideQueueOverlay();
 
         // Stop current playback
         MpvPlayer::getInstance().stop();

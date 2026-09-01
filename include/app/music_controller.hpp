@@ -23,6 +23,7 @@
 #pragma once
 
 #include <borealis.hpp>
+#include <cstdint>
 #include <functional>
 
 #include "app/music_queue.hpp"
@@ -41,6 +42,7 @@ public:
         std::function<void(const QueueItem*)> onTrackEnded; // auto-advance handler
         std::function<void(bool)> onSetShuffle;             // server-aware shuffle + icon refresh
         std::function<void(RepeatMode)> onSetRepeat;        // set repeat + icon refresh
+        std::function<void(int)> onPlayIndex;               // jump to a queue row (rich UI load)
     };
 
     // Called by PlayerActivity on create (attach) and on destroy / background
@@ -74,6 +76,9 @@ public:
     void seekToMs(long long ms);
     void seekRelativeMs(long long deltaMs);   // fast-forward / rewind keys
     void stopPlayback();                       // Stop key: halt mpv + clear session
+    // Jump straight to a row of the published queue (absolute queue index), as
+    // picked in the OS up-next list.
+    void playQueueIndex(int index);
 
     // Repeat / shuffle from the OS controls. set* take an explicit target (SMTC /
     // MPRIS); cycle/toggle advance from the current state (Android custom actions).
@@ -92,6 +97,7 @@ private:
     void registerOsHandler();       // (re)claim the nowplaying transport handler
     void handleTrackEnded(const QueueItem* nextTrack);
     bool loadCurrentHeadless();     // minimal URL resolve + mpv loadUrl (no UI)
+    void publishQueue();            // push the queue window to the OS, if changed
     void startPolling();
     void stopPolling();
 
@@ -101,6 +107,9 @@ private:
     bool m_endHandled = false;
     bool m_sessionActive = false;        // a session/notification is currently up
     bool m_lastPublishedPlaying = false; // play flag of the most recent publish
+    // Fingerprint of the last queue window sent to the OS. publishNowPlaying()
+    // runs every second; without this the whole list would cross JNI each time.
+    uint64_t m_lastQueueSig = 0;
     ForegroundHooks m_fg;
     brls::RepeatingTimer m_pollTimer;  // headless end-of-track watcher
 };
