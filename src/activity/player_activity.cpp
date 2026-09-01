@@ -15,6 +15,7 @@
 #include "utils/async.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/http_client.hpp"
+#include "utils/media_keys.hpp"
 #include "utils/pip.h"
 #include "view/video_view.hpp"
 #include "platform/platform.hpp"
@@ -825,23 +826,41 @@ void PlayerActivity::onContentAvailable() {
     m_focusWiringDone = true;
     syncHiddenFocus();
 
-    // Space toggles playback. It goes through the raw keyboard event rather
+    // Space and the media keys. These go through the raw keyboard event rather
     // than registerAction because borealis' action system is keyed on
-    // ControllerButton, and Space has no gamepad equivalent to bind to.
+    // ControllerButton and neither has a gamepad equivalent to bind to. The
+    // media codes are synthetic — see include/utils/media_keys.hpp.
     m_inputManager = brls::Application::getPlatform()
                          ? brls::Application::getPlatform()->getInputManager() : nullptr;
     if (m_inputManager) {
         m_kbSub = m_inputManager->getKeyboardKeyStateChanged()->subscribe(
             [this](brls::KeyState ks) {
                 if (!ks.pressed || m_destroying) return;
-                if (ks.key != brls::BRLS_KBD_KEY_SPACE) return;
+                const int k = (int)ks.key;
+                if (k != brls::BRLS_KBD_KEY_SPACE &&
+                    k != mediakey::PLAY_PAUSE && k != mediakey::STOP &&
+                    k != mediakey::NEXT && k != mediakey::PREV) return;
                 // Only when this player is the activity on top: the event is
                 // global, and a Space typed into a search field elsewhere must
                 // not reach playback.
                 const auto stack = brls::Application::getActivitiesStack();
                 if (stack.empty() || stack.back() != this) return;
                 resetControlsIdleTimer();
-                togglePlayPause();
+
+                if (k == mediakey::NEXT || k == mediakey::PREV) {
+                    // Skip tracks in a music queue, where that is what the key
+                    // means; in a video there is nothing to skip to, so fall
+                    // back to a seek of the configured interval.
+                    const bool fwd = (k == mediakey::NEXT);
+                    if (m_isQueueMode) {
+                        fwd ? playNext() : playPrevious();
+                    } else {
+                        int interval = Application::getInstance().getSettings().seekInterval;
+                        seek(fwd ? interval : -interval);
+                    }
+                    return;
+                }
+                togglePlayPause();   // Space, Play/Pause, and Stop
             });
         m_kbSubscribed = true;
     }
