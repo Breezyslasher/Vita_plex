@@ -10,6 +10,9 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.media.AudioAttributes;
+import android.media.AudioFocusRequest;
+import android.media.AudioManager;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.os.Build;
@@ -83,6 +86,12 @@ public final class MediaNotification {
     private static boolean sChannelCreated;
     private static BroadcastReceiver sReceiver;
     private static boolean sServiceStarted;   // MusicService is foregrounding us
+    // Audio focus. Without holding it Android never asks us to stop, so starting
+    // a video or a podcast elsewhere left both playing over each other.
+    private static Object  sFocusRequest;        // AudioFocusRequest on O+, unused below
+    private static boolean sHasFocus;
+    private static boolean sPausedByFocusLoss;   // only resume what focus loss paused
+
     private static PowerManager.WakeLock sWakeLock;   // held only while playing
     private static WifiManager.WifiLock sWifiLock;    // held only while playing
 
@@ -145,6 +154,7 @@ public final class MediaNotification {
             @Override public void run() {
                 try {
                     releaseLocks();  // never leave the CPU/Wi-Fi held after playback ends
+                    abandonAudioFocus();
                     Context ctx = VitaPlexActivity.getAppContext();
                     if (ctx != null) {
                         stopService(ctx);  // drop the foreground service first
@@ -237,6 +247,7 @@ public final class MediaNotification {
         sSession.setActive(true);
 
         updateLocks(ctx, sPlaying);
+        updateAudioFocus(ctx, sPlaying);
         postNotification(ctx);
     }
 
@@ -274,6 +285,97 @@ public final class MediaNotification {
         } catch (Throwable t) {
             Log.w(TAG, "updateLocks failed", t);
         }
+    }
+
+    private static final AudioManager.OnAudioFocusChangeListener sFocusListener =
+        new AudioManager.OnAudioFocusChangeListener() {
+            @Override public void onAudioFocusChange(int change) {
+                switch (change) {
+                    case AudioManager.AUDIOFOCUS_LOSS:
+                        // Taken for good — stop and let go. Not a candidate for
+                        // resume: whatever took over is staying.
+                        sPausedByFocusLoss = false;
+                        if (sPlaying) send(CODE_PAUSE);
+                        abandonAudioFocus();
+                        break;
+                    case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT:
+                    case AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK:
+                        // A call, or a navigation prompt. Pause rather than duck:
+                        // this is music being listened to, not a background bed.
+                        if (sPlaying) {
+                            sPausedByFocusLoss = true;
+                            send(CODE_PAUSE);
+                        }
+                        break;
+                    case AudioManager.AUDIOFOCUS_GAIN:
+                        if (sPausedByFocusLoss) {
+                            sPausedByFocusLoss = false;
+                            send(CODE_PLAY);
+                        }
+                        break;
+                    default:
+                        break;
+                }
+            }
+        };
+
+    private static void updateAudioFocus(Context ctx, boolean playing) {
+        try {
+            if (playing) {
+                requestAudioFocus(ctx);
+            } else if (!sPausedByFocusLoss) {
+                // Keep focus while a transient loss is what paused us, or the
+                // GAIN that would resume playback never arrives.
+                abandonAudioFocus(ctx);
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "audio focus update failed", t);
+        }
+    }
+
+    private static void requestAudioFocus(Context ctx) {
+        if (sHasFocus || ctx == null) return;
+        AudioManager am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+        if (am == null) return;
+        int res;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            AudioFocusRequest req = new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                .setAudioAttributes(new AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build())
+                .setOnAudioFocusChangeListener(sFocusListener, sMain)
+                .build();
+            sFocusRequest = req;
+            res = am.requestAudioFocus(req);
+        } else {
+            res = am.requestAudioFocus(sFocusListener, AudioManager.STREAM_MUSIC,
+                                       AudioManager.AUDIOFOCUS_GAIN);
+        }
+        sHasFocus = (res == AudioManager.AUDIOFOCUS_REQUEST_GRANTED);
+        if (!sHasFocus) Log.w(TAG, "audio focus denied (" + res + ")");
+    }
+
+    private static void abandonAudioFocus() {
+        abandonAudioFocus(VitaPlexActivity.getAppContext());
+    }
+
+    private static void abandonAudioFocus(Context ctx) {
+        if (!sHasFocus || ctx == null) return;
+        try {
+            AudioManager am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+            if (am != null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    && sFocusRequest instanceof AudioFocusRequest) {
+                    am.abandonAudioFocusRequest((AudioFocusRequest) sFocusRequest);
+                } else {
+                    am.abandonAudioFocus(sFocusListener);
+                }
+            }
+        } catch (Throwable ignore) {}
+        sFocusRequest = null;
+        sHasFocus = false;
+        sPausedByFocusLoss = false;
     }
 
     private static void releaseLocks() {
