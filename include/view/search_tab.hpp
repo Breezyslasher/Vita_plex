@@ -28,9 +28,8 @@ public:
     // layouts; everything else keeps the desktop/TV two-column form, whose
     // 300px keyboard column is unusable at phone width.
     enum class Layout {
-        TwoColumn,   // desktop / TV: keyboard beside the results
-        NativeIme,   // phone A: no on-screen keyboard, tap the field for the system one
-        OnScreen,    // phone B: grid keyboard docked along the bottom
+        TwoColumn,   // desktop / TV: on-screen keyboard beside the results
+        NativeIme,   // phone: tap the field, the platform keyboard comes up
     };
 
 private:
@@ -42,17 +41,11 @@ private:
     static Layout resolveLayout();
     static bool   isPhoneSized();
 
-    // Build the whole tab for `m_layout`. Split out of the constructor so the
-    // A/B switch can tear down and re-run it without a relaunch.
+    // Build the whole tab for `m_layout`.
     void buildLayout();
     void buildTwoColumn();
     void buildMobile();
-    // `dock` true puts the keyboard in a bottom bar sized for touch, false
-    // builds the narrow desktop column.
-    void buildKeyboard(brls::Box* parent, bool dock = false);
-    // Swap between the two mobile layouts for this session only — the FAB in A
-    // and "Hide" in B. Does not write the setting.
-    void switchMobileLayout(Layout to);
+    void buildKeyboard(brls::Box* parent);
     // Bring up the keyboard for the query. On Android this starts SDL text
     // input directly, so the platform keyboard appears with no borealis dialog
     // and characters land in the tab's own field; elsewhere it falls back to

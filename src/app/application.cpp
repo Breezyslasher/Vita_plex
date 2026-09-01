@@ -495,11 +495,6 @@ bool Application::loadSettings() {
     }
 
     // Network settings
-    {
-        int sml = extractInt("searchMobileLayout");
-        if (sml >= 0 && sml <= 2) m_settings.searchMobileLayout = sml;
-    }
-
     m_settings.connectionTimeout = extractInt("connectionTimeout");
     if (m_settings.connectionTimeout <= 0) m_settings.connectionTimeout = 180;
     m_settings.directPlay = extractBool("directPlay", false);
@@ -664,7 +659,6 @@ bool Application::saveSettings() {
     json += "  \"videoQuality\": " + std::to_string(static_cast<int>(m_settings.videoQuality)) + ",\n";
     json += "  \"forceTranscode\": " + b(m_settings.forceTranscode) + ",\n";
     json += "  \"maxBitrate\": " + std::to_string(m_settings.maxBitrate) + ",\n";
-    json += "  \"searchMobileLayout\": " + std::to_string(m_settings.searchMobileLayout) + ",\n";
     json += "  \"connectionTimeout\": " + std::to_string(m_settings.connectionTimeout) + ",\n";
     json += "  \"directPlay\": " + b(m_settings.directPlay) + ",\n";
     json += "  \"deleteAfterWatch\": " + b(m_settings.deleteAfterWatch) + ",\n";

@@ -42,13 +42,13 @@ namespace spal {
 namespace {
 
 // A keyboard key: focusable box (default gold highlight), gold ring on focus.
-brls::Box* makeKeyBox(int height, int radius = 6) {
+brls::Box* makeKeyBox(int height) {
     auto* key = new brls::Box();
     key->setHeight((float)height);
     key->setGrow(1.0f);                 // equal columns within the row
     key->setJustifyContent(brls::JustifyContent::CENTER);
     key->setAlignItems(brls::AlignItems::CENTER);
-    key->setCornerRadius((float)radius);
+    key->setCornerRadius(6);
     key->setBackgroundColor(spal::key());
     key->setBorderColor(spal::keyLine());
     key->setBorderThickness(1.0f);
@@ -56,22 +56,22 @@ brls::Box* makeKeyBox(int height, int radius = 6) {
     return key;
 }
 
-brls::Box* makeCharKey(const std::string& ch, bool dock = false) {
-    auto* key = makeKeyBox(dock ? 58 : 30, dock ? 11 : 6);
+brls::Box* makeCharKey(const std::string& ch) {
+    auto* key = makeKeyBox(30);
     auto* lbl = new brls::Label();
     lbl->setText(ch);
-    lbl->setFontSize(dock ? 22.0f : 14.0f);
+    lbl->setFontSize(14);
     lbl->setTextColor(spal::keyText());
     key->addView(lbl);
     return key;
 }
 
-brls::Box* makeSpecialKey(const std::string& iconRes, bool dock = false) {
-    auto* key = makeKeyBox(dock ? 58 : 34, dock ? 11 : 6);
+brls::Box* makeSpecialKey(const std::string& iconRes) {
+    auto* key = makeKeyBox(34);
     auto* icn = new brls::Image();
     icn->setImageFromRes(iconRes);
-    icn->setWidth(dock ? 24 : 16);
-    icn->setHeight(dock ? 24 : 16);
+    icn->setWidth(16);
+    icn->setHeight(16);
     icn->setScalingType(brls::ImageScalingType::FIT);
     key->addView(icn);
     return key;
@@ -148,15 +148,9 @@ bool SearchTab::isPhoneSized() {
 }
 
 SearchTab::Layout SearchTab::resolveLayout() {
-    const int setting = Application::getInstance().getSettings().searchMobileLayout;
-    if (setting == 1) return Layout::NativeIme;
-    if (setting == 2) return Layout::OnScreen;
-    // Auto: the phone gets the docked keyboard, everything else keeps today's
-    // layout. Not the system IME — borealis routes that to its own modal
-    // EditTextDialog rather than the platform keyboard (SDLImeManager::
-    // openForText builds one), so choosing it means typing into a popup that
-    // covers the results. The dock keeps input and results on the same screen.
-    return isPhoneSized() ? Layout::OnScreen : Layout::TwoColumn;
+    // Phones type with the platform keyboard; everything else keeps the
+    // two-column layout, whose 300px key column suits a pointer and a D-pad.
+    return isPhoneSized() ? Layout::NativeIme : Layout::TwoColumn;
 }
 
 SearchTab::SearchTab() {
@@ -214,23 +208,6 @@ void SearchTab::buildLayout() {
     if (!m_query.empty()) rebuildResults();
 }
 
-void SearchTab::switchMobileLayout(Layout to) {
-    if (to == m_layout) return;
-    endNativeTextInput();
-    m_layout = to;
-
-    // Park focus outside the subtree before deleting it. ~View() tries to clear
-    // the focus pointer with giveFocus(nullptr), but that call returns early on
-    // a null target and leaves it dangling — and the hints-update event fired
-    // while the new tree is built reads it. The sidebar is the nearest thing
-    // that outlives us; the rebuild takes focus back straight after.
-    if (brls::View* sidebar = this->getNearestView("brls/tab_frame/sidebar"))
-        brls::Application::giveFocus(sidebar);
-
-    this->clearViews();
-    buildLayout();
-    brls::Application::giveFocus(this);
-}
 
 #if defined(ANDROID)
 // The SearchTab currently collecting native text input, and the SDL watch that
@@ -387,10 +364,8 @@ void SearchTab::buildTwoColumn() {
 }
 
 void SearchTab::buildMobile() {
-    const bool dock = (m_layout == Layout::OnScreen);
-
     // Stacked, not side-by-side: the full width goes to the field and results,
-    // and the keyboard (layout B only) takes a bottom dock instead of a column.
+    // and typing happens on the platform keyboard rather than a key column.
     this->setAxis(brls::Axis::COLUMN);
     this->setAlignItems(brls::AlignItems::STRETCH);
 
@@ -412,11 +387,8 @@ void SearchTab::buildMobile() {
     field->setBorderColor(spal::fldLine());
     field->setBorderThickness(1.0f);
     field->setPadding(0, 12, 0, 14);
-    // Only a control in layout A, where tapping it is the only way to type. In
-    // B the docked grid is the input method, so the field is a readout — making
-    // it activatable there just puts borealis' modal EditTextDialog on top of a
-    // keyboard that is already on screen.
-    field->setFocusable(!dock);
+    // Tapping the field is how you type: it raises the platform keyboard.
+    field->setFocusable(true);
     field->setHighlightCornerRadius(12);
 
     auto* fieldIcon = new brls::Image();
@@ -464,10 +436,8 @@ void SearchTab::buildMobile() {
     m_clearButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_clearButton));
     field->addView(m_clearButton);
 
-    if (!dock) {
-        field->registerClickAction([this](brls::View*) { openIme(); return true; });
-        field->addGestureRecognizer(new brls::TapGestureRecognizer(field));
-    }
+    field->registerClickAction([this](brls::View*) { openIme(); return true; });
+    field->addGestureRecognizer(new brls::TapGestureRecognizer(field));
 
     topBar->addView(field);
     this->addView(topBar);
@@ -480,101 +450,24 @@ void SearchTab::buildMobile() {
     m_resultsContent = new brls::Box();
     m_resultsContent->setAxis(brls::Axis::COLUMN);
     m_resultsContent->setAlignItems(brls::AlignItems::STRETCH);
-    m_resultsContent->setPadding(4, 0, dock ? 8 : 76, 0);
+    m_resultsContent->setPadding(4, 0, 8, 0);
 
     m_resultsScroll->setContentView(m_resultsContent);
     this->addView(m_resultsScroll);
-
-    if (dock) {
-        // ---------------- B: keyboard docked along the bottom ----------------
-        auto* dockBox = new brls::Box();
-        dockBox->setAxis(brls::Axis::COLUMN);
-        dockBox->setAlignItems(brls::AlignItems::STRETCH);
-        dockBox->setBackgroundColor(nvgRGB(0x21, 0x21, 0x24));
-        dockBox->setLineColor(nvgRGB(0x31, 0x31, 0x38));
-        dockBox->setLineTop(1.0f);
-        dockBox->setPadding(10, 10, 10, 10);
-
-        auto* dockHead = new brls::Box();
-        dockHead->setAxis(brls::Axis::ROW);
-        dockHead->setAlignItems(brls::AlignItems::CENTER);
-        dockHead->setMarginBottom(8);
-
-        auto* dockTitle = new brls::Label();
-        dockTitle->setText("ON-SCREEN KEYBOARD");
-        dockTitle->setFontSize(11);
-        dockTitle->setTextColor(spal::muted());
-        dockHead->addView(dockTitle);
-
-        auto* headGap = new brls::Box();
-        headGap->setGrow(1.0f);
-        dockHead->addView(headGap);
-
-        auto* hide = new brls::Box();
-        hide->setAxis(brls::Axis::ROW);
-        hide->setAlignItems(brls::AlignItems::CENTER);
-        hide->setHeight(26);
-        hide->setPadding(0, 8, 0, 8);
-        hide->setCornerRadius(7);
-        hide->setFocusable(true);
-        hide->setHighlightCornerRadius(7);
-        auto* hideLbl = new brls::Label();
-        hideLbl->setText("Hide");
-        hideLbl->setFontSize(13);
-        hideLbl->setTextColor(spal::amber());
-        hide->addView(hideLbl);
-        hide->registerClickAction([this](brls::View*) {
-            switchMobileLayout(Layout::NativeIme);
-            return true;
-        });
-        hide->addGestureRecognizer(new brls::TapGestureRecognizer(hide));
-        dockHead->addView(hide);
-
-        dockBox->addView(dockHead);
-        buildKeyboard(dockBox, /*dock=*/true);
-        this->addView(dockBox);
-    } else {
-        // ---------------- A: FAB back to the on-screen keyboard ----------------
-        // Absolute so it floats over the results rather than reserving a row;
-        // the results already carry bottom padding to clear it.
-        auto* fab = new brls::Box();
-        fab->setPositionType(brls::PositionType::ABSOLUTE);
-        fab->setPositionBottom(16);
-        fab->setPositionRight(16);
-        fab->setWidth(52);
-        fab->setHeight(52);
-        fab->setCornerRadius(16);
-        fab->setBackgroundColor(spal::amber());
-        fab->setJustifyContent(brls::JustifyContent::CENTER);
-        fab->setAlignItems(brls::AlignItems::CENTER);
-        fab->setFocusable(true);
-        fab->setHighlightCornerRadius(16);
-        auto* fabIcon = new brls::Image();
-        fabIcon->setImageFromRes("icons/keyboard-space.png");
-        fabIcon->setWidth(24);
-        fabIcon->setHeight(24);
-        fab->addView(fabIcon);
-        fab->registerClickAction([this](brls::View*) {
-            switchMobileLayout(Layout::OnScreen);
-            return true;
-        });
-        fab->addGestureRecognizer(new brls::TapGestureRecognizer(fab));
-        this->addView(fab);
-    }
 }
 
-void SearchTab::buildKeyboard(brls::Box* parent, bool dock) {
+void SearchTab::buildKeyboard(brls::Box* parent) {
     auto* kb = new brls::Box();
     kb->setAxis(brls::Axis::COLUMN);
     kb->setAlignItems(brls::AlignItems::STRETCH);   // rows fill the column width
-    kb->setMarginTop(dock ? 0.0f : 14.0f);
+    kb->setMarginTop(14);
 
     std::vector<std::vector<brls::Box*>> grid;   // [row][col] for nav wiring
 
     // Special row: Clear, Backspace, Space, Search.
     auto* sprow = new brls::Box();
     sprow->setAxis(brls::Axis::ROW);
-    sprow->setMarginBottom(dock ? 9.0f : 7.0f);
+    sprow->setMarginBottom(7);
     std::vector<brls::Box*> srowKeys;
     struct Spec { const char* icon; int act; };           // 0 clear,1 bksp,2 space,3 search
     const Spec specials[4] = {
@@ -584,8 +477,8 @@ void SearchTab::buildKeyboard(brls::Box* parent, bool dock) {
         {"icons/magnify.png",           3},
     };
     for (int i = 0; i < 4; i++) {
-        auto* key = makeSpecialKey(specials[i].icon, dock);
-        if (i > 0) key->setMarginLeft(dock ? 8.0f : 6.0f);
+        auto* key = makeSpecialKey(specials[i].icon);
+        if (i > 0) key->setMarginLeft(6);
         int act = specials[i].act;
         key->registerClickAction([this, act](brls::View*) {
             if (act == 0)      clearQuery();
@@ -616,7 +509,7 @@ void SearchTab::buildKeyboard(brls::Box* parent, bool dock) {
         const int n = (int)strlen(rows[r]);
         auto* crow = new brls::Box();
         crow->setAxis(brls::Axis::ROW);
-        if (r < 3) crow->setMarginBottom(dock ? 9.0f : 7.0f);
+        if (r < 3) crow->setMarginBottom(7);
 
         // Spacers carry the leftover columns, split evenly either side.
         const float pad = (float)(kCols - n) / 2.0f;
@@ -631,8 +524,8 @@ void SearchTab::buildKeyboard(brls::Box* parent, bool dock) {
         std::vector<brls::Box*> rowKeys;
         for (int c = 0; c < n; c++) {
             std::string ch(1, rows[r][c]);
-            auto* key = makeCharKey(ch, dock);
-            if (c > 0) key->setMarginLeft(dock ? 8.0f : 6.0f);
+            auto* key = makeCharKey(ch);
+            if (c > 0) key->setMarginLeft(6);
             key->registerClickAction([this, ch](brls::View*) { appendChar(ch); return true; });
             key->addGestureRecognizer(new brls::TapGestureRecognizer(key));
             crow->addView(key);
@@ -817,33 +710,28 @@ void SearchTab::addSection(const std::string& title, const std::vector<MediaItem
 // stills aren't cropped into a portrait frame. Episodes get a larger 16:9 card;
 // movies/shows portrait, albums/tracks/artists square.
 //
-// Phone cards are sized so roughly two and a half fit across a handset — enough
-// that the artwork reads instead of being a strip of thumbnails, and tall
-// enough that about three sections fill the screen. B runs a little smaller
-// than A because its keyboard dock takes the bottom. Thumb requests stay at 2x
-// the drawn size.
+// Phone cards are sized so roughly two fit across a handset — enough that the
+// artwork reads instead of being a strip of thumbnails, and tall enough that
+// about three sections fill the screen. Thumb requests stay at 2x the drawn
+// size.
 //
 // Shared with addSection, which takes the row height from ph; the two must not
 // drift or the cards get clipped by their own row.
 SearchTab::CardMetrics SearchTab::cardMetrics(MediaType type, Layout layout) {
-    const bool phoneA = (layout == Layout::NativeIme);
-    const bool phoneB = (layout == Layout::OnScreen);
+    const bool phone = (layout != Layout::TwoColumn);
     CardMetrics m { 96, 140, 192, 280 };           // portrait default (movies / shows)
-    if (phoneA)      m = { 180, 270, 360, 540 };
-    else if (phoneB) m = { 168, 252, 336, 504 };
+    if (phone) m = { 180, 270, 360, 540 };
     switch (type) {
         case MediaType::EPISODE:
         case MediaType::CLIP:
             m = { 150, 84, 300, 168 };             // bigger 16:9 still
-            if (phoneA)      m = { 300, 169, 600, 338 };
-            else if (phoneB) m = { 280, 158, 560, 316 };
+            if (phone) m = { 300, 169, 600, 338 };
             break;
         case MediaType::MUSIC_ALBUM:
         case MediaType::MUSIC_TRACK:
         case MediaType::MUSIC_ARTIST:
             m = { 96, 96, 192, 192 };              // square cover
-            if (phoneA)      m = { 180, 180, 360, 360 };
-            else if (phoneB) m = { 168, 168, 336, 336 };
+            if (phone) m = { 180, 180, 360, 360 };
             break;
         default:
             break;
@@ -857,8 +745,7 @@ brls::Box* SearchTab::makeCard(const MediaItem& item) {
     card->setCornerRadius(6);
     card->setFocusable(true);
 
-    const bool phoneA = (m_layout == Layout::NativeIme);
-    const bool phoneB = (m_layout == Layout::OnScreen);
+    const bool phone = (m_layout != Layout::TwoColumn);
     const CardMetrics m = cardMetrics(item.mediaType, m_layout);
     const int cw = m.cw, ph = m.ph, rw = m.rw, rh = m.rh;
     card->setWidth((float)cw);
@@ -893,16 +780,16 @@ brls::Box* SearchTab::makeCard(const MediaItem& item) {
         badge->setPositionType(brls::PositionType::ABSOLUTE);
         badge->setPositionTop(5);
         badge->setPositionRight(5);
-        badge->setWidth((phoneA || phoneB) ? 20.0f : 18.0f);
-        badge->setHeight((phoneA || phoneB) ? 20.0f : 18.0f);
+        badge->setWidth(phone ? 20.0f : 18.0f);
+        badge->setHeight(phone ? 20.0f : 18.0f);
         badge->setCornerRadius(9);
         badge->setBackgroundColor(spal::amber());
         badge->setJustifyContent(brls::JustifyContent::CENTER);
         badge->setAlignItems(brls::AlignItems::CENTER);
         auto* chk = new brls::Image();
         chk->setImageFromRes("icons/search-check.png");
-        chk->setWidth((phoneA || phoneB) ? 12.0f : 11.0f);
-        chk->setHeight((phoneA || phoneB) ? 12.0f : 11.0f);
+        chk->setWidth(phone ? 12.0f : 11.0f);
+        chk->setHeight(phone ? 12.0f : 11.0f);
         chk->setScalingType(brls::ImageScalingType::FIT);
         badge->addView(chk);
         poster->addView(badge);
@@ -912,7 +799,7 @@ brls::Box* SearchTab::makeCard(const MediaItem& item) {
     // Title (single line, ellipsised).
     auto* cap = new brls::Label();
     cap->setText(cardTitle(item));
-    cap->setFontSize((phoneA || phoneB) ? 14.5f : 12.0f);
+    cap->setFontSize(phone ? 14.5f : 12.0f);
     cap->setTextColor(spal::cap());
     cap->setSingleLine(true);
     cap->setWidth((float)cw);
@@ -923,7 +810,7 @@ brls::Box* SearchTab::makeCard(const MediaItem& item) {
     if (!sub.empty()) {
         auto* s = new brls::Label();
         s->setText(sub);
-        s->setFontSize((phoneA || phoneB) ? 12.5f : 11.0f);
+        s->setFontSize(phone ? 12.5f : 11.0f);
         s->setTextColor(spal::muted());
         s->setSingleLine(true);
         s->setWidth((float)cw);
