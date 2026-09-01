@@ -197,6 +197,52 @@ bool supports4KDecode() {
     return ok;
 }
 
+void setPreferredRefreshRate(float contentFps) {
+    JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    if (!env) return;
+    jclass cls = env->FindClass("org/VitaPlex/app/VitaPlexActivity");
+    if (!cls) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return;
+    }
+    jmethodID mid = env->GetStaticMethodID(cls, "setPreferredRefreshRate", "(F)V");
+    if (mid) {
+        env->CallStaticVoidMethod(cls, mid, (jfloat)contentFps);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    } else if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(cls);
+}
+
+bool displaySupportsHdr() {
+    // Probed once: the panel can't change under us, and this runs from mpv init.
+    static const bool ok = []() -> bool {
+        JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+        if (!env) return false;
+        jclass cls = env->FindClass("org/VitaPlex/app/VitaPlexActivity");
+        if (!cls) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            return false;
+        }
+        jmethodID mid = env->GetStaticMethodID(cls, "displaySupportsHdr", "()Z");
+        if (!mid) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            env->DeleteLocalRef(cls);
+            return false;
+        }
+        jboolean res = env->CallStaticBooleanMethod(cls, mid);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            res = JNI_FALSE;
+        }
+        env->DeleteLocalRef(cls);
+        brls::Logger::info("Android display HDR: {}", res == JNI_TRUE ? "yes" : "no");
+        return res == JNI_TRUE;
+    }();
+    return ok;
+}
+
 bool init() {
     // Borealis on Android loads resources via fopen("resources/...") which
     // can't read APK assets directly, so extract them to internal storage

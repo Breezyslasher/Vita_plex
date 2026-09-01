@@ -155,6 +155,11 @@ bool supports4KDecode() {
     return true;
 }
 
+// The display mode is the OS/console's business on this port; VitaPlex neither
+// switches refresh rates nor sees HDR capabilities here, so both stay no-ops.
+void setPreferredRefreshRate(float) {}
+bool displaySupportsHdr() { return false; }
+
 bool init() {
     if (!::vitaplex::HttpClient::globalInit()) {
         brls::Logger::error("Failed to initialize curl");

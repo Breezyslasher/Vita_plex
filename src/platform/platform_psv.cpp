@@ -227,6 +227,11 @@ bool supports4KDecode() {
     return false;   // Vita panel is 960x544 and the decoder is H.264 level 4.0
 }
 
+// The display mode is the OS/console's business on this port; VitaPlex neither
+// switches refresh rates nor sees HDR capabilities here, so both stay no-ops.
+void setPreferredRefreshRate(float) {}
+bool displaySupportsHdr() { return false; }
+
 bool init() {
     if (!initVitaSystem()) {
         return false;

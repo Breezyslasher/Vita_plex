@@ -788,6 +788,10 @@ void PlayerActivity::onContentAvailable() {
         // the surface, not the window: the two can be a frame or two apart.
         reapplyIcons();
 
+        // mpv doesn't know the frame rate until it has parsed the container, so
+        // this waits for a reading rather than asking at load time.
+        applyContentRefreshRate();
+
         bool fg = brls::Application::isWindowForeground();
         if (m_isQueueMode && fg && !m_wasForeground && albumArt && !m_destroying) {
             const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
@@ -926,6 +930,13 @@ void PlayerActivity::willDisappear(bool resetState) {
         m_videoOsActive = false;
         nowplaying::clear();
         nowplaying::clearHandler();
+    }
+
+    // Hand the display back to the mode it was in. Leaving a 24Hz mode set
+    // would make the whole UI redraw at 24Hz once the player is gone.
+    if (m_refreshRateApplied) {
+        m_refreshRateApplied = false;
+        platform::setPreferredRefreshRate(0.0f);
     }
 
     // Re-enable background thumbnail loading now that playback is ending
@@ -1268,6 +1279,7 @@ void PlayerActivity::loadMedia() {
     m_osArtUrl.clear();
     m_osArtist.clear();
     m_osAlbum.clear();
+    m_refreshRateApplied = false;   // the next file gets its own rate
 
     // Handle direct file playback (debug/testing)
     if (m_isDirectFile) {
@@ -2309,6 +2321,31 @@ void PlayerActivity::setupVideoMediaSession() {
         });
 
     publishVideoNowPlaying();
+}
+
+void PlayerActivity::applyContentRefreshRate() {
+    if (m_refreshRateApplied || m_isQueueMode || m_isPhoto) return;
+
+    MpvPlayer& p = MpvPlayer::getInstance();
+    if (!p.isPlaying()) return;
+
+    // container-fps is what the file declares; estimated-vf-fps is measured and
+    // only settles after a few frames, so it is the fallback rather than the
+    // first choice.
+    double fps = 0.0;
+    try {
+        std::string v = p.getProperty("container-fps");
+        if (v.empty()) v = p.getProperty("estimated-vf-fps");
+        if (!v.empty()) fps = std::stod(v);
+    } catch (const std::exception&) {
+        return;   // unparseable: try again on the next tick
+    }
+    // Anything outside this is a still, a bad reading, or a variable-rate file
+    // there is no single right mode for.
+    if (!std::isfinite(fps) || fps < 10.0 || fps > 121.0) return;
+
+    m_refreshRateApplied = true;
+    platform::setPreferredRefreshRate((float)fps);
 }
 
 void PlayerActivity::publishVideoNowPlaying() {

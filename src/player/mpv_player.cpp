@@ -212,6 +212,25 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "ytdl", "no");  // Disable youtube-dl (like switchfin)
     mpv_set_option_string(m_mpv, "reset-on-next-file", "speed,pause");  // Reset state between files
 
+    // HDR. Every port renders HDR down to SDR — Android through vo=gpu, the
+    // rest through the libmpv FBO composite — so the tone-mapping curve is
+    // shared. Without an explicit one, an HDR source falls back to a flat clip
+    // and bright scenes come out grey; that is worst on Android, where
+    // profile=fast also turns off peak detection, but it is not Android-only.
+    // bt.2446a is the ITU curve for HDR->SDR and is a fixed analytic function,
+    // so it costs nothing extra on the weak SoCs profile=fast exists for. On
+    // Vita it is inert: that decoder never sees 10-bit HDR in the first place.
+    mpv_set_option_string(m_mpv, "tone-mapping", "bt.2446a");
+    // Passing HDR through instead of mapping it down needs the port to hand the
+    // display an HDR signal, which only the Android vo=gpu path can do today —
+    // the FBO composite the other ports share is 8-bit SDR, so the panel never
+    // sees HDR whatever it supports. displaySupportsHdr() is the per-platform
+    // capability query, so a port that later gains HDR output gets this by
+    // returning true rather than by editing here.
+    if (platform::displaySupportsHdr()) {
+        mpv_set_option_string(m_mpv, "target-colorspace-hint", "yes");
+    }
+
 #ifdef __SWITCH__
     // libmpv resolves its config / cache / watch-later / font directories from
     // $HOME / $XDG_* during mpv_initialize. On Switch (libnx) those env vars are

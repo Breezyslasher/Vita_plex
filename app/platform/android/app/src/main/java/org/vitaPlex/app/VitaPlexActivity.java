@@ -238,6 +238,101 @@ public class VitaPlexActivity extends SDLActivity
      * @return true if the PiP request was issued, false if unsupported or
      *         the system refused it.
      */
+    // ---- Display mode: match the panel's refresh rate to the content ----
+    //
+    // A 23.976fps film shown on a 60Hz panel is displayed with a 3:2 pulldown
+    // cadence: two frames get three refreshes and the next gets two, which is
+    // the judder you see on slow pans. Asking the window for a display mode
+    // whose refresh rate is a whole multiple of the content rate removes it.
+    //
+    // Only the refresh rate is changed — the mode must keep the current
+    // resolution, so this never downgrades a 4K panel to reach a nicer rate.
+
+    private static int sOriginalModeId = 0;   // 0 = never changed it
+
+    /**
+     * Called from native when a file's frame rate becomes known. Pass 0 to
+     * hand the display back to whatever mode it was in.
+     */
+    public static void setPreferredRefreshRate(final float contentFps) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;   // getSupportedModes is API 23
+        final Activity activity = (Activity) mSingleton;
+        if (activity == null) return;
+        activity.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try { applyRefreshRate(activity, contentFps); }
+                catch (Throwable t) { Log.w(TAG, "setPreferredRefreshRate failed", t); }
+            }
+        });
+    }
+
+    private static void applyRefreshRate(Activity activity, float contentFps) {
+        android.view.Display display = activity.getWindowManager().getDefaultDisplay();
+        if (display == null) return;
+        android.view.WindowManager.LayoutParams lp = activity.getWindow().getAttributes();
+
+        if (sOriginalModeId == 0) sOriginalModeId = display.getMode().getModeId();
+        if (contentFps <= 0f) {
+            if (lp.preferredDisplayModeId != sOriginalModeId) {
+                lp.preferredDisplayModeId = sOriginalModeId;
+                activity.getWindow().setAttributes(lp);
+                Log.i(TAG, "refresh rate: restored mode " + sOriginalModeId);
+            }
+            return;
+        }
+
+        android.view.Display.Mode current = display.getMode();
+        android.view.Display.Mode[] modes = display.getSupportedModes();
+        if (modes == null || modes.length < 2) return;   // nothing to switch to
+
+        // Score every mode at the current resolution by how close its refresh
+        // rate is to a whole multiple of the content rate, preferring the
+        // lowest multiple that fits so a 24fps film lands on 24 rather than 120.
+        android.view.Display.Mode best = null;
+        double bestError = Double.MAX_VALUE;
+        for (android.view.Display.Mode m : modes) {
+            if (m.getPhysicalWidth() != current.getPhysicalWidth()
+                || m.getPhysicalHeight() != current.getPhysicalHeight()) continue;
+            final double rate = m.getRefreshRate();
+            final long multiple = Math.round(rate / contentFps);
+            if (multiple < 1) continue;
+            // Relative error, so 23.976 vs 24.000 (0.1%) beats 50 vs 47.95 (4%).
+            double error = Math.abs(rate - contentFps * multiple) / rate;
+            if (error > 0.01) continue;              // more than 1% off is not a match
+            error += (multiple - 1) * 1e-4;          // tie-break toward the lowest multiple
+            if (error < bestError) { bestError = error; best = m; }
+        }
+        if (best == null) {
+            Log.i(TAG, "refresh rate: no mode matches " + contentFps + "fps");
+            return;
+        }
+        if (lp.preferredDisplayModeId == best.getModeId()) return;
+        lp.preferredDisplayModeId = best.getModeId();
+        activity.getWindow().setAttributes(lp);
+        Log.i(TAG, "refresh rate: " + contentFps + "fps -> " + best.getRefreshRate()
+                   + "Hz (mode " + best.getModeId() + ")");
+    }
+
+    /**
+     * Whether the display can show HDR at all. Called from native at mpv init
+     * to decide between passing HDR through and tone-mapping it down.
+     */
+    public static boolean displaySupportsHdr() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false;
+        try {
+            final Activity activity = (Activity) mSingleton;
+            if (activity == null) return false;
+            android.view.Display display = activity.getWindowManager().getDefaultDisplay();
+            if (display == null) return false;
+            android.view.Display.HdrCapabilities caps = display.getHdrCapabilities();
+            return caps != null && caps.getSupportedHdrTypes() != null
+                   && caps.getSupportedHdrTypes().length > 0;
+        } catch (Throwable t) {
+            Log.w(TAG, "displaySupportsHdr failed", t);
+            return false;
+        }
+    }
+
     public static boolean enterPiP(int aspectNum, int aspectDen) {
         final Activity activity = (Activity) mSingleton;
         if (activity == null) {

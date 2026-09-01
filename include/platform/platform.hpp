@@ -230,6 +230,21 @@ const VideoConstraints& getVideoConstraints();
 bool supports4KDecode();
 
 /**
+ * Ask the display for a mode whose refresh rate matches the content, so a
+ * 23.976fps film isn't shown with a 3:2 pulldown cadence on a 60Hz panel.
+ * Pass 0 to hand the display back to the mode it was in. Android only; a
+ * no-op everywhere else, where the port has no say over the display mode.
+ */
+void setPreferredRefreshRate(float contentFps);
+
+/**
+ * Whether the display can show HDR at all. Decides between passing HDR
+ * through and tone-mapping it down for an SDR panel. Android only; false
+ * elsewhere, which leaves those ports on their existing behaviour.
+ */
+bool displaySupportsHdr();
+
+/**
  * Bootstraps platform-specific subsystems before brls::Application::init().
  * Loads native modules, initializes networking / SSL / HTTP, sets clock
  * speeds, opens log files, etc. Returns false on a fatal failure.

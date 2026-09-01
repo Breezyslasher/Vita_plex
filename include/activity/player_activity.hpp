@@ -273,6 +273,11 @@ private:
     // Metadata for the OS media session while playing video. Music reads the
     // queue for this; video has no queue, so the details fetch stashes it here.
     // Only consumed on Android — the desktop MPRIS/SMTC publishes are unchanged.
+    // Display-mode matching: applied once per file, from the first frame rate
+    // mpv reports. Restored when the player leaves.
+    bool m_refreshRateApplied = false;
+    void applyContentRefreshRate();
+
     std::string m_osArtUrl;    // poster / episode still, already a full URL or file path
     std::string m_osArtist;    // show title for episodes, year for movies
     std::string m_osAlbum;     // "S2 - E4" for episodes, empty otherwise
