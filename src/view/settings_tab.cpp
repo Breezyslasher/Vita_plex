@@ -661,6 +661,22 @@ brls::Box* SettingsTab::createUISection() {
     AppSettings& settings = app.getSettings();
     brls::Box* box = makeSectionBox();
 
+    // Search layout on phones. Lives under Interface rather than a Search
+    // section of its own — it is a layout choice, and Search has no other
+    // settings to sit beside. Auto is the shipping behaviour; the two explicit
+    // values exist so the layouts can be compared on a device without a
+    // rebuild. Takes effect next time the Search tab is opened, which is every
+    // sidebar switch: TabFrame recreates a tab's view each time it is focused.
+    auto* searchLayout = makePickerCell("Search Keyboard",
+        {"Auto (phone: system keyboard)", "System keyboard", "On-screen keyboard"},
+        (settings.searchMobileLayout >= 0 && settings.searchMobileLayout <= 2)
+            ? settings.searchMobileLayout : 0,
+        [&settings](int index) {
+            settings.searchMobileLayout = index;
+            Application::getInstance().saveSettings();
+        });
+    box->addView(searchLayout);
+
     // Debug logging toggle
     m_debugLogToggle = new brls::BooleanCell();
     m_debugLogToggle->init("Debug Logging", settings.debugLogging, [&settings](bool value) {

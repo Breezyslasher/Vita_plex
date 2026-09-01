@@ -23,8 +23,36 @@ public:
     void onFocusGained() override;
     void willDisappear(bool resetState) override;
 
+public:
+    // Which shape the tab is built in. Phones get one of the two mobile
+    // layouts; everything else keeps the desktop/TV two-column form, whose
+    // 300px keyboard column is unusable at phone width.
+    enum class Layout {
+        TwoColumn,   // desktop / TV: keyboard beside the results
+        NativeIme,   // phone A: no on-screen keyboard, tap the field for the system one
+        OnScreen,    // phone B: grid keyboard docked along the bottom
+    };
+
 private:
-    void buildKeyboard(brls::Box* parent);
+    // Resolve the layout from the setting and the current screen. Re-read on
+    // rebuild so a rotation or a setting change lands.
+    static Layout resolveLayout();
+    static bool   isPhoneSized();
+
+    // Build the whole tab for `m_layout`. Split out of the constructor so the
+    // A/B switch can tear down and re-run it without a relaunch.
+    void buildLayout();
+    void buildTwoColumn();
+    void buildMobile();
+    // `dock` true puts the keyboard in a bottom bar sized for touch, false
+    // builds the narrow desktop column.
+    void buildKeyboard(brls::Box* parent, bool dock = false);
+    // Swap between the two mobile layouts for this session only — the FAB in A
+    // and "Hide" in B. Does not write the setting.
+    void switchMobileLayout(Layout to);
+    // Open the platform IME on the query. The callback returns the finished
+    // string, so results refresh on commit rather than per character.
+    void openIme();
 
     // Query editing (each mutation refreshes the field + live results).
     void appendChar(const std::string& c);
@@ -38,9 +66,13 @@ private:
     brls::Box* makeCard(const MediaItem& item);
     void onItemSelected(const MediaItem& item);
 
+    Layout m_layout = Layout::TwoColumn;
+
     // Left column
     brls::Label* m_queryLabel = nullptr;
     brls::Box*   m_keyboardFirstKey = nullptr;   // default focus target
+    // Clear affordance on the field; only shown once there is a query.
+    brls::Box*   m_clearButton = nullptr;
 
     // Right column
     brls::ScrollingFrame* m_resultsScroll = nullptr;

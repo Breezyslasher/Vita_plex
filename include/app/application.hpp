@@ -140,6 +140,14 @@ struct AppSettings {
     int maxBitrate = 0;         // 0 = use platform default bitrate
     bool forceTranscode = false;
 
+    // Search layout on phones. The desktop/TV two-column layout puts a 300px
+    // keyboard beside the results, which on a phone eats most of the width and
+    // leaves keys well under a touch target.
+    //   0 Auto        phone -> native IME, everything else -> two-column
+    //   1 Native IME  no on-screen keyboard; tapping the field opens the system one
+    //   2 On-screen   grid keyboard docked along the bottom
+    int searchMobileLayout = 0;
+
     // Network Settings
     int connectionTimeout = 180; // seconds (3 minutes for slow connections)
     bool directPlay = false;     // Try direct play first
