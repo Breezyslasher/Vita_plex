@@ -477,6 +477,21 @@ bool Application::loadSettings() {
         } else {
             m_settings.maxBitrate = vc.defaultBitrate;
         }
+        // A saved tier this device cannot decode has to be dropped, not merely
+        // hidden: the picker would show one thing while the transcode request
+        // carried another, and the stored bitrate would stay at the tier's.
+        // Reachable from a config written before a capability check tightened,
+        // or carried between devices.
+        auto offered = [](VideoQuality q) {
+            for (VideoQuality t : qualityLadder()) if (t == q) return true;
+            return false;
+        };
+        if (!offered(m_settings.videoQuality)) {
+            brls::Logger::info("Video quality {} unavailable here — falling back",
+                               getQualityString(m_settings.videoQuality));
+            m_settings.videoQuality = static_cast<VideoQuality>(vc.defaultVideoQualityIndex);
+            m_settings.maxBitrate   = vc.defaultBitrate;
+        }
     }
 
     // Network settings
@@ -488,7 +503,15 @@ bool Application::loadSettings() {
     m_settings.deleteAfterWatch = extractBool("deleteAfterWatch", false);
     {
         int dq = extractInt("downloadQuality");   // 0 (ORIGINAL) when absent
-        if (dq >= 0 && dq <= 5) m_settings.downloadQuality = static_cast<VideoQuality>(dq);
+        // Upper bound tracks the enum — 4K was appended as 6, and the old
+        // `<= 5` silently discarded it, leaving the picker on Original.
+        if (dq >= 0 && dq <= (int)VideoQuality::QUALITY_4K)
+            m_settings.downloadQuality = static_cast<VideoQuality>(dq);
+        // Same reasoning as videoQuality above: a tier this device cannot
+        // decode must not survive into the transcode request.
+        bool dqOffered = false;
+        for (VideoQuality t : qualityLadder()) if (t == m_settings.downloadQuality) dqOffered = true;
+        if (!dqOffered) m_settings.downloadQuality = VideoQuality::ORIGINAL;
     }
     m_settings.downloadKeepOriginalAudio = extractBool("downloadKeepOriginalAudio", false);
     m_settings.downloadIncludeSubtitles  = extractBool("downloadIncludeSubtitles", false);

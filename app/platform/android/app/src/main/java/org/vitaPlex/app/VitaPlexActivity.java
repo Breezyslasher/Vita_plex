@@ -101,10 +101,18 @@ public class VitaPlexActivity extends SDLActivity
     }
 
     /**
-     * Whether anything on this device can decode 2160p. Android spans TV boxes
-     * that handle 4K comfortably and budget phones that don't, so the 4K
-     * transcode tier is offered from the codec list rather than assumed from
-     * the platform. Called once from native (platform_android.cpp).
+     * Whether this device can decode 2160p in the codec we actually stream.
+     * Android spans TV boxes that handle 4K comfortably and budget phones that
+     * don't, so the 4K transcode tier is offered from the codec list rather
+     * than assumed from the platform. Called once from native
+     * (platform_android.cpp).
+     *
+     * AVC only, deliberately. The transcode profile asks Plex for
+     * videoCodec=h264, and most TV SoCs decode 2160p in HEVC or VP9 while
+     * capping H.264 at 1080p — so accepting an HEVC 4K decoder here says yes to
+     * a device that then has to software-decode the H.264 stream we send it.
+     * If 4K over HEVC is ever wanted, the transcode target has to change first
+     * and this check follows it.
      */
     public static boolean supports4KDecode() {
         try {
@@ -112,19 +120,28 @@ public class VitaPlexActivity extends SDLActivity
             for (MediaCodecInfo info : list.getCodecInfos()) {
                 if (info.isEncoder()) continue;
                 for (String type : info.getSupportedTypes()) {
-                    if (!type.equalsIgnoreCase(MediaFormat.MIMETYPE_VIDEO_AVC)
-                     && !type.equalsIgnoreCase(MediaFormat.MIMETYPE_VIDEO_HEVC)) continue;
-                    MediaCodecInfo.VideoCapabilities caps =
-                        info.getCapabilitiesForType(type).getVideoCapabilities();
-                    if (caps != null && caps.isSizeSupported(3840, 2160)) {
-                        Log.i(TAG, "4K decode available via " + info.getName());
-                        return true;
+                    if (!type.equalsIgnoreCase(MediaFormat.MIMETYPE_VIDEO_AVC)) continue;
+                    try {
+                        MediaCodecInfo.VideoCapabilities caps =
+                            info.getCapabilitiesForType(type).getVideoCapabilities();
+                        // Rate as well as size: a decoder can accept 2160p
+                        // dimensions and still not sustain a frame rate at them,
+                        // which is choppy playback rather than an outright
+                        // failure. 30fps is the floor worth offering.
+                        if (caps != null && caps.areSizeAndRateSupported(3840, 2160, 30.0)) {
+                            Log.i(TAG, "4K H.264 decode available via " + info.getName());
+                            return true;
+                        }
+                    } catch (Throwable inner) {
+                        // One vendor codec throwing on query must not abandon
+                        // the whole list — the next entry may well answer.
+                        Log.w(TAG, "4K probe skipped codec " + info.getName(), inner);
                     }
                 }
             }
+            Log.i(TAG, "no hardware 4K H.264 decoder; 4K tier hidden");
         } catch (Throwable t) {
-            // A vendor codec that throws on query shouldn't cost us the setting
-            // screen; treat an unusable probe as "no 4K".
+            // An unusable probe shouldn't cost us the settings screen.
             Log.w(TAG, "4K decode probe failed", t);
         }
         return false;
