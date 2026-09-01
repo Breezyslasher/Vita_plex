@@ -337,12 +337,16 @@ LiveTVTab::LiveTVTab() {
     m_guideScrollV->setContentView(m_guideBox);
     m_guideContainer->addView(m_guideScrollV);
 
-    // Current-time vertical line: an absolutely-positioned cyan rule
-    // overlaid on the guide container. Positioned by updateCurrentTimeLine
-    // once the grid is built and any time the layout refreshes.
+    // Current-time vertical line: an absolutely-positioned rule overlaid on the
+    // guide container. Positioned by updateCurrentTimeLine once the grid is
+    // built and any time the layout refreshes.
+    //
+    // The Box carries position, size and visibility but paints nothing — the
+    // rule itself is drawn at the end of draw(). Box::draw() would paint it
+    // before the batched cell pass, which paints the guide's rects manually and
+    // so would cover it.
     m_currentTimeLine = new brls::Box();
     m_currentTimeLine->setPositionType(brls::PositionType::ABSOLUTE);
-    m_currentTimeLine->setBackgroundColor(tok::accent());
     m_currentTimeLine->setWidth(2);
     m_currentTimeLine->setHeight(1);  // grows in updateCurrentTimeLine
     m_currentTimeLine->setPositionTop(0);
@@ -634,20 +638,12 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         std::vector<VisibleCell> visible;
         visible.reserve(m_epgCells.size());
 
-        // Subtitles (time ranges) render only for the FOCUSED row: LTVPROF
-        // measured the batched text pass at ~15.6ms/frame while navigating,
-        // roughly half of it the time-range line under every visible cell.
-        // Titles stay on every cell; the hero shows full times for the
-        // focused program anyway.
-        brls::Box* focusedRowBox = nullptr;
-        {
-            brls::View* fc = brls::Application::getCurrentFocus();
-            if (fc) {
-                for (const EpgRowRange& rr : m_epgRowRanges) {
-                    if (rr.row && isDescendantOf(fc, rr.row)) { focusedRowBox = rr.row; break; }
-                }
-            }
-        }
+        // Time ranges used to render only for the focused row, because LTVPROF
+        // measured the batched text pass at ~15.6ms/frame while navigating and
+        // roughly half of that was the time line under every visible cell. That
+        // made the text under the cursor change as you moved, so the range is
+        // now drawn on every cell that has room for it. Worth re-reading the
+        // LTVPROF text= figure on the Vita if the guide feels slower.
         static const std::string kNoSubtitle;
 
         for (const EpgRowRange& rr : m_epgRowRanges) {
@@ -681,13 +677,18 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
             v.onNow     = info.onNow;
             v.scheduled = info.scheduled;
             v.title    = &info.title;
-            // Every visible row shows its programmes' start times; the focused
-            // row upgrades to the full range (+ "on now"). Cells narrower than
-            // a time string would spill the text over their neighbour, so they
-            // show the title only.
-            v.subtitle = (rr.row && rr.row == focusedRowBox) ? &info.subtitle
-                       : (cw >= 50.0f)                       ? &info.startLabel
-                                                             : &kNoSubtitle;
+            // Longest form that fits the cell, the same rule for every row —
+            // focus deliberately plays no part, so nothing shifts under the
+            // cursor. ~5px per character at the size-10 subtitle font, plus the
+            // 8px padding either side; that is the same ratio the old 50px
+            // threshold encoded for the 7-character start time.
+            auto fits = [cw](const std::string& s) {
+                return cw >= (float)s.length() * 5.0f + 16.0f;
+            };
+            v.subtitle = fits(info.subtitle)   ? &info.subtitle
+                       : fits(info.range)      ? &info.range
+                       : fits(info.startLabel) ? &info.startLabel
+                                               : &kNoSubtitle;
             visible.push_back(v);
             }
         }
@@ -773,6 +774,22 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
         }
         nvgRestore(vg);
     }();
+
+    // Current-time rule, painted last so it sits over the cells. Its Box is
+    // transparent and only supplies geometry; getX() already folds in the
+    // per-second translation the line rides.
+    if (m_currentTimeLine && m_guideContainer &&
+        m_currentTimeLine->getVisibility() == brls::Visibility::VISIBLE) {
+        nvgSave(vg);
+        nvgIntersectScissor(vg, m_guideContainer->getX(), m_guideContainer->getY(),
+                            m_guideContainer->getWidth(), m_guideContainer->getHeight());
+        nvgBeginPath(vg);
+        nvgRect(vg, m_currentTimeLine->getX(), m_currentTimeLine->getY(),
+                m_currentTimeLine->getWidth(), m_currentTimeLine->getHeight());
+        nvgFillColor(vg, tok::accent());
+        nvgFill(vg);
+        nvgRestore(vg);
+    }
 
     const int64_t pf4 = brls::getCPUTimeUsec();
     m_perfTextUs += pf4 - pf3;
@@ -1747,9 +1764,9 @@ bool LiveTVTab::streamGuideRowCells(GuideRowCursor& cur, int64_t deadlineUs) {
             if ((int)title.length() > maxChars) title = title.substr(0, maxChars - 2) + "..";
             info.title = std::move(title);
             std::string startStr = formatTime(prog.startTime);
-            std::string sub = startStr + " – " + formatTime(prog.endTime);
-            if (isCurrently) sub += "  ·  on now";
-            info.subtitle   = std::move(sub);
+            std::string range = startStr + " – " + formatTime(prog.endTime);
+            info.subtitle   = isCurrently ? range + "  ·  on now" : range;
+            info.range      = std::move(range);
             info.startLabel = std::move(startStr);
             // Red "will record" dot for airings the DVR is scheduled to grab
             // (painted in the batched draw pass). If the scheduled list hasn't
@@ -1842,7 +1859,8 @@ bool LiveTVTab::streamGuideRowCells(GuideRowCursor& cur, int64_t deadlineUs) {
         if ((int)title.length() > maxChars) title = title.substr(0, maxChars - 2) + "..";
         info.title = std::move(title);
         info.startLabel = formatTime(channel.programStart);
-        info.subtitle = info.startLabel + " – " + formatTime(channel.programEnd) + "  ·  on now";
+        info.range    = info.startLabel + " – " + formatTime(channel.programEnd);
+        info.subtitle = info.range + "  ·  on now";
         m_epgCells.push_back(info);
 
         // Hover on the legacy fallback updates the hero with this
