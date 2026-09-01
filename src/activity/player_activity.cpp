@@ -782,6 +782,11 @@ void PlayerActivity::onContentAvailable() {
         // again, re-issue the current track's cover load so it uploads cleanly.
         // (The bytes are still in the ImageLoader cache, so this is a cheap re-
         // upload, not a re-download.)
+        // Icons parked while there was no GL surface. Not gated on the
+        // foreground edge: the surface can come back a frame or two after the
+        // window does, and this is a no-op once the map is empty.
+        flushPendingIcons();
+
         bool fg = brls::Application::isWindowForeground();
         if (m_isQueueMode && fg && !m_wasForeground && albumArt && !m_destroying) {
             const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
@@ -2307,14 +2312,31 @@ void PlayerActivity::syncLoungeReportUserAction(const std::string& state, double
     sl.announceLocalMedia(state, absTimeMs, durMs, /*claimHost=*/false);
 }
 
+// Set an icon, or park it if the upload would be thrown away right now.
+// borealis' setImageFromRes() creates the texture immediately; with no GL
+// surface — the app backgrounded on Android — the call silently does nothing
+// and leaves the icon blank. The OS notification can reach play/pause, shuffle
+// and repeat while exactly that is true.
+void PlayerActivity::setIconRes(brls::Image* img, const std::string& res) {
+    if (!img) return;
+    if (!brls::Application::canUploadTextures()) {
+        m_pendingIcons[img] = res;
+        return;
+    }
+    img->setImageFromRes(res);
+    m_pendingIcons.erase(img);
+}
+
+void PlayerActivity::flushPendingIcons() {
+    if (m_pendingIcons.empty() || !brls::Application::canUploadTextures()) return;
+    for (const auto& [img, res] : m_pendingIcons) img->setImageFromRes(res);
+    m_pendingIcons.clear();
+}
+
 void PlayerActivity::updatePlayPauseLabel() {
-    if (playPauseIcon) {
-        playPauseIcon->setImageFromRes(m_isPlaying ? "icons/pause.png" : "icons/play.png");
-    }
-    // Also update music transport play icon
-    if (musicPlayIcon) {
-        musicPlayIcon->setImageFromRes(m_isPlaying ? "icons/pause.png" : "icons/play.png");
-    }
+    const char* res = m_isPlaying ? "icons/pause.png" : "icons/play.png";
+    setIconRes(playPauseIcon, res);
+    setIconRes(musicPlayIcon, res);   // music transport's own play button
 }
 
 void PlayerActivity::cycleAudioTrack() {
@@ -3152,7 +3174,7 @@ void PlayerActivity::toggleRepeat() {
 void PlayerActivity::updateShuffleIcon() {
     if (!shuffleIcon) return;
     MusicQueue& queue = MusicQueue::getInstance();
-    shuffleIcon->setImageFromRes(queue.isShuffleEnabled()
+    setIconRes(shuffleIcon, queue.isShuffleEnabled()
         ? "icons/shuffle-variant.png" : "icons/shuffle-disabled.png");
 }
 
@@ -3207,9 +3229,9 @@ void PlayerActivity::applyMusicLayoutForViewport() {
 void PlayerActivity::updateRepeatIcon() {
     if (!repeatIcon) return;
     switch (MusicQueue::getInstance().getRepeatMode()) {
-        case RepeatMode::OFF: repeatIcon->setImageFromRes("icons/repeat-off.png");  break;
-        case RepeatMode::ALL: repeatIcon->setImageFromRes("icons/repeat.png");      break;
-        case RepeatMode::ONE: repeatIcon->setImageFromRes("icons/repeat-once.png"); break;
+        case RepeatMode::OFF: setIconRes(repeatIcon, "icons/repeat-off.png");  break;
+        case RepeatMode::ALL: setIconRes(repeatIcon, "icons/repeat.png");      break;
+        case RepeatMode::ONE: setIconRes(repeatIcon, "icons/repeat-once.png"); break;
     }
 }
 

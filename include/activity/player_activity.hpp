@@ -12,6 +12,7 @@
 #include <memory>
 #include <atomic>
 #include <unordered_map>
+#include <map>
 #include <chrono>
 #include "app/plex_client.hpp"
 #include "app/music_queue.hpp"
@@ -430,6 +431,15 @@ private:
     // GONE box stays focusable and hit-testable, and the highlight lands on a
     // zero-sized view. Called whenever those containers change visibility.
     void syncHiddenFocus();
+    // Icon swaps that could not upload because the app had no GL surface.
+    // Image::setImageFromRes() uploads there and then, so a swap made while
+    // backgrounded — an OS notification toggling play/pause, shuffle or repeat —
+    // is silently dropped and the icon renders blank for the rest of the
+    // session. Replayed by flushPendingIcons() once a surface is back.
+    std::map<brls::Image*, std::string> m_pendingIcons;
+    void setIconRes(brls::Image* img, const std::string& res);
+    void flushPendingIcons();
+
     // Raw keyboard hook, for keys borealis has no gamepad equivalent for:
     // Space toggles playback. Subscribed in onContentAvailable, dropped in
     // willDisappear — the event outlives the activity.
