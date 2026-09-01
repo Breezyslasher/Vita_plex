@@ -79,6 +79,9 @@ public:
     // Jump straight to a row of the published queue (absolute queue index), as
     // picked in the OS up-next list.
     void playQueueIndex(int index);
+    // "Like this track" from the OS controls: writes the Plex user rating of the
+    // currently playing track (10 for liked, 0 to clear).
+    void setCurrentTrackLiked(bool liked);
 
     // Repeat / shuffle from the OS controls. set* take an explicit target (SMTC /
     // MPRIS); cycle/toggle advance from the current state (Android custom actions).

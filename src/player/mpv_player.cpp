@@ -42,6 +42,56 @@ static void* mpvGlGetProcAddress(void* ctx, const char* name) {
     (void)ctx;
     return SDL_GL_GetProcAddress(name);
 }
+
+#include <jni.h>
+
+namespace {
+// Audio session plumbing for system equalizers.
+//
+// An AudioEffect host (the stock equalizer, Wavelet, Poweramp EQ) attaches to
+// an audio session id, so it can only touch our output if AudioTrack and the
+// broadcast agree on one. Java mints the id; we hand it to mpv's audiotrack AO
+// and, only if that option was accepted, tell Java it may advertise the session.
+// A libmpv without the option leaves the session unadvertised rather than
+// pointing an equalizer at audio nobody is playing.
+int androidAudioSessionId() {
+    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
+    if (!env) return 0;
+    jclass cls = env->FindClass("org/VitaPlex/app/VitaPlexActivity");
+    if (!cls) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return 0;
+    }
+    int id = 0;
+    jmethodID mid = env->GetStaticMethodID(cls, "audioSessionId", "()I");
+    if (mid) {
+        id = (int)env->CallStaticIntMethod(cls, mid);
+        if (env->ExceptionCheck()) { env->ExceptionClear(); id = 0; }
+    } else if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(cls);
+    return id;
+}
+
+void androidMarkAudioSessionUsable() {
+    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
+    if (!env) return;
+    jclass cls = env->FindClass("org/VitaPlex/app/MediaNotification");
+    if (!cls) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return;
+    }
+    jmethodID mid = env->GetStaticMethodID(cls, "setAudioSessionUsable", "()V");
+    if (mid) {
+        env->CallStaticVoidMethod(cls, mid);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    } else if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(cls);
+}
+}  // namespace
 #endif
 
 #if defined(__SWITCH__) && defined(BOREALIS_USE_OPENGL)
@@ -227,6 +277,18 @@ bool MpvPlayer::init() {
         // the TV log. Prefer AudioTrack (modern, low-latency) with
         // OpenSL ES as fallback.
         mpv_set_option_string(m_mpv, "ao", "audiotrack,opensles");
+        // Give AudioTrack a session id a system equalizer can attach to. Only
+        // advertise it if this libmpv actually took the option — see
+        // androidAudioSessionId() above.
+        if (const int audioSession = androidAudioSessionId()) {
+            if (mpv_set_option_string(m_mpv, "audiotrack-session-id",
+                                      std::to_string(audioSession).c_str()) >= 0) {
+                androidMarkAudioSessionUsable();
+            } else {
+                brls::Logger::info("MpvPlayer: libmpv has no audiotrack-session-id; "
+                                   "system equalizer will not attach");
+            }
+        }
         // force-window stays no until the surface is attached so mpv
         // doesn't try to create a window before we hand it one.
         mpv_set_option_string(m_mpv, "force-window", "no");

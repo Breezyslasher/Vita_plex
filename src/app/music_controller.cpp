@@ -9,6 +9,7 @@
 #include "player/mpv_player.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
+#include "utils/async.hpp"
 
 namespace vitaplex {
 
@@ -106,7 +107,8 @@ void MusicController::registerOsHandler() {
         [](long long ms) { MusicController::getInstance().seekToMs(ms); },
         [](nowplaying::RepeatMode m) { MusicController::getInstance().setRepeatMode(fromBridgeRepeat(m)); },
         [](bool on) { MusicController::getInstance().setShuffleMode(on); },
-        [](long long id) { MusicController::getInstance().playQueueIndex((int)id); });
+        [](long long id) { MusicController::getInstance().playQueueIndex((int)id); },
+        [](bool liked) { MusicController::getInstance().setCurrentTrackLiked(liked); });
 }
 
 void MusicController::attachForeground(ForegroundHooks hooks) {
@@ -356,6 +358,18 @@ void MusicController::playQueueIndex(int index) {
     if (!q.playTrack(index)) return;
     loadCurrentHeadless();
     publishNowPlaying(1);
+}
+
+void MusicController::setCurrentTrackLiked(bool liked) {
+    const QueueItem* t = MusicQueue::getInstance().getCurrentTrack();
+    if (!t || t->ratingKey.empty()) return;
+    const std::string key = t->ratingKey;
+    // The PUT is network I/O; nothing on screen depends on the answer.
+    asyncRun([key, liked]() {
+        const bool ok = PlexClient::getInstance().rateItem(key, liked ? 10.0f : 0.0f);
+        brls::Logger::info("MusicController: rate {} -> {} ({})",
+                           key, liked ? "liked" : "cleared", ok ? "ok" : "failed");
+    });
 }
 
 void MusicController::seekToMs(long long ms) {

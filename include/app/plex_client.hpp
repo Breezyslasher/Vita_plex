@@ -454,6 +454,11 @@ public:
     bool markAsWatched(const std::string& ratingKey);
     bool markAsUnwatched(const std::string& ratingKey);
 
+    // Set the user rating (Plex's 0-10 scale; 0 clears it). Used by the Android
+    // media session's "like this track", which is the only place the app rates
+    // anything today.
+    bool rateItem(const std::string& ratingKey, float rating);
+
     // Stream selection (Plex API: PUT /library/parts/{partId})
     bool fetchStreams(const std::string& ratingKey, std::vector<PlexStream>& streams, int& partId);
     bool setStreamSelection(int partId, int audioStreamID = -1, int subtitleStreamID = -1);

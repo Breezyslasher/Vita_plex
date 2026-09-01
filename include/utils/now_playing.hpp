@@ -86,12 +86,15 @@ void clear();
 // repeat mode / shuffle flag (the SMTC + MPRIS controls request a specific state
 // rather than a cycle). All are invoked on the UI (main) thread.
 // onSkipToQueueItem carries the `id` of a QueueEntry the user picked out of the
-// published queue.
+// published queue; onSetRating carries Android's "like this track" heart. Both
+// are music-only, so a video session leaves them null and the OS request is
+// simply dropped.
 void setHandler(std::function<void(Transport)> onTransport,
                 std::function<void(int64_t)> onSeekMs,
                 std::function<void(RepeatMode)> onSetRepeat = nullptr,
                 std::function<void(bool)> onSetShuffle = nullptr,
-                std::function<void(int64_t)> onSkipToQueueItem = nullptr);
+                std::function<void(int64_t)> onSkipToQueueItem = nullptr,
+                std::function<void(bool)> onSetRating = nullptr);
 void clearHandler();
 
 // Called by the platform layer (Android JNI / desktop backends) when the OS
@@ -102,6 +105,7 @@ void dispatchSeek(int64_t positionMs);
 void dispatchSetRepeat(RepeatMode mode);
 void dispatchSetShuffle(bool on);
 void dispatchSkipToQueueItem(int64_t id);
+void dispatchSetRating(bool liked);
 
 } // namespace nowplaying
 } // namespace vitaplex

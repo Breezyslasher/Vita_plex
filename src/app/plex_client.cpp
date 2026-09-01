@@ -3403,6 +3403,25 @@ bool PlexClient::markAsUnwatched(const std::string& ratingKey) {
     return resp.statusCode == 200;
 }
 
+bool PlexClient::rateItem(const std::string& ratingKey, float rating) {
+    if (ratingKey.empty()) return false;
+    if (rating < 0.0f) rating = 0.0f;
+    if (rating > 10.0f) rating = 10.0f;
+
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%.1f", rating);
+
+    HttpClient client;
+    std::string url = buildApiUrl("/:/rate?key=" + ratingKey +
+                                  "&identifier=com.plexapp.plugins.library&rating=" + buf);
+    HttpRequest req;
+    req.url = url;
+    req.method = "PUT";
+    req.timeout = 10;
+    HttpResponse resp = client.request(req);
+    return resp.statusCode == 200;
+}
+
 bool PlexClient::probeLiveTV() {
     if (m_dvrId.empty()) {
         checkLiveTVAvailability();

@@ -26,6 +26,7 @@ std::function<void(int64_t)> g_onSeek;
 std::function<void(RepeatMode)> g_onSetRepeat;
 std::function<void(bool)> g_onSetShuffle;
 std::function<void(int64_t)> g_onSkipToQueueItem;
+std::function<void(bool)> g_onSetRating;
 
 } // namespace
 
@@ -33,13 +34,15 @@ void setHandler(std::function<void(Transport)> onTransport,
                 std::function<void(int64_t)> onSeekMs,
                 std::function<void(RepeatMode)> onSetRepeat,
                 std::function<void(bool)> onSetShuffle,
-                std::function<void(int64_t)> onSkipToQueueItem) {
+                std::function<void(int64_t)> onSkipToQueueItem,
+                std::function<void(bool)> onSetRating) {
     std::lock_guard<std::mutex> lock(g_mutex);
     g_onTransport = std::move(onTransport);
     g_onSeek = std::move(onSeekMs);
     g_onSetRepeat = std::move(onSetRepeat);
     g_onSetShuffle = std::move(onSetShuffle);
     g_onSkipToQueueItem = std::move(onSkipToQueueItem);
+    g_onSetRating = std::move(onSetRating);
 }
 
 void clearHandler() {
@@ -49,6 +52,7 @@ void clearHandler() {
     g_onSetRepeat = nullptr;
     g_onSetShuffle = nullptr;
     g_onSkipToQueueItem = nullptr;
+    g_onSetRating = nullptr;
 }
 
 void dispatchTransport(Transport t) {
@@ -94,6 +98,15 @@ void dispatchSkipToQueueItem(int64_t id) {
         fn = g_onSkipToQueueItem;
     }
     if (fn) fn(id);
+}
+
+void dispatchSetRating(bool liked) {
+    std::function<void(bool)> fn;
+    {
+        std::lock_guard<std::mutex> lock(g_mutex);
+        fn = g_onSetRating;
+    }
+    if (fn) fn(liked);
 }
 
 #ifdef __ANDROID__
@@ -334,6 +347,14 @@ extern "C" JNIEXPORT void JNICALL
 Java_org_VitaPlex_app_MediaNotification_nativeSkipToQueueItem(JNIEnv*, jclass, jlong id) {
     brls::sync([id]() {
         vitaplex::nowplaying::dispatchSkipToQueueItem((int64_t)id);
+    });
+}
+
+// Java -> native: the "like this track" heart was set or cleared.
+extern "C" JNIEXPORT void JNICALL
+Java_org_VitaPlex_app_MediaNotification_nativeSetRating(JNIEnv*, jclass, jboolean liked) {
+    brls::sync([liked]() {
+        vitaplex::nowplaying::dispatchSetRating(liked == JNI_TRUE);
     });
 }
 #endif

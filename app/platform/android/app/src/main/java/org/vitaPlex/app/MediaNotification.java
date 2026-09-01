@@ -14,6 +14,7 @@ import android.graphics.BitmapFactory;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
+import android.media.audiofx.AudioEffect;
 import android.net.Uri;
 import android.net.wifi.WifiManager;
 import android.os.Build;
@@ -25,6 +26,7 @@ import android.os.SystemClock;
 import android.util.Log;
 
 import android.support.v4.media.MediaDescriptionCompat;
+import android.support.v4.media.RatingCompat;
 import android.support.v4.media.MediaMetadataCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
@@ -86,6 +88,8 @@ public final class MediaNotification {
     private static native void nativeSetShuffle(boolean on);
     // A row picked out of the published queue; the long is the id we published.
     private static native void nativeSkipToQueueItem(long id);
+    // "Like this track" — writes the Plex user rating of what's playing.
+    private static native void nativeSetRating(boolean liked);
 
     private static final Handler sMain = new Handler(Looper.getMainLooper());
 
@@ -104,6 +108,13 @@ public final class MediaNotification {
     // that stops music blaring out of the speaker.
     private static BroadcastReceiver sNoisyReceiver;
     private static boolean sNoisyRegistered;
+
+    // System equalizer plumbing. mpv only routes through our audio session if
+    // this libmpv accepted --audiotrack-session-id, which native tells us; until
+    // then the session is never advertised, so an effect host can't attach to
+    // audio that isn't going through it.
+    private static boolean sAudioSessionUsable;
+    private static boolean sEffectSessionOpen;
 
     private static PowerManager.WakeLock sWakeLock;   // held only while playing
     private static WifiManager.WifiLock sWifiLock;    // held only while playing
@@ -147,6 +158,36 @@ public final class MediaNotification {
     static MediaSessionCompat getSession(Context ctx) {
         ensureSession(ctx);
         return sSession;
+    }
+
+    /** Called from native once mpv has accepted our audio session id. */
+    public static void setAudioSessionUsable() {
+        sMain.post(new Runnable() {
+            @Override public void run() { sAudioSessionUsable = true; }
+        });
+    }
+
+    /**
+     * Tell the system's AudioEffect hosts (the stock equalizer and friends)
+     * that our audio session exists, so their controls apply to our output.
+     * Opened once playback is actually running and closed when it ends.
+     */
+    private static void updateEffectSession(Context ctx, boolean open) {
+        if (!sAudioSessionUsable || open == sEffectSessionOpen) return;
+        try {
+            final int session = VitaPlexActivity.audioSessionId();
+            if (session == 0) return;
+            Intent i = new Intent(open
+                ? AudioEffect.ACTION_OPEN_AUDIO_EFFECT_CONTROL_SESSION
+                : AudioEffect.ACTION_CLOSE_AUDIO_EFFECT_CONTROL_SESSION);
+            i.putExtra(AudioEffect.EXTRA_AUDIO_SESSION, session);
+            i.putExtra(AudioEffect.EXTRA_PACKAGE_NAME, ctx.getPackageName());
+            if (open) i.putExtra(AudioEffect.EXTRA_CONTENT_TYPE, AudioEffect.CONTENT_TYPE_MUSIC);
+            ctx.sendBroadcast(i);
+            sEffectSessionOpen = open;
+        } catch (Throwable t) {
+            Log.w(TAG, "effect session broadcast failed", t);
+        }
     }
 
     /** PendingIntent flags with the mutability bit Android 12+ demands. */
@@ -254,6 +295,7 @@ public final class MediaNotification {
                     Context ctx = VitaPlexActivity.getAppContext();
                     if (ctx != null) {
                         updateNoisyReceiver(ctx, false);
+                        updateEffectSession(ctx, false);
                         stopService(ctx);  // drop the foreground service first
                         NotificationManager nm = (NotificationManager)
                             ctx.getSystemService(Context.NOTIFICATION_SERVICE);
@@ -317,6 +359,8 @@ public final class MediaNotification {
             | PlaybackStateCompat.ACTION_PREPARE_FROM_MEDIA_ID;
         // Only offer "jump to this row" once a queue has actually been published.
         if (sQueueSize > 0) actions |= PlaybackStateCompat.ACTION_SKIP_TO_QUEUE_ITEM;
+        // Rating is a music idea; a video session has nothing to like.
+        if (sShowModes) actions |= PlaybackStateCompat.ACTION_SET_RATING;
         // Advertise the mode setters for music so remote controllers render real
         // shuffle/repeat controls rather than nothing. Without these in the
         // action mask a client has no way to know the session accepts them.
@@ -365,6 +409,9 @@ public final class MediaNotification {
         updateLocks(ctx, sPlaying);
         updateAudioFocus(ctx, sPlaying);
         updateNoisyReceiver(ctx, sPlaying);
+        // Opened on the first play and left open while paused, so an equalizer
+        // keeps its settings across a pause; clear() closes it.
+        if (sPlaying) updateEffectSession(ctx, true);
         postNotification(ctx);
     }
 
@@ -563,6 +610,11 @@ public final class MediaNotification {
             PendingIntent.getBroadcast(ctx, 0, mbIntent, pendingIntentFlags(0)));
         sSession.setFlags(MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS
                           | MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS);
+        // A heart, not stars: Plex stores a 0-10 user rating, and "like this
+        // track" from a car or a watch is the only rating gesture those
+        // surfaces offer. Write-only for now — a track's existing rating isn't
+        // carried on the queue, so the heart starts empty each session.
+        sSession.setRatingType(RatingCompat.RATING_HEART);
         // What a controller opens when its "now playing" card is tapped: the
         // lock screen, Android Auto, Wear and the Android 13+ system controls
         // all use this. Unset, those surfaces have no way back into the app.
@@ -605,6 +657,11 @@ public final class MediaNotification {
             @Override public void onSkipToQueueItem(long id) {
                 try { nativeSkipToQueueItem(id); }
                 catch (Throwable t) { Log.w(TAG, "skipToQueueItem", t); }
+            }
+            @Override public void onSetRating(RatingCompat rating) {
+                if (rating == null) return;
+                try { nativeSetRating(rating.hasHeart()); }
+                catch (Throwable t) { Log.w(TAG, "setRating", t); }
             }
             // Kept for clients (and the Android 13+ system controls) that drive
             // shuffle/repeat as PlaybackState custom actions. These are toggles

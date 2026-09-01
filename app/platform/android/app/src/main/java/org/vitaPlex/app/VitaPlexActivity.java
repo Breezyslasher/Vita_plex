@@ -156,6 +156,27 @@ public class VitaPlexActivity extends SDLActivity
         return getContext();
     }
 
+    // Audio session id shared with mpv's AudioTrack output, so a system
+    // equalizer can attach to what we play. Minted once and kept for the life
+    // of the process — mpv is configured with it at init and the AudioEffect
+    // broadcast has to name the same id.
+    private static int sAudioSessionId = 0;
+
+    /** Called from native (mpv init). 0 means "no session available". */
+    public static int audioSessionId() {
+        if (sAudioSessionId != 0) return sAudioSessionId;
+        try {
+            Context ctx = getAppContext();
+            android.media.AudioManager am = ctx != null
+                    ? (android.media.AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE)
+                    : null;
+            if (am != null) sAudioSessionId = am.generateAudioSessionId();
+        } catch (Throwable t) {
+            Log.w(TAG, "generateAudioSessionId failed", t);
+        }
+        return sAudioSessionId;
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
