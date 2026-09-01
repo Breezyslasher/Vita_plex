@@ -9,6 +9,7 @@
 #include "platform/platform.hpp"
 
 #include <orbis/Sysmodule.h>
+#include <orbis/libkernel.h>   // sceKernelHasNeoMode
 #include <sys/stat.h>
 
 #include <borealis.hpp>
@@ -114,6 +115,15 @@ const VideoConstraints& getVideoConstraints() {
         /* supportsHevc     */ true,  // PS4 has a hardware HEVC decoder
     };
     return v;
+}
+
+bool supports4KDecode() {
+    // Neo (PS4 Pro) only. The base console outputs 1080p at most, so a 4K
+    // transcode there is bandwidth spent on pixels it will only scale away.
+    // sceKernelHasNeoMode reports the hardware; sceKernelIsNeoMode would report
+    // whether this process opted into Neo mode, which is a different question.
+    static const bool neo = sceKernelHasNeoMode() != 0;
+    return neo;
 }
 
 bool init() {

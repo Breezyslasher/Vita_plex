@@ -23,8 +23,43 @@ public:
     void onFocusGained() override;
     void willDisappear(bool resetState) override;
 
+public:
+    // Which shape the tab is built in. Phones get one of the two mobile
+    // layouts; everything else keeps the desktop/TV two-column form, whose
+    // 300px keyboard column is unusable at phone width.
+    enum class Layout {
+        TwoColumn,   // desktop / TV: on-screen keyboard beside the results
+        NativeIme,   // phone: tap the field, the platform keyboard comes up
+    };
+
 private:
+    // Drawn card size and the thumbnail size to request for it (2x drawn).
+    struct CardMetrics { int cw, ph, rw, rh; };
+    static CardMetrics cardMetrics(MediaType type, Layout layout);
+    // Resolve the layout from the setting and the current screen. Re-read on
+    // rebuild so a rotation or a setting change lands.
+    static Layout resolveLayout();
+    static bool   isPhoneSized();
+
+    // Build the whole tab for `m_layout`.
+    void buildLayout();
+    void buildTwoColumn();
+    void buildMobile();
     void buildKeyboard(brls::Box* parent);
+    // Bring up the keyboard for the query. On Android this starts SDL text
+    // input directly, so the platform keyboard appears with no borealis dialog
+    // and characters land in the tab's own field; elsewhere it falls back to
+    // ImeManager, whose callback returns the finished string on commit.
+    void openIme();
+
+public:
+    // Called from the SDL event watch while native input is running. void* so
+    // the header needn't include SDL; it is an SDL_Event*.
+    void onNativeTextEvent(void* ev);
+
+private:
+    void endNativeTextInput();
+    bool m_textInputActive = false;
 
     // Query editing (each mutation refreshes the field + live results).
     void appendChar(const std::string& c);
@@ -38,9 +73,13 @@ private:
     brls::Box* makeCard(const MediaItem& item);
     void onItemSelected(const MediaItem& item);
 
+    Layout m_layout = Layout::TwoColumn;
+
     // Left column
     brls::Label* m_queryLabel = nullptr;
     brls::Box*   m_keyboardFirstKey = nullptr;   // default focus target
+    // Clear affordance on the field; only shown once there is a query.
+    brls::Box*   m_clearButton = nullptr;
 
     // Right column
     brls::ScrollingFrame* m_resultsScroll = nullptr;

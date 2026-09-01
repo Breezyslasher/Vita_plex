@@ -98,6 +98,10 @@ const VideoConstraints& getVideoConstraints() {
     return v;
 }
 
+bool supports4KDecode() {
+    return false;   // NVDEC on the Switch tops out at 1080p, docked or handheld
+}
+
 bool init() {
     if (!::vitaplex::HttpClient::globalInit()) {
         brls::Logger::error("Failed to initialize curl");

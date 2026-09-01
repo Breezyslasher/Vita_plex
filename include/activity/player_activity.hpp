@@ -430,6 +430,13 @@ private:
     // GONE box stays focusable and hit-testable, and the highlight lands on a
     // zero-sized view. Called whenever those containers change visibility.
     void syncHiddenFocus();
+    // Raw keyboard hook, for keys borealis has no gamepad equivalent for:
+    // Space toggles playback. Subscribed in onContentAvailable, dropped in
+    // willDisappear — the event outlives the activity.
+    brls::InputManager* m_inputManager = nullptr;
+    brls::Event<brls::KeyState>::Subscription m_kbSub;
+    bool m_kbSubscribed = false;
+
     // Inert until onContentAvailable has wired the D-pad routes. See
     // syncHiddenFocus() for why running it before that point aborts the process.
     bool m_focusWiringDone = false;

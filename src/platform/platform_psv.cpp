@@ -223,6 +223,10 @@ const VideoConstraints& getVideoConstraints() {
     return v;
 }
 
+bool supports4KDecode() {
+    return false;   // Vita panel is 960x544 and the decoder is H.264 level 4.0
+}
+
 bool init() {
     if (!initVitaSystem()) {
         return false;

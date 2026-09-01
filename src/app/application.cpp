@@ -287,9 +287,50 @@ void Application::applyLogLevel() {
     }
 }
 
+bool Application::supports4K() {
+    return platform::supports4KDecode();
+}
+
+std::vector<VideoQuality> Application::qualityLadder() {
+    std::vector<VideoQuality> tiers = { VideoQuality::ORIGINAL };
+    if (supports4K()) tiers.push_back(VideoQuality::QUALITY_4K);
+    tiers.insert(tiers.end(), {
+        VideoQuality::QUALITY_1080P, VideoQuality::QUALITY_720P,
+        VideoQuality::QUALITY_480P,  VideoQuality::QUALITY_360P,
+        VideoQuality::QUALITY_240P,
+    });
+    return tiers;
+}
+
+void Application::videoLimitFor(VideoQuality quality, int& outWidth, int& outHeight) {
+    const auto& vc = platform::getVideoConstraints();
+    outWidth  = vc.maxVideoWidth;
+    outHeight = vc.maxVideoHeight;
+    if (quality == VideoQuality::QUALITY_4K && supports4K()) {
+        outWidth  = 3840;
+        outHeight = 2160;
+    }
+}
+
+const char* Application::resolutionFor(VideoQuality quality) {
+    switch (quality) {
+        case VideoQuality::QUALITY_4K:
+            if (supports4K()) return "3840x2160";
+            break;                                  // else the default below
+        case VideoQuality::QUALITY_1080P: return "1920x1080";
+        case VideoQuality::QUALITY_720P:  return "1280x720";
+        case VideoQuality::QUALITY_480P:  return "854x480";
+        case VideoQuality::QUALITY_360P:  return "640x360";
+        case VideoQuality::QUALITY_240P:  return "426x240";
+        case VideoQuality::ORIGINAL:      break;
+    }
+    return platform::getVideoConstraints().defaultResolution;
+}
+
 std::string Application::getQualityString(VideoQuality quality) {
     switch (quality) {
         case VideoQuality::ORIGINAL: return "Original (Direct Play)";
+        case VideoQuality::QUALITY_4K: return "4K (40 Mbps)";
         case VideoQuality::QUALITY_1080P: return "1080p (20 Mbps)";
         case VideoQuality::QUALITY_720P: return "720p (4 Mbps)";
         case VideoQuality::QUALITY_480P: return "480p (2 Mbps)";
@@ -451,6 +492,21 @@ bool Application::loadSettings() {
         } else {
             m_settings.maxBitrate = vc.defaultBitrate;
         }
+        // A saved tier this device cannot decode has to be dropped, not merely
+        // hidden: the picker would show one thing while the transcode request
+        // carried another, and the stored bitrate would stay at the tier's.
+        // Reachable from a config written before a capability check tightened,
+        // or carried between devices.
+        auto offered = [](VideoQuality q) {
+            for (VideoQuality t : qualityLadder()) if (t == q) return true;
+            return false;
+        };
+        if (!offered(m_settings.videoQuality)) {
+            brls::Logger::info("Video quality {} unavailable here — falling back",
+                               getQualityString(m_settings.videoQuality));
+            m_settings.videoQuality = static_cast<VideoQuality>(vc.defaultVideoQualityIndex);
+            m_settings.maxBitrate   = vc.defaultBitrate;
+        }
     }
 
     // Network settings
@@ -462,7 +518,15 @@ bool Application::loadSettings() {
     m_settings.deleteAfterWatch = extractBool("deleteAfterWatch", false);
     {
         int dq = extractInt("downloadQuality");   // 0 (ORIGINAL) when absent
-        if (dq >= 0 && dq <= 5) m_settings.downloadQuality = static_cast<VideoQuality>(dq);
+        // Upper bound tracks the enum — 4K was appended as 6, and the old
+        // `<= 5` silently discarded it, leaving the picker on Original.
+        if (dq >= 0 && dq <= (int)VideoQuality::QUALITY_4K)
+            m_settings.downloadQuality = static_cast<VideoQuality>(dq);
+        // Same reasoning as videoQuality above: a tier this device cannot
+        // decode must not survive into the transcode request.
+        bool dqOffered = false;
+        for (VideoQuality t : qualityLadder()) if (t == m_settings.downloadQuality) dqOffered = true;
+        if (!dqOffered) m_settings.downloadQuality = VideoQuality::ORIGINAL;
     }
     m_settings.downloadKeepOriginalAudio = extractBool("downloadKeepOriginalAudio", false);
     m_settings.downloadIncludeSubtitles  = extractBool("downloadIncludeSubtitles", false);

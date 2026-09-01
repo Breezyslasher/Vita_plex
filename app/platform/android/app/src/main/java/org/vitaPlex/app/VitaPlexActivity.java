@@ -14,6 +14,9 @@ import android.app.UiModeManager;
 import android.database.ContentObserver;
 import android.graphics.drawable.Icon;
 import android.graphics.PixelFormat;
+import android.media.MediaCodecInfo;
+import android.media.MediaCodecList;
+import android.media.MediaFormat;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -95,6 +98,53 @@ public class VitaPlexActivity extends SDLActivity
                 Log.w(TAG, "onUserLeaveHint: enterPiP failed", t);
             }
         }
+    }
+
+    /**
+     * Whether this device can decode 2160p in the codec we actually stream.
+     * Android spans TV boxes that handle 4K comfortably and budget phones that
+     * don't, so the 4K transcode tier is offered from the codec list rather
+     * than assumed from the platform. Called once from native
+     * (platform_android.cpp).
+     *
+     * AVC only, deliberately. The transcode profile asks Plex for
+     * videoCodec=h264, and most TV SoCs decode 2160p in HEVC or VP9 while
+     * capping H.264 at 1080p — so accepting an HEVC 4K decoder here says yes to
+     * a device that then has to software-decode the H.264 stream we send it.
+     * If 4K over HEVC is ever wanted, the transcode target has to change first
+     * and this check follows it.
+     */
+    public static boolean supports4KDecode() {
+        try {
+            MediaCodecList list = new MediaCodecList(MediaCodecList.REGULAR_CODECS);
+            for (MediaCodecInfo info : list.getCodecInfos()) {
+                if (info.isEncoder()) continue;
+                for (String type : info.getSupportedTypes()) {
+                    if (!type.equalsIgnoreCase(MediaFormat.MIMETYPE_VIDEO_AVC)) continue;
+                    try {
+                        MediaCodecInfo.VideoCapabilities caps =
+                            info.getCapabilitiesForType(type).getVideoCapabilities();
+                        // Rate as well as size: a decoder can accept 2160p
+                        // dimensions and still not sustain a frame rate at them,
+                        // which is choppy playback rather than an outright
+                        // failure. 30fps is the floor worth offering.
+                        if (caps != null && caps.areSizeAndRateSupported(3840, 2160, 30.0)) {
+                            Log.i(TAG, "4K H.264 decode available via " + info.getName());
+                            return true;
+                        }
+                    } catch (Throwable inner) {
+                        // One vendor codec throwing on query must not abandon
+                        // the whole list — the next entry may well answer.
+                        Log.w(TAG, "4K probe skipped codec " + info.getName(), inner);
+                    }
+                }
+            }
+            Log.i(TAG, "no hardware 4K H.264 decoder; 4K tier hidden");
+        } catch (Throwable t) {
+            // An unusable probe shouldn't cost us the settings screen.
+            Log.w(TAG, "4K decode probe failed", t);
+        }
+        return false;
     }
 
     /**
@@ -415,20 +465,24 @@ public class VitaPlexActivity extends SDLActivity
             }
         }
 
+        // Media keys from any source — TV remote, USB or Bluetooth keyboard,
+        // headset. Sent straight to mpv for both video and audio/music playback,
+        // whether we are in PiP or fullscreen. Handling them here also settles
+        // who wins: a foreground activity sees media buttons before the media
+        // session does, so this is the single path rather than racing the
+        // MediaSessionCompat callback that serves them when we are backgrounded.
+        Integer mediaAction = mapMediaKeyToMpvAction(keyCode);
+        if (mediaAction != null) {
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                onPipActionReceived(mediaAction);
+            }
+            // Consume both DOWN and UP so this key never reaches Borealis.
+            return true;
+        }
+
         // For TV remote events, bypass the joystick handler for keys that need
         // keyboard-path mapping or translation to mapped keycodes.
         if (isTvRemoteEvent(event)) {
-            Integer mpvAction = mapMediaKeyToMpvAction(keyCode);
-            if (mpvAction != null) {
-                // Send media controls straight to mpv for both video and audio/music
-                // playback, regardless of whether we are in PiP or fullscreen mode.
-                if (event.getAction() == KeyEvent.ACTION_DOWN) {
-                    onPipActionReceived(mpvAction);
-                }
-                // Consume both DOWN and UP so this key never reaches Borealis.
-                return true;
-            }
-
             int translatedKey = keyCode;
             switch (keyCode) {
                 case KeyEvent.KEYCODE_ENTER:

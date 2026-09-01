@@ -149,6 +149,12 @@ const VideoConstraints& getVideoConstraints() {
     return v;
 }
 
+bool supports4KDecode() {
+    // Software decode on a desktop CPU handles 2160p; mpv falls back to it when
+    // no hardware path exists.
+    return true;
+}
+
 bool init() {
     if (!::vitaplex::HttpClient::globalInit()) {
         brls::Logger::error("Failed to initialize curl");

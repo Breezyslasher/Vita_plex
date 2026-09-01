@@ -78,7 +78,7 @@ static void glfwJoystickCallback(int jid, int event)
     {
         Logger::info("glfw: joystick {} disconnected", jid);
 
-        controllersCount--;
+        if (controllersCount > 0) controllersCount--;
     }
     Application::setActiveEvent(true);
 }
@@ -121,18 +121,79 @@ static void glfwTouchCallback(GLFWwindow* window, int touch, int action, double 
     Application::setActiveEvent(true);
 }
 
+// VitaPlex: media keys reach GLFW as GLFW_KEY_UNKNOWN carrying only a platform
+// scancode, so without this every one of them is indistinguishable by the time
+// the app sees it. Translate the four we act on into the synthetic codes in
+// include/utils/media_keys.hpp — keep the two lists in sync. Returns 0 for
+// anything else, which is left as GLFW_KEY_UNKNOWN.
+static int vitaplexMediaKeyFromScancode(int scancode)
+{
+#if defined(__linux__)
+    // The two Linux backends disagree: X11 reports keycodes, which are evdev
+    // codes + 8, while Wayland passes the raw evdev code straight through
+    // (wl_window.c hands _glfwInputKey the untouched scancode and only adds 8
+    // when it needs an xkb keycode). The same key therefore differs by 8
+    // between sessions.
+    //
+    // Derive the offset from a key whose evdev code is fixed rather than
+    // sniffing the session: XWayland runs the X11 backend inside a Wayland
+    // session, so WAYLAND_DISPLAY would answer for the wrong one. Both backends
+    // implement glfwGetKeyScancode as the reverse of the table they translate
+    // incoming events with, so it returns exactly what this callback receives.
+    static int base = -1;
+    if (base < 0)
+    {
+        const int a = glfwGetKeyScancode(GLFW_KEY_A);  // evdev KEY_A == 30
+        base        = (a > 0) ? a - 30 : 8;            // 8 on X11, 0 on Wayland
+    }
+    switch (scancode - base)
+    {
+        case 164:               // KEY_PLAYPAUSE — what HID consumer-page
+        case 207: return 400;   // KEY_PLAY        keyboards send
+        case 166: return 401;   // KEY_STOPCD
+        case 163: return 402;   // KEY_NEXTSONG
+        case 165: return 403;   // KEY_PREVIOUSSONG
+        default: return 0;
+    }
+#elif defined(_WIN32)
+    // Set-1 scancodes; GLFW ORs 0x100 on for the E0-prefixed extended keys.
+    switch (scancode)
+    {
+        case 0x122: return 400;  // Media Play/Pause
+        case 0x124: return 401;  // Media Stop
+        case 0x119: return 402;  // Media Next Track
+        case 0x110: return 403;  // Media Prev Track
+        default: return 0;
+    }
+#else
+    // macOS delivers media keys as NSSystemDefined events, which never reach
+    // GLFW's key callback — there is no scancode here to translate.
+    (void)scancode;
+    return 0;
+#endif
+}
+
 void GLFWInputManager::keyboardCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
     auto* self = (GLFWInputManager*)Application::getPlatform()->getInputManager();
     KeyState state {};
-    state.key            = (BrlsKeyboardScancode)key;
+    int reportedKey = key;
+    if (key == GLFW_KEY_UNKNOWN)
+    {
+        int media = vitaplexMediaKeyFromScancode(scancode);
+        if (media != 0)
+            reportedKey = media;
+    }
+    state.key            = (BrlsKeyboardScancode)reportedKey;
     state.mods           = mods;
     state.pressed        = action != GLFW_RELEASE;
     const char* key_name = glfwGetKeyName(key, scancode);
     if (key_name != NULL)
         Logger::debug("Key: {} / Code: {} / Action: {}", key_name, key, action);
     else
-        Logger::debug("Key: NULL / Code: {} / Action: {}", key, action);
+        // Scancode included: it is the only thing identifying an unmapped media
+        // key, so a keyboard whose codes differ can be read straight off a log.
+        Logger::debug("Key: NULL / Scan: {:#x} / Code: {} / Action: {}", scancode, reportedKey, action);
     self->getKeyboardKeyStateChanged()->fire(state);
     Application::setActiveEvent(true);
 }
@@ -209,6 +270,7 @@ GLFWInputManager::GLFWInputManager(GLFWwindow* window)
         {
             Logger::info("glfw: joystick {} connected", i);
             Logger::info("glfw: joystick {} is gamepad: \"{}\"", i, glfwGetGamepadName(i));
+            controllersCount++;
         }
     }
 

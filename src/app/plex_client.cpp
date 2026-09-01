@@ -3174,7 +3174,10 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
 
         const auto& vc = platform::getVideoConstraints();
         int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : vc.defaultBitrate;
-        const char* resolution = vc.defaultResolution;
+        // Follows the chosen tier. It used to be the platform default always,
+        // so the quality picker moved the bitrate but never the frame size —
+        // picking 480p asked for 1080p at 2 Mbps, and 4K asked for 1080p at 40.
+        const char* resolution = Application::resolutionFor(settings.videoQuality);
 
         snprintf(buf, sizeof(buf), "&videoBitrate=%d", bitrate);
         queryParams += buf;
@@ -3218,6 +3221,9 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
         // Platform-specific limits for resolution and H.264 level come
         // from the platform abstraction layer instead of #defines.
         const auto& vc = platform::getVideoConstraints();
+        int limW = 0, limH = 0;
+        Application::videoLimitFor(
+            Application::getInstance().getSettings().videoQuality, limW, limH);
         char profileBuf[512];
         snprintf(profileBuf, sizeof(profileBuf),
             "add-transcode-target(type=videoProfile"
@@ -3231,7 +3237,7 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
             "&type=upperBound&name=video.width&value=%d)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
             "&type=upperBound&name=video.height&value=%d)",
-            vc.maxVideoLevel, vc.maxVideoWidth, vc.maxVideoHeight);
+            vc.maxVideoLevel, limW, limH);
         profileExtra = profileBuf;
     }
 
@@ -4886,7 +4892,8 @@ bool PlexClient::buildLiveSessionStreamUrl(const std::string& liveSessionId, std
     q += "&directPlay=0&directStream=0&directStreamAudio=1";
     q += "&protocol=hls&fastSeek=1&hasMDE=1&location=lan&audioBoost=100";
     snprintf(buf, sizeof(buf), "&videoBitrate=%d", bitrate); q += buf;
-    snprintf(buf, sizeof(buf), "&videoResolution=%s", vc.defaultResolution); q += buf;
+    snprintf(buf, sizeof(buf), "&videoResolution=%s",
+             Application::resolutionFor(settings.videoQuality)); q += buf;
     q += "&videoQuality=100";
     q += settings.showSubtitles ? "&subtitles=auto" : "&subtitles=none";
     q += "&session=" + sessionId;
@@ -4894,6 +4901,8 @@ bool PlexClient::buildLiveSessionStreamUrl(const std::string& liveSessionId, std
 
     // Profile augmentation matches getTranscodeUrl's video branch so the server
     // picks an h264/aac HLS target the player can handle.
+    int limW = 0, limH = 0;
+    Application::videoLimitFor(settings.videoQuality, limW, limH);
     char profileBuf[512];
     snprintf(profileBuf, sizeof(profileBuf),
         "add-transcode-target(type=videoProfile&context=streaming&protocol=hls"
@@ -4901,7 +4910,7 @@ bool PlexClient::buildLiveSessionStreamUrl(const std::string& liveSessionId, std
         "+add-limitation(scope=videoCodec&scopeName=h264&type=upperBound&name=video.level&value=%d)"
         "+add-limitation(scope=videoCodec&scopeName=h264&type=upperBound&name=video.width&value=%d)"
         "+add-limitation(scope=videoCodec&scopeName=h264&type=upperBound&name=video.height&value=%d)",
-        vc.maxVideoLevel, vc.maxVideoWidth, vc.maxVideoHeight);
+        vc.maxVideoLevel, limW, limH);
     std::string profileExtra = profileBuf;
 
     // Step 1: /decision with X-Plex-* as headers.  X-Plex-Session-Identifier

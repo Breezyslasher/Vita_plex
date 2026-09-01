@@ -16,6 +16,9 @@
 
 #include <atomic>
 #include <cctype>
+#if defined(ANDROID)
+#include <SDL2/SDL.h>
+#endif
 
 namespace vitaplex {
 
@@ -129,11 +132,184 @@ void wireContextMenu(brls::View* cell, const MediaItem& item) {
 
 } // namespace
 
+bool SearchTab::isPhoneSized() {
+    // Width is what actually breaks the desktop layout: a 300px keyboard column
+    // beside results needs room the phone doesn't have. contentWidth is in the
+    // same units the views are laid out in, so it compares directly against the
+    // column. Portrait on a handheld platform counts too, for a tablet-ish
+    // width that still wants the touch layout.
+    if (brls::Application::contentWidth > 0.0f &&
+        brls::Application::contentWidth < 600.0f) return true;
+#if defined(ANDROID) || defined(PLATFORM_IOS)
+    if (platform::isPortrait()) return true;
+#endif
+    return false;
+}
+
+SearchTab::Layout SearchTab::resolveLayout() {
+    // Phones type with the platform keyboard; everything else keeps the
+    // two-column layout, whose 300px key column suits a pointer and a D-pad.
+    return isPhoneSized() ? Layout::NativeIme : Layout::TwoColumn;
+}
+
 SearchTab::SearchTab() {
-    this->setAxis(brls::Axis::ROW);
-    this->setAlignItems(brls::AlignItems::STRETCH);
+    m_layout = resolveLayout();
+    buildLayout();
+
+    // ---------------- Physical keyboard typing ----------------
+    // The raw key event fires app-wide, so only act while focus is inside this
+    // tab. A-Z / 0-9 / space / backspace aren't mapped to controller buttons,
+    // so there's no conflict with navigation (Enter still clicks the on-screen
+    // key, Escape still goes back).
+    m_inputManager = brls::Application::getPlatform()
+                         ? brls::Application::getPlatform()->getInputManager() : nullptr;
+    if (m_inputManager) {
+        m_kbSub = m_inputManager->getKeyboardKeyStateChanged()->subscribe(
+            [this](brls::KeyState ks) {
+                if (!ks.pressed) return;
+                // Native text input delivers the same keystroke as an
+                // SDL_TEXTINPUT, so taking it here too would double every
+                // character typed on a hardware keyboard.
+                if (m_textInputActive) return;
+                brls::View* f = brls::Application::getCurrentFocus();
+                bool inSearch = false;
+                for (brls::View* v = f; v != nullptr; v = v->getParent())
+                    if (v == this) { inSearch = true; break; }
+                if (!inSearch) return;
+
+                int k = (int)ks.key;
+                if (k >= brls::BRLS_KBD_KEY_A && k <= brls::BRLS_KBD_KEY_Z)
+                    appendChar(std::string(1, (char)('A' + (k - brls::BRLS_KBD_KEY_A))));
+                else if (k >= brls::BRLS_KBD_KEY_0 && k <= brls::BRLS_KBD_KEY_9)
+                    appendChar(std::string(1, (char)('0' + (k - brls::BRLS_KBD_KEY_0))));
+                else if (k == brls::BRLS_KBD_KEY_SPACE)     appendChar(" ");
+                else if (k == brls::BRLS_KBD_KEY_BACKSPACE) backspace();
+            });
+        m_kbSubscribed = true;
+    }
+}
+
+void SearchTab::buildLayout() {
     this->setGrow(1.0f);
     this->setBackgroundColor(spal::bg());
+    m_queryLabel = nullptr;
+    m_keyboardFirstKey = nullptr;
+    m_clearButton = nullptr;
+    m_resultsScroll = nullptr;
+    m_resultsContent = nullptr;
+
+    if (m_layout == Layout::TwoColumn) buildTwoColumn();
+    else                               buildMobile();
+
+    updateField();
+    // Results survive a layout switch — re-render into the new tree rather than
+    // re-querying the server for a search the user already ran.
+    if (!m_query.empty()) rebuildResults();
+}
+
+
+#if defined(ANDROID)
+// The SearchTab currently collecting native text input, and the SDL watch that
+// feeds it. File-static so the header needn't pull in SDL.
+static SearchTab* s_imeTarget = nullptr;
+
+static int SDLCALL searchTextWatch(void* userdata, SDL_Event* e) {
+    auto* self = static_cast<SearchTab*>(userdata);
+    if (!self || self != s_imeTarget) return 0;
+    self->onNativeTextEvent(e);
+    return 0;   // watch only; the event still reaches borealis
+}
+#endif
+
+void SearchTab::endNativeTextInput() {
+#if defined(ANDROID)
+    if (!m_textInputActive) return;
+    m_textInputActive = false;
+    s_imeTarget = nullptr;
+    SDL_DelEventWatch(&searchTextWatch, this);
+    SDL_StopTextInput();
+#endif
+}
+
+#if defined(ANDROID)
+void SearchTab::onNativeTextEvent(void* ev) {
+    auto* e = static_cast<SDL_Event*>(ev);
+    std::weak_ptr<bool> aliveWeak = m_alive;
+    // The watch runs inside SDL_PumpEvents on the UI thread, but rebuilding the
+    // result views from underneath the event pump is asking for trouble — take
+    // the text now, do the view work on the next frame.
+    auto refresh = [this, aliveWeak]() {
+        brls::sync([this, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+            updateField();
+            performSearch();
+        });
+    };
+    switch (e->type) {
+        case SDL_TEXTINPUT:
+            m_query += e->text.text;
+            refresh();
+            break;
+        case SDL_KEYDOWN:
+            if (e->key.keysym.sym == SDLK_BACKSPACE) {
+                if (!m_query.empty()) m_query.pop_back();
+                refresh();
+            } else if (e->key.keysym.sym == SDLK_RETURN ||
+                       e->key.keysym.sym == SDLK_KP_ENTER) {
+                endNativeTextInput();
+            }
+            break;
+        default:
+            break;
+    }
+}
+#endif
+
+void SearchTab::openIme() {
+#if defined(ANDROID)
+    // Raise the platform keyboard directly rather than through
+    // Application::getImeManager(). On the SDL platforms that manager *is*
+    // borealis' EditTextDialog — SDLImeManager::openForText builds one — so
+    // asking it for a "system" keyboard puts a modal over the results the
+    // search exists to show. SDL_StartTextInput() is what that dialog calls
+    // anyway; going straight to it gets the keyboard and nothing else, typing
+    // into the tab's own field.
+    //
+    // The watch is installed once; SDL_StartTextInput() is re-issued on every
+    // tap. Android gives no event when the user dismisses the keyboard — system
+    // back, or its own hide key — so m_textInputActive cannot mean "the
+    // keyboard is up", only "we are listening". Returning early on it left
+    // every tap after the first dismissal doing nothing.
+    if (!m_textInputActive) {
+        m_textInputActive = true;
+        s_imeTarget = this;
+        SDL_AddEventWatch(&searchTextWatch, this);   // twice would double every keystroke
+    }
+    SDL_StartTextInput();
+    return;
+#else
+    auto* ime = brls::Application::getImeManager();
+    if (!ime) return;
+    std::weak_ptr<bool> aliveWeak = m_alive;
+    // The callback delivers the finished string, not each keystroke, so results
+    // refresh on commit. Seeded with the current query so reopening the IME
+    // continues an existing search instead of starting over.
+    ime->openForText(
+        [this, aliveWeak](std::string text) {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+            m_query = std::move(text);
+            updateField();
+            performSearch();
+        },
+        "Search", "", 64, m_query);
+#endif
+}
+
+void SearchTab::buildTwoColumn() {
+    this->setAxis(brls::Axis::ROW);
+    this->setAlignItems(brls::AlignItems::STRETCH);
 
     // ---------------- Left column: field + keyboard (300px) ----------------
     auto* left = new brls::Box();
@@ -191,34 +367,99 @@ SearchTab::SearchTab() {
 
     m_resultsScroll->setContentView(m_resultsContent);
     this->addView(m_resultsScroll);
+}
 
-    // ---------------- Physical keyboard typing ----------------
-    // The raw key event fires app-wide, so only act while focus is inside this
-    // tab. A-Z / 0-9 / space / backspace aren't mapped to controller buttons,
-    // so there's no conflict with navigation (Enter still clicks the on-screen
-    // key, Escape still goes back).
-    m_inputManager = brls::Application::getPlatform()
-                         ? brls::Application::getPlatform()->getInputManager() : nullptr;
-    if (m_inputManager) {
-        m_kbSub = m_inputManager->getKeyboardKeyStateChanged()->subscribe(
-            [this](brls::KeyState ks) {
-                if (!ks.pressed) return;
-                brls::View* f = brls::Application::getCurrentFocus();
-                bool inSearch = false;
-                for (brls::View* v = f; v != nullptr; v = v->getParent())
-                    if (v == this) { inSearch = true; break; }
-                if (!inSearch) return;
+void SearchTab::buildMobile() {
+    // Stacked, not side-by-side: the full width goes to the field and results,
+    // and typing happens on the platform keyboard rather than a key column.
+    this->setAxis(brls::Axis::COLUMN);
+    this->setAlignItems(brls::AlignItems::STRETCH);
 
-                int k = (int)ks.key;
-                if (k >= brls::BRLS_KBD_KEY_A && k <= brls::BRLS_KBD_KEY_Z)
-                    appendChar(std::string(1, (char)('A' + (k - brls::BRLS_KBD_KEY_A))));
-                else if (k >= brls::BRLS_KBD_KEY_0 && k <= brls::BRLS_KBD_KEY_9)
-                    appendChar(std::string(1, (char)('0' + (k - brls::BRLS_KBD_KEY_0))));
-                else if (k == brls::BRLS_KBD_KEY_SPACE)     appendChar(" ");
-                else if (k == brls::BRLS_KBD_KEY_BACKSPACE) backspace();
-            });
-        m_kbSubscribed = true;
-    }
+    // ---------------- Top bar: the search field ----------------
+    // No hamburger: this app has no mobile sidebar drawer to open, so the field
+    // takes the full width.
+    auto* topBar = new brls::Box();
+    topBar->setAxis(brls::Axis::ROW);
+    topBar->setAlignItems(brls::AlignItems::CENTER);
+    topBar->setPadding(10, 14, 10, 14);
+
+    auto* field = new brls::Box();
+    field->setAxis(brls::Axis::ROW);
+    field->setAlignItems(brls::AlignItems::CENTER);
+    field->setGrow(1.0f);
+    field->setHeight(48);
+    field->setCornerRadius(12);
+    field->setBackgroundColor(spal::field());
+    field->setBorderColor(spal::fldLine());
+    field->setBorderThickness(1.0f);
+    field->setPadding(0, 12, 0, 14);
+    // Tapping the field is how you type: it raises the platform keyboard.
+    field->setFocusable(true);
+    field->setHighlightCornerRadius(12);
+
+    auto* fieldIcon = new brls::Image();
+    fieldIcon->setImageFromRes("icons/magnify.png");
+    fieldIcon->setWidth(18);
+    fieldIcon->setHeight(18);
+    fieldIcon->setMarginRight(10);
+    field->addView(fieldIcon);
+
+    m_queryLabel = new brls::Label();
+    m_queryLabel->setText(m_query);
+    m_queryLabel->setFontSize(16);
+    m_queryLabel->setTextColor(spal::qText());
+    m_queryLabel->setSingleLine(true);
+    field->addView(m_queryLabel);
+
+    auto* caret = new brls::Rectangle();
+    caret->setColor(spal::amber());
+    caret->setWidth(2);
+    caret->setHeight(20);
+    caret->setMarginLeft(1);
+    field->addView(caret);
+
+    // Spacer so the clear button sits hard against the right edge.
+    auto* fieldGap = new brls::Box();
+    fieldGap->setGrow(1.0f);
+    field->addView(fieldGap);
+
+    m_clearButton = new brls::Box();
+    m_clearButton->setAxis(brls::Axis::ROW);
+    m_clearButton->setJustifyContent(brls::JustifyContent::CENTER);
+    m_clearButton->setAlignItems(brls::AlignItems::CENTER);
+    m_clearButton->setWidth(22);
+    m_clearButton->setHeight(22);
+    m_clearButton->setCornerRadius(11);
+    m_clearButton->setBackgroundColor(spal::key());
+    m_clearButton->setFocusable(true);
+    m_clearButton->setHighlightCornerRadius(11);
+    auto* clearIcon = new brls::Image();
+    clearIcon->setImageFromRes("icons/delete-outline.png");
+    clearIcon->setWidth(13);
+    clearIcon->setHeight(13);
+    m_clearButton->addView(clearIcon);
+    m_clearButton->registerClickAction([this](brls::View*) { clearQuery(); return true; });
+    m_clearButton->addGestureRecognizer(new brls::TapGestureRecognizer(m_clearButton));
+    field->addView(m_clearButton);
+
+    field->registerClickAction([this](brls::View*) { openIme(); return true; });
+    field->addGestureRecognizer(new brls::TapGestureRecognizer(field));
+
+    topBar->addView(field);
+    this->addView(topBar);
+
+    // ---------------- Results ----------------
+    m_resultsScroll = new brls::ScrollingFrame();
+    m_resultsScroll->setGrow(1.0f);
+    m_resultsScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
+
+    m_resultsContent = new brls::Box();
+    m_resultsContent->setAxis(brls::Axis::COLUMN);
+    m_resultsContent->setAlignItems(brls::AlignItems::STRETCH);
+    m_resultsContent->setPadding(4, 0, 8, 0);
+
+    m_resultsScroll->setContentView(m_resultsContent);
+    this->addView(m_resultsScroll);
 }
 
 void SearchTab::buildKeyboard(brls::Box* parent) {
@@ -259,7 +500,10 @@ void SearchTab::buildKeyboard(brls::Box* parent) {
     kb->addView(sprow);
     grid.push_back(srowKeys);
 
-    // Character rows.
+    // Character rows, alphabetical in a uniform 6x6. This keyboard is only
+    // reached on desktop and TV now — phones raise the platform keyboard — and
+    // a D-pad reads a regular grid far better than QWERTY, whose ragged rows
+    // make every vertical move a guess about which key you land on.
     static const char* const rows[6] = {
         "ABCDEF", "GHIJKL", "MNOPQR", "STUVWX", "YZ1234", "567890"
     };
@@ -307,7 +551,18 @@ void SearchTab::buildKeyboard(brls::Box* parent) {
 void SearchTab::appendChar(const std::string& c) { m_query += c; updateField(); performSearch(); }
 void SearchTab::backspace()                      { if (!m_query.empty()) m_query.pop_back(); updateField(); performSearch(); }
 void SearchTab::clearQuery()                     { m_query.clear(); updateField(); performSearch(); }
-void SearchTab::updateField()                    { if (m_queryLabel) m_queryLabel->setText(m_query); }
+void SearchTab::updateField() {
+    if (m_queryLabel) m_queryLabel->setText(m_query);
+    // The clear affordance only exists in the mobile field, and only earns its
+    // space once there is something to clear. Focusability tracks visibility —
+    // borealis tests only a view's own flag, so a hidden button stays reachable.
+    if (m_clearButton) {
+        const bool show = !m_query.empty();
+        m_clearButton->setVisibility(show ? brls::Visibility::VISIBLE
+                                          : brls::Visibility::GONE);
+        m_clearButton->setFocusable(show);
+    }
+}
 
 void SearchTab::performSearch() {
     if (m_query.empty()) {
@@ -406,9 +661,11 @@ void SearchTab::addSection(const std::string& title, const std::vector<MediaItem
     head->setAxis(brls::Axis::ROW);
     head->setAlignItems(brls::AlignItems::CENTER);
     head->setMarginBottom(11);
+    const bool phone = (m_layout != Layout::TwoColumn);
+    if (phone) head->setPadding(0, 16, 0, 16);
     auto* h2 = new brls::Label();
     h2->setText(title);
-    h2->setFontSize(16);
+    h2->setFontSize(phone ? 17.0f : 16.0f);
     h2->setTextColor(spal::h2());
     h2->setMarginRight(9);
     head->addView(h2);
@@ -422,17 +679,12 @@ void SearchTab::addSection(const std::string& title, const std::vector<MediaItem
     // One horizontal scrolling carousel of cards, like the home screen. The row
     // height fits this type's poster + labels; HorizontalScrollRow handles
     // LEFT/RIGHT + hands focus back to the keyboard / next section at its edges.
-    int posterH = 140;                       // portrait (movies / shows)
-    switch (items[0].mediaType) {
-        case MediaType::EPISODE:
-        case MediaType::CLIP:          posterH = 84; break;   // 16:9
-        case MediaType::MUSIC_ALBUM:
-        case MediaType::MUSIC_TRACK:
-        case MediaType::MUSIC_ARTIST:  posterH = 96; break;   // square
-        default: break;
-    }
+    // From the same metrics the cards are built with. Hardcoding the desktop
+    // poster height here clipped the taller phone cards inside their own row.
+    const int posterH = cardMetrics(items[0].mediaType, m_layout).ph;
     auto* row = new HorizontalScrollRow();
     row->setHeight((float)(posterH + 44));
+    if (phone) row->setPadding(0, 16, 0, 16);
     for (const auto& it : items) {
         auto* card = makeCard(it);
         card->setMarginRight(14);
@@ -442,29 +694,48 @@ void SearchTab::addSection(const std::string& title, const std::vector<MediaItem
     m_resultsContent->addView(section);
 }
 
+// Poster aspect (and width) match the media type so square covers and landscape
+// stills aren't cropped into a portrait frame. Episodes get a larger 16:9 card;
+// movies/shows portrait, albums/tracks/artists square.
+//
+// Phone cards are sized so roughly two fit across a handset — enough that the
+// artwork reads instead of being a strip of thumbnails, and tall enough that
+// about three sections fill the screen. Thumb requests stay at 2x the drawn
+// size.
+//
+// Shared with addSection, which takes the row height from ph; the two must not
+// drift or the cards get clipped by their own row.
+SearchTab::CardMetrics SearchTab::cardMetrics(MediaType type, Layout layout) {
+    const bool phone = (layout != Layout::TwoColumn);
+    CardMetrics m { 96, 140, 192, 280 };           // portrait default (movies / shows)
+    if (phone) m = { 180, 270, 360, 540 };
+    switch (type) {
+        case MediaType::EPISODE:
+        case MediaType::CLIP:
+            m = { 150, 84, 300, 168 };             // bigger 16:9 still
+            if (phone) m = { 300, 169, 600, 338 };
+            break;
+        case MediaType::MUSIC_ALBUM:
+        case MediaType::MUSIC_TRACK:
+        case MediaType::MUSIC_ARTIST:
+            m = { 96, 96, 192, 192 };              // square cover
+            if (phone) m = { 180, 180, 360, 360 };
+            break;
+        default:
+            break;
+    }
+    return m;
+}
+
 brls::Box* SearchTab::makeCard(const MediaItem& item) {
     auto* card = new brls::Box();
     card->setAxis(brls::Axis::COLUMN);
     card->setCornerRadius(6);
     card->setFocusable(true);
 
-    // Poster aspect (and width) match the media type so square covers and
-    // landscape stills aren't cropped into a portrait frame. Episodes get a
-    // larger 16:9 card; movies/shows portrait, albums/tracks/artists square.
-    int cw = 96, ph = 140, rw = 192, rh = 280;     // portrait default (movies / shows)
-    switch (item.mediaType) {
-        case MediaType::EPISODE:
-        case MediaType::CLIP:
-            cw = 150; ph = 84;  rw = 300; rh = 168; // bigger 16:9 still
-            break;
-        case MediaType::MUSIC_ALBUM:
-        case MediaType::MUSIC_TRACK:
-        case MediaType::MUSIC_ARTIST:
-            cw = 96;  ph = 96;  rw = 192; rh = 192; // square cover
-            break;
-        default:
-            break;
-    }
+    const bool phone = (m_layout != Layout::TwoColumn);
+    const CardMetrics m = cardMetrics(item.mediaType, m_layout);
+    const int cw = m.cw, ph = m.ph, rw = m.rw, rh = m.rh;
     card->setWidth((float)cw);
 
     auto* poster = new brls::Box();
@@ -497,16 +768,16 @@ brls::Box* SearchTab::makeCard(const MediaItem& item) {
         badge->setPositionType(brls::PositionType::ABSOLUTE);
         badge->setPositionTop(5);
         badge->setPositionRight(5);
-        badge->setWidth(18);
-        badge->setHeight(18);
+        badge->setWidth(phone ? 20.0f : 18.0f);
+        badge->setHeight(phone ? 20.0f : 18.0f);
         badge->setCornerRadius(9);
         badge->setBackgroundColor(spal::amber());
         badge->setJustifyContent(brls::JustifyContent::CENTER);
         badge->setAlignItems(brls::AlignItems::CENTER);
         auto* chk = new brls::Image();
         chk->setImageFromRes("icons/search-check.png");
-        chk->setWidth(11);
-        chk->setHeight(11);
+        chk->setWidth(phone ? 12.0f : 11.0f);
+        chk->setHeight(phone ? 12.0f : 11.0f);
         chk->setScalingType(brls::ImageScalingType::FIT);
         badge->addView(chk);
         poster->addView(badge);
@@ -516,7 +787,7 @@ brls::Box* SearchTab::makeCard(const MediaItem& item) {
     // Title (single line, ellipsised).
     auto* cap = new brls::Label();
     cap->setText(cardTitle(item));
-    cap->setFontSize(12);
+    cap->setFontSize(phone ? 14.5f : 12.0f);
     cap->setTextColor(spal::cap());
     cap->setSingleLine(true);
     cap->setWidth((float)cw);
@@ -527,7 +798,7 @@ brls::Box* SearchTab::makeCard(const MediaItem& item) {
     if (!sub.empty()) {
         auto* s = new brls::Label();
         s->setText(sub);
-        s->setFontSize(11);
+        s->setFontSize(phone ? 12.5f : 11.0f);
         s->setTextColor(spal::muted());
         s->setSingleLine(true);
         s->setWidth((float)cw);
@@ -561,6 +832,8 @@ void SearchTab::onItemSelected(const MediaItem& item) {
 }
 
 SearchTab::~SearchTab() {
+    // The SDL watch holds a raw `this`; it must not outlive the tab.
+    endNativeTextInput();
     if (m_alive) *m_alive = false;
     if (m_imgAlive) *m_imgAlive = false;
     if (m_inputManager && m_kbSubscribed)
@@ -569,6 +842,9 @@ SearchTab::~SearchTab() {
 
 void SearchTab::willDisappear(bool resetState) {
     brls::Box::willDisappear(resetState);
+    // Leaving the tab with the keyboard still up would keep it on screen over
+    // whatever comes next.
+    endNativeTextInput();
     if (m_alive) *m_alive = false;
     if (m_imgAlive) *m_imgAlive = false;
     m_loadGeneration++;

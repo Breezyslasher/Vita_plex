@@ -16,6 +16,7 @@
 
 #include <borealis.hpp>
 #include <vector>
+#include "app/application.hpp"   // VideoQuality, used in the picker helpers below
 
 namespace vitaplex {
 
@@ -94,6 +95,11 @@ private:
     void onTestLocalPlayback();
     void onThemeChanged(int index);
     void onQualityChanged(int index);
+    // Picker position <-> VideoQuality. Not a cast: the enum is numbered in the
+    // order tiers were added (so saved configs keep their meaning) while the
+    // picker lists them best-first and drops 4K where it can't be decoded.
+    static int          qualityLadderIndex(VideoQuality quality);
+    static VideoQuality qualityAtLadderIndex(int index);
     void onSubtitleSizeChanged(int index);
     void onSeekIntervalChanged(int index);
     void onControlsAutoHideChanged(int index);

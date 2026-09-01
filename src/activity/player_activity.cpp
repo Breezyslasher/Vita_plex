@@ -15,6 +15,7 @@
 #include "utils/async.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/http_client.hpp"
+#include "utils/media_keys.hpp"
 #include "utils/pip.h"
 #include "view/video_view.hpp"
 #include "platform/platform.hpp"
@@ -309,8 +310,18 @@ void PlayerActivity::onContentAvailable() {
     }
 
     // Register controller actions
+    // A / OK is the centre button on a TV remote. With the OSD down it raises
+    // it, matching how the D-pad already behaves and how most TV players work;
+    // with the OSD up the focused control answers first (borealis dispatches
+    // from the focus outward), so this only runs when nothing else claims it.
+    // Photo and music keep their controls up permanently, so A stays Play/Pause
+    // there rather than becoming a no-op.
     this->registerAction("Play/Pause", brls::ControllerButton::BUTTON_A, [this](brls::View* view) {
         resetControlsIdleTimer();
+        if (!m_controlsVisible && !m_isPhoto && !m_isQueueMode) {
+            showControls();
+            return true;
+        }
         togglePlayPause();
         return true;
     });
@@ -325,6 +336,13 @@ void PlayerActivity::onContentAvailable() {
         // If queue overlay is showing, dismiss it instead of leaving player
         if (m_queueOverlayVisible) {
             hideQueueOverlay();
+            return true;
+        }
+        // OSD up: close it first, same as the two overlays above. Photo and
+        // music modes are excluded because hideControls() is a no-op there —
+        // swallowing Back would leave them with no way out.
+        if (m_controlsVisible && !m_isPhoto && !m_isQueueMode) {
+            hideControls();
             return true;
         }
         // In music mode with background music enabled, leave without stopping
@@ -807,6 +825,45 @@ void PlayerActivity::onContentAvailable() {
     // no-op, because the route wiring above cannot survive a cleared flag.
     m_focusWiringDone = true;
     syncHiddenFocus();
+
+    // Space and the media keys. These go through the raw keyboard event rather
+    // than registerAction because borealis' action system is keyed on
+    // ControllerButton and neither has a gamepad equivalent to bind to. The
+    // media codes are synthetic — see include/utils/media_keys.hpp.
+    m_inputManager = brls::Application::getPlatform()
+                         ? brls::Application::getPlatform()->getInputManager() : nullptr;
+    if (m_inputManager) {
+        m_kbSub = m_inputManager->getKeyboardKeyStateChanged()->subscribe(
+            [this](brls::KeyState ks) {
+                if (!ks.pressed || m_destroying) return;
+                const int k = (int)ks.key;
+                if (k != brls::BRLS_KBD_KEY_SPACE &&
+                    k != mediakey::PLAY_PAUSE && k != mediakey::STOP &&
+                    k != mediakey::NEXT && k != mediakey::PREV) return;
+                // Only when this player is the activity on top: the event is
+                // global, and a Space typed into a search field elsewhere must
+                // not reach playback.
+                const auto stack = brls::Application::getActivitiesStack();
+                if (stack.empty() || stack.back() != this) return;
+                resetControlsIdleTimer();
+
+                if (k == mediakey::NEXT || k == mediakey::PREV) {
+                    // Skip tracks in a music queue, where that is what the key
+                    // means; in a video there is nothing to skip to, so fall
+                    // back to a seek of the configured interval.
+                    const bool fwd = (k == mediakey::NEXT);
+                    if (m_isQueueMode) {
+                        fwd ? playNext() : playPrevious();
+                    } else {
+                        int interval = Application::getInstance().getSettings().seekInterval;
+                        seek(fwd ? interval : -interval);
+                    }
+                    return;
+                }
+                togglePlayPause();   // Space, Play/Pause, and Stop
+            });
+        m_kbSubscribed = true;
+    }
 }
 
 void PlayerActivity::setBackgroundTransparent(bool transparent) {
@@ -830,6 +887,12 @@ void PlayerActivity::setBackgroundTransparent(bool transparent) {
 
 void PlayerActivity::willDisappear(bool resetState) {
     brls::Activity::willDisappear(resetState);
+
+    // The keyboard event is owned by the input manager and outlives us.
+    if (m_inputManager && m_kbSubscribed) {
+        m_inputManager->getKeyboardKeyStateChanged()->unsubscribe(m_kbSub);
+        m_kbSubscribed = false;
+    }
 
     // Cancel any pending debounced seek so its commit can't fire after we leave
     // (stop() passes finished=false, which the end callback ignores).
@@ -4759,6 +4822,33 @@ void PlayerActivity::skipToMarkerEnd() {
     if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
 }
 
+// Enable/disable the A (click) action on every control in a subtree.
+//
+// hideControls() cannot move focus off the controls — giveFocus() resolves
+// through getDefaultFocus(), which refuses a view that isn't VISIBLE, so the
+// button that had focus keeps it while invisible. borealis dispatches A from
+// the focused view upward and stops at the first handler that consumes it, so
+// that invisible button, not the activity, is what answers the press. Marking
+// its action unavailable lets A fall through to the activity handler, which
+// raises the OSD instead.
+// Only views that actually carry the action are touched: setActionAvailable()
+// fires the global hints-update event whether or not it matched, and this runs
+// on every auto-hide.
+static void setSubtreeClickAvailable(brls::View* v, bool available) {
+    if (!v) return;
+    for (const auto& a : v->getActions()) {
+        if (a->getType() == brls::ActionType::ACTION_GAMEPAD &&
+            a->getButton() == brls::ControllerButton::BUTTON_A) {
+            v->setActionAvailable(brls::ControllerButton::BUTTON_A, available);
+            break;
+        }
+    }
+    if (auto* box = dynamic_cast<brls::Box*>(v)) {
+        for (brls::View* child : box->getChildren())
+            setSubtreeClickAvailable(child, available);
+    }
+}
+
 void PlayerActivity::toggleControls() {
     if (m_controlsVisible) {
         hideControls();
@@ -4774,6 +4864,8 @@ void PlayerActivity::resetControlsIdleTimer() {
 void PlayerActivity::showControls() {
     m_controlsVisible = true;
     resetControlsIdleTimer();
+    setSubtreeClickAvailable(controlsBox, true);
+    setSubtreeClickAvailable(centerControls, true);
     if (controlsBox) {
         controlsBox->setAlpha(1.0f);
         controlsBox->setVisibility(brls::Visibility::VISIBLE);
@@ -4806,6 +4898,11 @@ void PlayerActivity::hideControls() {
         centerControls->setAlpha(0.0f);
         centerControls->setVisibility(brls::Visibility::GONE);
     }
+    // Focus stays on whichever control had it, so hand A back to the activity —
+    // otherwise the press lands on an invisible button (queue, audio, subtitles)
+    // and opens its overlay over a hidden OSD.
+    setSubtreeClickAvailable(controlsBox, false);
+    setSubtreeClickAvailable(centerControls, false);
 }
 
 // ─── MPV stats overlay ─────────────────────────────────────────────────
@@ -4887,17 +4984,44 @@ void PlayerActivity::updateMpvStatsOverlay() {
         return std::string(buf);
     };
 
+    // mpv reports cache depth to microsecond precision; one decimal is plenty.
+    auto fmtCacheSecs = [&]() -> std::string {
+        std::string raw = p.getProperty("demuxer-cache-time");
+        if (raw.empty()) return "?";
+        try {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%.1f", std::stod(raw));
+            return std::string(buf);
+        } catch (...) { return raw; }
+    };
+
     std::string body;
     body.reserve(256);
-    body += "Codec: " + get("video-codec")  + " | HW: " + get("hwdec-current") + "\n";
-    body += "Source: " + get("width") + "x" + get("height")
-          + " @ " + get("container-fps") + " fps"
-          + " | Bitrate: " + get("video-bitrate") + "\n";
-    body += "Render: " + get("estimated-vf-fps") + " fps"
-          + " | Display: " + get("estimated-display-fps") + " fps\n";
-    body += "Drops: " + get("decoder-frame-drop-count") + " decoder, "
-                     + get("frame-drop-count") + " vo\n";
-    body += "Cache: " + get("demuxer-cache-time") + " s / " + fmtSpeed()
+
+    // Audio-only leaves every video property unset, which rendered as a column
+    // of "?". Asked of mpv, not m_isQueueMode, so a videoless file reads right.
+    const bool hasVideo = !p.getProperty("video-codec").empty();
+
+    if (hasVideo) {
+        body += "Codec: " + get("video-codec")  + " | HW: " + get("hwdec-current") + "\n";
+        body += "Source: " + get("width") + "x" + get("height")
+              + " @ " + get("container-fps") + " fps"
+              + " | Bitrate: " + get("video-bitrate") + "\n";
+        body += "Render: " + get("estimated-vf-fps") + " fps"
+              + " | Display: " + get("estimated-display-fps") + " fps\n";
+        body += "Drops: " + get("decoder-frame-drop-count") + " decoder, "
+                         + get("frame-drop-count") + " vo\n";
+    } else {
+        body += "Codec: " + get("audio-codec-name") + " | AO: " + get("current-ao") + "\n";
+        body += "Source: " + get("audio-params/samplerate") + " Hz, "
+              + get("audio-params/channels")
+              + " | Bitrate: " + get("audio-bitrate") + "\n";
+        body += "Output: " + get("audio-out-params/samplerate") + " Hz, "
+              + get("audio-out-params/channels") + ", "
+              + get("audio-out-params/format") + "\n";
+    }
+
+    body += "Cache: " + fmtCacheSecs() + " s / " + fmtSpeed()
           + " | Paused: " + get("paused-for-cache");
     m_mpvStatsLabel->setText(body);
 }

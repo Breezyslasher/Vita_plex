@@ -964,14 +964,17 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         // keeps the platform's ceiling (and, with directPlay above, ships an
         // already-compatible source untouched); a specific tier yields a smaller
         // file that also encodes faster.
-        std::string resolution = vc.defaultResolution;
+        // Frame size comes from the shared table so the download and streaming
+        // paths cannot disagree about what a tier means.
+        std::string resolution = Application::resolutionFor(settings.downloadQuality);
         int bitrate = settings.maxBitrate > 0 ? settings.maxBitrate : vc.defaultBitrate;
         switch (settings.downloadQuality) {
-            case VideoQuality::QUALITY_1080P: resolution = "1920x1080"; bitrate = 20000; break;
-            case VideoQuality::QUALITY_720P:  resolution = "1280x720";  bitrate = 4000;  break;
-            case VideoQuality::QUALITY_480P:  resolution = "854x480";   bitrate = 2000;  break;
-            case VideoQuality::QUALITY_360P:  resolution = "640x360";   bitrate = 1000;  break;
-            case VideoQuality::QUALITY_240P:  resolution = "426x240";   bitrate = 500;   break;
+            case VideoQuality::QUALITY_4K:    bitrate = 40000; break;
+            case VideoQuality::QUALITY_1080P: bitrate = 20000; break;
+            case VideoQuality::QUALITY_720P:  bitrate = 4000;  break;
+            case VideoQuality::QUALITY_480P:  bitrate = 2000;  break;
+            case VideoQuality::QUALITY_360P:  bitrate = 1000;  break;
+            case VideoQuality::QUALITY_240P:  bitrate = 500;   break;
             case VideoQuality::ORIGINAL: default: break;  // keep the platform default
         }
         char bitrateStr[64];
@@ -986,6 +989,8 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
         const bool wantSubs = settings.downloadIncludeSubtitles;
         addUrl += wantSubs ? "&subtitles=embedded" : "&subtitles=none";
         const char* subCodec = wantSubs ? "&subtitleCodec=mov_text" : "";
+        int limW = 0, limH = 0;
+        Application::videoLimitFor(settings.downloadQuality, limW, limH);
         char dlProfileBuf[1700];
         snprintf(dlProfileBuf, sizeof(dlProfileBuf),
             // Direct-play profiles say "ship this file untouched" — keep them
@@ -1027,7 +1032,7 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
                 "&type=upperBound&name=video.width&value=%d)"
             "+add-limitation(scope=videoCodec&scopeName=h264"
                 "&type=upperBound&name=video.height&value=%d)",
-            subCodec, subCodec, vc.maxVideoLevel, vc.maxVideoWidth, vc.maxVideoHeight);
+            subCodec, subCodec, vc.maxVideoLevel, limW, limH);
         profileExtra = dlProfileBuf;
     }
 
@@ -1331,11 +1336,13 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
             snprintf(bitrateStr, sizeof(bitrateStr), "&videoBitrate=%d", bitrate);
             queryParams += bitrateStr;
             queryParams += "&videoResolution=";
-            queryParams += vc.defaultResolution;
+            queryParams += Application::resolutionFor(settings.videoQuality);
             queryParams += "&videoQuality=100";
             queryParams += "&subtitles=none";
 
             // HLS with MPEG-TS segments, h264+aac - platform-specific limits
+            int limW = 0, limH = 0;
+            Application::videoLimitFor(settings.videoQuality, limW, limH);
             char streamProfileBuf[512];
             snprintf(streamProfileBuf, sizeof(streamProfileBuf),
                 "add-transcode-target(type=videoProfile"
@@ -1348,7 +1355,7 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                 "&type=upperBound&name=video.width&value=%d)"
                 "+add-limitation(scope=videoCodec&scopeName=h264"
                 "&type=upperBound&name=video.height&value=%d)",
-                vc.maxVideoLevel, vc.maxVideoWidth, vc.maxVideoHeight);
+                vc.maxVideoLevel, limW, limH);
             profileExtra = streamProfileBuf;
         }
 

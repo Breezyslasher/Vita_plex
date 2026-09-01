@@ -7,6 +7,7 @@
 
 #include <string>
 #include <functional>
+#include <vector>
 
 // Application version. Two flavours, both injected by the build system
 // (CMakeLists.txt forwards them from -DAPP_VERSION / -DAPP_DISPLAY_VERSION):
@@ -53,13 +54,16 @@ enum class AppTheme {
 };
 
 // Video quality options for transcoding
+// Values are written to the config file, so new tiers are appended rather than
+// inserted in ladder order — the pickers sort them for display instead.
 enum class VideoQuality {
     ORIGINAL = 0,      // Direct play/stream
     QUALITY_1080P = 1, // 1080p 20Mbps
     QUALITY_720P = 2,  // 720p 4Mbps
     QUALITY_480P = 3,  // 480p 2Mbps (recommended for Vita)
     QUALITY_360P = 4,  // 360p 1Mbps
-    QUALITY_240P = 5   // 240p 500kbps
+    QUALITY_240P = 5,  // 240p 500kbps
+    QUALITY_4K = 6     // 2160p 40Mbps
 };
 
 // Subtitle size options
@@ -290,6 +294,19 @@ public:
     static std::string getQualityString(VideoQuality quality);
     static std::string getThemeString(AppTheme theme);
     static std::string getSubtitleSizeString(SubtitleSize size);
+
+    // Quality tiers in ladder order (best first) for the settings pickers,
+    // filtered to what this platform can decode.
+    static std::vector<VideoQuality> qualityLadder();
+    // Device-level, not port-level — see platform::supports4KDecode().
+    static bool supports4K();
+    // Decode ceiling to advertise to Plex. The platform's, except when the user
+    // has asked for 4K — the server clamps to whatever we claim, so leaving the
+    // 1080p bound in place would make the tier do nothing.
+    static void videoLimitFor(VideoQuality quality, int& outWidth, int& outHeight);
+    // Frame size to ask Plex to transcode to. ORIGINAL, and any tier this
+    // device cannot decode, fall back to the platform default.
+    static const char* resolutionFor(VideoQuality quality);
 
 private:
     Application() = default;
