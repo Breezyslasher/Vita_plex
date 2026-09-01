@@ -129,13 +129,30 @@ static void glfwTouchCallback(GLFWwindow* window, int touch, int action, double 
 static int vitaplexMediaKeyFromScancode(int scancode)
 {
 #if defined(__linux__)
-    // X11 keycode == evdev code + 8.
-    switch (scancode)
+    // The two Linux backends disagree: X11 reports keycodes, which are evdev
+    // codes + 8, while Wayland passes the raw evdev code straight through
+    // (wl_window.c hands _glfwInputKey the untouched scancode and only adds 8
+    // when it needs an xkb keycode). The same key therefore differs by 8
+    // between sessions.
+    //
+    // Derive the offset from a key whose evdev code is fixed rather than
+    // sniffing the session: XWayland runs the X11 backend inside a Wayland
+    // session, so WAYLAND_DISPLAY would answer for the wrong one. Both backends
+    // implement glfwGetKeyScancode as the reverse of the table they translate
+    // incoming events with, so it returns exactly what this callback receives.
+    static int base = -1;
+    if (base < 0)
     {
-        case 172: return 400;  // XF86AudioPlay,  evdev KEY_PLAYPAUSE    164
-        case 174: return 401;  // XF86AudioStop,  evdev KEY_STOPCD       166
-        case 171: return 402;  // XF86AudioNext,  evdev KEY_NEXTSONG     163
-        case 173: return 403;  // XF86AudioPrev,  evdev KEY_PREVIOUSSONG 165
+        const int a = glfwGetKeyScancode(GLFW_KEY_A);  // evdev KEY_A == 30
+        base        = (a > 0) ? a - 30 : 8;            // 8 on X11, 0 on Wayland
+    }
+    switch (scancode - base)
+    {
+        case 164:               // KEY_PLAYPAUSE — what HID consumer-page
+        case 207: return 400;   // KEY_PLAY        keyboards send
+        case 166: return 401;   // KEY_STOPCD
+        case 163: return 402;   // KEY_NEXTSONG
+        case 165: return 403;   // KEY_PREVIOUSSONG
         default: return 0;
     }
 #elif defined(_WIN32)
