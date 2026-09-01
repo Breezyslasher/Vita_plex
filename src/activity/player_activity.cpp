@@ -1263,6 +1263,12 @@ void PlayerActivity::loadMedia() {
     m_syncRecoverAttempts = 0;
     m_directPlay = false;
 
+    // Same reason: auto-play-next reloads into this same activity, so the old
+    // item's poster must not survive into the next one's media session.
+    m_osArtUrl.clear();
+    m_osArtist.clear();
+    m_osAlbum.clear();
+
     // Handle direct file playback (debug/testing)
     if (m_isDirectFile) {
         brls::Logger::info("PlayerActivity: Playing direct file: {}", m_directFilePath);
@@ -1384,6 +1390,11 @@ void PlayerActivity::loadMedia() {
                 }
                 titleLabel->setText(title);
             }
+            // Offline: the cover is already a file on disk, so the session can
+            // show it with no server to reach.
+            m_osArtUrl = dlItem.thumbPath;
+            m_osArtist = dlItem.parentTitle;
+            m_osAlbum.clear();
         }
 
         // Pause image loading and free cache to reclaim memory for MPV
@@ -1444,6 +1455,22 @@ void PlayerActivity::loadMedia() {
             m_episodeIndex = item.index;
             m_parentRatingKey = item.parentRatingKey;
             m_grandparentRatingKey = item.grandparentRatingKey;
+        }
+
+        // Poster + show/season line for the OS media session. The lock screen
+        // and the Android 13+ controls had a bare title on a grey card, while
+        // music showed full art.
+        {
+            const std::string art = !item.thumb.empty() ? item.thumb : item.grandparentThumb;
+            m_osArtUrl = art.empty() ? "" : client.getThumbnailUrl(art, 512, 512);
+            if (item.mediaType == MediaType::EPISODE) {
+                m_osArtist = item.grandparentTitle;
+                m_osAlbum = "S" + std::to_string(item.parentIndex) +
+                            " - E" + std::to_string(item.index);
+            } else {
+                m_osArtist = item.year > 0 ? std::to_string(item.year) : "";
+                m_osAlbum = item.studio;
+            }
         }
 
         // Store markers for intro/credits skip
@@ -2290,6 +2317,13 @@ void PlayerActivity::publishVideoNowPlaying() {
 
     nowplaying::Info info;
     if (titleLabel) info.title = titleLabel->getFullText();
+#ifdef __ANDROID__
+    // Android only: MPRIS (Linux) and SMTC (Windows) read the same struct, and
+    // their video controls are staying as they are.
+    info.artUrl = m_osArtUrl;
+    info.artist = m_osArtist;
+    info.album  = m_osAlbum;
+#endif
     info.playing    = m_isPlaying;
     info.positionMs = (long long)(p.getPosition() * 1000.0);
     info.durationMs = (long long)(p.getDuration() * 1000.0);

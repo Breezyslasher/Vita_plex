@@ -270,6 +270,13 @@ private:
                                    // /:/timeline keep-alive pings in updateProgress
     int m_liveKeepaliveCounter = 0;  // Seconds since last live-TV keep-alive
     MediaType m_mediaType = MediaType::UNKNOWN;  // Type of media being played
+    // Metadata for the OS media session while playing video. Music reads the
+    // queue for this; video has no queue, so the details fetch stashes it here.
+    // Only consumed on Android — the desktop MPRIS/SMTC publishes are unchanged.
+    std::string m_osArtUrl;    // poster / episode still, already a full URL or file path
+    std::string m_osArtist;    // show title for episodes, year for movies
+    std::string m_osAlbum;     // "S2 - E4" for episodes, empty otherwise
+
     std::string m_parentRatingKey;  // Season/album ratingKey for auto-play-next
     std::string m_grandparentRatingKey;  // Show ratingKey for cross-season auto-play-next
     int m_episodeIndex = 0;         // Episode index within season for auto-play-next
