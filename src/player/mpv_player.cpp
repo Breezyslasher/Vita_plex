@@ -231,6 +231,60 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "target-colorspace-hint", "yes");
     }
 
+    // Subtitles follow the platform's accessibility caption settings where it
+    // has any. Someone who set large high-contrast captions system-wide was
+    // still getting small white text here. valid is false on every port that
+    // exposes nothing, so their subtitle styling is untouched.
+    {
+        const auto& cs = platform::getSystemCaptionStyle();
+        if (cs.valid) {
+            auto argbToMpv = [](unsigned argb) {
+                // mpv wants #AARRGGBB, and its alpha is opacity, same as ARGB's.
+                char buf[16];
+                snprintf(buf, sizeof(buf), "#%08X", argb);
+                return std::string(buf);
+            };
+            if (cs.fontScale > 0.01f && cs.fontScale != 1.0f) {
+                mpv_set_option_string(m_mpv, "sub-scale",
+                                      std::to_string(cs.fontScale).c_str());
+            }
+            if (cs.hasForeground) {
+                mpv_set_option_string(m_mpv, "sub-color",
+                                      argbToMpv(cs.foreground).c_str());
+            }
+            if (cs.hasBackground) {
+                // mpv paints sub-back-color behind the glyphs only, which is
+                // what Android's "background" means too (the window colour is
+                // the box behind the whole line, and mpv has no equivalent).
+                mpv_set_option_string(m_mpv, "sub-back-color",
+                                      argbToMpv(cs.background).c_str());
+            }
+            switch (cs.edgeType) {
+                case 1:   // outline
+                    mpv_set_option_string(m_mpv, "sub-border-size", "3");
+                    if (cs.hasEdgeColor) {
+                        mpv_set_option_string(m_mpv, "sub-border-color",
+                                              argbToMpv(cs.edgeColor).c_str());
+                    }
+                    break;
+                case 2:   // drop shadow
+                case 3:   // raised
+                case 4:   // depressed
+                    // mpv has one shadow, with no direction, so raised and
+                    // depressed both land here rather than being faked.
+                    mpv_set_option_string(m_mpv, "sub-shadow-offset", "2");
+                    if (cs.hasEdgeColor) {
+                        mpv_set_option_string(m_mpv, "sub-shadow-color",
+                                              argbToMpv(cs.edgeColor).c_str());
+                    }
+                    break;
+                case 0:
+                default:
+                    break;
+            }
+        }
+    }
+
     // Audio passthrough. Without it mpv decodes Dolby/DTS to PCM and downmixes
     // it, so a receiver that could have rendered 5.1 gets stereo. The list is
     // the intersection of what the user asked for and what the audio output

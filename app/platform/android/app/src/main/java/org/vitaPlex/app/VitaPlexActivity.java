@@ -83,6 +83,19 @@ public class VitaPlexActivity extends SDLActivity
             sVideoAspectNum = aspectNum;
             sVideoAspectDen = aspectDen;
         }
+        // Keep the window's PiP params current while playing. From API 31 the
+        // system can enter PiP itself on a gesture-nav swipe, but only if the
+        // params were already registered — onUserLeaveHint fires too late for
+        // that, and going through it gives a visible transition instead of the
+        // video morphing into the window.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            final Activity activity = (Activity) mSingleton;
+            if (activity != null) {
+                activity.runOnUiThread(new Runnable() {
+                    @Override public void run() { PiPS.refreshParams(activity); }
+                });
+            }
+        }
     }
 
     @Override
@@ -91,7 +104,9 @@ public class VitaPlexActivity extends SDLActivity
         // User is leaving the app (e.g. Home button). If a video is playing,
         // try to seamlessly enter Picture-in-Picture so playback continues in
         // a small window instead of stopping.
-        if (sVideoPlaying) {
+        // From API 31 the system already auto-entered from the registered
+        // params, so doing it again here would fight that.
+        if (sVideoPlaying && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             try {
                 enterPiP(sVideoAspectNum, sVideoAspectDen);
             } catch (Throwable t) {
@@ -182,6 +197,10 @@ public class VitaPlexActivity extends SDLActivity
         super.onCreate(savedInstanceState);
         mSurface.getHolder().setFormat(PixelFormat.RGBA_8888);
 
+        // A deep link that cold-started us. Native isn't up yet, so it is held
+        // until the UI asks for it (takePendingDeepLink).
+        rememberDeepLink(getIntent());
+
         // Android 13+ gates notifications behind a runtime grant; ask once so the
         // music media notification can be posted. Denial is non-fatal (the
         // notification just won't show).
@@ -238,6 +257,98 @@ public class VitaPlexActivity extends SDLActivity
      * @return true if the PiP request was issued, false if unsupported or
      *         the system refused it.
      */
+    // ---- Deep links ----
+    //
+    // plex:// , vitaplex:// and app.plex.tv links. Anything carrying a
+    // /library/metadata/<key> opens that item; anything else just opens the
+    // app, which is what a link we can't read should do.
+    //
+    // The link is held rather than pushed because a cold start has no native
+    // library loaded and no borealis loop to push onto. The UI collects it once
+    // it is ready; a link that arrives while the app is already running is
+    // stored the same way and picked up on the next poll.
+    private static volatile String sPendingDeepLink;
+
+    /** Native trampoline: implemented in src/platform/platform_android.cpp. */
+    private static native void nativeDeepLink();
+
+    private static void rememberDeepLink(Intent intent) {
+        try {
+            if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) return;
+            android.net.Uri uri = intent.getData();
+            if (uri == null) return;
+            sPendingDeepLink = uri.toString();
+            Log.i(TAG, "deep link: " + sPendingDeepLink);
+        } catch (Throwable t) {
+            Log.w(TAG, "rememberDeepLink failed", t);
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        // singleInstance, so a second link arrives here rather than in onCreate.
+        rememberDeepLink(intent);
+        // Unlike a cold start there is a running UI, so nudge it to collect the
+        // link now instead of waiting for the next thing that happens to poll.
+        try {
+            nativeDeepLink();
+        } catch (Throwable t) {
+            Log.w(TAG, "nativeDeepLink unavailable", t);
+        }
+    }
+
+    /** Called from native. Returns the pending link and clears it, or null. */
+    public static String takePendingDeepLink() {
+        String link = sPendingDeepLink;
+        sPendingDeepLink = null;
+        return link;
+    }
+
+    // ---- System caption styling ----
+    //
+    // Android's accessibility settings carry a subtitle size, colour, edge and
+    // background that every media app is expected to honour. VitaPlex styled
+    // subtitles only from its own defaults, so a user who had set large
+    // high-contrast captions system-wide got small white text anyway.
+    //
+    // Returned as a flat int[] so the JNI side stays one call:
+    //   [0] font scale x1000
+    //   [1] foreground ARGB   [2] background ARGB   [3] edge ARGB
+    //   [4] edge type (0 none, 1 outline, 2 drop shadow, 3 raised, 4 depressed)
+    //   [5] which of those the user actually set: bit0 fg, bit1 bg, bit2 edge
+    // Null when the platform has no caption manager, which leaves the app's own
+    // styling alone.
+    public static int[] captionStyle() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT) return null;
+        try {
+            Context ctx = getAppContext();
+            android.view.accessibility.CaptioningManager cm = ctx != null
+                ? (android.view.accessibility.CaptioningManager)
+                      ctx.getSystemService(Context.CAPTIONING_SERVICE)
+                : null;
+            if (cm == null) return null;
+
+            android.view.accessibility.CaptioningManager.CaptionStyle st = cm.getUserStyle();
+            int flags = 0;
+            if (st != null && st.hasForegroundColor()) flags |= 1;
+            if (st != null && st.hasBackgroundColor()) flags |= 2;
+            if (st != null && st.hasEdgeColor())       flags |= 4;
+
+            return new int[] {
+                Math.round(cm.getFontScale() * 1000f),
+                st != null ? st.foregroundColor : 0xFFFFFFFF,
+                st != null ? st.backgroundColor : 0x00000000,
+                st != null ? st.edgeColor : 0xFF000000,
+                st != null ? st.edgeType : 0,
+                flags,
+            };
+        } catch (Throwable t) {
+            Log.w(TAG, "captionStyle failed", t);
+            return null;
+        }
+    }
+
     // ---- Audio passthrough ----
     //
     // Which surround codecs the current output can take as a bitstream, as a
@@ -444,6 +555,47 @@ public class VitaPlexActivity extends SDLActivity
      * can be loaded on pre-O devices without triggering verifier errors
      * from references to PictureInPictureParams / Rational / RemoteAction.
      */
+    /**
+     * API 31+ PiP extras, in their own class so the S-only method references
+     * never appear in bytecode that older devices verify.
+     *
+     * autoEnterEnabled lets the system take the app into PiP on the gesture-nav
+     * swipe-up, which is both smoother and the only way it happens at all on
+     * devices where onUserLeaveHint is not delivered for that gesture.
+     * sourceRectHint tells it which part of the window is the video, so the
+     * transition morphs that rectangle into the PiP window instead of
+     * cross-fading the whole screen. seamlessResize is off because that is for
+     * content that can resize without a visual break (a live camera feed); a
+     * decoded video frame cannot.
+     */
+    private static final class PiPS {
+        static void refreshParams(Activity activity) {
+            try {
+                PackageManager pm = activity.getPackageManager();
+                if (pm != null
+                    && !pm.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return;
+
+                PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
+                    .setAspectRatio(new Rational(sVideoAspectNum, sVideoAspectDen))
+                    .setAutoEnterEnabled(sVideoPlaying)
+                    .setSeamlessResizeEnabled(false);
+
+                android.view.View content =
+                    activity.findViewById(android.R.id.content);
+                if (content != null && content.getWidth() > 0 && content.getHeight() > 0) {
+                    int[] xy = new int[2];
+                    content.getLocationOnScreen(xy);
+                    b.setSourceRectHint(new android.graphics.Rect(
+                        xy[0], xy[1],
+                        xy[0] + content.getWidth(), xy[1] + content.getHeight()));
+                }
+                activity.setPictureInPictureParams(b.build());
+            } catch (Throwable t) {
+                Log.w(TAG, "PiP params refresh failed", t);
+            }
+        }
+    }
+
     private static final class PiPO {
         static boolean enter(final Activity activity, int aspectNum, int aspectDen) {
             // Not all Android builds (stock Android TV without the PiP

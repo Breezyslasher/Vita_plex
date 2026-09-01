@@ -132,6 +132,24 @@
             <intent-filter>
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
             </intent-filter>
+            <!-- Deep links. plex:// and vitaplex:// are ours to claim outright;
+                 app.plex.tv links are offered in the chooser rather than
+                 verified, since verification needs an assetlinks.json we do not
+                 control on that domain. Anything carrying a
+                 /library/metadata/<key> opens that item's detail page. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="vitaplex" />
+                <data android:scheme="plex" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="app.plex.tv" />
+            </intent-filter>
             <!-- Drop file event -->
             <!--
             <intent-filter>

@@ -271,6 +271,93 @@ int passthroughCodecs() {
     return mask;
 }
 
+const CaptionStyle& getSystemCaptionStyle() {
+    // Read once. Android delivers changes through a listener, but mpv takes
+    // these at init, so a mid-playback change would not be acted on anyway.
+    static const CaptionStyle style = []() -> CaptionStyle {
+        CaptionStyle cs;
+        JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+        if (!env) return cs;
+        jclass cls = env->FindClass("org/VitaPlex/app/VitaPlexActivity");
+        if (!cls) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            return cs;
+        }
+        jmethodID mid = env->GetStaticMethodID(cls, "captionStyle", "()[I");
+        if (!mid) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            env->DeleteLocalRef(cls);
+            return cs;
+        }
+        jintArray arr = (jintArray)env->CallStaticObjectMethod(cls, mid);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            arr = nullptr;
+        }
+        if (arr && env->GetArrayLength(arr) >= 6) {
+            jint v[6];
+            env->GetIntArrayRegion(arr, 0, 6, v);
+            cs.valid = true;
+            cs.fontScale = v[0] > 0 ? (float)v[0] / 1000.0f : 1.0f;
+            cs.foreground = (unsigned)v[1];
+            cs.background = (unsigned)v[2];
+            cs.edgeColor = (unsigned)v[3];
+            cs.edgeType = (int)v[4];
+            cs.hasForeground = (v[5] & 1) != 0;
+            cs.hasBackground = (v[5] & 2) != 0;
+            cs.hasEdgeColor = (v[5] & 4) != 0;
+            brls::Logger::info("Android captions: scale {:.2f} edge {} flags {}",
+                               cs.fontScale, cs.edgeType, (int)v[5]);
+        }
+        if (arr) env->DeleteLocalRef(arr);
+        env->DeleteLocalRef(cls);
+        return cs;
+    }();
+    return style;
+}
+
+namespace {
+std::function<void()> g_deepLinkHandler;
+}
+
+std::string takePendingDeepLink() {
+    JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    if (!env) return {};
+    jclass cls = env->FindClass("org/VitaPlex/app/VitaPlexActivity");
+    if (!cls) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return {};
+    }
+    std::string out;
+    jmethodID mid = env->GetStaticMethodID(cls, "takePendingDeepLink", "()Ljava/lang/String;");
+    if (mid) {
+        jstring js = (jstring)env->CallStaticObjectMethod(cls, mid);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        } else if (js) {
+            const char* raw = env->GetStringUTFChars(js, nullptr);
+            if (raw) {
+                out = raw;
+                env->ReleaseStringUTFChars(js, raw);
+            }
+        }
+        if (js) env->DeleteLocalRef(js);
+    } else if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(cls);
+    return out;
+}
+
+void setDeepLinkHandler(std::function<void()> onLinkArrived) {
+    g_deepLinkHandler = std::move(onLinkArrived);
+}
+
+// Not in the header: only the JNI trampoline at the bottom of this file calls it.
+void invokeDeepLinkHandler() {
+    if (g_deepLinkHandler) g_deepLinkHandler();
+}
+
 bool init() {
     // Borealis on Android loads resources via fopen("resources/...") which
     // can't read APK assets directly, so extract them to internal storage
@@ -330,3 +417,14 @@ bool needsHardExit() {
 
 }  // namespace platform
 }  // namespace vitaplex
+
+#ifdef __ANDROID__
+// Java -> native: a link arrived while the app was already running, so there is
+// a UI to open it with right now. onCreate's link takes the polled path instead.
+extern "C" JNIEXPORT void JNICALL
+Java_org_VitaPlex_app_VitaPlexActivity_nativeDeepLink(JNIEnv*, jclass) {
+    brls::sync([]() {
+        vitaplex::platform::invokeDeepLinkHandler();
+    });
+}
+#endif

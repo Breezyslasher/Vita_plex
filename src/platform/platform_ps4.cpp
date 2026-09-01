@@ -133,6 +133,14 @@ bool displaySupportsHdr() { return false; }
 // No way to ask what the audio sink accepts, so everything is decoded to PCM
 // exactly as before.
 int passthroughCodecs() { return 0; }
+// No platform caption preferences here, so subtitles keep the app's styling.
+const CaptionStyle& getSystemCaptionStyle() {
+    static const CaptionStyle none;
+    return none;
+}
+// No deep-link plumbing on this port; nothing ever hands us a URL.
+std::string takePendingDeepLink() { return {}; }
+void setDeepLinkHandler(std::function<void()>) {}
 
 bool init() {
     initPs4SysModules();

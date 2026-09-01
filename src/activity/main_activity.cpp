@@ -10,6 +10,7 @@
 #include "view/settings_tab.hpp"
 #include "view/livetv_tab.hpp"
 #include "view/downloads_tab.hpp"
+#include "view/media_detail_view.hpp"
 #include "view/sidebar_editor.hpp"
 #include "view/long_press_gesture.hpp"
 #include "app/hint_icons.hpp"
@@ -26,6 +27,8 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
+#include <cstring>
 
 namespace vitaplex {
 
@@ -91,8 +94,65 @@ void MainActivity::applySidebarSizingForViewport() {
     }
 }
 
+// Pull a ratingKey out of a link.
+//
+// Plex's own web links carry the item as a URL-encoded key parameter
+//   https://app.plex.tv/desktop/#!/server/<id>/details?key=%2Flibrary%2Fmetadata%2F12345
+// and our own scheme keeps it plain
+//   vitaplex://media/12345   |   plex://.../library/metadata/12345
+// so this looks for /library/metadata/<key> in both encodings, then falls back
+// to a bare media/<key>. Returns empty when the link isn't about an item, which
+// is the case for "open the app" links and anything we don't recognise.
+static std::string ratingKeyFromLink(const std::string& link) {
+    static const char* kMarkers[] = {
+        "/library/metadata/", "%2Flibrary%2Fmetadata%2F", "%2flibrary%2fmetadata%2f",
+        "media/",
+    };
+    for (const char* marker : kMarkers) {
+        const size_t at = link.find(marker);
+        if (at == std::string::npos) continue;
+        size_t i = at + strlen(marker);
+        std::string key;
+        while (i < link.size() && isdigit((unsigned char)link[i])) key += link[i++];
+        if (!key.empty()) return key;
+    }
+    return {};
+}
+
+void MainActivity::consumeDeepLink() {
+    const std::string link = platform::takePendingDeepLink();
+    if (link.empty()) return;
+
+    const std::string key = ratingKeyFromLink(link);
+    if (key.empty()) {
+        // A link we can't read still opened the app, which is the right
+        // outcome; there is just nothing further to do with it.
+        brls::Logger::info("Deep link with no item, ignoring: {}", link);
+        return;
+    }
+
+    brls::Logger::info("Deep link -> ratingKey {}", key);
+    asyncRun([key]() {
+        MediaItem item;
+        if (!PlexClient::getInstance().fetchMediaDetails(key, item)) {
+            brls::Logger::warning("Deep link: {} not found on the server", key);
+            return;
+        }
+        brls::sync([item]() {
+            brls::Application::pushActivity(new brls::Activity(new MediaDetailView(item)));
+        });
+    });
+}
+
 void MainActivity::onContentAvailable() {
     brls::Logger::debug("MainActivity content available");
+
+    // A link that cold-started the app has been waiting for a UI to open it.
+    // The handler covers links that arrive while we are already running.
+    platform::setDeepLinkHandler([]() {
+        if (MainActivity* self = MainActivity::getInstance()) self->consumeDeepLink();
+    });
+    consumeDeepLink();
 
     // Startup update check — the module delays itself so login and the
     // first content fetches get the pipe first.
