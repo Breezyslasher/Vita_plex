@@ -47,6 +47,13 @@ private:
     // again whenever a link arrives while the app is already running.
     void consumeDeepLink();
 
+    // Sidebar positions of the tabs a shortcut or deep link can jump to,
+    // recorded as the sidebar is built (the order is user-configurable, so it
+    // can't be assumed). -1 when the tab isn't present.
+    int m_homeTabIndex = -1;
+    int m_searchTabIndex = -1;
+    int m_downloadsTabIndex = -1;
+
     BRLS_BIND(brls::TabFrame, tabFrame, "main/tab_frame");
 
     static MainActivity* s_instance;

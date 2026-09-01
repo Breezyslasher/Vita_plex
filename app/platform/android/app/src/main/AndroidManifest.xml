@@ -134,6 +134,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+            <!-- Long-press shortcuts on the launcher icon. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
             <!-- Let Android know that we can handle some USB devices and should receive this event -->
             <intent-filter>
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
@@ -196,6 +200,33 @@
             <intent-filter>
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
+        </receiver>
+
+        <!-- Quick-settings tile: one tap to pause music from anywhere, without
+             hunting for the media notification in the shade. API 24+; older
+             devices simply never see it. -->
+        <service
+            android:name="org.VitaPlex.app.MusicTileService"
+            android:label="@string/tile_music_label"
+            android:icon="@drawable/ic_tile_music"
+            android:exported="true"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- Home-screen now-playing widget. Updated by MediaNotification rather
+             than on a timer, so it costs nothing while nothing is playing. -->
+        <receiver
+            android:name="org.VitaPlex.app.NowPlayingWidget"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_now_playing_info" />
         </receiver>
 
         <!-- Answers the TV global-search suggestion queries. Exported because

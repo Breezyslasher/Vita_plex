@@ -190,6 +190,29 @@ public final class MediaNotification {
         }
     }
 
+    // ---- Read-only view of the current state, for the tile and the widget ----
+    //
+    // Both live outside this class and outside the player, and neither should
+    // be poking at the session; these are the whole of what they need.
+
+    /** True once native has pushed a track, i.e. there is something to control. */
+    static boolean isPlaybackLoaded() { return sHasState; }
+    static boolean isPlaying() { return sPlaying; }
+    static String currentTitle() { return sTitle != null ? sTitle : ""; }
+    static String currentArtist() { return sArtist != null ? sArtist : ""; }
+    static Bitmap currentArt() { return sArtBitmap; }
+
+    /** Send a transport code as if a notification button had been pressed. */
+    static void sendTransport(Context ctx, int code) {
+        try {
+            ctx.sendBroadcast(new Intent(ACTION)
+                .setPackage(ctx.getPackageName())
+                .putExtra(EXTRA_CODE, code));
+        } catch (Throwable t) {
+            Log.w(TAG, "sendTransport failed", t);
+        }
+    }
+
     /** PendingIntent flags with the mutability bit Android 12+ demands. */
     private static int pendingIntentFlags(int extra) {
         int f = PendingIntent.FLAG_UPDATE_CURRENT | extra;
@@ -315,6 +338,7 @@ public final class MediaNotification {
                     sHasState = false;
                     sQueueSize = 0;
                     sActiveQueueId = MediaSessionCompat.QueueItem.UNKNOWN_ID;
+                    if (ctx != null) NowPlayingWidget.refresh(ctx);
                 } catch (Throwable t) {
                     Log.w(TAG, "clear failed", t);
                 }
@@ -413,6 +437,7 @@ public final class MediaNotification {
         // keeps its settings across a pause; clear() closes it.
         if (sPlaying) updateEffectSession(ctx, true);
         postNotification(ctx);
+        NowPlayingWidget.refresh(ctx);
     }
 
     // Hold the CPU (PARTIAL_WAKE_LOCK) and Wi-Fi radio (FULL_HIGH_PERF) awake only

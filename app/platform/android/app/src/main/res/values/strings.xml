@@ -2,4 +2,13 @@
     <string name="app_name">VitaPlex</string>
     <string name="search_hint">Search your Plex library</string>
     <string name="search_settings_description">Movies, shows and music from your Plex server</string>
+    <string name="shortcut_continue_short">Continue</string>
+    <string name="shortcut_continue_long">Continue watching</string>
+    <string name="shortcut_search_short">Search</string>
+    <string name="shortcut_search_long">Search your library</string>
+    <string name="shortcut_downloads_short">Downloads</string>
+    <string name="shortcut_downloads_long">Downloaded media</string>
+    <string name="tile_music_label">VitaPlex music</string>
+    <string name="widget_description">Now playing, with transport controls</string>
+    <string name="widget_nothing_playing">Nothing playing</string>
 </resources>

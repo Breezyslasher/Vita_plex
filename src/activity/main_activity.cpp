@@ -123,6 +123,15 @@ void MainActivity::consumeDeepLink() {
     const std::string link = platform::takePendingDeepLink();
     if (link.empty()) return;
 
+    // Destination links: the launcher shortcuts and the TV channel's app-link
+    // use these, and they only need the right tab focused.
+    auto jumpTo = [this](int index) {
+        if (index >= 0 && tabFrame) tabFrame->focusTab(index);
+    };
+    if (link.rfind("vitaplex://search", 0) == 0)    { jumpTo(m_searchTabIndex); return; }
+    if (link.rfind("vitaplex://downloads", 0) == 0) { jumpTo(m_downloadsTabIndex); return; }
+    if (link.rfind("vitaplex://home", 0) == 0)      { jumpTo(m_homeTabIndex); return; }
+
     const std::string key = ratingKeyFromLink(link);
     if (key.empty()) {
         // A link we can't read still opened the app, which is the right
@@ -441,7 +450,13 @@ void MainActivity::buildSidebarTabs() {
     const bool hasLiveTV = PlexClient::getInstance().hasLiveTV()
                         || Application::getInstance().getSettings().lastHadLiveTV;
 
+    // Sidebar positions for the deep-link / shortcut jumps, counted as tabs are
+    // added. Separators occupy a slot too, so this counts every item.
+    int sidebarIndex = 0;
+    m_homeTabIndex = m_searchTabIndex = m_downloadsTabIndex = -1;
+
     // Home is always pinned to the top.
+    m_homeTabIndex = sidebarIndex++;
     tabFrame->addTab("Home", []() { return withMusicBack(new HomeTab()); });
 
     // Library sections — fetch synchronously + cache (libraries always live in
@@ -490,14 +505,22 @@ void MainActivity::buildSidebarTabs() {
             const LibrarySection* sec = findSection(key);
             if (!sec) continue;
             std::string k = sec->key, t = sec->title, ty = sec->type;
+            sidebarIndex++;
             tabFrame->addTab(t, [k, t, ty]() { return withMusicBack(new LibrarySectionTab(k, t, ty)); });
         } else {
             // Search is always shown; only Live TV / Downloads can be hidden
             // (via Settings ▸ Interface ▸ Manage Hidden Libraries).
             if (id != "search" && sidebarCsvHas(settings.hiddenSidebarItems, id)) continue;
-            if (id == "search")         tabFrame->addTab("Search",    []() { return withMusicBack(new SearchTab()); });
-            else if (id == "livetv")    tabFrame->addTab("Live TV",   []() { return new LiveTVTab(); });
-            else if (id == "downloads") tabFrame->addTab("Downloads", []() { return new DownloadsTab(); });
+            if (id == "search") {
+                m_searchTabIndex = sidebarIndex++;
+                tabFrame->addTab("Search", []() { return withMusicBack(new SearchTab()); });
+            } else if (id == "livetv") {
+                sidebarIndex++;
+                tabFrame->addTab("Live TV", []() { return new LiveTVTab(); });
+            } else if (id == "downloads") {
+                m_downloadsTabIndex = sidebarIndex++;
+                tabFrame->addTab("Downloads", []() { return new DownloadsTab(); });
+            }
         }
     }
 

@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Long-press shortcuts on the launcher icon.
+
+    Each one is the vitaplex:// deep link for that destination, so the launcher,
+    Assistant and the home-screen channels all reach it the same way and there
+    is only one path to keep working.
+-->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <shortcut
+        android:shortcutId="continue_watching"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_continue"
+        android:shortcutShortLabel="@string/shortcut_continue_short"
+        android:shortcutLongLabel="@string/shortcut_continue_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="vitaplex://home"
+            android:targetPackage="org.VitaPlex.app"
+            android:targetClass="org.VitaPlex.app.VitaPlexActivity" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="search"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_search"
+        android:shortcutShortLabel="@string/shortcut_search_short"
+        android:shortcutLongLabel="@string/shortcut_search_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="vitaplex://search"
+            android:targetPackage="org.VitaPlex.app"
+            android:targetClass="org.VitaPlex.app.VitaPlexActivity" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="downloads"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_downloads"
+        android:shortcutShortLabel="@string/shortcut_downloads_short"
+        android:shortcutLongLabel="@string/shortcut_downloads_long">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:data="vitaplex://downloads"
+            android:targetPackage="org.VitaPlex.app"
+            android:targetClass="org.VitaPlex.app.VitaPlexActivity" />
+    </shortcut>
+
+</shortcuts>
