@@ -60,6 +60,12 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
+    <!-- Android TV home-screen channels + the system Watch Next row. Both live
+         in the TV provider, which is absent on phones — the code checks for it
+         rather than assuming, so these are inert there. -->
+    <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
+    <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
+
     <!-- Post the music media-session notification (runtime grant on Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -86,7 +92,7 @@
     -->
     <application android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
-        android:banner="@mipmap/ic_launcher"
+        android:banner="@drawable/banner"
         android:allowBackup="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
         android:hardwareAccelerated="true" >
@@ -150,6 +156,11 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="app.plex.tv" />
             </intent-filter>
+            <!-- Declares the app searchable, which is what puts it in the TV
+                 home screen's global search and the remote's microphone. -->
+            <meta-data
+                android:name="android.app.searchable"
+                android:resource="@xml/searchable" />
             <!-- Drop file event -->
             <!--
             <intent-filter>
@@ -186,6 +197,15 @@
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
         </receiver>
+
+        <!-- Answers the TV global-search suggestion queries. Exported because
+             the system search app binds it from its own process, and gated on
+             GLOBAL_SEARCH so only that app can. -->
+        <provider
+            android:name="org.VitaPlex.app.SearchSuggestionProvider"
+            android:authorities="org.VitaPlex.app.search"
+            android:exported="true"
+            android:readPermission="android.permission.GLOBAL_SEARCH" />
 
         <!-- Media browsing: lets Android Auto, Google Assistant, Wear and the
              Android TV media surfaces browse and play the Plex music library.

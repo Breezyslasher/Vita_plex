@@ -274,6 +274,16 @@ public final class LibraryBrowserService extends MediaBrowserServiceCompat {
      * and reconnecting to the Plex server, so do exactly that and nothing else —
      * prepare must not start playing.
      */
+    /**
+     * Bring native up for a caller outside this service — the global-search
+     * provider is bound by the system in a process where nothing else has
+     * loaded the library yet.
+     */
+    static boolean ensureNativeForSearch(android.content.Context ctx) {
+        if (sAppContext == null && ctx != null) sAppContext = ctx.getApplicationContext();
+        return ensureNative(sAppContext);
+    }
+
     static void prepare() {
         try {
             ensureNative(sAppContext);

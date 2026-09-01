@@ -13,6 +13,7 @@
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
 #include "platform/platform.hpp"
+#include "platform/tv_home.hpp"
 #include "utils/air_time.hpp"
 #include "view/livetv_actions.hpp"
 
@@ -550,6 +551,10 @@ void HomeTab::loadContent() {
                 m_continueWatching = items;
                 populateRow(m_continueWatchingRow, m_continueWatching, true);
             });
+            // Android TV's home screen is built from app-published rows, so
+            // this is what puts "keep watching" in front of the user without
+            // opening the app. A no-op on every other target, and on a phone.
+            tvhome::publishContinueWatching(items);
         } else {
             brls::Logger::error("HomeTab: Failed to fetch continue watching");
         }
@@ -636,6 +641,12 @@ void HomeTab::loadContent() {
             populateRow(m_showsRow, m_recentShows);
             populateRow(m_musicRow, m_recentMusic);
         });
+
+        // Movies and shows together for the home-screen channel: music has no
+        // poster worth a TV tile and the row is short enough as it is.
+        std::vector<MediaItem> recent = movies;
+        recent.insert(recent.end(), shows.begin(), shows.end());
+        tvhome::publishRecentlyAdded(recent);
     });
 
     m_loaded = true;

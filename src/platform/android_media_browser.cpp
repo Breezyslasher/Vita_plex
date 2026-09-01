@@ -622,6 +622,65 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromSearch(JNIEnv* env, jc
     });
 }
 
+/**
+ * Android TV global search: the system's search app queries
+ * SearchSuggestionProvider, which calls straight through to here.
+ *
+ * Synchronous on purpose — the provider is already on a binder thread and the
+ * system blocks on the answer, so hopping to a worker would only add latency.
+ * Rows come back flat, four strings each: rating key, title, subtitle, art URI.
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_org_VitaPlex_app_SearchSuggestionProvider_nativeSearchSuggestions(JNIEnv* env, jclass,
+                                                                       jstring jQuery) {
+    const char* raw = jQuery ? env->GetStringUTFChars(jQuery, nullptr) : nullptr;
+    std::string query = raw ? raw : "";
+    if (raw) env->ReleaseStringUTFChars(jQuery, raw);
+
+    jclass strCls = env->FindClass("java/lang/String");
+    if (query.empty() || !ensureClientReady()) return env->NewObjectArray(0, strCls, nullptr);
+
+    std::vector<MediaItem> results;
+    if (!PlexClient::getInstance().search(query, results))
+        return env->NewObjectArray(0, strCls, nullptr);
+
+    // The search UI shows a handful of cards; sending the whole result set
+    // would be rows nobody scrolls to, over a binder transaction.
+    constexpr size_t kMaxRows = 20;
+    PlexClient& client = PlexClient::getInstance();
+
+    std::vector<std::string> flat;
+    flat.reserve(kMaxRows * 4);
+    for (const auto& m : results) {
+        if (flat.size() >= kMaxRows * 4) break;
+        if (m.ratingKey.empty()) continue;
+        // People and other non-playable hits have nothing to open.
+        if (m.type == "person" || m.type == "tag") continue;
+
+        std::string subtitle;
+        if (m.mediaType == MediaType::EPISODE) subtitle = m.grandparentTitle;
+        else if (m.year > 0)                   subtitle = std::to_string(m.year);
+        else                                   subtitle = m.type;
+
+        flat.push_back(m.ratingKey);
+        flat.push_back(m.title);
+        flat.push_back(subtitle);
+        flat.push_back(artUri(client, !m.thumb.empty() ? m.thumb : m.grandparentThumb));
+    }
+
+    jobjectArray arr = env->NewObjectArray((jsize)flat.size(), strCls, nullptr);
+    if (!arr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
+    for (jsize i = 0; i < (jsize)flat.size(); i++) {
+        jstring s = env->NewStringUTF(flat[(size_t)i].c_str());
+        env->SetObjectArrayElement(arr, i, s);
+        env->DeleteLocalRef(s);
+    }
+    return arr;
+}
+
 }  // extern "C"
 
 #endif  // __ANDROID__

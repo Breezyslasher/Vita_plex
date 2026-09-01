@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Android TV global search.
+
+    The home screen's search (and the remote's microphone) queries every app
+    that declares itself searchable. Without this, typing a film's name on the
+    TV home screen returned results from every installed app except the one
+    that actually holds the library.
+
+    searchSuggestAuthority points at SearchSuggestionProvider, which answers with
+    rows carrying a vitaplex://media/<key> intent — the same deep link the rest
+    of the app publishes, so a result opens that item's page.
+-->
+<searchable xmlns:android="http://schemas.android.com/apk/res/android"
+    android:label="@string/app_name"
+    android:hint="@string/search_hint"
+    android:searchSettingsDescription="@string/search_settings_description"
+    android:includeInGlobalSearch="true"
+    android:searchSuggestAuthority="org.VitaPlex.app.search"
+    android:searchSuggestIntentAction="android.intent.action.VIEW"
+    android:queryAfterZeroResults="false" />
