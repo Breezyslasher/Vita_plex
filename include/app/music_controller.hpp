@@ -140,6 +140,14 @@ private:
     // syncSessionState() compares reality against.
     long long m_lastPublishedPositionMs = 0;
     std::chrono::steady_clock::time_point m_lastPublishAt{};
+    // A seek we have told the OS about but mpv has not arrived at yet. Seeking
+    // an HTTP stream is not instant — it re-buffers, and mpv keeps reporting the
+    // old position meanwhile — so without this the drift check below would see a
+    // huge gap one tick later and "correct" the scrubber straight back to where
+    // the drag started. -1 = nothing in flight.
+    long long m_pendingSeekMs = -1;
+    std::chrono::steady_clock::time_point m_pendingSeekAt{};
+    std::string m_lastPublishedRatingKey;  // to notice a track change
     // Fingerprint of the last queue window sent to the OS. publishNowPlaying()
     // runs every second; without this the whole list would cross JNI each time.
     uint64_t m_lastQueueSig = 0;

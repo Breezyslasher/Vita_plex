@@ -143,6 +143,12 @@ public:
     double getPosition() const;
     double getDuration() const;
     double getPercentPosition() const;
+    // Whether mpv can seek within what is currently loaded. A Plex music
+    // transcode is generated on the fly and served without a length or range
+    // support, so mpv cannot move inside it at all — a seek command is accepted
+    // and does nothing. Callers that can restart the stream at an offset should
+    // check this first rather than assuming a seek took.
+    bool isSeekable() const;
     const MpvPlaybackInfo& getPlaybackInfo() const { return m_playbackInfo; }
     std::string getErrorMessage() const { return m_errorMessage; }
 
