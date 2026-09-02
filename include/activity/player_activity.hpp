@@ -138,6 +138,7 @@ private:
     // render context, so a subtitle handed to mpv has no surface to land on.
     const PlexStream* findSideloadableStream(int trackId) const;
     void loadAndShowLyrics(const PlexStream& stream);
+    void showLyricsMessage(const std::string& text);   // sheet with a reason, not a song
     void showLyricsOverlay();
     void hideLyricsOverlay();
     void buildLyricsRows();

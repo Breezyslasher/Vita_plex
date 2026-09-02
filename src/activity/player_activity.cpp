@@ -676,7 +676,19 @@ void PlayerActivity::onContentAvailable() {
             lyricsBtn->setFocusable(true);
             setIconRes(lyricsIcon, "icons/subtitles.png");
             lyricsBtn->registerClickAction([this](brls::View* view) {
-                showTrackOverlay(TrackSelectMode::SUBTITLE);
+                // A track has one lyrics file or none; a picker to choose from a
+                // list of one is a tap that asks nothing, so go straight to the
+                // words. The picker is still there for the rare track carrying
+                // several (an LRC and a plain text, say), where the choice is
+                // real.
+                fetchPlexStreams();
+                std::vector<const PlexStream*> found;
+                for (const auto& ps : m_plexStreams)
+                    if (ps.streamType == 4 && !ps.key.empty()) found.push_back(&ps);
+
+                if (found.size() == 1)  loadAndShowLyrics(*found.front());
+                else if (found.empty()) showLyricsMessage("This track has no lyrics.");
+                else                    showTrackOverlay(TrackSelectMode::SUBTITLE);
                 return true;
             });
             lyricsBtn->addGestureRecognizer(new brls::TapGestureRecognizer(lyricsBtn));
@@ -2574,6 +2586,22 @@ static std::vector<std::string> splitLines(const std::string& text) {
     return out;
 }
 
+// Open the sheet on a message rather than a song: no lyrics, or the reason a
+// fetch came back empty. Rendered as ordinary untimed rows, so it scrolls and
+// dismisses exactly like real lyrics do.
+void PlayerActivity::showLyricsMessage(const std::string& text) {
+    m_lyrics.clear();
+    for (const std::string& line : splitLines(text)) {
+        LyricLine l;
+        l.timeMs = -1;
+        l.text = line;
+        m_lyrics.push_back(std::move(l));
+    }
+    m_lyricsFailed = true;
+    buildLyricsRows();
+    showLyricsOverlay();
+}
+
 void PlayerActivity::loadAndShowLyrics(const PlexStream& stream) {
     if (m_lyricsLoading) return;
     m_lyricsLoading = true;
@@ -2594,23 +2622,16 @@ void PlayerActivity::loadAndShowLyrics(const PlexStream& stream) {
             if (!alive || !*alive) return;
             m_lyricsLoading = false;
 
-            m_lyrics = lines;
             if (!ok || lines.empty()) {
                 // Open the sheet anyway and say what went wrong there. A toast
                 // over the player is easy to miss, and the reason is the useful
                 // part when lyrics are the thing being debugged.
-                m_lyrics.clear();
-                for (const std::string& line : splitLines(
-                         status.empty() ? std::string("No lyrics for this track.") : status)) {
-                    LyricLine l;
-                    l.timeMs = -1;
-                    l.text = line;
-                    m_lyrics.push_back(l);
-                }
-                m_lyricsFailed = true;
-            } else {
-                m_lyricsFailed = false;
+                showLyricsMessage(status.empty() ? std::string("No lyrics for this track.")
+                                                 : status);
+                return;
             }
+            m_lyrics = lines;
+            m_lyricsFailed = false;
             buildLyricsRows();
             showLyricsOverlay();
         });
