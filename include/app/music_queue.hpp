@@ -67,6 +67,11 @@ public:
     bool playPrevious();                // Play previous track
     bool hasNext() const;               // Check if there's a next track
     bool hasPrevious() const;           // Check if there's a previous track
+    // The track playNext() would land on, without advancing. Used to resolve the
+    // next stream URL while the current track is still playing. Returns nullptr
+    // when the answer is not settled yet — running off the end of a shuffled
+    // queue with repeat-all reshuffles, so there is nothing honest to return.
+    const QueueItem* peekNextTrack() const;
 
     // Current state
     int getCurrentIndex() const { return m_currentIndex; }
@@ -88,6 +93,11 @@ public:
     // there index 0 is just "the top of the list", so it played the same first
     // track every time. This picks the opening track at random too.
     void shuffleFromStart();
+    // Shuffle with the current track pinned in front. Same result setShuffle(true)
+    // gives, but unconditional: setShuffle is a toggle and returns early when the
+    // flag is already set, which silently did nothing for a new queue that
+    // inherited shuffle from the previous one.
+    void shuffleKeepingCurrent();
     const std::vector<int>& getShuffleOrder() const { return m_shuffleOrder; }
     int getShufflePosition() const { return m_shufflePosition; }
 

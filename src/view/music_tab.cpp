@@ -601,7 +601,7 @@ void MusicTab::onItemSelected(const MediaItem& item) {
                     break;
                 }
             }
-            playPlaylistWithQueue(m_currentPlaylistId, startIndex);
+            playPlaylistWithQueue(m_currentPlaylistId, startIndex, /*userPickedTrack=*/true);
         } else {
             // Single track playback
             Application::getInstance().pushPlayerActivity(item.ratingKey);
@@ -661,10 +661,11 @@ void MusicTab::onPlaylistSelected(const Playlist& playlist) {
     });
 }
 
-void MusicTab::playPlaylistWithQueue(const std::string& playlistId, int startIndex) {
+void MusicTab::playPlaylistWithQueue(const std::string& playlistId, int startIndex,
+                                     bool userPickedTrack) {
     std::weak_ptr<bool> aliveWeak = m_alive;
 
-    asyncRun([this, playlistId, startIndex, aliveWeak]() {
+    asyncRun([this, playlistId, startIndex, userPickedTrack, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<PlaylistItem> items;
 
@@ -675,13 +676,13 @@ void MusicTab::playPlaylistWithQueue(const std::string& playlistId, int startInd
                 tracks.push_back(item.media);
             }
 
-            brls::sync([tracks, startIndex, aliveWeak]() {
+            brls::sync([tracks, startIndex, userPickedTrack, aliveWeak]() {
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
                 // Create player with queue
                 brls::Application::pushActivity(
-                    PlayerActivity::createWithQueue(tracks, startIndex)
+                    PlayerActivity::createWithQueue(tracks, startIndex, userPickedTrack)
                 );
             });
         } else {
@@ -884,7 +885,9 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
 
     addDialogButton("Play All", [this, capturedPlaylist, dialog](brls::View*) {
         dialog->dismiss();
-        playPlaylistWithQueue(capturedPlaylist.ratingKey, 0);
+        // Playing the whole playlist: index 0 is just the top of the list, not a
+        // choice, so shuffle gets to pick the opening track.
+        playPlaylistWithQueue(capturedPlaylist.ratingKey, 0, /*userPickedTrack=*/false);
         return true;
     });
 

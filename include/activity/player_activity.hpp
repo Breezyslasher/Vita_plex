@@ -158,6 +158,30 @@ private:
     // Ticks only while the sheet is open. The 1s player timer is too coarse to
     // follow a lyric line without it visibly lagging the vocal.
     brls::RepeatingTimer m_lyricsTimer;
+    // End-of-track watcher. mpv's events are pumped from updateProgress(), which
+    // runs once a second, so the ENDED state was not even set until up to a
+    // second after the audio stopped — and then handled on that same tick. This
+    // pumps four times a second and hands over the moment the file ends.
+    brls::RepeatingTimer m_endWatchTimer;
+
+    // Next-track prefetch. Resolving a Plex stream URL costs two blocking HTTP
+    // round-trips (/library/metadata, then /decision). Doing them when the track
+    // ends put both of them inside the silence between songs, and froze the UI
+    // thread for their duration. This resolves the next track while the current
+    // one is still playing, so auto-advance only has to hand mpv a URL.
+    //
+    // Invalidation is the pair (ratingKey, queue version): every queue mutation
+    // bumps MusicQueue's version, so a reorder, add or remove simply makes the
+    // cache stop matching and the blocking path runs as before. A cached entry
+    // with an empty URL records a failed attempt, so a track whose resolve fails
+    // is not retried every second.
+    void prefetchNextTrack();
+    std::string m_prefetchKey;       // ratingKey the cached URL belongs to
+    std::string m_prefetchUrl;       // empty = resolve was attempted and failed
+    std::string m_prefetchSession;   // transcode session negotiated for that URL
+    uint32_t m_prefetchVersion = 0;  // MusicQueue version the entry was built at
+    bool m_prefetchInFlight = false;
+
     void updateNowPlayingBlock();   // Refresh the "Now Playing" header from the current track
     void clearUpcoming();           // Remove every track after the current one
     void removeFocusedQueueTrack(); // Remove the track for the focused up-next row

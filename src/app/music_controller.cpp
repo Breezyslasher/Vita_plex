@@ -66,10 +66,18 @@ void MusicController::install() {
     // Receive the OS media buttons (lock-screen / notification / media keys).
     registerOsHandler();
 
-    // Headless end-of-track watcher — mirrors PlayerActivity's per-second poll
-    // (MpvPlayer has no end callback). Runs only while we're driving headlessly.
+    // Headless end-of-track watcher (MpvPlayer has no end callback). Runs only
+    // while we're driving headlessly.
+    //
+    // update() is not optional here: ENDED is only ever set from inside mpv's
+    // event loop, and nothing else pumps it on this path — without the pump
+    // hasEnded() would stay false and headless auto-advance would never fire.
+    // Four ticks a second rather than one, so a finished track is noticed
+    // promptly instead of up to a second late; syncSessionState() keeps its
+    // original per-second cadence.
     m_pollTimer.setCallback([this]() {
         MpvPlayer& p = MpvPlayer::getInstance();
+        if (p.isInitialized()) p.update();
         if (p.hasEnded()) {
             if (!m_endHandled) {
                 m_endHandled = true;
@@ -80,7 +88,15 @@ void MusicController::install() {
         } else if (p.isPlaying() || p.isPaused()) {
             m_endHandled = false;
         }
-        syncSessionState();   // keep the notification honest about play/pause
+        if (++m_pollTick >= 4) {
+            m_pollTick = 0;
+            syncSessionState();   // keep the notification honest about play/pause
+            // Resolve the next track's URL while this one is still playing. Held
+            // off for the first few seconds so the extra round-trips don't
+            // compete with this track's own buffering; a no-op on every tick
+            // after the first success.
+            if (p.isPlaying() && p.getPosition() > 5.0) prefetchNextTrack();
+        }
     });
 }
 
@@ -116,6 +132,11 @@ void MusicController::attachForeground(ForegroundHooks hooks) {
     registerOsHandler();   // reclaim from any video session that had it
     m_fg = std::move(hooks);
     m_hasForeground = true;
+    // The activity does its own prefetching from here on; drop ours so a stale
+    // entry can't be adopted later against a queue that has moved on.
+    m_prefetchKey.clear();
+    m_prefetchUrl.clear();
+    m_prefetchSession.clear();
     stopPolling();  // the live player polls + drives the queue itself
 }
 
@@ -164,13 +185,30 @@ bool MusicController::loadCurrentHeadless() {
 
     std::string url;
     DownloadItem dl;
+    PlexClient& client = PlexClient::getInstance();
+    const bool prefetched = !m_prefetchUrl.empty() &&
+                            m_prefetchKey == track->ratingKey &&
+                            m_prefetchVersion == MusicQueue::getInstance().getVersion();
     if (DownloadsManager::getInstance().getDownloadCopy(track->ratingKey, dl) &&
         dl.state == DownloadState::COMPLETED && !dl.localPath.empty()) {
         url = dl.localPath;
-    } else if (!PlexClient::getInstance().getTranscodeUrl(track->ratingKey, url, 0)) {
+    } else if (prefetched) {
+        // Resolved while the previous track was still playing — the whole point
+        // is to keep those two blocking round-trips out of the gap between songs.
+        url = m_prefetchUrl;
+        client.adoptTranscodeSession(m_prefetchSession);
+        brls::Logger::info("MusicController: using prefetched stream URL for {}", track->ratingKey);
+    } else if (!client.getTranscodeUrl(track->ratingKey, url, 0)) {
         brls::Logger::error("MusicController: failed to resolve URL for {}", track->ratingKey);
+        m_prefetchKey.clear();
+        m_prefetchUrl.clear();
+        m_prefetchSession.clear();
         return false;
     }
+    // Spent, whichever branch ran.
+    m_prefetchKey.clear();
+    m_prefetchUrl.clear();
+    m_prefetchSession.clear();
 
     MpvPlayer& player = MpvPlayer::getInstance();
     if (!player.isInitialized()) {
@@ -187,6 +225,44 @@ bool MusicController::loadCurrentHeadless() {
     }
     m_endHandled = false;
     return true;
+}
+
+void MusicController::prefetchNextTrack() {
+    // The foreground player runs its own prefetch; two would just duplicate the
+    // request and fight over which session ends up adopted.
+    if (m_hasForeground || m_prefetchInFlight) return;
+
+    MusicQueue& queue = MusicQueue::getInstance();
+    const QueueItem* next = queue.peekNextTrack();
+    if (!next || next->ratingKey.empty()) return;
+
+    const uint32_t version = queue.getVersion();
+    if (m_prefetchKey == next->ratingKey && m_prefetchVersion == version) return;
+
+    DownloadItem dl;
+    if (DownloadsManager::getInstance().getDownloadCopy(next->ratingKey, dl) &&
+        dl.state == DownloadState::COMPLETED && !dl.localPath.empty()) {
+        return;   // plays from disk; nothing to resolve
+    }
+
+    const std::string key = next->ratingKey;
+    m_prefetchInFlight = true;
+
+    // Capturing `this` is safe here in a way it would not be in an activity:
+    // MusicController is a singleton that outlives the whole session.
+    asyncRun([this, key, version]() {
+        std::string url, session;
+        const bool ok = PlexClient::getInstance().getTranscodeUrlSpeculative(key, url, session);
+        brls::sync([this, key, version, url, session, ok]() {
+            m_prefetchInFlight = false;
+            // Recorded either way: on failure the empty URL is what keeps this
+            // from being retried on every tick.
+            m_prefetchKey     = key;
+            m_prefetchUrl     = ok ? url : std::string();
+            m_prefetchSession = ok ? session : std::string();
+            m_prefetchVersion = version;
+        });
+    });
 }
 
 void MusicController::publishNowPlaying(int playingOverride) {

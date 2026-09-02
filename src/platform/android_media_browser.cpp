@@ -401,8 +401,11 @@ void playMediaId(const std::string& mediaId) {
         // full album/playlist context so playback continues past the pick.
         // Both need the player activity.
         if (queue.isEmpty() || action == TrackDefaultAction::PLAY_NOW_CLEAR) {
+            // singlePick doubles as "startIndex is a choice": asking a head unit
+            // for a whole album should let shuffle pick where it opens, rather
+            // than pinning whatever happens to be first.
             brls::Application::pushActivity(
-                PlayerActivity::createWithQueue(tracks, startIndex));
+                PlayerActivity::createWithQueue(tracks, startIndex, singlePick));
             return;
         }
 

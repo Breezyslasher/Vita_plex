@@ -458,6 +458,17 @@ public:
     // Playback
     bool getPlaybackUrl(const std::string& ratingKey, std::string& url);
     bool getTranscodeUrl(const std::string& ratingKey, std::string& url, int offsetMs = 0);
+    // Same, but for a track we are only *speculatively* resolving (the next one
+    // in the music queue, fetched while the current one still plays). It costs
+    // two blocking round-trips — /library/metadata then /decision — which is why
+    // it is worth doing off the play path. outSessionId hands back the session it
+    // negotiated instead of storing it in m_lastSessionId: a background resolve
+    // must not overwrite the session belonging to the track that is playing.
+    // Call adoptTranscodeSession() when the URL is actually handed to the player.
+    bool getTranscodeUrlSpeculative(const std::string& ratingKey, std::string& url,
+                                    std::string& outSessionId);
+    // Make a speculatively-resolved session the current one (see above).
+    void adoptTranscodeSession(const std::string& sessionId) { m_lastSessionId = sessionId; }
     void stopTranscode();  // Stop the current transcode session
     bool updatePlayProgress(const std::string& ratingKey, int timeMs);
     bool reportTimeline(const std::string& ratingKey, const std::string& key,
@@ -693,6 +704,16 @@ private:
     std::string m_authToken;
     std::string m_serverUrl;
     std::string m_lastSessionId;  // Last transcode session ID for stop/restart
+    // Session ids used to be the wall-clock second alone, so two resolves inside
+    // the same second produced the same id — which now actually happens, because
+    // the next track is resolved while the current one is still playing. This
+    // makes them distinct.
+    unsigned m_sessionSeq = 0;
+    // Shared implementation behind getTranscodeUrl / getTranscodeUrlSpeculative.
+    // Hands the negotiated session back rather than storing it, so the caller
+    // decides whether it becomes the current one.
+    bool resolveTranscodeUrl(const std::string& ratingKey, std::string& url,
+                             int offsetMs, std::string& outSessionId);
     // Live-TV bookkeeping for the rolling subscription keep-alive. Both are
     // pulled out of the tune response and consumed by reportLiveTimeline so
     // the /:/timeline ping uses the same ratingKey the server's parser is

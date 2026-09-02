@@ -3338,6 +3338,21 @@ void PlexClient::stopTranscode() {
 }
 
 bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url, int offsetMs) {
+    std::string session;
+    if (!resolveTranscodeUrl(ratingKey, url, offsetMs, session)) return false;
+    m_lastSessionId = session;
+    return true;
+}
+
+bool PlexClient::getTranscodeUrlSpeculative(const std::string& ratingKey, std::string& url,
+                                            std::string& outSessionId) {
+    // Deliberately does not touch m_lastSessionId — see the header. The caller
+    // adopts the session only if it ends up playing this URL.
+    return resolveTranscodeUrl(ratingKey, url, 0, outSessionId);
+}
+
+bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& url,
+                                     int offsetMs, std::string& outSessionId) {
     brls::Logger::debug("getTranscodeUrl: ratingKey={}, offsetMs={}", ratingKey, offsetMs);
 
     // Fetch media details to get the Part key and determine if audio or video
@@ -3387,9 +3402,12 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     std::string metadataPath = "/library/metadata/" + ratingKey;
     std::string encodedPath = HttpClient::urlEncode(metadataPath);
 
-    // Generate a unique session ID
-    char sessionBuf[32];
-    snprintf(sessionBuf, sizeof(sessionBuf), "%lu", (unsigned long)time(nullptr));
+    // Generate a unique session ID. The counter matters: the next track is
+    // resolved while the current one is still playing, so the second alone is
+    // not enough to keep the two sessions apart.
+    char sessionBuf[48];
+    snprintf(sessionBuf, sizeof(sessionBuf), "%lu-%u",
+             (unsigned long)time(nullptr), ++m_sessionSeq);
     std::string sessionId = sessionBuf;
 
     // Build query string with query-type parameters (per official API spec)
@@ -3453,7 +3471,7 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     }
 
     // Session ID
-    m_lastSessionId = sessionId;
+    outSessionId = sessionId;
     queryParams += "&session=" + sessionId;
 
     // Auth token

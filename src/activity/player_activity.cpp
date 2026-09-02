@@ -84,6 +84,11 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
     // Try to create a server-side play queue when online
     // Uses the parent ratingKey (album/season) or the first track's ratingKey
     bool serverOk = false;
+    // Whether the queue we ended up with came back already shuffled from the
+    // server. That is the one case where shuffling again below would be wrong:
+    // the server's order is authoritative and setFromPlayQueue has already
+    // matched the shuffle order to it.
+    bool serverShuffled = false;
     if (!tracks.empty() && !PlexClient::getInstance().getServerUrl().empty()) {
         PlexClient& client = PlexClient::getInstance();
         PlexClient::PlayQueueContainer pq;
@@ -110,9 +115,14 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
         std::string startKey = (startIndex >= 0 && startIndex < (int)tracks.size())
             ? tracks[startIndex].ratingKey : "";
 
-        serverOk = client.createPlayQueue(uri, queueType, pq, startKey);
-        if (serverOk && !pq.items.empty()) {
+        // An accepted request that carried no items is not a usable queue. It
+        // used to still count as success, which left neither branch below
+        // building anything — so "Play Now (Clear Queue)" quietly went on
+        // playing whatever was already queued.
+        serverOk = client.createPlayQueue(uri, queueType, pq, startKey) && !pq.items.empty();
+        if (serverOk) {
             queue.setFromPlayQueue(pq, pq.playQueueShuffled);
+            serverShuffled = pq.playQueueShuffled;
             brls::Logger::info("PlayerActivity: Server play queue {} created ({} items)",
                                pq.playQueueID, pq.playQueueTotalCount);
         }
@@ -126,20 +136,26 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
     // "Shuffle New Queues": turn shuffle on as a fresh music queue starts.
     // Applied here, after the queue is populated.
     //
-    // Which shuffle depends on how the queue was built. setShuffle() pins the
-    // current track at the front, which is what a user who picked a track
-    // wants. Pressing Play on a playlist or album picks nothing — startIndex is
-    // just the top of the list — so pinning it there opened the same track
-    // every single time, which is the one thing shuffle is supposed to avoid.
+    // Which shuffle depends on how the queue was built. Pinning the current
+    // track at the front is what a user who picked a track wants. Pressing Play
+    // on a playlist or album picks nothing — startIndex is just the top of the
+    // list — so pinning it there opened the same track every single time, which
+    // is the one thing shuffle is supposed to avoid.
+    //
+    // The gate is "the server didn't already shuffle this", not "shuffle is
+    // off". It used to be the latter, which meant that once shuffle had been
+    // switched on by an earlier queue the whole block was skipped for every
+    // queue after it — and setQueue()'s own shuffle branch pins startIndex at
+    // the front, so a playlist opened on its first track anyway.
     //
     // Music only: shuffling a queue of episodes is never what's meant. Applied
     // per new queue rather than once per session, since that is what a
     // "default" is — the user can still turn it off for the queue in hand.
     if (!tracks.empty() && tracks[0].mediaType == MediaType::MUSIC_TRACK &&
         Application::getInstance().getSettings().musicShuffleDefault &&
-        !queue.isShuffleEnabled()) {
+        !serverShuffled) {
         if (userPickedTrack) {
-            queue.setShuffle(true);
+            queue.shuffleKeepingCurrent();
             brls::Logger::info("PlayerActivity: shuffle on by default, keeping the picked track first");
         } else {
             queue.shuffleFromStart();
@@ -872,6 +888,19 @@ void PlayerActivity::onContentAvailable() {
     });
     m_updateTimer.start(1000); // Update every second
 
+    // Auto-advance latency is what this is for: the gap between a track ending
+    // and the next one starting was up to a second of pure polling delay before
+    // any work began. Deliberately tiny — pump mpv, and only when the file has
+    // actually ended let the existing handler run early rather than waiting for
+    // its own tick. m_endHandled keeps it to once per track.
+    m_endWatchTimer.setCallback([this]() {
+        MpvPlayer& p = MpvPlayer::getInstance();
+        if (!p.isInitialized() || m_endHandled) return;
+        p.update();
+        if (p.hasEnded()) updateProgress();
+    });
+    m_endWatchTimer.start(250);
+
     // Debounced transcode-seek commit (see seek() / requestTranscodeSeek). The
     // `finished` flag is false when we stop() the timer early (teardown / content
     // switch), so a cancelled debounce never commits a stale seek.
@@ -990,6 +1019,11 @@ void PlayerActivity::willDisappear(bool resetState) {
     }
 
     m_lyricsTimer.stop();   // nothing left to follow once the player is gone
+    // Both teardown paths below go through here, so stopping it once covers the
+    // background-music hand-off as well as the full destroy. It must not keep
+    // firing updateProgress() at an activity that is going away — and under the
+    // hand-off the controller's own poll takes over the watching.
+    m_endWatchTimer.stop();
 
     // Hand the display back to the mode it was in. Leaving a 24Hz mode set
     // would make the whole UI redraw at 24Hz once the player is gone.
@@ -1209,6 +1243,15 @@ void PlayerActivity::loadFromQueue() {
         return;
     }
 
+    // Past the resume shortcut, so this really is a different track: the
+    // previous one's lyrics do not belong to it. loadMedia() does the same for
+    // video, but music auto-advance comes through here and never touches it —
+    // which left the finished track's lyrics on screen over the new one.
+    if (m_lyricsOverlayVisible) hideLyricsOverlay();
+    m_lyrics.clear();
+    m_lyricRows.clear();
+    m_lyricsIndex = -1;
+
     // Update display - use music info labels (between cover and play controls)
     if (musicTitleLabel) {
         musicTitleLabel->setText(track->title);
@@ -1259,7 +1302,26 @@ void PlayerActivity::loadFromQueue() {
         // Stream from server
         m_isLocalFile = false;  // Reset in case previous track was local
         PlexClient& client = PlexClient::getInstance();
-        if (!client.getTranscodeUrl(track->ratingKey, url, 0)) {
+
+        // Resolved while the previous track was still playing? Use it. This is
+        // what keeps two blocking round-trips out of the gap between songs.
+        const bool prefetched = !m_prefetchUrl.empty() &&
+                                m_prefetchKey == track->ratingKey &&
+                                m_prefetchVersion == queue.getVersion();
+        if (prefetched) {
+            url = m_prefetchUrl;
+            // The speculative resolve deliberately left the live session alone;
+            // now that this URL is the one being played, it becomes current.
+            client.adoptTranscodeSession(m_prefetchSession);
+            brls::Logger::info("PlayerActivity: using prefetched stream URL for {}",
+                               track->ratingKey);
+        }
+        // Whatever happens next, this entry is spent.
+        m_prefetchKey.clear();
+        m_prefetchUrl.clear();
+        m_prefetchSession.clear();
+
+        if (!prefetched && !client.getTranscodeUrl(track->ratingKey, url, 0)) {
             brls::Logger::error("Failed to get transcode URL for track: {}", track->ratingKey);
             m_loadingMedia = false;
             return;
@@ -1314,6 +1376,48 @@ void PlayerActivity::loadFromQueue() {
     m_isPlaying = true;
     m_loadingMedia = false;
     MusicController::getInstance().publishNowPlaying(1);
+}
+
+void PlayerActivity::prefetchNextTrack() {
+    if (!m_isQueueMode || m_destroying || m_prefetchInFlight) return;
+
+    MusicQueue& queue = MusicQueue::getInstance();
+    const QueueItem* next = queue.peekNextTrack();
+    if (!next || next->ratingKey.empty()) return;
+
+    const uint32_t version = queue.getVersion();
+    // Already resolved (or already tried and failed) for this exact track and
+    // queue state — nothing to do. Without this the once-a-second caller would
+    // re-resolve all the way through the song.
+    if (m_prefetchKey == next->ratingKey && m_prefetchVersion == version) return;
+
+    // A downloaded track plays from disk; there is no URL to resolve.
+    DownloadItem dl;
+    if (DownloadsManager::getInstance().getDownloadCopy(next->ratingKey, dl) &&
+        dl.state == DownloadState::COMPLETED && !dl.localPath.empty()) {
+        return;
+    }
+
+    const std::string key = next->ratingKey;
+    m_prefetchInFlight = true;
+    std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+
+    asyncRun([this, key, version, aliveWeak]() {
+        std::string url, session;
+        const bool ok = PlexClient::getInstance().getTranscodeUrlSpeculative(key, url, session);
+        brls::sync([this, key, version, url, session, ok, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+            m_prefetchInFlight = false;
+            // Recorded either way: on failure the empty URL is what stops this
+            // from being retried on every tick.
+            m_prefetchKey     = key;
+            m_prefetchUrl     = ok ? url : std::string();
+            m_prefetchSession = ok ? session : std::string();
+            m_prefetchVersion = version;
+            if (ok) brls::Logger::debug("PlayerActivity: prefetched stream URL for {}", key);
+        });
+    });
 }
 
 void PlayerActivity::loadMedia() {
@@ -1872,6 +1976,12 @@ void PlayerActivity::updateProgress() {
     }
     if (duration <= 0)
         duration = player.getDuration();
+
+    // Resolve the next track's stream URL while this one plays, so auto-advance
+    // only has to hand mpv a URL. Held off for the first few seconds so the
+    // extra round-trips don't compete with this track's own buffering, and a
+    // no-op on every tick after the first success (see prefetchNextTrack).
+    if (m_isQueueMode && position > 5.0) prefetchNextTrack();
 
     // While a debounced seek is pending, showSeekPreview owns the slider + time
     // labels (they point at the target, not the live position) — don't stomp it.

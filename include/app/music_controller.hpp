@@ -108,6 +108,14 @@ private:
     void registerOsHandler();       // (re)claim the nowplaying transport handler
     void handleTrackEnded(const QueueItem* nextTrack);
     bool loadCurrentHeadless();     // minimal URL resolve + mpv loadUrl (no UI)
+    // Resolve the next track's stream URL while the current one still plays.
+    // getTranscodeUrl() costs two blocking round-trips (/library/metadata, then
+    // /decision) and runs on the main loop, so doing it at end-of-track put both
+    // of them inside the silence between songs. Mirrors PlayerActivity's
+    // prefetch; the pair (ratingKey, queue version) is the invalidation, and a
+    // cached entry with an empty URL records a failed attempt so it is not
+    // retried every tick.
+    void prefetchNextTrack();
     void publishQueue();            // push the queue window to the OS, if changed
     void startPolling();
     void stopPolling();
@@ -121,8 +129,18 @@ private:
     // Fingerprint of the last queue window sent to the OS. publishNowPlaying()
     // runs every second; without this the whole list would cross JNI each time.
     uint64_t m_lastQueueSig = 0;
+    // Next-track prefetch (see prefetchNextTrack).
+    std::string m_prefetchKey;       // ratingKey the cached URL belongs to
+    std::string m_prefetchUrl;       // empty = resolve was attempted and failed
+    std::string m_prefetchSession;   // transcode session negotiated for that URL
+    uint32_t m_prefetchVersion = 0;  // MusicQueue version the entry was built at
+    bool m_prefetchInFlight = false;
     ForegroundHooks m_fg;
     brls::RepeatingTimer m_pollTimer;  // headless end-of-track watcher
+    // The poll runs four times a second so the gap between a track ending and
+    // the next one loading stays short. syncSessionState() only needs the
+    // original once-a-second cadence, so it fires on every fourth tick.
+    int m_pollTick = 0;
     // Sleep timer. A repeating one-second tick rather than a single delayed
     // callback, so the remaining time can be shown and a cancel takes effect
     // immediately.

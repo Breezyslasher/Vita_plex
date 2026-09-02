@@ -368,6 +368,31 @@ bool MusicQueue::hasPrevious() const {
     return m_currentIndex > 0;
 }
 
+const QueueItem* MusicQueue::peekNextTrack() const {
+    // Mirrors playNext()'s index selection without any of its side effects.
+    if (m_queue.empty()) return nullptr;
+
+    int nextIndex;
+    if (m_repeatMode == RepeatMode::ONE) {
+        nextIndex = m_currentIndex;
+    } else if (m_shuffleEnabled) {
+        int pos = m_shufflePosition + 1;
+        // Off the end, playNext() reshuffles — which track follows is not
+        // decided yet, so there is nothing to report.
+        if (pos < 0 || pos >= (int)m_shuffleOrder.size()) return nullptr;
+        nextIndex = m_shuffleOrder[pos];
+    } else {
+        nextIndex = m_currentIndex + 1;
+        if (nextIndex >= (int)m_queue.size()) {
+            if (m_repeatMode != RepeatMode::ALL) return nullptr;
+            nextIndex = 0;
+        }
+    }
+
+    if (nextIndex < 0 || nextIndex >= (int)m_queue.size()) return nullptr;
+    return &m_queue[nextIndex];
+}
+
 const QueueItem* MusicQueue::getCurrentTrack() const {
     if (m_currentIndex < 0 || m_currentIndex >= (int)m_queue.size()) {
         return nullptr;
@@ -398,39 +423,65 @@ void MusicQueue::shuffleFromStart() {
     notifyQueueChanged();
 }
 
-void MusicQueue::setShuffle(bool enabled) {
-    if (m_shuffleEnabled == enabled) return;
-
-    m_shuffleEnabled = enabled;
-
-    if (enabled && !m_queue.empty()) {
-        // Build shuffle order: current track first, then all others shuffled
-        m_shuffleOrder.clear();
-        m_shuffleOrder.push_back(m_currentIndex);
-
-        // Collect all other indices
-        std::vector<int> others;
-        for (int i = 0; i < (int)m_queue.size(); i++) {
-            if (i != m_currentIndex) {
-                others.push_back(i);
-            }
-        }
-
-        // Fisher-Yates shuffle the remaining tracks
-        for (int i = (int)others.size() - 1; i > 0; i--) {
-            int j = m_rng() % (i + 1);
-            std::swap(others[i], others[j]);
-        }
-
-        // Append shuffled tracks after current
-        m_shuffleOrder.insert(m_shuffleOrder.end(), others.begin(), others.end());
-        m_shufflePosition = 0;
-    } else {
+void MusicQueue::shuffleKeepingCurrent() {
+    if (m_queue.empty()) {
+        m_shuffleEnabled = true;
         m_shuffleOrder.clear();
         m_shufflePosition = -1;
+        return;
+    }
+    // Nothing is current, so there is nothing to keep in front — that is
+    // shuffleFromStart's job, and it also avoids putting -1 in the order.
+    if (m_currentIndex < 0 || m_currentIndex >= (int)m_queue.size()) {
+        shuffleFromStart();
+        return;
     }
 
-    brls::Logger::info("MusicQueue: Shuffle {}", enabled ? "enabled" : "disabled");
+    m_shuffleEnabled = true;
+
+    // Build shuffle order: current track first, then all others shuffled
+    m_shuffleOrder.clear();
+    m_shuffleOrder.push_back(m_currentIndex);
+
+    // Collect all other indices
+    std::vector<int> others;
+    for (int i = 0; i < (int)m_queue.size(); i++) {
+        if (i != m_currentIndex) {
+            others.push_back(i);
+        }
+    }
+
+    // Fisher-Yates shuffle the remaining tracks
+    for (int i = (int)others.size() - 1; i > 0; i--) {
+        int j = m_rng() % (i + 1);
+        std::swap(others[i], others[j]);
+    }
+
+    // Append shuffled tracks after current
+    m_shuffleOrder.insert(m_shuffleOrder.end(), others.begin(), others.end());
+    m_shufflePosition = 0;
+
+    brls::Logger::info("MusicQueue: shuffled, keeping {} in front", m_currentIndex);
+    notifyQueueChanged();
+}
+
+void MusicQueue::setShuffle(bool enabled) {
+    // Toggle semantics: this is the user flipping the button, so an unchanged
+    // state is genuinely nothing to do. Setting a *new queue* up for shuffle
+    // must not go through here — it would no-op on a queue that inherited the
+    // flag from the last one. Call shuffleKeepingCurrent/shuffleFromStart.
+    if (m_shuffleEnabled == enabled) return;
+
+    if (enabled) {
+        shuffleKeepingCurrent();
+        return;
+    }
+
+    m_shuffleEnabled = false;
+    m_shuffleOrder.clear();
+    m_shufflePosition = -1;
+
+    brls::Logger::info("MusicQueue: Shuffle disabled");
     notifyQueueChanged();
 }
 
