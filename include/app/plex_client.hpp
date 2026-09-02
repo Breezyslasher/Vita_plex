@@ -305,6 +305,13 @@ struct PlaylistItem {
 };
 
 // Stream info from Plex metadata (audio/video/subtitle streams within a Part)
+// One line of a track's lyrics. timeMs is -1 for an unsynced file (a plain .txt
+// stream), in which case the lines are still in order but carry no timing.
+struct LyricLine {
+    int timeMs = -1;
+    std::string text;
+};
+
 struct PlexStream {
     int id = 0;              // Stream ID (for Plex API stream selection)
     int streamType = 0;      // 1=video, 2=audio, 3=subtitle
@@ -322,6 +329,10 @@ struct PlexStream {
     // file rather than muxed in — sidecar subtitles and track lyrics. Empty for
     // embedded streams, which is also what `external` is derived from.
     std::string key;
+    // The stream object exactly as the server sent it. The parser keeps a
+    // handful of fields, and for lyrics the one that addresses the file is not
+    // among them — this is kept so it can be shown rather than guessed at.
+    std::string rawJson;
 };
 
 /**
@@ -469,6 +480,34 @@ public:
 
     // Stream selection (Plex API: PUT /library/parts/{partId})
     bool fetchStreams(const std::string& ratingKey, std::vector<PlexStream>& streams, int& partId);
+
+    /**
+     * Download and parse a lyrics stream (PlexStream::key, e.g.
+     * "/library/streams/39070").
+     *
+     * The app renders lyrics itself rather than handing the URL to mpv: music
+     * plays with vo=null and no render context, so mpv has no surface to draw
+     * a subtitle on and the load silently does nothing.
+     *
+     * Handles LRC ("[mm:ss.xx]text", possibly several stamps per line) and
+     * plain text, which comes back as ordered lines with no timing.
+     *
+     * Two documented routes, tried in order:
+     *
+     *  1. GET /library/streams/{streamId}.{ext} — the sidecar file. `codec`
+     *     supplies the extension, which is a required path segment; the key the
+     *     stream object hands out carries none. Some servers answer 200 with an
+     *     empty body here, which is why there is a second route.
+     *  2. GET /music/:/transcode/universal/subtitles — the transcoder. Lyrics
+     *     are a subtitle stream of a music transcode, which is why servers
+     *     advertise transcoderLyrics separately from transcoderSubtitles. The
+     *     stream has to be selected on the part first, and the transcoder may
+     *     hand back SRT rather than the original LRC.
+     *
+     * `status` carries a human-readable reason when both fail, for the UI.
+     */
+    bool fetchLyrics(const std::string& ratingKey, const PlexStream& stream, int partId,
+                     std::vector<LyricLine>& lines, std::string& status);
     bool setStreamSelection(int partId, int audioStreamID = -1, int subtitleStreamID = -1);
 
     // Subtitle search (Plex API: GET /library/metadata/{id}/subtitles)

@@ -134,9 +134,24 @@ private:
     void hideQueueOverlay();
     void populateQueueList();       // Build queue list with cover art and titles
     void playFromQueue(int index);  // Play a specific track from queue list
-    // Lyrics streams are loaded into mpv by URL rather than selected on the
-    // server; this identifies them among the picker's entries.
+    // Lyrics. Drawn by the app, not by mpv: music plays with vo=null and no
+    // render context, so a subtitle handed to mpv has no surface to land on.
     const PlexStream* findSideloadableStream(int trackId) const;
+    void loadAndShowLyrics(const PlexStream& stream);
+    void showLyricsOverlay();
+    void hideLyricsOverlay();
+    void buildLyricsRows();
+    void syncLyricsToPosition();   // highlight + scroll the line that is playing
+
+    std::vector<LyricLine> m_lyrics;
+    std::vector<brls::Label*> m_lyricRows;
+    int  m_lyricsIndex = -1;            // row currently highlighted, -1 = none
+    bool m_lyricsOverlayVisible = false;
+    bool m_lyricsLoading = false;
+    bool m_lyricsFailed = false;    // sheet is showing a reason, not a song
+    // Ticks only while the sheet is open. The 1s player timer is too coarse to
+    // follow a lyric line without it visibly lagging the vocal.
+    brls::RepeatingTimer m_lyricsTimer;
     void updateNowPlayingBlock();   // Refresh the "Now Playing" header from the current track
     void clearUpcoming();           // Remove every track after the current one
     void removeFocusedQueueTrack(); // Remove the track for the focused up-next row
@@ -439,6 +454,8 @@ private:
     BRLS_BIND(brls::Box, trackList, "player/track_list");
     BRLS_BIND(brls::Box, skipBtn, "player/skip_btn");
     BRLS_BIND(brls::Label, skipLabel, "player/skip_label");
+    BRLS_BIND(brls::Box, lyricsBtn, "player/lyrics_btn");
+    BRLS_BIND(brls::Image, lyricsIcon, "player/lyrics_icon");
     BRLS_BIND(brls::Box, queueBtn, "player/queue_btn");
     BRLS_BIND(brls::Image, queueIcon, "player/queue_icon");
     // Keep buttons inside hidden containers out of the focus order. borealis'
@@ -476,6 +493,11 @@ private:
     // syncHiddenFocus() for why running it before that point aborts the process.
     bool m_focusWiringDone = false;
 
+    BRLS_BIND(brls::Box, lyricsOverlay, "player/lyrics_overlay");
+    BRLS_BIND(brls::Box, lyricsScrim, "player/lyrics_scrim");
+    BRLS_BIND(brls::ScrollingFrame, lyricsScroll, "player/lyrics_scroll");
+    BRLS_BIND(brls::Box, lyricsList, "player/lyrics_list");
+    BRLS_BIND(brls::Label, lyricsOverlayTitle, "player/lyrics_overlay_title");
     BRLS_BIND(brls::Box, queueOverlay, "player/queue_overlay");
     BRLS_BIND(brls::Box, queueScrim, "player/queue_scrim");
     BRLS_BIND(brls::Label, queueOverlayTitle, "player/queue_overlay_title");

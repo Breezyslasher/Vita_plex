@@ -340,6 +340,10 @@ void PlayerActivity::onContentAvailable() {
             hideQueueOverlay();
             return true;
         }
+        if (m_lyricsOverlayVisible) {
+            hideLyricsOverlay();
+            return true;
+        }
         // OSD up: close it first, same as the two overlays above. Photo and
         // music modes are excluded because hideControls() is a no-op there —
         // swallowing Back would leave them with no way out.
@@ -577,6 +581,15 @@ void PlayerActivity::onContentAvailable() {
             }));
     }
 
+    if (lyricsScrim) {
+        lyricsScrim->addGestureRecognizer(new brls::TapGestureRecognizer(
+            [this](brls::TapGestureStatus status, brls::Sound* soundToPlay) {
+                if (status.state == brls::GestureState::END) {
+                    hideLyricsOverlay();
+                }
+            }));
+    }
+
     // Show mode-specific icons and wire touch
     if (m_isQueueMode) {
         // Music mode: hide center video controls, show music transport + info
@@ -655,6 +668,20 @@ void PlayerActivity::onContentAvailable() {
             updateRepeatIcon();
         }
 
+        // Lyrics. The track picker has always known how to list them — it even
+        // relabels itself "Lyrics" in queue mode — but music had no button to
+        // open it with, so they were unreachable.
+        if (lyricsBtn) {
+            lyricsBtn->setVisibility(brls::Visibility::VISIBLE);
+            lyricsBtn->setFocusable(true);
+            setIconRes(lyricsIcon, "icons/subtitles.png");
+            lyricsBtn->registerClickAction([this](brls::View* view) {
+                showTrackOverlay(TrackSelectMode::SUBTITLE);
+                return true;
+            });
+            lyricsBtn->addGestureRecognizer(new brls::TapGestureRecognizer(lyricsBtn));
+        }
+
         if (queueBtn) {
             queueBtn->setVisibility(brls::Visibility::VISIBLE);
             queueBtn->registerClickAction([this](brls::View* view) {
@@ -718,6 +745,12 @@ void PlayerActivity::onContentAvailable() {
         }
 
         // Subtitle track button - shows track selection overlay
+        // Video has its own subtitle button for this picker.
+        if (lyricsBtn) {
+            lyricsBtn->setFocusable(false);
+            lyricsBtn->setVisibility(brls::Visibility::GONE);
+        }
+
         if (subBtn) {
             subBtn->setVisibility(brls::Visibility::VISIBLE);
             if (subtitleIcon) {
@@ -755,6 +788,8 @@ void PlayerActivity::onContentAvailable() {
     // Block downward D-pad navigation from the bottom button row so focus
     // doesn't escape to off-screen elements (absolutely-positioned overlays)
     // Only set on focusable buttons — in music mode audioBtn/subBtn/videoBtn are non-focusable
+    if (lyricsBtn && lyricsBtn->isFocusable())
+        lyricsBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, lyricsBtn);
     if (queueBtn) queueBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, queueBtn);
     if (!m_isQueueMode) {
         if (audioBtn) audioBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, audioBtn);
@@ -931,6 +966,8 @@ void PlayerActivity::willDisappear(bool resetState) {
         nowplaying::clear();
         nowplaying::clearHandler();
     }
+
+    m_lyricsTimer.stop();   // nothing left to follow once the player is gone
 
     // Hand the display back to the mode it was in. Leaving a 24Hz mode set
     // would make the whole UI redraw at 24Hz once the player is gone.
@@ -1280,6 +1317,12 @@ void PlayerActivity::loadMedia() {
     m_osArtist.clear();
     m_osAlbum.clear();
     m_refreshRateApplied = false;   // the next file gets its own rate
+
+    // The previous track's lyrics do not belong to this one.
+    if (m_lyricsOverlayVisible) hideLyricsOverlay();
+    m_lyrics.clear();
+    m_lyricRows.clear();
+    m_lyricsIndex = -1;
 
     // Handle direct file playback (debug/testing)
     if (m_isDirectFile) {
@@ -2418,6 +2461,7 @@ void PlayerActivity::registerIcons() {
     note(videoIcon,       "icons/video-image.png");
     note(pipIcon,         "icons/video-image.png");
     note(queueIcon,       "icons/format-list-group.png");
+    note(lyricsIcon,      "icons/subtitles.png");
 }
 
 // Re-upload every icon. Called on the edge where uploads become possible again,
@@ -2517,6 +2561,167 @@ void PlayerActivity::hideTrackOverlay() {
 // track lyrics, which are always a separate file. Returns null for anything
 // else, including sidecar subtitles on video — those still go through the
 // transcode path, which is what already works there.
+// Split a message on newlines so a multi-line reason renders as its own rows
+// rather than one clipped line.
+static std::vector<std::string> splitLines(const std::string& text) {
+    std::vector<std::string> out;
+    std::string current;
+    for (char c : text) {
+        if (c == '\n') { out.push_back(current); current.clear(); }
+        else            { current += c; }
+    }
+    out.push_back(current);
+    return out;
+}
+
+void PlayerActivity::loadAndShowLyrics(const PlexStream& stream) {
+    if (m_lyricsLoading) return;
+    m_lyricsLoading = true;
+    m_lyrics.clear();
+    m_lyricsIndex = -1;
+
+    const PlexStream lyricsStream = stream;   // copied: m_plexStreams can be rebuilt
+    const std::string ratingKey = m_mediaKey;
+    const int partId = m_partId;
+    std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+    asyncRun([this, lyricsStream, ratingKey, partId, aliveWeak]() {
+        std::vector<LyricLine> lines;
+        std::string status;
+        const bool ok = PlexClient::getInstance().fetchLyrics(
+            ratingKey, lyricsStream, partId, lines, status);
+        brls::sync([this, lines, ok, status, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+            m_lyricsLoading = false;
+
+            m_lyrics = lines;
+            if (!ok || lines.empty()) {
+                // Open the sheet anyway and say what went wrong there. A toast
+                // over the player is easy to miss, and the reason is the useful
+                // part when lyrics are the thing being debugged.
+                m_lyrics.clear();
+                for (const std::string& line : splitLines(
+                         status.empty() ? std::string("No lyrics for this track.") : status)) {
+                    LyricLine l;
+                    l.timeMs = -1;
+                    l.text = line;
+                    m_lyrics.push_back(l);
+                }
+                m_lyricsFailed = true;
+            } else {
+                m_lyricsFailed = false;
+            }
+            buildLyricsRows();
+            showLyricsOverlay();
+        });
+    });
+}
+
+void PlayerActivity::buildLyricsRows() {
+    if (!lyricsList) return;
+
+    // Focus first: destroying focused children while they hold focus is what
+    // the queue sheet's own rebuild guards against too.
+    if (!lyricsList->getChildren().empty() && lyricsOverlayTitle) {
+        lyricsOverlayTitle->setFocusable(true);
+        brls::Application::giveFocus(lyricsOverlayTitle);
+    }
+    lyricsList->clearViews();
+    m_lyricRows.clear();
+    m_lyricRows.reserve(m_lyrics.size());
+
+    for (const auto& line : m_lyrics) {
+        auto* label = new brls::Label();
+        // A timed blank is a rest in the song; give it height so the scroll
+        // position still tracks the music through an instrumental break.
+        label->setText(line.text.empty() ? " " : line.text);
+        label->setFontSize(17);
+        label->setTextColor(nvgRGB(0x8A, 0x8A, 0x90));
+        label->setMarginBottom(10);
+        lyricsList->addView(label);
+        m_lyricRows.push_back(label);
+    }
+
+    if (lyricsOverlayTitle) {
+        const bool synced = !m_lyricsFailed && !m_lyrics.empty()
+                         && m_lyrics.front().timeMs >= 0;
+        lyricsOverlayTitle->setText(m_lyricsFailed ? "Lyrics unavailable"
+                                  : synced         ? "Lyrics"
+                                                   : "Lyrics (not timed)");
+    }
+}
+
+void PlayerActivity::showLyricsOverlay() {
+    if (!lyricsOverlay) return;
+    m_lyricsOverlayVisible = true;
+    lyricsOverlay->setVisibility(brls::Visibility::VISIBLE);
+    syncHiddenFocus();
+
+    // Only worth ticking while the sheet is on screen, and only for a file that
+    // carries timings — an untimed one never moves.
+    if (!m_lyricsFailed && !m_lyrics.empty() && m_lyrics.front().timeMs >= 0) {
+        m_lyricsTimer.setCallback([this]() { syncLyricsToPosition(); });
+        m_lyricsTimer.start(250);
+        syncLyricsToPosition();
+    }
+
+    if (lyricsOverlayTitle) {
+        lyricsOverlayTitle->setFocusable(true);
+        brls::Application::giveFocus(lyricsOverlayTitle);
+    }
+}
+
+void PlayerActivity::hideLyricsOverlay() {
+    m_lyricsTimer.stop();
+    m_lyricsOverlayVisible = false;
+    if (lyricsOverlayTitle) lyricsOverlayTitle->setFocusable(false);
+    if (lyricsOverlay) {
+        lyricsOverlay->setVisibility(brls::Visibility::GONE);
+        syncHiddenFocus();
+    }
+    if (lyricsBtn && lyricsBtn->getVisibility() == brls::Visibility::VISIBLE) {
+        brls::Application::giveFocus(lyricsBtn);
+    } else if (musicPlayBtn) {
+        brls::Application::giveFocus(musicPlayBtn);
+    }
+}
+
+void PlayerActivity::syncLyricsToPosition() {
+    if (!m_lyricsOverlayVisible || m_lyrics.empty()) return;
+
+    const int posMs = (int)(MpvPlayer::getInstance().getPosition() * 1000.0);
+
+    // Last line whose stamp has passed. Linear from the current index rather
+    // than a search over the whole file: playback moves forward a line at a
+    // time, and a seek backwards is the only case that walks far.
+    int idx = -1;
+    for (size_t i = 0; i < m_lyrics.size(); i++) {
+        if (m_lyrics[i].timeMs < 0) continue;
+        if (m_lyrics[i].timeMs > posMs) break;
+        idx = (int)i;
+    }
+    if (idx == m_lyricsIndex) return;
+
+    if (m_lyricsIndex >= 0 && m_lyricsIndex < (int)m_lyricRows.size()) {
+        m_lyricRows[(size_t)m_lyricsIndex]->setTextColor(nvgRGB(0x8A, 0x8A, 0x90));
+        m_lyricRows[(size_t)m_lyricsIndex]->setFontSize(17);
+    }
+    m_lyricsIndex = idx;
+    if (idx < 0 || idx >= (int)m_lyricRows.size()) return;
+
+    brls::Label* row = m_lyricRows[(size_t)idx];
+    row->setTextColor(nvgRGB(0xE5, 0xA0, 0x0D));
+    row->setFontSize(19);
+    // getY() is absolute, so subtract the content box's own origin to get the
+    // row's offset inside it, then bias upward so the current line sits a bit
+    // above centre with the next few visible below it.
+    if (lyricsScroll && lyricsList) {
+        const float offset = (row->getY() - lyricsList->getY())
+                           - lyricsScroll->getHeight() * 0.4f;
+        lyricsScroll->setContentOffsetY(offset < 0.0f ? 0.0f : offset, true);
+    }
+}
+
 const PlexStream* PlayerActivity::findSideloadableStream(int trackId) const {
     for (const auto& ps : m_plexStreams) {
         if (ps.id != trackId) continue;
@@ -3014,13 +3219,10 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                 // transcoder muxes in, so they are loaded straight into mpv.
                 // Going through setStreamSelection would restart the audio
                 // stream to no effect.
-                const std::string url =
-                    PlexClient::getInstance().buildApiUrlPublic(lyrics->key);
-                player.loadSubtitleUrl(url);
                 for (auto& ps : m_plexStreams)
                     if (ps.streamType == 3 || ps.streamType == 4)
                         ps.selected = (ps.id == trackId);
-                player.showOSD(m_isQueueMode ? "Lyrics on" : "Subtitles on", 1.5);
+                loadAndShowLyrics(*lyrics);
             } else if (hasPlexStreams && m_partId > 0) {
                 // trackId is a Plex stream ID - tell Plex server to switch subtitle
                 std::string displayTitle = "Subtitle " + std::to_string(trackId);

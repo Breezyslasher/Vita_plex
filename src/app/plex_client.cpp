@@ -12,6 +12,9 @@
 #include <cstring>
 #include <ctime>
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <sstream>
 #include <set>
 #include <string_view>
 
@@ -2894,6 +2897,18 @@ bool PlexClient::fetchStreams(const std::string& ratingKey, std::vector<PlexStre
         // server, which is how they get loaded rather than transcoded in.
         stream.key = extractJsonValue(obj, "key");
         stream.external = !stream.key.empty();
+        // Only for lyrics: the field that actually addresses the file is not
+        // one the parser keeps, and this is what makes it visible.
+        if (stream.streamType == 4) stream.rawJson = obj;
+
+        // Lyrics streams are the one kind we cannot yet fetch: the documented
+        // /library/streams/{id}.{ext} answers 200 with an empty body for them,
+        // and the server advertises transcoderLyrics separately from
+        // transcoderSubtitles. Dump the whole object so the field that actually
+        // addresses the file is visible rather than guessed at.
+        if (stream.streamType == 4) {
+            brls::Logger::info("fetchStreams: lyrics stream object = {}", obj);
+        }
 
         if (stream.id > 0 && stream.streamType > 0) {
             streams.push_back(stream);
@@ -2906,6 +2921,228 @@ bool PlexClient::fetchStreams(const std::string& ratingKey, std::vector<PlexStre
 
     brls::Logger::info("fetchStreams: Found {} streams for ratingKey {}", streams.size(), ratingKey);
     return true;
+}
+
+namespace {
+
+// Parse a lyrics body. Three shapes reach us: LRC from a sidecar, SRT from the
+// transcoder (its documented response example is text/srt), and plain text.
+// Detected from the content rather than the extension, because the transcoder
+// converts and the extension no longer describes what came back.
+std::vector<LyricLine> parseLyricsBody(const std::string& body) {
+    std::vector<LyricLine> out;
+
+    auto trim = [](std::string t) {
+        const size_t a = t.find_first_not_of(" \t\r");
+        const size_t b = t.find_last_not_of(" \t\r");
+        return a == std::string::npos ? std::string() : t.substr(a, b - a + 1);
+    };
+
+    // "[mm:ss.xx]" leading stamps. Returns where the text begins.
+    auto lrcStamps = [](const std::string& line, std::vector<int>& outMs) -> size_t {
+        size_t pos = 0;
+        while (pos < line.size() && line[pos] == '[') {
+            const size_t close = line.find(']', pos);
+            if (close == std::string::npos) break;
+            const std::string inside = line.substr(pos + 1, close - pos - 1);
+            const size_t colon = inside.find(':');
+            if (colon == std::string::npos) break;                       // "[ar: ...]"
+            if (inside.find_first_not_of("0123456789") != colon) break;  // not a time
+            outMs.push_back(std::atoi(inside.substr(0, colon).c_str()) * 60000
+                          + (int)(std::atof(inside.substr(colon + 1).c_str()) * 1000.0));
+            pos = close + 1;
+        }
+        return pos;
+    };
+
+    // "00:00:02,499 --> 00:00:06,416". Only the start time matters here: the
+    // list is a running transcript, not a timed overlay with an end.
+    auto srtStart = [](const std::string& line, int& outMs) -> bool {
+        const size_t arrow = line.find("-->");
+        if (arrow == std::string::npos) return false;
+        int h = 0, m = 0, sec = 0, ms = 0;
+        if (std::sscanf(line.c_str(), "%d:%d:%d,%d", &h, &m, &sec, &ms) != 4 &&
+            std::sscanf(line.c_str(), "%d:%d:%d.%d", &h, &m, &sec, &ms) != 4) return false;
+        outMs = ((h * 60 + m) * 60 + sec) * 1000 + ms;
+        return true;
+    };
+
+    // format=xml returns Plex's own lyrics document rather than the LRC the
+    // stream advertises, so this is tried first. Parsed by scanning for <Line>
+    // elements rather than with a real XML parser: the only two things needed
+    // are the start offset and the text, and the surrounding document shape is
+    // not something to depend on.
+    if (body.find("<Line") != std::string::npos) {
+        size_t pos = 0;
+        while ((pos = body.find("<Line", pos)) != std::string::npos) {
+            const size_t tagEnd = body.find('>', pos);
+            if (tagEnd == std::string::npos) break;
+            const std::string tag = body.substr(pos, tagEnd - pos);
+
+            int ms = -1;
+            for (const char* attr : {"startOffset=\"", "startTimeOffset=\""}) {
+                const size_t at = tag.find(attr);
+                if (at == std::string::npos) continue;
+                ms = std::atoi(tag.c_str() + at + strlen(attr));
+                break;
+            }
+
+            // Everything up to </Line>, with the inner tags (<Span> and the
+            // like) stripped so the words survive whatever markup wraps them.
+            const size_t close = body.find("</Line>", tagEnd);
+            std::string text;
+            if (close != std::string::npos) {
+                bool inTag = false;
+                for (size_t i = tagEnd + 1; i < close; i++) {
+                    const char c = body[i];
+                    if (c == '<')      inTag = true;
+                    else if (c == '>') inTag = false;
+                    else if (!inTag)   text += c;
+                }
+            }
+            text = trim(text);
+
+            LyricLine l;
+            l.timeMs = ms;
+            l.text = text;
+            out.push_back(std::move(l));
+
+            pos = (close == std::string::npos) ? tagEnd : close + 7;
+        }
+        while (!out.empty() && out.back().text.empty()) out.pop_back();
+        return out;
+    }
+
+    const bool looksSrt = body.find("-->") != std::string::npos;
+
+    std::istringstream stream(body);
+    std::string raw;
+
+    if (looksSrt) {
+        int pending = -1;
+        std::string text;
+        auto flush = [&]() {
+            if (pending < 0) return;
+            LyricLine l;
+            l.timeMs = pending;
+            l.text = trim(text);
+            out.push_back(l);
+            pending = -1;
+            text.clear();
+        };
+        while (std::getline(stream, raw)) {
+            const std::string line = trim(raw);
+            int ms = 0;
+            if (srtStart(line, ms)) { flush(); pending = ms; continue; }
+            if (line.empty()) { flush(); continue; }
+            // A bare number on its own is the cue index, not a lyric.
+            if (pending < 0 && line.find_first_not_of("0123456789") == std::string::npos) continue;
+            if (pending >= 0) text += (text.empty() ? "" : " ") + line;
+        }
+        flush();
+        return out;
+    }
+
+    while (std::getline(stream, raw)) {
+        if (!raw.empty() && raw.back() == '\r') raw.pop_back();
+        std::vector<int> stamps;
+        const size_t textStart = lrcStamps(raw, stamps);
+        const std::string text = trim(raw.substr(textStart));
+
+        if (stamps.empty()) {
+            if (!raw.empty() && raw[0] == '[') continue;   // an LRC metadata tag
+            if (text.empty() && out.empty()) continue;     // leading blank lines
+            LyricLine l;
+            l.timeMs = -1;
+            l.text = text;
+            out.push_back(std::move(l));
+        } else {
+            // One source line can carry several stamps for a repeated phrase.
+            for (int ms : stamps) {
+                LyricLine l;
+                l.timeMs = ms;
+                l.text = text;
+                out.push_back(l);
+            }
+        }
+    }
+
+    std::stable_sort(out.begin(), out.end(),
+                     [](const LyricLine& a, const LyricLine& b) { return a.timeMs < b.timeMs; });
+    while (!out.empty() && out.back().text.empty() && out.back().timeMs < 0) out.pop_back();
+    return out;
+}
+
+}  // namespace
+
+bool PlexClient::fetchLyrics(const std::string& ratingKey, const PlexStream& stream, int partId,
+                             std::vector<LyricLine>& lines, std::string& status) {
+    (void)ratingKey; (void)partId;
+    lines.clear();
+    status.clear();
+    if (stream.id <= 0 || stream.key.empty()) {
+        status = "This track has no lyrics stream.";
+        return false;
+    }
+
+    // Where the lyrics live depends on where they came from, which the stream's
+    // own `provider` field says:
+    //
+    //  - com.plexapp.agents.localmedia — a file sitting next to the track.
+    //    /library/streams/{id}.{ext} serves it, and this is the route that
+    //    works today (3952 bytes, 101 lines, for an .lrc beside the file).
+    //  - com.plexapp.agents.lyricfind — fetched from Plex's licensed provider,
+    //    with nothing on disk. The extension route answers 200 with an empty
+    //    body for these; ?format=xml is what Plex Web itself asks for, caught
+    //    in the server log as
+    //      GET /library/streams/50400?format=xml -> 404
+    //
+    // Both are tried rather than branching on the provider string, since a
+    // server may hold either kind and the cost of a miss is one request.
+    //
+    // Ruled out, and deliberately not retried: the universal transcoder. It
+    // delivers "the selected subtitle", and PUT /library/parts/{id} accepts
+    // only audioStreamID and subtitleStreamID — a streamType 4 can never be
+    // selected, so it transcodes nothing and returns an empty 200.
+    std::vector<std::string> routes;
+    if (!stream.codec.empty()) routes.push_back(stream.key + "." + stream.codec);
+    routes.push_back(stream.key + "?format=xml");
+
+    HttpClient client;
+    std::string tried;
+
+    for (const std::string& path : routes) {
+        brls::Logger::debug("fetchLyrics: GET {}", path);
+        HttpResponse r = client.get(buildApiUrl(path));
+        tried += "\n  " + path + " -> " + std::to_string(r.statusCode)
+               + " (" + std::to_string(r.body.size()) + "B)";
+
+        if (r.statusCode != 200 || r.body.empty()) continue;
+
+        lines = parseLyricsBody(r.body);
+        if (!lines.empty()) {
+            brls::Logger::info("fetchLyrics: {} gave {} line(s), {}", path, lines.size(),
+                               lines.front().timeMs >= 0 ? "synced" : "unsynced");
+            return true;
+        }
+        brls::Logger::warning("fetchLyrics: {} body did not parse: {}",
+                              path, r.body.substr(0, 400));
+        status = "The server returned lyrics this build could not read.\n\nFirst bytes:\n"
+               + r.body.substr(0, 240);
+        return false;
+    }
+
+    status = "The server has no lyrics for this track.\n" + tried
+           + "\n\nThe provider is " + (stream.rawJson.find("lyricfind") != std::string::npos
+                                       ? "lyricfind, so the words come from Plex rather than "
+                                         "from a file — an empty answer here means the server "
+                                         "does not hold them, which is what Plex's own web "
+                                         "client also gets."
+                                       : "local, so a lyrics file should be sitting next to "
+                                         "the track. An empty answer suggests the server "
+                                         "cannot read it.");
+    brls::Logger::warning("fetchLyrics: no route returned lyrics:{}", tried);
+    return false;
 }
 
 bool PlexClient::setStreamSelection(int partId, int audioStreamID, int subtitleStreamID) {
@@ -2928,7 +3165,10 @@ bool PlexClient::setStreamSelection(int partId, int audioStreamID, int subtitleS
     HttpResponse resp = client.request(req);
 
     if (resp.statusCode != 200) {
-        brls::Logger::error("setStreamSelection: Failed: {}", resp.statusCode);
+        // The body carries the server's actual objection; a bare status code
+        // sent us looking in the wrong place more than once.
+        brls::Logger::error("setStreamSelection: Failed: {} body: {}",
+                            resp.statusCode, resp.body.substr(0, 300));
         return false;
     }
 
