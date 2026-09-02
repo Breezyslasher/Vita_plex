@@ -53,27 +53,27 @@
          music mode, so nothing here needs new plumbing. -->
     <brls:Box
         width="100%"
-        height="52"
+        height="162"
         axis="row"
         justifyContent="spaceBetween"
         alignItems="center"
-        paddingLeft="14"
-        paddingRight="14"
-        marginTop="10">
+        paddingLeft="43"
+        paddingRight="43"
+        marginTop="31">
 
         <brls:Box
             id="player/queue_btn"
-            width="44"
-            height="44"
+            width="137"
+            height="137"
             axis="row"
             justifyContent="center"
             alignItems="center"
-            cornerRadius="22"
+            cornerRadius="68"
             focusable="true">
             <brls:Image
                 id="player/queue_icon"
-                width="21"
-                height="21"
+                width="65"
+                height="65"
                 image="@res/icons/format-list-group.png"
                 scalingType="fit"/>
         </brls:Box>
@@ -84,48 +84,50 @@
         <brls:Label
             id="player/queue_info"
             text=""
-            fontSize="11"
+            fontSize="34"
             horizontalAlign="center"
             textColor="#8C8C93"
             grow="1"/>
 
         <brls:Box
             id="player/lyrics_btn"
-            width="44"
-            height="44"
+            width="137"
+            height="137"
             axis="row"
             justifyContent="center"
             alignItems="center"
-            cornerRadius="22"
+            cornerRadius="68"
             focusable="true">
             <brls:Image
                 id="player/lyrics_icon"
-                width="21"
-                height="21"
+                width="65"
+                height="65"
                 image="@res/icons/subtitles.png"
                 scalingType="fit"/>
         </brls:Box>
     </brls:Box>
 
-    <!-- Cover art. 300x300 per the handoff, and capped there rather than
-         scaled up: on a 1280x720 TV (reachable by forcing this layout) a
-         stretched cover would dominate the screen. PlayerActivity's
-         applyMusicLayoutForViewport() narrows it further on small screens. -->
+    <!-- Upper spacer. Paired with the smaller one after the transport, this is
+         what positions the whole block: the slack splits 1 : 0.6, so the group
+         sits about 62% down rather than centred or bottom-pinned. -->
+    <brls:Box width="100%" grow="1"/>
+
+    <!-- Cover art. The handoff draws it 300 wide in a 412 frame; the value here
+         is that ratio against borealis' fixed 1280-wide logical space, and
+         applyMusicLayoutForViewport() then fits it to the real viewport. -->
     <brls:Box
         id="player/album_art_container"
         width="100%"
-        grow="1"
         axis="column"
         justifyContent="center"
         alignItems="center"
-        marginTop="30"
-        marginBottom="28">
+        marginBottom="93">
         <brls:Image
             id="player/album_art"
-            width="300"
-            height="300"
+            width="932"
+            height="932"
             scalingType="fit"
-            cornerRadius="16"
+            cornerRadius="50"
             visibility="gone"/>
     </brls:Box>
 
@@ -136,18 +138,18 @@
         axis="column"
         alignItems="flexStart"
         visibility="gone"
-        paddingLeft="26"
-        paddingRight="26">
+        paddingLeft="81"
+        paddingRight="81">
         <brls:Label
             id="player/music_title"
             text=""
-            fontSize="22"
+            fontSize="68"
             textColor="#FFFFFF"
-            marginBottom="5"/>
+            marginBottom="16"/>
         <brls:Label
             id="player/music_artist"
             text=""
-            fontSize="14"
+            fontSize="43"
             textColor="#8C8C93"/>
     </brls:Box>
 
@@ -158,36 +160,36 @@
         width="100%"
         axis="column"
         alignItems="stretch"
-        paddingLeft="26"
-        paddingRight="26"
-        marginTop="26">
+        paddingLeft="81"
+        paddingRight="81"
+        marginTop="81">
 
         <brls:Slider
             id="player/progress"
             width="100%"
-            height="32"/>
+            height="99"/>
 
         <brls:Box
             width="100%"
             axis="row"
             justifyContent="spaceBetween"
             alignItems="center"
-            marginTop="2">
+            marginTop="6">
             <brls:Label
                 id="player/time_elapsed"
                 text="0:00"
-                fontSize="12"
+                fontSize="37"
                 textColor="#8C8C93"/>
             <brls:Label
                 id="player/time"
                 text=""
-                fontSize="12"
+                fontSize="37"
                 textColor="#8C8C93"
                 visibility="gone"/>
             <brls:Label
                 id="player/time_remaining"
                 text="0:00"
-                fontSize="12"
+                fontSize="37"
                 textColor="#8C8C93"/>
         </brls:Box>
 
@@ -202,65 +204,65 @@
             visibility="gone">
             <brls:Box
                 id="player/audio_btn"
-                width="44"
-                height="44"
+                width="137"
+                height="137"
                 axis="row"
                 justifyContent="center"
                 alignItems="center"
-                cornerRadius="22"
+                cornerRadius="68"
                 visibility="gone">
                 <brls:Image
                     id="player/audio_icon"
-                    width="22"
-                    height="22"
+                    width="68"
+                    height="68"
                     image="@res/icons/music-note.png"
                     scalingType="fit"/>
             </brls:Box>
             <brls:Box
                 id="player/sub_btn"
-                width="44"
-                height="44"
+                width="137"
+                height="137"
                 axis="row"
                 justifyContent="center"
                 alignItems="center"
-                cornerRadius="22"
+                cornerRadius="68"
                 visibility="gone">
                 <brls:Image
                     id="player/sub_icon"
-                    width="22"
-                    height="22"
+                    width="68"
+                    height="68"
                     image="@res/icons/subtitles.png"
                     scalingType="fit"/>
             </brls:Box>
             <brls:Box
                 id="player/video_btn"
-                width="44"
-                height="44"
+                width="137"
+                height="137"
                 axis="row"
                 justifyContent="center"
                 alignItems="center"
-                cornerRadius="22"
+                cornerRadius="68"
                 visibility="gone">
                 <brls:Image
                     id="player/video_icon"
-                    width="22"
-                    height="22"
+                    width="68"
+                    height="68"
                     image="@res/icons/video.png"
                     scalingType="fit"/>
             </brls:Box>
             <brls:Box
                 id="player/pip_btn"
-                width="44"
-                height="44"
+                width="137"
+                height="137"
                 axis="row"
                 justifyContent="center"
                 alignItems="center"
-                cornerRadius="22"
+                cornerRadius="68"
                 visibility="gone">
                 <brls:Image
                     id="player/pip_icon"
-                    width="22"
-                    height="22"
+                    width="68"
+                    height="68"
                     image="@res/icons/picture-in-picture.png"
                     scalingType="fit"/>
             </brls:Box>
@@ -271,13 +273,13 @@
         <brls:Label
             id="player/title"
             text=""
-            fontSize="18"
+            fontSize="56"
             textColor="#FFFFFF"
             visibility="gone"/>
         <brls:Label
             id="player/artist"
             text=""
-            fontSize="14"
+            fontSize="43"
             textColor="#8C8C93"
             visibility="gone"/>
     </brls:Box>
@@ -292,93 +294,92 @@
         justifyContent="spaceBetween"
         alignItems="center"
         visibility="gone"
-        paddingLeft="26"
-        paddingRight="26"
-        marginTop="24"
-        marginBottom="44">
+        paddingLeft="81"
+        paddingRight="81"
+        marginTop="75">
 
         <brls:Box
             id="player/shuffle_btn"
-            width="44"
-            height="44"
+            width="137"
+            height="137"
             axis="row"
             justifyContent="center"
             alignItems="center"
-            cornerRadius="22"
+            cornerRadius="68"
             focusable="true">
             <brls:Image
                 id="player/shuffle_icon"
-                width="22"
-                height="22"
+                width="68"
+                height="68"
                 image="@res/icons/shuffle-disabled.png"
                 scalingType="fit"/>
         </brls:Box>
 
         <brls:Box
             id="player/music_prev_btn"
-            width="52"
-            height="52"
+            width="162"
+            height="162"
             axis="row"
             justifyContent="center"
             alignItems="center"
-            cornerRadius="26"
+            cornerRadius="81"
             focusable="true">
             <brls:Image
                 id="player/music_prev_icon"
-                width="30"
-                height="30"
+                width="93"
+                height="93"
                 image="@res/icons/skip-previous.png"
                 scalingType="fit"/>
         </brls:Box>
 
         <brls:Box
             id="player/music_play_btn"
-            width="72"
-            height="72"
+            width="224"
+            height="224"
             axis="row"
             justifyContent="center"
             alignItems="center"
-            cornerRadius="36"
+            cornerRadius="112"
             backgroundColor="#E5A00D"
             focusable="true">
             <brls:Image
                 id="player/music_play_icon"
-                width="26"
-                height="26"
+                width="81"
+                height="81"
                 image="@res/icons/pause.png"
                 scalingType="fit"/>
         </brls:Box>
 
         <brls:Box
             id="player/music_next_btn"
-            width="52"
-            height="52"
+            width="162"
+            height="162"
             axis="row"
             justifyContent="center"
             alignItems="center"
-            cornerRadius="26"
+            cornerRadius="81"
             focusable="true">
             <brls:Image
                 id="player/music_next_icon"
-                width="30"
-                height="30"
+                width="93"
+                height="93"
                 image="@res/icons/skip-next.png"
                 scalingType="fit"/>
         </brls:Box>
 
         <brls:Box
             id="player/repeat_btn"
-            width="44"
-            height="44"
+            width="137"
+            height="137"
             axis="row"
             justifyContent="center"
             alignItems="center"
-            cornerRadius="22"
+            cornerRadius="68"
             focusable="true">
             <brls:Image
                 id="player/repeat_icon"
-                width="22"
-                height="22"
+                width="68"
+                height="68"
                 image="@res/icons/repeat-off.png"
                 scalingType="fit"/>
         </brls:Box>
@@ -401,53 +402,56 @@
         visibility="gone">
         <brls:Box
             id="player/rewind_btn"
-            width="80"
-            height="80"
+            width="249"
+            height="249"
             axis="row"
             justifyContent="center"
             alignItems="center"
-            cornerRadius="40"
-            marginRight="36">
+            cornerRadius="124"
+            marginRight="112">
             <brls:Image
                 id="player/rewind_icon"
-                width="44"
-                height="44"
+                width="137"
+                height="137"
                 image="@res/icons/rewind-10.png"
                 scalingType="fit"/>
         </brls:Box>
         <brls:Box
             id="player/play_btn"
-            width="110"
-            height="110"
+            width="342"
+            height="342"
             axis="row"
             justifyContent="center"
             alignItems="center"
-            cornerRadius="55">
+            cornerRadius="171">
             <brls:Image
                 id="player/play_pause_icon"
-                width="56"
-                height="56"
+                width="174"
+                height="174"
                 image="@res/icons/pause.png"
                 scalingType="fit"/>
         </brls:Box>
         <brls:Box
             id="player/forward_btn"
-            width="80"
-            height="80"
+            width="249"
+            height="249"
             axis="row"
             justifyContent="center"
             alignItems="center"
-            cornerRadius="40"
-            marginLeft="36">
+            cornerRadius="124"
+            marginLeft="112">
             <brls:Image
                 id="player/forward_icon"
-                width="44"
-                height="44"
+                width="137"
+                height="137"
                 image="@res/icons/forward-30.png"
                 scalingType="fit"/>
         </brls:Box>
     </brls:Box>
 
+
+    <!-- Lower spacer — see the note on the upper one. -->
+    <brls:Box width="100%" grow="0.6"/>
 
     <!-- ==================================================================
          Shared with player.xml from here down: the skip button and the

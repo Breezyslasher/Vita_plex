@@ -3738,7 +3738,7 @@ void PlayerActivity::applyMusicLayoutForViewport() {
     // The mobile layout is built around a big cover — the handoff draws it 300
     // wide in a 412 frame — so it gets a much larger share of the width than the
     // classic player, where the cover shares the screen with a control column.
-    float byWidth  = vw * (m_mobileLayout ? 0.73f : 0.55f);
+    float byWidth  = vw * (m_mobileLayout ? 0.78f : 0.55f);
     float byHeight = vh * (m_mobileLayout ? 0.42f : 0.45f);
     float target   = std::min(byWidth, byHeight);
 
@@ -3748,7 +3748,12 @@ void PlayerActivity::applyMusicLayoutForViewport() {
     // And don't blow up beyond 480 in either direction; pushed any
     // bigger the cover starts dominating the layout on big tablets
     // and the controls feel orphaned at the bottom.
-    if (target > 480.f) target = 480.f;
+    //
+    // The mobile layout is the exception: dominating is the point there, and
+    // this cap was what kept the cover at ~37% of the width on a phone —
+    // 480 of borealis' ~1280 logical units — instead of the 73% the design
+    // draws. The proportional limits above already bound it on both axes.
+    if (!m_mobileLayout && target > 480.f) target = 480.f;
 
     albumArt->setWidth(target);
     albumArt->setHeight(target);
