@@ -216,9 +216,13 @@ bool PlayerActivity::useMobileLayout() {
     // Width rather than platform, so a tablet and a resized desktop window get
     // the layout that actually fits them.
 #if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IOS)
-    brls::Size win = brls::Application::getWindowSize();
-    if (win.height > win.width) return true;   // portrait phone/tablet
-    return win.width < 600.0f;
+    // platform::viewport* is what the rest of the player sizes itself from
+    // (see applyMusicLayoutForViewport) and it is defined on every port.
+    const float vw = platform::viewportWidth();
+    const float vh = platform::viewportHeight();
+    if (vw <= 0.0f || vh <= 0.0f) return false;   // unknown: leave it classic
+    if (vh > vw) return true;                     // portrait phone/tablet
+    return vw < 600.0f;
 #else
     return false;   // PSV / PS4 / Switch / desktop keep the classic player
 #endif
