@@ -164,6 +164,12 @@ private:
     // pumps four times a second and hands over the moment the file ends.
     brls::RepeatingTimer m_endWatchTimer;
 
+    // Which layout createContentView() built. The two XMLs declare the same
+    // view ids, so almost nothing else needs to know — this is for the few
+    // places where the geometry genuinely differs.
+    bool m_mobileLayout = false;
+    static bool useMobileLayout();   // reads the Player layout setting
+
     // Next-track prefetch. Resolving a Plex stream URL costs two blocking HTTP
     // round-trips (/library/metadata, then /decision). Doing them when the track
     // ends put both of them inside the silence between songs, and froze the UI

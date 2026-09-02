@@ -19,6 +19,10 @@
 #include "utils/pip.h"
 #include "view/video_view.hpp"
 #include "platform/platform.hpp"
+#if defined(__APPLE__)
+// TARGET_OS_IOS, for the Auto branch of useMobileLayout().
+#include <TargetConditionals.h>
+#endif
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -202,8 +206,33 @@ PlayerActivity* PlayerActivity::createResumeQueue() {
     return activity;
 }
 
+bool PlayerActivity::useMobileLayout() {
+    switch (Application::getInstance().getSettings().playerLayout) {
+        case 1: return false;   // Classic, everywhere
+        case 2: return true;    // Mobile, everywhere — including handheld and TV
+        default: break;         // Auto
+    }
+    // Auto: the big-art player suits a phone-shaped screen and nothing else.
+    // Width rather than platform, so a tablet and a resized desktop window get
+    // the layout that actually fits them.
+#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IOS)
+    brls::Size win = brls::Application::getWindowSize();
+    if (win.height > win.width) return true;   // portrait phone/tablet
+    return win.width < 600.0f;
+#else
+    return false;   // PSV / PS4 / Switch / desktop keep the classic player
+#endif
+}
+
 brls::View* PlayerActivity::createContentView() {
-    return brls::View::createFromXMLResource("activity/player.xml");
+    // Both layouts declare the same view ids — every BRLS_BIND below resolves by
+    // id and throws if one is missing — so only the geometry differs and the
+    // rest of this class is layout-agnostic.
+    m_mobileLayout = useMobileLayout();
+    brls::Logger::info("PlayerActivity: using the {} player layout",
+                       m_mobileLayout ? "mobile" : "classic");
+    return brls::View::createFromXMLResource(
+        m_mobileLayout ? "activity/player_mobile.xml" : "activity/player.xml");
 }
 
 void PlayerActivity::onContentAvailable() {
