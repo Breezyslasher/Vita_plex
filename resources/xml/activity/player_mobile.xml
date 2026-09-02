@@ -13,8 +13,10 @@
   code hides them. The three overlays at the bottom (queue sheet, lyrics sheet,
   track picker) are shared verbatim with the classic layout.
 
-  Colours follow the handoff: bg #1B1B1D, gold #E5A00D, title #FFFFFF,
-  secondary #8C8C93, inactive control #CFCFD4.
+  Colours follow the handoff except the background: the handoff asks for
+  #1B1B1D, but the app paints #2D2D2D (palette::bg) everywhere else and a
+  player in a different dark reads as a different app. Gold #E5A00D, title
+  #FFFFFF, secondary #8C8C93, inactive control #CFCFD4 are as specified.
 -->
 <brls:Box
     id="player/container"
@@ -23,7 +25,7 @@
     axis="column"
     justifyContent="flexStart"
     alignItems="stretch"
-    backgroundColor="#1B1B1D">
+    backgroundColor="#2D2D2D">
 
     <!-- Video / photo. Never shown in this layout; kept so the id contract
          holds and a stray video load has somewhere to land. -->
@@ -112,6 +114,7 @@
     <brls:Box
         id="player/album_art_container"
         width="100%"
+        grow="1"
         axis="column"
         justifyContent="center"
         alignItems="center"
@@ -291,7 +294,8 @@
         visibility="gone"
         paddingLeft="26"
         paddingRight="26"
-        marginTop="24">
+        marginTop="24"
+        marginBottom="44">
 
         <brls:Box
             id="player/shuffle_btn"

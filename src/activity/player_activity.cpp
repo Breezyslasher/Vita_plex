@@ -3735,8 +3735,11 @@ void PlayerActivity::applyMusicLayoutForViewport() {
     float vh = platform::viewportHeight();
     if (vw <= 0 || vh <= 0) return;
 
-    float byWidth  = vw * 0.55f;
-    float byHeight = vh * 0.45f;
+    // The mobile layout is built around a big cover — the handoff draws it 300
+    // wide in a 412 frame — so it gets a much larger share of the width than the
+    // classic player, where the cover shares the screen with a control column.
+    float byWidth  = vw * (m_mobileLayout ? 0.73f : 0.55f);
+    float byHeight = vh * (m_mobileLayout ? 0.42f : 0.45f);
     float target   = std::min(byWidth, byHeight);
 
     // Don't shrink below the original 220px design size — every
