@@ -270,6 +270,14 @@ void MusicController::publishNowPlaying(int playingOverride, long long positionO
     const QueueItem* t = q.getCurrentTrack();
     if (!t) { stopSession(); return; }
 
+    // A different track than we last published means any seek still in flight
+    // belonged to the old one — drop it, or it would suppress the position
+    // re-anchor here and then report a seek that "never took".
+    if (m_lastPublishedRatingKey != t->ratingKey) {
+        m_lastPublishedRatingKey = t->ratingKey;
+        m_pendingSeekMs = -1;
+    }
+
     MpvPlayer& p = MpvPlayer::getInstance();
     nowplaying::Info info;
     info.mediaId = "track/" + t->ratingKey;   // what media resumption replays
@@ -403,19 +411,45 @@ void MusicController::syncSessionState() {
         return;
     }
 
-    // Position. The OS runs its own scrubber forward from the last publish, so a
-    // divergence never corrects itself: a seek mpv clamped or could not perform,
-    // a buffering stall, a track that ran shorter than its metadata said. Work
-    // out what the OS must be showing by now and re-anchor if reality has moved
-    // away from it. On a threshold rather than every tick — each publish rebuilds
-    // the notification, and a second of ordinary rounding drift is not worth one.
     if (!p.isPlaying() && !p.isPaused()) return;   // LOADING/BUFFERING: no answer yet
     const long long realMs = (long long)(p.getPosition() * 1000.0);
+    const auto now = std::chrono::steady_clock::now();
+
+    // A seek we've announced but mpv hasn't reached yet. Seeking an HTTP stream
+    // means re-opening and re-buffering it, which takes well over one tick, and
+    // mpv reports the *old* position the whole time. Correcting to that is what
+    // yanked the notification scrubber back to where the drag started — so hold
+    // the announced position until mpv arrives, or until it's clear it won't.
+    if (m_pendingSeekMs >= 0) {
+        const long long miss = (realMs > m_pendingSeekMs) ? (realMs - m_pendingSeekMs)
+                                                          : (m_pendingSeekMs - realMs);
+        if (miss <= 2500) {
+            m_pendingSeekMs = -1;      // arrived; resume normal drift checking
+        } else {
+            const long long waited = std::chrono::duration_cast<std::chrono::seconds>(
+                                         now - m_pendingSeekAt).count();
+            if (waited < 8) return;    // still on its way — leave the OS alone
+            // Long enough that the seek is not coming. Say so plainly, then let
+            // the re-anchor below tell the truth about where playback actually is.
+            brls::Logger::warning(
+                "MusicController: seek to {}ms did not take after {}s (still at {}ms, "
+                "mpv seekable={}) — the stream may not support seeking",
+                m_pendingSeekMs, waited, realMs, p.isSeekable());
+            m_pendingSeekMs = -1;
+        }
+    }
+
+    // Position. The OS runs its own scrubber forward from the last publish, so a
+    // divergence never corrects itself: a buffering stall, a track that ran
+    // shorter than its metadata said, a seek that never landed. Work out what the
+    // OS must be showing by now and re-anchor if reality has moved away from it.
+    // On a threshold rather than every tick — each publish rebuilds the
+    // notification, and a second of ordinary rounding drift is not worth one.
     long long shownMs = m_lastPublishedPositionMs;
     if (m_lastPublishedPlaying) {
         // Rate is 1.0 while playing, so the OS has advanced its own clock.
         shownMs += std::chrono::duration_cast<std::chrono::milliseconds>(
-                       std::chrono::steady_clock::now() - m_lastPublishAt).count();
+                       now - m_lastPublishAt).count();
     }
     const long long drift = (realMs > shownMs) ? (realMs - shownMs) : (shownMs - realMs);
     if (drift > 1500) publishNowPlaying(-1, realMs);
@@ -514,12 +548,14 @@ void MusicController::seekToMs(long long ms) {
     MpvPlayer& p = MpvPlayer::getInstance();
     if (!p.isInitialized()) return;
     if (ms < 0) ms = 0;
+    brls::Logger::info("MusicController: seek to {}ms (from {}ms, mpv seekable={})",
+                       ms, (long long)(p.getPosition() * 1000.0), p.isSeekable());
     p.seekTo((double)ms / 1000.0);
     // Publish where the user asked to go, not where getPosition() still says we
-    // are — seekTo is async, so reading it back here returns the pre-seek value.
-    // Publishing that is what made a drag on the notification scrubber snap
-    // straight back and look like the seek had been ignored. syncSessionState()
-    // re-anchors within a second if mpv ends up somewhere else.
+    // are — seekTo is async, so reading it back here returns the pre-seek value,
+    // and publishing that snapped the notification scrubber straight back.
+    m_pendingSeekMs = ms;
+    m_pendingSeekAt = std::chrono::steady_clock::now();
     publishNowPlaying(-1, ms);
 }
 
@@ -529,6 +565,8 @@ void MusicController::seekRelativeMs(long long deltaMs) {
     long long target = (long long)(p.getPosition() * 1000.0) + deltaMs;
     if (target < 0) target = 0;
     p.seekTo((double)target / 1000.0);
+    m_pendingSeekMs = target;
+    m_pendingSeekAt = std::chrono::steady_clock::now();
     publishNowPlaying(-1, target);
 }
 

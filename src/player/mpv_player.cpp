@@ -1167,6 +1167,18 @@ double MpvPlayer::getPosition() const {
     return pos;
 }
 
+bool MpvPlayer::isSeekable() const {
+    if (!m_mpv) return false;
+    int flag = 0;
+    if (mpv_get_property(m_mpv, "seekable", MPV_FORMAT_FLAG, &flag) < 0) {
+        // Property not answerable yet (nothing loaded, still opening). Assume
+        // seekable: the caller's fallback is to restart the stream, which is
+        // far more disruptive than a seek that quietly does nothing.
+        return true;
+    }
+    return flag != 0;
+}
+
 double MpvPlayer::getDuration() const {
     if (!m_mpv) return 0.0;
 
