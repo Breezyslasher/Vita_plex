@@ -30,6 +30,8 @@ struct QueueItem {
     int duration = 0;         // Duration in seconds
     int index = 0;            // Position in original queue (for unshuffle)
     int playQueueItemID = 0;  // Server-side play queue item ID (0 = offline/unsynced)
+    float userRating = 0.0f;  // viewer's own 0-10 rating, 0 when unrated; drives
+                              // the "liked" heart in the Android media session
 };
 
 /**
@@ -65,10 +67,18 @@ public:
     bool playPrevious();                // Play previous track
     bool hasNext() const;               // Check if there's a next track
     bool hasPrevious() const;           // Check if there's a previous track
+    // The track playNext() would land on, without advancing. Used to resolve the
+    // next stream URL while the current track is still playing. Returns nullptr
+    // when the answer is not settled yet — running off the end of a shuffled
+    // queue with repeat-all reshuffles, so there is nothing honest to return.
+    const QueueItem* peekNextTrack() const;
 
     // Current state
     int getCurrentIndex() const { return m_currentIndex; }
     const QueueItem* getCurrentTrack() const;
+    // Record a rating written elsewhere (the OS "like" heart), so the next
+    // publish reflects it without waiting for the server round trip.
+    void setCurrentTrackRating(float rating);
     const std::vector<QueueItem>& getQueue() const { return m_queue; }
     int getQueueSize() const { return (int)m_queue.size(); }
     bool isEmpty() const { return m_queue.empty(); }
@@ -77,6 +87,17 @@ public:
     void setShuffle(bool enabled);
     bool isShuffleEnabled() const { return m_shuffleEnabled; }
     void reshuffle();  // Re-randomize shuffle order
+    // Shuffle a queue that has not started playing. setShuffle() pins the
+    // current track first, which is right when the user turns shuffle on
+    // mid-song but wrong for a queue built by pressing Play on a container:
+    // there index 0 is just "the top of the list", so it played the same first
+    // track every time. This picks the opening track at random too.
+    void shuffleFromStart();
+    // Shuffle with the current track pinned in front. Same result setShuffle(true)
+    // gives, but unconditional: setShuffle is a toggle and returns early when the
+    // flag is already set, which silently did nothing for a new queue that
+    // inherited shuffle from the previous one.
+    void shuffleKeepingCurrent();
     const std::vector<int>& getShuffleOrder() const { return m_shuffleOrder; }
     int getShufflePosition() const { return m_shufflePosition; }
 

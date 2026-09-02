@@ -83,6 +83,19 @@ public class VitaPlexActivity extends SDLActivity
             sVideoAspectNum = aspectNum;
             sVideoAspectDen = aspectDen;
         }
+        // Keep the window's PiP params current while playing. From API 31 the
+        // system can enter PiP itself on a gesture-nav swipe, but only if the
+        // params were already registered — onUserLeaveHint fires too late for
+        // that, and going through it gives a visible transition instead of the
+        // video morphing into the window.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            final Activity activity = (Activity) mSingleton;
+            if (activity != null) {
+                activity.runOnUiThread(new Runnable() {
+                    @Override public void run() { PiPS.refreshParams(activity); }
+                });
+            }
+        }
     }
 
     @Override
@@ -91,7 +104,9 @@ public class VitaPlexActivity extends SDLActivity
         // User is leaving the app (e.g. Home button). If a video is playing,
         // try to seamlessly enter Picture-in-Picture so playback continues in
         // a small window instead of stopping.
-        if (sVideoPlaying) {
+        // From API 31 the system already auto-entered from the registered
+        // params, so doing it again here would fight that.
+        if (sVideoPlaying && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             try {
                 enterPiP(sVideoAspectNum, sVideoAspectDen);
             } catch (Throwable t) {
@@ -156,10 +171,35 @@ public class VitaPlexActivity extends SDLActivity
         return getContext();
     }
 
+    // Audio session id shared with mpv's AudioTrack output, so a system
+    // equalizer can attach to what we play. Minted once and kept for the life
+    // of the process — mpv is configured with it at init and the AudioEffect
+    // broadcast has to name the same id.
+    private static int sAudioSessionId = 0;
+
+    /** Called from native (mpv init). 0 means "no session available". */
+    public static int audioSessionId() {
+        if (sAudioSessionId != 0) return sAudioSessionId;
+        try {
+            Context ctx = getAppContext();
+            android.media.AudioManager am = ctx != null
+                    ? (android.media.AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE)
+                    : null;
+            if (am != null) sAudioSessionId = am.generateAudioSessionId();
+        } catch (Throwable t) {
+            Log.w(TAG, "generateAudioSessionId failed", t);
+        }
+        return sAudioSessionId;
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         mSurface.getHolder().setFormat(PixelFormat.RGBA_8888);
+
+        // A deep link that cold-started us. Native isn't up yet, so it is held
+        // until the UI asks for it (takePendingDeepLink).
+        rememberDeepLink(getIntent());
 
         // Android 13+ gates notifications behind a runtime grant; ask once so the
         // music media notification can be posted. Denial is non-fatal (the
@@ -217,6 +257,268 @@ public class VitaPlexActivity extends SDLActivity
      * @return true if the PiP request was issued, false if unsupported or
      *         the system refused it.
      */
+    // ---- Deep links ----
+    //
+    // plex:// , vitaplex:// and app.plex.tv links. Anything carrying a
+    // /library/metadata/<key> opens that item; anything else just opens the
+    // app, which is what a link we can't read should do.
+    //
+    // The link is held rather than pushed because a cold start has no native
+    // library loaded and no borealis loop to push onto. The UI collects it once
+    // it is ready; a link that arrives while the app is already running is
+    // stored the same way and picked up on the next poll.
+    private static volatile String sPendingDeepLink;
+
+    /** Native trampoline: implemented in src/platform/platform_android.cpp. */
+    private static native void nativeDeepLink();
+
+    private static void rememberDeepLink(Intent intent) {
+        try {
+            if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) return;
+            android.net.Uri uri = intent.getData();
+            if (uri == null) return;
+            sPendingDeepLink = uri.toString();
+            Log.i(TAG, "deep link: " + sPendingDeepLink);
+        } catch (Throwable t) {
+            Log.w(TAG, "rememberDeepLink failed", t);
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        // singleInstance, so a second link arrives here rather than in onCreate.
+        rememberDeepLink(intent);
+        // Unlike a cold start there is a running UI, so nudge it to collect the
+        // link now instead of waiting for the next thing that happens to poll.
+        try {
+            nativeDeepLink();
+        } catch (Throwable t) {
+            Log.w(TAG, "nativeDeepLink unavailable", t);
+        }
+    }
+
+    /** Called from native. Returns the pending link and clears it, or null. */
+    public static String takePendingDeepLink() {
+        String link = sPendingDeepLink;
+        sPendingDeepLink = null;
+        return link;
+    }
+
+    // ---- System caption styling ----
+    //
+    // Android's accessibility settings carry a subtitle size, colour, edge and
+    // background that every media app is expected to honour. VitaPlex styled
+    // subtitles only from its own defaults, so a user who had set large
+    // high-contrast captions system-wide got small white text anyway.
+    //
+    // Returned as a flat int[] so the JNI side stays one call:
+    //   [0] font scale x1000
+    //   [1] foreground ARGB   [2] background ARGB   [3] edge ARGB
+    //   [4] edge type (0 none, 1 outline, 2 drop shadow, 3 raised, 4 depressed)
+    //   [5] which of those the user actually set: bit0 fg, bit1 bg, bit2 edge
+    // Null when the platform has no caption manager, which leaves the app's own
+    // styling alone.
+    public static int[] captionStyle() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT) return null;
+        try {
+            Context ctx = getAppContext();
+            android.view.accessibility.CaptioningManager cm = ctx != null
+                ? (android.view.accessibility.CaptioningManager)
+                      ctx.getSystemService(Context.CAPTIONING_SERVICE)
+                : null;
+            if (cm == null) return null;
+
+            android.view.accessibility.CaptioningManager.CaptionStyle st = cm.getUserStyle();
+            int flags = 0;
+            if (st != null && st.hasForegroundColor()) flags |= 1;
+            if (st != null && st.hasBackgroundColor()) flags |= 2;
+            if (st != null && st.hasEdgeColor())       flags |= 4;
+
+            return new int[] {
+                Math.round(cm.getFontScale() * 1000f),
+                st != null ? st.foregroundColor : 0xFFFFFFFF,
+                st != null ? st.backgroundColor : 0x00000000,
+                st != null ? st.edgeColor : 0xFF000000,
+                st != null ? st.edgeType : 0,
+                flags,
+            };
+        } catch (Throwable t) {
+            Log.w(TAG, "captionStyle failed", t);
+            return null;
+        }
+    }
+
+    // ---- Audio passthrough ----
+    //
+    // Which surround codecs the current output can take as a bitstream, as a
+    // bitmask: 1 AC3, 2 E-AC3, 4 DTS, 8 DTS-HD, 16 TrueHD. Without this mpv
+    // decodes Dolby/DTS to PCM and downmixes it, so an AVR that could have
+    // rendered 5.1 gets stereo.
+    //
+    // Two probes because the good one is recent: from API 29 AudioTrack can be
+    // asked directly whether an encoding plays back untouched, which is
+    // authoritative. Below that, the union of the encodings the HDMI-ish output
+    // devices advertise is the best the platform offers.
+    public static int passthroughCodecs() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return 0;
+        try {
+            Context ctx = getAppContext();
+            android.media.AudioManager am = ctx != null
+                    ? (android.media.AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE)
+                    : null;
+            if (am == null) return 0;
+
+            final int[] encodings = {
+                android.media.AudioFormat.ENCODING_AC3,
+                android.media.AudioFormat.ENCODING_E_AC3,
+                android.media.AudioFormat.ENCODING_DTS,
+                android.media.AudioFormat.ENCODING_DTS_HD,
+                android.media.AudioFormat.ENCODING_DOLBY_TRUEHD,
+            };
+
+            int mask = 0;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                android.media.AudioAttributes attrs = new android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
+                        .build();
+                for (int i = 0; i < encodings.length; i++) {
+                    android.media.AudioFormat fmt = new android.media.AudioFormat.Builder()
+                            .setEncoding(encodings[i])
+                            .setSampleRate(48000)
+                            .setChannelMask(android.media.AudioFormat.CHANNEL_OUT_5POINT1)
+                            .build();
+                    if (android.media.AudioTrack.isDirectPlaybackSupported(fmt, attrs))
+                        mask |= (1 << i);
+                }
+            } else {
+                for (android.media.AudioDeviceInfo dev
+                        : am.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)) {
+                    if (!carriesCompressedAudio(dev.getType())) continue;
+                    int[] devEnc = dev.getEncodings();
+                    if (devEnc == null) continue;
+                    for (int e : devEnc) {
+                        for (int i = 0; i < encodings.length; i++) {
+                            if (e == encodings[i]) mask |= (1 << i);
+                        }
+                    }
+                }
+            }
+            Log.i(TAG, "audio passthrough mask = " + mask);
+            return mask;
+        } catch (Throwable t) {
+            Log.w(TAG, "passthroughCodecs failed", t);
+            return 0;
+        }
+    }
+
+    // Outputs that can carry a compressed bitstream. A speaker or a headset
+    // cannot, and claiming otherwise would hand an AVR stream to a phone.
+    private static boolean carriesCompressedAudio(int type) {
+        if (type == android.media.AudioDeviceInfo.TYPE_HDMI
+            || type == android.media.AudioDeviceInfo.TYPE_HDMI_ARC
+            || type == android.media.AudioDeviceInfo.TYPE_LINE_DIGITAL
+            || type == android.media.AudioDeviceInfo.TYPE_AUX_LINE) return true;
+        // HDMI eARC is API 31; named by value so this still compiles for 23.
+        return Build.VERSION.SDK_INT >= 31 && type == 29;
+    }
+
+    // ---- Display mode: match the panel's refresh rate to the content ----
+    //
+    // A 23.976fps film shown on a 60Hz panel is displayed with a 3:2 pulldown
+    // cadence: two frames get three refreshes and the next gets two, which is
+    // the judder you see on slow pans. Asking the window for a display mode
+    // whose refresh rate is a whole multiple of the content rate removes it.
+    //
+    // Only the refresh rate is changed — the mode must keep the current
+    // resolution, so this never downgrades a 4K panel to reach a nicer rate.
+
+    private static int sOriginalModeId = 0;   // 0 = never changed it
+
+    /**
+     * Called from native when a file's frame rate becomes known. Pass 0 to
+     * hand the display back to whatever mode it was in.
+     */
+    public static void setPreferredRefreshRate(final float contentFps) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;   // getSupportedModes is API 23
+        final Activity activity = (Activity) mSingleton;
+        if (activity == null) return;
+        activity.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try { applyRefreshRate(activity, contentFps); }
+                catch (Throwable t) { Log.w(TAG, "setPreferredRefreshRate failed", t); }
+            }
+        });
+    }
+
+    private static void applyRefreshRate(Activity activity, float contentFps) {
+        android.view.Display display = activity.getWindowManager().getDefaultDisplay();
+        if (display == null) return;
+        android.view.WindowManager.LayoutParams lp = activity.getWindow().getAttributes();
+
+        if (sOriginalModeId == 0) sOriginalModeId = display.getMode().getModeId();
+        if (contentFps <= 0f) {
+            if (lp.preferredDisplayModeId != sOriginalModeId) {
+                lp.preferredDisplayModeId = sOriginalModeId;
+                activity.getWindow().setAttributes(lp);
+                Log.i(TAG, "refresh rate: restored mode " + sOriginalModeId);
+            }
+            return;
+        }
+
+        android.view.Display.Mode current = display.getMode();
+        android.view.Display.Mode[] modes = display.getSupportedModes();
+        if (modes == null || modes.length < 2) return;   // nothing to switch to
+
+        // Score every mode at the current resolution by how close its refresh
+        // rate is to a whole multiple of the content rate, preferring the
+        // lowest multiple that fits so a 24fps film lands on 24 rather than 120.
+        android.view.Display.Mode best = null;
+        double bestError = Double.MAX_VALUE;
+        for (android.view.Display.Mode m : modes) {
+            if (m.getPhysicalWidth() != current.getPhysicalWidth()
+                || m.getPhysicalHeight() != current.getPhysicalHeight()) continue;
+            final double rate = m.getRefreshRate();
+            final long multiple = Math.round(rate / contentFps);
+            if (multiple < 1) continue;
+            // Relative error, so 23.976 vs 24.000 (0.1%) beats 50 vs 47.95 (4%).
+            double error = Math.abs(rate - contentFps * multiple) / rate;
+            if (error > 0.01) continue;              // more than 1% off is not a match
+            error += (multiple - 1) * 1e-4;          // tie-break toward the lowest multiple
+            if (error < bestError) { bestError = error; best = m; }
+        }
+        if (best == null) {
+            Log.i(TAG, "refresh rate: no mode matches " + contentFps + "fps");
+            return;
+        }
+        if (lp.preferredDisplayModeId == best.getModeId()) return;
+        lp.preferredDisplayModeId = best.getModeId();
+        activity.getWindow().setAttributes(lp);
+        Log.i(TAG, "refresh rate: " + contentFps + "fps -> " + best.getRefreshRate()
+                   + "Hz (mode " + best.getModeId() + ")");
+    }
+
+    /**
+     * Whether the display can show HDR at all. Called from native at mpv init
+     * to decide between passing HDR through and tone-mapping it down.
+     */
+    public static boolean displaySupportsHdr() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return false;
+        try {
+            final Activity activity = (Activity) mSingleton;
+            if (activity == null) return false;
+            android.view.Display display = activity.getWindowManager().getDefaultDisplay();
+            if (display == null) return false;
+            android.view.Display.HdrCapabilities caps = display.getHdrCapabilities();
+            return caps != null && caps.getSupportedHdrTypes() != null
+                   && caps.getSupportedHdrTypes().length > 0;
+        } catch (Throwable t) {
+            Log.w(TAG, "displaySupportsHdr failed", t);
+            return false;
+        }
+    }
+
     public static boolean enterPiP(int aspectNum, int aspectDen) {
         final Activity activity = (Activity) mSingleton;
         if (activity == null) {
@@ -253,6 +555,47 @@ public class VitaPlexActivity extends SDLActivity
      * can be loaded on pre-O devices without triggering verifier errors
      * from references to PictureInPictureParams / Rational / RemoteAction.
      */
+    /**
+     * API 31+ PiP extras, in their own class so the S-only method references
+     * never appear in bytecode that older devices verify.
+     *
+     * autoEnterEnabled lets the system take the app into PiP on the gesture-nav
+     * swipe-up, which is both smoother and the only way it happens at all on
+     * devices where onUserLeaveHint is not delivered for that gesture.
+     * sourceRectHint tells it which part of the window is the video, so the
+     * transition morphs that rectangle into the PiP window instead of
+     * cross-fading the whole screen. seamlessResize is off because that is for
+     * content that can resize without a visual break (a live camera feed); a
+     * decoded video frame cannot.
+     */
+    private static final class PiPS {
+        static void refreshParams(Activity activity) {
+            try {
+                PackageManager pm = activity.getPackageManager();
+                if (pm != null
+                    && !pm.hasSystemFeature(PackageManager.FEATURE_PICTURE_IN_PICTURE)) return;
+
+                PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
+                    .setAspectRatio(new Rational(sVideoAspectNum, sVideoAspectDen))
+                    .setAutoEnterEnabled(sVideoPlaying)
+                    .setSeamlessResizeEnabled(false);
+
+                android.view.View content =
+                    activity.findViewById(android.R.id.content);
+                if (content != null && content.getWidth() > 0 && content.getHeight() > 0) {
+                    int[] xy = new int[2];
+                    content.getLocationOnScreen(xy);
+                    b.setSourceRectHint(new android.graphics.Rect(
+                        xy[0], xy[1],
+                        xy[0] + content.getWidth(), xy[1] + content.getHeight()));
+                }
+                activity.setPictureInPictureParams(b.build());
+            } catch (Throwable t) {
+                Log.w(TAG, "PiP params refresh failed", t);
+            }
+        }
+    }
+
     private static final class PiPO {
         static boolean enter(final Activity activity, int aspectNum, int aspectDen) {
             // Not all Android builds (stock Android TV without the PiP

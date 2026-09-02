@@ -42,6 +42,56 @@ static void* mpvGlGetProcAddress(void* ctx, const char* name) {
     (void)ctx;
     return SDL_GL_GetProcAddress(name);
 }
+
+#include <jni.h>
+
+namespace {
+// Audio session plumbing for system equalizers.
+//
+// An AudioEffect host (the stock equalizer, Wavelet, Poweramp EQ) attaches to
+// an audio session id, so it can only touch our output if AudioTrack and the
+// broadcast agree on one. Java mints the id; we hand it to mpv's audiotrack AO
+// and, only if that option was accepted, tell Java it may advertise the session.
+// A libmpv without the option leaves the session unadvertised rather than
+// pointing an equalizer at audio nobody is playing.
+int androidAudioSessionId() {
+    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
+    if (!env) return 0;
+    jclass cls = env->FindClass("org/VitaPlex/app/VitaPlexActivity");
+    if (!cls) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return 0;
+    }
+    int id = 0;
+    jmethodID mid = env->GetStaticMethodID(cls, "audioSessionId", "()I");
+    if (mid) {
+        id = (int)env->CallStaticIntMethod(cls, mid);
+        if (env->ExceptionCheck()) { env->ExceptionClear(); id = 0; }
+    } else if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(cls);
+    return id;
+}
+
+void androidMarkAudioSessionUsable() {
+    JNIEnv* env = (JNIEnv*)SDL_AndroidGetJNIEnv();
+    if (!env) return;
+    jclass cls = env->FindClass("org/VitaPlex/app/MediaNotification");
+    if (!cls) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return;
+    }
+    jmethodID mid = env->GetStaticMethodID(cls, "setAudioSessionUsable", "()V");
+    if (mid) {
+        env->CallStaticVoidMethod(cls, mid);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    } else if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(cls);
+}
+}  // namespace
 #endif
 
 #if defined(__SWITCH__) && defined(BOREALIS_USE_OPENGL)
@@ -162,6 +212,106 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "ytdl", "no");  // Disable youtube-dl (like switchfin)
     mpv_set_option_string(m_mpv, "reset-on-next-file", "speed,pause");  // Reset state between files
 
+    // HDR. Every port renders HDR down to SDR — Android through vo=gpu, the
+    // rest through the libmpv FBO composite — so the tone-mapping curve is
+    // shared. Without an explicit one, an HDR source falls back to a flat clip
+    // and bright scenes come out grey; that is worst on Android, where
+    // profile=fast also turns off peak detection, but it is not Android-only.
+    // bt.2446a is the ITU curve for HDR->SDR and is a fixed analytic function,
+    // so it costs nothing extra on the weak SoCs profile=fast exists for. On
+    // Vita it is inert: that decoder never sees 10-bit HDR in the first place.
+    mpv_set_option_string(m_mpv, "tone-mapping", "bt.2446a");
+    // Passing HDR through instead of mapping it down needs the port to hand the
+    // display an HDR signal, which only the Android vo=gpu path can do today —
+    // the FBO composite the other ports share is 8-bit SDR, so the panel never
+    // sees HDR whatever it supports. displaySupportsHdr() is the per-platform
+    // capability query, so a port that later gains HDR output gets this by
+    // returning true rather than by editing here.
+    if (platform::displaySupportsHdr()) {
+        mpv_set_option_string(m_mpv, "target-colorspace-hint", "yes");
+    }
+
+    // Subtitles follow the platform's accessibility caption settings where it
+    // has any. Someone who set large high-contrast captions system-wide was
+    // still getting small white text here. valid is false on every port that
+    // exposes nothing, so their subtitle styling is untouched.
+    {
+        const auto& cs = platform::getSystemCaptionStyle();
+        if (cs.valid) {
+            auto argbToMpv = [](unsigned argb) {
+                // mpv wants #AARRGGBB, and its alpha is opacity, same as ARGB's.
+                char buf[16];
+                snprintf(buf, sizeof(buf), "#%08X", argb);
+                return std::string(buf);
+            };
+            if (cs.fontScale > 0.01f && cs.fontScale != 1.0f) {
+                mpv_set_option_string(m_mpv, "sub-scale",
+                                      std::to_string(cs.fontScale).c_str());
+            }
+            if (cs.hasForeground) {
+                mpv_set_option_string(m_mpv, "sub-color",
+                                      argbToMpv(cs.foreground).c_str());
+            }
+            if (cs.hasBackground) {
+                // mpv paints sub-back-color behind the glyphs only, which is
+                // what Android's "background" means too (the window colour is
+                // the box behind the whole line, and mpv has no equivalent).
+                mpv_set_option_string(m_mpv, "sub-back-color",
+                                      argbToMpv(cs.background).c_str());
+            }
+            switch (cs.edgeType) {
+                case 1:   // outline
+                    mpv_set_option_string(m_mpv, "sub-border-size", "3");
+                    if (cs.hasEdgeColor) {
+                        mpv_set_option_string(m_mpv, "sub-border-color",
+                                              argbToMpv(cs.edgeColor).c_str());
+                    }
+                    break;
+                case 2:   // drop shadow
+                case 3:   // raised
+                case 4:   // depressed
+                    // mpv has one shadow, with no direction, so raised and
+                    // depressed both land here rather than being faked.
+                    mpv_set_option_string(m_mpv, "sub-shadow-offset", "2");
+                    if (cs.hasEdgeColor) {
+                        mpv_set_option_string(m_mpv, "sub-shadow-color",
+                                              argbToMpv(cs.edgeColor).c_str());
+                    }
+                    break;
+                case 0:
+                default:
+                    break;
+            }
+        }
+    }
+
+    // Audio passthrough. Without it mpv decodes Dolby/DTS to PCM and downmixes
+    // it, so a receiver that could have rendered 5.1 gets stereo. The list is
+    // the intersection of what the user asked for and what the audio output
+    // says it accepts, so an unsupported codec still decodes normally instead
+    // of going silent. Ports with no way to ask report nothing and are
+    // unaffected.
+    if (Application::getInstance().getSettings().audioPassthrough) {
+        const int caps = platform::passthroughCodecs();
+        std::string spdif;
+        auto add = [&spdif](const char* name) {
+            if (!spdif.empty()) spdif += ",";
+            spdif += name;
+        };
+        if (caps & platform::PASSTHROUGH_AC3)    add("ac3");
+        if (caps & platform::PASSTHROUGH_EAC3)   add("eac3");
+        if (caps & platform::PASSTHROUGH_DTS)    add("dts");
+        if (caps & platform::PASSTHROUGH_DTSHD)  add("dts-hd");
+        if (caps & platform::PASSTHROUGH_TRUEHD) add("truehd");
+        if (!spdif.empty()) {
+            mpv_set_option_string(m_mpv, "audio-spdif", spdif.c_str());
+            brls::Logger::info("MpvPlayer: audio passthrough enabled for {}", spdif);
+        } else {
+            brls::Logger::info("MpvPlayer: audio passthrough requested but the "
+                               "output accepts no compressed formats");
+        }
+    }
+
 #ifdef __SWITCH__
     // libmpv resolves its config / cache / watch-later / font directories from
     // $HOME / $XDG_* during mpv_initialize. On Switch (libnx) those env vars are
@@ -227,6 +377,18 @@ bool MpvPlayer::init() {
         // the TV log. Prefer AudioTrack (modern, low-latency) with
         // OpenSL ES as fallback.
         mpv_set_option_string(m_mpv, "ao", "audiotrack,opensles");
+        // Give AudioTrack a session id a system equalizer can attach to. Only
+        // advertise it if this libmpv actually took the option — see
+        // androidAudioSessionId() above.
+        if (const int audioSession = androidAudioSessionId()) {
+            if (mpv_set_option_string(m_mpv, "audiotrack-session-id",
+                                      std::to_string(audioSession).c_str()) >= 0) {
+                androidMarkAudioSessionUsable();
+            } else {
+                brls::Logger::info("MpvPlayer: libmpv has no audiotrack-session-id; "
+                                   "system equalizer will not attach");
+            }
+        }
         // force-window stays no until the surface is attached so mpv
         // doesn't try to create a window before we hand it one.
         mpv_set_option_string(m_mpv, "force-window", "no");

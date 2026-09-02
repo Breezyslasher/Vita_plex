@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Sizing for the now-playing widget. Four columns by one row on a stock
+    launcher grid, which is the smallest shape that fits cover art, two lines of
+    text and three buttons without any of them being cut off.
+
+    updatePeriodMillis is 0 on purpose: MediaNotification pushes an update
+    whenever playback changes, so a timer would only redraw an unchanged widget
+    and wake the device to do it.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="70dp"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/widget_now_playing"
+    android:description="@string/widget_description"
+    android:previewImage="@drawable/banner"
+    android:resizeMode="horizontal"
+    android:widgetCategory="home_screen" />

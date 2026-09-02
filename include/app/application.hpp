@@ -139,6 +139,12 @@ struct AppSettings {
     VideoQuality videoQuality = VideoQuality::QUALITY_1080P;
     int maxBitrate = 0;         // 0 = use platform default bitrate
     bool forceTranscode = false;
+    // Bitstream Dolby/DTS to the receiver instead of decoding it to PCM.
+    // Only ever acted on where the audio output says it accepts those
+    // encodings, so this is inert on a phone speaker. Off by default: a sink
+    // can advertise a codec its downstream AVR mishandles, and the failure
+    // mode is silence rather than a downmix.
+    bool audioPassthrough = false;
 
     // Network Settings
     int connectionTimeout = 180; // seconds (3 minutes for slow connections)

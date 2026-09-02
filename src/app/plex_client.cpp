@@ -12,6 +12,9 @@
 #include <cstring>
 #include <ctime>
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <sstream>
 #include <set>
 #include <string_view>
 
@@ -1276,6 +1279,7 @@ bool PlexClient::fetchChildren(const std::string& ratingKey, std::vector<MediaIt
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
         item.contentRating = extractJsonValue(obj, "contentRating");
         item.index = extractJsonInt(obj, "index");
@@ -1330,6 +1334,7 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
     item.duration = extractJsonInt(resp.body, "duration");
     item.viewOffset = extractJsonInt(resp.body, "viewOffset");
     item.rating = extractJsonFloat(resp.body, "rating");
+    item.userRating = extractJsonFloat(resp.body, "userRating");
     item.contentRating = extractJsonValue(resp.body, "contentRating");
     item.studio = extractJsonValue(resp.body, "studio");
     // leafCount = track count for artists, episode count for shows/seasons.
@@ -1540,6 +1545,7 @@ bool PlexClient::fetchByPersonFilter(const std::string& sectionKey, const std::s
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
         // Per-title role for the cast member, when the server includes it in the
         // filtered listing (often absent for actors; present for some credits).
@@ -1611,6 +1617,7 @@ bool PlexClient::fetchRelated(const std::string& ratingKey, std::vector<MediaIte
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         bool playable = (item.mediaType == MediaType::MOVIE ||
@@ -2112,6 +2119,7 @@ bool PlexClient::fetchContinueWatching(std::vector<MediaItem>& items) {
         item.index = extractJsonInt(obj, "index");
         item.parentIndex = extractJsonInt(obj, "parentIndex");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
@@ -2182,6 +2190,7 @@ bool PlexClient::fetchRecentlyAdded(std::vector<MediaItem>& items) {
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
@@ -2277,6 +2286,7 @@ bool PlexClient::fetchRecentlyAddedByType(MediaType type, std::vector<MediaItem>
         item.duration = extractJsonInt(obj, "duration");
         item.viewOffset = extractJsonInt(obj, "viewOffset");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
@@ -2354,6 +2364,7 @@ bool PlexClient::search(const std::string& query, std::vector<MediaItem>& result
         item.parentThumb = extractJsonValue(obj, "parentThumb");
         item.grandparentThumb = extractJsonValue(obj, "grandparentThumb");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
@@ -2673,6 +2684,7 @@ bool PlexClient::fetchByGenre(const std::string& sectionKey, const std::string& 
         item.year = extractJsonInt(obj, "year");
         item.duration = extractJsonInt(obj, "duration");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
@@ -2741,6 +2753,7 @@ bool PlexClient::fetchByGenreKey(const std::string& sectionKey, const std::strin
         item.year = extractJsonInt(obj, "year");
         item.duration = extractJsonInt(obj, "duration");
         item.rating = extractJsonFloat(obj, "rating");
+        item.userRating = extractJsonFloat(obj, "userRating");
         item.audienceRating = extractJsonFloat(obj, "audienceRating");
 
         if (!item.ratingKey.empty() && !item.title.empty()) {
@@ -2879,8 +2892,23 @@ bool PlexClient::fetchStreams(const std::string& ratingKey, std::vector<PlexStre
         stream.title = extractJsonValue(obj, "title");
         stream.forced = extractJsonBool(obj, "forced");
         stream.hearingImpaired = extractJsonBool(obj, "hearingImpaired");
-        // External (sidecar) subtitles carry a stream key; embedded don't.
-        stream.external = !extractJsonValue(obj, "key").empty();
+        // External (sidecar) subtitles carry a stream key; embedded don't. Track
+        // lyrics (streamType 4) always do — they are a separate file on the
+        // server, which is how they get loaded rather than transcoded in.
+        stream.key = extractJsonValue(obj, "key");
+        stream.external = !stream.key.empty();
+        // Only for lyrics: the field that actually addresses the file is not
+        // one the parser keeps, and this is what makes it visible.
+        if (stream.streamType == 4) stream.rawJson = obj;
+
+        // Lyrics streams are the one kind we cannot yet fetch: the documented
+        // /library/streams/{id}.{ext} answers 200 with an empty body for them,
+        // and the server advertises transcoderLyrics separately from
+        // transcoderSubtitles. Dump the whole object so the field that actually
+        // addresses the file is visible rather than guessed at.
+        if (stream.streamType == 4) {
+            brls::Logger::info("fetchStreams: lyrics stream object = {}", obj);
+        }
 
         if (stream.id > 0 && stream.streamType > 0) {
             streams.push_back(stream);
@@ -2893,6 +2921,228 @@ bool PlexClient::fetchStreams(const std::string& ratingKey, std::vector<PlexStre
 
     brls::Logger::info("fetchStreams: Found {} streams for ratingKey {}", streams.size(), ratingKey);
     return true;
+}
+
+namespace {
+
+// Parse a lyrics body. Three shapes reach us: LRC from a sidecar, SRT from the
+// transcoder (its documented response example is text/srt), and plain text.
+// Detected from the content rather than the extension, because the transcoder
+// converts and the extension no longer describes what came back.
+std::vector<LyricLine> parseLyricsBody(const std::string& body) {
+    std::vector<LyricLine> out;
+
+    auto trim = [](std::string t) {
+        const size_t a = t.find_first_not_of(" \t\r");
+        const size_t b = t.find_last_not_of(" \t\r");
+        return a == std::string::npos ? std::string() : t.substr(a, b - a + 1);
+    };
+
+    // "[mm:ss.xx]" leading stamps. Returns where the text begins.
+    auto lrcStamps = [](const std::string& line, std::vector<int>& outMs) -> size_t {
+        size_t pos = 0;
+        while (pos < line.size() && line[pos] == '[') {
+            const size_t close = line.find(']', pos);
+            if (close == std::string::npos) break;
+            const std::string inside = line.substr(pos + 1, close - pos - 1);
+            const size_t colon = inside.find(':');
+            if (colon == std::string::npos) break;                       // "[ar: ...]"
+            if (inside.find_first_not_of("0123456789") != colon) break;  // not a time
+            outMs.push_back(std::atoi(inside.substr(0, colon).c_str()) * 60000
+                          + (int)(std::atof(inside.substr(colon + 1).c_str()) * 1000.0));
+            pos = close + 1;
+        }
+        return pos;
+    };
+
+    // "00:00:02,499 --> 00:00:06,416". Only the start time matters here: the
+    // list is a running transcript, not a timed overlay with an end.
+    auto srtStart = [](const std::string& line, int& outMs) -> bool {
+        const size_t arrow = line.find("-->");
+        if (arrow == std::string::npos) return false;
+        int h = 0, m = 0, sec = 0, ms = 0;
+        if (std::sscanf(line.c_str(), "%d:%d:%d,%d", &h, &m, &sec, &ms) != 4 &&
+            std::sscanf(line.c_str(), "%d:%d:%d.%d", &h, &m, &sec, &ms) != 4) return false;
+        outMs = ((h * 60 + m) * 60 + sec) * 1000 + ms;
+        return true;
+    };
+
+    // format=xml returns Plex's own lyrics document rather than the LRC the
+    // stream advertises, so this is tried first. Parsed by scanning for <Line>
+    // elements rather than with a real XML parser: the only two things needed
+    // are the start offset and the text, and the surrounding document shape is
+    // not something to depend on.
+    if (body.find("<Line") != std::string::npos) {
+        size_t pos = 0;
+        while ((pos = body.find("<Line", pos)) != std::string::npos) {
+            const size_t tagEnd = body.find('>', pos);
+            if (tagEnd == std::string::npos) break;
+            const std::string tag = body.substr(pos, tagEnd - pos);
+
+            int ms = -1;
+            for (const char* attr : {"startOffset=\"", "startTimeOffset=\""}) {
+                const size_t at = tag.find(attr);
+                if (at == std::string::npos) continue;
+                ms = std::atoi(tag.c_str() + at + strlen(attr));
+                break;
+            }
+
+            // Everything up to </Line>, with the inner tags (<Span> and the
+            // like) stripped so the words survive whatever markup wraps them.
+            const size_t close = body.find("</Line>", tagEnd);
+            std::string text;
+            if (close != std::string::npos) {
+                bool inTag = false;
+                for (size_t i = tagEnd + 1; i < close; i++) {
+                    const char c = body[i];
+                    if (c == '<')      inTag = true;
+                    else if (c == '>') inTag = false;
+                    else if (!inTag)   text += c;
+                }
+            }
+            text = trim(text);
+
+            LyricLine l;
+            l.timeMs = ms;
+            l.text = text;
+            out.push_back(std::move(l));
+
+            pos = (close == std::string::npos) ? tagEnd : close + 7;
+        }
+        while (!out.empty() && out.back().text.empty()) out.pop_back();
+        return out;
+    }
+
+    const bool looksSrt = body.find("-->") != std::string::npos;
+
+    std::istringstream stream(body);
+    std::string raw;
+
+    if (looksSrt) {
+        int pending = -1;
+        std::string text;
+        auto flush = [&]() {
+            if (pending < 0) return;
+            LyricLine l;
+            l.timeMs = pending;
+            l.text = trim(text);
+            out.push_back(l);
+            pending = -1;
+            text.clear();
+        };
+        while (std::getline(stream, raw)) {
+            const std::string line = trim(raw);
+            int ms = 0;
+            if (srtStart(line, ms)) { flush(); pending = ms; continue; }
+            if (line.empty()) { flush(); continue; }
+            // A bare number on its own is the cue index, not a lyric.
+            if (pending < 0 && line.find_first_not_of("0123456789") == std::string::npos) continue;
+            if (pending >= 0) text += (text.empty() ? "" : " ") + line;
+        }
+        flush();
+        return out;
+    }
+
+    while (std::getline(stream, raw)) {
+        if (!raw.empty() && raw.back() == '\r') raw.pop_back();
+        std::vector<int> stamps;
+        const size_t textStart = lrcStamps(raw, stamps);
+        const std::string text = trim(raw.substr(textStart));
+
+        if (stamps.empty()) {
+            if (!raw.empty() && raw[0] == '[') continue;   // an LRC metadata tag
+            if (text.empty() && out.empty()) continue;     // leading blank lines
+            LyricLine l;
+            l.timeMs = -1;
+            l.text = text;
+            out.push_back(std::move(l));
+        } else {
+            // One source line can carry several stamps for a repeated phrase.
+            for (int ms : stamps) {
+                LyricLine l;
+                l.timeMs = ms;
+                l.text = text;
+                out.push_back(l);
+            }
+        }
+    }
+
+    std::stable_sort(out.begin(), out.end(),
+                     [](const LyricLine& a, const LyricLine& b) { return a.timeMs < b.timeMs; });
+    while (!out.empty() && out.back().text.empty() && out.back().timeMs < 0) out.pop_back();
+    return out;
+}
+
+}  // namespace
+
+bool PlexClient::fetchLyrics(const std::string& ratingKey, const PlexStream& stream, int partId,
+                             std::vector<LyricLine>& lines, std::string& status) {
+    (void)ratingKey; (void)partId;
+    lines.clear();
+    status.clear();
+    if (stream.id <= 0 || stream.key.empty()) {
+        status = "This track has no lyrics stream.";
+        return false;
+    }
+
+    // Where the lyrics live depends on where they came from, which the stream's
+    // own `provider` field says:
+    //
+    //  - com.plexapp.agents.localmedia — a file sitting next to the track.
+    //    /library/streams/{id}.{ext} serves it, and this is the route that
+    //    works today (3952 bytes, 101 lines, for an .lrc beside the file).
+    //  - com.plexapp.agents.lyricfind — fetched from Plex's licensed provider,
+    //    with nothing on disk. The extension route answers 200 with an empty
+    //    body for these; ?format=xml is what Plex Web itself asks for, caught
+    //    in the server log as
+    //      GET /library/streams/50400?format=xml -> 404
+    //
+    // Both are tried rather than branching on the provider string, since a
+    // server may hold either kind and the cost of a miss is one request.
+    //
+    // Ruled out, and deliberately not retried: the universal transcoder. It
+    // delivers "the selected subtitle", and PUT /library/parts/{id} accepts
+    // only audioStreamID and subtitleStreamID — a streamType 4 can never be
+    // selected, so it transcodes nothing and returns an empty 200.
+    std::vector<std::string> routes;
+    if (!stream.codec.empty()) routes.push_back(stream.key + "." + stream.codec);
+    routes.push_back(stream.key + "?format=xml");
+
+    HttpClient client;
+    std::string tried;
+
+    for (const std::string& path : routes) {
+        brls::Logger::debug("fetchLyrics: GET {}", path);
+        HttpResponse r = client.get(buildApiUrl(path));
+        tried += "\n  " + path + " -> " + std::to_string(r.statusCode)
+               + " (" + std::to_string(r.body.size()) + "B)";
+
+        if (r.statusCode != 200 || r.body.empty()) continue;
+
+        lines = parseLyricsBody(r.body);
+        if (!lines.empty()) {
+            brls::Logger::info("fetchLyrics: {} gave {} line(s), {}", path, lines.size(),
+                               lines.front().timeMs >= 0 ? "synced" : "unsynced");
+            return true;
+        }
+        brls::Logger::warning("fetchLyrics: {} body did not parse: {}",
+                              path, r.body.substr(0, 400));
+        status = "The server returned lyrics this build could not read.\n\nFirst bytes:\n"
+               + r.body.substr(0, 240);
+        return false;
+    }
+
+    status = "The server has no lyrics for this track.\n" + tried
+           + "\n\nThe provider is " + (stream.rawJson.find("lyricfind") != std::string::npos
+                                       ? "lyricfind, so the words come from Plex rather than "
+                                         "from a file — an empty answer here means the server "
+                                         "does not hold them, which is what Plex's own web "
+                                         "client also gets."
+                                       : "local, so a lyrics file should be sitting next to "
+                                         "the track. An empty answer suggests the server "
+                                         "cannot read it.");
+    brls::Logger::warning("fetchLyrics: no route returned lyrics:{}", tried);
+    return false;
 }
 
 bool PlexClient::setStreamSelection(int partId, int audioStreamID, int subtitleStreamID) {
@@ -2915,7 +3165,10 @@ bool PlexClient::setStreamSelection(int partId, int audioStreamID, int subtitleS
     HttpResponse resp = client.request(req);
 
     if (resp.statusCode != 200) {
-        brls::Logger::error("setStreamSelection: Failed: {}", resp.statusCode);
+        // The body carries the server's actual objection; a bare status code
+        // sent us looking in the wrong place more than once.
+        brls::Logger::error("setStreamSelection: Failed: {} body: {}",
+                            resp.statusCode, resp.body.substr(0, 300));
         return false;
     }
 
@@ -3085,6 +3338,21 @@ void PlexClient::stopTranscode() {
 }
 
 bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url, int offsetMs) {
+    std::string session;
+    if (!resolveTranscodeUrl(ratingKey, url, offsetMs, session)) return false;
+    m_lastSessionId = session;
+    return true;
+}
+
+bool PlexClient::getTranscodeUrlSpeculative(const std::string& ratingKey, std::string& url,
+                                            std::string& outSessionId) {
+    // Deliberately does not touch m_lastSessionId — see the header. The caller
+    // adopts the session only if it ends up playing this URL.
+    return resolveTranscodeUrl(ratingKey, url, 0, outSessionId);
+}
+
+bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& url,
+                                     int offsetMs, std::string& outSessionId) {
     brls::Logger::debug("getTranscodeUrl: ratingKey={}, offsetMs={}", ratingKey, offsetMs);
 
     // Fetch media details to get the Part key and determine if audio or video
@@ -3134,9 +3402,12 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     std::string metadataPath = "/library/metadata/" + ratingKey;
     std::string encodedPath = HttpClient::urlEncode(metadataPath);
 
-    // Generate a unique session ID
-    char sessionBuf[32];
-    snprintf(sessionBuf, sizeof(sessionBuf), "%lu", (unsigned long)time(nullptr));
+    // Generate a unique session ID. The counter matters: the next track is
+    // resolved while the current one is still playing, so the second alone is
+    // not enough to keep the two sessions apart.
+    char sessionBuf[48];
+    snprintf(sessionBuf, sizeof(sessionBuf), "%lu-%u",
+             (unsigned long)time(nullptr), ++m_sessionSeq);
     std::string sessionId = sessionBuf;
 
     // Build query string with query-type parameters (per official API spec)
@@ -3200,7 +3471,7 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     }
 
     // Session ID
-    m_lastSessionId = sessionId;
+    outSessionId = sessionId;
     queryParams += "&session=" + sessionId;
 
     // Auth token
@@ -3400,6 +3671,25 @@ bool PlexClient::markAsUnwatched(const std::string& ratingKey) {
     HttpClient client;
     std::string url = buildApiUrl("/:/unscrobble?key=" + ratingKey + "&identifier=com.plexapp.plugins.library");
     HttpResponse resp = client.get(url);
+    return resp.statusCode == 200;
+}
+
+bool PlexClient::rateItem(const std::string& ratingKey, float rating) {
+    if (ratingKey.empty()) return false;
+    if (rating < 0.0f) rating = 0.0f;
+    if (rating > 10.0f) rating = 10.0f;
+
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%.1f", rating);
+
+    HttpClient client;
+    std::string url = buildApiUrl("/:/rate?key=" + ratingKey +
+                                  "&identifier=com.plexapp.plugins.library&rating=" + buf);
+    HttpRequest req;
+    req.url = url;
+    req.method = "PUT";
+    req.timeout = 10;
+    HttpResponse resp = client.request(req);
     return resp.statusCode == 200;
 }
 
@@ -5379,6 +5669,10 @@ static void parsePlayQueueItems(const std::string& json, PlexClient& client,
             item.duration = client.extractJsonIntPublic(obj, "duration");
             item.index = client.extractJsonIntPublic(obj, "index");
             item.type = client.extractJsonValuePublic(obj, "type");
+            // 0-10, 0 when unrated. Server play queues are the usual source for
+            // music, so without this the media session's heart would only be
+            // right for offline / client-side queues.
+            item.userRating = (float)client.extractJsonIntPublic(obj, "userRating");
 
             if (!item.ratingKey.empty()) {
                 result.items.push_back(item);

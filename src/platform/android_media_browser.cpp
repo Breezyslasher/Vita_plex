@@ -26,10 +26,12 @@
 #include "app/plex_client.hpp"
 #include "app/application.hpp"
 #include "app/music_queue.hpp"
+#include "app/music_controller.hpp"
 #include "activity/player_activity.hpp"
 #include "platform/paths.hpp"
 #include "utils/async.hpp"
 
+#include <cctype>
 #include <mutex>
 
 using namespace vitaplex;
@@ -312,6 +314,200 @@ std::vector<BrowseRow> resolveNode(const std::string& parentId) {
     return {};
 }
 
+// Resolve a browse-tree media id to tracks and start them, honouring the user's
+// default track action. Runs on a worker thread (it does network I/O), hopping
+// to the UI loop only to touch the queue. Shared by the media-id and the
+// voice-search entry points below.
+void playMediaId(const std::string& mediaId) {
+    if (!ensureClientReady()) return;
+
+    PlexClient& client = PlexClient::getInstance();
+    std::vector<MediaItem> tracks;
+    int startIndex = 0;
+    // Whether the user picked one track or a whole album/playlist. Only
+    // matters for the queue-preserving actions: picking a single track must
+    // enqueue that track, not the album it happens to sit on.
+    bool singlePick = false;
+
+    if (startsWith(mediaId, "ptrack/")) {
+        // A track picked inside a playlist: play it with the playlist as
+        // context so the queue continues through the playlist, not the
+        // track's album.
+        singlePick = true;
+        const std::string rest = suffixAfter(mediaId, "ptrack/");
+        const size_t slash = rest.find('/');
+        if (slash == std::string::npos) return;
+        const std::string playlistId = rest.substr(0, slash);
+        const std::string trackKey   = rest.substr(slash + 1);
+
+        std::vector<PlaylistItem> items;
+        if (client.fetchPlaylistItems(playlistId, items)) {
+            for (const auto& pi : items) tracks.push_back(pi.media);
+            for (size_t i = 0; i < tracks.size(); i++) {
+                if (tracks[i].ratingKey == trackKey) { startIndex = (int)i; break; }
+            }
+        }
+        if (tracks.empty()) {
+            // Playlist fetch failed — fall back to the track on its own.
+            MediaItem track;
+            if (client.fetchMediaDetails(trackKey, track)) tracks.push_back(track);
+        }
+    } else if (startsWith(mediaId, "track/")) {
+        singlePick = true;
+        // A single track: play it in the context of its album so the queue
+        // continues past it, exactly as picking a track in the app does.
+        MediaItem track;
+        if (!client.fetchMediaDetails(suffixAfter(mediaId, "track/"), track)) return;
+
+        if (!track.parentRatingKey.empty() &&
+            client.fetchChildren(track.parentRatingKey, tracks) && !tracks.empty()) {
+            for (size_t i = 0; i < tracks.size(); i++) {
+                if (tracks[i].ratingKey == track.ratingKey) {
+                    startIndex = (int)i;
+                    break;
+                }
+            }
+        } else {
+            tracks.push_back(track);
+        }
+    } else if (startsWith(mediaId, "album/")) {
+        client.fetchChildren(suffixAfter(mediaId, "album/"), tracks);
+    } else if (startsWith(mediaId, "playlist/")) {
+        std::vector<PlaylistItem> items;
+        if (client.fetchPlaylistItems(suffixAfter(mediaId, "playlist/"), items)) {
+            for (const auto& pi : items) tracks.push_back(pi.media);
+        }
+    }
+
+    if (tracks.empty()) {
+        brls::Logger::warning("MediaBrowser: nothing playable for {}", mediaId);
+        return;
+    }
+
+    brls::sync([tracks, startIndex, singlePick]() {
+        MusicQueue& queue = MusicQueue::getInstance();
+        TrackDefaultAction action =
+            vitaplex::Application::getInstance().getSettings().trackDefaultAction;
+
+        // ASK_EACH_TIME cannot ask — the whole point of browsing from a
+        // watch or head unit is that nobody is at the phone. Fall back to
+        // PLAY_NOW_REPLACE rather than PLAY_NOW_CLEAR: the pick still starts
+        // playing immediately, which is what "play" means in a media
+        // browser, but a queue the user never asked to clear survives.
+        if (action == TrackDefaultAction::ASK_EACH_TIME)
+            action = TrackDefaultAction::PLAY_NOW_REPLACE;
+
+        // Nothing to preserve when the queue is empty, and "clear" wants the
+        // full album/playlist context so playback continues past the pick.
+        // Both need the player activity.
+        if (queue.isEmpty() || action == TrackDefaultAction::PLAY_NOW_CLEAR) {
+            // singlePick doubles as "startIndex is a choice": asking a head unit
+            // for a whole album should let shuffle pick where it opens, rather
+            // than pinning whatever happens to be first.
+            brls::Application::pushActivity(
+                PlayerActivity::createWithQueue(tracks, startIndex, singlePick));
+            return;
+        }
+
+        // Queue-preserving actions operate on exactly what was picked.
+        std::vector<MediaItem> picked;
+        if (singlePick && startIndex < (int)tracks.size())
+            picked.push_back(tracks[(size_t)startIndex]);
+        else
+            picked = tracks;
+        if (picked.empty()) return;
+
+        // insertTrackAfterCurrent puts each item directly after the current
+        // track, so inserting back-to-front leaves them in playing order.
+        auto insertAfterCurrent = [&]() {
+            for (size_t i = picked.size(); i-- > 0;)
+                queue.insertTrackAfterCurrent(picked[i]);
+        };
+
+        switch (action) {
+            case TrackDefaultAction::PLAY_NEXT:
+                insertAfterCurrent();
+                brls::Application::notify("Playing next: " + picked.front().title);
+                break;
+
+            case TrackDefaultAction::ADD_TO_BOTTOM:
+                queue.addTracks(picked);
+                brls::Application::notify("Added to queue: " + picked.front().title);
+                break;
+
+            case TrackDefaultAction::PLAY_NOW_REPLACE:
+            default: {
+                // Jump to the inserted track by index rather than calling
+                // playNext(): under RepeatMode::ONE playNext() deliberately
+                // stays on the current track, so it would report success
+                // while the pick never played. insertTrackAfterCurrent puts
+                // the first item at currentIndex + 1 (and keeps the shuffle
+                // order in step), so that is the target either way.
+                const int target = queue.getCurrentIndex() + 1;
+                insertAfterCurrent();
+                if (queue.playTrack(target))
+                    brls::Application::notify("Now playing: " + picked.front().title);
+                break;
+            }
+        }
+    });
+}
+
+// Turn a spoken query into something playable.
+//
+// Assistant hands over free text ("play <album> by <artist>"), so this searches
+// the library and picks the best music hit, preferring the broadest thing that
+// matched: an artist or album gives a full listening session, a bare track only
+// gives three minutes. An exact title match wins over a partial one at the same
+// type, so "play Kid A" doesn't land on a compilation that merely mentions it.
+//
+// Returns a browse-tree media id for playMediaId(), or empty when nothing in
+// the music library matched.
+std::string resolveSearchQuery(PlexClient& client, const std::string& query) {
+    std::vector<MediaItem> results;
+    if (!client.search(query, results) || results.empty()) return {};
+
+    auto lower = [](std::string s) {
+        for (char& c : s) c = (char)std::tolower((unsigned char)c);
+        return s;
+    };
+    const std::string want = lower(query);
+
+    // Higher is better. Type first (an artist beats a track), exactness second.
+    auto score = [&](const MediaItem& m) -> int {
+        int base;
+        if (m.type == "artist")        base = 40;
+        else if (m.type == "album")    base = 30;
+        else if (m.type == "playlist") base = 20;
+        else if (m.type == "track")    base = 10;
+        else                           return -1;   // movies, shows: not music
+        const std::string t = lower(m.title);
+        if (t == want) return base + 3;
+        if (startsWith(t, want)) return base + 2;
+        if (t.find(want) != std::string::npos) return base + 1;
+        return base;
+    };
+
+    const MediaItem* best = nullptr;
+    int bestScore = 0;
+    for (const auto& m : results) {
+        const int s = score(m);
+        if (s > bestScore) { bestScore = s; best = &m; }
+    }
+    if (!best) return {};
+
+    if (best->type == "album")    return "album/" + best->ratingKey;
+    if (best->type == "playlist") return "playlist/" + best->ratingKey;
+    if (best->type == "track")    return "track/" + best->ratingKey;
+
+    // An artist has no single playable node: pick their first album, which
+    // playMediaId() expands into a full track list.
+    std::vector<MediaItem> albums;
+    if (client.fetchChildren(best->ratingKey, albums) && !albums.empty())
+        return "album/" + albums.front().ratingKey;
+    return {};
+}
+
 }  // namespace
 
 extern "C" {
@@ -388,138 +584,104 @@ Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromMediaId(JNIEnv* env, j
     if (raw) env->ReleaseStringUTFChars(jMediaId, raw);
 
     brls::Logger::info("MediaBrowser: playFromMediaId({})", mediaId);
+    asyncRun([mediaId]() { playMediaId(mediaId); });
+}
 
-    asyncRun([mediaId]() {
+/**
+ * "Hey Google, play <something> on VitaPlex" — MediaSessionCompat's
+ * onPlayFromSearch, routed through the browser service so it shares the same
+ * cold-bind client bootstrap.
+ *
+ * An empty query means "play something": Assistant sends it for a bare "play
+ * music", and the contract is to start *any* reasonable playback rather than
+ * fail. Resuming what's already queued is the least surprising answer.
+ */
+JNIEXPORT void JNICALL
+Java_org_VitaPlex_app_LibraryBrowserService_nativePlayFromSearch(JNIEnv* env, jclass,
+                                                                 jstring jQuery) {
+    const char* raw = jQuery ? env->GetStringUTFChars(jQuery, nullptr) : nullptr;
+    std::string query = raw ? raw : "";
+    if (raw) env->ReleaseStringUTFChars(jQuery, raw);
+
+    brls::Logger::info("MediaBrowser: playFromSearch({})", query);
+
+    asyncRun([query]() {
         if (!ensureClientReady()) return;
 
-        PlexClient& client = PlexClient::getInstance();
-        std::vector<MediaItem> tracks;
-        int startIndex = 0;
-        // Whether the user picked one track or a whole album/playlist. Only
-        // matters for the queue-preserving actions: picking a single track must
-        // enqueue that track, not the album it happens to sit on.
-        bool singlePick = false;
-
-        if (startsWith(mediaId, "ptrack/")) {
-            // A track picked inside a playlist: play it with the playlist as
-            // context so the queue continues through the playlist, not the
-            // track's album.
-            singlePick = true;
-            const std::string rest = suffixAfter(mediaId, "ptrack/");
-            const size_t slash = rest.find('/');
-            if (slash == std::string::npos) return;
-            const std::string playlistId = rest.substr(0, slash);
-            const std::string trackKey   = rest.substr(slash + 1);
-
-            std::vector<PlaylistItem> items;
-            if (client.fetchPlaylistItems(playlistId, items)) {
-                for (const auto& pi : items) tracks.push_back(pi.media);
-                for (size_t i = 0; i < tracks.size(); i++) {
-                    if (tracks[i].ratingKey == trackKey) { startIndex = (int)i; break; }
-                }
-            }
-            if (tracks.empty()) {
-                // Playlist fetch failed — fall back to the track on its own.
-                MediaItem track;
-                if (client.fetchMediaDetails(trackKey, track)) tracks.push_back(track);
-            }
-        } else if (startsWith(mediaId, "track/")) {
-            singlePick = true;
-            // A single track: play it in the context of its album so the queue
-            // continues past it, exactly as picking a track in the app does.
-            MediaItem track;
-            if (!client.fetchMediaDetails(suffixAfter(mediaId, "track/"), track)) return;
-
-            if (!track.parentRatingKey.empty() &&
-                client.fetchChildren(track.parentRatingKey, tracks) && !tracks.empty()) {
-                for (size_t i = 0; i < tracks.size(); i++) {
-                    if (tracks[i].ratingKey == track.ratingKey) {
-                        startIndex = (int)i;
-                        break;
-                    }
-                }
-            } else {
-                tracks.push_back(track);
-            }
-        } else if (startsWith(mediaId, "album/")) {
-            client.fetchChildren(suffixAfter(mediaId, "album/"), tracks);
-        } else if (startsWith(mediaId, "playlist/")) {
-            std::vector<PlaylistItem> items;
-            if (client.fetchPlaylistItems(suffixAfter(mediaId, "playlist/"), items)) {
-                for (const auto& pi : items) tracks.push_back(pi.media);
-            }
-        }
-
-        if (tracks.empty()) {
-            brls::Logger::warning("MediaBrowser: nothing playable for {}", mediaId);
+        if (query.empty()) {
+            brls::sync([]() {
+                if (!MusicQueue::getInstance().isEmpty())
+                    MusicController::getInstance().playPause(true);
+            });
             return;
         }
 
-        brls::sync([tracks, startIndex, singlePick]() {
-            MusicQueue& queue = MusicQueue::getInstance();
-            TrackDefaultAction action =
-                vitaplex::Application::getInstance().getSettings().trackDefaultAction;
-
-            // ASK_EACH_TIME cannot ask — the whole point of browsing from a
-            // watch or head unit is that nobody is at the phone. Fall back to
-            // PLAY_NOW_REPLACE rather than PLAY_NOW_CLEAR: the pick still starts
-            // playing immediately, which is what "play" means in a media
-            // browser, but a queue the user never asked to clear survives.
-            if (action == TrackDefaultAction::ASK_EACH_TIME)
-                action = TrackDefaultAction::PLAY_NOW_REPLACE;
-
-            // Nothing to preserve when the queue is empty, and "clear" wants the
-            // full album/playlist context so playback continues past the pick.
-            // Both need the player activity.
-            if (queue.isEmpty() || action == TrackDefaultAction::PLAY_NOW_CLEAR) {
-                brls::Application::pushActivity(
-                    PlayerActivity::createWithQueue(tracks, startIndex));
-                return;
-            }
-
-            // Queue-preserving actions operate on exactly what was picked.
-            std::vector<MediaItem> picked;
-            if (singlePick && startIndex < (int)tracks.size())
-                picked.push_back(tracks[(size_t)startIndex]);
-            else
-                picked = tracks;
-            if (picked.empty()) return;
-
-            // insertTrackAfterCurrent puts each item directly after the current
-            // track, so inserting back-to-front leaves them in playing order.
-            auto insertAfterCurrent = [&]() {
-                for (size_t i = picked.size(); i-- > 0;)
-                    queue.insertTrackAfterCurrent(picked[i]);
-            };
-
-            switch (action) {
-                case TrackDefaultAction::PLAY_NEXT:
-                    insertAfterCurrent();
-                    brls::Application::notify("Playing next: " + picked.front().title);
-                    break;
-
-                case TrackDefaultAction::ADD_TO_BOTTOM:
-                    queue.addTracks(picked);
-                    brls::Application::notify("Added to queue: " + picked.front().title);
-                    break;
-
-                case TrackDefaultAction::PLAY_NOW_REPLACE:
-                default: {
-                    // Jump to the inserted track by index rather than calling
-                    // playNext(): under RepeatMode::ONE playNext() deliberately
-                    // stays on the current track, so it would report success
-                    // while the pick never played. insertTrackAfterCurrent puts
-                    // the first item at currentIndex + 1 (and keeps the shuffle
-                    // order in step), so that is the target either way.
-                    const int target = queue.getCurrentIndex() + 1;
-                    insertAfterCurrent();
-                    if (queue.playTrack(target))
-                        brls::Application::notify("Now playing: " + picked.front().title);
-                    break;
-                }
-            }
-        });
+        const std::string mediaId = resolveSearchQuery(PlexClient::getInstance(), query);
+        if (mediaId.empty()) {
+            brls::Logger::warning("MediaBrowser: no music match for \"{}\"", query);
+            return;
+        }
+        playMediaId(mediaId);
     });
+}
+
+/**
+ * Android TV global search: the system's search app queries
+ * SearchSuggestionProvider, which calls straight through to here.
+ *
+ * Synchronous on purpose — the provider is already on a binder thread and the
+ * system blocks on the answer, so hopping to a worker would only add latency.
+ * Rows come back flat, four strings each: rating key, title, subtitle, art URI.
+ */
+JNIEXPORT jobjectArray JNICALL
+Java_org_VitaPlex_app_SearchSuggestionProvider_nativeSearchSuggestions(JNIEnv* env, jclass,
+                                                                       jstring jQuery) {
+    const char* raw = jQuery ? env->GetStringUTFChars(jQuery, nullptr) : nullptr;
+    std::string query = raw ? raw : "";
+    if (raw) env->ReleaseStringUTFChars(jQuery, raw);
+
+    jclass strCls = env->FindClass("java/lang/String");
+    if (query.empty() || !ensureClientReady()) return env->NewObjectArray(0, strCls, nullptr);
+
+    std::vector<MediaItem> results;
+    if (!PlexClient::getInstance().search(query, results))
+        return env->NewObjectArray(0, strCls, nullptr);
+
+    // The search UI shows a handful of cards; sending the whole result set
+    // would be rows nobody scrolls to, over a binder transaction.
+    constexpr size_t kMaxRows = 20;
+    PlexClient& client = PlexClient::getInstance();
+
+    std::vector<std::string> flat;
+    flat.reserve(kMaxRows * 4);
+    for (const auto& m : results) {
+        if (flat.size() >= kMaxRows * 4) break;
+        if (m.ratingKey.empty()) continue;
+        // People and other non-playable hits have nothing to open.
+        if (m.type == "person" || m.type == "tag") continue;
+
+        std::string subtitle;
+        if (m.mediaType == MediaType::EPISODE) subtitle = m.grandparentTitle;
+        else if (m.year > 0)                   subtitle = std::to_string(m.year);
+        else                                   subtitle = m.type;
+
+        flat.push_back(m.ratingKey);
+        flat.push_back(m.title);
+        flat.push_back(subtitle);
+        flat.push_back(artUri(client, !m.thumb.empty() ? m.thumb : m.grandparentThumb));
+    }
+
+    jobjectArray arr = env->NewObjectArray((jsize)flat.size(), strCls, nullptr);
+    if (!arr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
+    for (jsize i = 0; i < (jsize)flat.size(); i++) {
+        jstring s = env->NewStringUTF(flat[(size_t)i].c_str());
+        env->SetObjectArrayElement(arr, i, s);
+        env->DeleteLocalRef(s);
+    }
+    return arr;
 }
 
 }  // extern "C"

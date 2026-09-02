@@ -60,6 +60,12 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
+    <!-- Android TV home-screen channels + the system Watch Next row. Both live
+         in the TV provider, which is absent on phones — the code checks for it
+         rather than assuming, so these are inert there. -->
+    <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
+    <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
+
     <!-- Post the music media-session notification (runtime grant on Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
@@ -86,7 +92,7 @@
     -->
     <application android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
-        android:banner="@mipmap/ic_launcher"
+        android:banner="@drawable/banner"
         android:allowBackup="true"
         android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
         android:hardwareAccelerated="true" >
@@ -132,6 +138,29 @@
             <intent-filter>
                 <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
             </intent-filter>
+            <!-- Deep links. plex:// and vitaplex:// are ours to claim outright;
+                 app.plex.tv links are offered in the chooser rather than
+                 verified, since verification needs an assetlinks.json we do not
+                 control on that domain. Anything carrying a
+                 /library/metadata/<key> opens that item's detail page. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="vitaplex" />
+                <data android:scheme="plex" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="app.plex.tv" />
+            </intent-filter>
+            <!-- Declares the app searchable, which is what puts it in the TV
+                 home screen's global search and the remote's microphone. -->
+            <meta-data
+                android:name="android.app.searchable"
+                android:resource="@xml/searchable" />
             <!-- Drop file event -->
             <!--
             <intent-filter>
@@ -148,7 +177,62 @@
         <service
             android:name="org.VitaPlex.app.MusicService"
             android:exported="false"
-            android:foregroundServiceType="mediaPlayback" />
+            android:foregroundServiceType="mediaPlayback">
+            <!-- MediaButtonReceiver forwards media keys to the one service in
+                 the package that declares this action. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </service>
+
+        <!-- Headset, Bluetooth and keyboard media keys. Declaring the receiver
+             is what lets MediaSessionCompat register a media-button component:
+             without one the session only sees keys while the app is in the
+             foreground. Keys land here as a broadcast, get forwarded to
+             MusicService, and are decoded by the session there. -->
+        <receiver
+            android:name="androidx.media.session.MediaButtonReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MEDIA_BUTTON" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Quick-settings tile: one tap to pause music from anywhere, without
+             hunting for the media notification in the shade. API 24+; older
+             devices simply never see it. -->
+        <service
+            android:name="org.VitaPlex.app.MusicTileService"
+            android:label="@string/tile_music_label"
+            android:icon="@drawable/ic_tile_music"
+            android:exported="true"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
+
+        <!-- Home-screen now-playing widget. Updated by MediaNotification rather
+             than on a timer, so it costs nothing while nothing is playing. -->
+        <receiver
+            android:name="org.VitaPlex.app.NowPlayingWidget"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_now_playing_info" />
+        </receiver>
+
+        <!-- Answers the TV global-search suggestion queries. Exported because
+             the system search app binds it from its own process, and gated on
+             GLOBAL_SEARCH so only that app can. -->
+        <provider
+            android:name="org.VitaPlex.app.SearchSuggestionProvider"
+            android:authorities="org.VitaPlex.app.search"
+            android:exported="true"
+            android:readPermission="android.permission.GLOBAL_SEARCH" />
 
         <!-- Media browsing: lets Android Auto, Google Assistant, Wear and the
              Android TV media surfaces browse and play the Plex music library.

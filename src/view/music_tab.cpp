@@ -601,7 +601,7 @@ void MusicTab::onItemSelected(const MediaItem& item) {
                     break;
                 }
             }
-            playPlaylistWithQueue(m_currentPlaylistId, startIndex);
+            playPlaylistWithQueue(m_currentPlaylistId, startIndex, /*userPickedTrack=*/true);
         } else {
             // Single track playback
             Application::getInstance().pushPlayerActivity(item.ratingKey);
@@ -661,10 +661,11 @@ void MusicTab::onPlaylistSelected(const Playlist& playlist) {
     });
 }
 
-void MusicTab::playPlaylistWithQueue(const std::string& playlistId, int startIndex) {
+void MusicTab::playPlaylistWithQueue(const std::string& playlistId, int startIndex,
+                                     bool userPickedTrack) {
     std::weak_ptr<bool> aliveWeak = m_alive;
 
-    asyncRun([this, playlistId, startIndex, aliveWeak]() {
+    asyncRun([this, playlistId, startIndex, userPickedTrack, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<PlaylistItem> items;
 
@@ -675,13 +676,13 @@ void MusicTab::playPlaylistWithQueue(const std::string& playlistId, int startInd
                 tracks.push_back(item.media);
             }
 
-            brls::sync([tracks, startIndex, aliveWeak]() {
+            brls::sync([tracks, startIndex, userPickedTrack, aliveWeak]() {
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
                 // Create player with queue
                 brls::Application::pushActivity(
-                    PlayerActivity::createWithQueue(tracks, startIndex)
+                    PlayerActivity::createWithQueue(tracks, startIndex, userPickedTrack)
                 );
             });
         } else {
@@ -784,7 +785,7 @@ void MusicTab::showAlbumContextMenu(const MediaItem& album) {
             std::vector<MediaItem> tracks;
             if (client.fetchChildren(capturedAlbum.ratingKey, tracks) && !tracks.empty()) {
                 brls::sync([tracks]() {
-                    auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                    auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
                     brls::Application::pushActivity(playerActivity);
                 });
             }
@@ -801,7 +802,7 @@ void MusicTab::showAlbumContextMenu(const MediaItem& album) {
                 brls::sync([tracks]() {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
-                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
                         brls::Application::pushActivity(playerActivity);
                     } else {
                         for (int i = (int)tracks.size() - 1; i >= 0; i--) {
@@ -824,7 +825,7 @@ void MusicTab::showAlbumContextMenu(const MediaItem& album) {
                 brls::sync([tracks]() {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
-                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
                         brls::Application::pushActivity(playerActivity);
                     } else {
                         queue.addTracks(tracks);
@@ -884,7 +885,9 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
 
     addDialogButton("Play All", [this, capturedPlaylist, dialog](brls::View*) {
         dialog->dismiss();
-        playPlaylistWithQueue(capturedPlaylist.ratingKey, 0);
+        // Playing the whole playlist: index 0 is just the top of the list, not a
+        // choice, so shuffle gets to pick the opening track.
+        playPlaylistWithQueue(capturedPlaylist.ratingKey, 0, /*userPickedTrack=*/false);
         return true;
     });
 
@@ -903,7 +906,7 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
                         brls::Application::pushActivity(
-                            PlayerActivity::createWithQueue(tracks, 0));
+                            PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false));
                     } else {
                         queue.addTracks(tracks);
                         brls::Application::notify("Playlist added to queue");

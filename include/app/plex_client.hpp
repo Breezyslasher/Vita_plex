@@ -45,6 +45,10 @@ struct MediaItem {
     int viewOffset = 0;
     float rating = 0.0f;
     float audienceRating = 0.0f;   // Plex audienceRating (RT popcorn / audience score, 0-10)
+    // The viewer's own rating, 0-10, 0 when unrated. Distinct from `rating`,
+    // which is the critic score. Read so the Android media session's heart can
+    // show what is already set instead of always starting empty.
+    float userRating = 0.0f;
     std::string contentRating;
     std::string studio;
     std::vector<std::string> genres;  // populated by fetchMediaDetails (detail view only)
@@ -301,6 +305,13 @@ struct PlaylistItem {
 };
 
 // Stream info from Plex metadata (audio/video/subtitle streams within a Part)
+// One line of a track's lyrics. timeMs is -1 for an unsynced file (a plain .txt
+// stream), in which case the lines are still in order but carry no timing.
+struct LyricLine {
+    int timeMs = -1;
+    std::string text;
+};
+
 struct PlexStream {
     int id = 0;              // Stream ID (for Plex API stream selection)
     int streamType = 0;      // 1=video, 2=audio, 3=subtitle
@@ -314,6 +325,14 @@ struct PlexStream {
     bool forced = false;          // Forced subtitle (signs/songs)
     bool hearingImpaired = false; // SDH / hearing-impaired subtitle
     bool external = false;        // Sidecar subtitle (has a key) vs embedded
+    // Server path to fetch the stream itself, for the ones that are a separate
+    // file rather than muxed in — sidecar subtitles and track lyrics. Empty for
+    // embedded streams, which is also what `external` is derived from.
+    std::string key;
+    // The stream object exactly as the server sent it. The parser keeps a
+    // handful of fields, and for lyrics the one that addresses the file is not
+    // among them — this is kept so it can be shown rather than guessed at.
+    std::string rawJson;
 };
 
 /**
@@ -439,6 +458,17 @@ public:
     // Playback
     bool getPlaybackUrl(const std::string& ratingKey, std::string& url);
     bool getTranscodeUrl(const std::string& ratingKey, std::string& url, int offsetMs = 0);
+    // Same, but for a track we are only *speculatively* resolving (the next one
+    // in the music queue, fetched while the current one still plays). It costs
+    // two blocking round-trips — /library/metadata then /decision — which is why
+    // it is worth doing off the play path. outSessionId hands back the session it
+    // negotiated instead of storing it in m_lastSessionId: a background resolve
+    // must not overwrite the session belonging to the track that is playing.
+    // Call adoptTranscodeSession() when the URL is actually handed to the player.
+    bool getTranscodeUrlSpeculative(const std::string& ratingKey, std::string& url,
+                                    std::string& outSessionId);
+    // Make a speculatively-resolved session the current one (see above).
+    void adoptTranscodeSession(const std::string& sessionId) { m_lastSessionId = sessionId; }
     void stopTranscode();  // Stop the current transcode session
     bool updatePlayProgress(const std::string& ratingKey, int timeMs);
     bool reportTimeline(const std::string& ratingKey, const std::string& key,
@@ -454,8 +484,41 @@ public:
     bool markAsWatched(const std::string& ratingKey);
     bool markAsUnwatched(const std::string& ratingKey);
 
+    // Set the user rating (Plex's 0-10 scale; 0 clears it). Used by the Android
+    // media session's "like this track", which is the only place the app rates
+    // anything today.
+    bool rateItem(const std::string& ratingKey, float rating);
+
     // Stream selection (Plex API: PUT /library/parts/{partId})
     bool fetchStreams(const std::string& ratingKey, std::vector<PlexStream>& streams, int& partId);
+
+    /**
+     * Download and parse a lyrics stream (PlexStream::key, e.g.
+     * "/library/streams/39070").
+     *
+     * The app renders lyrics itself rather than handing the URL to mpv: music
+     * plays with vo=null and no render context, so mpv has no surface to draw
+     * a subtitle on and the load silently does nothing.
+     *
+     * Handles LRC ("[mm:ss.xx]text", possibly several stamps per line) and
+     * plain text, which comes back as ordered lines with no timing.
+     *
+     * Two documented routes, tried in order:
+     *
+     *  1. GET /library/streams/{streamId}.{ext} — the sidecar file. `codec`
+     *     supplies the extension, which is a required path segment; the key the
+     *     stream object hands out carries none. Some servers answer 200 with an
+     *     empty body here, which is why there is a second route.
+     *  2. GET /music/:/transcode/universal/subtitles — the transcoder. Lyrics
+     *     are a subtitle stream of a music transcode, which is why servers
+     *     advertise transcoderLyrics separately from transcoderSubtitles. The
+     *     stream has to be selected on the part first, and the transcoder may
+     *     hand back SRT rather than the original LRC.
+     *
+     * `status` carries a human-readable reason when both fail, for the UI.
+     */
+    bool fetchLyrics(const std::string& ratingKey, const PlexStream& stream, int partId,
+                     std::vector<LyricLine>& lines, std::string& status);
     bool setStreamSelection(int partId, int audioStreamID = -1, int subtitleStreamID = -1);
 
     // Subtitle search (Plex API: GET /library/metadata/{id}/subtitles)
@@ -490,6 +553,7 @@ public:
         int index = 0;                 // Track/episode number
         std::string type;              // "track", "episode", "movie", etc.
         MediaType mediaType = MediaType::UNKNOWN;
+        float userRating = 0.0f;       // viewer's own 0-10 rating, 0 when unrated
     };
 
     struct PlayQueueContainer {
@@ -640,6 +704,16 @@ private:
     std::string m_authToken;
     std::string m_serverUrl;
     std::string m_lastSessionId;  // Last transcode session ID for stop/restart
+    // Session ids used to be the wall-clock second alone, so two resolves inside
+    // the same second produced the same id — which now actually happens, because
+    // the next track is resolved while the current one is still playing. This
+    // makes them distinct.
+    unsigned m_sessionSeq = 0;
+    // Shared implementation behind getTranscodeUrl / getTranscodeUrlSpeculative.
+    // Hands the negotiated session back rather than storing it, so the caller
+    // decides whether it becomes the current one.
+    bool resolveTranscodeUrl(const std::string& ratingKey, std::string& url,
+                             int offsetMs, std::string& outSessionId);
     // Live-TV bookkeeping for the rolling subscription keep-alive. Both are
     // pulled out of the tune response and consumed by reportLiveTimeline so
     // the /:/timeline ping uses the same ratingKey the server's parser is

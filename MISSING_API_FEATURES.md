@@ -11,7 +11,9 @@ Authentication, library browsing, hubs/discovery, media playback (direct + trans
 ### High Impact
 
 #### 1. User Ratings
-- `PUT /:/rate` — Rate an item (set rating value on a ratingKey)
+- `PUT /:/rate` — implemented as `PlexClient::rateItem()`, but only reachable from
+  the Android media session's "like this track" heart. No in-app rating UI, and
+  `userRating` is never read back, so a rating set elsewhere isn't shown.
 
 #### 2. Related / Similar / Post-play
 - `GET /library/metadata/{id}/related` — Get related items for any metadata item

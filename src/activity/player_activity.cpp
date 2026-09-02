@@ -74,7 +74,8 @@ PlayerActivity* PlayerActivity::createForStream(const std::string& streamUrl, co
     return activity;
 }
 
-PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tracks, int startIndex) {
+PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tracks, int startIndex,
+                                                bool userPickedTrack) {
     PlayerActivity* activity = new PlayerActivity("", false);
     activity->m_isQueueMode = true;
 
@@ -83,6 +84,11 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
     // Try to create a server-side play queue when online
     // Uses the parent ratingKey (album/season) or the first track's ratingKey
     bool serverOk = false;
+    // Whether the queue we ended up with came back already shuffled from the
+    // server. That is the one case where shuffling again below would be wrong:
+    // the server's order is authoritative and setFromPlayQueue has already
+    // matched the shuffle order to it.
+    bool serverShuffled = false;
     if (!tracks.empty() && !PlexClient::getInstance().getServerUrl().empty()) {
         PlexClient& client = PlexClient::getInstance();
         PlexClient::PlayQueueContainer pq;
@@ -109,9 +115,14 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
         std::string startKey = (startIndex >= 0 && startIndex < (int)tracks.size())
             ? tracks[startIndex].ratingKey : "";
 
-        serverOk = client.createPlayQueue(uri, queueType, pq, startKey);
-        if (serverOk && !pq.items.empty()) {
+        // An accepted request that carried no items is not a usable queue. It
+        // used to still count as success, which left neither branch below
+        // building anything — so "Play Now (Clear Queue)" quietly went on
+        // playing whatever was already queued.
+        serverOk = client.createPlayQueue(uri, queueType, pq, startKey) && !pq.items.empty();
+        if (serverOk) {
             queue.setFromPlayQueue(pq, pq.playQueueShuffled);
+            serverShuffled = pq.playQueueShuffled;
             brls::Logger::info("PlayerActivity: Server play queue {} created ({} items)",
                                pq.playQueueID, pq.playQueueTotalCount);
         }
@@ -123,18 +134,33 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
     }
 
     // "Shuffle New Queues": turn shuffle on as a fresh music queue starts.
-    // Applied here, after the queue is populated, because setShuffle() builds
-    // its order around the current track — so the track the user actually
-    // picked still plays first and only the rest is shuffled.
+    // Applied here, after the queue is populated.
+    //
+    // Which shuffle depends on how the queue was built. Pinning the current
+    // track at the front is what a user who picked a track wants. Pressing Play
+    // on a playlist or album picks nothing — startIndex is just the top of the
+    // list — so pinning it there opened the same track every single time, which
+    // is the one thing shuffle is supposed to avoid.
+    //
+    // The gate is "the server didn't already shuffle this", not "shuffle is
+    // off". It used to be the latter, which meant that once shuffle had been
+    // switched on by an earlier queue the whole block was skipped for every
+    // queue after it — and setQueue()'s own shuffle branch pins startIndex at
+    // the front, so a playlist opened on its first track anyway.
     //
     // Music only: shuffling a queue of episodes is never what's meant. Applied
     // per new queue rather than once per session, since that is what a
     // "default" is — the user can still turn it off for the queue in hand.
     if (!tracks.empty() && tracks[0].mediaType == MediaType::MUSIC_TRACK &&
         Application::getInstance().getSettings().musicShuffleDefault &&
-        !queue.isShuffleEnabled()) {
-        queue.setShuffle(true);
-        brls::Logger::info("PlayerActivity: shuffle on by default for new music queue");
+        !serverShuffled) {
+        if (userPickedTrack) {
+            queue.shuffleKeepingCurrent();
+            brls::Logger::info("PlayerActivity: shuffle on by default, keeping the picked track first");
+        } else {
+            queue.shuffleFromStart();
+            brls::Logger::info("PlayerActivity: shuffle on by default, opening on a random track");
+        }
     }
 
     // Hand transport to the persistent MusicController while this player is
@@ -145,7 +171,8 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
         [activity]() { activity->playPrevious(); },
         [activity](const QueueItem* nextTrack) { activity->onTrackEnded(nextTrack); },
         [activity](bool on) { activity->setShuffleFromOs(on); },
-        [activity](RepeatMode m) { activity->setRepeatFromOs(m); }
+        [activity](RepeatMode m) { activity->setRepeatFromOs(m); },
+        [activity](int index) { activity->playFromQueue(index); }
     });
 
     brls::Logger::info("PlayerActivity created with queue of {} tracks, starting at {} (server={})",
@@ -167,7 +194,8 @@ PlayerActivity* PlayerActivity::createResumeQueue() {
         [activity]() { activity->playPrevious(); },
         [activity](const QueueItem* nextTrack) { activity->onTrackEnded(nextTrack); },
         [activity](bool on) { activity->setShuffleFromOs(on); },
-        [activity](RepeatMode m) { activity->setRepeatFromOs(m); }
+        [activity](RepeatMode m) { activity->setRepeatFromOs(m); },
+        [activity](int index) { activity->playFromQueue(index); }
     });
 
     brls::Logger::info("PlayerActivity resumed existing queue at index {}", queue.getCurrentIndex());
@@ -336,6 +364,10 @@ void PlayerActivity::onContentAvailable() {
         // If queue overlay is showing, dismiss it instead of leaving player
         if (m_queueOverlayVisible) {
             hideQueueOverlay();
+            return true;
+        }
+        if (m_lyricsOverlayVisible) {
+            hideLyricsOverlay();
             return true;
         }
         // OSD up: close it first, same as the two overlays above. Photo and
@@ -575,6 +607,15 @@ void PlayerActivity::onContentAvailable() {
             }));
     }
 
+    if (lyricsScrim) {
+        lyricsScrim->addGestureRecognizer(new brls::TapGestureRecognizer(
+            [this](brls::TapGestureStatus status, brls::Sound* soundToPlay) {
+                if (status.state == brls::GestureState::END) {
+                    hideLyricsOverlay();
+                }
+            }));
+    }
+
     // Show mode-specific icons and wire touch
     if (m_isQueueMode) {
         // Music mode: hide center video controls, show music transport + info
@@ -653,6 +694,32 @@ void PlayerActivity::onContentAvailable() {
             updateRepeatIcon();
         }
 
+        // Lyrics. The track picker has always known how to list them — it even
+        // relabels itself "Lyrics" in queue mode — but music had no button to
+        // open it with, so they were unreachable.
+        if (lyricsBtn) {
+            lyricsBtn->setVisibility(brls::Visibility::VISIBLE);
+            lyricsBtn->setFocusable(true);
+            setIconRes(lyricsIcon, "icons/subtitles.png");
+            lyricsBtn->registerClickAction([this](brls::View* view) {
+                // A track has one lyrics file or none; a picker to choose from a
+                // list of one is a tap that asks nothing, so go straight to the
+                // words. The picker is still there for the rare track carrying
+                // several (an LRC and a plain text, say), where the choice is
+                // real.
+                fetchPlexStreams();
+                std::vector<const PlexStream*> found;
+                for (const auto& ps : m_plexStreams)
+                    if (ps.streamType == 4 && !ps.key.empty()) found.push_back(&ps);
+
+                if (found.size() == 1)  loadAndShowLyrics(*found.front());
+                else if (found.empty()) showLyricsMessage("This track has no lyrics.");
+                else                    showTrackOverlay(TrackSelectMode::SUBTITLE);
+                return true;
+            });
+            lyricsBtn->addGestureRecognizer(new brls::TapGestureRecognizer(lyricsBtn));
+        }
+
         if (queueBtn) {
             queueBtn->setVisibility(brls::Visibility::VISIBLE);
             queueBtn->registerClickAction([this](brls::View* view) {
@@ -699,14 +766,14 @@ void PlayerActivity::onContentAvailable() {
         int seekSec = Application::getInstance().getSettings().seekInterval;
         std::string rewindRes = "icons/rewind-" + std::to_string(seekSec) + ".png";
         std::string fwdRes = "icons/fast-forward-" + std::to_string(seekSec) + ".png";
-        if (rewindIcon) rewindIcon->setImageFromRes(rewindRes);
-        if (forwardIcon) forwardIcon->setImageFromRes(fwdRes);
+        setIconRes(rewindIcon, rewindRes);
+        setIconRes(forwardIcon, fwdRes);
 
         // Audio track button - shows track selection overlay
         if (audioBtn) {
             audioBtn->setVisibility(brls::Visibility::VISIBLE);
             if (audioIcon) {
-                audioIcon->setImageFromRes("icons/translate.png");
+                setIconRes(audioIcon, "icons/translate.png");
             }
             audioBtn->registerClickAction([this](brls::View* view) {
                 showTrackOverlay(TrackSelectMode::AUDIO);
@@ -716,10 +783,16 @@ void PlayerActivity::onContentAvailable() {
         }
 
         // Subtitle track button - shows track selection overlay
+        // Video has its own subtitle button for this picker.
+        if (lyricsBtn) {
+            lyricsBtn->setFocusable(false);
+            lyricsBtn->setVisibility(brls::Visibility::GONE);
+        }
+
         if (subBtn) {
             subBtn->setVisibility(brls::Visibility::VISIBLE);
             if (subtitleIcon) {
-                subtitleIcon->setImageFromRes("icons/subtitles.png");
+                setIconRes(subtitleIcon, "icons/subtitles.png");
             }
             subBtn->registerClickAction([this](brls::View* view) {
                 showTrackOverlay(TrackSelectMode::SUBTITLE);
@@ -732,7 +805,7 @@ void PlayerActivity::onContentAvailable() {
         if (videoBtn) {
             videoBtn->setVisibility(brls::Visibility::VISIBLE);
             if (videoIcon) {
-                videoIcon->setImageFromRes("icons/video-image.png");
+                setIconRes(videoIcon, "icons/video-image.png");
             }
             videoBtn->registerClickAction([this](brls::View* view) {
                 showTrackOverlay(TrackSelectMode::VIDEO);
@@ -753,6 +826,8 @@ void PlayerActivity::onContentAvailable() {
     // Block downward D-pad navigation from the bottom button row so focus
     // doesn't escape to off-screen elements (absolutely-positioned overlays)
     // Only set on focusable buttons — in music mode audioBtn/subBtn/videoBtn are non-focusable
+    if (lyricsBtn && lyricsBtn->isFocusable())
+        lyricsBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, lyricsBtn);
     if (queueBtn) queueBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, queueBtn);
     if (!m_isQueueMode) {
         if (audioBtn) audioBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, audioBtn);
@@ -782,6 +857,14 @@ void PlayerActivity::onContentAvailable() {
         // again, re-issue the current track's cover load so it uploads cleanly.
         // (The bytes are still in the ImageLoader cache, so this is a cheap re-
         // upload, not a re-download.)
+        // Icons dropped or invalidated while there was no GL surface. Driven by
+        // the surface, not the window: the two can be a frame or two apart.
+        reapplyIcons();
+
+        // mpv doesn't know the frame rate until it has parsed the container, so
+        // this waits for a reading rather than asking at load time.
+        applyContentRefreshRate();
+
         bool fg = brls::Application::isWindowForeground();
         if (m_isQueueMode && fg && !m_wasForeground && albumArt && !m_destroying) {
             const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
@@ -805,6 +888,19 @@ void PlayerActivity::onContentAvailable() {
     });
     m_updateTimer.start(1000); // Update every second
 
+    // Auto-advance latency is what this is for: the gap between a track ending
+    // and the next one starting was up to a second of pure polling delay before
+    // any work began. Deliberately tiny — pump mpv, and only when the file has
+    // actually ended let the existing handler run early rather than waiting for
+    // its own tick. m_endHandled keeps it to once per track.
+    m_endWatchTimer.setCallback([this]() {
+        MpvPlayer& p = MpvPlayer::getInstance();
+        if (!p.isInitialized() || m_endHandled) return;
+        p.update();
+        if (p.hasEnded()) updateProgress();
+    });
+    m_endWatchTimer.start(250);
+
     // Debounced transcode-seek commit (see seek() / requestTranscodeSeek). The
     // `finished` flag is false when we stop() the timer early (teardown / content
     // switch), so a cancelled debounce never commits a stale seek.
@@ -825,6 +921,7 @@ void PlayerActivity::onContentAvailable() {
     // no-op, because the route wiring above cannot survive a cleared flag.
     m_focusWiringDone = true;
     syncHiddenFocus();
+    registerIcons();
 
     // Space and the media keys. These go through the raw keyboard event rather
     // than registerAction because borealis' action system is keyed on
@@ -919,6 +1016,20 @@ void PlayerActivity::willDisappear(bool resetState) {
         m_videoOsActive = false;
         nowplaying::clear();
         nowplaying::clearHandler();
+    }
+
+    m_lyricsTimer.stop();   // nothing left to follow once the player is gone
+    // Both teardown paths below go through here, so stopping it once covers the
+    // background-music hand-off as well as the full destroy. It must not keep
+    // firing updateProgress() at an activity that is going away — and under the
+    // hand-off the controller's own poll takes over the watching.
+    m_endWatchTimer.stop();
+
+    // Hand the display back to the mode it was in. Leaving a 24Hz mode set
+    // would make the whole UI redraw at 24Hz once the player is gone.
+    if (m_refreshRateApplied) {
+        m_refreshRateApplied = false;
+        platform::setPreferredRefreshRate(0.0f);
     }
 
     // Re-enable background thumbnail loading now that playback is ending
@@ -1132,6 +1243,15 @@ void PlayerActivity::loadFromQueue() {
         return;
     }
 
+    // Past the resume shortcut, so this really is a different track: the
+    // previous one's lyrics do not belong to it. loadMedia() does the same for
+    // video, but music auto-advance comes through here and never touches it —
+    // which left the finished track's lyrics on screen over the new one.
+    if (m_lyricsOverlayVisible) hideLyricsOverlay();
+    m_lyrics.clear();
+    m_lyricRows.clear();
+    m_lyricsIndex = -1;
+
     // Update display - use music info labels (between cover and play controls)
     if (musicTitleLabel) {
         musicTitleLabel->setText(track->title);
@@ -1182,7 +1302,26 @@ void PlayerActivity::loadFromQueue() {
         // Stream from server
         m_isLocalFile = false;  // Reset in case previous track was local
         PlexClient& client = PlexClient::getInstance();
-        if (!client.getTranscodeUrl(track->ratingKey, url, 0)) {
+
+        // Resolved while the previous track was still playing? Use it. This is
+        // what keeps two blocking round-trips out of the gap between songs.
+        const bool prefetched = !m_prefetchUrl.empty() &&
+                                m_prefetchKey == track->ratingKey &&
+                                m_prefetchVersion == queue.getVersion();
+        if (prefetched) {
+            url = m_prefetchUrl;
+            // The speculative resolve deliberately left the live session alone;
+            // now that this URL is the one being played, it becomes current.
+            client.adoptTranscodeSession(m_prefetchSession);
+            brls::Logger::info("PlayerActivity: using prefetched stream URL for {}",
+                               track->ratingKey);
+        }
+        // Whatever happens next, this entry is spent.
+        m_prefetchKey.clear();
+        m_prefetchUrl.clear();
+        m_prefetchSession.clear();
+
+        if (!prefetched && !client.getTranscodeUrl(track->ratingKey, url, 0)) {
             brls::Logger::error("Failed to get transcode URL for track: {}", track->ratingKey);
             m_loadingMedia = false;
             return;
@@ -1239,6 +1378,48 @@ void PlayerActivity::loadFromQueue() {
     MusicController::getInstance().publishNowPlaying(1);
 }
 
+void PlayerActivity::prefetchNextTrack() {
+    if (!m_isQueueMode || m_destroying || m_prefetchInFlight) return;
+
+    MusicQueue& queue = MusicQueue::getInstance();
+    const QueueItem* next = queue.peekNextTrack();
+    if (!next || next->ratingKey.empty()) return;
+
+    const uint32_t version = queue.getVersion();
+    // Already resolved (or already tried and failed) for this exact track and
+    // queue state — nothing to do. Without this the once-a-second caller would
+    // re-resolve all the way through the song.
+    if (m_prefetchKey == next->ratingKey && m_prefetchVersion == version) return;
+
+    // A downloaded track plays from disk; there is no URL to resolve.
+    DownloadItem dl;
+    if (DownloadsManager::getInstance().getDownloadCopy(next->ratingKey, dl) &&
+        dl.state == DownloadState::COMPLETED && !dl.localPath.empty()) {
+        return;
+    }
+
+    const std::string key = next->ratingKey;
+    m_prefetchInFlight = true;
+    std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+
+    asyncRun([this, key, version, aliveWeak]() {
+        std::string url, session;
+        const bool ok = PlexClient::getInstance().getTranscodeUrlSpeculative(key, url, session);
+        brls::sync([this, key, version, url, session, ok, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+            m_prefetchInFlight = false;
+            // Recorded either way: on failure the empty URL is what stops this
+            // from being retried on every tick.
+            m_prefetchKey     = key;
+            m_prefetchUrl     = ok ? url : std::string();
+            m_prefetchSession = ok ? session : std::string();
+            m_prefetchVersion = version;
+            if (ok) brls::Logger::debug("PlayerActivity: prefetched stream URL for {}", key);
+        });
+    });
+}
+
 void PlayerActivity::loadMedia() {
     // Prevent rapid re-entry
     if (m_loadingMedia) {
@@ -1255,6 +1436,19 @@ void PlayerActivity::loadMedia() {
     m_mediaDurationMs = 0;
     m_syncRecoverAttempts = 0;
     m_directPlay = false;
+
+    // Same reason: auto-play-next reloads into this same activity, so the old
+    // item's poster must not survive into the next one's media session.
+    m_osArtUrl.clear();
+    m_osArtist.clear();
+    m_osAlbum.clear();
+    m_refreshRateApplied = false;   // the next file gets its own rate
+
+    // The previous track's lyrics do not belong to this one.
+    if (m_lyricsOverlayVisible) hideLyricsOverlay();
+    m_lyrics.clear();
+    m_lyricRows.clear();
+    m_lyricsIndex = -1;
 
     // Handle direct file playback (debug/testing)
     if (m_isDirectFile) {
@@ -1377,6 +1571,11 @@ void PlayerActivity::loadMedia() {
                 }
                 titleLabel->setText(title);
             }
+            // Offline: the cover is already a file on disk, so the session can
+            // show it with no server to reach.
+            m_osArtUrl = dlItem.thumbPath;
+            m_osArtist = dlItem.parentTitle;
+            m_osAlbum.clear();
         }
 
         // Pause image loading and free cache to reclaim memory for MPV
@@ -1437,6 +1636,22 @@ void PlayerActivity::loadMedia() {
             m_episodeIndex = item.index;
             m_parentRatingKey = item.parentRatingKey;
             m_grandparentRatingKey = item.grandparentRatingKey;
+        }
+
+        // Poster + show/season line for the OS media session. The lock screen
+        // and the Android 13+ controls had a bare title on a grey card, while
+        // music showed full art.
+        {
+            const std::string art = !item.thumb.empty() ? item.thumb : item.grandparentThumb;
+            m_osArtUrl = art.empty() ? "" : client.getThumbnailUrl(art, 512, 512);
+            if (item.mediaType == MediaType::EPISODE) {
+                m_osArtist = item.grandparentTitle;
+                m_osAlbum = "S" + std::to_string(item.parentIndex) +
+                            " - E" + std::to_string(item.index);
+            } else {
+                m_osArtist = item.year > 0 ? std::to_string(item.year) : "";
+                m_osAlbum = item.studio;
+            }
         }
 
         // Store markers for intro/credits skip
@@ -1761,6 +1976,12 @@ void PlayerActivity::updateProgress() {
     }
     if (duration <= 0)
         duration = player.getDuration();
+
+    // Resolve the next track's stream URL while this one plays, so auto-advance
+    // only has to hand mpv a URL. Held off for the first few seconds so the
+    // extra round-trips don't compete with this track's own buffering, and a
+    // no-op on every tick after the first success (see prefetchNextTrack).
+    if (m_isQueueMode && position > 5.0) prefetchNextTrack();
 
     // While a debounced seek is pending, showSeekPreview owns the slider + time
     // labels (they point at the target, not the live position) — don't stomp it.
@@ -2277,12 +2498,44 @@ void PlayerActivity::setupVideoMediaSession() {
     publishVideoNowPlaying();
 }
 
+void PlayerActivity::applyContentRefreshRate() {
+    if (m_refreshRateApplied || m_isQueueMode || m_isPhoto) return;
+
+    MpvPlayer& p = MpvPlayer::getInstance();
+    if (!p.isPlaying()) return;
+
+    // container-fps is what the file declares; estimated-vf-fps is measured and
+    // only settles after a few frames, so it is the fallback rather than the
+    // first choice.
+    double fps = 0.0;
+    try {
+        std::string v = p.getProperty("container-fps");
+        if (v.empty()) v = p.getProperty("estimated-vf-fps");
+        if (!v.empty()) fps = std::stod(v);
+    } catch (const std::exception&) {
+        return;   // unparseable: try again on the next tick
+    }
+    // Anything outside this is a still, a bad reading, or a variable-rate file
+    // there is no single right mode for.
+    if (!std::isfinite(fps) || fps < 10.0 || fps > 121.0) return;
+
+    m_refreshRateApplied = true;
+    platform::setPreferredRefreshRate((float)fps);
+}
+
 void PlayerActivity::publishVideoNowPlaying() {
     if (m_isQueueMode) return;   // music has its own publish path
     MpvPlayer& p = MpvPlayer::getInstance();
 
     nowplaying::Info info;
     if (titleLabel) info.title = titleLabel->getFullText();
+#ifdef __ANDROID__
+    // Android only: MPRIS (Linux) and SMTC (Windows) read the same struct, and
+    // their video controls are staying as they are.
+    info.artUrl = m_osArtUrl;
+    info.artist = m_osArtist;
+    info.album  = m_osAlbum;
+#endif
     info.playing    = m_isPlaying;
     info.positionMs = (long long)(p.getPosition() * 1000.0);
     info.durationMs = (long long)(p.getDuration() * 1000.0);
@@ -2307,14 +2560,59 @@ void PlayerActivity::syncLoungeReportUserAction(const std::string& state, double
     sl.announceLocalMedia(state, absTimeMs, durMs, /*claimHost=*/false);
 }
 
+// Set an icon, or park it if the upload would be thrown away right now.
+// borealis' setImageFromRes() creates the texture immediately; with no GL
+// surface — the app backgrounded on Android — the call silently does nothing
+// and leaves the icon blank. The OS notification can reach play/pause, shuffle
+// and repeat while exactly that is true.
+void PlayerActivity::setIconRes(brls::Image* img, const std::string& res) {
+    if (!img) return;
+    m_iconRes[img] = res;   // remembered whether or not the upload lands
+    if (brls::Application::canUploadTextures()) img->setImageFromRes(res);
+}
+
+// What the XML loads at inflation. Recorded rather than re-set: the textures
+// are already good at this point, and these are the paths reapplyIcons() needs
+// if the context is later lost. Kept beside player.xml's image= attributes.
+void PlayerActivity::registerIcons() {
+    auto note = [this](brls::Image* img, const char* res) {
+        // Only if nothing has set one already — the video branch picks
+        // seek-interval icons above, and those are the real resources.
+        if (img && m_iconRes.find(img) == m_iconRes.end()) m_iconRes[img] = res;
+    };
+    note(shuffleIcon,     "icons/shuffle-disabled.png");
+    note(musicPrevIcon,   "icons/skip-previous.png");
+    note(musicPlayIcon,   "icons/pause.png");
+    note(musicNextIcon,   "icons/skip-next.png");
+    note(repeatIcon,      "icons/repeat-off.png");
+    note(rewindIcon,      "icons/rewind-10.png");
+    note(playPauseIcon,   "icons/pause.png");
+    note(forwardIcon,     "icons/fast-forward-10.png");
+    note(audioIcon,       "icons/translate.png");
+    note(subtitleIcon,    "icons/subtitles.png");
+    note(videoIcon,       "icons/video-image.png");
+    note(pipIcon,         "icons/video-image.png");
+    note(queueIcon,       "icons/format-list-group.png");
+    note(lyricsIcon,      "icons/subtitles.png");
+}
+
+// Re-upload every icon. Called on the edge where uploads become possible again,
+// which covers both a swap that was dropped while hidden and a texture the lost
+// EGL context invalidated — from here the two are indistinguishable, and
+// re-issuing a good icon costs a cache lookup.
+void PlayerActivity::reapplyIcons() {
+    const bool safe = brls::Application::canUploadTextures();
+    if (safe && !m_uploadsWereSafe) {
+        for (const auto& [img, res] : m_iconRes)
+            if (img) img->setImageFromRes(res);
+    }
+    m_uploadsWereSafe = safe;
+}
+
 void PlayerActivity::updatePlayPauseLabel() {
-    if (playPauseIcon) {
-        playPauseIcon->setImageFromRes(m_isPlaying ? "icons/pause.png" : "icons/play.png");
-    }
-    // Also update music transport play icon
-    if (musicPlayIcon) {
-        musicPlayIcon->setImageFromRes(m_isPlaying ? "icons/pause.png" : "icons/play.png");
-    }
+    const char* res = m_isPlaying ? "icons/pause.png" : "icons/play.png";
+    setIconRes(playPauseIcon, res);
+    setIconRes(musicPlayIcon, res);   // music transport's own play button
 }
 
 void PlayerActivity::cycleAudioTrack() {
@@ -2389,6 +2687,189 @@ void PlayerActivity::hideTrackOverlay() {
     } else if (playBtn) {
         brls::Application::giveFocus(playBtn);
     }
+}
+
+// A stream mpv can load by URL instead of asking the server to switch to it:
+// track lyrics, which are always a separate file. Returns null for anything
+// else, including sidecar subtitles on video — those still go through the
+// transcode path, which is what already works there.
+// Split a message on newlines so a multi-line reason renders as its own rows
+// rather than one clipped line.
+static std::vector<std::string> splitLines(const std::string& text) {
+    std::vector<std::string> out;
+    std::string current;
+    for (char c : text) {
+        if (c == '\n') { out.push_back(current); current.clear(); }
+        else            { current += c; }
+    }
+    out.push_back(current);
+    return out;
+}
+
+// Open the sheet on a message rather than a song: no lyrics, or the reason a
+// fetch came back empty. Rendered as ordinary untimed rows, so it scrolls and
+// dismisses exactly like real lyrics do.
+void PlayerActivity::showLyricsMessage(const std::string& text) {
+    m_lyrics.clear();
+    for (const std::string& line : splitLines(text)) {
+        LyricLine l;
+        l.timeMs = -1;
+        l.text = line;
+        m_lyrics.push_back(std::move(l));
+    }
+    m_lyricsFailed = true;
+    buildLyricsRows();
+    showLyricsOverlay();
+}
+
+void PlayerActivity::loadAndShowLyrics(const PlexStream& stream) {
+    if (m_lyricsLoading) return;
+    m_lyricsLoading = true;
+    m_lyrics.clear();
+    m_lyricsIndex = -1;
+
+    const PlexStream lyricsStream = stream;   // copied: m_plexStreams can be rebuilt
+    const std::string ratingKey = m_mediaKey;
+    const int partId = m_partId;
+    std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+    asyncRun([this, lyricsStream, ratingKey, partId, aliveWeak]() {
+        std::vector<LyricLine> lines;
+        std::string status;
+        const bool ok = PlexClient::getInstance().fetchLyrics(
+            ratingKey, lyricsStream, partId, lines, status);
+        brls::sync([this, lines, ok, status, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+            m_lyricsLoading = false;
+
+            if (!ok || lines.empty()) {
+                // Open the sheet anyway and say what went wrong there. A toast
+                // over the player is easy to miss, and the reason is the useful
+                // part when lyrics are the thing being debugged.
+                showLyricsMessage(status.empty() ? std::string("No lyrics for this track.")
+                                                 : status);
+                return;
+            }
+            m_lyrics = lines;
+            m_lyricsFailed = false;
+            buildLyricsRows();
+            showLyricsOverlay();
+        });
+    });
+}
+
+void PlayerActivity::buildLyricsRows() {
+    if (!lyricsList) return;
+
+    // Focus first: destroying focused children while they hold focus is what
+    // the queue sheet's own rebuild guards against too.
+    if (!lyricsList->getChildren().empty() && lyricsOverlayTitle) {
+        lyricsOverlayTitle->setFocusable(true);
+        brls::Application::giveFocus(lyricsOverlayTitle);
+    }
+    lyricsList->clearViews();
+    m_lyricRows.clear();
+    m_lyricRows.reserve(m_lyrics.size());
+
+    for (const auto& line : m_lyrics) {
+        auto* label = new brls::Label();
+        // A timed blank is a rest in the song; give it height so the scroll
+        // position still tracks the music through an instrumental break.
+        label->setText(line.text.empty() ? " " : line.text);
+        label->setFontSize(17);
+        label->setTextColor(nvgRGB(0x8A, 0x8A, 0x90));
+        label->setMarginBottom(10);
+        lyricsList->addView(label);
+        m_lyricRows.push_back(label);
+    }
+
+    if (lyricsOverlayTitle) {
+        const bool synced = !m_lyricsFailed && !m_lyrics.empty()
+                         && m_lyrics.front().timeMs >= 0;
+        lyricsOverlayTitle->setText(m_lyricsFailed ? "Lyrics unavailable"
+                                  : synced         ? "Lyrics"
+                                                   : "Lyrics (not timed)");
+    }
+}
+
+void PlayerActivity::showLyricsOverlay() {
+    if (!lyricsOverlay) return;
+    m_lyricsOverlayVisible = true;
+    lyricsOverlay->setVisibility(brls::Visibility::VISIBLE);
+    syncHiddenFocus();
+
+    // Only worth ticking while the sheet is on screen, and only for a file that
+    // carries timings — an untimed one never moves.
+    if (!m_lyricsFailed && !m_lyrics.empty() && m_lyrics.front().timeMs >= 0) {
+        m_lyricsTimer.setCallback([this]() { syncLyricsToPosition(); });
+        m_lyricsTimer.start(250);
+        syncLyricsToPosition();
+    }
+
+    if (lyricsOverlayTitle) {
+        lyricsOverlayTitle->setFocusable(true);
+        brls::Application::giveFocus(lyricsOverlayTitle);
+    }
+}
+
+void PlayerActivity::hideLyricsOverlay() {
+    m_lyricsTimer.stop();
+    m_lyricsOverlayVisible = false;
+    if (lyricsOverlayTitle) lyricsOverlayTitle->setFocusable(false);
+    if (lyricsOverlay) {
+        lyricsOverlay->setVisibility(brls::Visibility::GONE);
+        syncHiddenFocus();
+    }
+    if (lyricsBtn && lyricsBtn->getVisibility() == brls::Visibility::VISIBLE) {
+        brls::Application::giveFocus(lyricsBtn);
+    } else if (musicPlayBtn) {
+        brls::Application::giveFocus(musicPlayBtn);
+    }
+}
+
+void PlayerActivity::syncLyricsToPosition() {
+    if (!m_lyricsOverlayVisible || m_lyrics.empty()) return;
+
+    const int posMs = (int)(MpvPlayer::getInstance().getPosition() * 1000.0);
+
+    // Last line whose stamp has passed. Linear from the current index rather
+    // than a search over the whole file: playback moves forward a line at a
+    // time, and a seek backwards is the only case that walks far.
+    int idx = -1;
+    for (size_t i = 0; i < m_lyrics.size(); i++) {
+        if (m_lyrics[i].timeMs < 0) continue;
+        if (m_lyrics[i].timeMs > posMs) break;
+        idx = (int)i;
+    }
+    if (idx == m_lyricsIndex) return;
+
+    if (m_lyricsIndex >= 0 && m_lyricsIndex < (int)m_lyricRows.size()) {
+        m_lyricRows[(size_t)m_lyricsIndex]->setTextColor(nvgRGB(0x8A, 0x8A, 0x90));
+        m_lyricRows[(size_t)m_lyricsIndex]->setFontSize(17);
+    }
+    m_lyricsIndex = idx;
+    if (idx < 0 || idx >= (int)m_lyricRows.size()) return;
+
+    brls::Label* row = m_lyricRows[(size_t)idx];
+    row->setTextColor(nvgRGB(0xE5, 0xA0, 0x0D));
+    row->setFontSize(19);
+    // getY() is absolute, so subtract the content box's own origin to get the
+    // row's offset inside it, then bias upward so the current line sits a bit
+    // above centre with the next few visible below it.
+    if (lyricsScroll && lyricsList) {
+        const float offset = (row->getY() - lyricsList->getY())
+                           - lyricsScroll->getHeight() * 0.4f;
+        lyricsScroll->setContentOffsetY(offset < 0.0f ? 0.0f : offset, true);
+    }
+}
+
+const PlexStream* PlayerActivity::findSideloadableStream(int trackId) const {
+    for (const auto& ps : m_plexStreams) {
+        if (ps.id != trackId) continue;
+        if (ps.streamType == 4 && !ps.key.empty()) return &ps;
+        return nullptr;
+    }
+    return nullptr;
 }
 
 void PlayerActivity::populateTrackList(TrackSelectMode mode) {
@@ -2874,6 +3355,15 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                         player.loadUrl(newUrl, "");
                     }
                 }
+            } else if (const PlexStream* lyrics = findSideloadableStream(trackId)) {
+                // Lyrics are a separate file on the server, not something the
+                // transcoder muxes in, so they are loaded straight into mpv.
+                // Going through setStreamSelection would restart the audio
+                // stream to no effect.
+                for (auto& ps : m_plexStreams)
+                    if (ps.streamType == 3 || ps.streamType == 4)
+                        ps.selected = (ps.id == trackId);
+                loadAndShowLyrics(*lyrics);
             } else if (hasPlexStreams && m_partId > 0) {
                 // trackId is a Plex stream ID - tell Plex server to switch subtitle
                 std::string displayTitle = "Subtitle " + std::to_string(trackId);
@@ -3152,7 +3642,7 @@ void PlayerActivity::toggleRepeat() {
 void PlayerActivity::updateShuffleIcon() {
     if (!shuffleIcon) return;
     MusicQueue& queue = MusicQueue::getInstance();
-    shuffleIcon->setImageFromRes(queue.isShuffleEnabled()
+    setIconRes(shuffleIcon, queue.isShuffleEnabled()
         ? "icons/shuffle-variant.png" : "icons/shuffle-disabled.png");
 }
 
@@ -3207,9 +3697,9 @@ void PlayerActivity::applyMusicLayoutForViewport() {
 void PlayerActivity::updateRepeatIcon() {
     if (!repeatIcon) return;
     switch (MusicQueue::getInstance().getRepeatMode()) {
-        case RepeatMode::OFF: repeatIcon->setImageFromRes("icons/repeat-off.png");  break;
-        case RepeatMode::ALL: repeatIcon->setImageFromRes("icons/repeat.png");      break;
-        case RepeatMode::ONE: repeatIcon->setImageFromRes("icons/repeat-once.png"); break;
+        case RepeatMode::OFF: setIconRes(repeatIcon, "icons/repeat-off.png");  break;
+        case RepeatMode::ALL: setIconRes(repeatIcon, "icons/repeat.png");      break;
+        case RepeatMode::ONE: setIconRes(repeatIcon, "icons/repeat-once.png"); break;
     }
 }
 
@@ -4681,8 +5171,10 @@ void PlayerActivity::playFromQueue(int index) {
 
     MusicQueue& queue = MusicQueue::getInstance();
     if (queue.playTrack(index)) {
-        // Hide queue overlay first (safe - just changes visibility)
-        hideQueueOverlay();
+        // Hide queue overlay first (safe - just changes visibility). Only when
+        // it's actually up: this also runs for a row picked in the OS up-next
+        // list, and hideQueueOverlay() moves focus.
+        if (m_queueOverlayVisible) hideQueueOverlay();
 
         // Stop current playback
         MpvPlayer::getInstance().stop();

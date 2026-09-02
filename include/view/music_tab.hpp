@@ -36,7 +36,12 @@ private:
     void showCreatePlaylistDialog();
     void showPlaylistOptionsDialog(const Playlist& playlist);
     void showAlbumContextMenu(const MediaItem& album);
-    void playPlaylistWithQueue(const std::string& playlistId, int startIndex = 0);
+    // userPickedTrack says whether startIndex is a track the user chose or just
+    // the top of the list. It decides which shuffle the player applies when
+    // "Shuffle New Queues" is on, and has no default on purpose: defaulting it
+    // is what made "Play All" on a playlist open on track 1 every time.
+    void playPlaylistWithQueue(const std::string& playlistId, int startIndex,
+                               bool userPickedTrack);
     void refreshPlaylists();
 
     // Button styling helpers

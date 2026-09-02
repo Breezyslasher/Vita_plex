@@ -230,6 +230,70 @@ const VideoConstraints& getVideoConstraints();
 bool supports4KDecode();
 
 /**
+ * Ask the display for a mode whose refresh rate matches the content, so a
+ * 23.976fps film isn't shown with a 3:2 pulldown cadence on a 60Hz panel.
+ * Pass 0 to hand the display back to the mode it was in. Android only; a
+ * no-op everywhere else, where the port has no say over the display mode.
+ */
+void setPreferredRefreshRate(float contentFps);
+
+/**
+ * Whether the display can show HDR at all. Decides between passing HDR
+ * through and tone-mapping it down for an SDR panel. Android only; false
+ * elsewhere, which leaves those ports on their existing behaviour.
+ */
+bool displaySupportsHdr();
+
+/**
+ * Surround codecs the audio output can take as a bitstream, as a bitmask:
+ * 1 AC3, 2 E-AC3, 4 DTS, 8 DTS-HD, 16 TrueHD. Zero means everything has to be
+ * decoded to PCM, which is the answer on every port that has no way to ask.
+ */
+enum PassthroughCodec {
+    PASSTHROUGH_AC3    = 1 << 0,
+    PASSTHROUGH_EAC3   = 1 << 1,
+    PASSTHROUGH_DTS    = 1 << 2,
+    PASSTHROUGH_DTSHD  = 1 << 3,
+    PASSTHROUGH_TRUEHD = 1 << 4,
+};
+int passthroughCodecs();
+
+/**
+ * The platform's own subtitle styling preferences, where it has any.
+ *
+ * Accessibility settings on Android carry a caption size, colour, edge and
+ * background that a media app is expected to honour; `valid` is false on every
+ * port that exposes nothing, and those keep the app's own styling untouched.
+ * Colours are ARGB. edgeType: 0 none, 1 outline, 2 drop shadow, 3 raised,
+ * 4 depressed. The has* flags say which fields the user actually chose, as
+ * opposed to the platform's defaults.
+ */
+struct CaptionStyle {
+    bool valid = false;
+    float fontScale = 1.0f;
+    unsigned foreground = 0xFFFFFFFFu;
+    unsigned background = 0x00000000u;
+    unsigned edgeColor = 0xFF000000u;
+    int edgeType = 0;
+    bool hasForeground = false;
+    bool hasBackground = false;
+    bool hasEdgeColor = false;
+};
+const CaptionStyle& getSystemCaptionStyle();
+
+/**
+ * A link the OS handed us (plex://, vitaplex://, an app.plex.tv URL), or an
+ * empty string. Reading it clears it, so a link is acted on once.
+ *
+ * Held rather than delivered because a cold start has no UI to open anything
+ * with; the app collects it when it is ready. setDeepLinkHandler registers what
+ * to do with one that arrives while the app is already running — it is invoked
+ * on the UI thread. Both are no-ops on ports with no link plumbing.
+ */
+std::string takePendingDeepLink();
+void setDeepLinkHandler(std::function<void()> onLinkArrived);
+
+/**
  * Bootstraps platform-specific subsystems before brls::Application::init().
  * Loads native modules, initializes networking / SSL / HTTP, sets clock
  * speeds, opens log files, etc. Returns false on a fatal failure.

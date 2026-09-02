@@ -1,3 +1,8 @@
 <resources>
     <string name="app_name">VitaPlex</string>
+    <string name="search_hint">Search your Plex library</string>
+    <string name="search_settings_description">Movies, shows and music from your Plex server</string>
+    <string name="tile_music_label">VitaPlex music</string>
+    <string name="widget_description">Now playing, with transport controls</string>
+    <string name="widget_nothing_playing">Nothing playing</string>
 </resources>

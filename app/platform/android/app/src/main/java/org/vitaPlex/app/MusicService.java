@@ -8,6 +8,9 @@ import android.os.Build;
 import android.os.IBinder;
 import android.util.Log;
 
+import android.support.v4.media.session.MediaSessionCompat;
+import androidx.media.session.MediaButtonReceiver;
+
 /**
  * Foreground service that keeps music playback (and its media notification)
  * alive while the app is backgrounded or the screen is off. It owns nothing —
@@ -31,6 +34,18 @@ public final class MusicService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // Headset, Bluetooth and keyboard media keys arrive as ACTION_MEDIA_BUTTON,
+        // forwarded here by the manifest's MediaButtonReceiver. The session decodes
+        // the key event into the same transport callbacks the notification buttons
+        // use, so this is the whole of the handling.
+        if (intent != null && Intent.ACTION_MEDIA_BUTTON.equals(intent.getAction())) {
+            try {
+                MediaSessionCompat session = MediaNotification.getSession(this);
+                if (session != null) MediaButtonReceiver.handleIntent(session, intent);
+            } catch (Throwable t) {
+                Log.w(TAG, "media button", t);
+            }
+        }
         try {
             Notification n = MediaNotification.buildNotification(this);
             if (n == null) {

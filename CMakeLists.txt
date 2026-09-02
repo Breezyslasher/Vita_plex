@@ -306,6 +306,10 @@ set(APP_SOURCES
 # across every target.
 # ---------------------------------------------------------------------------
 list(APPEND APP_SOURCES src/platform/platform_common.cpp)
+# TV home-screen rows (Android channels + Watch Next). Always compiled: the
+# Android half is behind __ANDROID__ and every other target links the no-ops, so
+# callers need no #ifdef.
+list(APPEND APP_SOURCES src/platform/tv_home.cpp)
 if(PLATFORM_PSV)
     list(APPEND APP_SOURCES src/platform/platform_psv.cpp)
 elseif(PLATFORM_PS4)

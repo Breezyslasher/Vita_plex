@@ -23,6 +23,8 @@
 #pragma once
 
 #include <borealis.hpp>
+#include <chrono>
+#include <cstdint>
 #include <functional>
 
 #include "app/music_queue.hpp"
@@ -41,6 +43,7 @@ public:
         std::function<void(const QueueItem*)> onTrackEnded; // auto-advance handler
         std::function<void(bool)> onSetShuffle;             // server-aware shuffle + icon refresh
         std::function<void(RepeatMode)> onSetRepeat;        // set repeat + icon refresh
+        std::function<void(int)> onPlayIndex;               // jump to a queue row (rich UI load)
     };
 
     // Called by PlayerActivity on create (attach) and on destroy / background
@@ -54,15 +57,23 @@ public:
     // play/pause flag (1 playing, 0 paused) instead of querying MpvPlayer, whose
     // state lags the play()/pause() command by an async event — without it the
     // notification needs a second press to catch up. -1 = query MpvPlayer.
-    void publishNowPlaying(int playingOverride = -1);
+    //
+    // positionOverrideMs is the same idea for position: MpvPlayer::seekTo issues
+    // an async mpv command, so getPosition() still reads the pre-seek value for
+    // a while afterwards. Publishing that made the OS scrubber snap back to
+    // where the drag started. -1 = query MpvPlayer.
+    void publishNowPlaying(int playingOverride = -1, long long positionOverrideMs = -1);
     // Stop and clear the OS media session/notification.
     void stopSession();
 
     // Re-publish the session if MpvPlayer's *settled* play/pause state diverged
     // from what we last sent — catches changes we didn't trigger (audio-focus
-    // pause, a stall, an optimistic state that didn't take). Cheap; call it from
-    // the per-second timers that already run (the headless poll + the foreground
-    // player's update timer). Ignores transient LOADING/BUFFERING.
+    // pause, a stall, an optimistic state that didn't take). Also re-anchors the
+    // position when it has drifted from what the OS must be showing, since the
+    // OS extrapolates from the last publish and nothing corrects a divergence on
+    // its own. Cheap; call it from the per-second timers that already run (the
+    // headless poll + the foreground player's update timer). Ignores transient
+    // LOADING/BUFFERING.
     void syncSessionState();
 
     // Transport entry points. These are also the targets of the OS media buttons
@@ -74,6 +85,20 @@ public:
     void seekToMs(long long ms);
     void seekRelativeMs(long long deltaMs);   // fast-forward / rewind keys
     void stopPlayback();                       // Stop key: halt mpv + clear session
+    // Jump straight to a row of the published queue (absolute queue index), as
+    // picked in the OS up-next list.
+    void playQueueIndex(int index);
+    // "Like this track" from the OS controls: writes the Plex user rating of the
+    // currently playing track (10 for liked, 0 to clear).
+    void setCurrentTrackLiked(bool liked);
+
+    // Sleep timer. Pauses playback after `minutes`; 0 cancels a running one.
+    // Deliberately not persisted — it is a one-shot for tonight, not a setting
+    // that should still be armed next week.
+    void startSleepTimer(int minutes);
+    int sleepTimerMinutes() const { return m_sleepMinutes; }
+    // Whole minutes left, or 0 when nothing is armed. For the settings label.
+    int sleepTimerRemaining() const;
 
     // Repeat / shuffle from the OS controls. set* take an explicit target (SMTC /
     // MPRIS); cycle/toggle advance from the current state (Android custom actions).
@@ -92,6 +117,15 @@ private:
     void registerOsHandler();       // (re)claim the nowplaying transport handler
     void handleTrackEnded(const QueueItem* nextTrack);
     bool loadCurrentHeadless();     // minimal URL resolve + mpv loadUrl (no UI)
+    // Resolve the next track's stream URL while the current one still plays.
+    // getTranscodeUrl() costs two blocking round-trips (/library/metadata, then
+    // /decision) and runs on the main loop, so doing it at end-of-track put both
+    // of them inside the silence between songs. Mirrors PlayerActivity's
+    // prefetch; the pair (ratingKey, queue version) is the invalidation, and a
+    // cached entry with an empty URL records a failed attempt so it is not
+    // retried every tick.
+    void prefetchNextTrack();
+    void publishQueue();            // push the queue window to the OS, if changed
     void startPolling();
     void stopPolling();
 
@@ -101,8 +135,32 @@ private:
     bool m_endHandled = false;
     bool m_sessionActive = false;        // a session/notification is currently up
     bool m_lastPublishedPlaying = false; // play flag of the most recent publish
+    // Position anchor of the most recent publish, and when it was sent. The OS
+    // runs its scrubber forward from this pair on its own, so these are what
+    // syncSessionState() compares reality against.
+    long long m_lastPublishedPositionMs = 0;
+    std::chrono::steady_clock::time_point m_lastPublishAt{};
+    // Fingerprint of the last queue window sent to the OS. publishNowPlaying()
+    // runs every second; without this the whole list would cross JNI each time.
+    uint64_t m_lastQueueSig = 0;
+    // Next-track prefetch (see prefetchNextTrack).
+    std::string m_prefetchKey;       // ratingKey the cached URL belongs to
+    std::string m_prefetchUrl;       // empty = resolve was attempted and failed
+    std::string m_prefetchSession;   // transcode session negotiated for that URL
+    uint32_t m_prefetchVersion = 0;  // MusicQueue version the entry was built at
+    bool m_prefetchInFlight = false;
     ForegroundHooks m_fg;
     brls::RepeatingTimer m_pollTimer;  // headless end-of-track watcher
+    // The poll runs four times a second so the gap between a track ending and
+    // the next one loading stays short. syncSessionState() only needs the
+    // original once-a-second cadence, so it fires on every fourth tick.
+    int m_pollTick = 0;
+    // Sleep timer. A repeating one-second tick rather than a single delayed
+    // callback, so the remaining time can be shown and a cancel takes effect
+    // immediately.
+    brls::RepeatingTimer m_sleepTimer;
+    int m_sleepMinutes = 0;            // what the user picked, 0 = off
+    int m_sleepSecondsLeft = 0;
 };
 
 } // namespace vitaplex

@@ -1869,7 +1869,9 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
 
     addDialogButton("Play Now (Clear Queue)", [this, capturedPlaylist, dialog](brls::View*) {
         dialog->dismiss();
-        playPlaylistWithQueue(capturedPlaylist.ratingKey, 0);
+        // Playing the whole playlist: index 0 is just the top of the list, not a
+        // choice, so shuffle gets to pick the opening track.
+        playPlaylistWithQueue(capturedPlaylist.ratingKey, 0, /*userPickedTrack=*/false);
         return true;
     });
 
@@ -1888,7 +1890,7 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
                         brls::Application::pushActivity(
-                            PlayerActivity::createWithQueue(tracks, 0));
+                            PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false));
                     } else {
                         queue.addTracks(tracks);
                         brls::Application::notify("Playlist added to queue");
@@ -1987,7 +1989,8 @@ void LibrarySectionTab::showPlaylistOptionsDialog(const Playlist& playlist) {
 
     std::string playlistId = playlist.ratingKey;
     dialog->addButton("Play All", [this, playlistId]() {
-        playPlaylistWithQueue(playlistId, 0);
+        // "All", not "this one" — shuffle picks the opening track.
+        playPlaylistWithQueue(playlistId, 0, /*userPickedTrack=*/false);
     });
 
     if (!playlist.smart) {
@@ -2021,10 +2024,11 @@ void LibrarySectionTab::showPlaylistOptionsDialog(const Playlist& playlist) {
     dialog->open();
 }
 
-void LibrarySectionTab::playPlaylistWithQueue(const std::string& playlistId, int startIndex) {
+void LibrarySectionTab::playPlaylistWithQueue(const std::string& playlistId, int startIndex,
+                                              bool userPickedTrack) {
     std::weak_ptr<bool> aliveWeak = m_alive;
 
-    asyncRun([this, playlistId, startIndex, aliveWeak]() {
+    asyncRun([this, playlistId, startIndex, userPickedTrack, aliveWeak]() {
         PlexClient& client = PlexClient::getInstance();
         std::vector<PlaylistItem> items;
 
@@ -2034,12 +2038,12 @@ void LibrarySectionTab::playPlaylistWithQueue(const std::string& playlistId, int
                 tracks.push_back(item.media);
             }
 
-            brls::sync([tracks, startIndex, aliveWeak]() {
+            brls::sync([tracks, startIndex, userPickedTrack, aliveWeak]() {
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
                 brls::Application::pushActivity(
-                    PlayerActivity::createWithQueue(tracks, startIndex)
+                    PlayerActivity::createWithQueue(tracks, startIndex, userPickedTrack)
                 );
             });
         } else {

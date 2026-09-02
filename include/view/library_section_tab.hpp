@@ -55,7 +55,12 @@ private:
     void onPlaylistSelected(const Playlist& playlist);
     void showPlaylistContextMenu(const Playlist& playlist);
     void showPlaylistOptionsDialog(const Playlist& playlist);
-    void playPlaylistWithQueue(const std::string& playlistId, int startIndex);
+    // userPickedTrack says whether startIndex is a track the user chose or just
+    // the top of the list. It decides which shuffle the player applies when
+    // "Shuffle New Queues" is on, and has no default on purpose: defaulting it
+    // is what made "Play All" on a playlist open on track 1 every time.
+    void playPlaylistWithQueue(const std::string& playlistId, int startIndex,
+                               bool userPickedTrack);
     void showPlaylistTrackList(std::vector<MediaItem>&& tracks, const std::string& playlistTitle, const std::string& playlistId);
     void appendTrackListPage();
     void performPlaylistTrackAction(size_t trackIndex);

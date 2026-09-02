@@ -12,6 +12,7 @@
 #include <memory>
 #include <atomic>
 #include <unordered_map>
+#include <map>
 #include <chrono>
 #include "app/plex_client.hpp"
 #include "app/music_queue.hpp"
@@ -45,7 +46,12 @@ public:
     // Play from queue (album, playlist, etc.)
     // Automatically creates a server-side play queue when online,
     // falls back to client-side queue when offline
-    static PlayerActivity* createWithQueue(const std::vector<MediaItem>& tracks, int startIndex = 0);
+    // userPickedTrack says whether startIndex is a track the user chose or just
+    // the top of a list they pressed Play on. It only matters when "Shuffle New
+    // Queues" is on: a chosen track still plays first, while a container is
+    // opened on a random one instead of always its first track.
+    static PlayerActivity* createWithQueue(const std::vector<MediaItem>& tracks, int startIndex = 0,
+                                           bool userPickedTrack = true);
 
     // Resume existing queue (return to player without resetting queue)
     static PlayerActivity* createResumeQueue();
@@ -133,6 +139,49 @@ private:
     void hideQueueOverlay();
     void populateQueueList();       // Build queue list with cover art and titles
     void playFromQueue(int index);  // Play a specific track from queue list
+    // Lyrics. Drawn by the app, not by mpv: music plays with vo=null and no
+    // render context, so a subtitle handed to mpv has no surface to land on.
+    const PlexStream* findSideloadableStream(int trackId) const;
+    void loadAndShowLyrics(const PlexStream& stream);
+    void showLyricsMessage(const std::string& text);   // sheet with a reason, not a song
+    void showLyricsOverlay();
+    void hideLyricsOverlay();
+    void buildLyricsRows();
+    void syncLyricsToPosition();   // highlight + scroll the line that is playing
+
+    std::vector<LyricLine> m_lyrics;
+    std::vector<brls::Label*> m_lyricRows;
+    int  m_lyricsIndex = -1;            // row currently highlighted, -1 = none
+    bool m_lyricsOverlayVisible = false;
+    bool m_lyricsLoading = false;
+    bool m_lyricsFailed = false;    // sheet is showing a reason, not a song
+    // Ticks only while the sheet is open. The 1s player timer is too coarse to
+    // follow a lyric line without it visibly lagging the vocal.
+    brls::RepeatingTimer m_lyricsTimer;
+    // End-of-track watcher. mpv's events are pumped from updateProgress(), which
+    // runs once a second, so the ENDED state was not even set until up to a
+    // second after the audio stopped — and then handled on that same tick. This
+    // pumps four times a second and hands over the moment the file ends.
+    brls::RepeatingTimer m_endWatchTimer;
+
+    // Next-track prefetch. Resolving a Plex stream URL costs two blocking HTTP
+    // round-trips (/library/metadata, then /decision). Doing them when the track
+    // ends put both of them inside the silence between songs, and froze the UI
+    // thread for their duration. This resolves the next track while the current
+    // one is still playing, so auto-advance only has to hand mpv a URL.
+    //
+    // Invalidation is the pair (ratingKey, queue version): every queue mutation
+    // bumps MusicQueue's version, so a reorder, add or remove simply makes the
+    // cache stop matching and the blocking path runs as before. A cached entry
+    // with an empty URL records a failed attempt, so a track whose resolve fails
+    // is not retried every second.
+    void prefetchNextTrack();
+    std::string m_prefetchKey;       // ratingKey the cached URL belongs to
+    std::string m_prefetchUrl;       // empty = resolve was attempted and failed
+    std::string m_prefetchSession;   // transcode session negotiated for that URL
+    uint32_t m_prefetchVersion = 0;  // MusicQueue version the entry was built at
+    bool m_prefetchInFlight = false;
+
     void updateNowPlayingBlock();   // Refresh the "Now Playing" header from the current track
     void clearUpcoming();           // Remove every track after the current one
     void removeFocusedQueueTrack(); // Remove the track for the focused up-next row
@@ -269,6 +318,18 @@ private:
                                    // /:/timeline keep-alive pings in updateProgress
     int m_liveKeepaliveCounter = 0;  // Seconds since last live-TV keep-alive
     MediaType m_mediaType = MediaType::UNKNOWN;  // Type of media being played
+    // Metadata for the OS media session while playing video. Music reads the
+    // queue for this; video has no queue, so the details fetch stashes it here.
+    // Only consumed on Android — the desktop MPRIS/SMTC publishes are unchanged.
+    // Display-mode matching: applied once per file, from the first frame rate
+    // mpv reports. Restored when the player leaves.
+    bool m_refreshRateApplied = false;
+    void applyContentRefreshRate();
+
+    std::string m_osArtUrl;    // poster / episode still, already a full URL or file path
+    std::string m_osArtist;    // show title for episodes, year for movies
+    std::string m_osAlbum;     // "S2 - E4" for episodes, empty otherwise
+
     std::string m_parentRatingKey;  // Season/album ratingKey for auto-play-next
     std::string m_grandparentRatingKey;  // Show ratingKey for cross-season auto-play-next
     int m_episodeIndex = 0;         // Episode index within season for auto-play-next
@@ -423,6 +484,8 @@ private:
     BRLS_BIND(brls::Box, trackList, "player/track_list");
     BRLS_BIND(brls::Box, skipBtn, "player/skip_btn");
     BRLS_BIND(brls::Label, skipLabel, "player/skip_label");
+    BRLS_BIND(brls::Box, lyricsBtn, "player/lyrics_btn");
+    BRLS_BIND(brls::Image, lyricsIcon, "player/lyrics_icon");
     BRLS_BIND(brls::Box, queueBtn, "player/queue_btn");
     BRLS_BIND(brls::Image, queueIcon, "player/queue_icon");
     // Keep buttons inside hidden containers out of the focus order. borealis'
@@ -430,6 +493,25 @@ private:
     // GONE box stays focusable and hit-testable, and the highlight lands on a
     // zero-sized view. Called whenever those containers change visibility.
     void syncHiddenFocus();
+    // Every icon in the player and the resource behind it. Two problems need
+    // this, both of them Android backgrounding:
+    //
+    //   - Image::setImageFromRes() uploads there and then, so a swap made with
+    //     no GL surface (an OS notification toggling play/pause, shuffle or
+    //     repeat) is silently dropped and the icon stays blank.
+    //   - Icons the XML loaded once already have textures, and losing the EGL
+    //     context invalidates them. Image keeps no copy of its path, so nothing
+    //     can ask it to reload; the path has to be remembered here.
+    //
+    // registerIcons() seeds the map with what the XML set, setIconRes() keeps
+    // it current, and reapplyIcons() re-issues the lot when uploads become
+    // possible again.
+    std::map<brls::Image*, std::string> m_iconRes;
+    bool m_uploadsWereSafe = true;
+    void registerIcons();
+    void setIconRes(brls::Image* img, const std::string& res);
+    void reapplyIcons();
+
     // Raw keyboard hook, for keys borealis has no gamepad equivalent for:
     // Space toggles playback. Subscribed in onContentAvailable, dropped in
     // willDisappear — the event outlives the activity.
@@ -441,6 +523,11 @@ private:
     // syncHiddenFocus() for why running it before that point aborts the process.
     bool m_focusWiringDone = false;
 
+    BRLS_BIND(brls::Box, lyricsOverlay, "player/lyrics_overlay");
+    BRLS_BIND(brls::Box, lyricsScrim, "player/lyrics_scrim");
+    BRLS_BIND(brls::ScrollingFrame, lyricsScroll, "player/lyrics_scroll");
+    BRLS_BIND(brls::Box, lyricsList, "player/lyrics_list");
+    BRLS_BIND(brls::Label, lyricsOverlayTitle, "player/lyrics_overlay_title");
     BRLS_BIND(brls::Box, queueOverlay, "player/queue_overlay");
     BRLS_BIND(brls::Box, queueScrim, "player/queue_scrim");
     BRLS_BIND(brls::Label, queueOverlayTitle, "player/queue_overlay_title");
@@ -462,6 +549,10 @@ private:
     BRLS_BIND(brls::Box, musicTransport, "player/music_transport");
     BRLS_BIND(brls::Box, musicPlayBtn, "player/music_play_btn");
     BRLS_BIND(brls::Image, musicPlayIcon, "player/music_play_icon");
+    // Bound only so their resource can be re-applied after a lost GL context;
+    // neither is ever swapped at runtime.
+    BRLS_BIND(brls::Image, musicPrevIcon, "player/music_prev_icon");
+    BRLS_BIND(brls::Image, musicNextIcon, "player/music_next_icon");
     BRLS_BIND(brls::Box, musicPrevBtn, "player/music_prev_btn");
     BRLS_BIND(brls::Box, musicNextBtn, "player/music_next_btn");
     // lyrics button removed

@@ -49,8 +49,14 @@ QueueItem MusicQueue::mediaItemToQueueItem(const MediaItem& item, int index) {
     if (qi.thumb.empty()) qi.thumb = item.parentThumb;
     if (qi.thumb.empty()) qi.thumb = item.grandparentThumb;
     qi.duration = item.duration / 1000; // Convert ms to seconds
+    qi.userRating = item.userRating;
     qi.index = index;
     return qi;
+}
+
+void MusicQueue::setCurrentTrackRating(float rating) {
+    if (m_currentIndex < 0 || m_currentIndex >= (int)m_queue.size()) return;
+    m_queue[(size_t)m_currentIndex].userRating = rating;
 }
 
 void MusicQueue::addTrack(const MediaItem& item) {
@@ -362,6 +368,31 @@ bool MusicQueue::hasPrevious() const {
     return m_currentIndex > 0;
 }
 
+const QueueItem* MusicQueue::peekNextTrack() const {
+    // Mirrors playNext()'s index selection without any of its side effects.
+    if (m_queue.empty()) return nullptr;
+
+    int nextIndex;
+    if (m_repeatMode == RepeatMode::ONE) {
+        nextIndex = m_currentIndex;
+    } else if (m_shuffleEnabled) {
+        int pos = m_shufflePosition + 1;
+        // Off the end, playNext() reshuffles — which track follows is not
+        // decided yet, so there is nothing to report.
+        if (pos < 0 || pos >= (int)m_shuffleOrder.size()) return nullptr;
+        nextIndex = m_shuffleOrder[pos];
+    } else {
+        nextIndex = m_currentIndex + 1;
+        if (nextIndex >= (int)m_queue.size()) {
+            if (m_repeatMode != RepeatMode::ALL) return nullptr;
+            nextIndex = 0;
+        }
+    }
+
+    if (nextIndex < 0 || nextIndex >= (int)m_queue.size()) return nullptr;
+    return &m_queue[nextIndex];
+}
+
 const QueueItem* MusicQueue::getCurrentTrack() const {
     if (m_currentIndex < 0 || m_currentIndex >= (int)m_queue.size()) {
         return nullptr;
@@ -369,39 +400,88 @@ const QueueItem* MusicQueue::getCurrentTrack() const {
     return &m_queue[m_currentIndex];
 }
 
-void MusicQueue::setShuffle(bool enabled) {
-    if (m_shuffleEnabled == enabled) return;
+void MusicQueue::shuffleFromStart() {
+    if (m_queue.empty()) return;
 
-    m_shuffleEnabled = enabled;
+    m_shuffleEnabled = true;
+    m_shuffleOrder.clear();
+    m_shuffleOrder.reserve(m_queue.size());
+    for (int i = 0; i < (int)m_queue.size(); i++) m_shuffleOrder.push_back(i);
 
-    if (enabled && !m_queue.empty()) {
-        // Build shuffle order: current track first, then all others shuffled
-        m_shuffleOrder.clear();
-        m_shuffleOrder.push_back(m_currentIndex);
-
-        // Collect all other indices
-        std::vector<int> others;
-        for (int i = 0; i < (int)m_queue.size(); i++) {
-            if (i != m_currentIndex) {
-                others.push_back(i);
-            }
-        }
-
-        // Fisher-Yates shuffle the remaining tracks
-        for (int i = (int)others.size() - 1; i > 0; i--) {
-            int j = m_rng() % (i + 1);
-            std::swap(others[i], others[j]);
-        }
-
-        // Append shuffled tracks after current
-        m_shuffleOrder.insert(m_shuffleOrder.end(), others.begin(), others.end());
-        m_shufflePosition = 0;
-    } else {
-        m_shuffleOrder.clear();
-        m_shufflePosition = -1;
+    for (int i = (int)m_shuffleOrder.size() - 1; i > 0; i--) {
+        int j = m_rng() % (i + 1);
+        std::swap(m_shuffleOrder[i], m_shuffleOrder[j]);
     }
 
-    brls::Logger::info("MusicQueue: Shuffle {}", enabled ? "enabled" : "disabled");
+    // Nothing is playing yet, so the front of the shuffled order becomes the
+    // current track rather than being inserted after one.
+    m_shufflePosition = 0;
+    m_currentIndex = m_shuffleOrder[0];
+
+    brls::Logger::info("MusicQueue: shuffled from the start, opening on {} - {}",
+                       m_currentIndex, m_queue[m_currentIndex].title);
+    notifyQueueChanged();
+}
+
+void MusicQueue::shuffleKeepingCurrent() {
+    if (m_queue.empty()) {
+        m_shuffleEnabled = true;
+        m_shuffleOrder.clear();
+        m_shufflePosition = -1;
+        return;
+    }
+    // Nothing is current, so there is nothing to keep in front — that is
+    // shuffleFromStart's job, and it also avoids putting -1 in the order.
+    if (m_currentIndex < 0 || m_currentIndex >= (int)m_queue.size()) {
+        shuffleFromStart();
+        return;
+    }
+
+    m_shuffleEnabled = true;
+
+    // Build shuffle order: current track first, then all others shuffled
+    m_shuffleOrder.clear();
+    m_shuffleOrder.push_back(m_currentIndex);
+
+    // Collect all other indices
+    std::vector<int> others;
+    for (int i = 0; i < (int)m_queue.size(); i++) {
+        if (i != m_currentIndex) {
+            others.push_back(i);
+        }
+    }
+
+    // Fisher-Yates shuffle the remaining tracks
+    for (int i = (int)others.size() - 1; i > 0; i--) {
+        int j = m_rng() % (i + 1);
+        std::swap(others[i], others[j]);
+    }
+
+    // Append shuffled tracks after current
+    m_shuffleOrder.insert(m_shuffleOrder.end(), others.begin(), others.end());
+    m_shufflePosition = 0;
+
+    brls::Logger::info("MusicQueue: shuffled, keeping {} in front", m_currentIndex);
+    notifyQueueChanged();
+}
+
+void MusicQueue::setShuffle(bool enabled) {
+    // Toggle semantics: this is the user flipping the button, so an unchanged
+    // state is genuinely nothing to do. Setting a *new queue* up for shuffle
+    // must not go through here — it would no-op on a queue that inherited the
+    // flag from the last one. Call shuffleKeepingCurrent/shuffleFromStart.
+    if (m_shuffleEnabled == enabled) return;
+
+    if (enabled) {
+        shuffleKeepingCurrent();
+        return;
+    }
+
+    m_shuffleEnabled = false;
+    m_shuffleOrder.clear();
+    m_shufflePosition = -1;
+
+    brls::Logger::info("MusicQueue: Shuffle disabled");
     notifyQueueChanged();
 }
 
@@ -568,6 +648,7 @@ void MusicQueue::setFromPlayQueue(const PlexClient::PlayQueueContainer& pq, bool
         if (qi.thumb.empty()) qi.thumb = pqItem.parentThumb;
         if (qi.thumb.empty()) qi.thumb = pqItem.grandparentThumb;
         qi.duration = pqItem.duration / 1000;  // ms to seconds
+        qi.userRating = pqItem.userRating;
         qi.index = (int)i;
         qi.playQueueItemID = pqItem.playQueueItemID;
         m_queue.push_back(qi);

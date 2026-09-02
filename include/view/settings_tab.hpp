@@ -159,6 +159,7 @@ private:
     // Transcode section
     brls::DetailCell*   m_qualitySelector = nullptr;
     brls::BooleanCell* m_forceTranscodeToggle = nullptr;
+    brls::BooleanCell* m_audioPassthroughToggle = nullptr;
     brls::BooleanCell* m_directPlayToggle = nullptr;
 
     // Network section (split out of Transcoding so it gets its own rail
@@ -180,6 +181,7 @@ private:
 
     // Music section (split out of Playback)
     brls::DetailCell*   m_trackActionSelector = nullptr;
+    brls::DetailCell*   m_sleepTimerSelector = nullptr;
     brls::BooleanCell* m_backgroundMusicToggle = nullptr;
     brls::BooleanCell* m_shuffleDefaultToggle = nullptr;
 

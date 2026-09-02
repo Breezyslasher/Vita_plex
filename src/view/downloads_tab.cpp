@@ -1570,7 +1570,7 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
         addActionBtn("Play All", [completedItems](brls::View*) {
             if (!completedItems->empty()) {
                 brls::Application::pushActivity(
-                    PlayerActivity::createWithQueue(*completedItems, 0));
+                    PlayerActivity::createWithQueue(*completedItems, 0, /*userPickedTrack=*/false));
             } else {
                 brls::Application::notify("No completed tracks to play");
             }
@@ -1585,7 +1585,7 @@ void DownloadsTab::showGroupDetail(DownloadGroupType groupType, const std::strin
             MusicQueue& queue = MusicQueue::getInstance();
             if (queue.isEmpty()) {
                 brls::Application::pushActivity(
-                    PlayerActivity::createWithQueue(*completedItems, 0));
+                    PlayerActivity::createWithQueue(*completedItems, 0, /*userPickedTrack=*/false));
             } else {
                 queue.addTracks(*completedItems);
                 brls::Application::notify("Added " + std::to_string(completedItems->size()) + " tracks to queue");
@@ -2088,7 +2088,7 @@ void DownloadsTab::showGroupContextMenu(DownloadGroupType groupType, const std::
         dialog->dismiss();
         if (!completedTracks.empty()) {
             brls::Application::pushActivity(
-                PlayerActivity::createWithQueue(completedTracks, 0));
+                PlayerActivity::createWithQueue(completedTracks, 0, /*userPickedTrack=*/false));
         } else {
             brls::Application::notify("No completed tracks to play");
         }
@@ -2105,7 +2105,7 @@ void DownloadsTab::showGroupContextMenu(DownloadGroupType groupType, const std::
         MusicQueue& queue = MusicQueue::getInstance();
         if (queue.isEmpty()) {
             brls::Application::pushActivity(
-                PlayerActivity::createWithQueue(completedTracks, 0));
+                PlayerActivity::createWithQueue(completedTracks, 0, /*userPickedTrack=*/false));
         } else {
             queue.addTracks(completedTracks);
             brls::Application::notify("Added " + std::to_string(completedTracks.size()) + " tracks to queue");

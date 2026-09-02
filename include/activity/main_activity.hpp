@@ -43,6 +43,10 @@ private:
     // room).
     void applySidebarSizingForViewport();
 
+    // Open whatever link the OS handed us, if any. Called once at startup and
+    // again whenever a link arrives while the app is already running.
+    void consumeDeepLink();
+
     BRLS_BIND(brls::TabFrame, tabFrame, "main/tab_frame");
 
     static MainActivity* s_instance;

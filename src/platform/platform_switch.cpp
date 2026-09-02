@@ -102,6 +102,22 @@ bool supports4KDecode() {
     return false;   // NVDEC on the Switch tops out at 1080p, docked or handheld
 }
 
+// The display mode is the OS/console's business on this port; VitaPlex neither
+// switches refresh rates nor sees HDR capabilities here, so both stay no-ops.
+void setPreferredRefreshRate(float) {}
+bool displaySupportsHdr() { return false; }
+// No way to ask what the audio sink accepts, so everything is decoded to PCM
+// exactly as before.
+int passthroughCodecs() { return 0; }
+// No platform caption preferences here, so subtitles keep the app's styling.
+const CaptionStyle& getSystemCaptionStyle() {
+    static const CaptionStyle none;
+    return none;
+}
+// No deep-link plumbing on this port; nothing ever hands us a URL.
+std::string takePendingDeepLink() { return {}; }
+void setDeepLinkHandler(std::function<void()>) {}
+
 bool init() {
     if (!::vitaplex::HttpClient::globalInit()) {
         brls::Logger::error("Failed to initialize curl");

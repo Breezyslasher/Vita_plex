@@ -414,6 +414,28 @@
                     scalingType="fit"/>
             </brls:Box>
 
+            <!-- Lyrics button (music queue mode). Opens the same track picker
+                 the subtitle button opens for video; it relabels itself to
+                 "Lyrics" there. -->
+            <brls:Box
+                id="player/lyrics_btn"
+                width="64"
+                height="64"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="32"
+                marginLeft="16"
+                focusable="true"
+                visibility="gone">
+                <brls:Image
+                    id="player/lyrics_icon"
+                    width="34"
+                    height="34"
+                    image="@res/icons/subtitles.png"
+                    scalingType="fit"/>
+            </brls:Box>
+
             <!-- Queue list button (music queue mode) -->
             <brls:Box
                 id="player/queue_btn"
@@ -604,6 +626,71 @@
                 grow="1">
                 <brls:Box
                     id="player/queue_list"
+                    width="100%"
+                    axis="column"
+                    alignItems="stretch"
+                    paddingTop="2"
+                    paddingBottom="8"/>
+            </brls:ScrollingFrame>
+
+        </brls:Box>
+
+    </brls:Box>
+
+    <!-- Lyrics side sheet. Mirrors the queue sheet's geometry so the two read
+         as the same kind of panel. The app draws lyrics itself: music plays
+         with vo=null and no render context, so mpv has no surface to put a
+         subtitle on. -->
+    <brls:Box
+        id="player/lyrics_overlay"
+        width="100%"
+        height="100%"
+        axis="row"
+        justifyContent="flexEnd"
+        alignItems="stretch"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        positionRight="0"
+        positionBottom="0"
+        backgroundColor="#08080973"
+        visibility="gone">
+
+        <brls:Box
+            id="player/lyrics_scrim"
+            grow="1"
+            height="100%"/>
+
+        <brls:Box
+            width="460"
+            height="100%"
+            axis="column"
+            alignItems="stretch"
+            backgroundColor="#202022"
+            paddingTop="22"
+            paddingLeft="22"
+            paddingRight="22"
+            paddingBottom="6">
+
+            <brls:Box
+                width="100%"
+                axis="row"
+                alignItems="center"
+                marginBottom="14">
+                <brls:Label
+                    id="player/lyrics_overlay_title"
+                    text="Lyrics"
+                    grow="1"
+                    fontSize="21"
+                    textColor="#FFFFFF"/>
+            </brls:Box>
+
+            <brls:ScrollingFrame
+                id="player/lyrics_scroll"
+                width="100%"
+                grow="1">
+                <brls:Box
+                    id="player/lyrics_list"
                     width="100%"
                     axis="column"
                     alignItems="stretch"
