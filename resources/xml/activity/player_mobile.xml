@@ -466,6 +466,105 @@
     <brls:Box width="100%" grow="0.6"/>
 
     <!-- ==================================================================
+         Collapsed queue sheet. Pinned to the bottom, always visible in this
+         layout: the grab handle, how much is left in the queue, and what plays
+         next. Tapping anywhere on it opens the expanded sheet above, which is
+         the shared queue overlay re-anchored to the bottom.
+
+         Absolute, so it sits over the column rather than in it — the column's
+         own height budget (applyMusicLayoutForViewport) reserves room for it so
+         the transport never ends up underneath.
+         ================================================================== -->
+    <brls:Box
+        id="player/sheet"
+        width="100%"
+        height="348"
+        axis="column"
+        alignItems="stretch"
+        positionType="absolute"
+        positionLeft="0"
+        positionRight="0"
+        positionBottom="0"
+        backgroundColor="#212124"
+        cornerRadius="56"
+        paddingTop="37"
+        paddingLeft="56"
+        paddingRight="56"
+        visibility="gone"
+        focusable="true">
+
+        <!-- Grab handle. Decorative for now: the sheet opens on a tap, and
+             drag-to-expand needs gesture plumbing this does not have yet. -->
+        <brls:Box
+            width="112"
+            height="12"
+            cornerRadius="6"
+            backgroundColor="#4A4A52"
+            marginBottom="37"
+            alignSelf="center"/>
+
+        <brls:Box
+            width="100%"
+            axis="row"
+            justifyContent="spaceBetween"
+            alignItems="center">
+            <brls:Label
+                id="player/sheet_upnext"
+                text="UP NEXT"
+                fontSize="34"
+                singleLine="true"
+                textColor="#8C8C93"/>
+            <brls:Label
+                id="player/sheet_action"
+                text="Queue"
+                fontSize="36"
+                singleLine="true"
+                textColor="#E5A00D"/>
+        </brls:Box>
+
+        <!-- What plays next. -->
+        <brls:Box
+            width="100%"
+            axis="row"
+            alignItems="center"
+            marginTop="31">
+            <brls:Image
+                id="player/sheet_next_thumb"
+                width="106"
+                height="106"
+                cornerRadius="19"
+                scalingType="fit"
+                marginRight="34"
+                visibility="gone"/>
+            <brls:Box
+                grow="1"
+                shrink="1"
+                axis="column"
+                alignItems="flexStart">
+                <brls:Label
+                    id="player/sheet_next_title"
+                    text=""
+                    fontSize="39"
+                    singleLine="true"
+                    textColor="#E7E7EA"/>
+                <brls:Label
+                    id="player/sheet_next_artist"
+                    text=""
+                    fontSize="36"
+                    singleLine="true"
+                    textColor="#8C8C93"/>
+            </brls:Box>
+            <brls:Label
+                id="player/sheet_next_duration"
+                text=""
+                fontSize="36"
+                singleLine="true"
+                textColor="#8C8C93"
+                marginLeft="25"/>
+        </brls:Box>
+    </brls:Box>
+
+    <!-- ==================================================================
          Shared with player.xml from here down: the skip button and the
          queue / lyrics / track-picker overlays. All absolutely positioned,
          so they sit identically over either layout.
@@ -499,7 +598,7 @@
         id="player/queue_overlay"
         width="100%"
         height="100%"
-        axis="row"
+        axis="column"
         justifyContent="flexEnd"
         alignItems="stretch"
         positionType="absolute"
@@ -510,23 +609,26 @@
         backgroundColor="#08080973"
         visibility="gone">
 
-        <!-- Scrim: fills the area left of the sheet, tap to dismiss -->
+        <!-- Scrim: fills the area above the sheet, tap to dismiss -->
         <brls:Box
             id="player/queue_scrim"
-            grow="1"
-            height="100%"/>
+            width="100%"
+            grow="1"/>
 
-        <!-- Side sheet panel anchored to the right edge -->
+        <!-- Expanded sheet, anchored to the bottom edge at the handoff's ~72%.
+             The views inside are the shared ones, so populateQueueList() and the
+             reorder / remove handling need no idea this is a different shape. -->
         <brls:Box
-            width="460"
-            height="100%"
+            width="100%"
+            height="72%"
             axis="column"
             alignItems="stretch"
-            backgroundColor="#202022"
-            paddingTop="22"
-            paddingLeft="22"
-            paddingRight="22"
-            paddingBottom="6">
+            backgroundColor="#212124"
+            cornerRadius="56"
+            paddingTop="37"
+            paddingLeft="56"
+            paddingRight="56"
+            paddingBottom="18">
 
             <!-- Header -->
             <brls:Box

@@ -169,6 +169,19 @@ private:
     // places where the geometry genuinely differs.
     bool m_mobileLayout = false;
     static bool useMobileLayout();   // reads the Player layout setting
+    // The collapsed queue sheet along the bottom of the mobile layout. Its
+    // views exist only in player_mobile.xml and are looked up by id rather than
+    // bound, so the classic layout needs no stubs for them.
+    void updateMobileSheet();        // refresh "up next" from the queue
+    void wireMobileSheet();          // tap-to-open, once at build time
+    bool mobileSheetFits() const;    // false on a screen too short to spare it
+    // Heights the mobile layout budgets against, in borealis logical units and
+    // matching player_mobile.xml: everything below the cover, the collapsed
+    // sheet, and the smallest cover worth calling a cover.
+    static constexpr float kMobileChrome      = 910.f;
+    static constexpr float kMobileSheetHeight = 348.f;
+    static constexpr float kMobileMinCover    = 450.f;
+    std::string m_sheetThumbKey;     // cover already loaded, to avoid refetching
 
     // Next-track prefetch. Resolving a Plex stream URL costs two blocking HTTP
     // round-trips (/library/metadata, then /decision). Doing them when the track

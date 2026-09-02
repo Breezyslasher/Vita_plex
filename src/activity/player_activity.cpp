@@ -681,6 +681,8 @@ void PlayerActivity::onContentAvailable() {
             applyMusicLayoutForViewport();
         });
 
+        wireMobileSheet();
+
         // Wire music transport buttons
         if (musicPlayBtn) {
             musicPlayBtn->registerClickAction([this](brls::View* view) {
@@ -3728,6 +3730,19 @@ void PlayerActivity::setRepeatFromOs(RepeatMode mode) {
     updateRepeatIcon();
 }
 
+
+// Whether there is room for the collapsed queue sheet. The handoff's frame is a
+// tall phone (412x915, so 1280x2841 in borealis units); on a much shorter one —
+// an unfolded foldable, a landscape window — reserving the sheet's height would
+// leave the cover a stamp. Better to drop the sheet there than to wreck the
+// thing the layout is built around. The Queue button in the header still opens
+// the full list either way.
+bool PlayerActivity::mobileSheetFits() const {
+    const float vh = platform::viewportHeight();
+    if (vh <= 0.f) return false;
+    return (vh - kMobileChrome - kMobileSheetHeight) >= kMobileMinCover;
+}
+
 void PlayerActivity::applyMusicLayoutForViewport() {
     if (!albumArt) return;
 
@@ -3763,8 +3778,12 @@ void PlayerActivity::applyMusicLayoutForViewport() {
     // (40 + 224), and 80 of breathing room so the circle is never flush against
     // the edge.
     if (m_mobileLayout) {
-        constexpr float kChromeBelowCover = 910.f;
-        target = std::min(target, vh - kChromeBelowCover);
+        float chrome = kMobileChrome;
+        // The collapsed queue sheet is absolutely positioned along the bottom,
+        // so the column must leave its height clear or the transport ends up
+        // behind it — but only when the sheet is actually shown.
+        if (mobileSheetFits()) chrome += kMobileSheetHeight;
+        target = std::min(target, vh - chrome);
     }
 
     // Don't shrink below the original 220px design size — every
@@ -3850,6 +3869,8 @@ void PlayerActivity::updateQueueDisplay() {
         queueLabel->setVisibility(brls::Visibility::VISIBLE);
     }
 
+    updateMobileSheet();
+
     // Refresh the queue side sheet if it's open. Rebuild when the queue
     // version changed (size/order/shuffle) or when the song advanced -
     // playTrack/playNext don't bump the version, so the current index is
@@ -3860,6 +3881,98 @@ void PlayerActivity::updateQueueDisplay() {
             populateQueueList();
         }
     }
+}
+
+
+// The collapsed queue sheet along the bottom of the mobile layout: how much is
+// left to play, and what comes next. Its views live only in player_mobile.xml,
+// so they are looked up by id rather than bound — getView returns null in the
+// classic layout and every use below tolerates that.
+void PlayerActivity::updateMobileSheet() {
+    if (!m_mobileLayout || !m_isQueueMode) return;
+
+    auto* sheet = dynamic_cast<brls::Box*>(getView("player/sheet"));
+    if (!sheet) return;
+
+    if (!mobileSheetFits()) {
+        sheet->setVisibility(brls::Visibility::GONE);
+        sheet->setFocusable(false);
+        return;
+    }
+    sheet->setFocusable(true);
+
+    MusicQueue& queue = MusicQueue::getInstance();
+    const QueueItem* next = queue.peekNextTrack();
+
+    // Nothing after this track (end of a queue with repeat off) — the sheet has
+    // nothing to say, so it gets out of the way rather than showing an empty row.
+    if (!next) {
+        sheet->setVisibility(brls::Visibility::GONE);
+        return;
+    }
+    sheet->setVisibility(brls::Visibility::VISIBLE);
+
+    auto* label = dynamic_cast<brls::Label*>(getView("player/sheet_upnext"));
+    if (label) {
+        const int remaining = queue.getQueueSize() -
+            (queue.isShuffleEnabled() ? queue.getShufflePosition() + 1
+                                      : queue.getCurrentIndex() + 1);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "UP NEXT \u00b7 %d TRACK%s",
+                 remaining > 0 ? remaining : 0, remaining == 1 ? "" : "S");
+        label->setText(buf);
+    }
+
+    if (auto* t = dynamic_cast<brls::Label*>(getView("player/sheet_next_title")))
+        t->setText(next->title);
+    if (auto* a = dynamic_cast<brls::Label*>(getView("player/sheet_next_artist")))
+        a->setText(next->artist);
+    if (auto* d = dynamic_cast<brls::Label*>(getView("player/sheet_next_duration"))) {
+        if (next->duration > 0) {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%d:%02d", next->duration / 60, next->duration % 60);
+            d->setText(buf);
+        } else {
+            d->setText("");
+        }
+    }
+
+    // Cover for the next track. Only re-fetched when it actually changes — this
+    // runs once a second off updateQueueDisplay.
+    auto* thumb = dynamic_cast<brls::Image*>(getView("player/sheet_next_thumb"));
+    if (thumb && next->ratingKey != m_sheetThumbKey) {
+        m_sheetThumbKey = next->ratingKey;
+        DownloadItem dl;
+        if (DownloadsManager::getInstance().getDownloadCopy(next->ratingKey, dl) &&
+            dl.state == DownloadState::COMPLETED && !dl.thumbPath.empty()) {
+            if (ImageLoader::loadFromFile(dl.thumbPath, thumb))
+                thumb->setVisibility(brls::Visibility::VISIBLE);
+        } else if (!next->thumb.empty()) {
+            std::string url = PlexClient::getInstance().getThumbnailUrl(next->thumb, 160, 160);
+            ImageLoader::setPaused(false);
+            ImageLoader::loadAsync(url, [](brls::Image* img) {
+                img->setVisibility(brls::Visibility::VISIBLE);
+            }, thumb, m_alive);
+            ImageLoader::setPaused(true);
+        } else {
+            thumb->setVisibility(brls::Visibility::GONE);
+        }
+    }
+}
+
+void PlayerActivity::wireMobileSheet() {
+    if (!m_mobileLayout) return;
+    auto* sheet = dynamic_cast<brls::Box*>(getView("player/sheet"));
+    if (!sheet) return;
+
+    // Tap anywhere on the sheet to open the full queue. The handoff wants a
+    // drag as well; that needs gesture plumbing the sheet does not have yet, so
+    // the grab handle is decorative until then.
+    sheet->registerClickAction([this](brls::View*) {
+        showQueueOverlay();
+        return true;
+    });
+    sheet->addGestureRecognizer(new brls::TapGestureRecognizer(sheet));
 }
 
 // Queue list overlay methods
