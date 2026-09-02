@@ -565,9 +565,11 @@
     </brls:Box>
 
     <!-- ==================================================================
-         Shared with player.xml from here down: the skip button and the
-         queue / lyrics / track-picker overlays. All absolutely positioned,
-         so they sit identically over either layout.
+         The skip button and the queue / lyrics / track-picker overlays. Same
+         structure and same view ids as player.xml — the code driving them does
+         not know which layout it is in — but sized for this one: the classic
+         file's numbers are against a 1280x720-ish screen, and read at a third
+         of their intended size in a phone frame.
          ================================================================== -->
     <!-- Skip intro/credits button - positioned at bottom-right above controls -->
     <brls:Box
@@ -578,18 +580,18 @@
         positionType="absolute"
         positionBottom="160"
         positionRight="30"
-        paddingLeft="20"
-        paddingRight="20"
-        paddingTop="10"
-        paddingBottom="10"
+        paddingLeft="62"
+        paddingRight="62"
+        paddingTop="31"
+        paddingBottom="31"
         backgroundColor="#DD333333"
-        cornerRadius="8"
+        cornerRadius="25"
         focusable="true"
         visibility="gone">
         <brls:Label
             id="player/skip_label"
             text="Skip Intro"
-            fontSize="18"
+            fontSize="56"
             textColor="#FFFFFF"/>
     </brls:Box>
 
@@ -624,23 +626,23 @@
             axis="column"
             alignItems="stretch"
             backgroundColor="#212124"
-            cornerRadius="56"
-            paddingTop="37"
-            paddingLeft="56"
-            paddingRight="56"
-            paddingBottom="18">
+            cornerRadius="174"
+            paddingTop="115"
+            paddingLeft="174"
+            paddingRight="174"
+            paddingBottom="56">
 
             <!-- Header -->
             <brls:Box
                 width="100%"
                 axis="row"
                 alignItems="center"
-                marginBottom="14">
+                marginBottom="43">
                 <brls:Label
                     id="player/queue_overlay_title"
                     text="Queue"
                     grow="1"
-                    fontSize="21"
+                    fontSize="65"
                     textColor="#FFFFFF"/>
             </brls:Box>
 
@@ -648,29 +650,29 @@
             <brls:Label
                 id="player/queue_np_label"
                 text="NOW PLAYING"
-                fontSize="12"
+                fontSize="37"
                 textColor="#8A8A90"
-                marginBottom="8"/>
+                marginBottom="25"/>
 
             <!-- Now Playing row (current track) -->
             <brls:Box
                 id="player/queue_now_playing"
                 width="100%"
-                height="60"
+                height="186"
                 axis="row"
                 alignItems="center"
-                cornerRadius="10"
-                paddingLeft="8"
-                paddingRight="10"
-                marginBottom="16"
+                cornerRadius="31"
+                paddingLeft="25"
+                paddingRight="31"
+                marginBottom="50"
                 backgroundColor="#E5A00D1F">
                 <brls:Image
                     id="player/queue_np_thumb"
-                    width="44"
-                    height="44"
-                    cornerRadius="6"
+                    width="137"
+                    height="137"
+                    cornerRadius="19"
                     scalingType="fit"
-                    marginRight="12"/>
+                    marginRight="37"/>
                 <brls:Box
                     grow="1"
                     axis="column"
@@ -678,26 +680,26 @@
                     <brls:Label
                         id="player/queue_np_title"
                         text=""
-                        fontSize="15"
+                        fontSize="47"
                         textColor="#FFC23D"/>
                     <brls:Label
                         id="player/queue_np_artist"
                         text=""
-                        fontSize="12"
-                        marginTop="2"
+                        fontSize="37"
+                        marginTop="6"
                         textColor="#B4B4BA"/>
                 </brls:Box>
                 <!-- Animated-style equaliser glyph (3 static gold bars) -->
                 <brls:Box
-                    width="16"
-                    height="14"
+                    width="50"
+                    height="43"
                     axis="row"
                     alignItems="flexEnd"
                     justifyContent="spaceBetween"
-                    marginLeft="6">
-                    <brls:Box width="3" height="6"  cornerRadius="1" backgroundColor="#E5A00D"/>
-                    <brls:Box width="3" height="13" cornerRadius="1" backgroundColor="#E5A00D"/>
-                    <brls:Box width="3" height="9"  cornerRadius="1" backgroundColor="#E5A00D"/>
+                    marginLeft="19">
+                    <brls:Box width="9" height="19"  cornerRadius="3" backgroundColor="#E5A00D"/>
+                    <brls:Box width="9" height="40" cornerRadius="3" backgroundColor="#E5A00D"/>
+                    <brls:Box width="9" height="28"  cornerRadius="3" backgroundColor="#E5A00D"/>
                 </brls:Box>
             </brls:Box>
 
@@ -706,27 +708,27 @@
                 width="100%"
                 axis="row"
                 alignItems="center"
-                marginBottom="6">
+                marginBottom="19">
                 <brls:Label
                     id="player/queue_upnext_label"
                     text="UP NEXT"
                     grow="1"
-                    fontSize="12"
+                    fontSize="37"
                     textColor="#8A8A90"/>
                 <brls:Box
                     id="player/queue_clear_btn"
                     axis="row"
                     alignItems="center"
                     justifyContent="center"
-                    cornerRadius="6"
-                    paddingLeft="8"
-                    paddingRight="8"
-                    paddingTop="3"
-                    paddingBottom="3"
+                    cornerRadius="19"
+                    paddingLeft="25"
+                    paddingRight="25"
+                    paddingTop="9"
+                    paddingBottom="9"
                     focusable="true">
                     <brls:Label
                         text="Clear"
-                        fontSize="12"
+                        fontSize="37"
                         textColor="#E5A00D"/>
                 </brls:Box>
             </brls:Box>
@@ -741,8 +743,8 @@
                     width="100%"
                     axis="column"
                     alignItems="stretch"
-                    paddingTop="2"
-                    paddingBottom="8"/>
+                    paddingTop="6"
+                    paddingBottom="25"/>
             </brls:ScrollingFrame>
 
         </brls:Box>
@@ -774,26 +776,26 @@
             height="100%"/>
 
         <brls:Box
-            width="460"
+            width="1429"
             height="100%"
             axis="column"
             alignItems="stretch"
             backgroundColor="#202022"
-            paddingTop="22"
-            paddingLeft="22"
-            paddingRight="22"
-            paddingBottom="6">
+            paddingTop="68"
+            paddingLeft="68"
+            paddingRight="68"
+            paddingBottom="19">
 
             <brls:Box
                 width="100%"
                 axis="row"
                 alignItems="center"
-                marginBottom="14">
+                marginBottom="43">
                 <brls:Label
                     id="player/lyrics_overlay_title"
                     text="Lyrics"
                     grow="1"
-                    fontSize="21"
+                    fontSize="65"
                     textColor="#FFFFFF"/>
             </brls:Box>
 
@@ -806,8 +808,8 @@
                     width="100%"
                     axis="column"
                     alignItems="stretch"
-                    paddingTop="2"
-                    paddingBottom="8"/>
+                    paddingTop="6"
+                    paddingBottom="25"/>
             </brls:ScrollingFrame>
 
         </brls:Box>
@@ -834,18 +836,18 @@
         <brls:Label
             id="player/track_overlay_title"
             text="Select Track"
-            fontSize="22"
+            fontSize="68"
             textColor="#FFFFFF"
-            marginBottom="12"/>
+            marginBottom="37"/>
 
         <!-- Track list container -->
         <brls:Box
             id="player/track_list"
-            width="400"
+            width="1243"
             axis="column"
             alignItems="stretch"
             backgroundColor="#E0222222"
-            cornerRadius="8"
+            cornerRadius="25"
             padding="8"/>
 
     </brls:Box>

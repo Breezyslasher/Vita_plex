@@ -175,6 +175,12 @@ private:
     void updateMobileSheet();        // refresh "up next" from the queue
     void wireMobileSheet();          // tap-to-open, once at build time
     bool mobileSheetFits() const;    // false on a screen too short to spare it
+    // The queue / lyrics rows are built in code at sizes written for the
+    // classic layout. The mobile layout's XML is scaled to a phone frame
+    // (1280 logical units standing in for the handoff's 412), so anything it
+    // shares has to be scaled the same way or it renders a third of the size.
+    float ui(float v) const { return m_mobileLayout ? v * kMobileUiScale : v; }
+    static constexpr float kMobileUiScale = 1280.f / 412.f;
     // Heights the mobile layout budgets against, in borealis logical units and
     // matching player_mobile.xml: everything below the cover, the collapsed
     // sheet, and the smallest cover worth calling a cover.
