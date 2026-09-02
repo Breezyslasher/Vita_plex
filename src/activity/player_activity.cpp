@@ -2839,9 +2839,9 @@ void PlayerActivity::buildLyricsRows() {
         // A timed blank is a rest in the song; give it height so the scroll
         // position still tracks the music through an instrumental break.
         label->setText(line.text.empty() ? " " : line.text);
-        label->setFontSize(17);
+        label->setFontSize(ui(17));
         label->setTextColor(nvgRGB(0x8A, 0x8A, 0x90));
-        label->setMarginBottom(10);
+        label->setMarginBottom(ui(10));
         lyricsList->addView(label);
         m_lyricRows.push_back(label);
     }
@@ -3962,6 +3962,18 @@ void PlayerActivity::updateMobileSheet() {
 
 void PlayerActivity::wireMobileSheet() {
     if (!m_mobileLayout) return;
+
+    // Lyrics fill the screen in this layout, so the scrim the classic one
+    // dismisses through has nothing to occupy. Back still works; this is the
+    // visible way out for touch.
+    if (auto* close = dynamic_cast<brls::Box*>(getView("player/lyrics_close"))) {
+        close->registerClickAction([this](brls::View*) {
+            hideLyricsOverlay();
+            return true;
+        });
+        close->addGestureRecognizer(new brls::TapGestureRecognizer(close));
+    }
+
     auto* sheet = dynamic_cast<brls::Box*>(getView("player/sheet"));
     if (!sheet) return;
 

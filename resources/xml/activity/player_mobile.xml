@@ -759,28 +759,31 @@
         id="player/lyrics_overlay"
         width="100%"
         height="100%"
-        axis="row"
-        justifyContent="flexEnd"
+        axis="column"
+        justifyContent="flexStart"
         alignItems="stretch"
         positionType="absolute"
         positionTop="0"
         positionLeft="0"
         positionRight="0"
         positionBottom="0"
-        backgroundColor="#08080973"
+        backgroundColor="#2D2D2D"
         visibility="gone">
 
+        <!-- No scrim strip on a phone: the sheet is the whole screen, so there
+             is nothing beside it to tap. Kept (zero-sized) because the code
+             wires a dismiss tap to it. -->
         <brls:Box
             id="player/lyrics_scrim"
-            grow="1"
-            height="100%"/>
+            width="0"
+            height="0"/>
 
         <brls:Box
-            width="1429"
-            height="100%"
+            width="100%"
+            grow="1"
             axis="column"
             alignItems="stretch"
-            backgroundColor="#202022"
+            backgroundColor="#2D2D2D"
             paddingTop="68"
             paddingLeft="68"
             paddingRight="68"
@@ -797,6 +800,24 @@
                     grow="1"
                     fontSize="65"
                     textColor="#FFFFFF"/>
+                <!-- Full-screen here, so there is no scrim beside the sheet to
+                     tap. Back still closes it; this gives touch a visible way
+                     out too. Mobile-only, so it is found by id, not bound. -->
+                <brls:Box
+                    id="player/lyrics_close"
+                    width="137"
+                    height="137"
+                    axis="row"
+                    justifyContent="center"
+                    alignItems="center"
+                    cornerRadius="68"
+                    focusable="true">
+                    <brls:Image
+                        width="60"
+                        height="60"
+                        image="@res/icons/cross.png"
+                        scalingType="fit"/>
+                </brls:Box>
             </brls:Box>
 
             <brls:ScrollingFrame
