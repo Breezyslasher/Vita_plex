@@ -917,7 +917,8 @@ void PlayerActivity::onContentAvailable() {
                     if (ImageLoader::loadFromFile(dl.thumbPath, albumArt))
                         albumArt->setVisibility(brls::Visibility::VISIBLE);
                 } else if (!track->thumb.empty()) {
-                    std::string thumbUrl = PlexClient::getInstance().getThumbnailUrl(track->thumb, 300, 300);
+                    std::string thumbUrl = PlexClient::getInstance().getThumbnailUrl(track->thumb, m_mobileLayout ? 900 : 300,
+                                                 m_mobileLayout ? 900 : 300);
                     ImageLoader::setPaused(false);
                     ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
                         img->setVisibility(brls::Visibility::VISIBLE);
@@ -1254,7 +1255,9 @@ void PlayerActivity::loadFromQueue() {
         if (titleLabel) titleLabel->setText(track->title);
         if (artistLabel) {
             artistLabel->setText(track->artist);
-            artistLabel->setVisibility(track->artist.empty()
+            // Not in the mobile layout: music_artist above already shows this,
+            // and a second copy lands on top of the time row.
+            artistLabel->setVisibility((m_mobileLayout || track->artist.empty())
                 ? brls::Visibility::GONE : brls::Visibility::VISIBLE);
         }
         updateQueueDisplay();
@@ -1269,7 +1272,8 @@ void PlayerActivity::loadFromQueue() {
                 }
             } else if (!track->thumb.empty()) {
                 PlexClient& client = PlexClient::getInstance();
-                std::string thumbUrl = client.getThumbnailUrl(track->thumb, 300, 300);
+                std::string thumbUrl = client.getThumbnailUrl(track->thumb, m_mobileLayout ? 900 : 300,
+                                                 m_mobileLayout ? 900 : 300);
                 ImageLoader::setPaused(false);
                 ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
                     img->setVisibility(brls::Visibility::VISIBLE);
@@ -1312,8 +1316,10 @@ void PlayerActivity::loadFromQueue() {
     }
     if (artistLabel) {
         artistLabel->setText(track->artist);
-        // Only show the artist label if there's actually text to display
-        artistLabel->setVisibility(track->artist.empty()
+        // Only show the artist label if there's actually text to display —
+        // and never in the mobile layout, where music_artist already has it and
+        // a second copy collides with the time row.
+        artistLabel->setVisibility((m_mobileLayout || track->artist.empty())
             ? brls::Visibility::GONE : brls::Visibility::VISIBLE);
     }
 
@@ -1379,7 +1385,8 @@ void PlayerActivity::loadFromQueue() {
         // The async worker no longer checks pause, so the load will complete.
         if (albumArt && !track->thumb.empty()) {
             PlexClient& artClient = PlexClient::getInstance();
-            std::string thumbUrl = artClient.getThumbnailUrl(track->thumb, 300, 300);
+            std::string thumbUrl = artClient.getThumbnailUrl(track->thumb, m_mobileLayout ? 900 : 300,
+                                                 m_mobileLayout ? 900 : 300);
             ImageLoader::setPaused(false);
             ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
                 img->setVisibility(brls::Visibility::VISIBLE);
