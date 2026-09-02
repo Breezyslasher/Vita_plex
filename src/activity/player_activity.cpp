@@ -330,7 +330,16 @@ void PlayerActivity::onContentAvailable() {
             // aware path so a big scrub restarts the transcode at the target
             // instead of stalling mpv on un-transcoded segments. The slider maps
             // [0,1] onto the real media length so it can't scrub past the end.
-            if (m_isLocalFile || m_isDirectFile || m_isQueueMode || m_directPlay) {
+            if (m_isQueueMode && !m_isLocalFile) {
+                // A streamed Plex music transcode cannot be seeked in place —
+                // mpv only moves inside what it has buffered. MusicController
+                // owns that decision (restart the transcode at the target when
+                // it must), and it is the same path the OS scrubber uses, so
+                // both agree about where the stream now starts.
+                double absDuration = m_transcodeBaseOffsetMs / 1000.0 + duration;
+                MusicController::getInstance().seekToMs(
+                    (long long)(std::max(0.0, absDuration * progress) * 1000.0));
+            } else if (m_isLocalFile || m_isDirectFile || m_isQueueMode || m_directPlay) {
                 double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
                 double absDuration = baseOffsetSec + duration;
                 player.seekTo(std::max(0.0, absDuration * progress - baseOffsetSec));
@@ -1219,6 +1228,11 @@ void PlayerActivity::loadFromQueue() {
         });
     }
 
+    // New track: the stream starts at the top again, so drop any offset a seek
+    // left behind (and the local mirror of it).
+    MusicController::getInstance().resetStreamStartOffset();
+    m_transcodeBaseOffsetMs = 0;
+
     // Reset streams cache for the new track
     m_streamsLoaded = false;
     m_plexStreams.clear();
@@ -2009,6 +2023,13 @@ void PlayerActivity::updateProgress() {
     }
     if (duration <= 0)
         duration = player.getDuration();
+
+    // A music seek can restart the transcode part-way into the track, after
+    // which mpv's clock runs from zero again. MusicController knows where the
+    // stream now starts; mirroring it here keeps every absolute-position
+    // calculation below (slider, time labels, markers) correct.
+    if (m_isQueueMode)
+        m_transcodeBaseOffsetMs = (int)MusicController::getInstance().streamStartOffsetMs();
 
     // Resolve the next track's stream URL while this one plays, so auto-advance
     // only has to hand mpv a URL. Held off for the first few seconds so the
@@ -2863,7 +2884,10 @@ void PlayerActivity::hideLyricsOverlay() {
 void PlayerActivity::syncLyricsToPosition() {
     if (!m_lyricsOverlayVisible || m_lyrics.empty()) return;
 
-    const int posMs = (int)(MpvPlayer::getInstance().getPosition() * 1000.0);
+    // Absolute, not mpv's local clock: a seek can restart the transcode part-way
+    // into the track, and lyric timestamps are against the whole song.
+    const int posMs = m_transcodeBaseOffsetMs
+                    + (int)(MpvPlayer::getInstance().getPosition() * 1000.0);
 
     // Last line whose stamp has passed. Linear from the current index rather
     // than a search over the whole file: playback moves forward a line at a

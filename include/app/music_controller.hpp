@@ -82,8 +82,23 @@ public:
     void playPause(bool play);
     void next();
     void previous();
+    // Absolute seek within the current track. Not simply an mpv seek: a Plex
+    // music transcode is generated on the fly and served without range support,
+    // so mpv can only move inside whatever it has already buffered — "Cannot
+    // seek in this stream" for anything beyond that. When mpv reports the stream
+    // unseekable this restarts the transcode at the target instead, which is
+    // what Plex's offset= parameter exists for and what the video path already
+    // does in restartTranscodeAtMs().
     void seekToMs(long long ms);
     void seekRelativeMs(long long deltaMs);   // fast-forward / rewind keys
+
+    // Where the currently loaded stream begins, in ms into the track. Non-zero
+    // once a seek has restarted the transcode part-way in: mpv then plays from 0
+    // locally, so anything reporting an absolute position must add this back.
+    long long streamStartOffsetMs() const { return m_streamStartOffsetMs; }
+    // Called when a new track is loaded — the next stream starts at the top
+    // again. PlayerActivity's own load path calls this too.
+    void resetStreamStartOffset() { m_streamStartOffsetMs = 0; }
     void stopPlayback();                       // Stop key: halt mpv + clear session
     // Jump straight to a row of the published queue (absolute queue index), as
     // picked in the OS up-next list.
@@ -148,6 +163,13 @@ private:
     long long m_pendingSeekMs = -1;
     std::chrono::steady_clock::time_point m_pendingSeekAt{};
     std::string m_lastPublishedRatingKey;  // to notice a track change
+    // See streamStartOffsetMs(). Set when a seek restarts the transcode part-way
+    // into the track, cleared whenever a track is loaded from its start.
+    long long m_streamStartOffsetMs = 0;
+    bool m_restartingTranscode = false;   // a restart is resolving; don't stack another
+    // Restart the transcode so the stream itself begins at ms. Resolves the URL
+    // off the UI thread — it costs two blocking round-trips — then reloads.
+    void restartTranscodeAtMs(long long ms);
     // Fingerprint of the last queue window sent to the OS. publishNowPlaying()
     // runs every second; without this the whole list would cross JNI each time.
     uint64_t m_lastQueueSig = 0;
