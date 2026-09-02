@@ -114,10 +114,14 @@
 
     <!-- Cover art. The handoff draws it 300 wide in a 412 frame; the value here
          is that ratio against borealis' fixed 1280-wide logical space, and
-         applyMusicLayoutForViewport() then fits it to the real viewport. -->
+         applyMusicLayoutForViewport() then fits it to the real viewport.
+         shrink=1 is the backstop: yoga defaults children to not shrinking, so
+         without it an overflowing column clips its *last* child — the play
+         button — instead of squeezing the one thing that can afford it. -->
     <brls:Box
         id="player/album_art_container"
         width="100%"
+        shrink="1"
         axis="column"
         justifyContent="center"
         alignItems="center"

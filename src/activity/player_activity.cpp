@@ -3749,9 +3749,29 @@ void PlayerActivity::applyMusicLayoutForViewport() {
     float byHeight = vh * (m_mobileLayout ? 0.42f : 0.45f);
     float target   = std::min(byWidth, byHeight);
 
+    // A fraction of the height is not enough on its own: everything under the
+    // cover has a fixed height, so on a shorter screen — or as soon as a long
+    // title wraps to two lines — the column overflows and the last thing on it,
+    // the play button, gets clipped off the bottom. Flex grow cannot save it
+    // either; it only shares out space that is already spare.
+    //
+    // So also fit the cover to what is actually left. The budget below is the
+    // rest of the mobile column at its worst, in the same logical units the XML
+    // uses: header 162 + 31 margin, cover's 56 bottom margin, a two-line 68pt
+    // title with its 16 margin over a 43pt artist (~232), the controls block
+    // (46 + 64 slider + 6 + ~45 labels = 161), the transport (40 + 224), and 80
+    // of breathing room so the circle is never flush against the edge.
+    if (m_mobileLayout) {
+        constexpr float kChromeBelowCover = 990.f;
+        target = std::min(target, vh - kChromeBelowCover);
+    }
+
     // Don't shrink below the original 220px design size — every
-    // platform has at least enough room for that on landscape.
-    if (target < 220.f) target = 220.f;
+    // platform has at least enough room for that on landscape. The mobile
+    // layout gets a lower floor: on a short screen, holding 220 here would put
+    // back the overflow the fit above exists to avoid.
+    const float floorPx = m_mobileLayout ? 150.f : 220.f;
+    if (target < floorPx) target = floorPx;
     // And don't blow up beyond 480 in either direction; pushed any
     // bigger the cover starts dominating the layout on big tablets
     // and the controls feel orphaned at the bottom.
