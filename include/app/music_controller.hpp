@@ -23,6 +23,7 @@
 #pragma once
 
 #include <borealis.hpp>
+#include <chrono>
 #include <cstdint>
 #include <functional>
 
@@ -56,15 +57,23 @@ public:
     // play/pause flag (1 playing, 0 paused) instead of querying MpvPlayer, whose
     // state lags the play()/pause() command by an async event — without it the
     // notification needs a second press to catch up. -1 = query MpvPlayer.
-    void publishNowPlaying(int playingOverride = -1);
+    //
+    // positionOverrideMs is the same idea for position: MpvPlayer::seekTo issues
+    // an async mpv command, so getPosition() still reads the pre-seek value for
+    // a while afterwards. Publishing that made the OS scrubber snap back to
+    // where the drag started. -1 = query MpvPlayer.
+    void publishNowPlaying(int playingOverride = -1, long long positionOverrideMs = -1);
     // Stop and clear the OS media session/notification.
     void stopSession();
 
     // Re-publish the session if MpvPlayer's *settled* play/pause state diverged
     // from what we last sent — catches changes we didn't trigger (audio-focus
-    // pause, a stall, an optimistic state that didn't take). Cheap; call it from
-    // the per-second timers that already run (the headless poll + the foreground
-    // player's update timer). Ignores transient LOADING/BUFFERING.
+    // pause, a stall, an optimistic state that didn't take). Also re-anchors the
+    // position when it has drifted from what the OS must be showing, since the
+    // OS extrapolates from the last publish and nothing corrects a divergence on
+    // its own. Cheap; call it from the per-second timers that already run (the
+    // headless poll + the foreground player's update timer). Ignores transient
+    // LOADING/BUFFERING.
     void syncSessionState();
 
     // Transport entry points. These are also the targets of the OS media buttons
@@ -126,6 +135,11 @@ private:
     bool m_endHandled = false;
     bool m_sessionActive = false;        // a session/notification is currently up
     bool m_lastPublishedPlaying = false; // play flag of the most recent publish
+    // Position anchor of the most recent publish, and when it was sent. The OS
+    // runs its scrubber forward from this pair on its own, so these are what
+    // syncSessionState() compares reality against.
+    long long m_lastPublishedPositionMs = 0;
+    std::chrono::steady_clock::time_point m_lastPublishAt{};
     // Fingerprint of the last queue window sent to the OS. publishNowPlaying()
     // runs every second; without this the whole list would cross JNI each time.
     uint64_t m_lastQueueSig = 0;

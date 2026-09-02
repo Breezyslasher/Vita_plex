@@ -265,7 +265,7 @@ void MusicController::prefetchNextTrack() {
     });
 }
 
-void MusicController::publishNowPlaying(int playingOverride) {
+void MusicController::publishNowPlaying(int playingOverride, long long positionOverrideMs) {
     MusicQueue& q = MusicQueue::getInstance();
     const QueueItem* t = q.getCurrentTrack();
     if (!t) { stopSession(); return; }
@@ -286,7 +286,11 @@ void MusicController::publishNowPlaying(int playingOverride) {
     }
 
     info.durationMs = (long long)t->duration * 1000;   // QueueItem.duration is seconds
-    info.positionMs = (long long)(p.getPosition() * 1000.0);
+    // Same reasoning as playingOverride below: seekTo() is an async mpv command,
+    // so right after one getPosition() still reads where we were, not where the
+    // user asked to go.
+    info.positionMs = (positionOverrideMs >= 0) ? positionOverrideMs
+                                                : (long long)(p.getPosition() * 1000.0);
     // MpvPlayer's state lags the play()/pause() command; trust the caller's intent
     // when it knows it (playingOverride), else fall back to the queried state.
     info.playing = (playingOverride >= 0) ? (playingOverride != 0) : p.isPlaying();
@@ -303,6 +307,8 @@ void MusicController::publishNowPlaying(int playingOverride) {
     nowplaying::update(info);
 
     m_lastPublishedPlaying = info.playing;
+    m_lastPublishedPositionMs = info.positionMs;
+    m_lastPublishAt = std::chrono::steady_clock::now();
     m_sessionActive = true;
 }
 
@@ -390,9 +396,29 @@ void MusicController::syncSessionState() {
     // can't wrongly flip the notification to paused.
     if (m_lastPublishedPlaying && p.isPaused()) {
         publishNowPlaying(0);        // mpv paused on its own (e.g. audio-focus loss)
-    } else if (!m_lastPublishedPlaying && p.isPlaying()) {
-        publishNowPlaying(1);        // mpv resumed / finally started
+        return;
     }
+    if (!m_lastPublishedPlaying && p.isPlaying()) {
+        publishNowPlaying(1);        // mpv resumed / finally started
+        return;
+    }
+
+    // Position. The OS runs its own scrubber forward from the last publish, so a
+    // divergence never corrects itself: a seek mpv clamped or could not perform,
+    // a buffering stall, a track that ran shorter than its metadata said. Work
+    // out what the OS must be showing by now and re-anchor if reality has moved
+    // away from it. On a threshold rather than every tick — each publish rebuilds
+    // the notification, and a second of ordinary rounding drift is not worth one.
+    if (!p.isPlaying() && !p.isPaused()) return;   // LOADING/BUFFERING: no answer yet
+    const long long realMs = (long long)(p.getPosition() * 1000.0);
+    long long shownMs = m_lastPublishedPositionMs;
+    if (m_lastPublishedPlaying) {
+        // Rate is 1.0 while playing, so the OS has advanced its own clock.
+        shownMs += std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now() - m_lastPublishAt).count();
+    }
+    const long long drift = (realMs > shownMs) ? (realMs - shownMs) : (shownMs - realMs);
+    if (drift > 1500) publishNowPlaying(-1, realMs);
 }
 
 void MusicController::togglePlayPause() {
@@ -487,8 +513,14 @@ int MusicController::sleepTimerRemaining() const {
 void MusicController::seekToMs(long long ms) {
     MpvPlayer& p = MpvPlayer::getInstance();
     if (!p.isInitialized()) return;
+    if (ms < 0) ms = 0;
     p.seekTo((double)ms / 1000.0);
-    publishNowPlaying();
+    // Publish where the user asked to go, not where getPosition() still says we
+    // are — seekTo is async, so reading it back here returns the pre-seek value.
+    // Publishing that is what made a drag on the notification scrubber snap
+    // straight back and look like the seek had been ignored. syncSessionState()
+    // re-anchors within a second if mpv ends up somewhere else.
+    publishNowPlaying(-1, ms);
 }
 
 void MusicController::seekRelativeMs(long long deltaMs) {
@@ -497,7 +529,7 @@ void MusicController::seekRelativeMs(long long deltaMs) {
     long long target = (long long)(p.getPosition() * 1000.0) + deltaMs;
     if (target < 0) target = 0;
     p.seekTo((double)target / 1000.0);
-    publishNowPlaying();
+    publishNowPlaying(-1, target);
 }
 
 void MusicController::stopPlayback() {
