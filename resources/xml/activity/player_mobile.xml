@@ -144,16 +144,24 @@
         visibility="gone"
         paddingLeft="81"
         paddingRight="81">
+        <!-- singleLine on both. A wrapping Label reports a one-line height to
+             the layout and then draws every line it needs, so a long title ran
+             straight over the artist beneath it. The handoff asks for the same
+             thing anyway — "do not wrap to a third line" — and marquee is not an
+             option here: Label only animates while focused, which a label never
+             is. So: one line, ellipsised. -->
         <brls:Label
             id="player/music_title"
             text=""
             fontSize="68"
+            singleLine="true"
             textColor="#FFFFFF"
             marginBottom="16"/>
         <brls:Label
             id="player/music_artist"
             text=""
             fontSize="43"
+            singleLine="true"
             textColor="#8C8C93"/>
     </brls:Box>
 

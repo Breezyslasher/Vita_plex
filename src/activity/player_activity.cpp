@@ -3756,13 +3756,14 @@ void PlayerActivity::applyMusicLayoutForViewport() {
     // either; it only shares out space that is already spare.
     //
     // So also fit the cover to what is actually left. The budget below is the
-    // rest of the mobile column at its worst, in the same logical units the XML
-    // uses: header 162 + 31 margin, cover's 56 bottom margin, a two-line 68pt
-    // title with its 16 margin over a 43pt artist (~232), the controls block
-    // (46 + 64 slider + 6 + ~45 labels = 161), the transport (40 + 224), and 80
-    // of breathing room so the circle is never flush against the edge.
+    // rest of the mobile column, in the same logical units the XML uses: header
+    // 162 + 31 margin, cover's 56 bottom margin, a 68pt title with its 16 margin
+    // over a 43pt artist (~150 — both are singleLine, so neither can grow), the
+    // controls block (46 + 64 slider + 6 + ~45 labels = 161), the transport
+    // (40 + 224), and 80 of breathing room so the circle is never flush against
+    // the edge.
     if (m_mobileLayout) {
-        constexpr float kChromeBelowCover = 990.f;
+        constexpr float kChromeBelowCover = 910.f;
         target = std::min(target, vh - kChromeBelowCover);
     }
 
