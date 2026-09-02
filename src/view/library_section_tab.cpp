@@ -1888,7 +1888,7 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
                         brls::Application::pushActivity(
-                            PlayerActivity::createWithQueue(tracks, 0));
+                            PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false));
                     } else {
                         queue.addTracks(tracks);
                         brls::Application::notify("Playlist added to queue");

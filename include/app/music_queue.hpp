@@ -82,6 +82,12 @@ public:
     void setShuffle(bool enabled);
     bool isShuffleEnabled() const { return m_shuffleEnabled; }
     void reshuffle();  // Re-randomize shuffle order
+    // Shuffle a queue that has not started playing. setShuffle() pins the
+    // current track first, which is right when the user turns shuffle on
+    // mid-song but wrong for a queue built by pressing Play on a container:
+    // there index 0 is just "the top of the list", so it played the same first
+    // track every time. This picks the opening track at random too.
+    void shuffleFromStart();
     const std::vector<int>& getShuffleOrder() const { return m_shuffleOrder; }
     int getShufflePosition() const { return m_shufflePosition; }
 

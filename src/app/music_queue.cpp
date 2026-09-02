@@ -375,6 +375,29 @@ const QueueItem* MusicQueue::getCurrentTrack() const {
     return &m_queue[m_currentIndex];
 }
 
+void MusicQueue::shuffleFromStart() {
+    if (m_queue.empty()) return;
+
+    m_shuffleEnabled = true;
+    m_shuffleOrder.clear();
+    m_shuffleOrder.reserve(m_queue.size());
+    for (int i = 0; i < (int)m_queue.size(); i++) m_shuffleOrder.push_back(i);
+
+    for (int i = (int)m_shuffleOrder.size() - 1; i > 0; i--) {
+        int j = m_rng() % (i + 1);
+        std::swap(m_shuffleOrder[i], m_shuffleOrder[j]);
+    }
+
+    // Nothing is playing yet, so the front of the shuffled order becomes the
+    // current track rather than being inserted after one.
+    m_shufflePosition = 0;
+    m_currentIndex = m_shuffleOrder[0];
+
+    brls::Logger::info("MusicQueue: shuffled from the start, opening on {} - {}",
+                       m_currentIndex, m_queue[m_currentIndex].title);
+    notifyQueueChanged();
+}
+
 void MusicQueue::setShuffle(bool enabled) {
     if (m_shuffleEnabled == enabled) return;
 

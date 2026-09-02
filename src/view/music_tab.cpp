@@ -784,7 +784,7 @@ void MusicTab::showAlbumContextMenu(const MediaItem& album) {
             std::vector<MediaItem> tracks;
             if (client.fetchChildren(capturedAlbum.ratingKey, tracks) && !tracks.empty()) {
                 brls::sync([tracks]() {
-                    auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                    auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
                     brls::Application::pushActivity(playerActivity);
                 });
             }
@@ -801,7 +801,7 @@ void MusicTab::showAlbumContextMenu(const MediaItem& album) {
                 brls::sync([tracks]() {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
-                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
                         brls::Application::pushActivity(playerActivity);
                     } else {
                         for (int i = (int)tracks.size() - 1; i >= 0; i--) {
@@ -824,7 +824,7 @@ void MusicTab::showAlbumContextMenu(const MediaItem& album) {
                 brls::sync([tracks]() {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
-                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
                         brls::Application::pushActivity(playerActivity);
                     } else {
                         queue.addTracks(tracks);
@@ -903,7 +903,7 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
                         brls::Application::pushActivity(
-                            PlayerActivity::createWithQueue(tracks, 0));
+                            PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false));
                     } else {
                         queue.addTracks(tracks);
                         brls::Application::notify("Playlist added to queue");

@@ -595,7 +595,7 @@ void LibraryTab::showAlbumContextMenu(const MediaItem& album) {
             std::vector<MediaItem> tracks;
             if (client.fetchChildren(capturedAlbum.ratingKey, tracks) && !tracks.empty()) {
                 brls::sync([tracks]() {
-                    auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                    auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
                     brls::Application::pushActivity(playerActivity);
                 });
             }
@@ -612,7 +612,7 @@ void LibraryTab::showAlbumContextMenu(const MediaItem& album) {
                 brls::sync([tracks]() {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
-                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
                         brls::Application::pushActivity(playerActivity);
                     } else {
                         for (int i = (int)tracks.size() - 1; i >= 0; i--) {
@@ -635,7 +635,7 @@ void LibraryTab::showAlbumContextMenu(const MediaItem& album) {
                 brls::sync([tracks]() {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
-                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
                         brls::Application::pushActivity(playerActivity);
                     } else {
                         queue.addTracks(tracks);

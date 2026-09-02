@@ -439,7 +439,7 @@ void playAllArtistTracks(const MediaItem& artist, bool shuffle) {
                 std::swap(allTracks[i], allTracks[rand() % (i + 1)]);
         }
         brls::sync([allTracks]() {
-            brls::Application::pushActivity(PlayerActivity::createWithQueue(allTracks, 0));
+            brls::Application::pushActivity(PlayerActivity::createWithQueue(allTracks, 0, /*userPickedTrack=*/false));
         });
     });
 }
@@ -498,7 +498,7 @@ void enqueueArtistTracks(const MediaItem& artist) {
         brls::sync([allTracks]() {
             MusicQueue& queue = MusicQueue::getInstance();
             if (queue.isEmpty()) {
-                brls::Application::pushActivity(PlayerActivity::createWithQueue(allTracks, 0));
+                brls::Application::pushActivity(PlayerActivity::createWithQueue(allTracks, 0, /*userPickedTrack=*/false));
             } else {
                 queue.addTracks(allTracks);
                 brls::Application::notify("Artist added to queue");
@@ -3485,7 +3485,7 @@ void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
             std::vector<MediaItem> tracks;
             if (client.fetchChildren(capturedAlbum.ratingKey, tracks) && !tracks.empty()) {
                 brls::sync([tracks]() {
-                    auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                    auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
                     brls::Application::pushActivity(playerActivity);
                 });
             }
@@ -3502,7 +3502,7 @@ void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
                 brls::sync([tracks]() {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
-                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
                         brls::Application::pushActivity(playerActivity);
                     } else {
                         // Insert all tracks after current
@@ -3526,7 +3526,7 @@ void MediaDetailView::showAlbumContextMenu(const MediaItem& album) {
                 brls::sync([tracks]() {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
-                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
                         brls::Application::pushActivity(playerActivity);
                     } else {
                         queue.addTracks(tracks);
@@ -4392,7 +4392,7 @@ void MediaDetailView::showAlbumContextMenuStatic(const MediaItem& album) {
             std::vector<MediaItem> tracks;
             if (client.fetchChildren(capturedAlbum.ratingKey, tracks) && !tracks.empty()) {
                 brls::sync([tracks]() {
-                    auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                    auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
                     brls::Application::pushActivity(playerActivity);
                 });
             }
@@ -4409,7 +4409,7 @@ void MediaDetailView::showAlbumContextMenuStatic(const MediaItem& album) {
                 brls::sync([tracks]() {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
-                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
                         brls::Application::pushActivity(playerActivity);
                     } else {
                         for (int i = (int)tracks.size() - 1; i >= 0; i--) {
@@ -4432,7 +4432,7 @@ void MediaDetailView::showAlbumContextMenuStatic(const MediaItem& album) {
                 brls::sync([tracks]() {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
-                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0);
+                        auto* playerActivity = PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false);
                         brls::Application::pushActivity(playerActivity);
                     } else {
                         queue.addTracks(tracks);

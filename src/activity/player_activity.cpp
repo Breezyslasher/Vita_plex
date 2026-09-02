@@ -74,7 +74,8 @@ PlayerActivity* PlayerActivity::createForStream(const std::string& streamUrl, co
     return activity;
 }
 
-PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tracks, int startIndex) {
+PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tracks, int startIndex,
+                                                bool userPickedTrack) {
     PlayerActivity* activity = new PlayerActivity("", false);
     activity->m_isQueueMode = true;
 
@@ -123,9 +124,13 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
     }
 
     // "Shuffle New Queues": turn shuffle on as a fresh music queue starts.
-    // Applied here, after the queue is populated, because setShuffle() builds
-    // its order around the current track — so the track the user actually
-    // picked still plays first and only the rest is shuffled.
+    // Applied here, after the queue is populated.
+    //
+    // Which shuffle depends on how the queue was built. setShuffle() pins the
+    // current track at the front, which is what a user who picked a track
+    // wants. Pressing Play on a playlist or album picks nothing — startIndex is
+    // just the top of the list — so pinning it there opened the same track
+    // every single time, which is the one thing shuffle is supposed to avoid.
     //
     // Music only: shuffling a queue of episodes is never what's meant. Applied
     // per new queue rather than once per session, since that is what a
@@ -133,8 +138,13 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
     if (!tracks.empty() && tracks[0].mediaType == MediaType::MUSIC_TRACK &&
         Application::getInstance().getSettings().musicShuffleDefault &&
         !queue.isShuffleEnabled()) {
-        queue.setShuffle(true);
-        brls::Logger::info("PlayerActivity: shuffle on by default for new music queue");
+        if (userPickedTrack) {
+            queue.setShuffle(true);
+            brls::Logger::info("PlayerActivity: shuffle on by default, keeping the picked track first");
+        } else {
+            queue.shuffleFromStart();
+            brls::Logger::info("PlayerActivity: shuffle on by default, opening on a random track");
+        }
     }
 
     // Hand transport to the persistent MusicController while this player is
