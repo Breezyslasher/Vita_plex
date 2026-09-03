@@ -82,6 +82,11 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
                                                 bool userPickedTrack) {
     PlayerActivity* activity = new PlayerActivity("", false);
     activity->m_isQueueMode = true;
+    // Record what this queue is made of while we still have the item types;
+    // QueueItem does not carry one, so nothing downstream can work it out.
+    const int typeIdx = (startIndex >= 0 && startIndex < (int)tracks.size()) ? startIndex : 0;
+    s_queueIsMusic = !tracks.empty() &&
+                     tracks[(size_t)typeIdx].mediaType == MediaType::MUSIC_TRACK;
 
     MusicQueue& queue = MusicQueue::getInstance();
 
@@ -206,10 +211,21 @@ PlayerActivity* PlayerActivity::createResumeQueue() {
     return activity;
 }
 
-bool PlayerActivity::useMobileLayout() {
+bool PlayerActivity::s_queueIsMusic = false;
+
+bool PlayerActivity::useMobileLayout() const {
+    // The mobile layout is a Now Playing screen for music: big cover, queue
+    // sheet, no room made for a video surface or its track/PiP controls. Video
+    // on it was never designed and its buttons referenced icons that did not
+    // exist, so it took the app down. Video gets the classic player on every
+    // screen size until there is a mobile design for it -- including under the
+    // explicit Mobile setting, which can only mean "for music" while that is
+    // the only thing the layout can draw.
+    if (!m_isQueueMode || !s_queueIsMusic) return false;
+
     switch (Application::getInstance().getSettings().playerLayout) {
         case 1: return false;   // Classic, everywhere
-        case 2: return true;    // Mobile, everywhere — including handheld and TV
+        case 2: return true;    // Mobile wherever it can draw the media
         default: break;         // Auto
     }
     // Auto: the big-art player suits a phone-shaped screen and nothing else.
@@ -233,8 +249,9 @@ brls::View* PlayerActivity::createContentView() {
     // id and throws if one is missing — so only the geometry differs and the
     // rest of this class is layout-agnostic.
     m_mobileLayout = useMobileLayout();
-    brls::Logger::info("PlayerActivity: using the {} player layout",
-                       m_mobileLayout ? "mobile" : "classic");
+    brls::Logger::info("PlayerActivity: using the {} player layout (queue={} music={})",
+                       m_mobileLayout ? "mobile" : "classic",
+                       m_isQueueMode, s_queueIsMusic);
     return brls::View::createFromXMLResource(
         m_mobileLayout ? "activity/player_mobile.xml" : "activity/player.xml");
 }
