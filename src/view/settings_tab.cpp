@@ -662,6 +662,25 @@ brls::Box* SettingsTab::createUISection() {
     AppSettings& settings = app.getSettings();
     brls::Box* box = makeSectionBox();
 
+    // Which music player to build. Not hard-gated to phones on purpose: forcing
+    // it either way is how the big-art layout gets tested on a handheld, and
+    // some people want it on a tablet or a desktop window.
+    m_playerLayoutSelector = makePickerCell("Player Layout",
+        {"Auto", "Classic", "Mobile"},
+        settings.playerLayout,
+        [this](int index) {
+            onPlayerLayoutChanged(index);
+        });
+    box->addView(m_playerLayoutSelector);
+
+    auto* playerLayoutInfo = new brls::Label();
+    playerLayoutInfo->setText(
+        "Auto uses the big-art player on phones and the current player everywhere else");
+    playerLayoutInfo->setFontSize(14);
+    playerLayoutInfo->setMarginLeft(16);
+    playerLayoutInfo->setMarginTop(8);
+    box->addView(playerLayoutInfo);
+
     // Debug logging toggle
     m_debugLogToggle = new brls::BooleanCell();
     m_debugLogToggle->init("Debug Logging", settings.debugLogging, [&settings](bool value) {
@@ -865,25 +884,6 @@ brls::Box* SettingsTab::createPlaybackSection() {
             onControlsAutoHideChanged(index);
         });
     box->addView(m_controlsAutoHideSelector);
-
-    // Which music player to build. Not hard-gated to phones on purpose: forcing
-    // it either way is how the big-art layout gets tested on a handheld, and
-    // some people want it on a tablet or a desktop window.
-    m_playerLayoutSelector = makePickerCell("Player Layout",
-        {"Auto", "Classic", "Mobile"},
-        settings.playerLayout,
-        [this](int index) {
-            onPlayerLayoutChanged(index);
-        });
-    box->addView(m_playerLayoutSelector);
-
-    auto* playerLayoutInfo = new brls::Label();
-    playerLayoutInfo->setText(
-        "Auto uses the big-art player on phones and the current player everywhere else");
-    playerLayoutInfo->setFontSize(14);
-    playerLayoutInfo->setMarginLeft(16);
-    playerLayoutInfo->setMarginTop(8);
-    box->addView(playerLayoutInfo);
 
     // Auto-skip intro toggle
     m_autoSkipIntroToggle = new brls::BooleanCell();
