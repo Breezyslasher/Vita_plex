@@ -2033,6 +2033,8 @@ void PlayerActivity::updateProgress() {
     if (duration <= 0)
         duration = player.getDuration();
 
+    logQueueScrollGeometry();
+
     // A music seek can restart the transcode part-way into the track, after
     // which mpv's clock runs from zero again. MusicController knows where the
     // stream now starts; mirroring it here keeps every absolute-position
@@ -3836,6 +3838,28 @@ void PlayerActivity::onTrackEnded(const QueueItem* nextTrack) {
     }
 }
 
+
+// One-shot report of the queue sheet's scroll geometry. Scrolling is bounded by
+// (content height - frame height), so if the list stops short of its end, those
+// two numbers say whether the geometry is wrong or whether the gesture handling
+// is. Called from the per-second tick: updateQueueDisplay only runs on a track
+// load or a transport action, so a check living there never fired while the
+// sheet simply sat open.
+void PlayerActivity::logQueueScrollGeometry() {
+    if (!m_queueOverlayVisible || m_queueScrollLogged) return;
+    if (!queueScroll || !queueList || m_queueBatchActive) return;
+    if (queueList->getChildren().size() <= 6) return;
+    // Wait for a real layout pass; zeroes would burn the one shot on a line
+    // that says nothing.
+    if (queueScroll->getHeight() <= 1.0f || queueList->getHeight() <= 1.0f) return;
+
+    m_queueScrollLogged = true;
+    brls::Logger::info("Queue sheet: frame h={} content h={} rows={} -> scrollable={}",
+                       queueScroll->getHeight(), queueList->getHeight(),
+                       (int)queueList->getChildren().size(),
+                       queueList->getHeight() - queueScroll->getHeight());
+}
+
 void PlayerActivity::updateQueueDisplay() {
     if (!m_isQueueMode) return;
 
@@ -3870,23 +3894,6 @@ void PlayerActivity::updateQueueDisplay() {
     }
 
     updateMobileSheet();
-
-    // One-shot sanity check on the queue sheet's scroll geometry. Scrolling is
-    // bounded by (content height - frame height); if the frame is ever reported
-    // as tall as its content while the list plainly has more rows than fit, the
-    // list will stop short of its end and it is this that is wrong, not the
-    // gesture handling. Logged once per opening rather than guessed at.
-    if (m_queueOverlayVisible && !m_queueScrollLogged && queueScroll && queueList
-        && !m_queueBatchActive && queueList->getChildren().size() > 6
-        // Wait for a real layout: logging zeroes from before the first pass
-        // would burn the one-shot on a line that says nothing.
-        && queueScroll->getHeight() > 1.0f && queueList->getHeight() > 1.0f) {
-        m_queueScrollLogged = true;
-        brls::Logger::info("Queue sheet: frame h={} content h={} rows={} -> scrollable={}",
-                           queueScroll->getHeight(), queueList->getHeight(),
-                           (int)queueList->getChildren().size(),
-                           queueList->getHeight() - queueScroll->getHeight());
-    }
 
     // Refresh the queue side sheet if it's open. Rebuild when the queue
     // version changed (size/order/shuffle) or when the song advanced -
