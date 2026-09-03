@@ -4660,7 +4660,7 @@ void PlayerActivity::updateNowPlayingBlock() {
                 ImageLoader::loadAsync(url, [](brls::Image*) {}, queueNpThumb, m_alive);
                 ImageLoader::setPaused(true);
             } else {
-                queueNpThumb->setImageFromRes("img/default_music.png");
+                queueNpThumb->setImageFromRes("icons/music.png");
             }
         }
     }
@@ -5140,13 +5140,13 @@ void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB, bool skipTh
                 std::string urlA = swapClient.getThumbnailUrl(dtA.thumbPath, 100, 100);
                 ImageLoader::loadAsync(urlA, [](brls::Image*) {}, thumbA, m_alive);
             } else {
-                thumbA->setImageFromRes("img/default_music.png");
+                thumbA->setImageFromRes("icons/music.png");
             }
             if (dtB.loaded && !dtB.thumbPath.empty()) {
                 std::string urlB = swapClient.getThumbnailUrl(dtB.thumbPath, 100, 100);
                 ImageLoader::loadAsync(urlB, [](brls::Image*) {}, thumbB, m_alive);
             } else {
-                thumbB->setImageFromRes("img/default_music.png");
+                thumbB->setImageFromRes("icons/music.png");
             }
         }
     }
