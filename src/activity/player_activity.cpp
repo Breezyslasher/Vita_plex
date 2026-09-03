@@ -3871,6 +3871,20 @@ void PlayerActivity::updateQueueDisplay() {
 
     updateMobileSheet();
 
+    // One-shot sanity check on the queue sheet's scroll geometry. Scrolling is
+    // bounded by (content height - frame height); if the frame is ever reported
+    // as tall as its content while the list plainly has more rows than fit, the
+    // list will stop short of its end and it is this that is wrong, not the
+    // gesture handling. Logged once per opening rather than guessed at.
+    if (m_queueOverlayVisible && !m_queueScrollLogged && queueScroll && queueList
+        && !m_queueBatchActive && queueList->getChildren().size() > 6) {
+        m_queueScrollLogged = true;
+        brls::Logger::info("Queue sheet: frame h={} content h={} rows={} -> scrollable={}",
+                           queueScroll->getHeight(), queueList->getHeight(),
+                           (int)queueList->getChildren().size(),
+                           queueList->getHeight() - queueScroll->getHeight());
+    }
+
     // Refresh the queue side sheet if it's open. Rebuild when the queue
     // version changed (size/order/shuffle) or when the song advanced -
     // playTrack/playNext don't bump the version, so the current index is
@@ -3990,6 +4004,7 @@ void PlayerActivity::wireMobileSheet() {
 // Queue list overlay methods
 
 void PlayerActivity::showQueueOverlay() {
+    m_queueScrollLogged = false;
     if (m_queueOverlayVisible) {
         hideQueueOverlay();
         return;

@@ -612,17 +612,22 @@
         visibility="gone">
 
         <!-- Scrim: fills the area above the sheet, tap to dismiss -->
+        <!-- Flex weights rather than a percentage height on the sheet below:
+             the sheet's height decides the scroll frame's height, and that is
+             what bounds scrolling (bottomLimit = content - frame). A percentage
+             that fails to resolve would silently oversize the frame and stop
+             the list short of its end. Weights cannot fail that way. -->
         <brls:Box
             id="player/queue_scrim"
             width="100%"
-            grow="1"/>
+            grow="28"/>
 
         <!-- Expanded sheet, anchored to the bottom edge at the handoff's ~72%.
              The views inside are the shared ones, so populateQueueList() and the
              reorder / remove handling need no idea this is a different shape. -->
         <brls:Box
             width="100%"
-            height="72%"
+            grow="72"
             axis="column"
             alignItems="stretch"
             backgroundColor="#212124"
