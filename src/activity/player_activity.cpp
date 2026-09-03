@@ -2915,14 +2915,14 @@ void PlayerActivity::syncLyricsToPosition() {
 
     if (m_lyricsIndex >= 0 && m_lyricsIndex < (int)m_lyricRows.size()) {
         m_lyricRows[(size_t)m_lyricsIndex]->setTextColor(nvgRGB(0x8A, 0x8A, 0x90));
-        m_lyricRows[(size_t)m_lyricsIndex]->setFontSize(17);
+        m_lyricRows[(size_t)m_lyricsIndex]->setFontSize(ui(17));
     }
     m_lyricsIndex = idx;
     if (idx < 0 || idx >= (int)m_lyricRows.size()) return;
 
     brls::Label* row = m_lyricRows[(size_t)idx];
     row->setTextColor(nvgRGB(0xE5, 0xA0, 0x0D));
-    row->setFontSize(19);
+    row->setFontSize(ui(19));
     // getY() is absolute, so subtract the content box's own origin to get the
     // row's offset inside it, then bias upward so the current line sits a bit
     // above centre with the next few visible below it.
@@ -2998,16 +2998,16 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         item->setAxis(brls::Axis::ROW);
         item->setJustifyContent(brls::JustifyContent::FLEX_START);
         item->setAlignItems(brls::AlignItems::CENTER);
-        item->setPaddingTop(10);
-        item->setPaddingBottom(10);
-        item->setPaddingLeft(12);
-        item->setPaddingRight(12);
-        item->setCornerRadius(4);
+        item->setPaddingTop(ui(10));
+        item->setPaddingBottom(ui(10));
+        item->setPaddingLeft(ui(12));
+        item->setPaddingRight(ui(12));
+        item->setCornerRadius(ui(4));
         item->setFocusable(true);
 
         brls::Label* label = new brls::Label();
         label->setText(m_isQueueMode ? "Off (No Lyrics)" : "Off (No Subtitles)");
-        label->setFontSize(16);
+        label->setFontSize(ui(16));
         label->setTextColor(nvgRGB(220, 220, 220));
         item->addView(label);
 
@@ -3035,11 +3035,11 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
             item->setAxis(brls::Axis::ROW);
             item->setJustifyContent(brls::JustifyContent::FLEX_START);
             item->setAlignItems(brls::AlignItems::CENTER);
-            item->setPaddingTop(10);
-            item->setPaddingBottom(10);
-            item->setPaddingLeft(12);
-            item->setPaddingRight(12);
-            item->setCornerRadius(4);
+            item->setPaddingTop(ui(10));
+            item->setPaddingBottom(ui(10));
+            item->setPaddingLeft(ui(12));
+            item->setPaddingRight(ui(12));
+            item->setCornerRadius(ui(4));
             item->setFocusable(true);
 
             if (ps.selected) {
@@ -3053,7 +3053,7 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
             std::string prefix = ps.selected ? "> " : "  ";
             brls::Label* label = new brls::Label();
             label->setText(prefix + displayStr);
-            label->setFontSize(16);
+            label->setFontSize(ui(16));
             label->setTextColor(ps.selected ? nvgRGB(150, 200, 255) : nvgRGB(220, 220, 220));
             item->addView(label);
 
@@ -3095,11 +3095,11 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
             item->setAxis(brls::Axis::ROW);
             item->setJustifyContent(brls::JustifyContent::FLEX_START);
             item->setAlignItems(brls::AlignItems::CENTER);
-            item->setPaddingTop(10);
-            item->setPaddingBottom(10);
-            item->setPaddingLeft(12);
-            item->setPaddingRight(12);
-            item->setCornerRadius(4);
+            item->setPaddingTop(ui(10));
+            item->setPaddingBottom(ui(10));
+            item->setPaddingLeft(ui(12));
+            item->setPaddingRight(ui(12));
+            item->setCornerRadius(ui(4));
             item->setFocusable(true);
 
             if (track.selected) {
@@ -3111,7 +3111,7 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
             std::string prefix = track.selected ? "> " : "  ";
             brls::Label* label = new brls::Label();
             label->setText(prefix + displayStr);
-            label->setFontSize(16);
+            label->setFontSize(ui(16));
             label->setTextColor(track.selected ? nvgRGB(150, 200, 255) : nvgRGB(220, 220, 220));
             item->addView(label);
 
@@ -3127,9 +3127,9 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         if (mpvTracks.empty() && mode != TrackSelectMode::SUBTITLE) {
             brls::Label* label = new brls::Label();
             label->setText("No tracks available");
-            label->setFontSize(16);
+            label->setFontSize(ui(16));
             label->setTextColor(nvgRGB(180, 180, 180));
-            label->setMargins(12, 12, 12, 12);
+            label->setMargins(ui(12), ui(12), ui(12), ui(12));
             trackList->addView(label);
         }
     }
@@ -3138,28 +3138,28 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
     if (mode == TrackSelectMode::SUBTITLE && !m_mediaKey.empty() && !m_isQueueMode) {
         // Add separator
         brls::Box* sep = new brls::Box();
-        sep->setWidth(376);  // track list width (400) minus padding (24)
-        sep->setHeight(1);
+        sep->setWidthPercentage(100.0f);  // the list content box, either layout
+        sep->setHeight(ui(1));
         sep->setBackgroundColor(nvgRGBA(255, 255, 255, 40));
-        sep->setMarginTop(6);
-        sep->setMarginBottom(6);
+        sep->setMarginTop(ui(6));
+        sep->setMarginBottom(ui(6));
         trackList->addView(sep);
 
         brls::Box* searchItem = new brls::Box();
         searchItem->setAxis(brls::Axis::ROW);
         searchItem->setJustifyContent(brls::JustifyContent::FLEX_START);
         searchItem->setAlignItems(brls::AlignItems::CENTER);
-        searchItem->setPaddingTop(10);
-        searchItem->setPaddingBottom(10);
-        searchItem->setPaddingLeft(12);
-        searchItem->setPaddingRight(12);
-        searchItem->setCornerRadius(4);
+        searchItem->setPaddingTop(ui(10));
+        searchItem->setPaddingBottom(ui(10));
+        searchItem->setPaddingLeft(ui(12));
+        searchItem->setPaddingRight(ui(12));
+        searchItem->setCornerRadius(ui(4));
         searchItem->setFocusable(true);
         searchItem->setBackgroundColor(nvgRGBA(60, 120, 60, 80));
 
         brls::Label* searchLabel = new brls::Label();
         searchLabel->setText("Search for Subtitles...");
-        searchLabel->setFontSize(16);
+        searchLabel->setFontSize(ui(16));
         searchLabel->setTextColor(nvgRGB(140, 230, 140));
         searchItem->addView(searchLabel);
 
@@ -3193,9 +3193,9 @@ void PlayerActivity::populateSubtitleSearchResults() {
     // Add a loading label
     brls::Label* loadingLabel = new brls::Label();
     loadingLabel->setText("Searching for subtitles...");
-    loadingLabel->setFontSize(16);
+    loadingLabel->setFontSize(ui(16));
     loadingLabel->setTextColor(nvgRGB(180, 180, 180));
-    loadingLabel->setMargins(12, 12, 12, 12);
+    loadingLabel->setMargins(ui(12), ui(12), ui(12), ui(12));
     trackList->addView(loadingLabel);
 
     // Search for subtitles from Plex (queries OpenSubtitles, etc.)
@@ -3208,9 +3208,9 @@ void PlayerActivity::populateSubtitleSearchResults() {
 
         brls::Label* noResults = new brls::Label();
         noResults->setText("No subtitles found");
-        noResults->setFontSize(16);
+        noResults->setFontSize(ui(16));
         noResults->setTextColor(nvgRGB(180, 180, 180));
-        noResults->setMargins(12, 12, 12, 12);
+        noResults->setMargins(ui(12), ui(12), ui(12), ui(12));
         trackList->addView(noResults);
 
         // Add back button
@@ -3218,16 +3218,16 @@ void PlayerActivity::populateSubtitleSearchResults() {
         backItem->setAxis(brls::Axis::ROW);
         backItem->setJustifyContent(brls::JustifyContent::FLEX_START);
         backItem->setAlignItems(brls::AlignItems::CENTER);
-        backItem->setPaddingTop(10);
-        backItem->setPaddingBottom(10);
-        backItem->setPaddingLeft(12);
-        backItem->setPaddingRight(12);
-        backItem->setCornerRadius(4);
+        backItem->setPaddingTop(ui(10));
+        backItem->setPaddingBottom(ui(10));
+        backItem->setPaddingLeft(ui(12));
+        backItem->setPaddingRight(ui(12));
+        backItem->setCornerRadius(ui(4));
         backItem->setFocusable(true);
 
         brls::Label* backLabel = new brls::Label();
         backLabel->setText("< Back to Subtitles");
-        backLabel->setFontSize(16);
+        backLabel->setFontSize(ui(16));
         backLabel->setTextColor(nvgRGB(150, 200, 255));
         backItem->addView(backLabel);
 
@@ -3260,16 +3260,16 @@ void PlayerActivity::populateSubtitleSearchResults() {
     backItem->setAxis(brls::Axis::ROW);
     backItem->setJustifyContent(brls::JustifyContent::FLEX_START);
     backItem->setAlignItems(brls::AlignItems::CENTER);
-    backItem->setPaddingTop(10);
-    backItem->setPaddingBottom(10);
-    backItem->setPaddingLeft(12);
-    backItem->setPaddingRight(12);
-    backItem->setCornerRadius(4);
+    backItem->setPaddingTop(ui(10));
+    backItem->setPaddingBottom(ui(10));
+    backItem->setPaddingLeft(ui(12));
+    backItem->setPaddingRight(ui(12));
+    backItem->setCornerRadius(ui(4));
     backItem->setFocusable(true);
 
     brls::Label* backLabel = new brls::Label();
     backLabel->setText("< Back to Subtitles");
-    backLabel->setFontSize(16);
+    backLabel->setFontSize(ui(16));
     backLabel->setTextColor(nvgRGB(150, 200, 255));
     backItem->addView(backLabel);
 
@@ -3284,11 +3284,11 @@ void PlayerActivity::populateSubtitleSearchResults() {
 
     // Add separator
     brls::Box* sep = new brls::Box();
-    sep->setWidth(376);  // track list width (400) minus padding (24)
-    sep->setHeight(1);
+    sep->setWidthPercentage(100.0f);  // the list content box, either layout
+    sep->setHeight(ui(1));
     sep->setBackgroundColor(nvgRGBA(255, 255, 255, 40));
-    sep->setMarginTop(4);
-    sep->setMarginBottom(4);
+    sep->setMarginTop(ui(4));
+    sep->setMarginBottom(ui(4));
     trackList->addView(sep);
 
     // Show up to 15 results to avoid overflow on Vita's small screen
@@ -3309,16 +3309,16 @@ void PlayerActivity::populateSubtitleSearchResults() {
         item->setAxis(brls::Axis::ROW);
         item->setJustifyContent(brls::JustifyContent::FLEX_START);
         item->setAlignItems(brls::AlignItems::CENTER);
-        item->setPaddingTop(10);
-        item->setPaddingBottom(10);
-        item->setPaddingLeft(12);
-        item->setPaddingRight(12);
-        item->setCornerRadius(4);
+        item->setPaddingTop(ui(10));
+        item->setPaddingBottom(ui(10));
+        item->setPaddingLeft(ui(12));
+        item->setPaddingRight(ui(12));
+        item->setCornerRadius(ui(4));
         item->setFocusable(true);
 
         brls::Label* label = new brls::Label();
         label->setText(displayStr);
-        label->setFontSize(14);
+        label->setFontSize(ui(14));
         label->setTextColor(nvgRGB(220, 220, 220));
         item->addView(label);
 
