@@ -4215,23 +4215,40 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     // by accident while scrolling. ui() puts it near a third of the width there
     // and leaves the classic player where it was.
     const float kCommitPx = ui(120.0f);
-    const float kFadePx   = ui(200.0f);
+    // The commit distance is long enough that spreading the tint across all of
+    // it leaves the red barely there for most of the swipe. Saturate well
+    // before the end instead, so the colour is doing its job as a warning
+    // rather than as a progress bar.
+    const float kTintFullPx = kCommitPx * 0.4f;
+    const float kRestPx     = ui(4.0f);
     row->addGestureRecognizer(new brls::PanGestureRecognizer(
-        [this, row, restoreRowTint, kCommitPx, kFadePx](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
+        [this, row, restoreRowTint, kCommitPx, kTintFullPx, kRestPx](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
             if (status.state == brls::GestureState::UNSURE || status.state == brls::GestureState::START) {
                 float deltaX = status.position.x - status.startPosition.x;
-                if (deltaX > 0) { row->setTranslationX(0); row->setAlpha(1.0f); restoreRowTint(); return; }
+                if (deltaX > 0) { row->setTranslationX(0); restoreRowTint(); return; }
                 row->setTranslationX(deltaX);
-                float alpha = 1.0f - std::min(1.0f, std::abs(deltaX) / kFadePx);
-                row->setAlpha(std::max(0.2f, alpha));
-                // Ramp to full over the commit distance, then hold there. From
-                // zero, not a floor: swiping back has to clear the red as the
-                // finger returns, not only once it lifts. Below a hair's width
-                // the row is effectively at rest, so it gets its real colour
-                // back — otherwise a focused row would look unfocused mid-swipe.
-                float t = std::min(1.0f, std::abs(deltaX) / kCommitPx);
-                if (t < 0.03f) restoreRowTint();
-                else row->setBackgroundColor(nvgRGBA(200, 60, 60, (unsigned char)(170 * t)));
+                // No opacity fade on the row: view alpha multiplies through to
+                // the background, so fading the row and tinting it red fight
+                // each other and both come out weak. The slide plus the colour
+                // are the cue.
+                //
+                // Ramp from zero, not from a floor: swiping back has to clear
+                // the red as the finger returns, not only once it lifts. The
+                // curve is steep so the red still shows up immediately. Within
+                // a few units of rest the row is treated as unswiped and gets
+                // its real colour back, otherwise a focused row would look
+                // unfocused mid-swipe.
+                float d = std::abs(deltaX);
+                if (d < kRestPx) {
+                    restoreRowTint();
+                } else if (d >= kCommitPx) {
+                    // Armed — letting go here deletes, so say so plainly.
+                    row->setBackgroundColor(nvgRGBA(205, 55, 55, 235));
+                } else {
+                    float t = std::min(1.0f, d / kTintFullPx);
+                    row->setBackgroundColor(
+                        nvgRGBA(200, 60, 60, (unsigned char)(190.0f * std::sqrt(t))));
+                }
             } else if (status.state == brls::GestureState::END) {
                 float deltaX = status.position.x - status.startPosition.x;
                 if (deltaX < -kCommitPx) {
@@ -4243,11 +4260,9 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     }
                 }
                 row->setTranslationX(0);
-                row->setAlpha(1.0f);
                 restoreRowTint();
             } else if (status.state == brls::GestureState::FAILED) {
                 row->setTranslationX(0);
-                row->setAlpha(1.0f);
                 restoreRowTint();
             }
         }, brls::PanAxis::HORIZONTAL));
