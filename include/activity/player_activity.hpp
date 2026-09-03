@@ -188,6 +188,19 @@ private:
     float uiRow(float v) const { return m_mobileLayout ? v * kMobileRowScale : v; }
     static constexpr float kMobileUiScale  = 1280.f / 412.f;
     static constexpr float kMobileRowScale = 2.15f;
+    // A queue row's height and the gap below it. createQueueRow builds rows
+    // from these, and every scroll clamp, hold threshold and reorder target
+    // index has to agree with the result — a hand-copied 54 stops the list
+    // short of its end and moves a dragged track the wrong distance, so go
+    // through queueRowPitch() rather than writing the sum out again.
+    static constexpr float kQueueRowH   = 52.0f;
+    static constexpr float kQueueRowGap = 2.0f;
+    float queueRowPitch() const { return uiRow(kQueueRowH) + uiRow(kQueueRowGap); }
+    // How far the queue list can scroll. Reads the content view's measured
+    // height so it lands on exactly the limit ScrollingFrame enforces for
+    // itself; a figure derived from a row count and an assumed padding can
+    // only disagree with it, and does.
+    float queueMaxScroll();
     // Heights the mobile layout budgets against, in borealis logical units and
     // matching player_mobile.xml: everything below the cover, the collapsed
     // sheet, and the smallest cover worth calling a cover.

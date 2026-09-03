@@ -367,7 +367,10 @@ void PlayerActivity::onContentAvailable() {
                 if (!m_isQueueMode) return;
                 if (status.state == brls::GestureState::END) {
                     float deltaX = status.position.x - status.startPosition.x;
-                    float threshold = 60.0f; // Minimum swipe distance
+                    // Scaled, or on the mobile layout this is ~19dp — barely
+                    // past the 6-unit slop the recogniser needs to call it a
+                    // pan at all, so a nudge on the cover skips a track.
+                    float threshold = ui(60.0f);
                     if (deltaX > threshold) {
                         // Swipe right = previous track
                         playPrevious();
@@ -4099,12 +4102,12 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     row->setAxis(brls::Axis::ROW);
     row->setJustifyContent(brls::JustifyContent::FLEX_START);
     row->setAlignItems(brls::AlignItems::CENTER);
-    row->setHeight(uiRow(52));
+    row->setHeight(uiRow(kQueueRowH));
     row->setPaddingLeft(uiRow(10));
     row->setPaddingRight(uiRow(10));
     row->setCornerRadius(uiRow(9));
     row->setFocusable(true);
-    row->setMarginBottom(uiRow(2));
+    row->setMarginBottom(uiRow(kQueueRowGap));
     row->setBackgroundColor(nvgRGBA(0, 0, 0, 0));
 
     // Drag-handle glyph (3 stacked bars) - a visual affordance for reordering
@@ -4284,13 +4287,8 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     // row follows the finger while neighbours slide out of the way, and the
     // drop commits via moveTrack + rebuild.
     row->addGestureRecognizer(new brls::PanGestureRecognizer(
-        [this, row](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
-            // Must match what createQueueRow actually builds, not the classic
-            // layout's numbers. This drives the scroll clamp on the passthrough
-            // path below, the auto-scroll clamp, the hold threshold and the
-            // reorder target index — so a stale value both stops the list short
-            // of its end and makes a drag move the track the wrong distance.
-            const float rowH = uiRow(52.0f) + uiRow(2.0f);   // height + margin
+        [this, row, restoreRowTint](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
+            const float rowH = queueRowPitch();
             float deltaY = status.position.y - status.startPosition.y;
 
             if (status.state == brls::GestureState::UNSURE) {
@@ -4326,12 +4324,10 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
 
                 // Not yet a drag: forward the vertical motion to the scroll view
                 if (m_dragState.scrollPassthrough && m_dragState.draggedRow == row) {
-                    if (queueScroll && std::abs(deltaY) >= 10.0f) {
+                    if (queueScroll && std::abs(deltaY) >= ui(10.0f)) {
                         float newOffset = m_dragState.initialScrollY - deltaY;
                         if (newOffset < 0) newOffset = 0;
-                        float viewH = queueScroll->getHeight();
-                        int n = queueList ? (int)queueList->getChildren().size() : 0;
-                        float maxScroll = std::max(0.0f, n * rowH + 8.0f - viewH);
+                        float maxScroll = queueMaxScroll();
                         if (newOffset > maxScroll) newOffset = maxScroll;
                         queueScroll->setContentOffsetY(newOffset, false);
                     }
@@ -4365,8 +4361,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     float viewH = queueScroll->getHeight();
                     float fingerInView = status.position.y - queueScroll->getY();
                     float scrollY = queueScroll->getContentOffsetY();
-                    int n = queueList ? (int)queueList->getChildren().size() : 0;
-                    float maxScroll = std::max(0.0f, n * rowH + 8.0f - viewH);
+                    float maxScroll = queueMaxScroll();
                     float past = fingerInView - (viewH - EDGE);   // into the bottom zone
                     float above = EDGE - fingerInView;            // into the top zone
                     if (past > 0 && scrollY < maxScroll) {
@@ -4401,7 +4396,8 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     }
                 }
             } else if (status.state == brls::GestureState::END ||
-                       status.state == brls::GestureState::FAILED) {
+                       status.state == brls::GestureState::FAILED ||
+                       status.state == brls::GestureState::INTERRUPTED) {
                 bool didDrag = m_dragState.holdMet && m_dragState.draggedRow == row;
                 int origIdx = m_dragState.originalDisplayIdx;
                 int targetIdx = m_dragState.targetDisplayIdx;
@@ -4445,10 +4441,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 }
                 // Suppress the click that fires right after a drag gesture
                 m_dragState.justEnded = didDrag;
-                if (!committed) {
-                    row->setBackgroundColor(m_focusedQueueRow == row
-                        ? nvgRGB(58, 58, 70) : nvgRGBA(0, 0, 0, 0));
-                }
+                if (!committed) restoreRowTint();
 
                 m_dragState.active = false;
                 m_dragState.holdMet = false;
@@ -4805,13 +4798,25 @@ void PlayerActivity::refixQueueUpRoutes(int lo) {
     }
 }
 
+float PlayerActivity::queueMaxScroll() {
+    if (!queueScroll || !queueList) return 0.0f;
+    // ScrollingFrame clamps itself against its content view's measured height,
+    // so anything we compute independently -- a row count times an assumed
+    // pitch, plus an assumed padding -- can only ever disagree with it, and
+    // then a scroll either overshoots and snaps back or stops short of the
+    // end. Ask the same question it asks.
+    float contentH = queueList->getHeight();
+    if (contentH <= 0.0f)   // not laid out yet: estimate from what we build
+        contentH = (float)queueList->getChildren().size() * queueRowPitch();
+    return std::max(0.0f, contentH - queueScroll->getHeight());
+}
+
 void PlayerActivity::scrollQueueToChild(int idx) {
     if (!queueScroll || !queueList || idx < 0) return;
-    constexpr float rowH = 54.0f;  // 52 height + 2 margin (matches the rows)
+    const float rowH = queueRowPitch();
     float viewH = queueScroll->getHeight();
     if (viewH <= 0.0f) return;
-    int n = (int)queueList->getChildren().size();
-    float maxScroll = std::max(0.0f, n * rowH + 8.0f - viewH);
+    float maxScroll = queueMaxScroll();
     // Center the row (clamped at the ends), matching the list's CENTERED nav so
     // a grab-mode move keeps the held row centered as the list scrolls under it.
     float newOffset = (idx * rowH + rowH / 2.0f) - viewH / 2.0f;
