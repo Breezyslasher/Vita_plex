@@ -4350,17 +4350,31 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 // STAY fires every frame the finger is held, so this keeps
                 // scrolling even when the finger isn't moving.
                 if (queueScroll) {
-                    constexpr float EDGE = 44.0f;
-                    constexpr float SPEED = 9.0f;
+                    // Both of these used to be bare literals, which made the
+                    // mobile layout the slow one: 9 units a frame is a sixth of
+                    // a classic row but only a thirteenth of a mobile row, so
+                    // the same code crawled at under half the speed on the
+                    // layout with the taller rows. Rate is in rows now, so the
+                    // two layouts move at the same pace down the list.
+                    const float EDGE = ui(44.0f);
+                    // ...and it ramps with how deep into the zone the finger
+                    // is: a creep at the boundary to place a track exactly,
+                    // fast at the very edge to cross a long queue.
+                    const float SLOW = rowH * 0.03f;
+                    const float FAST = rowH * 0.18f;
                     float viewH = queueScroll->getHeight();
                     float fingerInView = status.position.y - queueScroll->getY();
                     float scrollY = queueScroll->getContentOffsetY();
                     int n = queueList ? (int)queueList->getChildren().size() : 0;
                     float maxScroll = std::max(0.0f, n * rowH + 8.0f - viewH);
-                    if (fingerInView > viewH - EDGE && scrollY < maxScroll) {
-                        queueScroll->setContentOffsetY(std::min(maxScroll, scrollY + SPEED), false);
-                    } else if (fingerInView < EDGE && scrollY > 0) {
-                        queueScroll->setContentOffsetY(std::max(0.0f, scrollY - SPEED), false);
+                    float past = fingerInView - (viewH - EDGE);   // into the bottom zone
+                    float above = EDGE - fingerInView;            // into the top zone
+                    if (past > 0 && scrollY < maxScroll) {
+                        float speed = SLOW + (FAST - SLOW) * std::min(1.0f, past / EDGE);
+                        queueScroll->setContentOffsetY(std::min(maxScroll, scrollY + speed), false);
+                    } else if (above > 0 && scrollY > 0) {
+                        float speed = SLOW + (FAST - SLOW) * std::min(1.0f, above / EDGE);
+                        queueScroll->setContentOffsetY(std::max(0.0f, scrollY - speed), false);
                     }
                     // Re-read the scroll offset so the dragged row stays under the
                     // finger and the target index reflects the new scroll position.
