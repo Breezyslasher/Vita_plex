@@ -138,10 +138,6 @@ private:
     void showQueueOverlay();
     void hideQueueOverlay();
     void populateQueueList();       // Build queue list with cover art and titles
-    // Set once the scroll geometry has been reported for an opening of the
-    // sheet, so the check above logs once rather than every tick.
-    bool m_queueScrollLogged = false;
-    void logQueueScrollGeometry();  // one-shot, from the per-second tick
     void playFromQueue(int index);  // Play a specific track from queue list
     // Lyrics. Drawn by the app, not by mpv: music plays with vo=null and no
     // render context, so a subtitle handed to mpv has no surface to land on.

@@ -2033,7 +2033,6 @@ void PlayerActivity::updateProgress() {
     if (duration <= 0)
         duration = player.getDuration();
 
-    logQueueScrollGeometry();
 
     // A music seek can restart the transcode part-way into the track, after
     // which mpv's clock runs from zero again. MusicController knows where the
@@ -3839,27 +3838,6 @@ void PlayerActivity::onTrackEnded(const QueueItem* nextTrack) {
 }
 
 
-// One-shot report of the queue sheet's scroll geometry. Scrolling is bounded by
-// (content height - frame height), so if the list stops short of its end, those
-// two numbers say whether the geometry is wrong or whether the gesture handling
-// is. Called from the per-second tick: updateQueueDisplay only runs on a track
-// load or a transport action, so a check living there never fired while the
-// sheet simply sat open.
-void PlayerActivity::logQueueScrollGeometry() {
-    if (!m_queueOverlayVisible || m_queueScrollLogged) return;
-    if (!queueScroll || !queueList || m_queueBatchActive) return;
-    if (queueList->getChildren().size() <= 6) return;
-    // Wait for a real layout pass; zeroes would burn the one shot on a line
-    // that says nothing.
-    if (queueScroll->getHeight() <= 1.0f || queueList->getHeight() <= 1.0f) return;
-
-    m_queueScrollLogged = true;
-    brls::Logger::info("Queue sheet: frame h={} content h={} rows={} -> scrollable={}",
-                       queueScroll->getHeight(), queueList->getHeight(),
-                       (int)queueList->getChildren().size(),
-                       queueList->getHeight() - queueScroll->getHeight());
-}
-
 void PlayerActivity::updateQueueDisplay() {
     if (!m_isQueueMode) return;
 
@@ -4014,7 +3992,6 @@ void PlayerActivity::wireMobileSheet() {
 // Queue list overlay methods
 
 void PlayerActivity::showQueueOverlay() {
-    m_queueScrollLogged = false;
     if (m_queueOverlayVisible) {
         hideQueueOverlay();
         return;
@@ -4250,7 +4227,12 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     // drop commits via moveTrack + rebuild.
     row->addGestureRecognizer(new brls::PanGestureRecognizer(
         [this, row](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
-            constexpr float rowH = 54.0f;  // 52 height + 2 margin
+            // Must match what createQueueRow actually builds, not the classic
+            // layout's numbers. This drives the scroll clamp on the passthrough
+            // path below, the auto-scroll clamp, the hold threshold and the
+            // reorder target index — so a stale value both stops the list short
+            // of its end and makes a drag move the track the wrong distance.
+            const float rowH = uiRow(52.0f) + uiRow(2.0f);   // height + margin
             float deltaY = status.position.y - status.startPosition.y;
 
             if (status.state == brls::GestureState::UNSURE) {
