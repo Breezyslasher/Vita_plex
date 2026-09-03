@@ -3877,7 +3877,10 @@ void PlayerActivity::updateQueueDisplay() {
     // list will stop short of its end and it is this that is wrong, not the
     // gesture handling. Logged once per opening rather than guessed at.
     if (m_queueOverlayVisible && !m_queueScrollLogged && queueScroll && queueList
-        && !m_queueBatchActive && queueList->getChildren().size() > 6) {
+        && !m_queueBatchActive && queueList->getChildren().size() > 6
+        // Wait for a real layout: logging zeroes from before the first pass
+        // would burn the one-shot on a line that says nothing.
+        && queueScroll->getHeight() > 1.0f && queueList->getHeight() > 1.0f) {
         m_queueScrollLogged = true;
         brls::Logger::info("Queue sheet: frame h={} content h={} rows={} -> scrollable={}",
                            queueScroll->getHeight(), queueList->getHeight(),
