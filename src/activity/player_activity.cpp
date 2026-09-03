@@ -4194,18 +4194,37 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     // Row -> track mapping (looked up dynamically by the handlers below)
     m_queueRowData[row] = {trackIdx, track.title, removeBtn};
 
-    // Swipe left to remove this track from the queue
+    // Swipe left to remove this track from the queue. The row reddens as it
+    // goes, mirroring the gold lift a grab gives: the tint deepens with the
+    // swipe and saturates once past the commit distance, so letting go there is
+    // clearly going to delete rather than a guess about how far is far enough.
+    //
+    // Whatever the row's resting colour is depends on focus and on whether a
+    // track is being held, so an abandoned swipe restores it from the same rule
+    // the focus handler uses rather than assuming transparent.
+    auto restoreRowTint = [this, row]() {
+        if (row == m_focusedQueueRow) {
+            row->setBackgroundColor(m_queueGrabActive ? nvgRGBA(229, 160, 13, 90)
+                                                      : nvgRGB(58, 58, 70));
+        } else {
+            row->setBackgroundColor(nvgRGBA(0, 0, 0, 0));
+        }
+    };
     row->addGestureRecognizer(new brls::PanGestureRecognizer(
-        [this, row](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
+        [this, row, restoreRowTint](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
+            constexpr float kCommitPx = 120.0f;   // same distance the END check uses
             if (status.state == brls::GestureState::UNSURE || status.state == brls::GestureState::START) {
                 float deltaX = status.position.x - status.startPosition.x;
-                if (deltaX > 0) { row->setTranslationX(0); row->setAlpha(1.0f); return; }
+                if (deltaX > 0) { row->setTranslationX(0); row->setAlpha(1.0f); restoreRowTint(); return; }
                 row->setTranslationX(deltaX);
                 float alpha = 1.0f - std::min(1.0f, std::abs(deltaX) / 200.0f);
                 row->setAlpha(std::max(0.2f, alpha));
+                // Ramp to full over the commit distance, then hold there.
+                float t = std::min(1.0f, std::abs(deltaX) / kCommitPx);
+                row->setBackgroundColor(nvgRGBA(200, 60, 60, (unsigned char)(40 + 130 * t)));
             } else if (status.state == brls::GestureState::END) {
                 float deltaX = status.position.x - status.startPosition.x;
-                if (deltaX < -120.0f) {
+                if (deltaX < -kCommitPx) {
                     auto it = m_queueRowData.find(row);
                     if (it != m_queueRowData.end()) {
                         int tIdx = it->second.trackIdx;
@@ -4215,9 +4234,11 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 }
                 row->setTranslationX(0);
                 row->setAlpha(1.0f);
+                restoreRowTint();
             } else if (status.state == brls::GestureState::FAILED) {
                 row->setTranslationX(0);
                 row->setAlpha(1.0f);
+                restoreRowTint();
             }
         }, brls::PanAxis::HORIZONTAL));
 
