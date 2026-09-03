@@ -1849,34 +1849,29 @@ void LibrarySectionTab::performPlaylistTrackAction(size_t trackIndex) {
 }
 
 void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
-    auto* dialog = new brls::Dialog(playlist.title);
+    // Same popover the track / album / episode / movie / show menus use, so a
+    // playlist does not open a differently-styled sheet from everything else.
+    // The rows are the former buttons verbatim, minus their dialog->dismiss():
+    // showOptionsPopover dismisses before running the action itself.
+    brls::View* anchor = brls::Application::getCurrentFocus();
+    std::vector<OptionRow> rows;
 
-    auto* optionsBox = new brls::Box();
-    optionsBox->setAxis(brls::Axis::COLUMN);
-    optionsBox->setPadding(20);
-
-    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
-        auto* btn = new brls::Button();
-        btn->setText(text);
-        btn->setHeight(44);
-        btn->setMarginBottom(10);
-        btn->registerClickAction(action);
-        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-        optionsBox->addView(btn);
+    auto addDialogButtonIcon = [&rows](const std::string& icon, bool primary, bool danger,
+                                       const std::string& text,
+                                       std::function<bool(brls::View*)> action) {
+        rows.push_back({ icon, text, "", primary, danger, std::move(action) });
     };
 
     Playlist capturedPlaylist = playlist;
 
-    addDialogButton("Play Now (Clear Queue)", [this, capturedPlaylist, dialog](brls::View*) {
-        dialog->dismiss();
+    addDialogButtonIcon("play.png", true, false, "Play Now (Clear Queue)", [this, capturedPlaylist](brls::View*) {
         // Playing the whole playlist: index 0 is just the top of the list, not a
         // choice, so shuffle gets to pick the opening track.
         playPlaylistWithQueue(capturedPlaylist.ratingKey, 0, /*userPickedTrack=*/false);
         return true;
     });
 
-    addDialogButton("Add to Queue", [capturedPlaylist, dialog](brls::View*) {
-        dialog->dismiss();
+    addDialogButtonIcon("playlist-plus.png", false, false, "Add to Queue", [capturedPlaylist](brls::View*) {
         std::string playlistId = capturedPlaylist.ratingKey;
         asyncRun([playlistId]() {
             PlexClient& client = PlexClient::getInstance();
@@ -1905,8 +1900,7 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
         return true;
     });
 
-    addDialogButton("Download", [capturedPlaylist, dialog](brls::View*) {
-        dialog->dismiss();
+    addDialogButtonIcon("download.png", false, false, "Download", [capturedPlaylist](brls::View*) {
         std::string playlistId = capturedPlaylist.ratingKey;
         std::string playlistTitle = capturedPlaylist.title;
         std::string playlistThumb = capturedPlaylist.thumb.empty() ? capturedPlaylist.composite : capturedPlaylist.thumb;
@@ -1952,17 +1946,11 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
         return true;
     });
 
-    addDialogButton("Cancel", [dialog](brls::View*) {
-        dialog->dismiss();
+    addDialogButtonIcon("cross.png", false, true, "Cancel", [](brls::View*) {
         return true;
     });
 
-    dialog->addView(optionsBox);
-    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
-        dialog->dismiss();
-        return true;
-    });
-    brls::Application::pushActivity(new brls::Activity(dialog));
+    MediaDetailView::showOptionsPopover(anchor, "PLAYLIST", playlist.title, std::move(rows));
 }
 
 void LibrarySectionTab::showPlaylistOptionsDialog(const Playlist& playlist) {

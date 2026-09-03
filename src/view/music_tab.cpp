@@ -851,48 +851,32 @@ void MusicTab::showAlbumContextMenu(const MediaItem& album) {
 }
 
 void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
-    auto* dialog = new brls::Dialog(playlist.title);
+    // The shared popover, as the track / album / show menus use — a playlist
+    // was the last thing still opening a stock Dialog. The track count and the
+    // smart-playlist note move into the context line rather than an info box;
+    // that line is exactly what carries "ALBUM", "SHOW" and so on elsewhere.
+    brls::View* anchor = brls::Application::getCurrentFocus();
+    std::string contextLine = "PLAYLIST \u00b7 " + std::to_string(playlist.leafCount) + " TRACKS";
+    if (playlist.smart) contextLine += " \u00b7 SMART";
 
-    auto* optionsBox = new brls::Box();
-    optionsBox->setAxis(brls::Axis::COLUMN);
-    optionsBox->setPadding(20);
+    std::vector<OptionRow> rows;
 
-    auto* trackCount = new brls::Label();
-    trackCount->setText("Tracks: " + std::to_string(playlist.leafCount));
-    trackCount->setMarginBottom(10);
-    optionsBox->addView(trackCount);
-
-    if (playlist.smart) {
-        auto* smartLabel = new brls::Label();
-        smartLabel->setText("(Smart Playlist - cannot be edited)");
-        smartLabel->setFontSize(14);
-        smartLabel->setTextColor(nvgRGBA(150, 150, 150, 255));
-        smartLabel->setMarginBottom(10);
-        optionsBox->addView(smartLabel);
-    }
-
-    auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
-        auto* btn = new brls::Button();
-        btn->setText(text);
-        btn->setHeight(44);
-        btn->setMarginBottom(10);
-        btn->registerClickAction(action);
-        btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-        optionsBox->addView(btn);
+    auto addDialogButtonIcon = [&rows](const std::string& icon, bool primary, bool danger,
+                                       const std::string& text,
+                                       std::function<bool(brls::View*)> action) {
+        rows.push_back({ icon, text, "", primary, danger, std::move(action) });
     };
 
     Playlist capturedPlaylist = playlist;
 
-    addDialogButton("Play All", [this, capturedPlaylist, dialog](brls::View*) {
-        dialog->dismiss();
+    addDialogButtonIcon("play.png", true, false, "Play All", [this, capturedPlaylist](brls::View*) {
         // Playing the whole playlist: index 0 is just the top of the list, not a
         // choice, so shuffle gets to pick the opening track.
         playPlaylistWithQueue(capturedPlaylist.ratingKey, 0, /*userPickedTrack=*/false);
         return true;
     });
 
-    addDialogButton("Add to Queue", [capturedPlaylist, dialog](brls::View*) {
-        dialog->dismiss();
+    addDialogButtonIcon("playlist-plus.png", false, false, "Add to Queue", [capturedPlaylist](brls::View*) {
         std::string playlistId = capturedPlaylist.ratingKey;
         asyncRun([playlistId]() {
             PlexClient& client = PlexClient::getInstance();
@@ -921,8 +905,7 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
         return true;
     });
 
-    addDialogButton("Download", [capturedPlaylist, dialog](brls::View*) {
-        dialog->dismiss();
+    addDialogButtonIcon("download.png", false, false, "Download", [capturedPlaylist](brls::View*) {
         std::string playlistId = capturedPlaylist.ratingKey;
         std::string playlistTitle = capturedPlaylist.title;
         std::string playlistThumb = capturedPlaylist.thumb.empty() ? capturedPlaylist.composite : capturedPlaylist.thumb;
@@ -970,8 +953,7 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
 
     // Delete button (only for non-smart playlists)
     if (!capturedPlaylist.smart) {
-        addDialogButton("Delete", [this, capturedPlaylist, dialog](brls::View*) {
-            dialog->dismiss();
+        addDialogButtonIcon("delete-outline.png", false, true, "Delete", [this, capturedPlaylist](brls::View*) {
             brls::Dialog* confirmDialog = new brls::Dialog("Delete this playlist?");
             confirmDialog->addButton("Yes, Delete", [this, capturedPlaylist]() {
                 std::weak_ptr<bool> aliveWeak = m_alive;
@@ -998,17 +980,11 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
         });
     }
 
-    addDialogButton("Cancel", [dialog](brls::View*) {
-        dialog->dismiss();
+    addDialogButtonIcon("cross.png", false, true, "Cancel", [](brls::View*) {
         return true;
     });
 
-    dialog->addView(optionsBox);
-    dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
-        dialog->dismiss();
-        return true;
-    });
-    brls::Application::pushActivity(new brls::Activity(dialog));
+    MediaDetailView::showOptionsPopover(anchor, contextLine, playlist.title, std::move(rows));
 }
 
 } // namespace vitaplex
