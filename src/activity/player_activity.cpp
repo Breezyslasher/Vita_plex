@@ -4223,7 +4223,15 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     const float kRestPx     = ui(4.0f);
     row->addGestureRecognizer(new brls::PanGestureRecognizer(
         [this, row, restoreRowTint, kCommitPx, kTintFullPx, kRestPx](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
-            if (status.state == brls::GestureState::UNSURE || status.state == brls::GestureState::START) {
+            // STAY is the state for every frame of a pan in progress; UNSURE
+            // and START each fire exactly once and both report a zero delta
+            // (the recognizer rebases startPosition when it promotes UNSURE to
+            // START). Leaving STAY out meant the only frames this ever saw had
+            // nothing to draw, so the row never actually followed the finger
+            // and the tint never left its resting value.
+            if (status.state == brls::GestureState::UNSURE ||
+                status.state == brls::GestureState::START ||
+                status.state == brls::GestureState::STAY) {
                 float deltaX = status.position.x - status.startPosition.x;
                 if (deltaX > 0) { row->setTranslationX(0); restoreRowTint(); return; }
                 row->setTranslationX(deltaX);
@@ -4261,7 +4269,11 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 }
                 row->setTranslationX(0);
                 restoreRowTint();
-            } else if (status.state == brls::GestureState::FAILED) {
+            } else if (status.state == brls::GestureState::FAILED ||
+                       status.state == brls::GestureState::INTERRUPTED) {
+                // A swipe that turns into a vertical drag gets interrupted
+                // rather than failed, and without this the row keeps whatever
+                // offset and red it had reached.
                 row->setTranslationX(0);
                 restoreRowTint();
             }
