@@ -626,23 +626,23 @@
             axis="column"
             alignItems="stretch"
             backgroundColor="#212124"
-            cornerRadius="174"
-            paddingTop="115"
-            paddingLeft="174"
-            paddingRight="174"
-            paddingBottom="56">
+            cornerRadius="56"
+            paddingTop="34"
+            paddingLeft="56"
+            paddingRight="56"
+            paddingBottom="18">
 
             <!-- Header -->
             <brls:Box
                 width="100%"
                 axis="row"
                 alignItems="center"
-                marginBottom="43">
+                marginBottom="22">
                 <brls:Label
                     id="player/queue_overlay_title"
                     text="Queue"
                     grow="1"
-                    fontSize="65"
+                    fontSize="52"
                     textColor="#FFFFFF"/>
             </brls:Box>
 

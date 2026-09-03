@@ -4097,12 +4097,12 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     row->setAxis(brls::Axis::ROW);
     row->setJustifyContent(brls::JustifyContent::FLEX_START);
     row->setAlignItems(brls::AlignItems::CENTER);
-    row->setHeight(ui(52));
-    row->setPaddingLeft(ui(10));
-    row->setPaddingRight(ui(10));
-    row->setCornerRadius(ui(9));
+    row->setHeight(uiRow(52));
+    row->setPaddingLeft(uiRow(10));
+    row->setPaddingRight(uiRow(10));
+    row->setCornerRadius(uiRow(9));
     row->setFocusable(true);
-    row->setMarginBottom(ui(2));
+    row->setMarginBottom(uiRow(2));
     row->setBackgroundColor(nvgRGBA(0, 0, 0, 0));
 
     // Drag-handle glyph (3 stacked bars) - a visual affordance for reordering
@@ -4110,26 +4110,26 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     grip->setAxis(brls::Axis::COLUMN);
     grip->setJustifyContent(brls::JustifyContent::CENTER);
     grip->setAlignItems(brls::AlignItems::CENTER);
-    grip->setWidth(ui(14));
-    grip->setMarginRight(ui(8));
+    grip->setWidth(uiRow(14));
+    grip->setMarginRight(uiRow(8));
     for (int b = 0; b < 3; b++) {
         brls::Box* bar = new brls::Box();
-        bar->setWidth(ui(12));
-        bar->setHeight(ui(2));
-        bar->setCornerRadius(ui(1));
+        bar->setWidth(uiRow(12));
+        bar->setHeight(uiRow(2));
+        bar->setCornerRadius(uiRow(1));
         bar->setBackgroundColor(nvgRGB(138, 138, 144));
-        if (b < 2) bar->setMarginBottom(ui(3));
+        if (b < 2) bar->setMarginBottom(uiRow(3));
         grip->addView(bar);
     }
     row->addView(grip);
 
     // Cover art thumbnail (38x38), loaded lazily when the row nears the viewport
     brls::Image* thumb = new brls::Image();
-    thumb->setWidth(ui(38));
-    thumb->setHeight(ui(38));
-    thumb->setCornerRadius(ui(6));
+    thumb->setWidth(uiRow(38));
+    thumb->setHeight(uiRow(38));
+    thumb->setCornerRadius(uiRow(6));
     thumb->setScalingType(brls::ImageScalingType::FIT);
-    thumb->setMarginRight(ui(11));
+    thumb->setMarginRight(uiRow(11));
     m_deferredThumbs.push_back({thumb, track.thumb, track.ratingKey, false});
     row->addView(thumb);
 
@@ -4152,7 +4152,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
         artistLbl->setFontSize(ui(12));
         artistLbl->setTextColor(nvgRGB(180, 180, 186));
         artistLbl->setSingleLine(true);
-        artistLbl->setMarginTop(ui(1));
+        artistLbl->setMarginTop(uiRow(1));
         meta->addView(artistLbl);
     }
     row->addView(meta);
@@ -4168,7 +4168,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     }
     durLbl->setFontSize(ui(12));
     durLbl->setTextColor(nvgRGB(138, 138, 144));
-    durLbl->setMarginLeft(ui(8));
+    durLbl->setMarginLeft(uiRow(8));
     row->addView(durLbl);
 
     // Remove (x) affordance - reserved space, revealed only while focused
@@ -4176,14 +4176,14 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     removeBtn->setAxis(brls::Axis::ROW);
     removeBtn->setJustifyContent(brls::JustifyContent::CENTER);
     removeBtn->setAlignItems(brls::AlignItems::CENTER);
-    removeBtn->setWidth(ui(24));
-    removeBtn->setHeight(ui(24));
-    removeBtn->setCornerRadius(ui(6));
-    removeBtn->setMarginLeft(ui(6));
+    removeBtn->setWidth(uiRow(24));
+    removeBtn->setHeight(uiRow(24));
+    removeBtn->setCornerRadius(uiRow(6));
+    removeBtn->setMarginLeft(uiRow(6));
     removeBtn->setVisibility(brls::Visibility::INVISIBLE);
     brls::Image* removeIcon = new brls::Image();
-    removeIcon->setWidth(ui(12));
-    removeIcon->setHeight(ui(12));
+    removeIcon->setWidth(uiRow(12));
+    removeIcon->setHeight(uiRow(12));
     removeIcon->setScalingType(brls::ImageScalingType::FIT);
     removeIcon->setImageFromRes("icons/cross.png");
     removeBtn->addView(removeIcon);

@@ -180,7 +180,14 @@ private:
     // (1280 logical units standing in for the handoff's 412), so anything it
     // shares has to be scaled the same way or it renders a third of the size.
     float ui(float v) const { return m_mobileLayout ? v * kMobileUiScale : v; }
-    static constexpr float kMobileUiScale = 1280.f / 412.f;
+    // List-row geometry wants a gentler factor than type does. At the full
+    // scale a queue row is ~161 units tall and only two or three fit the sheet;
+    // the text at that size is right, but the box around it is not. So heights,
+    // thumbnails and margins in the row builders scale by this instead, while
+    // their labels keep ui().
+    float uiRow(float v) const { return m_mobileLayout ? v * kMobileRowScale : v; }
+    static constexpr float kMobileUiScale  = 1280.f / 412.f;
+    static constexpr float kMobileRowScale = 2.15f;
     // Heights the mobile layout budgets against, in borealis logical units and
     // matching player_mobile.xml: everything below the cover, the collapsed
     // sheet, and the smallest cover worth calling a cover.
