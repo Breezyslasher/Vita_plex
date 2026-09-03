@@ -4210,18 +4210,28 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
             row->setBackgroundColor(nvgRGBA(0, 0, 0, 0));
         }
     };
+    // How far is "far enough" has to scale with the layout. 120 units is about
+    // 9% of the 1280-wide logical space — a flick on a phone, and easy to fire
+    // by accident while scrolling. ui() puts it near a third of the width there
+    // and leaves the classic player where it was.
+    const float kCommitPx = ui(120.0f);
+    const float kFadePx   = ui(200.0f);
     row->addGestureRecognizer(new brls::PanGestureRecognizer(
-        [this, row, restoreRowTint](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
-            constexpr float kCommitPx = 120.0f;   // same distance the END check uses
+        [this, row, restoreRowTint, kCommitPx, kFadePx](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
             if (status.state == brls::GestureState::UNSURE || status.state == brls::GestureState::START) {
                 float deltaX = status.position.x - status.startPosition.x;
                 if (deltaX > 0) { row->setTranslationX(0); row->setAlpha(1.0f); restoreRowTint(); return; }
                 row->setTranslationX(deltaX);
-                float alpha = 1.0f - std::min(1.0f, std::abs(deltaX) / 200.0f);
+                float alpha = 1.0f - std::min(1.0f, std::abs(deltaX) / kFadePx);
                 row->setAlpha(std::max(0.2f, alpha));
-                // Ramp to full over the commit distance, then hold there.
+                // Ramp to full over the commit distance, then hold there. From
+                // zero, not a floor: swiping back has to clear the red as the
+                // finger returns, not only once it lifts. Below a hair's width
+                // the row is effectively at rest, so it gets its real colour
+                // back — otherwise a focused row would look unfocused mid-swipe.
                 float t = std::min(1.0f, std::abs(deltaX) / kCommitPx);
-                row->setBackgroundColor(nvgRGBA(200, 60, 60, (unsigned char)(40 + 130 * t)));
+                if (t < 0.03f) restoreRowTint();
+                else row->setBackgroundColor(nvgRGBA(200, 60, 60, (unsigned char)(170 * t)));
             } else if (status.state == brls::GestureState::END) {
                 float deltaX = status.position.x - status.startPosition.x;
                 if (deltaX < -kCommitPx) {
