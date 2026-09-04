@@ -133,6 +133,11 @@ struct AppSettings {
     // window. 0 = Auto (phone gets Mobile, everything else Classic),
     // 1 = Classic (today's player everywhere), 2 = Mobile (big art everywhere).
     int playerLayout = 0;
+    // Same three choices for the video player, kept separate because the two
+    // layouts answer different questions: the music one is a portrait Now
+    // Playing screen, the video one a landscape OSD over the picture. Wanting
+    // one is no reason to be given the other.
+    int videoPlayerLayout = 0;
     // ISO 639-1 / -2 code prefilled into the subtitle search dialog and
     // used as the default when the user opens "Search online for
     // subtitles…". Empty falls back to "en". User-editable from the

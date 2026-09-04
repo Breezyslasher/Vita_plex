@@ -681,6 +681,25 @@ brls::Box* SettingsTab::createUISection() {
     playerLayoutInfo->setMarginTop(8);
     box->addView(playerLayoutInfo);
 
+    // The same choice for video, separately: the music layout is a portrait Now
+    // Playing screen and the video one a landscape OSD, so wanting one says
+    // nothing about wanting the other.
+    m_videoPlayerLayoutSelector = makePickerCell("Video Player Layout",
+        {"Auto", "Classic", "Mobile"},
+        settings.videoPlayerLayout,
+        [this](int index) {
+            onVideoPlayerLayoutChanged(index);
+        });
+    box->addView(m_videoPlayerLayoutSelector);
+
+    auto* videoPlayerLayoutInfo = new brls::Label();
+    videoPlayerLayoutInfo->setText(
+        "Auto uses the touch OSD on phones and the current controls everywhere else");
+    videoPlayerLayoutInfo->setFontSize(14);
+    videoPlayerLayoutInfo->setMarginLeft(16);
+    videoPlayerLayoutInfo->setMarginTop(8);
+    box->addView(videoPlayerLayoutInfo);
+
     // Debug logging toggle
     m_debugLogToggle = new brls::BooleanCell();
     m_debugLogToggle->init("Debug Logging", settings.debugLogging, [&settings](bool value) {
@@ -1631,6 +1650,16 @@ void SettingsTab::onPlayerLayoutChanged(int index) {
     brls::Application::notify(index == 0 ? "Player layout: Auto"
                             : index == 1 ? "Player layout: Classic"
                                          : "Player layout: Mobile");
+}
+
+void SettingsTab::onVideoPlayerLayoutChanged(int index) {
+    if (index < 0 || index > 2) return;
+    Application& app = Application::getInstance();
+    app.getSettings().videoPlayerLayout = index;
+    app.saveSettings();
+    brls::Application::notify(index == 0 ? "Video player layout: Auto"
+                            : index == 1 ? "Video player layout: Classic"
+                                         : "Video player layout: Mobile");
 }
 
 void SettingsTab::onControlsAutoHideChanged(int index) {

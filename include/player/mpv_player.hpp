@@ -103,6 +103,14 @@ public:
     bool isMuted() const;
     void toggleMute();
 
+    // Playback speed (clamped to 0.25x - 4x)
+    void setSpeed(double speed);
+    double getSpeed() const;
+
+    // Video sizing: fit letterboxes the whole frame, fill crops it to the window
+    void setFillScreen(bool fill);
+    bool isFillScreen() const;
+
     // Track info (from MPV's track-list)
     struct TrackInfo {
         int id = 0;              // MPV track ID

@@ -1013,6 +1013,44 @@ void MpvPlayer::toggleMute() {
     mpv_command_async(m_mpv, 0, cmd);
 }
 
+void MpvPlayer::setSpeed(double speed) {
+    if (!m_mpv || m_stopping) return;
+
+    // mpv will accept far wider than this, but past these the audio filter stops
+    // producing anything intelligible and seeking gets unreliable.
+    if (speed < 0.25) speed = 0.25;
+    if (speed > 4.0)  speed = 4.0;
+
+    mpv_set_property_async(m_mpv, 0, "speed", MPV_FORMAT_DOUBLE, &speed);
+}
+
+double MpvPlayer::getSpeed() const {
+    if (!m_mpv) return 1.0;
+
+    double speed = 1.0;
+    mpv_get_property(m_mpv, "speed", MPV_FORMAT_DOUBLE, &speed);
+    return speed;
+}
+
+// panscan is how much of the letterboxing mpv is allowed to crop away to fill
+// the window: 0 fits the whole frame inside it, 1 fills the window and loses
+// whatever falls outside. That is exactly the fit/fill toggle, so there is no
+// need to touch video-aspect or the window itself.
+void MpvPlayer::setFillScreen(bool fill) {
+    if (!m_mpv || m_stopping) return;
+
+    double panscan = fill ? 1.0 : 0.0;
+    mpv_set_property_async(m_mpv, 0, "panscan", MPV_FORMAT_DOUBLE, &panscan);
+}
+
+bool MpvPlayer::isFillScreen() const {
+    if (!m_mpv) return false;
+
+    double panscan = 0.0;
+    mpv_get_property(m_mpv, "panscan", MPV_FORMAT_DOUBLE, &panscan);
+    return panscan > 0.5;
+}
+
 void MpvPlayer::setSubtitleTrack(int track) {
     if (!m_mpv || m_stopping) return;
 

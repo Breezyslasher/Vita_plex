@@ -249,16 +249,55 @@ bool PlayerActivity::useMobileLayout() const {
 #endif
 }
 
+// The landscape OSD drawn over video. Separate from useMobileLayout() and from
+// its setting: the two designs answer different questions -- a portrait Now
+// Playing screen for music, an OSD over the picture for video -- so wanting one
+// says nothing about wanting the other.
+bool PlayerActivity::useVideoOsd() const {
+    // Music has its own mobile layout and chooses it above. Everything else
+    // that reaches this player is video, which is what the OSD is for.
+    if (m_isQueueMode && MusicQueue::getInstance().isMusicQueue()) return false;
+
+    switch (Application::getInstance().getSettings().videoPlayerLayout) {
+        case 1: return false;   // Classic, everywhere
+        case 2: return true;    // Mobile, everywhere -- including handheld and TV
+        default: break;         // Auto
+    }
+#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IOS)
+    const float vw = platform::viewportWidth();
+    const float vh = platform::viewportHeight();
+    if (vw <= 0.0f || vh <= 0.0f) return false;   // unknown: leave it classic
+    // Touch-sized controls over the picture suit a phone held either way. A
+    // tablet or a resized desktop window has room for the classic ones, so the
+    // test is the short edge rather than the orientation.
+    return std::min(vw, vh) < 600.0f;
+#else
+    return false;   // PSV / PS4 / Switch / desktop keep the classic controls
+#endif
+}
+
+// Whether the OSD is allowed to hide itself. Photos and music keep their
+// controls up permanently -- there is nothing behind them to look at -- but
+// m_isQueueMode is only a stand-in for "music": MusicQueue also carries single
+// videos from downloads and the detail view, and those get an OSD like any
+// other video.
+bool PlayerActivity::controlsCanHide() const {
+    return !m_isPhoto && (!m_isQueueMode || m_videoOsd);
+}
+
 brls::View* PlayerActivity::createContentView() {
-    // Both layouts declare the same view ids — every BRLS_BIND below resolves by
-    // id and throws if one is missing — so only the geometry differs and the
-    // rest of this class is layout-agnostic.
+    // All three layouts declare the same view ids — every BRLS_BIND below
+    // resolves by id and throws if one is missing — so only the geometry
+    // differs and the rest of this class is layout-agnostic. The two mobile
+    // designs share one file and hide each other's views; see its header.
     m_mobileLayout = useMobileLayout();
+    m_videoOsd     = !m_mobileLayout && useVideoOsd();
+    const bool mobileXml = m_mobileLayout || m_videoOsd;
     brls::Logger::info("PlayerActivity: using the {} player layout (queue={} music={})",
-                       m_mobileLayout ? "mobile" : "classic", m_isQueueMode,
-                       MusicQueue::getInstance().isMusicQueue());
+                       m_mobileLayout ? "mobile music" : m_videoOsd ? "mobile video" : "classic",
+                       m_isQueueMode, MusicQueue::getInstance().isMusicQueue());
     return brls::View::createFromXMLResource(
-        m_mobileLayout ? "activity/player_mobile.xml" : "activity/player.xml");
+        mobileXml ? "activity/player_mobile.xml" : "activity/player.xml");
 }
 
 void PlayerActivity::onContentAvailable() {
@@ -413,7 +452,7 @@ void PlayerActivity::onContentAvailable() {
     // there rather than becoming a no-op.
     this->registerAction("Play/Pause", brls::ControllerButton::BUTTON_A, [this](brls::View* view) {
         resetControlsIdleTimer();
-        if (!m_controlsVisible && !m_isPhoto && !m_isQueueMode) {
+        if (!m_controlsVisible && controlsCanHide()) {
             showControls();
             return true;
         }
@@ -440,7 +479,7 @@ void PlayerActivity::onContentAvailable() {
         // OSD up: close it first, same as the two overlays above. Photo and
         // music modes are excluded because hideControls() is a no-op there —
         // swallowing Back would leave them with no way out.
-        if (m_controlsVisible && !m_isPhoto && !m_isQueueMode) {
+        if (m_controlsVisible && controlsCanHide()) {
             hideControls();
             return true;
         }
@@ -708,6 +747,7 @@ void PlayerActivity::onContentAvailable() {
 
         wireMobileSheet();
 
+
         // Wire music transport buttons
         if (musicPlayBtn) {
             musicPlayBtn->registerClickAction([this](brls::View* view) {
@@ -883,6 +923,11 @@ void PlayerActivity::onContentAvailable() {
             videoBtn->addGestureRecognizer(new brls::TapGestureRecognizer(videoBtn));
         }
     }
+
+    // Runs after the mode wiring above, which is what makes the audio, subtitle
+    // and video buttons visible — this arranges them and the rest of the OSD
+    // around them. No-op in the other two layouts.
+    wireVideoOsd();
 
     // Block upward D-pad navigation from center transport controls so focus
     // doesn't escape to off-screen elements (absolutely-positioned overlays)
@@ -1644,7 +1689,10 @@ void PlayerActivity::loadMedia() {
             if (videoView) videoView->setVisibility(brls::Visibility::GONE);
             if (photoImage) photoImage->setVisibility(brls::Visibility::GONE);
         } else {
-            if (titleLabel) {
+            if (m_videoOsd) {
+                setVideoOsdTitle(dlItem.parentTitle.empty() ? dlItem.title : dlItem.parentTitle,
+                                 dlItem.parentTitle.empty() ? "" : dlItem.title);
+            } else if (titleLabel) {
                 std::string title = dlItem.title;
                 if (!dlItem.parentTitle.empty()) {
                     title = dlItem.parentTitle + " - " + dlItem.title;
@@ -1740,11 +1788,25 @@ void PlayerActivity::loadMedia() {
             brls::Logger::info("PlayerActivity: Loaded {} markers for {}", m_markers.size(), item.title);
         }
         if (titleLabel) {
-            std::string title = item.title;
-            if (item.mediaType == MediaType::EPISODE) {
-                title = item.grandparentTitle + " - " + item.title;
+            if (m_videoOsd) {
+                // The OSD's top bar has two lines for this, so give it the show
+                // over the episode rather than one run-together string. The
+                // same pair the OS media session gets, below.
+                if (item.mediaType == MediaType::EPISODE) {
+                    setVideoOsdTitle(item.grandparentTitle.empty() ? item.title
+                                                                   : item.grandparentTitle,
+                                     "S" + std::to_string(item.parentIndex) +
+                                     "E" + std::to_string(item.index) + "  " + item.title);
+                } else {
+                    setVideoOsdTitle(item.title, item.year > 0 ? std::to_string(item.year) : "");
+                }
+            } else {
+                std::string title = item.title;
+                if (item.mediaType == MediaType::EPISODE) {
+                    title = item.grandparentTitle + " - " + item.title;
+                }
+                titleLabel->setText(title);
             }
-            titleLabel->setText(title);
         }
 
         // SyncLounge: report what we're playing so our outbound mediaUpdates
@@ -1759,6 +1821,18 @@ void PlayerActivity::loadMedia() {
             brls::Logger::info("Displaying photo: {}", item.title);
             m_isPhoto = true;
             m_loadingMedia = false;
+
+            // A photo is not video, but nothing knows that until the metadata
+            // arrives — long after createContentView picked the layout. Strip
+            // the OSD back to its title bar: a transport, a scrubber and a
+            // fit toggle over a still image are all inert.
+            if (m_videoOsd) {
+                if (centerControls) centerControls->setVisibility(brls::Visibility::GONE);
+                for (const char* id : {"player/osd_bottom", "player/osd_bottom_scrim",
+                                       "player/speed_btn", "player/next_btn"}) {
+                    if (brls::View* v = getView(id)) v->setVisibility(brls::Visibility::GONE);
+                }
+            }
 
             // Load the full-size photo
             if (!item.thumb.empty()) {
@@ -1961,6 +2035,11 @@ void PlayerActivity::updateProgress() {
     // time it sees the toggle on so the panel doesn't sit in the view
     // tree consuming layout passes when the user isn't using it.
     updateMpvStatsOverlay();
+
+    // Keeps the audio/subtitle pills, the mute glyph and the speed honest after
+    // anything changes them — the track picker, a media key, the OS. No-op in
+    // the other two layouts.
+    updateVideoOsd();
 
     // Deferred MPV initialization (Phase 1 of 2):
     // Create MPV and its GXM render context, but do NOT call loadUrl yet.
@@ -4013,6 +4092,223 @@ void PlayerActivity::wireMobileSheet() {
     sheet->addGestureRecognizer(new brls::TapGestureRecognizer(sheet));
 }
 
+// ─── The video OSD ─────────────────────────────────────────────────────
+//
+// player_mobile.xml carries both mobile designs, so building one means hiding
+// the other's views and restyling the three they share. Runs once, from
+// onContentAvailable, after the mode-specific button wiring.
+//
+// Everything reached by getView() here exists in this layout only; the other
+// two return null and every use tolerates it.
+void PlayerActivity::wireVideoOsd() {
+    if (!m_videoOsd) return;
+
+    auto box  = [this](const char* id) { return dynamic_cast<brls::Box*>(getView(id)); };
+    auto tap  = [this](brls::Box* b, std::function<void()> fn) {
+        if (!b) return;
+        b->registerClickAction([this, fn](brls::View*) {
+            resetControlsIdleTimer();
+            fn();
+            return true;
+        });
+        b->addGestureRecognizer(new brls::TapGestureRecognizer(b));
+    };
+
+    // The music design's own furniture. Hidden rather than deleted: the ids
+    // have to survive for the contract, and the activity may still touch them.
+    for (const char* id : {"player/music_seek", "player/sheet"}) {
+        if (brls::View* v = getView(id)) v->setVisibility(brls::Visibility::GONE);
+    }
+    if (albumArtContainer) albumArtContainer->setVisibility(brls::Visibility::GONE);
+    if (musicInfo)        musicInfo->setVisibility(brls::Visibility::GONE);
+    if (musicTransport)   musicTransport->setVisibility(brls::Visibility::GONE);
+    // The music header (queue / lyrics buttons and the source line) is the one
+    // block with no id of its own; its three children carry them, and clearing
+    // focusability keeps them out of the focus order as well as off the screen.
+    for (brls::View* v : {(brls::View*)queueBtn, (brls::View*)lyricsBtn, (brls::View*)queueLabel}) {
+        if (!v) continue;
+        v->setFocusable(false);
+        v->setVisibility(brls::Visibility::GONE);
+    }
+    if (queueBtn && queueBtn->getParent())
+        queueBtn->getParent()->setVisibility(brls::Visibility::GONE);
+
+    // The music layout paints palette::bg over the whole screen. On Android the
+    // mpv surface composites *behind* the borealis frame and shows through only
+    // where the frame is unpainted, so an opaque root hides the picture
+    // completely -- this is what "video plays but the screen stays grey" was.
+    if (playerContainer) playerContainer->setBackgroundColor(nvgRGBA(0, 0, 0, 0));
+
+    // Re-anchor the controls to the bottom edge. They sit in the column for
+    // music; over video they float on the scrim.
+    if (controlsBox) {
+        controlsBox->setPositionType(brls::PositionType::ABSOLUTE);
+        controlsBox->setPositionBottom(0.0f);
+        controlsBox->setPositionLeft(0.0f);
+        controlsBox->setPositionRight(0.0f);
+    }
+
+    // Move the three shared views into the video row: music stacks the bar over
+    // the times, the OSD runs elapsed, bar and remaining inline.
+    auto* scrubRow = box("player/video_scrub_row");
+    auto* musicRow = box("player/time_row");
+    if (scrubRow && musicRow && progressSlider && timeElapsedLabel && timeRemainingLabel) {
+        auto move = [&](brls::View* v, brls::Box* from) {
+            if (!v || !from) return;
+            from->removeView(v, /*free=*/false);
+            scrubRow->addView(v);
+        };
+        move(timeElapsedLabel, musicRow);
+        move(progressSlider, dynamic_cast<brls::Box*>(progressSlider->getParent()));
+        move(timeRemainingLabel, musicRow);
+
+        timeElapsedLabel->setFontSize(16);
+        timeElapsedLabel->setTextColor(nvgRGB(0xE2, 0xE2, 0xE6));
+        timeRemainingLabel->setFontSize(16);
+        timeRemainingLabel->setTextColor(nvgRGB(0x8C, 0x8C, 0x93));
+        // 46 tall gives the 32dp touch target the handoff asks for; the bar and
+        // knob are centred in whatever height the box is given.
+        progressSlider->setHeight(46.0f);
+        progressSlider->setWidth(brls::View::AUTO);
+        progressSlider->setGrow(1.0f);
+        progressSlider->setShrink(1.0f);
+        progressSlider->setMargins(0.0f, 20.0f, 0.0f, 20.0f);
+        progressSlider->setPointerSize(20.0f);
+    }
+
+    // The subtitle line stays hidden until setVideoOsdTitle() has something to
+    // put on it, so a movie with no second line gets a title rather than a
+    // title and a blank.
+    if (brls::View* v = getView("player/osd_bottom")) v->setVisibility(brls::Visibility::VISIBLE);
+    if (brls::View* v = getView("player/subs_pill")) v->setVisibility(brls::Visibility::VISIBLE);
+
+    tap(box("player/back_btn"),   [] { brls::Application::popActivity(); });
+    tap(box("player/speed_btn"),  [this] { cycleSpeed(); });
+    tap(box("player/subs_pill"),  [this] { showTrackOverlay(TrackSelectMode::SUBTITLE); });
+    tap(box("player/next_btn"),   [this] {
+        if (m_isQueueMode) playNext();
+        else               playNextEpisode();
+    });
+    tap(box("player/volume_btn"), [this] {
+        MpvPlayer::getInstance().toggleMute();
+        updateVideoOsd();
+    });
+    tap(box("player/fit_btn"), [this] {
+        auto& player = MpvPlayer::getInstance();
+        player.setFillScreen(!player.isFillScreen());
+        updateVideoOsd();
+    });
+
+    // This file starts the OSD hidden, because music never wants it and the
+    // centre transport is GONE there — but m_controlsVisible starts true. Put
+    // the two in step here rather than leaving the first frame showing nothing
+    // and the first tap appearing to do the wrong thing.
+    showControls();
+    updateVideoOsd();
+}
+
+// Pill text and the two toggle glyphs. Cheap enough to run on the per-second
+// tick, which is also what keeps the audio and subtitle pills honest after the
+// track picker changes something.
+void PlayerActivity::updateVideoOsd() {
+    if (!m_videoOsd) return;
+    auto& player = MpvPlayer::getInstance();
+
+    auto label = [this](const char* id) { return dynamic_cast<brls::Label*>(getView(id)); };
+
+    if (auto* l = label("player/speed_label")) {
+        const double s = player.getSpeed();
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%.2f", s);
+        std::string txt = buf;
+        // Trim to the shortest honest form: 1.00 -> "1", 1.50 -> "1.5",
+        // 1.25 stays. The common case should read as no change at all.
+        while (txt.size() > 1 && txt.back() == '0') txt.pop_back();
+        if (!txt.empty() && txt.back() == '.') txt.pop_back();
+        l->setText(txt + "x");
+    }
+
+    // "Audio · English", "Subs · Off" -- the selected track, not just the
+    // control's name, which is the whole reason these are pills and not glyphs.
+    if (auto* l = label("player/audio_label"))
+        l->setText("Audio  " + trackSummary(TrackSelectMode::AUDIO));
+    if (auto* l = label("player/subs_label"))
+        l->setText("Subs  " + trackSummary(TrackSelectMode::SUBTITLE));
+
+    if (auto* icon = dynamic_cast<brls::Image*>(getView("player/volume_icon")))
+        setIconRes(icon, player.isMuted() ? "icons/volume-off.png" : "icons/volume-high.png");
+    // Shows what pressing it will do next, the way the shuffle and repeat
+    // buttons already do: the arrows while the picture is letterboxed, the
+    // frame while it is cropped to fill.
+    if (auto* icon = dynamic_cast<brls::Image*>(getView("player/fit_icon")))
+        setIconRes(icon, player.isFillScreen() ? "icons/fit-to-screen.png"
+                                               : "icons/arrow-expand-all.png");
+
+    // Next only means anything with something after this. Outside a queue that
+    // is the same test auto-play-next makes: an episode whose season we know
+    // and that is not a local file. It cannot promise the episode exists
+    // without a lookup, which is not worth doing on a timer -- pressing it when
+    // there is nothing next is a no-op, not a failure.
+    if (brls::View* v = getView("player/next_btn")) {
+        const bool next = m_isQueueMode
+            ? MusicQueue::getInstance().hasNext()
+            : (m_mediaType == MediaType::EPISODE && !m_parentRatingKey.empty() && !m_isLocalFile);
+        v->setVisibility(next ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
+    }
+}
+
+// What the audio and subtitle pills say after the control's name. Plex
+// describes the streams it is serving; mpv is the fallback, and the only answer
+// at all for a local file. Reads the cached stream list -- never fetches, since
+// this runs on the per-second tick.
+std::string PlayerActivity::trackSummary(TrackSelectMode mode) const {
+    const bool audio  = (mode == TrackSelectMode::AUDIO);
+    const int  wanted = audio ? 2 : 3;
+
+    for (const auto& ps : m_plexStreams) {
+        if (ps.streamType != wanted || !ps.selected) continue;
+        if (!ps.language.empty())     return ps.language;
+        if (!ps.title.empty())        return ps.title;
+        if (!ps.displayTitle.empty()) return ps.displayTitle;
+        return ps.codec.empty() ? "On" : ps.codec;
+    }
+
+    for (const auto& t : MpvPlayer::getInstance().getTrackList(audio ? "audio" : "sub")) {
+        if (!t.selected) continue;
+        if (!t.lang.empty())  return t.lang;
+        if (!t.title.empty()) return t.title;
+        return "On";
+    }
+
+    return audio ? "Default" : "Off";
+}
+
+// The speeds worth having on a phone, in the order people reach for them.
+void PlayerActivity::cycleSpeed() {
+    static constexpr double kSteps[] = {1.0, 1.25, 1.5, 2.0, 0.75};
+    auto& player = MpvPlayer::getInstance();
+    const double now = player.getSpeed();
+
+    size_t next = 0;
+    for (size_t i = 0; i < std::size(kSteps); i++) {
+        if (std::abs(kSteps[i] - now) < 0.01) { next = (i + 1) % std::size(kSteps); break; }
+    }
+    player.setSpeed(kSteps[next]);
+    updateVideoOsd();
+}
+
+// The OSD's top bar prints the show over the episode, where the other layouts
+// print one "Show - Episode" line. Falls back to the single line when there is
+// no second part to show, so a movie gets a title and its year rather than a
+// title and a blank.
+void PlayerActivity::setVideoOsdTitle(const std::string& title, const std::string& subtitle) {
+    if (titleLabel) titleLabel->setText(title);
+    if (!artistLabel) return;
+    artistLabel->setText(subtitle);
+    artistLabel->setVisibility(subtitle.empty() ? brls::Visibility::GONE
+                                                : brls::Visibility::VISIBLE);
+}
+
 // Queue list overlay methods
 
 void PlayerActivity::showQueueOverlay() {
@@ -5676,6 +5972,22 @@ void PlayerActivity::resetControlsIdleTimer() {
     m_controlsIdleSeconds = 0;
 }
 
+// The video OSD's top bar and bottom scrim are not children of controlsBox or
+// centerControls, so they have to be raised and lowered alongside them or the
+// title and the gradients stay on screen over a hidden OSD. Null in the other
+// two layouts, where getView() simply finds nothing.
+void PlayerActivity::setVideoOsdChromeVisible(bool visible) {
+    if (!m_videoOsd) return;
+    const auto vis = visible ? brls::Visibility::VISIBLE : brls::Visibility::GONE;
+    for (const char* id : {"player/osd_top", "player/osd_bottom_scrim"}) {
+        if (brls::View* v = getView(id)) {
+            v->setAlpha(visible ? 1.0f : 0.0f);
+            v->setVisibility(vis);
+        }
+    }
+    setSubtreeClickAvailable(getView("player/osd_top"), visible);
+}
+
 void PlayerActivity::showControls() {
     m_controlsVisible = true;
     resetControlsIdleTimer();
@@ -5689,6 +6001,7 @@ void PlayerActivity::showControls() {
         centerControls->setAlpha(1.0f);
         centerControls->setVisibility(brls::Visibility::VISIBLE);
     }
+    setVideoOsdChromeVisible(true);
     if (titleLabel) {
         titleLabel->setVisibility(brls::Visibility::VISIBLE);
     }
@@ -5702,7 +6015,7 @@ void PlayerActivity::showControls() {
 
 void PlayerActivity::hideControls() {
     // Don't hide controls for photos or music mode
-    if (m_isPhoto || m_isQueueMode) return;
+    if (!controlsCanHide()) return;
 
     m_controlsVisible = false;
     if (controlsBox) {
@@ -5713,6 +6026,7 @@ void PlayerActivity::hideControls() {
         centerControls->setAlpha(0.0f);
         centerControls->setVisibility(brls::Visibility::GONE);
     }
+    setVideoOsdChromeVisible(false);
     // Focus stays on whichever control had it, so hand A back to the activity —
     // otherwise the press lands on an invisible button (queue, audio, subtitles)
     // and opens its overlay over a hidden OSD.
