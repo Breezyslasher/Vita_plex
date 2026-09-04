@@ -228,7 +228,7 @@
                     id="player/audio_icon"
                     width="68"
                     height="68"
-                    image="@res/icons/translate.png"
+                    image="@res/icons/music-note.png"
                     scalingType="fit"/>
             </brls:Box>
             <brls:Box
@@ -262,7 +262,7 @@
                     id="player/video_icon"
                     width="68"
                     height="68"
-                    image="@res/icons/video-image.png"
+                    image="@res/icons/video.png"
                     scalingType="fit"/>
             </brls:Box>
             <brls:Box
@@ -279,7 +279,7 @@
                     id="player/pip_icon"
                     width="68"
                     height="68"
-                    image="@res/icons/video-image.png"
+                    image="@res/icons/picture-in-picture.png"
                     scalingType="fit"/>
             </brls:Box>
         </brls:Box>
@@ -463,7 +463,7 @@
                 id="player/forward_icon"
                 width="137"
                 height="137"
-                image="@res/icons/fast-forward-10.png"
+                image="@res/icons/fast-forward-30.png"
                 scalingType="fit"/>
         </brls:Box>
     </brls:Box>
