@@ -164,6 +164,52 @@ private:
     // pumps four times a second and hands over the moment the file ends.
     brls::RepeatingTimer m_endWatchTimer;
 
+    // Which layout createContentView() built. The two XMLs declare the same
+    // view ids, so almost nothing else needs to know — this is for the few
+    // places where the geometry genuinely differs.
+    bool m_mobileLayout = false;
+    // Reads m_isQueueMode, so it can only be asked once the activity exists.
+    bool useMobileLayout() const;   // reads the Player layout setting
+    // The collapsed queue sheet along the bottom of the mobile layout. Its
+    // views exist only in player_mobile.xml and are looked up by id rather than
+    // bound, so the classic layout needs no stubs for them.
+    void updateMobileSheet();        // refresh "up next" from the queue
+    void wireMobileSheet();          // tap-to-open, once at build time
+    bool mobileSheetFits() const;    // false on a screen too short to spare it
+    // The queue / lyrics rows are built in code at sizes written for the
+    // classic layout. The mobile layout's XML is scaled to a phone frame
+    // (1280 logical units standing in for the handoff's 412), so anything it
+    // shares has to be scaled the same way or it renders a third of the size.
+    float ui(float v) const { return m_mobileLayout ? v * kMobileUiScale : v; }
+    // List-row geometry wants a gentler factor than type does. At the full
+    // scale a queue row is ~161 units tall and only two or three fit the sheet;
+    // the text at that size is right, but the box around it is not. So heights,
+    // thumbnails and margins in the row builders scale by this instead, while
+    // their labels keep ui().
+    float uiRow(float v) const { return m_mobileLayout ? v * kMobileRowScale : v; }
+    static constexpr float kMobileUiScale  = 1280.f / 412.f;
+    static constexpr float kMobileRowScale = 2.15f;
+    // A queue row's height and the gap below it. createQueueRow builds rows
+    // from these, and every scroll clamp, hold threshold and reorder target
+    // index has to agree with the result — a hand-copied 54 stops the list
+    // short of its end and moves a dragged track the wrong distance, so go
+    // through queueRowPitch() rather than writing the sum out again.
+    static constexpr float kQueueRowH   = 52.0f;
+    static constexpr float kQueueRowGap = 2.0f;
+    float queueRowPitch() const { return uiRow(kQueueRowH) + uiRow(kQueueRowGap); }
+    // How far the queue list can scroll. Reads the content view's measured
+    // height so it lands on exactly the limit ScrollingFrame enforces for
+    // itself; a figure derived from a row count and an assumed padding can
+    // only disagree with it, and does.
+    float queueMaxScroll();
+    // Heights the mobile layout budgets against, in borealis logical units and
+    // matching player_mobile.xml: everything below the cover, the collapsed
+    // sheet, and the smallest cover worth calling a cover.
+    static constexpr float kMobileChrome      = 910.f;
+    static constexpr float kMobileSheetHeight = 348.f;
+    static constexpr float kMobileMinCover    = 450.f;
+    std::string m_sheetThumbKey;     // cover already loaded, to avoid refetching
+
     // Next-track prefetch. Resolving a Plex stream URL costs two blocking HTTP
     // round-trips (/library/metadata, then /decision). Doing them when the track
     // ends put both of them inside the silence between songs, and froze the UI

@@ -50,6 +50,7 @@ QueueItem MusicQueue::mediaItemToQueueItem(const MediaItem& item, int index) {
     if (qi.thumb.empty()) qi.thumb = item.grandparentThumb;
     qi.duration = item.duration / 1000; // Convert ms to seconds
     qi.userRating = item.userRating;
+    qi.mediaType = item.mediaType;
     qi.index = index;
     return qi;
 }
@@ -393,6 +394,12 @@ const QueueItem* MusicQueue::peekNextTrack() const {
     return &m_queue[nextIndex];
 }
 
+bool MusicQueue::isMusicQueue() const {
+    const QueueItem* track = getCurrentTrack();
+    if (!track && !m_queue.empty()) track = &m_queue.front();
+    return track && track->mediaType == MediaType::MUSIC_TRACK;
+}
+
 const QueueItem* MusicQueue::getCurrentTrack() const {
     if (m_currentIndex < 0 || m_currentIndex >= (int)m_queue.size()) {
         return nullptr;
@@ -649,6 +656,7 @@ void MusicQueue::setFromPlayQueue(const PlexClient::PlayQueueContainer& pq, bool
         if (qi.thumb.empty()) qi.thumb = pqItem.grandparentThumb;
         qi.duration = pqItem.duration / 1000;  // ms to seconds
         qi.userRating = pqItem.userRating;
+        qi.mediaType = pqItem.mediaType;
         qi.index = (int)i;
         qi.playQueueItemID = pqItem.playQueueItemID;
         m_queue.push_back(qi);

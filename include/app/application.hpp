@@ -127,6 +127,12 @@ struct AppSettings {
     int controlsAutoHideSeconds = 5;  // Auto-hide player controls after inactivity (0 = never)
     bool autoSkipIntro = false;       // Automatically skip intro markers
     bool autoSkipCredits = false;     // Automatically skip credits markers
+    // Which music player layout to build. Deliberately not hard-gated to
+    // phones: forcing either one anywhere is how the big-art layout gets
+    // tested on a Vita, and some people prefer it on a tablet or a desktop
+    // window. 0 = Auto (phone gets Mobile, everything else Classic),
+    // 1 = Classic (today's player everywhere), 2 = Mobile (big art everywhere).
+    int playerLayout = 0;
     // ISO 639-1 / -2 code prefilled into the subtitle search dialog and
     // used as the default when the user opens "Search online for
     // subtitles…". Empty falls back to "en". User-editable from the

@@ -157,7 +157,11 @@ void MusicController::detachForeground() {
 void MusicController::startPolling() {
     if (m_polling) return;
     m_polling = true;
-    m_pollTimer.start(1000);
+    // 250ms, not 1000: the callback pumps mpv every tick so a finished track is
+    // noticed promptly, and gates syncSessionState() to every fourth tick to
+    // keep that at its original once-a-second cadence. Left at 1000 the gate
+    // would have stretched the session sync to once every four seconds.
+    m_pollTimer.start(250);
 }
 
 void MusicController::stopPolling() {
@@ -224,6 +228,7 @@ bool MusicController::loadCurrentHeadless() {
         return false;
     }
     m_endHandled = false;
+    m_streamStartOffsetMs = 0;   // fresh track, stream starts at its beginning
     return true;
 }
 
@@ -297,8 +302,9 @@ void MusicController::publishNowPlaying(int playingOverride, long long positionO
     // Same reasoning as playingOverride below: seekTo() is an async mpv command,
     // so right after one getPosition() still reads where we were, not where the
     // user asked to go.
-    info.positionMs = (positionOverrideMs >= 0) ? positionOverrideMs
-                                                : (long long)(p.getPosition() * 1000.0);
+    info.positionMs = (positionOverrideMs >= 0)
+        ? positionOverrideMs
+        : m_streamStartOffsetMs + (long long)(p.getPosition() * 1000.0);
     // MpvPlayer's state lags the play()/pause() command; trust the caller's intent
     // when it knows it (playingOverride), else fall back to the queried state.
     info.playing = (playingOverride >= 0) ? (playingOverride != 0) : p.isPlaying();
@@ -412,7 +418,7 @@ void MusicController::syncSessionState() {
     }
 
     if (!p.isPlaying() && !p.isPaused()) return;   // LOADING/BUFFERING: no answer yet
-    const long long realMs = (long long)(p.getPosition() * 1000.0);
+    const long long realMs = m_streamStartOffsetMs + (long long)(p.getPosition() * 1000.0);
     const auto now = std::chrono::steady_clock::now();
 
     // A seek we've announced but mpv hasn't reached yet. Seeking an HTTP stream
@@ -548,9 +554,25 @@ void MusicController::seekToMs(long long ms) {
     MpvPlayer& p = MpvPlayer::getInstance();
     if (!p.isInitialized()) return;
     if (ms < 0) ms = 0;
+    const long long nowMs = m_streamStartOffsetMs + (long long)(p.getPosition() * 1000.0);
     brls::Logger::info("MusicController: seek to {}ms (from {}ms, mpv seekable={})",
-                       ms, (long long)(p.getPosition() * 1000.0), p.isSeekable());
-    p.seekTo((double)ms / 1000.0);
+                       ms, nowMs, p.isSeekable());
+
+    // A downloaded file is a real file and seeks fine. A live Plex transcode is
+    // not: it arrives without range support, so mpv can only move inside what it
+    // has already buffered and refuses anything past that. Restarting the
+    // transcode at the target is the only way to get there.
+    if (!p.isSeekable()) {
+        restartTranscodeAtMs(ms);
+        m_pendingSeekMs = ms;
+        m_pendingSeekAt = std::chrono::steady_clock::now();
+        publishNowPlaying(-1, ms);
+        return;
+    }
+
+    // Seekable: an ordinary mpv seek, but mpv's timeline starts at whatever
+    // offset the stream was opened with, so take that off the absolute target.
+    p.seekTo((double)(ms - m_streamStartOffsetMs) / 1000.0);
     // Publish where the user asked to go, not where getPosition() still says we
     // are — seekTo is async, so reading it back here returns the pre-seek value,
     // and publishing that snapped the notification scrubber straight back.
@@ -562,12 +584,63 @@ void MusicController::seekToMs(long long ms) {
 void MusicController::seekRelativeMs(long long deltaMs) {
     MpvPlayer& p = MpvPlayer::getInstance();
     if (!p.isInitialized()) return;
-    long long target = (long long)(p.getPosition() * 1000.0) + deltaMs;
+    long long target = m_streamStartOffsetMs + (long long)(p.getPosition() * 1000.0) + deltaMs;
     if (target < 0) target = 0;
-    p.seekTo((double)target / 1000.0);
-    m_pendingSeekMs = target;
-    m_pendingSeekAt = std::chrono::steady_clock::now();
-    publishNowPlaying(-1, target);
+    seekToMs(target);   // shares the unseekable-stream handling
+}
+
+void MusicController::restartTranscodeAtMs(long long ms) {
+    if (m_restartingTranscode) return;   // one in flight is enough
+
+    const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
+    if (!track || track->ratingKey.empty()) return;
+
+    // Don't run off the end: Plex will happily start a transcode past the last
+    // sample and hand back a stream that ends immediately.
+    const long long durationMs = (long long)track->duration * 1000;
+    if (durationMs > 5000 && ms > durationMs - 5000) ms = durationMs - 5000;
+    if (ms < 0) ms = 0;
+
+    const std::string key = track->ratingKey;
+    const std::string title = track->title;
+    m_restartingTranscode = true;
+    brls::Logger::info("MusicController: stream is not seekable — restarting the "
+                       "transcode at {}ms for {}", ms, key);
+
+    // Two blocking round-trips (/library/metadata, then /decision), so not on
+    // the UI thread. Capturing `this` is safe: the controller is a singleton.
+    asyncRun([this, key, title, ms]() {
+        std::string url;
+        const bool ok = PlexClient::getInstance().getTranscodeUrl(key, url, (int)ms);
+        brls::sync([this, key, title, url, ms, ok]() {
+            m_restartingTranscode = false;
+            if (!ok || url.empty()) {
+                brls::Logger::error("MusicController: could not restart the transcode at {}ms", ms);
+                m_pendingSeekMs = -1;   // let the position re-anchor to reality
+                return;
+            }
+            // The queue may have moved on while the request was in flight.
+            const QueueItem* cur = MusicQueue::getInstance().getCurrentTrack();
+            if (!cur || cur->ratingKey != key) {
+                brls::Logger::info("MusicController: track changed mid-restart; dropping the seek");
+                m_pendingSeekMs = -1;
+                return;
+            }
+            MpvPlayer& p = MpvPlayer::getInstance();
+            if (!p.isInitialized()) return;
+            // The new stream starts at ms, so mpv's clock restarts at zero and
+            // everything reporting an absolute position adds this back.
+            m_streamStartOffsetMs = ms;
+            if (p.hasEnded()) p.stop();
+            if (!p.loadUrl(url, title)) {
+                brls::Logger::error("MusicController: loadUrl failed restarting at {}ms", ms);
+                m_streamStartOffsetMs = 0;
+                m_pendingSeekMs = -1;
+                return;
+            }
+            publishNowPlaying(1, ms);
+        });
+    });
 }
 
 void MusicController::stopPlayback() {

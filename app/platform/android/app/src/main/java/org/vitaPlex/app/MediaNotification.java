@@ -667,7 +667,15 @@ public final class MediaNotification {
             @Override public void onSkipToPrevious() { send(CODE_PREVIOUS); }
             @Override public void onStop() { send(CODE_STOP); }
             @Override public void onSeekTo(long pos) {
-                try { nativeMediaSeek(pos); } catch (Throwable t) { Log.w(TAG, "seek", t); }
+                // Logged before the hop, not only on failure. A seek that never
+                // moves playback can die at any of three places — Android not
+                // delivering the callback, this JNI call throwing (which the
+                // catch below would otherwise swallow into a warning nobody
+                // reads), or mpv declining the seek — and only the presence or
+                // absence of this line separates the first two.
+                Log.i(TAG, "onSeekTo " + pos + "ms");
+                try { nativeMediaSeek(pos); }
+                catch (Throwable t) { Log.w(TAG, "onSeekTo: native call failed", t); }
             }
             // A media id picked in Android Auto / Assistant / Wear. The ids come
             // from LibraryBrowserService's tree, so it owns resolving them.

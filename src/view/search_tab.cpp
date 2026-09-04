@@ -8,6 +8,7 @@
 #include "view/horizontal_scroll_row.hpp"
 #include "view/long_press_gesture.hpp"
 #include "app/application.hpp"
+#include "app/plex_palette.hpp"
 #include "utils/image_loader.hpp"
 #include "utils/async.hpp"
 #include "platform/platform.hpp"
@@ -24,7 +25,10 @@ namespace vitaplex {
 
 // ── Search palette (reference design tokens) ──
 namespace spal {
-    inline NVGcolor bg()      { return nvgRGB(0x1b, 0x1b, 0x1d); }
+    // The app paints palette::bg everywhere; search used to be a shade darker,
+    // which showed as soon as you moved between tabs. The rest of this palette
+    // is search's own and stays as it is.
+    inline NVGcolor bg()      { return vitaplex::palette::bg; }
     inline NVGcolor field()   { return nvgRGB(0x2b, 0x2b, 0x2e); }
     inline NVGcolor key()     { return nvgRGB(0x2c, 0x2c, 0x2f); }
     inline NVGcolor keyLine() { return nvgRGBA(255, 255, 255, 15); }  // .06

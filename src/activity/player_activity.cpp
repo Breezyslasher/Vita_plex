@@ -19,6 +19,10 @@
 #include "utils/pip.h"
 #include "view/video_view.hpp"
 #include "platform/platform.hpp"
+#if defined(__APPLE__)
+// TARGET_OS_IOS, for the Auto branch of useMobileLayout().
+#include <TargetConditionals.h>
+#endif
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -202,8 +206,59 @@ PlayerActivity* PlayerActivity::createResumeQueue() {
     return activity;
 }
 
+// borealis' setCustomNavigationRoute() calls fatal() -- an uncaught
+// std::logic_error -- when the receiving view is not focusable, so a layout
+// that omits focusable="true" aborts the whole app instead of just navigating
+// oddly. That has now cost three separate crashes (see syncHiddenFocus and the
+// Clear button below). A navigation route on a view that cannot take focus
+// means nothing anyway, so skip it rather than die.
+static void routeIfFocusable(brls::View* v, brls::FocusDirection dir, brls::View* target) {
+    if (v && v->isFocusable()) v->setCustomNavigationRoute(dir, target);
+}
+
+bool PlayerActivity::useMobileLayout() const {
+    // The mobile layout is a Now Playing screen for music: big cover, queue
+    // sheet, and no room made for a video surface or its track and PiP
+    // controls. Video on it has no design yet, so it takes the classic player
+    // at every screen size -- including under an explicit Mobile setting, which
+    // can only mean "for music" while music is all this layout can draw.
+    //
+    // The queue item carries its own type, so this is the real answer rather
+    // than a guess, and it stays right for a resumed queue, which a flag set
+    // when Play was pressed would not be.
+    if (!m_isQueueMode || !MusicQueue::getInstance().isMusicQueue()) return false;
+
+    switch (Application::getInstance().getSettings().playerLayout) {
+        case 1: return false;   // Classic, everywhere
+        case 2: return true;    // Mobile, everywhere — including handheld and TV
+        default: break;         // Auto
+    }
+    // Auto: the big-art player suits a phone-shaped screen and nothing else.
+    // Width rather than platform, so a tablet and a resized desktop window get
+    // the layout that actually fits them.
+#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IOS)
+    // platform::viewport* is what the rest of the player sizes itself from
+    // (see applyMusicLayoutForViewport) and it is defined on every port.
+    const float vw = platform::viewportWidth();
+    const float vh = platform::viewportHeight();
+    if (vw <= 0.0f || vh <= 0.0f) return false;   // unknown: leave it classic
+    if (vh > vw) return true;                     // portrait phone/tablet
+    return vw < 600.0f;
+#else
+    return false;   // PSV / PS4 / Switch / desktop keep the classic player
+#endif
+}
+
 brls::View* PlayerActivity::createContentView() {
-    return brls::View::createFromXMLResource("activity/player.xml");
+    // Both layouts declare the same view ids — every BRLS_BIND below resolves by
+    // id and throws if one is missing — so only the geometry differs and the
+    // rest of this class is layout-agnostic.
+    m_mobileLayout = useMobileLayout();
+    brls::Logger::info("PlayerActivity: using the {} player layout (queue={} music={})",
+                       m_mobileLayout ? "mobile" : "classic", m_isQueueMode,
+                       MusicQueue::getInstance().isMusicQueue());
+    return brls::View::createFromXMLResource(
+        m_mobileLayout ? "activity/player_mobile.xml" : "activity/player.xml");
 }
 
 void PlayerActivity::onContentAvailable() {
@@ -297,7 +352,16 @@ void PlayerActivity::onContentAvailable() {
             // aware path so a big scrub restarts the transcode at the target
             // instead of stalling mpv on un-transcoded segments. The slider maps
             // [0,1] onto the real media length so it can't scrub past the end.
-            if (m_isLocalFile || m_isDirectFile || m_isQueueMode || m_directPlay) {
+            if (m_isQueueMode && !m_isLocalFile) {
+                // A streamed Plex music transcode cannot be seeked in place —
+                // mpv only moves inside what it has buffered. MusicController
+                // owns that decision (restart the transcode at the target when
+                // it must), and it is the same path the OS scrubber uses, so
+                // both agree about where the stream now starts.
+                double absDuration = m_transcodeBaseOffsetMs / 1000.0 + duration;
+                MusicController::getInstance().seekToMs(
+                    (long long)(std::max(0.0, absDuration * progress) * 1000.0));
+            } else if (m_isLocalFile || m_isDirectFile || m_isQueueMode || m_directPlay) {
                 double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
                 double absDuration = baseOffsetSec + duration;
                 player.seekTo(std::max(0.0, absDuration * progress - baseOffsetSec));
@@ -325,7 +389,10 @@ void PlayerActivity::onContentAvailable() {
                 if (!m_isQueueMode) return;
                 if (status.state == brls::GestureState::END) {
                     float deltaX = status.position.x - status.startPosition.x;
-                    float threshold = 60.0f; // Minimum swipe distance
+                    // Scaled, or on the mobile layout this is ~19dp — barely
+                    // past the 6-unit slop the recogniser needs to call it a
+                    // pan at all, so a nudge on the cover skips a track.
+                    float threshold = ui(60.0f);
                     if (deltaX > threshold) {
                         // Swipe right = previous track
                         playPrevious();
@@ -639,6 +706,8 @@ void PlayerActivity::onContentAvailable() {
             applyMusicLayoutForViewport();
         });
 
+        wireMobileSheet();
+
         // Wire music transport buttons
         if (musicPlayBtn) {
             musicPlayBtn->registerClickAction([this](brls::View* view) {
@@ -818,21 +887,20 @@ void PlayerActivity::onContentAvailable() {
     // Block upward D-pad navigation from center transport controls so focus
     // doesn't escape to off-screen elements (absolutely-positioned overlays)
     if (!m_isQueueMode) {
-        if (playBtn) playBtn->setCustomNavigationRoute(brls::FocusDirection::UP, playBtn);
-        if (rewindBtn) rewindBtn->setCustomNavigationRoute(brls::FocusDirection::UP, rewindBtn);
-        if (forwardBtn) forwardBtn->setCustomNavigationRoute(brls::FocusDirection::UP, forwardBtn);
+        routeIfFocusable(playBtn, brls::FocusDirection::UP, playBtn);
+        routeIfFocusable(rewindBtn, brls::FocusDirection::UP, rewindBtn);
+        routeIfFocusable(forwardBtn, brls::FocusDirection::UP, forwardBtn);
     }
 
     // Block downward D-pad navigation from the bottom button row so focus
     // doesn't escape to off-screen elements (absolutely-positioned overlays)
     // Only set on focusable buttons — in music mode audioBtn/subBtn/videoBtn are non-focusable
-    if (lyricsBtn && lyricsBtn->isFocusable())
-        lyricsBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, lyricsBtn);
-    if (queueBtn) queueBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, queueBtn);
+    routeIfFocusable(lyricsBtn, brls::FocusDirection::DOWN, lyricsBtn);
+    routeIfFocusable(queueBtn, brls::FocusDirection::DOWN, queueBtn);
     if (!m_isQueueMode) {
-        if (audioBtn) audioBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, audioBtn);
-        if (subBtn) subBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, subBtn);
-        if (videoBtn) videoBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, videoBtn);
+        routeIfFocusable(audioBtn, brls::FocusDirection::DOWN, audioBtn);
+        routeIfFocusable(subBtn, brls::FocusDirection::DOWN, subBtn);
+        routeIfFocusable(videoBtn, brls::FocusDirection::DOWN, videoBtn);
     }
 
     // Wire up skip button for intro/credits
@@ -875,7 +943,8 @@ void PlayerActivity::onContentAvailable() {
                     if (ImageLoader::loadFromFile(dl.thumbPath, albumArt))
                         albumArt->setVisibility(brls::Visibility::VISIBLE);
                 } else if (!track->thumb.empty()) {
-                    std::string thumbUrl = PlexClient::getInstance().getThumbnailUrl(track->thumb, 300, 300);
+                    std::string thumbUrl = PlexClient::getInstance().getThumbnailUrl(track->thumb, m_mobileLayout ? 900 : 300,
+                                                 m_mobileLayout ? 900 : 300);
                     ImageLoader::setPaused(false);
                     ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
                         img->setVisibility(brls::Visibility::VISIBLE);
@@ -1186,6 +1255,11 @@ void PlayerActivity::loadFromQueue() {
         });
     }
 
+    // New track: the stream starts at the top again, so drop any offset a seek
+    // left behind (and the local mirror of it).
+    MusicController::getInstance().resetStreamStartOffset();
+    m_transcodeBaseOffsetMs = 0;
+
     // Reset streams cache for the new track
     m_streamsLoaded = false;
     m_plexStreams.clear();
@@ -1207,7 +1281,9 @@ void PlayerActivity::loadFromQueue() {
         if (titleLabel) titleLabel->setText(track->title);
         if (artistLabel) {
             artistLabel->setText(track->artist);
-            artistLabel->setVisibility(track->artist.empty()
+            // Not in the mobile layout: music_artist above already shows this,
+            // and a second copy lands on top of the time row.
+            artistLabel->setVisibility((m_mobileLayout || track->artist.empty())
                 ? brls::Visibility::GONE : brls::Visibility::VISIBLE);
         }
         updateQueueDisplay();
@@ -1222,7 +1298,8 @@ void PlayerActivity::loadFromQueue() {
                 }
             } else if (!track->thumb.empty()) {
                 PlexClient& client = PlexClient::getInstance();
-                std::string thumbUrl = client.getThumbnailUrl(track->thumb, 300, 300);
+                std::string thumbUrl = client.getThumbnailUrl(track->thumb, m_mobileLayout ? 900 : 300,
+                                                 m_mobileLayout ? 900 : 300);
                 ImageLoader::setPaused(false);
                 ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
                     img->setVisibility(brls::Visibility::VISIBLE);
@@ -1265,8 +1342,10 @@ void PlayerActivity::loadFromQueue() {
     }
     if (artistLabel) {
         artistLabel->setText(track->artist);
-        // Only show the artist label if there's actually text to display
-        artistLabel->setVisibility(track->artist.empty()
+        // Only show the artist label if there's actually text to display —
+        // and never in the mobile layout, where music_artist already has it and
+        // a second copy collides with the time row.
+        artistLabel->setVisibility((m_mobileLayout || track->artist.empty())
             ? brls::Visibility::GONE : brls::Visibility::VISIBLE);
     }
 
@@ -1332,7 +1411,8 @@ void PlayerActivity::loadFromQueue() {
         // The async worker no longer checks pause, so the load will complete.
         if (albumArt && !track->thumb.empty()) {
             PlexClient& artClient = PlexClient::getInstance();
-            std::string thumbUrl = artClient.getThumbnailUrl(track->thumb, 300, 300);
+            std::string thumbUrl = artClient.getThumbnailUrl(track->thumb, m_mobileLayout ? 900 : 300,
+                                                 m_mobileLayout ? 900 : 300);
             ImageLoader::setPaused(false);
             ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
                 img->setVisibility(brls::Visibility::VISIBLE);
@@ -1976,6 +2056,14 @@ void PlayerActivity::updateProgress() {
     }
     if (duration <= 0)
         duration = player.getDuration();
+
+
+    // A music seek can restart the transcode part-way into the track, after
+    // which mpv's clock runs from zero again. MusicController knows where the
+    // stream now starts; mirroring it here keeps every absolute-position
+    // calculation below (slider, time labels, markers) correct.
+    if (m_isQueueMode)
+        m_transcodeBaseOffsetMs = (int)MusicController::getInstance().streamStartOffsetMs();
 
     // Resolve the next track's stream URL while this one plays, so auto-advance
     // only has to hand mpv a URL. Held off for the first few seconds so the
@@ -2776,9 +2864,9 @@ void PlayerActivity::buildLyricsRows() {
         // A timed blank is a rest in the song; give it height so the scroll
         // position still tracks the music through an instrumental break.
         label->setText(line.text.empty() ? " " : line.text);
-        label->setFontSize(17);
+        label->setFontSize(ui(17));
         label->setTextColor(nvgRGB(0x8A, 0x8A, 0x90));
-        label->setMarginBottom(10);
+        label->setMarginBottom(ui(10));
         lyricsList->addView(label);
         m_lyricRows.push_back(label);
     }
@@ -2830,7 +2918,10 @@ void PlayerActivity::hideLyricsOverlay() {
 void PlayerActivity::syncLyricsToPosition() {
     if (!m_lyricsOverlayVisible || m_lyrics.empty()) return;
 
-    const int posMs = (int)(MpvPlayer::getInstance().getPosition() * 1000.0);
+    // Absolute, not mpv's local clock: a seek can restart the transcode part-way
+    // into the track, and lyric timestamps are against the whole song.
+    const int posMs = m_transcodeBaseOffsetMs
+                    + (int)(MpvPlayer::getInstance().getPosition() * 1000.0);
 
     // Last line whose stamp has passed. Linear from the current index rather
     // than a search over the whole file: playback moves forward a line at a
@@ -2845,14 +2936,14 @@ void PlayerActivity::syncLyricsToPosition() {
 
     if (m_lyricsIndex >= 0 && m_lyricsIndex < (int)m_lyricRows.size()) {
         m_lyricRows[(size_t)m_lyricsIndex]->setTextColor(nvgRGB(0x8A, 0x8A, 0x90));
-        m_lyricRows[(size_t)m_lyricsIndex]->setFontSize(17);
+        m_lyricRows[(size_t)m_lyricsIndex]->setFontSize(ui(17));
     }
     m_lyricsIndex = idx;
     if (idx < 0 || idx >= (int)m_lyricRows.size()) return;
 
     brls::Label* row = m_lyricRows[(size_t)idx];
     row->setTextColor(nvgRGB(0xE5, 0xA0, 0x0D));
-    row->setFontSize(19);
+    row->setFontSize(ui(19));
     // getY() is absolute, so subtract the content box's own origin to get the
     // row's offset inside it, then bias upward so the current line sits a bit
     // above centre with the next few visible below it.
@@ -2928,16 +3019,16 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         item->setAxis(brls::Axis::ROW);
         item->setJustifyContent(brls::JustifyContent::FLEX_START);
         item->setAlignItems(brls::AlignItems::CENTER);
-        item->setPaddingTop(10);
-        item->setPaddingBottom(10);
-        item->setPaddingLeft(12);
-        item->setPaddingRight(12);
-        item->setCornerRadius(4);
+        item->setPaddingTop(ui(10));
+        item->setPaddingBottom(ui(10));
+        item->setPaddingLeft(ui(12));
+        item->setPaddingRight(ui(12));
+        item->setCornerRadius(ui(4));
         item->setFocusable(true);
 
         brls::Label* label = new brls::Label();
         label->setText(m_isQueueMode ? "Off (No Lyrics)" : "Off (No Subtitles)");
-        label->setFontSize(16);
+        label->setFontSize(ui(16));
         label->setTextColor(nvgRGB(220, 220, 220));
         item->addView(label);
 
@@ -2965,11 +3056,11 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
             item->setAxis(brls::Axis::ROW);
             item->setJustifyContent(brls::JustifyContent::FLEX_START);
             item->setAlignItems(brls::AlignItems::CENTER);
-            item->setPaddingTop(10);
-            item->setPaddingBottom(10);
-            item->setPaddingLeft(12);
-            item->setPaddingRight(12);
-            item->setCornerRadius(4);
+            item->setPaddingTop(ui(10));
+            item->setPaddingBottom(ui(10));
+            item->setPaddingLeft(ui(12));
+            item->setPaddingRight(ui(12));
+            item->setCornerRadius(ui(4));
             item->setFocusable(true);
 
             if (ps.selected) {
@@ -2983,7 +3074,7 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
             std::string prefix = ps.selected ? "> " : "  ";
             brls::Label* label = new brls::Label();
             label->setText(prefix + displayStr);
-            label->setFontSize(16);
+            label->setFontSize(ui(16));
             label->setTextColor(ps.selected ? nvgRGB(150, 200, 255) : nvgRGB(220, 220, 220));
             item->addView(label);
 
@@ -3025,11 +3116,11 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
             item->setAxis(brls::Axis::ROW);
             item->setJustifyContent(brls::JustifyContent::FLEX_START);
             item->setAlignItems(brls::AlignItems::CENTER);
-            item->setPaddingTop(10);
-            item->setPaddingBottom(10);
-            item->setPaddingLeft(12);
-            item->setPaddingRight(12);
-            item->setCornerRadius(4);
+            item->setPaddingTop(ui(10));
+            item->setPaddingBottom(ui(10));
+            item->setPaddingLeft(ui(12));
+            item->setPaddingRight(ui(12));
+            item->setCornerRadius(ui(4));
             item->setFocusable(true);
 
             if (track.selected) {
@@ -3041,7 +3132,7 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
             std::string prefix = track.selected ? "> " : "  ";
             brls::Label* label = new brls::Label();
             label->setText(prefix + displayStr);
-            label->setFontSize(16);
+            label->setFontSize(ui(16));
             label->setTextColor(track.selected ? nvgRGB(150, 200, 255) : nvgRGB(220, 220, 220));
             item->addView(label);
 
@@ -3057,9 +3148,9 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         if (mpvTracks.empty() && mode != TrackSelectMode::SUBTITLE) {
             brls::Label* label = new brls::Label();
             label->setText("No tracks available");
-            label->setFontSize(16);
+            label->setFontSize(ui(16));
             label->setTextColor(nvgRGB(180, 180, 180));
-            label->setMargins(12, 12, 12, 12);
+            label->setMargins(ui(12), ui(12), ui(12), ui(12));
             trackList->addView(label);
         }
     }
@@ -3068,28 +3159,28 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
     if (mode == TrackSelectMode::SUBTITLE && !m_mediaKey.empty() && !m_isQueueMode) {
         // Add separator
         brls::Box* sep = new brls::Box();
-        sep->setWidth(376);  // track list width (400) minus padding (24)
-        sep->setHeight(1);
+        sep->setWidthPercentage(100.0f);  // the list content box, either layout
+        sep->setHeight(ui(1));
         sep->setBackgroundColor(nvgRGBA(255, 255, 255, 40));
-        sep->setMarginTop(6);
-        sep->setMarginBottom(6);
+        sep->setMarginTop(ui(6));
+        sep->setMarginBottom(ui(6));
         trackList->addView(sep);
 
         brls::Box* searchItem = new brls::Box();
         searchItem->setAxis(brls::Axis::ROW);
         searchItem->setJustifyContent(brls::JustifyContent::FLEX_START);
         searchItem->setAlignItems(brls::AlignItems::CENTER);
-        searchItem->setPaddingTop(10);
-        searchItem->setPaddingBottom(10);
-        searchItem->setPaddingLeft(12);
-        searchItem->setPaddingRight(12);
-        searchItem->setCornerRadius(4);
+        searchItem->setPaddingTop(ui(10));
+        searchItem->setPaddingBottom(ui(10));
+        searchItem->setPaddingLeft(ui(12));
+        searchItem->setPaddingRight(ui(12));
+        searchItem->setCornerRadius(ui(4));
         searchItem->setFocusable(true);
         searchItem->setBackgroundColor(nvgRGBA(60, 120, 60, 80));
 
         brls::Label* searchLabel = new brls::Label();
         searchLabel->setText("Search for Subtitles...");
-        searchLabel->setFontSize(16);
+        searchLabel->setFontSize(ui(16));
         searchLabel->setTextColor(nvgRGB(140, 230, 140));
         searchItem->addView(searchLabel);
 
@@ -3123,9 +3214,9 @@ void PlayerActivity::populateSubtitleSearchResults() {
     // Add a loading label
     brls::Label* loadingLabel = new brls::Label();
     loadingLabel->setText("Searching for subtitles...");
-    loadingLabel->setFontSize(16);
+    loadingLabel->setFontSize(ui(16));
     loadingLabel->setTextColor(nvgRGB(180, 180, 180));
-    loadingLabel->setMargins(12, 12, 12, 12);
+    loadingLabel->setMargins(ui(12), ui(12), ui(12), ui(12));
     trackList->addView(loadingLabel);
 
     // Search for subtitles from Plex (queries OpenSubtitles, etc.)
@@ -3138,9 +3229,9 @@ void PlayerActivity::populateSubtitleSearchResults() {
 
         brls::Label* noResults = new brls::Label();
         noResults->setText("No subtitles found");
-        noResults->setFontSize(16);
+        noResults->setFontSize(ui(16));
         noResults->setTextColor(nvgRGB(180, 180, 180));
-        noResults->setMargins(12, 12, 12, 12);
+        noResults->setMargins(ui(12), ui(12), ui(12), ui(12));
         trackList->addView(noResults);
 
         // Add back button
@@ -3148,16 +3239,16 @@ void PlayerActivity::populateSubtitleSearchResults() {
         backItem->setAxis(brls::Axis::ROW);
         backItem->setJustifyContent(brls::JustifyContent::FLEX_START);
         backItem->setAlignItems(brls::AlignItems::CENTER);
-        backItem->setPaddingTop(10);
-        backItem->setPaddingBottom(10);
-        backItem->setPaddingLeft(12);
-        backItem->setPaddingRight(12);
-        backItem->setCornerRadius(4);
+        backItem->setPaddingTop(ui(10));
+        backItem->setPaddingBottom(ui(10));
+        backItem->setPaddingLeft(ui(12));
+        backItem->setPaddingRight(ui(12));
+        backItem->setCornerRadius(ui(4));
         backItem->setFocusable(true);
 
         brls::Label* backLabel = new brls::Label();
         backLabel->setText("< Back to Subtitles");
-        backLabel->setFontSize(16);
+        backLabel->setFontSize(ui(16));
         backLabel->setTextColor(nvgRGB(150, 200, 255));
         backItem->addView(backLabel);
 
@@ -3190,16 +3281,16 @@ void PlayerActivity::populateSubtitleSearchResults() {
     backItem->setAxis(brls::Axis::ROW);
     backItem->setJustifyContent(brls::JustifyContent::FLEX_START);
     backItem->setAlignItems(brls::AlignItems::CENTER);
-    backItem->setPaddingTop(10);
-    backItem->setPaddingBottom(10);
-    backItem->setPaddingLeft(12);
-    backItem->setPaddingRight(12);
-    backItem->setCornerRadius(4);
+    backItem->setPaddingTop(ui(10));
+    backItem->setPaddingBottom(ui(10));
+    backItem->setPaddingLeft(ui(12));
+    backItem->setPaddingRight(ui(12));
+    backItem->setCornerRadius(ui(4));
     backItem->setFocusable(true);
 
     brls::Label* backLabel = new brls::Label();
     backLabel->setText("< Back to Subtitles");
-    backLabel->setFontSize(16);
+    backLabel->setFontSize(ui(16));
     backLabel->setTextColor(nvgRGB(150, 200, 255));
     backItem->addView(backLabel);
 
@@ -3214,11 +3305,11 @@ void PlayerActivity::populateSubtitleSearchResults() {
 
     // Add separator
     brls::Box* sep = new brls::Box();
-    sep->setWidth(376);  // track list width (400) minus padding (24)
-    sep->setHeight(1);
+    sep->setWidthPercentage(100.0f);  // the list content box, either layout
+    sep->setHeight(ui(1));
     sep->setBackgroundColor(nvgRGBA(255, 255, 255, 40));
-    sep->setMarginTop(4);
-    sep->setMarginBottom(4);
+    sep->setMarginTop(ui(4));
+    sep->setMarginBottom(ui(4));
     trackList->addView(sep);
 
     // Show up to 15 results to avoid overflow on Vita's small screen
@@ -3239,16 +3330,16 @@ void PlayerActivity::populateSubtitleSearchResults() {
         item->setAxis(brls::Axis::ROW);
         item->setJustifyContent(brls::JustifyContent::FLEX_START);
         item->setAlignItems(brls::AlignItems::CENTER);
-        item->setPaddingTop(10);
-        item->setPaddingBottom(10);
-        item->setPaddingLeft(12);
-        item->setPaddingRight(12);
-        item->setCornerRadius(4);
+        item->setPaddingTop(ui(10));
+        item->setPaddingBottom(ui(10));
+        item->setPaddingLeft(ui(12));
+        item->setPaddingRight(ui(12));
+        item->setCornerRadius(ui(4));
         item->setFocusable(true);
 
         brls::Label* label = new brls::Label();
         label->setText(displayStr);
-        label->setFontSize(14);
+        label->setFontSize(ui(14));
         label->setTextColor(nvgRGB(220, 220, 220));
         item->addView(label);
 
@@ -3664,6 +3755,19 @@ void PlayerActivity::setRepeatFromOs(RepeatMode mode) {
     updateRepeatIcon();
 }
 
+
+// Whether there is room for the collapsed queue sheet. The handoff's frame is a
+// tall phone (412x915, so 1280x2841 in borealis units); on a much shorter one —
+// an unfolded foldable, a landscape window — reserving the sheet's height would
+// leave the cover a stamp. Better to drop the sheet there than to wreck the
+// thing the layout is built around. The Queue button in the header still opens
+// the full list either way.
+bool PlayerActivity::mobileSheetFits() const {
+    const float vh = platform::viewportHeight();
+    if (vh <= 0.f) return false;
+    return (vh - kMobileChrome - kMobileSheetHeight) >= kMobileMinCover;
+}
+
 void PlayerActivity::applyMusicLayoutForViewport() {
     if (!albumArt) return;
 
@@ -3678,17 +3782,50 @@ void PlayerActivity::applyMusicLayoutForViewport() {
     float vh = platform::viewportHeight();
     if (vw <= 0 || vh <= 0) return;
 
-    float byWidth  = vw * 0.55f;
-    float byHeight = vh * 0.45f;
+    // The mobile layout is built around a big cover — the handoff draws it 300
+    // wide in a 412 frame — so it gets a much larger share of the width than the
+    // classic player, where the cover shares the screen with a control column.
+    float byWidth  = vw * (m_mobileLayout ? 0.78f : 0.55f);
+    float byHeight = vh * (m_mobileLayout ? 0.42f : 0.45f);
     float target   = std::min(byWidth, byHeight);
 
+    // A fraction of the height is not enough on its own: everything under the
+    // cover has a fixed height, so on a shorter screen — or as soon as a long
+    // title wraps to two lines — the column overflows and the last thing on it,
+    // the play button, gets clipped off the bottom. Flex grow cannot save it
+    // either; it only shares out space that is already spare.
+    //
+    // So also fit the cover to what is actually left. The budget below is the
+    // rest of the mobile column, in the same logical units the XML uses: header
+    // 162 + 31 margin, cover's 56 bottom margin, a 68pt title with its 16 margin
+    // over a 43pt artist (~150 — both are singleLine, so neither can grow), the
+    // controls block (46 + 64 slider + 6 + ~45 labels = 161), the transport
+    // (40 + 224), and 80 of breathing room so the circle is never flush against
+    // the edge.
+    if (m_mobileLayout) {
+        float chrome = kMobileChrome;
+        // The collapsed queue sheet is absolutely positioned along the bottom,
+        // so the column must leave its height clear or the transport ends up
+        // behind it — but only when the sheet is actually shown.
+        if (mobileSheetFits()) chrome += kMobileSheetHeight;
+        target = std::min(target, vh - chrome);
+    }
+
     // Don't shrink below the original 220px design size — every
-    // platform has at least enough room for that on landscape.
-    if (target < 220.f) target = 220.f;
+    // platform has at least enough room for that on landscape. The mobile
+    // layout gets a lower floor: on a short screen, holding 220 here would put
+    // back the overflow the fit above exists to avoid.
+    const float floorPx = m_mobileLayout ? 150.f : 220.f;
+    if (target < floorPx) target = floorPx;
     // And don't blow up beyond 480 in either direction; pushed any
     // bigger the cover starts dominating the layout on big tablets
     // and the controls feel orphaned at the bottom.
-    if (target > 480.f) target = 480.f;
+    //
+    // The mobile layout is the exception: dominating is the point there, and
+    // this cap was what kept the cover at ~37% of the width on a phone —
+    // 480 of borealis' ~1280 logical units — instead of the 73% the design
+    // draws. The proportional limits above already bound it on both axes.
+    if (!m_mobileLayout && target > 480.f) target = 480.f;
 
     albumArt->setWidth(target);
     albumArt->setHeight(target);
@@ -3724,6 +3861,7 @@ void PlayerActivity::onTrackEnded(const QueueItem* nextTrack) {
     }
 }
 
+
 void PlayerActivity::updateQueueDisplay() {
     if (!m_isQueueMode) return;
 
@@ -3757,6 +3895,8 @@ void PlayerActivity::updateQueueDisplay() {
         queueLabel->setVisibility(brls::Visibility::VISIBLE);
     }
 
+    updateMobileSheet();
+
     // Refresh the queue side sheet if it's open. Rebuild when the queue
     // version changed (size/order/shuffle) or when the song advanced -
     // playTrack/playNext don't bump the version, so the current index is
@@ -3767,6 +3907,110 @@ void PlayerActivity::updateQueueDisplay() {
             populateQueueList();
         }
     }
+}
+
+
+// The collapsed queue sheet along the bottom of the mobile layout: how much is
+// left to play, and what comes next. Its views live only in player_mobile.xml,
+// so they are looked up by id rather than bound — getView returns null in the
+// classic layout and every use below tolerates that.
+void PlayerActivity::updateMobileSheet() {
+    if (!m_mobileLayout || !m_isQueueMode) return;
+
+    auto* sheet = dynamic_cast<brls::Box*>(getView("player/sheet"));
+    if (!sheet) return;
+
+    if (!mobileSheetFits()) {
+        sheet->setVisibility(brls::Visibility::GONE);
+        sheet->setFocusable(false);
+        return;
+    }
+    sheet->setFocusable(true);
+
+    MusicQueue& queue = MusicQueue::getInstance();
+    const QueueItem* next = queue.peekNextTrack();
+
+    // Nothing after this track (end of a queue with repeat off) — the sheet has
+    // nothing to say, so it gets out of the way rather than showing an empty row.
+    if (!next) {
+        sheet->setVisibility(brls::Visibility::GONE);
+        return;
+    }
+    sheet->setVisibility(brls::Visibility::VISIBLE);
+
+    auto* label = dynamic_cast<brls::Label*>(getView("player/sheet_upnext"));
+    if (label) {
+        const int remaining = queue.getQueueSize() -
+            (queue.isShuffleEnabled() ? queue.getShufflePosition() + 1
+                                      : queue.getCurrentIndex() + 1);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "UP NEXT \u00b7 %d TRACK%s",
+                 remaining > 0 ? remaining : 0, remaining == 1 ? "" : "S");
+        label->setText(buf);
+    }
+
+    if (auto* t = dynamic_cast<brls::Label*>(getView("player/sheet_next_title")))
+        t->setText(next->title);
+    if (auto* a = dynamic_cast<brls::Label*>(getView("player/sheet_next_artist")))
+        a->setText(next->artist);
+    if (auto* d = dynamic_cast<brls::Label*>(getView("player/sheet_next_duration"))) {
+        if (next->duration > 0) {
+            char buf[16];
+            snprintf(buf, sizeof(buf), "%d:%02d", next->duration / 60, next->duration % 60);
+            d->setText(buf);
+        } else {
+            d->setText("");
+        }
+    }
+
+    // Cover for the next track. Only re-fetched when it actually changes — this
+    // runs once a second off updateQueueDisplay.
+    auto* thumb = dynamic_cast<brls::Image*>(getView("player/sheet_next_thumb"));
+    if (thumb && next->ratingKey != m_sheetThumbKey) {
+        m_sheetThumbKey = next->ratingKey;
+        DownloadItem dl;
+        if (DownloadsManager::getInstance().getDownloadCopy(next->ratingKey, dl) &&
+            dl.state == DownloadState::COMPLETED && !dl.thumbPath.empty()) {
+            if (ImageLoader::loadFromFile(dl.thumbPath, thumb))
+                thumb->setVisibility(brls::Visibility::VISIBLE);
+        } else if (!next->thumb.empty()) {
+            std::string url = PlexClient::getInstance().getThumbnailUrl(next->thumb, 160, 160);
+            ImageLoader::setPaused(false);
+            ImageLoader::loadAsync(url, [](brls::Image* img) {
+                img->setVisibility(brls::Visibility::VISIBLE);
+            }, thumb, m_alive);
+            ImageLoader::setPaused(true);
+        } else {
+            thumb->setVisibility(brls::Visibility::GONE);
+        }
+    }
+}
+
+void PlayerActivity::wireMobileSheet() {
+    if (!m_mobileLayout) return;
+
+    // Lyrics fill the screen in this layout, so the scrim the classic one
+    // dismisses through has nothing to occupy. Back still works; this is the
+    // visible way out for touch.
+    if (auto* close = dynamic_cast<brls::Box*>(getView("player/lyrics_close"))) {
+        close->registerClickAction([this](brls::View*) {
+            hideLyricsOverlay();
+            return true;
+        });
+        close->addGestureRecognizer(new brls::TapGestureRecognizer(close));
+    }
+
+    auto* sheet = dynamic_cast<brls::Box*>(getView("player/sheet"));
+    if (!sheet) return;
+
+    // Tap anywhere on the sheet to open the full queue. The handoff wants a
+    // drag as well; that needs gesture plumbing the sheet does not have yet, so
+    // the grab handle is decorative until then.
+    sheet->registerClickAction([this](brls::View*) {
+        showQueueOverlay();
+        return true;
+    });
+    sheet->addGestureRecognizer(new brls::TapGestureRecognizer(sheet));
 }
 
 // Queue list overlay methods
@@ -3879,12 +4123,12 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     row->setAxis(brls::Axis::ROW);
     row->setJustifyContent(brls::JustifyContent::FLEX_START);
     row->setAlignItems(brls::AlignItems::CENTER);
-    row->setHeight(52);
-    row->setPaddingLeft(10);
-    row->setPaddingRight(10);
-    row->setCornerRadius(9);
+    row->setHeight(uiRow(kQueueRowH));
+    row->setPaddingLeft(uiRow(10));
+    row->setPaddingRight(uiRow(10));
+    row->setCornerRadius(uiRow(9));
     row->setFocusable(true);
-    row->setMarginBottom(2);
+    row->setMarginBottom(uiRow(kQueueRowGap));
     row->setBackgroundColor(nvgRGBA(0, 0, 0, 0));
 
     // Drag-handle glyph (3 stacked bars) - a visual affordance for reordering
@@ -3892,26 +4136,26 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     grip->setAxis(brls::Axis::COLUMN);
     grip->setJustifyContent(brls::JustifyContent::CENTER);
     grip->setAlignItems(brls::AlignItems::CENTER);
-    grip->setWidth(14);
-    grip->setMarginRight(8);
+    grip->setWidth(uiRow(14));
+    grip->setMarginRight(uiRow(8));
     for (int b = 0; b < 3; b++) {
         brls::Box* bar = new brls::Box();
-        bar->setWidth(12);
-        bar->setHeight(2);
-        bar->setCornerRadius(1);
+        bar->setWidth(uiRow(12));
+        bar->setHeight(uiRow(2));
+        bar->setCornerRadius(uiRow(1));
         bar->setBackgroundColor(nvgRGB(138, 138, 144));
-        if (b < 2) bar->setMarginBottom(3);
+        if (b < 2) bar->setMarginBottom(uiRow(3));
         grip->addView(bar);
     }
     row->addView(grip);
 
     // Cover art thumbnail (38x38), loaded lazily when the row nears the viewport
     brls::Image* thumb = new brls::Image();
-    thumb->setWidth(38);
-    thumb->setHeight(38);
-    thumb->setCornerRadius(6);
+    thumb->setWidth(uiRow(38));
+    thumb->setHeight(uiRow(38));
+    thumb->setCornerRadius(uiRow(6));
     thumb->setScalingType(brls::ImageScalingType::FIT);
-    thumb->setMarginRight(11);
+    thumb->setMarginRight(uiRow(11));
     m_deferredThumbs.push_back({thumb, track.thumb, track.ratingKey, false});
     row->addView(thumb);
 
@@ -3923,7 +4167,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
 
     brls::Label* titleLbl = new brls::Label();
     titleLbl->setText(track.title);
-    titleLbl->setFontSize(14);
+    titleLbl->setFontSize(ui(14));
     titleLbl->setTextColor(nvgRGB(255, 255, 255));
     titleLbl->setSingleLine(true);
     meta->addView(titleLbl);
@@ -3931,10 +4175,10 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     if (!track.artist.empty()) {
         brls::Label* artistLbl = new brls::Label();
         artistLbl->setText(track.artist);
-        artistLbl->setFontSize(12);
+        artistLbl->setFontSize(ui(12));
         artistLbl->setTextColor(nvgRGB(180, 180, 186));
         artistLbl->setSingleLine(true);
-        artistLbl->setMarginTop(1);
+        artistLbl->setMarginTop(uiRow(1));
         meta->addView(artistLbl);
     }
     row->addView(meta);
@@ -3948,9 +4192,9 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     } else {
         durLbl->setText("");
     }
-    durLbl->setFontSize(12);
+    durLbl->setFontSize(ui(12));
     durLbl->setTextColor(nvgRGB(138, 138, 144));
-    durLbl->setMarginLeft(8);
+    durLbl->setMarginLeft(uiRow(8));
     row->addView(durLbl);
 
     // Remove (x) affordance - reserved space, revealed only while focused
@@ -3958,14 +4202,14 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     removeBtn->setAxis(brls::Axis::ROW);
     removeBtn->setJustifyContent(brls::JustifyContent::CENTER);
     removeBtn->setAlignItems(brls::AlignItems::CENTER);
-    removeBtn->setWidth(24);
-    removeBtn->setHeight(24);
-    removeBtn->setCornerRadius(6);
-    removeBtn->setMarginLeft(6);
+    removeBtn->setWidth(uiRow(24));
+    removeBtn->setHeight(uiRow(24));
+    removeBtn->setCornerRadius(uiRow(6));
+    removeBtn->setMarginLeft(uiRow(6));
     removeBtn->setVisibility(brls::Visibility::INVISIBLE);
     brls::Image* removeIcon = new brls::Image();
-    removeIcon->setWidth(12);
-    removeIcon->setHeight(12);
+    removeIcon->setWidth(uiRow(12));
+    removeIcon->setHeight(uiRow(12));
     removeIcon->setScalingType(brls::ImageScalingType::FIT);
     removeIcon->setImageFromRes("icons/cross.png");
     removeBtn->addView(removeIcon);
@@ -3974,18 +4218,72 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     // Row -> track mapping (looked up dynamically by the handlers below)
     m_queueRowData[row] = {trackIdx, track.title, removeBtn};
 
-    // Swipe left to remove this track from the queue
+    // Swipe left to remove this track from the queue. The row reddens as it
+    // goes, mirroring the gold lift a grab gives: the tint deepens with the
+    // swipe and saturates once past the commit distance, so letting go there is
+    // clearly going to delete rather than a guess about how far is far enough.
+    //
+    // Whatever the row's resting colour is depends on focus and on whether a
+    // track is being held, so an abandoned swipe restores it from the same rule
+    // the focus handler uses rather than assuming transparent.
+    auto restoreRowTint = [this, row]() {
+        if (row == m_focusedQueueRow) {
+            row->setBackgroundColor(m_queueGrabActive ? nvgRGBA(229, 160, 13, 90)
+                                                      : nvgRGB(58, 58, 70));
+        } else {
+            row->setBackgroundColor(nvgRGBA(0, 0, 0, 0));
+        }
+    };
+    // How far is "far enough" has to scale with the layout. 120 units is about
+    // 9% of the 1280-wide logical space — a flick on a phone, and easy to fire
+    // by accident while scrolling. ui() puts it near a third of the width there
+    // and leaves the classic player where it was.
+    const float kCommitPx = ui(120.0f);
+    // The commit distance is long enough that spreading the tint across all of
+    // it leaves the red barely there for most of the swipe. Saturate well
+    // before the end instead, so the colour is doing its job as a warning
+    // rather than as a progress bar.
+    const float kTintFullPx = kCommitPx * 0.4f;
+    const float kRestPx     = ui(4.0f);
     row->addGestureRecognizer(new brls::PanGestureRecognizer(
-        [this, row](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
-            if (status.state == brls::GestureState::UNSURE || status.state == brls::GestureState::START) {
+        [this, row, restoreRowTint, kCommitPx, kTintFullPx, kRestPx](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
+            // STAY is the state for every frame of a pan in progress; UNSURE
+            // and START each fire exactly once and both report a zero delta
+            // (the recognizer rebases startPosition when it promotes UNSURE to
+            // START). Leaving STAY out meant the only frames this ever saw had
+            // nothing to draw, so the row never actually followed the finger
+            // and the tint never left its resting value.
+            if (status.state == brls::GestureState::UNSURE ||
+                status.state == brls::GestureState::START ||
+                status.state == brls::GestureState::STAY) {
                 float deltaX = status.position.x - status.startPosition.x;
-                if (deltaX > 0) { row->setTranslationX(0); row->setAlpha(1.0f); return; }
+                if (deltaX > 0) { row->setTranslationX(0); restoreRowTint(); return; }
                 row->setTranslationX(deltaX);
-                float alpha = 1.0f - std::min(1.0f, std::abs(deltaX) / 200.0f);
-                row->setAlpha(std::max(0.2f, alpha));
+                // No opacity fade on the row: view alpha multiplies through to
+                // the background, so fading the row and tinting it red fight
+                // each other and both come out weak. The slide plus the colour
+                // are the cue.
+                //
+                // Ramp from zero, not from a floor: swiping back has to clear
+                // the red as the finger returns, not only once it lifts. The
+                // curve is steep so the red still shows up immediately. Within
+                // a few units of rest the row is treated as unswiped and gets
+                // its real colour back, otherwise a focused row would look
+                // unfocused mid-swipe.
+                float d = std::abs(deltaX);
+                if (d < kRestPx) {
+                    restoreRowTint();
+                } else if (d >= kCommitPx) {
+                    // Armed — letting go here deletes, so say so plainly.
+                    row->setBackgroundColor(nvgRGBA(205, 55, 55, 235));
+                } else {
+                    float t = std::min(1.0f, d / kTintFullPx);
+                    row->setBackgroundColor(
+                        nvgRGBA(200, 60, 60, (unsigned char)(190.0f * std::sqrt(t))));
+                }
             } else if (status.state == brls::GestureState::END) {
                 float deltaX = status.position.x - status.startPosition.x;
-                if (deltaX < -120.0f) {
+                if (deltaX < -kCommitPx) {
                     auto it = m_queueRowData.find(row);
                     if (it != m_queueRowData.end()) {
                         int tIdx = it->second.trackIdx;
@@ -3994,10 +4292,14 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     }
                 }
                 row->setTranslationX(0);
-                row->setAlpha(1.0f);
-            } else if (status.state == brls::GestureState::FAILED) {
+                restoreRowTint();
+            } else if (status.state == brls::GestureState::FAILED ||
+                       status.state == brls::GestureState::INTERRUPTED) {
+                // A swipe that turns into a vertical drag gets interrupted
+                // rather than failed, and without this the row keeps whatever
+                // offset and red it had reached.
                 row->setTranslationX(0);
-                row->setAlpha(1.0f);
+                restoreRowTint();
             }
         }, brls::PanAxis::HORIZONTAL));
 
@@ -4006,8 +4308,8 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     // row follows the finger while neighbours slide out of the way, and the
     // drop commits via moveTrack + rebuild.
     row->addGestureRecognizer(new brls::PanGestureRecognizer(
-        [this, row](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
-            constexpr float rowH = 54.0f;  // 52 height + 2 margin
+        [this, row, restoreRowTint](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
+            const float rowH = queueRowPitch();
             float deltaY = status.position.y - status.startPosition.y;
 
             if (status.state == brls::GestureState::UNSURE) {
@@ -4043,12 +4345,10 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
 
                 // Not yet a drag: forward the vertical motion to the scroll view
                 if (m_dragState.scrollPassthrough && m_dragState.draggedRow == row) {
-                    if (queueScroll && std::abs(deltaY) >= 10.0f) {
+                    if (queueScroll && std::abs(deltaY) >= ui(10.0f)) {
                         float newOffset = m_dragState.initialScrollY - deltaY;
                         if (newOffset < 0) newOffset = 0;
-                        float viewH = queueScroll->getHeight();
-                        int n = queueList ? (int)queueList->getChildren().size() : 0;
-                        float maxScroll = std::max(0.0f, n * rowH + 8.0f - viewH);
+                        float maxScroll = queueMaxScroll();
                         if (newOffset > maxScroll) newOffset = maxScroll;
                         queueScroll->setContentOffsetY(newOffset, false);
                     }
@@ -4067,17 +4367,30 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 // STAY fires every frame the finger is held, so this keeps
                 // scrolling even when the finger isn't moving.
                 if (queueScroll) {
-                    constexpr float EDGE = 44.0f;
-                    constexpr float SPEED = 9.0f;
+                    // Both of these used to be bare literals, which made the
+                    // mobile layout the slow one: 9 units a frame is a sixth of
+                    // a classic row but only a thirteenth of a mobile row, so
+                    // the same code crawled at under half the speed on the
+                    // layout with the taller rows. Rate is in rows now, so the
+                    // two layouts move at the same pace down the list.
+                    const float EDGE = ui(44.0f);
+                    // ...and it ramps with how deep into the zone the finger
+                    // is: a creep at the boundary to place a track exactly,
+                    // fast at the very edge to cross a long queue.
+                    const float SLOW = rowH * 0.03f;
+                    const float FAST = rowH * 0.18f;
                     float viewH = queueScroll->getHeight();
                     float fingerInView = status.position.y - queueScroll->getY();
                     float scrollY = queueScroll->getContentOffsetY();
-                    int n = queueList ? (int)queueList->getChildren().size() : 0;
-                    float maxScroll = std::max(0.0f, n * rowH + 8.0f - viewH);
-                    if (fingerInView > viewH - EDGE && scrollY < maxScroll) {
-                        queueScroll->setContentOffsetY(std::min(maxScroll, scrollY + SPEED), false);
-                    } else if (fingerInView < EDGE && scrollY > 0) {
-                        queueScroll->setContentOffsetY(std::max(0.0f, scrollY - SPEED), false);
+                    float maxScroll = queueMaxScroll();
+                    float past = fingerInView - (viewH - EDGE);   // into the bottom zone
+                    float above = EDGE - fingerInView;            // into the top zone
+                    if (past > 0 && scrollY < maxScroll) {
+                        float speed = SLOW + (FAST - SLOW) * std::min(1.0f, past / EDGE);
+                        queueScroll->setContentOffsetY(std::min(maxScroll, scrollY + speed), false);
+                    } else if (above > 0 && scrollY > 0) {
+                        float speed = SLOW + (FAST - SLOW) * std::min(1.0f, above / EDGE);
+                        queueScroll->setContentOffsetY(std::max(0.0f, scrollY - speed), false);
                     }
                     // Re-read the scroll offset so the dragged row stays under the
                     // finger and the target index reflects the new scroll position.
@@ -4104,7 +4417,8 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                     }
                 }
             } else if (status.state == brls::GestureState::END ||
-                       status.state == brls::GestureState::FAILED) {
+                       status.state == brls::GestureState::FAILED ||
+                       status.state == brls::GestureState::INTERRUPTED) {
                 bool didDrag = m_dragState.holdMet && m_dragState.draggedRow == row;
                 int origIdx = m_dragState.originalDisplayIdx;
                 int targetIdx = m_dragState.targetDisplayIdx;
@@ -4148,10 +4462,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 }
                 // Suppress the click that fires right after a drag gesture
                 m_dragState.justEnded = didDrag;
-                if (!committed) {
-                    row->setBackgroundColor(m_focusedQueueRow == row
-                        ? nvgRGB(58, 58, 70) : nvgRGBA(0, 0, 0, 0));
-                }
+                if (!committed) restoreRowTint();
 
                 m_dragState.active = false;
                 m_dragState.holdMet = false;
@@ -4272,7 +4583,7 @@ void PlayerActivity::populateQueueList() {
     if (upcoming <= 0) {
         brls::Label* empty = new brls::Label();
         empty->setText("Nothing up next");
-        empty->setFontSize(13);
+        empty->setFontSize(ui(13));
         empty->setTextColor(nvgRGB(124, 124, 132));
         empty->setMarginTop(10);
         empty->setMarginLeft(10);
@@ -4291,7 +4602,7 @@ void PlayerActivity::populateQueueList() {
             char mbuf[48];
             snprintf(mbuf, sizeof(mbuf), "+%d more", count - m_queueWindowEnd);
             more->setText(mbuf);
-            more->setFontSize(12);
+            more->setFontSize(ui(12));
             more->setTextColor(nvgRGB(124, 124, 132));
             more->setMarginTop(8);
             more->setMarginLeft(10);
@@ -4370,7 +4681,7 @@ void PlayerActivity::updateNowPlayingBlock() {
                 ImageLoader::loadAsync(url, [](brls::Image*) {}, queueNpThumb, m_alive);
                 ImageLoader::setPaused(true);
             } else {
-                queueNpThumb->setImageFromRes("img/default_music.png");
+                queueNpThumb->setImageFromRes("icons/music.png");
             }
         }
     }
@@ -4508,13 +4819,25 @@ void PlayerActivity::refixQueueUpRoutes(int lo) {
     }
 }
 
+float PlayerActivity::queueMaxScroll() {
+    if (!queueScroll || !queueList) return 0.0f;
+    // ScrollingFrame clamps itself against its content view's measured height,
+    // so anything we compute independently -- a row count times an assumed
+    // pitch, plus an assumed padding -- can only ever disagree with it, and
+    // then a scroll either overshoots and snaps back or stops short of the
+    // end. Ask the same question it asks.
+    float contentH = queueList->getHeight();
+    if (contentH <= 0.0f)   // not laid out yet: estimate from what we build
+        contentH = (float)queueList->getChildren().size() * queueRowPitch();
+    return std::max(0.0f, contentH - queueScroll->getHeight());
+}
+
 void PlayerActivity::scrollQueueToChild(int idx) {
     if (!queueScroll || !queueList || idx < 0) return;
-    constexpr float rowH = 54.0f;  // 52 height + 2 margin (matches the rows)
+    const float rowH = queueRowPitch();
     float viewH = queueScroll->getHeight();
     if (viewH <= 0.0f) return;
-    int n = (int)queueList->getChildren().size();
-    float maxScroll = std::max(0.0f, n * rowH + 8.0f - viewH);
+    float maxScroll = queueMaxScroll();
     // Center the row (clamped at the ends), matching the list's CENTERED nav so
     // a grab-mode move keeps the held row centered as the list scrolls under it.
     float newOffset = (idx * rowH + rowH / 2.0f) - viewH / 2.0f;
@@ -4838,13 +5161,13 @@ void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB, bool skipTh
                 std::string urlA = swapClient.getThumbnailUrl(dtA.thumbPath, 100, 100);
                 ImageLoader::loadAsync(urlA, [](brls::Image*) {}, thumbA, m_alive);
             } else {
-                thumbA->setImageFromRes("img/default_music.png");
+                thumbA->setImageFromRes("icons/music.png");
             }
             if (dtB.loaded && !dtB.thumbPath.empty()) {
                 std::string urlB = swapClient.getThumbnailUrl(dtB.thumbPath, 100, 100);
                 ImageLoader::loadAsync(urlB, [](brls::Image*) {}, thumbB, m_alive);
             } else {
-                thumbB->setImageFromRes("img/default_music.png");
+                thumbB->setImageFromRes("icons/music.png");
             }
         }
     }

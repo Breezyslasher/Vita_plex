@@ -1,0 +1,888 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Mobile Now Playing — the phone-shaped music player.
+
+  Chosen by PlayerActivity::createContentView() from the "Player layout"
+  setting (Auto / Classic / Mobile). It declares exactly the same view ids as
+  player.xml, because every BRLS_BIND in PlayerActivity resolves by id and
+  throws if one is missing — so the whole activity is layout-agnostic and only
+  the geometry differs here.
+
+  Video, photo and the centre video controls are present for that reason but
+  play no part in this layout: it is reached from music, where the existing
+  code hides them. The three overlays at the bottom (queue sheet, lyrics sheet,
+  track picker) are shared verbatim with the classic layout.
+
+  Colours follow the handoff except the background: the handoff asks for
+  #1B1B1D, but the app paints #2D2D2D (palette::bg) everywhere else and a
+  player in a different dark reads as a different app. Gold #E5A00D, title
+  #FFFFFF, secondary #8C8C93, inactive control #CFCFD4 are as specified.
+-->
+<brls:Box
+    id="player/container"
+    width="100%"
+    height="100%"
+    axis="column"
+    justifyContent="flexStart"
+    alignItems="stretch"
+    backgroundColor="#2D2D2D">
+
+    <!-- Video / photo. Never shown in this layout; kept so the id contract
+         holds and a stray video load has somewhere to land. -->
+    <vitaplex:VideoView
+        id="player/video"
+        width="100%"
+        height="100%"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        positionRight="0"
+        positionBottom="0"
+        visibility="gone"/>
+    <brls:Image
+        id="player/photo"
+        width="100%"
+        height="100%"
+        scalingType="fit"
+        visibility="gone"/>
+
+    <!-- Header: dismiss on the left, source in the middle, the two music
+         sheets on the right. The handoff calls for a single overflow menu
+         there; until that menu exists, the Lyrics and Queue buttons it would
+         contain sit in its place — they are already wired and already gated to
+         music mode, so nothing here needs new plumbing. -->
+    <brls:Box
+        width="100%"
+        height="162"
+        axis="row"
+        justifyContent="spaceBetween"
+        alignItems="center"
+        paddingLeft="43"
+        paddingRight="43"
+        marginTop="31">
+
+        <brls:Box
+            id="player/queue_btn"
+            width="137"
+            height="137"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="68"
+            focusable="true">
+            <brls:Image
+                id="player/queue_icon"
+                width="65"
+                height="65"
+                image="@res/icons/format-list-group.png"
+                scalingType="fit"/>
+        </brls:Box>
+
+        <!-- Source line. PlayerActivity keeps the "track N of M" text here in
+             music mode, which is the same job the design's PLAYING FROM ALBUM
+             label does. -->
+        <brls:Label
+            id="player/queue_info"
+            text=""
+            fontSize="34"
+            horizontalAlign="center"
+            textColor="#8C8C93"
+            grow="1"/>
+
+        <brls:Box
+            id="player/lyrics_btn"
+            width="137"
+            height="137"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="68"
+            focusable="true">
+            <brls:Image
+                id="player/lyrics_icon"
+                width="65"
+                height="65"
+                image="@res/icons/subtitles.png"
+                scalingType="fit"/>
+        </brls:Box>
+    </brls:Box>
+
+    <!-- Upper spacer. Paired with the smaller one after the transport, this is
+         what positions the whole block: the slack splits 1 : 0.6, so the group
+         sits about 62% down rather than centred or bottom-pinned. -->
+    <brls:Box width="100%" grow="0.85"/>
+
+    <!-- Cover art. The handoff draws it 300 wide in a 412 frame; the value here
+         is that ratio against borealis' fixed 1280-wide logical space, and
+         applyMusicLayoutForViewport() then fits it to the real viewport.
+         shrink=1 is the backstop: yoga defaults children to not shrinking, so
+         without it an overflowing column clips its *last* child — the play
+         button — instead of squeezing the one thing that can afford it. -->
+    <brls:Box
+        id="player/album_art_container"
+        width="100%"
+        shrink="1"
+        axis="column"
+        justifyContent="center"
+        alignItems="center"
+        marginBottom="56">
+        <brls:Image
+            id="player/album_art"
+            width="932"
+            height="932"
+            scalingType="fit"
+            cornerRadius="50"
+            visibility="gone"/>
+    </brls:Box>
+
+    <!-- Track and artist. Left-aligned per the design, not centred. -->
+    <brls:Box
+        id="player/music_info"
+        width="100%"
+        axis="column"
+        alignItems="flexStart"
+        visibility="gone"
+        paddingLeft="81"
+        paddingRight="81">
+        <!-- singleLine on both. A wrapping Label reports a one-line height to
+             the layout and then draws every line it needs, so a long title ran
+             straight over the artist beneath it. The handoff asks for the same
+             thing anyway — "do not wrap to a third line" — and marquee is not an
+             option here: Label only animates while focused, which a label never
+             is. So: one line, ellipsised. -->
+        <brls:Label
+            id="player/music_title"
+            text=""
+            fontSize="68"
+            singleLine="true"
+            textColor="#FFFFFF"
+            marginBottom="16"/>
+        <brls:Label
+            id="player/music_artist"
+            text=""
+            fontSize="43"
+            singleLine="true"
+            textColor="#8C8C93"/>
+    </brls:Box>
+
+    <!-- Seek bar and times. This is player/controls, which the activity keeps
+         visible throughout music playback (the auto-hide is video-only). -->
+    <brls:Box
+        id="player/controls"
+        width="100%"
+        axis="column"
+        alignItems="stretch"
+        paddingLeft="81"
+        paddingRight="81"
+        marginTop="46">
+
+        <brls:Slider
+            id="player/progress"
+            width="100%"
+            height="64"/>
+
+        <brls:Box
+            width="100%"
+            axis="row"
+            justifyContent="spaceBetween"
+            alignItems="center"
+            marginTop="6">
+            <brls:Label
+                id="player/time_elapsed"
+                text="0:00"
+                fontSize="37"
+                textColor="#8C8C93"/>
+            <brls:Label
+                id="player/time"
+                text=""
+                fontSize="37"
+                textColor="#8C8C93"
+                visibility="gone"/>
+            <brls:Label
+                id="player/time_remaining"
+                text="0:00"
+                fontSize="37"
+                textColor="#8C8C93"/>
+        </brls:Box>
+
+        <!-- Video-only controls. Present for the id contract; music mode hides
+             them and clears their focusability, so they never join the focus
+             order in this layout. -->
+        <brls:Box
+            width="100%"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            visibility="gone">
+            <brls:Box
+                id="player/audio_btn"
+                focusable="true"
+                width="137"
+                height="137"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="68"
+                visibility="gone">
+                <brls:Image
+                    id="player/audio_icon"
+                    width="68"
+                    height="68"
+                    image="@res/icons/music-note.png"
+                    scalingType="fit"/>
+            </brls:Box>
+            <brls:Box
+                id="player/sub_btn"
+                focusable="true"
+                width="137"
+                height="137"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="68"
+                visibility="gone">
+                <brls:Image
+                    id="player/sub_icon"
+                    width="68"
+                    height="68"
+                    image="@res/icons/subtitles.png"
+                    scalingType="fit"/>
+            </brls:Box>
+            <brls:Box
+                id="player/video_btn"
+                focusable="true"
+                width="137"
+                height="137"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="68"
+                visibility="gone">
+                <brls:Image
+                    id="player/video_icon"
+                    width="68"
+                    height="68"
+                    image="@res/icons/video.png"
+                    scalingType="fit"/>
+            </brls:Box>
+            <brls:Box
+                id="player/pip_btn"
+                focusable="true"
+                width="137"
+                height="137"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="68"
+                visibility="gone">
+                <brls:Image
+                    id="player/pip_icon"
+                    width="68"
+                    height="68"
+                    image="@res/icons/picture-in-picture.png"
+                    scalingType="fit"/>
+            </brls:Box>
+        </brls:Box>
+
+        <!-- Title / artist as the video controls use them. The mobile layout
+             shows the pair above instead, so these stay out of the way. -->
+        <brls:Label
+            id="player/title"
+            text=""
+            fontSize="56"
+            textColor="#FFFFFF"
+            visibility="gone"/>
+        <brls:Label
+            id="player/artist"
+            text=""
+            fontSize="43"
+            textColor="#8C8C93"
+            visibility="gone"/>
+    </brls:Box>
+
+    <!-- Transport. Spread across the full inset width, with the play button as
+         a 72px gold circle. Every control keeps a 44px box even where its glyph
+         is 22px, so touch targets stay honest. -->
+    <brls:Box
+        id="player/music_transport"
+        width="100%"
+        axis="row"
+        justifyContent="spaceBetween"
+        alignItems="center"
+        visibility="gone"
+        paddingLeft="81"
+        paddingRight="81"
+        marginTop="40">
+
+        <brls:Box
+            id="player/shuffle_btn"
+            width="137"
+            height="137"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="68"
+            focusable="true">
+            <brls:Image
+                id="player/shuffle_icon"
+                width="68"
+                height="68"
+                image="@res/icons/shuffle-disabled.png"
+                scalingType="fit"/>
+        </brls:Box>
+
+        <brls:Box
+            id="player/music_prev_btn"
+            width="162"
+            height="162"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="81"
+            focusable="true">
+            <brls:Image
+                id="player/music_prev_icon"
+                width="93"
+                height="93"
+                image="@res/icons/skip-previous.png"
+                scalingType="fit"/>
+        </brls:Box>
+
+        <brls:Box
+            id="player/music_play_btn"
+            width="224"
+            height="224"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="112"
+            backgroundColor="#E5A00D"
+            focusable="true">
+            <brls:Image
+                id="player/music_play_icon"
+                width="81"
+                height="81"
+                image="@res/icons/pause.png"
+                scalingType="fit"/>
+        </brls:Box>
+
+        <brls:Box
+            id="player/music_next_btn"
+            width="162"
+            height="162"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="81"
+            focusable="true">
+            <brls:Image
+                id="player/music_next_icon"
+                width="93"
+                height="93"
+                image="@res/icons/skip-next.png"
+                scalingType="fit"/>
+        </brls:Box>
+
+        <brls:Box
+            id="player/repeat_btn"
+            width="137"
+            height="137"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="68"
+            focusable="true">
+            <brls:Image
+                id="player/repeat_icon"
+                width="68"
+                height="68"
+                image="@res/icons/repeat-off.png"
+                scalingType="fit"/>
+        </brls:Box>
+    </brls:Box>
+
+    <!-- Centre video controls. Music mode hides the parent and clears each
+         child's focusability; they exist here only to satisfy the id contract. -->
+    <brls:Box
+        id="player/center_controls"
+        width="100%"
+        height="100%"
+        axis="row"
+        justifyContent="center"
+        alignItems="center"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        positionRight="0"
+        positionBottom="0"
+        visibility="gone">
+        <brls:Box
+            id="player/rewind_btn"
+            focusable="true"
+            width="249"
+            height="249"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="124"
+            marginRight="112">
+            <brls:Image
+                id="player/rewind_icon"
+                width="137"
+                height="137"
+                image="@res/icons/rewind-10.png"
+                scalingType="fit"/>
+        </brls:Box>
+        <brls:Box
+            id="player/play_btn"
+            focusable="true"
+            width="342"
+            height="342"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="171">
+            <brls:Image
+                id="player/play_pause_icon"
+                width="174"
+                height="174"
+                image="@res/icons/pause.png"
+                scalingType="fit"/>
+        </brls:Box>
+        <brls:Box
+            id="player/forward_btn"
+            focusable="true"
+            width="249"
+            height="249"
+            axis="row"
+            justifyContent="center"
+            alignItems="center"
+            cornerRadius="124"
+            marginLeft="112">
+            <brls:Image
+                id="player/forward_icon"
+                width="137"
+                height="137"
+                image="@res/icons/fast-forward-30.png"
+                scalingType="fit"/>
+        </brls:Box>
+    </brls:Box>
+
+
+    <!-- Lower spacer — see the note on the upper one. -->
+    <brls:Box width="100%" grow="0.6"/>
+
+    <!-- ==================================================================
+         Collapsed queue sheet. Pinned to the bottom, always visible in this
+         layout: the grab handle, how much is left in the queue, and what plays
+         next. Tapping anywhere on it opens the expanded sheet above, which is
+         the shared queue overlay re-anchored to the bottom.
+
+         Absolute, so it sits over the column rather than in it — the column's
+         own height budget (applyMusicLayoutForViewport) reserves room for it so
+         the transport never ends up underneath.
+         ================================================================== -->
+    <brls:Box
+        id="player/sheet"
+        width="100%"
+        height="348"
+        axis="column"
+        alignItems="stretch"
+        positionType="absolute"
+        positionLeft="0"
+        positionRight="0"
+        positionBottom="0"
+        backgroundColor="#212124"
+        cornerRadius="56"
+        paddingTop="37"
+        paddingLeft="56"
+        paddingRight="56"
+        visibility="gone"
+        focusable="true">
+
+        <!-- Grab handle. Decorative for now: the sheet opens on a tap, and
+             drag-to-expand needs gesture plumbing this does not have yet. -->
+        <brls:Box
+            width="112"
+            height="12"
+            cornerRadius="6"
+            backgroundColor="#4A4A52"
+            marginBottom="37"
+            alignSelf="center"/>
+
+        <brls:Box
+            width="100%"
+            axis="row"
+            justifyContent="spaceBetween"
+            alignItems="center">
+            <brls:Label
+                id="player/sheet_upnext"
+                text="UP NEXT"
+                fontSize="34"
+                singleLine="true"
+                textColor="#8C8C93"/>
+            <brls:Label
+                id="player/sheet_action"
+                text="Queue"
+                fontSize="36"
+                singleLine="true"
+                textColor="#E5A00D"/>
+        </brls:Box>
+
+        <!-- What plays next. -->
+        <brls:Box
+            width="100%"
+            axis="row"
+            alignItems="center"
+            marginTop="31">
+            <brls:Image
+                id="player/sheet_next_thumb"
+                width="106"
+                height="106"
+                cornerRadius="19"
+                scalingType="fit"
+                marginRight="34"
+                visibility="gone"/>
+            <brls:Box
+                grow="1"
+                shrink="1"
+                axis="column"
+                alignItems="flexStart">
+                <brls:Label
+                    id="player/sheet_next_title"
+                    text=""
+                    fontSize="39"
+                    singleLine="true"
+                    textColor="#E7E7EA"/>
+                <brls:Label
+                    id="player/sheet_next_artist"
+                    text=""
+                    fontSize="36"
+                    singleLine="true"
+                    textColor="#8C8C93"/>
+            </brls:Box>
+            <brls:Label
+                id="player/sheet_next_duration"
+                text=""
+                fontSize="36"
+                singleLine="true"
+                textColor="#8C8C93"
+                marginLeft="25"/>
+        </brls:Box>
+    </brls:Box>
+
+    <!-- ==================================================================
+         The skip button and the queue / lyrics / track-picker overlays. Same
+         structure and same view ids as player.xml — the code driving them does
+         not know which layout it is in — but sized for this one: the classic
+         file's numbers are against a 1280x720-ish screen, and read at a third
+         of their intended size in a phone frame.
+         ================================================================== -->
+    <!-- Skip intro/credits button - positioned at bottom-right above controls -->
+    <brls:Box
+        id="player/skip_btn"
+        axis="row"
+        justifyContent="center"
+        alignItems="center"
+        positionType="absolute"
+        positionBottom="160"
+        positionRight="30"
+        paddingLeft="62"
+        paddingRight="62"
+        paddingTop="31"
+        paddingBottom="31"
+        backgroundColor="#DD333333"
+        cornerRadius="25"
+        focusable="true"
+        visibility="gone">
+        <brls:Label
+            id="player/skip_label"
+            text="Skip Intro"
+            fontSize="56"
+            textColor="#FFFFFF"/>
+    </brls:Box>
+
+    <!-- Queue side sheet overlay - slides in from the right (Direction A) -->
+    <brls:Box
+        id="player/queue_overlay"
+        width="100%"
+        height="100%"
+        axis="column"
+        justifyContent="flexEnd"
+        alignItems="stretch"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        positionRight="0"
+        positionBottom="0"
+        backgroundColor="#08080973"
+        visibility="gone">
+
+        <!-- Scrim: fills the area above the sheet, tap to dismiss -->
+        <!-- Flex weights rather than a percentage height on the sheet below:
+             the sheet's height decides the scroll frame's height, and that is
+             what bounds scrolling (bottomLimit = content - frame). A percentage
+             that fails to resolve would silently oversize the frame and stop
+             the list short of its end. Weights cannot fail that way. -->
+        <brls:Box
+            id="player/queue_scrim"
+            width="100%"
+            grow="28"/>
+
+        <!-- Expanded sheet, anchored to the bottom edge at the handoff's ~72%.
+             The views inside are the shared ones, so populateQueueList() and the
+             reorder / remove handling need no idea this is a different shape. -->
+        <brls:Box
+            width="100%"
+            grow="72"
+            axis="column"
+            alignItems="stretch"
+            backgroundColor="#212124"
+            cornerRadius="56"
+            paddingTop="34"
+            paddingLeft="56"
+            paddingRight="56"
+            paddingBottom="18">
+
+            <!-- Header -->
+            <brls:Box
+                width="100%"
+                axis="row"
+                alignItems="center"
+                marginBottom="22">
+                <brls:Label
+                    id="player/queue_overlay_title"
+                    text="Queue"
+                    grow="1"
+                    fontSize="52"
+                    textColor="#FFFFFF"/>
+            </brls:Box>
+
+            <!-- NOW PLAYING section label -->
+            <brls:Label
+                id="player/queue_np_label"
+                text="NOW PLAYING"
+                fontSize="37"
+                textColor="#8A8A90"
+                marginBottom="25"/>
+
+            <!-- Now Playing row (current track) -->
+            <brls:Box
+                id="player/queue_now_playing"
+                width="100%"
+                height="186"
+                axis="row"
+                alignItems="center"
+                cornerRadius="31"
+                paddingLeft="25"
+                paddingRight="31"
+                marginBottom="50"
+                backgroundColor="#E5A00D1F">
+                <brls:Image
+                    id="player/queue_np_thumb"
+                    width="137"
+                    height="137"
+                    cornerRadius="19"
+                    scalingType="fit"
+                    marginRight="37"/>
+                <brls:Box
+                    grow="1"
+                    axis="column"
+                    justifyContent="center">
+                    <brls:Label
+                        id="player/queue_np_title"
+                        text=""
+                        fontSize="47"
+                        textColor="#FFC23D"/>
+                    <brls:Label
+                        id="player/queue_np_artist"
+                        text=""
+                        fontSize="37"
+                        marginTop="6"
+                        textColor="#B4B4BA"/>
+                </brls:Box>
+                <!-- Animated-style equaliser glyph (3 static gold bars) -->
+                <brls:Box
+                    width="50"
+                    height="43"
+                    axis="row"
+                    alignItems="flexEnd"
+                    justifyContent="spaceBetween"
+                    marginLeft="19">
+                    <brls:Box width="9" height="19"  cornerRadius="3" backgroundColor="#E5A00D"/>
+                    <brls:Box width="9" height="40" cornerRadius="3" backgroundColor="#E5A00D"/>
+                    <brls:Box width="9" height="28"  cornerRadius="3" backgroundColor="#E5A00D"/>
+                </brls:Box>
+            </brls:Box>
+
+            <!-- UP NEXT header row: label + Clear -->
+            <brls:Box
+                width="100%"
+                axis="row"
+                alignItems="center"
+                marginBottom="19">
+                <brls:Label
+                    id="player/queue_upnext_label"
+                    text="UP NEXT"
+                    grow="1"
+                    fontSize="37"
+                    textColor="#8A8A90"/>
+                <brls:Box
+                    id="player/queue_clear_btn"
+                    axis="row"
+                    alignItems="center"
+                    justifyContent="center"
+                    cornerRadius="19"
+                    paddingLeft="25"
+                    paddingRight="25"
+                    paddingTop="9"
+                    paddingBottom="9"
+                    focusable="true">
+                    <brls:Label
+                        text="Clear"
+                        fontSize="37"
+                        textColor="#E5A00D"/>
+                </brls:Box>
+            </brls:Box>
+
+            <!-- Up Next track list (scrollable) -->
+            <brls:ScrollingFrame
+                id="player/queue_scroll"
+                width="100%"
+                grow="1">
+                <brls:Box
+                    id="player/queue_list"
+                    width="100%"
+                    axis="column"
+                    alignItems="stretch"
+                    paddingTop="6"
+                    paddingBottom="25"/>
+            </brls:ScrollingFrame>
+
+        </brls:Box>
+
+    </brls:Box>
+
+    <!-- Lyrics side sheet. Mirrors the queue sheet's geometry so the two read
+         as the same kind of panel. The app draws lyrics itself: music plays
+         with vo=null and no render context, so mpv has no surface to put a
+         subtitle on. -->
+    <brls:Box
+        id="player/lyrics_overlay"
+        width="100%"
+        height="100%"
+        axis="column"
+        justifyContent="flexStart"
+        alignItems="stretch"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        positionRight="0"
+        positionBottom="0"
+        backgroundColor="#2D2D2D"
+        visibility="gone">
+
+        <!-- No scrim strip on a phone: the sheet is the whole screen, so there
+             is nothing beside it to tap. Kept (zero-sized) because the code
+             wires a dismiss tap to it. -->
+        <brls:Box
+            id="player/lyrics_scrim"
+            width="0"
+            height="0"/>
+
+        <brls:Box
+            width="100%"
+            grow="1"
+            axis="column"
+            alignItems="stretch"
+            backgroundColor="#2D2D2D"
+            paddingTop="68"
+            paddingLeft="68"
+            paddingRight="68"
+            paddingBottom="19">
+
+            <brls:Box
+                width="100%"
+                axis="row"
+                alignItems="center"
+                marginBottom="43">
+                <brls:Label
+                    id="player/lyrics_overlay_title"
+                    text="Lyrics"
+                    grow="1"
+                    fontSize="65"
+                    textColor="#FFFFFF"/>
+                <!-- Full-screen here, so there is no scrim beside the sheet to
+                     tap. Back still closes it; this gives touch a visible way
+                     out too. Mobile-only, so it is found by id, not bound. -->
+                <brls:Box
+                    id="player/lyrics_close"
+                    width="137"
+                    height="137"
+                    axis="row"
+                    justifyContent="center"
+                    alignItems="center"
+                    cornerRadius="68"
+                    focusable="true">
+                    <brls:Image
+                        width="60"
+                        height="60"
+                        image="@res/icons/cross.png"
+                        scalingType="fit"/>
+                </brls:Box>
+            </brls:Box>
+
+            <brls:ScrollingFrame
+                id="player/lyrics_scroll"
+                width="100%"
+                grow="1">
+                <brls:Box
+                    id="player/lyrics_list"
+                    width="100%"
+                    axis="column"
+                    alignItems="stretch"
+                    paddingTop="6"
+                    paddingBottom="25"/>
+            </brls:ScrollingFrame>
+
+        </brls:Box>
+
+    </brls:Box>
+
+    <!-- Track selection overlay - semi-transparent list -->
+    <brls:Box
+        id="player/track_overlay"
+        width="100%"
+        height="100%"
+        axis="column"
+        justifyContent="center"
+        alignItems="center"
+        positionType="absolute"
+        positionTop="0"
+        positionLeft="0"
+        positionRight="0"
+        positionBottom="0"
+        backgroundColor="#CC000000"
+        visibility="gone">
+
+        <!-- Overlay title -->
+        <brls:Label
+            id="player/track_overlay_title"
+            text="Select Track"
+            fontSize="68"
+            textColor="#FFFFFF"
+            marginBottom="37"/>
+
+        <!-- Track list container -->
+        <brls:Box
+            id="player/track_list"
+            width="1243"
+            axis="column"
+            alignItems="stretch"
+            backgroundColor="#E0222222"
+            cornerRadius="25"
+            padding="8"/>
+
+    </brls:Box>
+
+</brls:Box>

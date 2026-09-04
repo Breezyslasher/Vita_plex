@@ -102,6 +102,7 @@ private:
     static VideoQuality qualityAtLadderIndex(int index);
     void onSubtitleSizeChanged(int index);
     void onSeekIntervalChanged(int index);
+    void onPlayerLayoutChanged(int index);
     void onControlsAutoHideChanged(int index);
     void onConnectionTimeoutChanged(int index);
     void onManageHiddenLibraries();
@@ -153,6 +154,7 @@ private:
     brls::DetailCell*   m_subtitleSizeSelector = nullptr;
     brls::DetailCell*   m_seekIntervalSelector = nullptr;
     brls::DetailCell*   m_controlsAutoHideSelector = nullptr;
+    brls::DetailCell*   m_playerLayoutSelector = nullptr;
     brls::BooleanCell* m_autoSkipIntroToggle = nullptr;
     brls::BooleanCell* m_autoSkipCreditsToggle = nullptr;
 
