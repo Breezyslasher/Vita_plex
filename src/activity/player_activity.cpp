@@ -216,7 +216,18 @@ static void routeIfFocusable(brls::View* v, brls::FocusDirection dir, brls::View
     if (v && v->isFocusable()) v->setCustomNavigationRoute(dir, target);
 }
 
-bool PlayerActivity::useMobileLayout() {
+bool PlayerActivity::useMobileLayout() const {
+    // The mobile layout is a Now Playing screen for music: big cover, queue
+    // sheet, and no room made for a video surface or its track and PiP
+    // controls. Video on it has no design yet, so it takes the classic player
+    // at every screen size -- including under an explicit Mobile setting, which
+    // can only mean "for music" while music is all this layout can draw.
+    //
+    // The queue item carries its own type, so this is the real answer rather
+    // than a guess, and it stays right for a resumed queue, which a flag set
+    // when Play was pressed would not be.
+    if (!m_isQueueMode || !MusicQueue::getInstance().isMusicQueue()) return false;
+
     switch (Application::getInstance().getSettings().playerLayout) {
         case 1: return false;   // Classic, everywhere
         case 2: return true;    // Mobile, everywhere — including handheld and TV
@@ -243,8 +254,9 @@ brls::View* PlayerActivity::createContentView() {
     // id and throws if one is missing — so only the geometry differs and the
     // rest of this class is layout-agnostic.
     m_mobileLayout = useMobileLayout();
-    brls::Logger::info("PlayerActivity: using the {} player layout",
-                       m_mobileLayout ? "mobile" : "classic");
+    brls::Logger::info("PlayerActivity: using the {} player layout (queue={} music={})",
+                       m_mobileLayout ? "mobile" : "classic", m_isQueueMode,
+                       MusicQueue::getInstance().isMusicQueue());
     return brls::View::createFromXMLResource(
         m_mobileLayout ? "activity/player_mobile.xml" : "activity/player.xml");
 }

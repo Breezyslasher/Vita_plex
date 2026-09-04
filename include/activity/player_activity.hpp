@@ -168,7 +168,8 @@ private:
     // view ids, so almost nothing else needs to know — this is for the few
     // places where the geometry genuinely differs.
     bool m_mobileLayout = false;
-    static bool useMobileLayout();   // reads the Player layout setting
+    // Reads m_isQueueMode, so it can only be asked once the activity exists.
+    bool useMobileLayout() const;   // reads the Player layout setting
     // The collapsed queue sheet along the bottom of the mobile layout. Its
     // views exist only in player_mobile.xml and are looked up by id rather than
     // bound, so the classic layout needs no stubs for them.

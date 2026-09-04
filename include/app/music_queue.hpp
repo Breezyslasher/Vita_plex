@@ -32,6 +32,12 @@ struct QueueItem {
     int playQueueItemID = 0;  // Server-side play queue item ID (0 = offline/unsynced)
     float userRating = 0.0f;  // viewer's own 0-10 rating, 0 when unrated; drives
                               // the "liked" heart in the Android media session
+    // What this item actually is. Both sources of a queue item -- MediaItem and
+    // PlayQueueItem -- have always carried it; only this struct dropped it, so
+    // nothing downstream could tell what the queue held. The player needs it
+    // because a queue is not necessarily music: downloads and the detail view
+    // put single movies and episodes through the same path.
+    MediaType mediaType = MediaType::UNKNOWN;
 };
 
 /**
@@ -115,6 +121,10 @@ public:
 
     // Queue changed callback (for UI updates)
     using QueueChangedCallback = std::function<void()>;
+    // True when the item about to play is a music track. Falls back to the first
+    // item when nothing is current yet, and is false for an empty queue.
+    bool isMusicQueue() const;
+
     void setQueueChangedCallback(QueueChangedCallback callback) { m_queueChangedCallback = callback; }
 
     // Save/load queue state (for persistence across sessions)
