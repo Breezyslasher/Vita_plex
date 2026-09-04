@@ -192,6 +192,12 @@ private:
     void wireVideoOsd();             // once at build time
     void updateVideoOsd();           // pill text and icon state, per tick
     void setVideoOsdChromeVisible(bool visible);   // top bar + bottom scrim
+    // The OSD is drawn for a landscape phone. On a screen with far more height
+    // per unit of width — an unfolded foldable, a phone held upright — the same
+    // sizes sit in a much bigger field and read as small, so they scale.
+    float videoOsdScale() const;
+    void  applyVideoOsdForViewport();
+    float m_videoOsdScale = 0.0f;    // last factor applied; 0 = not yet
     void cycleSpeed();               // 1.0 -> 1.25 -> 1.5 -> 2.0 -> 0.75 -> ...
     // Set together on the top bar: the show over "S1E32 - Episode Title",
     // rather than the single "Show - Episode" line the other layouts print.
@@ -218,6 +224,9 @@ private:
     static constexpr float kMobileUiScale  = 1280.f / 412.f;
     static constexpr float kMobileRowScale = 2.15f;
     static constexpr float kVideoUiScale   = 1280.f / 915.f;
+    // The handoff's 915x412 landscape frame is 1280x576 in borealis units, so
+    // 576 is the short edge the OSD's sizes were drawn against.
+    static constexpr float kVideoOsdBaseHeight = 412.f * kVideoUiScale;
     // A queue row's height and the gap below it. createQueueRow builds rows
     // from these, and every scroll clamp, hold threshold and reorder target
     // index has to agree with the result — a hand-copied 54 stops the list
