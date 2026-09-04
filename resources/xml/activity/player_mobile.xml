@@ -452,46 +452,6 @@
                         textColor="#E6E6EA"/>
                 </brls:Box>
 
-                <!-- Pushes volume and fit to the right edge -->
-                <brls:Box grow="1" height="1"/>
-
-                <brls:Box
-                    id="player/volume_btn"
-                    width="62"
-                    height="62"
-                    axis="row"
-                    justifyContent="center"
-                    alignItems="center"
-                    cornerRadius="31"
-                    marginRight="22"
-                    shrink="0"
-                    focusable="true">
-                    <brls:Image
-                        id="player/volume_icon"
-                        width="29"
-                        height="29"
-                        image="@res/icons/volume-high.png"
-                        scalingType="fit"/>
-                </brls:Box>
-
-                <brls:Box
-                    id="player/fit_btn"
-                    width="62"
-                    height="62"
-                    axis="row"
-                    justifyContent="center"
-                    alignItems="center"
-                    cornerRadius="31"
-                    shrink="0"
-                    focusable="true">
-                    <brls:Image
-                        id="player/fit_icon"
-                        width="29"
-                        height="29"
-                        image="@res/icons/fit-to-screen.png"
-                        scalingType="fit"/>
-                </brls:Box>
-
             </brls:Box>
         </brls:Box>
     </brls:Box>

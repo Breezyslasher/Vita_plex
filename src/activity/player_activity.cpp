@@ -4189,16 +4189,6 @@ void PlayerActivity::wireVideoOsd() {
         if (m_isQueueMode) playNext();
         else               playNextEpisode();
     });
-    tap(box("player/volume_btn"), [this] {
-        MpvPlayer::getInstance().toggleMute();
-        updateVideoOsd();
-    });
-    tap(box("player/fit_btn"), [this] {
-        auto& player = MpvPlayer::getInstance();
-        player.setFillScreen(!player.isFillScreen());
-        updateVideoOsd();
-    });
-
     // This file starts the OSD hidden, because music never wants it and the
     // centre transport is GONE there — but m_controlsVisible starts true. Put
     // the two in step here rather than leaving the first frame showing nothing
@@ -4234,15 +4224,6 @@ void PlayerActivity::updateVideoOsd() {
         l->setText("Audio  " + trackSummary(TrackSelectMode::AUDIO));
     if (auto* l = label("player/subs_label"))
         l->setText("Subs  " + trackSummary(TrackSelectMode::SUBTITLE));
-
-    if (auto* icon = dynamic_cast<brls::Image*>(getView("player/volume_icon")))
-        setIconRes(icon, player.isMuted() ? "icons/volume-off.png" : "icons/volume-high.png");
-    // Shows what pressing it will do next, the way the shuffle and repeat
-    // buttons already do: the arrows while the picture is letterboxed, the
-    // frame while it is cropped to fill.
-    if (auto* icon = dynamic_cast<brls::Image*>(getView("player/fit_icon")))
-        setIconRes(icon, player.isFillScreen() ? "icons/fit-to-screen.png"
-                                               : "icons/arrow-expand-all.png");
 
     // Next only means anything with something after this. Outside a queue that
     // is the same test auto-play-next makes: an episode whose season we know
