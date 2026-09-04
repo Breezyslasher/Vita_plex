@@ -206,6 +206,16 @@ PlayerActivity* PlayerActivity::createResumeQueue() {
     return activity;
 }
 
+// borealis' setCustomNavigationRoute() calls fatal() -- an uncaught
+// std::logic_error -- when the receiving view is not focusable, so a layout
+// that omits focusable="true" aborts the whole app instead of just navigating
+// oddly. That has now cost three separate crashes (see syncHiddenFocus and the
+// Clear button below). A navigation route on a view that cannot take focus
+// means nothing anyway, so skip it rather than die.
+static void routeIfFocusable(brls::View* v, brls::FocusDirection dir, brls::View* target) {
+    if (v && v->isFocusable()) v->setCustomNavigationRoute(dir, target);
+}
+
 bool PlayerActivity::useMobileLayout() {
     switch (Application::getInstance().getSettings().playerLayout) {
         case 1: return false;   // Classic, everywhere
@@ -865,21 +875,20 @@ void PlayerActivity::onContentAvailable() {
     // Block upward D-pad navigation from center transport controls so focus
     // doesn't escape to off-screen elements (absolutely-positioned overlays)
     if (!m_isQueueMode) {
-        if (playBtn) playBtn->setCustomNavigationRoute(brls::FocusDirection::UP, playBtn);
-        if (rewindBtn) rewindBtn->setCustomNavigationRoute(brls::FocusDirection::UP, rewindBtn);
-        if (forwardBtn) forwardBtn->setCustomNavigationRoute(brls::FocusDirection::UP, forwardBtn);
+        routeIfFocusable(playBtn, brls::FocusDirection::UP, playBtn);
+        routeIfFocusable(rewindBtn, brls::FocusDirection::UP, rewindBtn);
+        routeIfFocusable(forwardBtn, brls::FocusDirection::UP, forwardBtn);
     }
 
     // Block downward D-pad navigation from the bottom button row so focus
     // doesn't escape to off-screen elements (absolutely-positioned overlays)
     // Only set on focusable buttons — in music mode audioBtn/subBtn/videoBtn are non-focusable
-    if (lyricsBtn && lyricsBtn->isFocusable())
-        lyricsBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, lyricsBtn);
-    if (queueBtn) queueBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, queueBtn);
+    routeIfFocusable(lyricsBtn, brls::FocusDirection::DOWN, lyricsBtn);
+    routeIfFocusable(queueBtn, brls::FocusDirection::DOWN, queueBtn);
     if (!m_isQueueMode) {
-        if (audioBtn) audioBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, audioBtn);
-        if (subBtn) subBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, subBtn);
-        if (videoBtn) videoBtn->setCustomNavigationRoute(brls::FocusDirection::DOWN, videoBtn);
+        routeIfFocusable(audioBtn, brls::FocusDirection::DOWN, audioBtn);
+        routeIfFocusable(subBtn, brls::FocusDirection::DOWN, subBtn);
+        routeIfFocusable(videoBtn, brls::FocusDirection::DOWN, videoBtn);
     }
 
     // Wire up skip button for intro/credits
@@ -4660,7 +4669,7 @@ void PlayerActivity::updateNowPlayingBlock() {
                 ImageLoader::loadAsync(url, [](brls::Image*) {}, queueNpThumb, m_alive);
                 ImageLoader::setPaused(true);
             } else {
-                queueNpThumb->setImageFromRes("img/default_music.png");
+                queueNpThumb->setImageFromRes("icons/music.png");
             }
         }
     }
@@ -5140,13 +5149,13 @@ void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB, bool skipTh
                 std::string urlA = swapClient.getThumbnailUrl(dtA.thumbPath, 100, 100);
                 ImageLoader::loadAsync(urlA, [](brls::Image*) {}, thumbA, m_alive);
             } else {
-                thumbA->setImageFromRes("img/default_music.png");
+                thumbA->setImageFromRes("icons/music.png");
             }
             if (dtB.loaded && !dtB.thumbPath.empty()) {
                 std::string urlB = swapClient.getThumbnailUrl(dtB.thumbPath, 100, 100);
                 ImageLoader::loadAsync(urlB, [](brls::Image*) {}, thumbB, m_alive);
             } else {
-                thumbB->setImageFromRes("img/default_music.png");
+                thumbB->setImageFromRes("icons/music.png");
             }
         }
     }
