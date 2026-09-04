@@ -4116,7 +4116,15 @@ void PlayerActivity::wireVideoOsd() {
 
     // The music design's own furniture. Hidden rather than deleted: the ids
     // have to survive for the contract, and the activity may still touch them.
-    for (const char* id : {"player/music_seek", "player/sheet"}) {
+    //
+    // The two spacers matter more than they look. They draw nothing, but they
+    // are full-width boxes that grow to fill the column, and borealis hit-tests
+    // every visible box — the lower one is declared after player/controls, so
+    // left up it covers the scrubber and the pills and silently takes their
+    // taps. The top bar comes after it in turn, which is why that half of the
+    // OSD kept working.
+    for (const char* id : {"player/music_seek", "player/sheet",
+                           "player/spacer_upper", "player/spacer_lower"}) {
         if (brls::View* v = getView(id)) v->setVisibility(brls::Visibility::GONE);
     }
     if (albumArtContainer) albumArtContainer->setVisibility(brls::Visibility::GONE);

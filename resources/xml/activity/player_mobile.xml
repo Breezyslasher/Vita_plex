@@ -137,8 +137,12 @@
 
     <!-- Upper spacer. Paired with the smaller one after the transport, this is
          what positions the whole block: the slack splits 1 : 0.6, so the group
-         sits about 62% down rather than centred or bottom-pinned. -->
-    <brls:Box width="100%" grow="0.85"/>
+         sits about 62% down rather than centred or bottom-pinned.
+
+         Both carry ids only so the video OSD can hide them. They are music
+         furniture, and an empty box that grows still takes taps — see the note
+         on the lower one. -->
+    <brls:Box id="player/spacer_upper" width="100%" grow="0.85"/>
 
     <!-- Cover art. The handoff draws it 300 wide in a 412 frame; the value here
          is that ratio against borealis' fixed 1280-wide logical space, and
@@ -557,8 +561,14 @@
         </brls:Box>
     </brls:Box>
 
-    <!-- Lower spacer — see the note on the upper one. -->
-    <brls:Box width="100%" grow="0.6"/>
+    <!-- Lower spacer — see the note on the upper one.
+
+         It has no background and draws nothing, but it is a full-width box that
+         grows to about 41% of the screen, and it is declared after
+         player/controls — so in the video layout it sat on top of the scrubber
+         and the pills and ate every tap on them, while the top bar, declared
+         after it in turn, kept working. wireVideoOsd() hides both spacers. -->
+    <brls:Box id="player/spacer_lower" width="100%" grow="0.6"/>
 
     <!-- ==================================================================
          VIDEO — top bar.
