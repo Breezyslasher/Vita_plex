@@ -675,8 +675,7 @@ brls::Box* SettingsTab::createUISection() {
 
     auto* playerLayoutInfo = new brls::Label();
     playerLayoutInfo->setText(
-        "Auto uses the big-art player for music on phones, and the current player "
-        "everywhere else. Video always uses the current player.");
+        "Auto uses the big-art player on phones and the current player everywhere else");
     playerLayoutInfo->setFontSize(14);
     playerLayoutInfo->setMarginLeft(16);
     playerLayoutInfo->setMarginTop(8);

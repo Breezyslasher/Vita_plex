@@ -168,16 +168,7 @@ private:
     // view ids, so almost nothing else needs to know — this is for the few
     // places where the geometry genuinely differs.
     bool m_mobileLayout = false;
-    // Reads m_isQueueMode, so it can only be asked once the activity exists.
-    bool useMobileLayout() const;
-    // Whether the queue MusicQueue currently holds was built out of tracks.
-    // MusicQueue is a singleton and takes single video items too (a downloaded
-    // movie, an episode from the detail view), so "is there a queue" says
-    // nothing about what is in it. createWithQueue is the only thing that fills
-    // it and it knows the item types, so it records the answer here for
-    // createResumeQueue -- which resumes whatever is loaded -- to reuse. False
-    // is the safe default: it selects the classic layout, which plays both.
-    static bool s_queueIsMusic;   // reads the Player layout setting
+    static bool useMobileLayout();   // reads the Player layout setting
     // The collapsed queue sheet along the bottom of the mobile layout. Its
     // views exist only in player_mobile.xml and are looked up by id rather than
     // bound, so the classic layout needs no stubs for them.
