@@ -4205,11 +4205,117 @@ void PlayerActivity::wireVideoOsd() {
     updateVideoOsd();
 }
 
+// How much bigger the OSD should be than the handoff drew it.
+//
+// borealis' logical space is a fixed 1280 wide and only the height varies with
+// the screen's aspect — contentWidth is always ORIGINAL_WINDOW_WIDTH — so every
+// size in the layout is a constant fraction of the screen's WIDTH. On the frame
+// the handoff drew, 915x412, which is 1280x576 here, that lands where it should.
+// On a shape with far more height per unit of width it does not: an unfolded
+// foldable is about 1280x1436, so the same controls sit in two and a half times
+// the vertical field and read as small islands.
+//
+// Two obvious rules both miss. Keeping a constant fraction of the short edge is
+// what "the same size" means on paper, but on a physically larger display it
+// overshoots badly — a play button around 150dp. Keeping a constant dp size is
+// the other end, and is exactly what we have now, which is too small. The
+// square root sits between them: 1.0x on the landscape phone the handoff drew,
+// which is the one shape already known to look right, and about 1.5x on an
+// unfolded foldable.
+//
+// The cap is a judgement, not a derivation — if the OSD comes out too large or
+// still too small on a given screen, this constant is the one to move.
+float PlayerActivity::videoOsdScale() const {
+    const float w = platform::viewportWidth();    // always 1280 under borealis
+    const float h = platform::viewportHeight();
+    if (w <= 0.0f || h <= 0.0f) return 1.0f;
+    return std::clamp(std::sqrt(std::min(w, h) / kVideoOsdBaseHeight), 1.0f, 1.6f);
+}
+
+// Re-sizes the OSD for the current viewport. Cheap to call repeatedly: it does
+// nothing at all unless the factor actually moved, which is what lets it run
+// off the per-second tick and so catch a fold, a rotation or a desktop resize
+// without needing a signal for each.
+void PlayerActivity::applyVideoOsdForViewport() {
+    if (!m_videoOsd) return;
+    const float k = videoOsdScale();
+    if (std::abs(k - m_videoOsdScale) < 0.01f) return;
+    m_videoOsdScale = k;
+
+    // Base values are the ones in player_mobile.xml, which are the handoff's at
+    // 1280/915. Passing 0 for a dimension leaves it alone — the pills are sized
+    // by their text, so only their height and radius are set here.
+    auto box = [&](const char* id, float w, float h, float r) {
+        brls::View* v = getView(id);
+        if (!v) return;
+        if (w > 0.0f) v->setWidth(w * k);
+        if (h > 0.0f) v->setHeight(h * k);
+        if (r > 0.0f) v->setCornerRadius(r * k);
+    };
+    auto font = [&](const char* id, float pt) {
+        if (auto* l = dynamic_cast<brls::Label*>(getView(id))) l->setFontSize(pt * k);
+    };
+    auto margins = [&](const char* id, float t, float r, float b, float l) {
+        if (brls::View* v = getView(id)) v->setMargins(t * k, r * k, b * k, l * k);
+    };
+
+    // Top bar
+    box("player/back_btn", 62, 62, 31);
+    box("player/back_icon", 34, 34, 0);
+    margins("player/osd_title_block", 0, 21, 0, 21);
+    font("player/title", 22);
+    font("player/artist", 16);
+    box("player/speed_btn", 0, 42, 21);
+    margins("player/speed_btn", 0, 21, 0, 0);
+    font("player/speed_label", 17);
+    box("player/sub_btn", 62, 62, 31);
+    box("player/sub_icon", 31, 31, 0);
+    box("player/video_btn", 62, 62, 31);
+    box("player/video_icon", 31, 31, 0);
+    box("player/pip_btn", 62, 62, 31);
+    box("player/pip_icon", 29, 29, 0);
+
+    // Centre transport
+    box("player/rewind_btn", 78, 78, 39);
+    margins("player/rewind_btn", 0, 78, 0, 0);
+    box("player/rewind_icon", 34, 34, 0);
+    box("player/play_btn", 106, 106, 53);
+    box("player/play_pause_icon", 39, 39, 0);
+    box("player/forward_btn", 78, 78, 39);
+    margins("player/forward_btn", 0, 0, 0, 78);
+    box("player/forward_icon", 34, 34, 0);
+
+    // Scrubber and pills
+    margins("player/video_scrub_row", 0, 0, 14, 0);
+    font("player/time_elapsed", 16);
+    font("player/time_remaining", 16);
+    if (progressSlider) {
+        progressSlider->setHeight(46.0f * k);
+        progressSlider->setMargins(0.0f, 20.0f * k, 0.0f, 20.0f * k);
+        progressSlider->setPointerSize(20.0f * k);
+    }
+    for (const char* id : {"player/next_btn", "player/audio_btn", "player/subs_pill"})
+        box(id, 0, 42, 21);
+    margins("player/next_btn", 0, 14, 0, 0);
+    margins("player/audio_btn", 0, 14, 0, 0);
+    font("player/next_label", 17);
+    font("player/audio_label", 17);
+    font("player/subs_label", 17);
+
+    brls::Logger::info("PlayerActivity: video OSD scaled {:.2f}x for a {}x{} viewport",
+                       k, platform::viewportWidth(), platform::viewportHeight());
+}
+
 // Pill text and the two toggle glyphs. Cheap enough to run on the per-second
 // tick, which is also what keeps the audio and subtitle pills honest after the
 // track picker changes something.
 void PlayerActivity::updateVideoOsd() {
     if (!m_videoOsd) return;
+    // Catches a fold, a rotation or a desktop resize without needing a signal
+    // for each — unfolding a foldable that was already portrait does not flip
+    // isPortrait(), so the orientation callback would miss exactly the case
+    // this exists for. No-op unless the factor actually moved.
+    applyVideoOsdForViewport();
     auto& player = MpvPlayer::getInstance();
 
     auto label = [this](const char* id) { return dynamic_cast<brls::Label*>(getView(id)); };

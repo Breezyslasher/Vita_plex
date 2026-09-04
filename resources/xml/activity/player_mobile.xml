@@ -616,6 +616,7 @@
                 shrink="0"
                 focusable="true">
                 <brls:Image
+                    id="player/back_icon"
                     width="34"
                     height="34"
                     image="@res/icons/chevron-left.png"
@@ -626,6 +627,7 @@
                  reports a one-line height to the layout and then draws as many
                  as it needs, straight through whatever sits under it. -->
             <brls:Box
+                id="player/osd_title_block"
                 grow="1"
                 shrink="1"
                 axis="column"
