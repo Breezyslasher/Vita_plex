@@ -103,6 +103,7 @@ private:
     void onSubtitleSizeChanged(int index);
     void onSeekIntervalChanged(int index);
     void onPlayerLayoutChanged(int index);
+    void onVideoPlayerLayoutChanged(int index);
     void onControlsAutoHideChanged(int index);
     void onConnectionTimeoutChanged(int index);
     void onManageHiddenLibraries();
@@ -155,6 +156,7 @@ private:
     brls::DetailCell*   m_seekIntervalSelector = nullptr;
     brls::DetailCell*   m_controlsAutoHideSelector = nullptr;
     brls::DetailCell*   m_playerLayoutSelector = nullptr;
+    brls::DetailCell*   m_videoPlayerLayoutSelector = nullptr;
     brls::BooleanCell* m_autoSkipIntroToggle = nullptr;
     brls::BooleanCell* m_autoSkipCreditsToggle = nullptr;
 

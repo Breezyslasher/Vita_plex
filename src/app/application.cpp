@@ -467,6 +467,8 @@ bool Application::loadSettings() {
     m_settings.autoSkipCredits = extractBool("autoSkipCredits", false);
     m_settings.playerLayout    = extractInt("playerLayout");
     if (m_settings.playerLayout < 0 || m_settings.playerLayout > 2) m_settings.playerLayout = 0;
+    m_settings.videoPlayerLayout = extractInt("videoPlayerLayout");
+    if (m_settings.videoPlayerLayout < 0 || m_settings.videoPlayerLayout > 2) m_settings.videoPlayerLayout = 0;
     {
         std::string lang = extractString("defaultSubtitleLanguage");
         if (!lang.empty()) m_settings.defaultSubtitleLanguage = lang;
@@ -671,6 +673,7 @@ bool Application::saveSettings() {
     json += "  \"autoSkipIntro\": " + b(m_settings.autoSkipIntro) + ",\n";
     json += "  \"autoSkipCredits\": " + b(m_settings.autoSkipCredits) + ",\n";
     json += "  \"playerLayout\": " + std::to_string(m_settings.playerLayout) + ",\n";
+    json += "  \"videoPlayerLayout\": " + std::to_string(m_settings.videoPlayerLayout) + ",\n";
     json += "  \"defaultSubtitleLanguage\": \"" + esc(m_settings.defaultSubtitleLanguage) + "\",\n";
     json += "  \"syncLoungeServer\": \"" + esc(m_settings.syncLoungeServer) + "\",\n";
     json += "  \"syncLoungeRoom\": \"" + esc(m_settings.syncLoungeRoom) + "\",\n";

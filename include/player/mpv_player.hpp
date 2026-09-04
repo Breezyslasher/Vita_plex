@@ -103,6 +103,10 @@ public:
     bool isMuted() const;
     void toggleMute();
 
+    // Playback speed (clamped to 0.25x - 4x)
+    void setSpeed(double speed);
+    double getSpeed() const;
+
     // Track info (from MPV's track-list)
     struct TrackInfo {
         int id = 0;              // MPV track ID

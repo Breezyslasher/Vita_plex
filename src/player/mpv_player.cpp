@@ -1013,6 +1013,25 @@ void MpvPlayer::toggleMute() {
     mpv_command_async(m_mpv, 0, cmd);
 }
 
+void MpvPlayer::setSpeed(double speed) {
+    if (!m_mpv || m_stopping) return;
+
+    // mpv will accept far wider than this, but past these the audio filter stops
+    // producing anything intelligible and seeking gets unreliable.
+    if (speed < 0.25) speed = 0.25;
+    if (speed > 4.0)  speed = 4.0;
+
+    mpv_set_property_async(m_mpv, 0, "speed", MPV_FORMAT_DOUBLE, &speed);
+}
+
+double MpvPlayer::getSpeed() const {
+    if (!m_mpv) return 1.0;
+
+    double speed = 1.0;
+    mpv_get_property(m_mpv, "speed", MPV_FORMAT_DOUBLE, &speed);
+    return speed;
+}
+
 void MpvPlayer::setSubtitleTrack(int track) {
     if (!m_mpv || m_stopping) return;
 

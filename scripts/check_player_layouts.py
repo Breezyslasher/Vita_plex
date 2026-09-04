@@ -11,7 +11,14 @@ only reachable on a device and none of them a compile error:
   * an image pointing at a file that is not in the tree -- romfs::get throws
     std::invalid_argument at the first draw.
 
-All three are decidable by reading the sources, so decide them here instead of
+A fourth kind does not crash, which makes it worse: it looks perfect and simply
+does not respond.
+
+  * an anonymous full-size or growing box declared after the controls --
+    borealis hit-tests siblings in document order, later on top, so it takes
+    their taps while drawing nothing, and with no id nothing can hide it.
+
+All of them are decidable by reading the sources, so decide them here instead of
 on a phone. Run with no arguments from the repo root; exits non-zero on any
 finding.
 """
@@ -29,6 +36,8 @@ REFERENCE = RESOURCES / "xml/activity/player.xml"
 LAYOUTS = sorted((RESOURCES / "xml/activity").glob("player*.xml"))
 
 ELEMENT = re.compile(r"<((?:\w+:)?\w+)((?:[^<>])*?)/?>", re.S)
+# Opening, closing and self-closing tags alike, for walking the tree by depth.
+ANY_TAG = re.compile(r"<(/?)((?:\w+:)?[\w?!-]+)((?:[^<>])*?)(/?)>", re.S)
 
 
 def elements(path):
@@ -39,6 +48,43 @@ def elements(path):
         found = re.search(r'\bid="([^"]+)"', attrs)
         if found:
             out[found.group(1)] = (tag, attrs)
+    return out
+
+
+def burying_siblings(path):
+    """Top-level boxes declared after the controls that can silently eat their taps.
+
+    borealis draws AND hit-tests siblings in document order, later on top, so a
+    box declared after player/controls covers it wherever the two overlap --
+    even with no background, drawing nothing at all. That has now cost two
+    rounds of "the buttons don't work": first player/center_controls, absolute
+    at 100% x 100%, and then a bare flex spacer that grows to 41% of the screen.
+
+    A layout cannot say which of these are wanted, since the answer differs per
+    mode and is decided in code. What it can require is that such a box carry an
+    id, because an id is the only way the activity can hide it -- the spacer had
+    none, which is exactly why it was invisible to everything but a finger.
+    """
+    src = path.read_text()
+    depth, seen_controls, out = 0, False, []
+    for m in ANY_TAG.finditer(src):
+        closing, tag, attrs, selfclosing = m.groups()
+        if tag.startswith("?") or tag.startswith("!"):
+            continue
+        if closing:
+            depth -= 1
+            continue
+        if depth == 1:
+            vid = re.search(r'\bid="([^"]+)"', attrs)
+            if vid and vid.group(1) in ("player/controls", "player/center_controls"):
+                seen_controls = True
+            elif seen_controls and not vid:
+                grow = re.search(r'\bgrow="([^"]+)"', attrs)
+                covers = 'height="100%"' in attrs or (grow and float(grow.group(1)) > 0)
+                if covers and 'visibility="gone"' not in attrs:
+                    out.append(src[: m.start()].count("\n") + 1)
+        if not selfclosing:
+            depth += 1
     return out
 
 
@@ -81,6 +127,13 @@ def main():
         for ref in sorted(set(re.findall(r'@res/([^"]+)', layout.read_text()))):
             if not (RESOURCES / ref).is_file():
                 problems.append(f"{name}: references @res/{ref}, which is not in the tree")
+
+        for line in burying_siblings(layout):
+            problems.append(
+                f"{name}:{line}: a growing/full-height box with no id sits after the "
+                f"controls — it draws nothing but still takes their taps, and with no "
+                f"id nothing can hide it"
+            )
 
     # The same throw reaches code-set images, so hold those to the same rule.
     for source in sorted((ROOT / "src").rglob("*.cpp")):

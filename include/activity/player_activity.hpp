@@ -164,23 +164,51 @@ private:
     // pumps four times a second and hands over the moment the file ends.
     brls::RepeatingTimer m_endWatchTimer;
 
-    // Which layout createContentView() built. The two XMLs declare the same
-    // view ids, so almost nothing else needs to know — this is for the few
+    // Which layout createContentView() built. All three XMLs declare the same
+    // view ids, so almost nothing else needs to know — these are for the few
     // places where the geometry genuinely differs.
+    //
+    // They are two flags rather than one enum because they answer different
+    // questions and are never both true: m_mobileLayout is the portrait Now
+    // Playing screen for music, m_videoOsd the landscape OSD over video. The
+    // dozen or so existing m_mobileLayout tests are all about the music
+    // layout's cover and sheet, so they keep meaning exactly what they did.
     bool m_mobileLayout = false;
-    // Reads m_isQueueMode, so it can only be asked once the activity exists.
+    bool m_videoOsd     = false;
+    // Both read m_isQueueMode, so they can only be asked once the activity
+    // exists.
     bool useMobileLayout() const;   // reads the Player layout setting
+    bool useVideoOsd() const;       // reads the Video player layout setting
+    bool controlsCanHide() const;   // false for photos and for music
     // The collapsed queue sheet along the bottom of the mobile layout. Its
     // views exist only in player_mobile.xml and are looked up by id rather than
     // bound, so the classic layout needs no stubs for them.
     void updateMobileSheet();        // refresh "up next" from the queue
     void wireMobileSheet();          // tap-to-open, once at build time
     bool mobileSheetFits() const;    // false on a screen too short to spare it
+    // The video OSD's own controls — back, speed, next, the subtitle pill,
+    // volume and fit. Like the sheet's, these views exist in one layout only
+    // and are found by id, so the other two need no stubs for them.
+    void wireVideoOsd();             // once at build time
+    void updateVideoOsd();           // pill text and icon state, per tick
+    void setVideoOsdChromeVisible(bool visible);   // top bar + bottom scrim
+    void cycleSpeed();               // 1.0 -> 1.25 -> 1.5 -> 2.0 -> 0.75 -> ...
+    // Set together on the top bar: the show over "S1E32 - Episode Title",
+    // rather than the single "Show - Episode" line the other layouts print.
+    void setVideoOsdTitle(const std::string& title, const std::string& subtitle);
     // The queue / lyrics rows are built in code at sizes written for the
     // classic layout. The mobile layout's XML is scaled to a phone frame
     // (1280 logical units standing in for the handoff's 412), so anything it
     // shares has to be scaled the same way or it renders a third of the size.
-    float ui(float v) const { return m_mobileLayout ? v * kMobileUiScale : v; }
+    // The two mobile layouts are drawn against different frames — a 412-wide
+    // portrait one for music, a 915-wide landscape one for video — so the
+    // factor depends on which is up. Getting this wrong is what makes shared
+    // code render at a third scale or at three times it.
+    float ui(float v) const {
+        if (m_mobileLayout) return v * kMobileUiScale;
+        if (m_videoOsd)     return v * kVideoUiScale;
+        return v;
+    }
     // List-row geometry wants a gentler factor than type does. At the full
     // scale a queue row is ~161 units tall and only two or three fit the sheet;
     // the text at that size is right, but the box around it is not. So heights,
@@ -189,6 +217,7 @@ private:
     float uiRow(float v) const { return m_mobileLayout ? v * kMobileRowScale : v; }
     static constexpr float kMobileUiScale  = 1280.f / 412.f;
     static constexpr float kMobileRowScale = 2.15f;
+    static constexpr float kVideoUiScale   = 1280.f / 915.f;
     // A queue row's height and the gap below it. createQueueRow builds rows
     // from these, and every scroll clamp, hold threshold and reorder target
     // index has to agree with the result — a hand-copied 54 stops the list
@@ -480,6 +509,9 @@ private:
 
     void showTrackOverlay(TrackSelectMode mode);
     void hideTrackOverlay();
+    // What the video OSD's audio and subtitle pills say after the name — the
+    // selected track, which is the reason they are pills and not glyphs.
+    std::string trackSummary(TrackSelectMode mode) const;
     void populateTrackList(TrackSelectMode mode);
     void populateSubtitleSearchResults();
     void selectTrack(TrackSelectMode mode, int index);  // index into filtered list, -1 = off for subs
