@@ -179,8 +179,4 @@ dependencies {
     // properly and lets clients read the current state back.
     implementation 'androidx.media:media:1.7.0'
 
-    // Android TV home-screen channels and the system Watch Next row. Without a
-    // published channel the app is a tile you have to open before it shows you
-    // anything, while every other TV app contributes rows to the home screen.
-    implementation 'androidx.tvprovider:tvprovider:1.0.0'
 }
