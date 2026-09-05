@@ -40,12 +40,24 @@
     const std::string& getIosDataDir();
     static constexpr const char* PLATFORM_DATA_DIR = "";
 #else
-    // Desktop: resolved at runtime via $HOME
+    // Desktop: $XDG_DATA_HOME/VitaPlex, per the XDG Base Directory spec, which
+    // defines $HOME/.local/share as the default when the variable is unset or
+    // not an absolute path. That default is byte-for-byte the path this used to
+    // hardcode, so nothing moves for anyone who has not set the variable —
+    // while a user who has relocated it, or a sandbox that sets it (Flatpak
+    // points it inside ~/.var/app), is now honoured instead of ignored.
+    //
+    // Config and cache deliberately stay in here rather than splitting to
+    // XDG_CONFIG_HOME and XDG_CACHE_HOME: correct, but it would move the
+    // settings of every existing install.
     inline const std::string& getDesktopDataDir() {
         static std::string s_dir;
         if (s_dir.empty()) {
-            const char* home = std::getenv("HOME");
-            if (home && *home) {
+            const char* xdgData = std::getenv("XDG_DATA_HOME");
+            const char* home    = std::getenv("HOME");
+            if (xdgData && xdgData[0] == '/') {
+                s_dir = std::string(xdgData) + "/VitaPlex";
+            } else if (home && *home) {
                 s_dir = std::string(home) + "/.local/share/VitaPlex";
             } else {
                 s_dir = "./VitaPlex";
