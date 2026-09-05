@@ -3442,6 +3442,14 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
         // Audio: HTTP progressive download of mp3
         queryParams += "&protocol=http";
         queryParams += "&musicBitrate=320";
+#if defined(__vita__) || defined(__PS4__)
+        // These two decode a much narrower set of audio than mpv does on a
+        // desktop, and the audio profile we send says only "I can take an mp3
+        // transcode" — it declares no direct-play capability for the server to
+        // judge. Asking for direct play here invites a FLAC or ALAC the port
+        // cannot open, so tell the server not to offer it and take the mp3.
+        queryParams += "&directPlay=0";
+#endif
     } else {
         // Video: HLS (HTTP Live Streaming) with TS segments.
         // This matches switchfin's proven Vita configuration:
@@ -3553,12 +3561,19 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
     }
 
     // If the server chose DIRECT PLAY (the user enabled it and the file is
-    // compatible), stream the original file directly. start.m3u8 is the HLS
-    // transcode endpoint and 400s for a direct-play decision — you can't ask for
-    // an HLS playlist of a file that's meant to be played as-is. mpv seeks the
-    // file via HTTP range requests, so no offset goes in the URL; the player
-    // detects the direct URL and seeks to the resume point itself.
-    if (settings.directPlay && !settings.forceTranscode && !isAudio &&
+    // compatible), stream the original file directly. The /start endpoints are
+    // transcode endpoints and 400 for a direct-play decision — you can't ask for
+    // an HLS playlist, or an mp3 transcode, of a file that is meant to be played
+    // as-is. mpv seeks the file via HTTP range requests, so no offset goes in
+    // the URL; the player detects the direct URL and seeks to the resume point
+    // itself.
+    //
+    // This used to be video-only. Audio fell through to start.mp3 and took the
+    // 400 the comment above describes — a track the server had judged directly
+    // playable simply would not start, which is what "music works on one device
+    // and not another" turns out to be: the same code, a different decision.
+    // The constrained ports opt out earlier by never asking for direct play.
+    if (settings.directPlay && !settings.forceTranscode &&
         decisionResp.statusCode == 200 &&
         (decisionResp.body.find("\"decision\":\"directplay\"") != std::string::npos ||
          decisionResp.body.find("Direct play OK") != std::string::npos)) {
