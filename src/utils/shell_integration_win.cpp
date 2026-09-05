@@ -80,12 +80,18 @@ HWND appHwnd() {
     return g_appHwnd;
 }
 
-// COM on this thread. Every entry point below is called from the UI thread via
-// brls::sync, so one apartment covers all of them. Apartment-threaded because
-// the shell objects want it; a second call returning RPC_E_CHANGED_MODE just
-// means someone else got there first, which is fine.
+// COM on this thread. Apartment-threaded because the shell objects want it; a
+// second call returning RPC_E_CHANGED_MODE just means someone else got there
+// first, which is fine.
+//
+// thread_local, not static: a COM apartment belongs to a thread, not a
+// process. A process-wide flag would report "already initialised" to a thread
+// that had never called CoInitializeEx, and every COM and WinRT call on that
+// thread would fail with CO_E_NOTINITIALIZED. Today every entry point below
+// arrives on the UI thread via brls::sync, so nothing was hitting it — but it
+// is the kind of thing that breaks the moment a caller moves.
 bool ensureCom() {
-    static bool s_done = false;
+    thread_local bool s_done = false;
     if (!s_done) {
         CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
         s_done = true;
@@ -179,11 +185,21 @@ bool shortcutHasAumid(const std::wstring& path, bool repair) {
 // The Start Menu shortcut a toast needs. Per-user, so no elevation; created if
 // absent, repaired if present without our id.
 bool ensureShortcut() {
-    if (!g_shortcutAllowed) return false;
+    if (!g_shortcutAllowed) {
+        brls::Logger::debug("shell: Start Menu shortcut disabled in settings — no toasts");
+        return false;
+    }
     const std::wstring path = shortcutPath();
-    if (path.empty()) return false;
-    if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
-        return shortcutHasAumid(path, /*repair=*/true);
+    if (path.empty()) {
+        brls::Logger::warning("shell: could not locate the Start Menu Programs folder");
+        return false;
+    }
+    if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
+        const bool ok = shortcutHasAumid(path, /*repair=*/true);
+        brls::Logger::debug("shell: existing Start Menu shortcut {} the AppUserModelID",
+                            ok ? "carries" : "COULD NOT BE GIVEN");
+        return ok;
+    }
 
     const std::wstring exe = exePath();
     if (exe.empty()) return false;
@@ -260,6 +276,20 @@ std::wstring xmlEscape(const std::wstring& in) {
     return out;
 }
 
+// Every step below used to return false without a word, so a toast that never
+// appeared produced an empty log and there was no way to tell which of six
+// calls had refused. Each one now names itself and its HRESULT. This macro is
+// the difference between "no notification" and a one-line answer.
+#define TOAST_TRY(expr, what)                                                    \
+    do {                                                                         \
+        const HRESULT _hr = (expr);                                              \
+        if (FAILED(_hr)) {                                                       \
+            brls::Logger::warning("shell: toast failed at {} ({:#x})", what,      \
+                                  (unsigned)_hr);                                \
+            return false;                                                        \
+        }                                                                        \
+    } while (0)
+
 // Returns false if anything at all went wrong, so the caller can fall back rather than leave the user with nothing.
 bool showToast(const std::wstring& summary, const std::wstring& body) {
     if (!ensureShortcut()) {
@@ -269,10 +299,10 @@ bool showToast(const std::wstring& summary, const std::wstring& body) {
     }
 
     ComPtr<WUN::IToastNotificationManagerStatics> mgr;
-    if (FAILED(RoGetActivationFactory(
-            HStringReference(RuntimeClass_Windows_UI_Notifications_ToastNotificationManager).Get(),
-            IID_PPV_ARGS(&mgr))))
-        return false;
+    TOAST_TRY(RoGetActivationFactory(
+                  HStringReference(RuntimeClass_Windows_UI_Notifications_ToastNotificationManager).Get(),
+                  IID_PPV_ARGS(&mgr)),
+              "RoGetActivationFactory(ToastNotificationManager)");
 
     // ToastGeneric with two text lines: title, then the detail.
     const std::wstring xml =
@@ -281,26 +311,50 @@ bool showToast(const std::wstring& summary, const std::wstring& body) {
         L"</text></binding></visual></toast>";
 
     ComPtr<WDX::IXmlDocument> doc;
-    if (FAILED(RoActivateInstance(
-            HStringReference(RuntimeClass_Windows_Data_Xml_Dom_XmlDocument).Get(),
-            (IInspectable**)doc.GetAddressOf())))
-        return false;
+    TOAST_TRY(RoActivateInstance(
+                  HStringReference(RuntimeClass_Windows_Data_Xml_Dom_XmlDocument).Get(),
+                  (IInspectable**)doc.GetAddressOf()),
+              "RoActivateInstance(XmlDocument)");
     ComPtr<WDX::IXmlDocumentIO> io;
-    if (FAILED(doc.As(&io))) return false;
-    if (FAILED(io->LoadXml(HStringReference(xml.c_str()).Get()))) return false;
+    TOAST_TRY(doc.As(&io), "QueryInterface(IXmlDocumentIO)");
+    TOAST_TRY(io->LoadXml(HStringReference(xml.c_str()).Get()), "LoadXml");
 
     ComPtr<WUN::IToastNotificationFactory> factory;
-    if (FAILED(RoGetActivationFactory(
-            HStringReference(RuntimeClass_Windows_UI_Notifications_ToastNotification).Get(),
-            IID_PPV_ARGS(&factory))))
-        return false;
+    TOAST_TRY(RoGetActivationFactory(
+                  HStringReference(RuntimeClass_Windows_UI_Notifications_ToastNotification).Get(),
+                  IID_PPV_ARGS(&factory)),
+              "RoGetActivationFactory(ToastNotification)");
     ComPtr<WUN::IToastNotification> toast;
-    if (FAILED(factory->CreateToastNotification(doc.Get(), &toast))) return false;
+    TOAST_TRY(factory->CreateToastNotification(doc.Get(), &toast), "CreateToastNotification");
 
     // Notifier is per-AppUserModelID, and the id must match the shortcut's.
     ComPtr<WUN::IToastNotifier> notifier;
-    if (FAILED(mgr->CreateToastNotifierWithId(HStringReference(kAumid).Get(), &notifier)))
-        return false;
+    TOAST_TRY(mgr->CreateToastNotifierWithId(HStringReference(kAumid).Get(), &notifier),
+              "CreateToastNotifierWithId");
+
+#if defined(VITAPLEX_HAVE_TOAST_SETTING)
+    // The one call that says WHY nothing appeared. Show() below reports that it
+    // handed the toast over, not that Windows displayed it — a toast suppressed
+    // by Focus Assist, by the per-app notification switch, or by policy still
+    // returns S_OK. Setting names that case outright.
+    WUN::NotificationSetting setting = WUN::NotificationSetting_Enabled;
+    if (SUCCEEDED(notifier->get_Setting(&setting)) &&
+        setting != WUN::NotificationSetting_Enabled) {
+        const char* why = "unknown";
+        switch (setting) {
+            case WUN::NotificationSetting_DisabledForApplication:
+                why = "notifications are switched off for VitaPlex in Windows Settings"; break;
+            case WUN::NotificationSetting_DisabledForUser:
+                why = "notifications are switched off for this user account"; break;
+            case WUN::NotificationSetting_DisabledByGroupPolicy:
+                why = "notifications are blocked by group policy"; break;
+            case WUN::NotificationSetting_DisabledByManifest:
+                why = "the app is not registered for notifications (shortcut/AppUserModelID)"; break;
+            default: break;
+        }
+        brls::Logger::warning("shell: Windows will not display this toast — {}", why);
+    }
+#endif
 
     const HRESULT hr = notifier->Show(toast.Get());
     if (FAILED(hr)) {
@@ -466,6 +520,14 @@ void init() {
     if (FAILED(hr))
         brls::Logger::debug("shell: SetCurrentProcessExplicitAppUserModelID failed ({:#x})",
                             (unsigned)hr);
+
+    // Settle the shortcut now rather than at the moment the first toast is
+    // sent. The shell resolves an AppUserModelID through its view of the Start
+    // Menu, and a shortcut written or rewritten microseconds earlier is the
+    // worst case for that lookup. Doing it at startup means the file has been
+    // sitting there for however long the app has been running — minutes, by
+    // the time a download finishes — which is the arrangement Windows expects.
+    ensureShortcut();
 }
 
 void setShortcutAllowed(bool allowed) {

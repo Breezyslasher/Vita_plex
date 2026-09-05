@@ -10,8 +10,12 @@
 
 #include <borealis.hpp>
 #include "utils/http_client.hpp"
+#include "platform/paths.hpp"
 
+#include <chrono>
 #include <cstdio>
+#include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <thread>
 
@@ -227,6 +231,7 @@ void attachParentConsole() {
 bool init() {
 #ifdef _WIN32
     attachParentConsole();
+    openLogFile();
 #endif
     if (!::vitaplex::HttpClient::globalInit()) {
         brls::Logger::error("Failed to initialize curl");
@@ -237,14 +242,71 @@ bool init() {
 
 void shutdown() {
     ::vitaplex::HttpClient::globalCleanup();
+    closeLogFile();
 }
 
+#ifdef _WIN32
+FILE* g_logFile = nullptr;
+#endif
+
+// Linux and macOS keep their log on stdout, where a terminal or the journal
+// picks it up. Windows cannot: the app links the GUI subsystem, so a
+// double-clicked build has no stdout to write to, and the console window that
+// used to carry the log is the thing that was removed. Without a file there is
+// no way for anyone to send a log at all.
 std::string getLogPath() {
+#ifdef _WIN32
+    return platformPath("vitaplex.log");
+#else
     return std::string{};
+#endif
 }
 
-void openLogFile() {}
-void closeLogFile() {}
+void openLogFile() {
+#ifdef _WIN32
+    if (g_logFile) return;
+    std::error_code ec;
+    std::filesystem::create_directories(getDesktopDataDir(), ec);
+
+    // Truncated per run rather than appended: this is for "it just did the
+    // wrong thing, send me the log", and an unbounded file that nobody ever
+    // rotates is its own problem.
+    g_logFile = std::fopen(getLogPath().c_str(), "w");
+    if (!g_logFile) return;
+    // Line-buffered, so a crash still leaves everything up to the last line.
+    setvbuf(g_logFile, nullptr, _IOLBF, 0);
+
+    brls::Logger::getLogEvent()->subscribe(
+        [](brls::Logger::TimePoint time, brls::LogLevel level, std::string log) {
+            if (!g_logFile) return;
+            const char* levelStr = "UNKNOWN";
+            switch (level) {
+                case brls::LogLevel::LOG_ERROR:   levelStr = "ERROR";   break;
+                case brls::LogLevel::LOG_WARNING: levelStr = "WARNING"; break;
+                case brls::LogLevel::LOG_INFO:    levelStr = "INFO";    break;
+                case brls::LogLevel::LOG_DEBUG:   levelStr = "DEBUG";   break;
+                case brls::LogLevel::LOG_VERBOSE: levelStr = "VERBOSE"; break;
+            }
+            std::time_t tt = std::chrono::system_clock::to_time_t(time);
+            std::tm tm = *std::localtime(&tt);
+            const uint64_t ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(time.time_since_epoch())
+                    .count() % 1000;
+            std::fprintf(g_logFile, "%02d:%02d:%02d.%03d [%s] %s\n", tm.tm_hour, tm.tm_min,
+                         tm.tm_sec, (int)ms, levelStr, log.c_str());
+        });
+    brls::Logger::info("Log file: {}", getLogPath());
+#endif
+}
+
+void closeLogFile() {
+#ifdef _WIN32
+    if (g_logFile) {
+        std::fclose(g_logFile);
+        g_logFile = nullptr;
+    }
+#endif
+}
 
 bool readLocalFile(const std::string& path,
                    std::vector<uint8_t>& out,
