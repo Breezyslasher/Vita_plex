@@ -521,6 +521,21 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "2MiB");
 #endif
 
+    // Resume a dropped HTTP connection instead of reporting end-of-stream.
+    //
+    // Without this, ffmpeg's HTTP reader treats any mid-transfer disconnect —
+    // a reset by the server, a Wi-Fi blip, a transcode session torn down early
+    // — as a clean end of file. mpv then raises eof-reached exactly as it does
+    // at the real end of a track, and the queue advances mid-song. Turning
+    // reconnect on makes those transient drops resume where they left off,
+    // which is where the fix belongs: the stream shouldn't end in the first
+    // place.
+    //
+    // reconnect_streamed covers the non-seekable case (the transcode
+    // endpoints), where ffmpeg would otherwise refuse to retry at all.
+    mpv_set_option_string(m_mpv, "stream-lavf-o",
+                          "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5");
+
     // ========================================
     // Network settings for streaming
     // ========================================
@@ -1521,12 +1536,40 @@ void MpvPlayer::handlePropertyChange(mpv_event_property* prop, uint64_t id) {
         case 7: // eof-reached
             if (prop->format == MPV_FORMAT_FLAG && prop->data) {
                 bool eof = *(int*)prop->data != 0;
-                if (eof) {
-                    brls::Logger::debug("MpvPlayer: EOF reached");
-                    // In audio-only mode on Vita, EVENT_END_FILE may not fire,
-                    // so transition to ENDED here to trigger auto-advance
-                    if (m_state == MpvPlayerState::PLAYING || m_state == MpvPlayerState::PAUSED) {
+                if (eof && (m_state == MpvPlayerState::PLAYING || m_state == MpvPlayerState::PAUSED)) {
+                    // This is what ends a track. keep-open=yes stops mpv
+                    // unloading the file at the end, so MPV_EVENT_END_FILE does
+                    // not fire for a normal finish on any platform — only for a
+                    // stop, an error or a redirect. eof-reached is the signal.
+                    //
+                    // The catch is that the demuxer raises it for a truncated
+                    // read exactly as it does for the real end of a file. A
+                    // dropped connection, a transcode session the server tore
+                    // down, a stall ffmpeg gave up on: all of them arrive here
+                    // as "finished". Acting on that mid-track is heard as the
+                    // music randomly skipping to the next song.
+                    //
+                    // So only believe it near the end of the track. A live
+                    // stream reports no usable duration, and must still be able
+                    // to end, so those are let through.
+                    constexpr double kEofSlackSec = 5.0;
+                    const double pos = m_playbackInfo.position;
+                    const double dur = m_playbackInfo.duration;
+
+                    if (dur <= 0.0 || pos >= dur - kEofSlackSec) {
+                        brls::Logger::debug("MpvPlayer: EOF reached at {:.1f}/{:.1f}s", pos, dur);
                         setState(MpvPlayerState::ENDED);
+                    } else {
+                        // Not the end of the track — the stream died early.
+                        // Report it rather than skipping: silently advancing is
+                        // what made this look random instead of like a network
+                        // fault.
+                        m_errorMessage = "Stream ended early";
+                        brls::Logger::error(
+                            "MpvPlayer: stream ended at {:.1f}s of {:.1f}s — treating as a "
+                            "broken stream, not end of track (url={})",
+                            pos, dur, m_currentUrl.substr(0, 120));
+                        setState(MpvPlayerState::ERROR);
                     }
                 }
             }
