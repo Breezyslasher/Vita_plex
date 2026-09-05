@@ -550,8 +550,7 @@ bool MpvPlayer::init() {
     // Ensure HTTPS/TLS protocols are enabled in ffmpeg's protocol whitelist
     mpv_set_option_string(m_mpv, "demuxer-lavf-o", "protocol_whitelist=file,http,https,tcp,tls,crypto,data,hls");
 #ifdef __PS4__
-    // PS4: also set ffmpeg-level TLS options in case MPV's tls-verify doesn't
-    // propagate correctly to the stream layer
+    // PS4: also set ffmpeg-level TLS options in case MPV's tls-verify doesn't propagate correctly to the stream layer
     mpv_set_option_string(m_mpv, "stream-lavf-o", "tls_verify=0");
 #endif
 
@@ -576,8 +575,7 @@ bool MpvPlayer::init() {
         mpv_set_option_string(m_mpv, "http-header-fields", headerFields.c_str());
     }
 
-    // Note: demuxer-lavf-probe-info and force-seekable caused crashes on Vita
-    // Keep options minimal for compatibility
+    // Note: demuxer-lavf-probe-info and force-seekable caused crashes on Vita Keep options minimal for compatibility
 
     // ========================================
     // Seek settings for faster seeking
@@ -1441,13 +1439,10 @@ void MpvPlayer::eventMainLoop() {
                                        (int)end->reason, end->error);
 
                     m_commandPending = false;
-                    // The file (and with it the decoder holding the
-                    // Android surface) is gone — releases stop()'s wait.
+                    // The file (and with it the decoder holding the Android surface) is gone — releases stop()'s wait.
                     m_fileUnloaded = true;
 
-                    // MPV_END_FILE_REASON_EOF = 0
-                    // MPV_END_FILE_REASON_STOP = 2
-                    // MPV_END_FILE_REASON_ERROR = 4
+                    // MPV_END_FILE_REASON_EOF = 0 MPV_END_FILE_REASON_STOP = 2 MPV_END_FILE_REASON_ERROR = 4
                     if (end->reason == 0) {
                         setState(MpvPlayerState::ENDED);
                     } else if (end->reason == 4 || end->error < 0) {
@@ -1720,8 +1715,7 @@ void MpvPlayer::onRenderUpdate(void* ctx) {
             mpv_render_context_render(player->m_mpvRenderCtx, player->m_mpvParams);
             mpv_render_context_report_swap(player->m_mpvRenderCtx);
 
-            // Restore the previous GL state so NanoVG's next frame sees what
-            // it expects.
+            // Restore the previous GL state so NanoVG's next frame sees what it expects.
             glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prevFbo);
             glViewport(prevViewport[0], prevViewport[1],
                        prevViewport[2], prevViewport[3]);
@@ -2214,8 +2208,7 @@ void MpvPlayer::cleanupRenderContext() {
     flushGxmPipeline();
 
     {
-        // Lock the render mutex to ensure no in-flight render callback is accessing
-        // GXM resources while we free them
+        // Lock the render mutex to ensure no in-flight render callback is accessing GXM resources while we free them
         std::lock_guard<std::mutex> lock(m_renderMutex);
 
         if (m_mpvRenderCtx) {

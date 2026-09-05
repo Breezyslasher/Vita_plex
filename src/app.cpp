@@ -421,8 +421,7 @@ void App::setError(const std::string& message) {
 }
 
 std::string App::buildApiUrl(const std::string& endpoint) {
-    // m_currentServer.address already contains the full URL with port
-    // e.g., "http://192.168.1.28:32400"
+    // m_currentServer.address already contains the full URL with port e.g., "http://192.168.1.28:32400"
     std::string url = m_currentServer.address;
     
     // Remove trailing slash if present
@@ -1384,8 +1383,7 @@ bool App::fetchLiveTVChannels() {
     std::vector<std::string> dvrIds;
     
     if (resp.statusCode == 200) {
-        // Parse DVR IDs from response
-        // Look for "key":"/livetv/dvrs/X" pattern or "id":"X"
+        // Parse DVR IDs from response Look for "key":"/livetv/dvrs/X" pattern or "id":"X"
         size_t pos = 0;
         while ((pos = resp.body.find("\"key\":\"/livetv/dvrs/", pos)) != std::string::npos) {
             pos += 20;  // Skip past "key":"/livetv/dvrs/
@@ -1707,8 +1705,7 @@ bool App::startLiveTVPlayback(const std::string& channelKey) {
         return false;
     }
     
-    // Build transcode URL for live TV
-    // URL-encode the path parameter (required by Plex API)
+    // Build transcode URL for live TV URL-encode the path parameter (required by Plex API)
     std::string encodedPath = HttpClient::urlEncode(channel->key);
     
     std::string transcodeUrl = m_currentServer.address;

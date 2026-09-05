@@ -200,6 +200,28 @@ private:
 
     std::deque<DownloadItem> m_downloads;
     mutable std::mutex m_mutex;
+    // Last time the shell progress indicator was updated, ms. The byte
+    // callback fires per chunk; this keeps it to one update a second.
+    int64_t m_lastLauncherMs = 0;
+    // What to say when the queue drains. Written by downloadItem and read at
+    // the end of the worker — both on the download thread, so unsynchronised
+    // is correct here rather than merely convenient.
+    int m_runCompleted = 0;
+    std::string m_runLastTitle;
+    // Bytes seen at the previous progress tick, for the live transfer rate.
+    int64_t m_lastProgressBytes = 0;
+    // The line under the title in the download notification: how far through
+    // the run, how far through this item, and how fast. Called once a second
+    // from the byte callback, which is why counting the queue under the mutex
+    // is affordable here.
+    std::string progressDetail(const DownloadItem& item, int64_t elapsedMs);
+
+    // Push this item's progress to the shell, throttled to once a second.
+    // downloadItem has two download paths — segmented HLS and a direct file —
+    // and calling this from both is what keeps them reporting alike. The
+    // direct path is the common one (movies, tracks), and it had no reporting
+    // at all, so the notification only ever appeared for HLS video.
+    void reportShellProgress(const DownloadItem& item);
     std::atomic<bool> m_downloading{false};
     std::atomic<bool> m_downloadThreadActive{false};
     bool m_initialized = false;

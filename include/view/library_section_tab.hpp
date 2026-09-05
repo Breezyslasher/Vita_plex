@@ -134,8 +134,7 @@ private:
     brls::Label*  m_filtersBadgeLabel = nullptr;
     brls::Box*    m_appliedFiltersBox = nullptr;
 
-    // Current ALL_ITEMS sort + filter. Default = Title A-Z (overridden per
-    // section by any saved sort preference).
+    // Current ALL_ITEMS sort + filter. Default = Title A-Z (overridden per section by any saved sort preference).
     std::string m_sortParam = "titleSort:asc";
     std::string m_sortLabel = "Title A-Z";
 

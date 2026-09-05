@@ -26,6 +26,19 @@ finish-args:
   # Talks to Plex servers over the network.
   - --share=network
   - --socket=pulseaudio
+  # MPRIS media controls. Flatpak's default session-bus policy lets an app own
+  # org.mpris.MediaPlayer2.$FLATPAK_ID and nothing else, and the bus name here
+  # is org.mpris.MediaPlayer2.vitaplex — outside that, so requesting it fails
+  # and the Flatpak build has no media controls at all. Naming it explicitly is
+  # the documented way to keep a name that does not match the app id.
+  - --own-name=org.mpris.MediaPlayer2.vitaplex
+  # Keep the screen from blanking during playback. The inhibit call goes to
+  # org.freedesktop.ScreenSaver, which is not in the default policy either, so
+  # without this the display sleeps mid-film inside the sandbox.
+  - --talk-name=org.freedesktop.ScreenSaver
+  # Desktop notifications (download finished) and the launcher progress bar.
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=com.canonical.Unity
 
 cleanup:
   - '*.a'

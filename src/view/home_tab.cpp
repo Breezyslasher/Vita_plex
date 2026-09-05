@@ -359,8 +359,7 @@ void HomeTab::populateChannelRow() {
             }, preview, m_channelImgAlive);
         }
 
-        // How much of the programme on this channel has aired, along the
-        // bottom edge of the tile.
+        // How much of the programme on this channel has aired, along the bottom edge of the tile.
         const float aired = airProgress(ch.programStart, ch.programEnd, (int64_t)now);
         if (aired >= 0.0f) {
             auto* bar = new brls::Rectangle();
@@ -780,8 +779,7 @@ void HomeTab::loadRecentChannels() {
             if (m_sportsOnNowRow)
                 m_sportsOnNowRow->setVisibility(showSports ? brls::Visibility::VISIBLE
                                                            : brls::Visibility::GONE);
-            // Fixtures without show art keep the landscape cell — see
-            // MediaItemCell::setPreferPoster().
+            // Fixtures without show art keep the landscape cell — see MediaItemCell::setPreferPoster().
             if (showSports) populateRow(m_sportsOnNowRow, m_sportsOnNow, false, true);
         });
     });

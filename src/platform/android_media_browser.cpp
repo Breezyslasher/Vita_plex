@@ -266,8 +266,7 @@ std::vector<BrowseRow> loadPlaylists(PlexClient& client) {
         r.title    = p.title;
         r.subtitle = p.leafCount > 0 ? std::to_string(p.leafCount) + " tracks" : std::string();
         r.iconUri  = artUri(client, !p.thumb.empty() ? p.thumb : p.composite);
-        // Open it to pick a track, or play the whole playlist straight from the
-        // list — same reasoning as albums above.
+        // Open it to pick a track, or play the whole playlist straight from the list — same reasoning as albums above.
         r.flags    = FLAG_BROWSABLE | FLAG_PLAYABLE;
         rows.push_back(std::move(r));
     }

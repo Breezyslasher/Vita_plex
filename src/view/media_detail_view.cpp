@@ -279,8 +279,7 @@ MediaDetailView::MediaDetailView(const MediaItem& item)
             m_mediaContentBox->addView(m_extrasScroll);
         }
 
-        // Shows also get Cast & Crew + Recommended rows (seasons keep just
-        // their episode list).
+        // Shows also get Cast & Crew + Recommended rows (seasons keep just their episode list).
         if (m_item.mediaType == MediaType::SHOW) {
             buildPeopleAndRecommendedRows(m_mediaContentBox);
         }
@@ -1173,8 +1172,7 @@ void MediaDetailView::draw(NVGcontext* vg, float x, float y, float width, float 
         !m_posterUrl.empty() && m_posterRetries < 5) {
         const int64_t now = brls::getCPUTimeUsec();
         if (m_posterRetryAt == 0) {
-            // First frame we notice it missing: wait a beat so an in-flight load
-            // gets the chance to finish normally.
+            // First frame we notice it missing: wait a beat so an in-flight load gets the chance to finish normally.
             m_posterRetryAt = now + 700 * 1000;
         } else if (now >= m_posterRetryAt) {
             m_posterRetryAt = 0;
@@ -4355,8 +4353,7 @@ void MediaDetailView::showArtistContextMenuStatic(const MediaItem& artist) {
 
     std::vector<OptionRow> rows;
 
-    // Shuffle / Play All / Download all share the artist detail helpers so the
-    // two entry points can never drift apart.
+    // Shuffle / Play All / Download all share the artist detail helpers so the two entry points can never drift apart.
     rows.push_back({ "shuffle-variant.png", "Shuffle Artist", "", false, false,
         [capturedArtist](brls::View*) { playAllArtistTracks(capturedArtist, true); return true; }});
 
@@ -5035,8 +5032,7 @@ static std::string subtitleSubLine(const PlexStream& s) {
     if (codec.empty()) return desc;
     return codec + "  \xC2\xB7  " + desc;
 }
-// Forced wins the badge; otherwise show where the track lives (external
-// sidecar vs embedded in the container).
+// Forced wins the badge; otherwise show where the track lives (external sidecar vs embedded in the container).
 static StreamBadge subtitleBadge(const PlexStream& s) {
     if (s.forced) return StreamBadge::Forced;
     return s.external ? StreamBadge::Ext : StreamBadge::Emb;
@@ -5464,8 +5460,7 @@ void MediaDetailView::showStreamDialog(int defaultTab) {
     auto promptLang         = std::make_shared<std::function<void()>>();
     auto selectTab          = std::make_shared<std::function<void(int)>>();
 
-    // Audio tab: one row per audio stream; selecting applies it (same
-    // setStreamSelection path) and closes the dialog.
+    // Audio tab: one row per audio stream; selecting applies it (same setStreamSelection path) and closes the dialog.
     *buildAudioList = [this, alive, dlgAlive, listBox, audioTab]() {
         if (!alive->load() || !*dlgAlive) return;
         brls::Application::giveFocus(audioTab.box);  // park before clearViews

@@ -16,8 +16,7 @@
 
 namespace vitaplex {
 
-// Local wall-clock time, "8:00 PM". Hour is not zero-padded, matching how
-// the Live TV guide prints its times.
+// Local wall-clock time, "8:00 PM". Hour is not zero-padded, matching how the Live TV guide prints its times.
 inline std::string airClockLabel(int64_t unixSeconds) {
     time_t t = (time_t)unixSeconds;
     struct tm tmv {};

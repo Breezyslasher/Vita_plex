@@ -216,8 +216,7 @@ void Application::showHomeUserPicker(std::function<void()> onComplete) {
     // re-resolved inside the callback so a logout mid-switch can't leave a
     // dangling pointer (same pattern as the Live TV probe).
     auto finish = [switched, onComplete]() {
-        // Caller's handler first — the Settings one repaints labels on views
-        // that rebuildSidebar() is about to destroy.
+        // Caller's handler first — the Settings one repaints labels on views that rebuildSidebar() is about to destroy.
         if (onComplete) onComplete();
         if (!*switched) return;
         brls::sync([]() {
@@ -565,6 +564,7 @@ bool Application::loadSettings() {
     m_settings.directPlay = extractBool("directPlay", false);
 
     // Download settings
+    m_settings.windowsStartMenuShortcut = extractBool("windowsStartMenuShortcut", true);
     m_settings.deleteAfterWatch = extractBool("deleteAfterWatch", false);
     {
         int dq = extractInt("downloadQuality");   // 0 (ORIGINAL) when absent
@@ -631,8 +631,7 @@ bool Application::loadSettings() {
     }
     m_settings.autoLoginAsLastUser = extractBool("autoLoginAsLastUser", true);
     {
-        // 0 = disabled; cap at one week so a corrupt settings file
-        // can't pin us to a stale response forever.
+        // 0 = disabled; cap at one week so a corrupt settings file can't pin us to a stale response forever.
         int v = extractInt("cacheLifetimeMinutes");
         if (v >= 0 && v <= 10080) m_settings.cacheLifetimeMinutes = v;
     }
@@ -729,6 +728,7 @@ bool Application::saveSettings() {
     json += "  \"maxBitrate\": " + std::to_string(m_settings.maxBitrate) + ",\n";
     json += "  \"connectionTimeout\": " + std::to_string(m_settings.connectionTimeout) + ",\n";
     json += "  \"directPlay\": " + b(m_settings.directPlay) + ",\n";
+    json += "  \"windowsStartMenuShortcut\": " + b(m_settings.windowsStartMenuShortcut) + ",\n";
     json += "  \"deleteAfterWatch\": " + b(m_settings.deleteAfterWatch) + ",\n";
     json += "  \"downloadQuality\": " + std::to_string(static_cast<int>(m_settings.downloadQuality)) + ",\n";
     json += "  \"downloadKeepOriginalAudio\": " + b(m_settings.downloadKeepOriginalAudio) + ",\n";

@@ -21,6 +21,12 @@
 #include <TargetConditionals.h>
 #endif
 
+#if defined(_WIN32)
+// Only the Windows branch of getDesktopDataDir() needs it, and the console toolchains are happier not seeing it at all.
+#include <filesystem>
+#include <system_error>
+#endif
+
 #if defined(__vita__)
     static constexpr const char* PLATFORM_DATA_DIR = "ux0:data/VitaPlex";
 #elif defined(__SWITCH__)
@@ -40,16 +46,52 @@
     const std::string& getIosDataDir();
     static constexpr const char* PLATFORM_DATA_DIR = "";
 #else
-    // Desktop: resolved at runtime via $HOME
+    // Desktop: $XDG_DATA_HOME/VitaPlex, per the XDG Base Directory spec, which
+    // defines $HOME/.local/share as the default when the variable is unset or
+    // not an absolute path. That default is byte-for-byte the path this used to
+    // hardcode, so nothing moves for anyone who has not set the variable —
+    // while a user who has relocated it, or a sandbox that sets it (Flatpak
+    // points it inside ~/.var/app), is now honoured instead of ignored.
+    //
+    // Config and cache deliberately stay in here rather than splitting to
+    // XDG_CONFIG_HOME and XDG_CACHE_HOME: correct, but it would move the
+    // settings of every existing install.
     inline const std::string& getDesktopDataDir() {
         static std::string s_dir;
         if (s_dir.empty()) {
-            const char* home = std::getenv("HOME");
-            if (home && *home) {
+#if defined(_WIN32)
+            // Windows has neither $HOME nor XDG_DATA_HOME, so the branch below
+            // fell all the way through to "./VitaPlex" — a path relative to the
+            // working directory. That is wrong twice over: an install under
+            // Program Files cannot write next to its own exe, and the working
+            // directory depends on how the app was launched, so the same
+            // install could read a different data directory from one start to
+            // the next. %LOCALAPPDATA% is where this belongs.
+            //
+            // An existing install already has its settings, downloads and cache
+            // in the old spot, and moving them out from under it would read as
+            // losing them. So a "VitaPlex" directory that is already there wins,
+            // and only fresh installs get the correct location.
+            std::error_code ec;
+            const char* localApp = std::getenv("LOCALAPPDATA");
+            if (std::filesystem::is_directory("VitaPlex", ec)) {
+                s_dir = "./VitaPlex";
+            } else if (localApp && *localApp) {
+                s_dir = std::string(localApp) + "\\VitaPlex";
+            } else {
+                s_dir = "./VitaPlex";
+            }
+#else
+            const char* xdgData = std::getenv("XDG_DATA_HOME");
+            const char* home    = std::getenv("HOME");
+            if (xdgData && xdgData[0] == '/') {
+                s_dir = std::string(xdgData) + "/VitaPlex";
+            } else if (home && *home) {
                 s_dir = std::string(home) + "/.local/share/VitaPlex";
             } else {
                 s_dir = "./VitaPlex";
             }
+#endif
         }
         return s_dir;
     }

@@ -155,8 +155,7 @@ void MainActivity::onContentAvailable() {
     });
     consumeDeepLink();
 
-    // Startup update check — the module delays itself so login and the
-    // first content fetches get the pipe first.
+    // Startup update check — the module delays itself so login and the first content fetches get the pipe first.
     if (Application::getInstance().getSettings().autoCheckUpdates)
         app_update::checkForUpdates(false);
 
@@ -174,8 +173,7 @@ void MainActivity::onContentAvailable() {
 #endif
 
     if (tabFrame) {
-        // First pass populates s_cachedSections from Plex; afterwards
-        // applySidebarSizingForViewport() reuses the cache.
+        // First pass populates s_cachedSections from Plex; afterwards applySidebarSizingForViewport() reuses the cache.
         if (!Application::getInstance().isOfflineMode()) {
             PlexClient& client = PlexClient::getInstance();
             std::vector<LibrarySection> sections;
@@ -454,8 +452,7 @@ void MainActivity::buildSidebarTabs() {
         sections = s_cachedSections;  // fall back to whatever we last saw
     }
 
-    // Movable item universe, in DEFAULT order: each library, then Search /
-    // Live TV / Downloads.
+    // Movable item universe, in DEFAULT order: each library, then Search / Live TV / Downloads.
     std::vector<std::string> defaultOrder;
     for (const auto& sec : sections) defaultOrder.push_back("lib:" + sec.key);
     defaultOrder.push_back("search");

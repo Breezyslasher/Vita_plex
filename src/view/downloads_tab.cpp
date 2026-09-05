@@ -450,8 +450,7 @@ brls::Box* DownloadsTab::buildTypeTabs() {
     bar->setAlignItems(brls::AlignItems::STRETCH);
     bar->setMargins(6, 0, 10, 0);
 
-    // Horizontal scroll so the strip stays usable when a narrow / portrait
-    // viewport can't fit all four tabs.
+    // Horizontal scroll so the strip stays usable when a narrow / portrait viewport can't fit all four tabs.
     auto* scroll = new brls::HScrollingFrame();
     scroll->setHeight(52);  // 46 content + 3 underline + headroom for the focus ring
     scroll->setScrollingIndicatorVisible(false);
@@ -873,8 +872,7 @@ void DownloadsTab::rebuildList() {
     // dereference -> segfault. Clear it explicitly first.
     m_listContainer->setLastFocusedView(nullptr);
 
-    // Clear existing rows. The empty-state placeholder lives outside the
-    // scroll now, so every child here is a real row.
+    // Clear existing rows. The empty-state placeholder lives outside the scroll now, so every child here is a real row.
     while (!m_listContainer->getChildren().empty()) {
         m_listContainer->removeView(m_listContainer->getChildren()[0]);
     }
@@ -993,8 +991,7 @@ void DownloadsTab::rebuildList() {
         // so UP only jumps to the toolbar from the top of the list.
         firstListItem->setCustomNavigationRoute(brls::FocusDirection::UP, m_startStopBtn);
 
-        // LEFT escapes to the sidebar from every item (same Box-in-a-Box
-        // caveat as above).
+        // LEFT escapes to the sidebar from every item (same Box-in-a-Box caveat as above).
         for (auto* child : children) {
             if (child->isFocusable()) {
                 child->setCustomNavigationRoute(brls::FocusDirection::LEFT,

@@ -149,8 +149,7 @@ void SyncLoungeClient::runWorker(std::shared_ptr<Session> session,
     };
     auto kill  = [&]() { session->running.store(false); };
 
-    // Normalize the base URL + socket path, then publish the prefix the send
-    // channel will reuse.
+    // Normalize the base URL + socket path, then publish the prefix the send channel will reuse.
     std::string base = cfg.server;
     while (!base.empty() && base.back() == '/') base.pop_back();
     std::string path = cfg.socketPath.empty() ? std::string("/socket.io/") : cfg.socketPath;
@@ -249,8 +248,7 @@ void SyncLoungeClient::runWorker(std::shared_ptr<Session> session,
                         sendPacket("42[\"slPong\",\"" + jsonEscape(secret) + "\"]", "slPong");
                     } else {
                         out("[event] " + name + "  " + rest.substr(0, 220));
-                        // Hand the parsed event to a higher-level consumer
-                        // (the session) for state-driven behaviour.
+                        // Hand the parsed event to a higher-level consumer (the session) for state-driven behaviour.
                         if (eventCb) eventCb(name, rest);
                     }
                 } else if (st == '4') {  // CONNECT_ERROR

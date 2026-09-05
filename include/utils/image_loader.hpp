@@ -42,8 +42,7 @@ public:
     static void loadCoverAsync(const std::string& url, CoverCallback callback,
                                std::shared_ptr<std::atomic<bool>> alive);
 
-    // Load image synchronously from a local file path into a brls::Image.
-    // Returns true on success.
+    // Load image synchronously from a local file path into a brls::Image. Returns true on success.
     static bool loadFromFile(const std::string& path, brls::Image* target);
 
     // Clear image cache
@@ -118,8 +117,7 @@ private:
     static std::atomic<uint64_t> s_generation;
     static std::atomic<bool> s_paused;
 
-    // Max cached images. Platform-driven: ~20 on Vita (tight RAM),
-    // ~60 on Switch/Android, ~120 on desktop/PS4.
+    // Max cached images. Platform-driven: ~20 on Vita (tight RAM), ~60 on Switch/Android, ~120 on desktop/PS4.
     static size_t getMaxCacheSize();
 };
 

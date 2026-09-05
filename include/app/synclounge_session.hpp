@@ -49,8 +49,7 @@ public:
     // whole party. We mirror inbound partyPause onto the local player and, on a
     // user pause/play, broadcast it.
     bool isPartyPauseEnabled() const;
-    // Latest party pause/resume action. seq bumps on each inbound partyPause so
-    // the player applies it exactly once.
+    // Latest party pause/resume action. seq bumps on each inbound partyPause so the player applies it exactly once.
     struct PartyPause { int seq = 0; bool isPause = false; };
     PartyPause partyPauseState() const;
     // Broadcast a pause/resume to the party. No-op (and never sent) unless
@@ -187,8 +186,7 @@ private:
     // background-safe — it uses its own HttpClient).
     void resolveMatchAsync(HostMedia hm);
 
-    // Add/refresh a roster entry (id -> username). An empty username keeps the
-    // existing one. Locks m_mtx internally.
+    // Add/refresh a roster entry (id -> username). An empty username keeps the existing one. Locks m_mtx internally.
     void noteMember(const std::string& id, const std::string& username);
 
     mutable std::mutex                m_mtx;

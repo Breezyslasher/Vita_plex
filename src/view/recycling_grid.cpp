@@ -35,11 +35,9 @@ int computeColumns() {
     if (cellW <= 0 || available <= 0) return ic.gridColumns;
     int fit = available / cellW;
     if (fit < ic.gridColumns) fit = ic.gridColumns;  // never less than the
-                                                    // platform-designed
-                                                    // minimum
+                                                    // platform-designed minimum
     if (fit > 12) fit = 12;                          // sanity cap — even
-                                                    // an 8K display shouldn't
-                                                    // shove 20 covers in a row
+                                                    // an 8K display shouldn't shove 20 covers in a row
     return fit;
 }
 }  // namespace
@@ -134,8 +132,7 @@ void RecyclingGrid::scrollToItemIndex(size_t index, bool animated) {
     brls::Box* row = m_rows[rowIdx];
     if (!row) return;
 
-    // Row's content-relative Y = its on-screen Y minus the frame's on-screen Y
-    // plus however far we're already scrolled.
+    // Row's content-relative Y = its on-screen Y minus the frame's on-screen Y plus however far we're already scrolled.
     float target = row->getY() - this->getY() + this->getContentOffsetY();
 
     // Clamp to the scrollable range so we never over- or under-scroll.

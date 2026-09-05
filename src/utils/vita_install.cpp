@@ -83,8 +83,7 @@ bool fileExists(const std::string& path) {
     return sceIoGetstat(path.c_str(), &st) >= 0;
 }
 
-// mkdir -p, tolerating already-existing components and the device root
-// ("ux0:"), which cannot be created.
+// mkdir -p, tolerating already-existing components and the device root ("ux0:"), which cannot be created.
 void mkdirs(const std::string& path) {
     size_t i = 0;
     while (i < path.size()) {
@@ -555,8 +554,7 @@ int installVpk(const std::string& vpkPath, const std::string& workDir, std::stri
         return -1;
     }
 
-    // Promotion is synchronous (sync=1): the bubble is updated, the scratch
-    // directory can go.
+    // Promotion is synchronous (sync=1): the bubble is updated, the scratch directory can go.
     removePath(workDir);
     vlog("vita: install succeeded");
     return 0;

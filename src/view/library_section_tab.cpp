@@ -19,8 +19,7 @@
 
 namespace vitaplex {
 
-// A-Z jump-rail buckets. Parallel to m_azLetters; '#' collects digits/symbols
-// (which Plex titleSort places before 'A').
+// A-Z jump-rail buckets. Parallel to m_azLetters; '#' collects digits/symbols (which Plex titleSort places before 'A').
 static const char* kAzLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ#";
 
 size_t LibrarySectionTab::libraryPageSize() {
@@ -683,8 +682,7 @@ void LibrarySectionTab::showSortMenu() {
         std::string label = o.label;
         std::string param = o.param;
         bool current = (m_sortParam == param);
-        // check-circle marks the active sort, neutral label — same selection
-        // cue as the Filters dialog.
+        // check-circle marks the active sort, neutral label — same selection cue as the Filters dialog.
         rows.push_back({ current ? "check-circle.png" : "",
                          label, "", false, false,
             [this, label, param](brls::View*) {
@@ -829,8 +827,7 @@ void LibrarySectionTab::showFilterMenu() {
             }});
     }
 
-    // Field list is short and bounded — no scrolling needed here (the long
-    // lists are the per-field value pickers).
+    // Field list is short and bounded — no scrolling needed here (the long lists are the per-field value pickers).
     MediaDetailView::showCenteredChoice("Filters", "Narrow this library",
                                         std::move(rows), /*scrollable=*/false);
 }
@@ -957,8 +954,7 @@ void LibrarySectionTab::showFilterValues(const std::string& field,
     MediaDetailView::showCenteredChoice(fieldLabel, "", std::move(rows), /*scrollable=*/false);
 }
 
-// Push the current filter state into the UI (chip styling, count badge, applied
-// chips) and re-query the grid.
+// Push the current filter state into the UI (chip styling, count badge, applied chips) and re-query the grid.
 void LibrarySectionTab::applyFilters() {
     const int n = activeFilterCount();
 
@@ -1045,8 +1041,7 @@ void LibrarySectionTab::buildAzRail() {
         lbl->setFontSize(9.5f);
         lbl->setTextColor(nvgRGB(0x8a, 0x8a, 0x90));
         lbl->setFocusable(true);
-        // LEFT off a rail letter returns to the grid (round-trips with the
-        // grid's RIGHT-edge escape below).
+        // LEFT off a rail letter returns to the grid (round-trips with the grid's RIGHT-edge escape below).
         if (m_contentGrid)
             lbl->setCustomNavigationRoute(brls::FocusDirection::LEFT, m_contentGrid);
         lbl->registerClickAction([this, ch](brls::View*) { jumpToLetter(ch); return true; });
@@ -1627,8 +1622,7 @@ void LibrarySectionTab::appendTrackListPage() {
         row->setAxis(brls::Axis::ROW);
         row->setJustifyContent(brls::JustifyContent::SPACE_BETWEEN);
         row->setAlignItems(brls::AlignItems::CENTER);
-        // Tracks are a dense list — scale slightly below the standard list
-        // row height so more titles fit on screen.
+        // Tracks are a dense list — scale slightly below the standard list row height so more titles fit on screen.
         row->setHeight(std::max(40, ic.listRowHeight - 8));
         row->setPadding(8, 12, 8, 12);
         row->setMarginBottom(3);

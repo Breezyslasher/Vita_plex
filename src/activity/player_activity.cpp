@@ -1,6 +1,4 @@
-/**
- * VitaPlex - Player Activity implementation
- */
+// VitaPlex - Player Activity implementation
 
 #include "activity/player_activity.hpp"
 #include "app/application.hpp"
@@ -36,8 +34,7 @@
 
 namespace vitaplex {
 
-// Base temp file path for streaming audio (MPV's HTTP handling crashes on Vita)
-// Extension will be added dynamically based on the actual file type
+// Base temp path for streamed audio (mpv's HTTP handling crashes on Vita); extension added from the real file type.
 
 
 std::atomic<bool> PlayerActivity::s_active{false};
@@ -86,13 +83,9 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
 
     MusicQueue& queue = MusicQueue::getInstance();
 
-    // Try to create a server-side play queue when online
-    // Uses the parent ratingKey (album/season) or the first track's ratingKey
+    // Try a server-side play queue when online, from the parent ratingKey (album/season) or the first track's.
     bool serverOk = false;
-    // Whether the queue we ended up with came back already shuffled from the
-    // server. That is the one case where shuffling again below would be wrong:
-    // the server's order is authoritative and setFromPlayQueue has already
-    // matched the shuffle order to it.
+    // Whether the server already shuffled this queue; shuffling again would override an authoritative order.
     bool serverShuffled = false;
     if (!tracks.empty() && !PlexClient::getInstance().getServerUrl().empty()) {
         PlexClient& client = PlexClient::getInstance();
@@ -105,27 +98,19 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
             queueType = "video";
         }
 
-        // Build URI from parent ratingKey (album/season) if available,
-        // otherwise from first track
+        // Build URI from parent ratingKey (album/season) if available, otherwise from first track
         std::string uri;
         if (!tracks[0].parentRatingKey.empty()) {
             uri = client.buildPlayQueueDirectoryURI(tracks[0].parentRatingKey);
         } else {
-            // No container to name. For a single track that is exactly right;
-            // for several it is a lie, and the check below is what catches it.
+            // No container to name: right for a single track, a lie for several, which the check below catches.
             uri = client.buildPlayQueueURI(tracks[0].ratingKey);
         }
 
         std::string startKey = (startIndex >= 0 && startIndex < (int)tracks.size())
             ? tracks[startIndex].ratingKey : "";
 
-        // An accepted request that carried no items is not a usable queue. It
-        // used to still count as success, which left neither branch below
-        // building anything — so "Play Now (Clear Queue)" quietly went on
-        // playing whatever was already queued.
-        // A playlist has its own source parameter. POST /playQueues takes
-        // "either a URI, or a playlist", and sending a first-track URI for a
-        // playlist is what produced a queue of one track out of four thousand.
+        // An accepted but empty queue is not usable, and a playlist is named by playlistID, not a URI.
         bool created = false;
         if (!playlistId.empty()) {
             int pid = 0;
@@ -139,19 +124,7 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
             created = client.createPlayQueue(uri, queueType, pq, startKey) && !pq.items.empty();
         }
 
-        // Nor is a queue that does not hold what was asked for. Playing a
-        // playlist, an album or an artist built a server queue of ONE track and
-        // then adopted it over the full list the caller had already assembled —
-        // 4026 tracks replaced by the one whose URI happened to be sent. The
-        // source URI is not naming these containers in a way this server
-        // expands, and until it does, a short queue is a wrong queue.
-        //
-        // What arrived, not what the server says it holds. Plex returns a
-        // window onto a long queue: a 4026-track playlist came back with
-        // playQueueTotalCount=4026 and a couple of dozen items, and adopting it
-        // on the strength of the count left a queue of what was in the window.
-        // We can only play what we were sent, and the client-side list is
-        // already complete, so it wins whenever the window is short.
+        // Reject a server queue holding less than was asked for; Plex sends a window, so count what arrived.
         const int serverCount = (int)pq.items.size();
         serverOk = created && serverCount >= (int)tracks.size();
         if (created && !serverOk) {
@@ -173,24 +146,7 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
         queue.setQueue(tracks, startIndex);
     }
 
-    // "Shuffle New Queues": turn shuffle on as a fresh music queue starts.
-    // Applied here, after the queue is populated.
-    //
-    // Which shuffle depends on how the queue was built. Pinning the current
-    // track at the front is what a user who picked a track wants. Pressing Play
-    // on a playlist or album picks nothing — startIndex is just the top of the
-    // list — so pinning it there opened the same track every single time, which
-    // is the one thing shuffle is supposed to avoid.
-    //
-    // The gate is "the server didn't already shuffle this", not "shuffle is
-    // off". It used to be the latter, which meant that once shuffle had been
-    // switched on by an earlier queue the whole block was skipped for every
-    // queue after it — and setQueue()'s own shuffle branch pins startIndex at
-    // the front, so a playlist opened on its first track anyway.
-    //
-    // Music only: shuffling a queue of episodes is never what's meant. Applied
-    // per new queue rather than once per session, since that is what a
-    // "default" is — the user can still turn it off for the queue in hand.
+    // "Shuffle New Queues": shuffle a fresh music queue, pinning the current track only if the user picked one.
     if (!tracks.empty() && tracks[0].mediaType == MediaType::MUSIC_TRACK &&
         Application::getInstance().getSettings().musicShuffleDefault &&
         !serverShuffled) {
@@ -203,9 +159,7 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
         }
     }
 
-    // Hand transport to the persistent MusicController while this player is
-    // alive: the OS media buttons + queue end-of-track route to the rich
-    // on-screen methods. On leave it hands back / takes over headlessly.
+    // Hand transport to MusicController while this player lives; on leave it takes over headlessly.
     MusicController::getInstance().attachForeground({
         [activity]() { activity->playNext(); },
         [activity]() { activity->playPrevious(); },
@@ -242,26 +196,13 @@ PlayerActivity* PlayerActivity::createResumeQueue() {
     return activity;
 }
 
-// borealis' setCustomNavigationRoute() calls fatal() -- an uncaught
-// std::logic_error -- when the receiving view is not focusable, so a layout
-// that omits focusable="true" aborts the whole app instead of just navigating
-// oddly. That has now cost three separate crashes (see syncHiddenFocus and the
-// Clear button below). A navigation route on a view that cannot take focus
-// means nothing anyway, so skip it rather than die.
+// borealis fatal()s on a navigation route to a non-focusable view, so skip rather than die.
 static void routeIfFocusable(brls::View* v, brls::FocusDirection dir, brls::View* target) {
     if (v && v->isFocusable()) v->setCustomNavigationRoute(dir, target);
 }
 
 bool PlayerActivity::useMobileLayout() const {
-    // The mobile layout is a Now Playing screen for music: big cover, queue
-    // sheet, and no room made for a video surface or its track and PiP
-    // controls. Video on it has no design yet, so it takes the classic player
-    // at every screen size -- including under an explicit Mobile setting, which
-    // can only mean "for music" while music is all this layout can draw.
-    //
-    // The queue item carries its own type, so this is the real answer rather
-    // than a guess, and it stays right for a resumed queue, which a flag set
-    // when Play was pressed would not be.
+    // Video always takes the classic player; the mobile layout is a music-only Now Playing screen.
     if (!m_isQueueMode || !MusicQueue::getInstance().isMusicQueue()) return false;
 
     switch (Application::getInstance().getSettings().playerLayout) {
@@ -269,12 +210,9 @@ bool PlayerActivity::useMobileLayout() const {
         case 2: return true;    // Mobile, everywhere — including handheld and TV
         default: break;         // Auto
     }
-    // Auto: the big-art player suits a phone-shaped screen and nothing else.
-    // Width rather than platform, so a tablet and a resized desktop window get
-    // the layout that actually fits them.
+    // Auto: big-art suits phone-shaped screens. Width, not platform, so tablets and resized windows fit too.
 #if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IOS)
-    // platform::viewport* is what the rest of the player sizes itself from
-    // (see applyMusicLayoutForViewport) and it is defined on every port.
+    // platform::viewport* is what the rest of the player sizes from, and it is defined on every port.
     const float vw = platform::viewportWidth();
     const float vh = platform::viewportHeight();
     if (vw <= 0.0f || vh <= 0.0f) return false;   // unknown: leave it classic
@@ -285,13 +223,9 @@ bool PlayerActivity::useMobileLayout() const {
 #endif
 }
 
-// The landscape OSD drawn over video. Separate from useMobileLayout() and from
-// its setting: the two designs answer different questions -- a portrait Now
-// Playing screen for music, an OSD over the picture for video -- so wanting one
-// says nothing about wanting the other.
+// The landscape OSD over video. Separate from useMobileLayout(): wanting one design says nothing about the other.
 bool PlayerActivity::useVideoOsd() const {
-    // Music has its own mobile layout and chooses it above. Everything else
-    // that reaches this player is video, which is what the OSD is for.
+    // Music picks its own mobile layout above; everything else reaching this player is video.
     if (m_isQueueMode && MusicQueue::getInstance().isMusicQueue()) return false;
 
     switch (Application::getInstance().getSettings().videoPlayerLayout) {
@@ -303,29 +237,20 @@ bool PlayerActivity::useVideoOsd() const {
     const float vw = platform::viewportWidth();
     const float vh = platform::viewportHeight();
     if (vw <= 0.0f || vh <= 0.0f) return false;   // unknown: leave it classic
-    // Touch-sized controls over the picture suit a phone held either way. A
-    // tablet or a resized desktop window has room for the classic ones, so the
-    // test is the short edge rather than the orientation.
+    // Short edge, not orientation: a phone suits touch controls either way, a tablet has room for the classic ones.
     return std::min(vw, vh) < 600.0f;
 #else
     return false;   // PSV / PS4 / Switch / desktop keep the classic controls
 #endif
 }
 
-// Whether the OSD is allowed to hide itself. Photos and music keep their
-// controls up permanently -- there is nothing behind them to look at -- but
-// m_isQueueMode is only a stand-in for "music": MusicQueue also carries single
-// videos from downloads and the detail view, and those get an OSD like any
-// other video.
+// Photos and music keep controls up, but m_isQueueMode also covers single videos, which get an OSD.
 bool PlayerActivity::controlsCanHide() const {
     return !m_isPhoto && (!m_isQueueMode || m_videoOsd);
 }
 
 brls::View* PlayerActivity::createContentView() {
-    // All three layouts declare the same view ids — every BRLS_BIND below
-    // resolves by id and throws if one is missing — so only the geometry
-    // differs and the rest of this class is layout-agnostic. The two mobile
-    // designs share one file and hide each other's views; see its header.
+    // All three layouts declare the same view ids, so only geometry differs and this class stays layout-agnostic.
     m_mobileLayout = useMobileLayout();
     m_videoOsd     = !m_mobileLayout && useVideoOsd();
     const bool mobileXml = m_mobileLayout || m_videoOsd;
@@ -339,15 +264,11 @@ brls::View* PlayerActivity::createContentView() {
 void PlayerActivity::onContentAvailable() {
     brls::Logger::debug("PlayerActivity content available");
 
-    // The up-next list scrolls CENTERED so D-pad Up/Down always change focus and
-    // scroll immediately. The default NATURAL only moves focus once the next row
-    // is already fully on screen, so UP/DOWN couldn't reach an off-screen track.
-    // CENTERED clamps at the ends, so the first/last tracks still sit flush.
+    // CENTERED so D-pad up/down always move focus; the default NATURAL cannot reach a row that is off screen.
     if (queueScroll)
         queueScroll->setScrollingBehavior(brls::ScrollingBehavior::CENTERED);
 
-    // We're on screen now — suppress the SyncLounge auto-join prompt (the
-    // in-player auto-load follows content changes instead).
+    // On screen now, so suppress the SyncLounge auto-join prompt; the in-player auto-load follows content instead.
     s_active.store(true);
 
 #ifdef __vita__
@@ -358,16 +279,10 @@ void PlayerActivity::onContentAvailable() {
     scePowerSetGpuXbarClockFrequency(166);
 #endif
 
-    // Cancel pending background thumbnail loads (HomeTab, MediaDetailView)
-    // to free up network bandwidth for media streaming.
-    // We don't setPaused(true) here yet because music queue mode needs to
-    // load album art first. setPaused is called later in loadMedia/loadFromQueue
-    // right before MPV starts streaming.
+    // Free bandwidth for the stream; setPaused comes later, once music has its album art.
     ImageLoader::cancelAll();
 
-    // If music is currently playing in the background and we're starting
-    // a non-queue playback (video/episode), stop the music first.
-    // Send a "stopped" timeline so the server clears the music session.
+    // Non-queue playback stops background music first, with a "stopped" timeline so the server clears the session.
     if (!m_isQueueMode) {
         MusicQueue& existingQueue = MusicQueue::getInstance();
         if (!existingQueue.isEmpty()) {
@@ -401,8 +316,7 @@ void PlayerActivity::onContentAvailable() {
             // Skip if this is a programmatic update (not user interaction)
             if (m_updatingSlider) return;
             resetControlsIdleTimer();
-            // Watch party: only the host can scrub. Block a follower's drag (the
-            // 1s progress tick snaps the thumb back to the synced position).
+            // Watch party: only the host may scrub, since the 1s tick snaps a follower's thumb back.
             {
                 auto& sl = SyncLoungeSession::instance();
                 if (sl.isConnected() && !sl.isHost()) {
@@ -413,8 +327,7 @@ void PlayerActivity::onContentAvailable() {
             // Seek to position
             MpvPlayer& player = MpvPlayer::getInstance();
             double duration = 0.0;
-            // For music queue mode, prefer Plex API duration (full track length)
-            // over MPV duration which may only reflect buffered/demuxed portion
+            // Prefer Plex's duration over mpv's in queue mode; mpv may only know the demuxed portion.
             if (m_isQueueMode) {
                 const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
                 if (track && track->duration > 0)
@@ -422,17 +335,9 @@ void PlayerActivity::onContentAvailable() {
             }
             if (duration <= 0)
                 duration = player.getDuration();
-            // Direct play / local / music seek locally & instantly (mpv has the
-            // data). A transcoded video routes through the debounced, transcode-
-            // aware path so a big scrub restarts the transcode at the target
-            // instead of stalling mpv on un-transcoded segments. The slider maps
-            // [0,1] onto the real media length so it can't scrub past the end.
+            // Direct play, local files and music seek locally; a transcoded video takes the debounced path.
             if (m_isQueueMode && !m_isLocalFile) {
-                // A streamed Plex music transcode cannot be seeked in place —
-                // mpv only moves inside what it has buffered. MusicController
-                // owns that decision (restart the transcode at the target when
-                // it must), and it is the same path the OS scrubber uses, so
-                // both agree about where the stream now starts.
+                // A streamed music transcode cannot seek in place, so MusicController restarts it at the target.
                 double absDuration = m_transcodeBaseOffsetMs / 1000.0 + duration;
                 MusicController::getInstance().seekToMs(
                     (long long)(std::max(0.0, absDuration * progress) * 1000.0));
@@ -464,9 +369,7 @@ void PlayerActivity::onContentAvailable() {
                 if (!m_isQueueMode) return;
                 if (status.state == brls::GestureState::END) {
                     float deltaX = status.position.x - status.startPosition.x;
-                    // Scaled, or on the mobile layout this is ~19dp — barely
-                    // past the 6-unit slop the recogniser needs to call it a
-                    // pan at all, so a nudge on the cover skips a track.
+                    // Scaled: unscaled this is ~19dp on mobile, barely past the recogniser's slop, so a nudge skipped a track.
                     float threshold = ui(60.0f);
                     if (deltaX > threshold) {
                         // Swipe right = previous track
@@ -479,13 +382,7 @@ void PlayerActivity::onContentAvailable() {
             }, brls::PanAxis::HORIZONTAL));
     }
 
-    // Register controller actions
-    // A / OK is the centre button on a TV remote. With the OSD down it raises
-    // it, matching how the D-pad already behaves and how most TV players work;
-    // with the OSD up the focused control answers first (borealis dispatches
-    // from the focus outward), so this only runs when nothing else claims it.
-    // Photo and music keep their controls up permanently, so A stays Play/Pause
-    // there rather than becoming a no-op.
+    // A/OK raises a hidden OSD; with it up the focused control answers first.
     this->registerAction("Play/Pause", brls::ControllerButton::BUTTON_A, [this](brls::View* view) {
         resetControlsIdleTimer();
         if (!m_controlsVisible && controlsCanHide()) {
@@ -512,9 +409,7 @@ void PlayerActivity::onContentAvailable() {
             hideLyricsOverlay();
             return true;
         }
-        // OSD up: close it first, same as the two overlays above. Photo and
-        // music modes are excluded because hideControls() is a no-op there —
-        // swallowing Back would leave them with no way out.
+        // OSD up: close it first. Photo and music are excluded — hideControls() is a no-op there, so Back would trap them.
         if (m_controlsVisible && controlsCanHide()) {
             hideControls();
             return true;
@@ -535,12 +430,7 @@ void PlayerActivity::onContentAvailable() {
         return true;
     });
 
-    // Android TV remote alias: GUIDE re-dispatches as START so the
-    // Menu key (which surfaces as BUTTON_GUIDE) opens the OSD too,
-    // not just the gamepad-only Start button. MainActivity has the
-    // mirror handler at the tab-frame level for when this activity
-    // isn't on top — but the activity stack means parent-walk doesn't
-    // cross activities, so PlayerActivity needs its own.
+    // Android TV's Menu key arrives as GUIDE, so re-dispatch it as START to open the OSD.
     this->registerAction("", brls::ControllerButton::BUTTON_GUIDE, [](brls::View*) {
         brls::View* v = brls::Application::getCurrentFocus();
         while (v) {
@@ -556,10 +446,7 @@ void PlayerActivity::onContentAvailable() {
         return true;
     });
 
-    // Picture-in-Picture: toggle on right-stick click and via a touchable OSD
-    // button (for phones with no gamepad). Only shown in video mode, and only
-    // registered on platforms where PiP is implemented (Android + desktop
-    // SDL2).
+    // PiP on right-stick click and an OSD button, video only, and only where PiP is implemented.
     if (!m_isQueueMode && !m_isPhoto && pip::isAvailable()) {
         auto pipHandler = [this](brls::View* view) {
             auto& player = MpvPlayer::getInstance();
@@ -638,12 +525,7 @@ void PlayerActivity::onContentAvailable() {
             return true;
         });
 
-        // D-pad left/right seek when controls are hidden (for TV remotes
-        // without shoulder buttons). When controls are visible, return false
-        // so D-pad navigation between buttons works normally — but reset
-        // the idle timer first so the OSD doesn't fade out from under
-        // the user while they're navigating between controls (the
-        // Android TV bug: "OSD closes while I'm still moving").
+        // D-pad seeks while the OSD is hidden; when visible, reset the idle timer and let navigation through.
         this->registerAction("Seek Back", brls::ControllerButton::BUTTON_LEFT, [this](brls::View* view) {
             if (!m_controlsVisible) {
                 resetControlsIdleTimer();
@@ -668,13 +550,7 @@ void PlayerActivity::onContentAvailable() {
 
     }
 
-    // D-pad up/down: when controls are HIDDEN, summon them — this is
-    // how Android TV remotes (which have no BUTTON_START) reopen the
-    // OSD after it auto-hides. When controls are VISIBLE, reset the
-    // idle timer and return false so up/down focus navigation between
-    // transport rows / buttons keeps working without the OSD timing
-    // out mid-press ("odd colors / closes while user is still
-    // moving"). Registered for BOTH music and video modes.
+    // D-pad up/down summons a hidden OSD, else resets the idle timer so focus can move without a timeout.
     this->registerAction("Show Controls", brls::ControllerButton::BUTTON_UP, [this](brls::View* view) {
         if (!m_controlsVisible) {
             showControls();
@@ -738,8 +614,7 @@ void PlayerActivity::onContentAvailable() {
             }));
     }
 
-    // Queue overlay dismiss on tap - attach to the scrim only so taps on the
-    // sheet panel (rows, header buttons) don't close the overlay.
+    // Scrim only, so taps on the sheet's rows and header buttons do not dismiss the overlay.
     if (queueScrim) {
         queueScrim->addGestureRecognizer(new brls::TapGestureRecognizer(
             [this](brls::TapGestureStatus status, brls::Sound* soundToPlay) {
@@ -767,12 +642,7 @@ void PlayerActivity::onContentAvailable() {
         if (musicInfo) musicInfo->setVisibility(brls::Visibility::VISIBLE);
         if (musicTransport) musicTransport->setVisibility(brls::Visibility::VISIBLE);
 
-        // Rescale the album cover to fit the current viewport (e.g.
-        // make it large on a portrait phone where the XML default of
-        // 220x220 would float lost in the middle), and keep it sized
-        // correctly across rotations. The captured weak ref guards
-        // against the orientation callback firing after the activity
-        // has been popped.
+        // Resize the cover for the current viewport and keep it right across rotations.
         applyMusicLayoutForViewport();
         std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
         platform::onOrientationChanged([this, aliveWeak]() {
@@ -807,8 +677,7 @@ void PlayerActivity::onContentAvailable() {
             musicNextBtn->addGestureRecognizer(new brls::TapGestureRecognizer(musicNextBtn));
         }
 
-        // In music mode: disable focusability on ALL hidden buttons
-        // so focus navigation skips them entirely
+        // In music mode: disable focusability on ALL hidden buttons so focus navigation skips them entirely
         if (audioBtn) { audioBtn->setFocusable(false); audioBtn->setVisibility(brls::Visibility::GONE); }
         if (subBtn) { subBtn->setFocusable(false); subBtn->setVisibility(brls::Visibility::GONE); }
         if (videoBtn) { videoBtn->setFocusable(false); videoBtn->setVisibility(brls::Visibility::GONE); }
@@ -839,19 +708,13 @@ void PlayerActivity::onContentAvailable() {
             updateRepeatIcon();
         }
 
-        // Lyrics. The track picker has always known how to list them — it even
-        // relabels itself "Lyrics" in queue mode — but music had no button to
-        // open it with, so they were unreachable.
+        // Lyrics: the track picker always listed them, but music had no button to open it with.
         if (lyricsBtn) {
             lyricsBtn->setVisibility(brls::Visibility::VISIBLE);
             lyricsBtn->setFocusable(true);
             setIconRes(lyricsIcon, "icons/subtitles.png");
             lyricsBtn->registerClickAction([this](brls::View* view) {
-                // A track has one lyrics file or none; a picker to choose from a
-                // list of one is a tap that asks nothing, so go straight to the
-                // words. The picker is still there for the rare track carrying
-                // several (an LRC and a plain text, say), where the choice is
-                // real.
+                // One lyrics file needs no picker; the picker stays for the rare track carrying several.
                 fetchPlexStreams();
                 std::vector<const PlexStream*> found;
                 for (const auto& ps : m_plexStreams)
@@ -885,19 +748,12 @@ void PlayerActivity::onContentAvailable() {
                 return true;
             });
             queueClearBtn->addGestureRecognizer(new brls::TapGestureRecognizer(queueClearBtn));
-            // Clear is the top of the sheet's focusable content; route UP back to
-            // itself so it can't escape to the player's queue button behind the
-            // overlay (which is what happens with the default upward traversal).
-            // setCustomNavigationRoute() aborts the process on a receiver whose
-            // focusable flag is already false, and the sheet is hidden at this
-            // point, so assert the flag first — syncHiddenFocus() at the end of
-            // this function puts it back to whatever the overlay's state says.
+            // Route Clear's UP back to itself so focus cannot escape behind the overlay.
             queueClearBtn->setFocusable(true);
             queueClearBtn->setCustomNavigationRoute(brls::FocusDirection::UP, queueClearBtn);
         }
 
-        // Music mode: controls never auto-hide, always visible
-        // Override the controls auto-hide for music
+        // Music mode: controls never auto-hide, always visible Override the controls auto-hide for music
         if (controlsBox) {
             controlsBox->setVisibility(brls::Visibility::VISIBLE);
             controlsBox->setAlpha(1.0f);
@@ -927,8 +783,7 @@ void PlayerActivity::onContentAvailable() {
             audioBtn->addGestureRecognizer(new brls::TapGestureRecognizer(audioBtn));
         }
 
-        // Subtitle track button - shows track selection overlay
-        // Video has its own subtitle button for this picker.
+        // Subtitle track button - shows track selection overlay Video has its own subtitle button for this picker.
         if (lyricsBtn) {
             lyricsBtn->setFocusable(false);
             lyricsBtn->setVisibility(brls::Visibility::GONE);
@@ -960,22 +815,17 @@ void PlayerActivity::onContentAvailable() {
         }
     }
 
-    // Runs after the mode wiring above, which is what makes the audio, subtitle
-    // and video buttons visible — this arranges them and the rest of the OSD
-    // around them. No-op in the other two layouts.
+    // Runs after the mode wiring that makes the audio/subtitle/video buttons visible; no-op in the other layouts.
     wireVideoOsd();
 
-    // Block upward D-pad navigation from center transport controls so focus
-    // doesn't escape to off-screen elements (absolutely-positioned overlays)
+    // Block upward D-pad escape from the transport row to off-screen absolutely-positioned overlays.
     if (!m_isQueueMode) {
         routeIfFocusable(playBtn, brls::FocusDirection::UP, playBtn);
         routeIfFocusable(rewindBtn, brls::FocusDirection::UP, rewindBtn);
         routeIfFocusable(forwardBtn, brls::FocusDirection::UP, forwardBtn);
     }
 
-    // Block downward D-pad navigation from the bottom button row so focus
-    // doesn't escape to off-screen elements (absolutely-positioned overlays)
-    // Only set on focusable buttons — in music mode audioBtn/subBtn/videoBtn are non-focusable
+    // Same downward, and only on focusable buttons — audioBtn/subBtn/videoBtn are non-focusable in music mode.
     routeIfFocusable(lyricsBtn, brls::FocusDirection::DOWN, lyricsBtn);
     routeIfFocusable(queueBtn, brls::FocusDirection::DOWN, queueBtn);
     if (!m_isQueueMode) {
@@ -996,22 +846,13 @@ void PlayerActivity::onContentAvailable() {
     // Start update timer
     m_updateTimer.setCallback([this]() {
         updateProgress();
-        // Keep the OS media notification's play/pause honest while the player is
-        // up (e.g. mpv paused by audio-focus loss). No-op unless it diverged.
+        // Keep the OS notification's play/pause honest (e.g. mpv paused by audio-focus loss). No-op unless it diverged.
         if (m_isQueueMode) MusicController::getInstance().syncSessionState();
 
-        // Returning from the background (Android/iOS): while the app was hidden
-        // the OS tore down our GL surface, so a cover that finished loading during
-        // that window failed to upload and renders black. Once we're visible
-        // again, re-issue the current track's cover load so it uploads cleanly.
-        // (The bytes are still in the ImageLoader cache, so this is a cheap re-
-        // upload, not a re-download.)
-        // Icons dropped or invalidated while there was no GL surface. Driven by
-        // the surface, not the window: the two can be a frame or two apart.
+        // Back from the background: the GL surface was torn down, so re-issue the cover and icon loads.
         reapplyIcons();
 
-        // mpv doesn't know the frame rate until it has parsed the container, so
-        // this waits for a reading rather than asking at load time.
+        // mpv only knows the frame rate once the container is parsed, so this waits for a reading.
         applyContentRefreshRate();
 
         bool fg = brls::Application::isWindowForeground();
@@ -1038,11 +879,7 @@ void PlayerActivity::onContentAvailable() {
     });
     m_updateTimer.start(1000); // Update every second
 
-    // Auto-advance latency is what this is for: the gap between a track ending
-    // and the next one starting was up to a second of pure polling delay before
-    // any work began. Deliberately tiny — pump mpv, and only when the file has
-    // actually ended let the existing handler run early rather than waiting for
-    // its own tick. m_endHandled keeps it to once per track.
+    // Pump mpv so auto-advance does not wait on the slow poll; m_endHandled keeps it to once per track.
     m_endWatchTimer.setCallback([this]() {
         MpvPlayer& p = MpvPlayer::getInstance();
         if (!p.isInitialized() || m_endHandled) return;
@@ -1051,9 +888,7 @@ void PlayerActivity::onContentAvailable() {
     });
     m_endWatchTimer.start(250);
 
-    // Debounced transcode-seek commit (see seek() / requestTranscodeSeek). The
-    // `finished` flag is false when we stop() the timer early (teardown / content
-    // switch), so a cancelled debounce never commits a stale seek.
+    // Debounced seek commit; `finished` is false when stopped early, so a cancelled debounce never commits.
     m_seekCommitTimer.setEndCallback([this](bool finished) {
         if (finished && !m_destroying) commitTranscodeSeek();
     });
@@ -1064,19 +899,12 @@ void PlayerActivity::onContentAvailable() {
         hideControls();
     }
 
-    // Runs for both modes, unlike the music-only block above: the transport
-    // starts GONE in XML and is only ever switched on for audio, so in a video
-    // session its buttons would otherwise sit in the focus order unseen. This is
-    // also where the focus sync becomes live: every call before this point is a
-    // no-op, because the route wiring above cannot survive a cleared flag.
+    // Runs for both modes, and is where focus sync goes live: every call before it is a no-op.
     m_focusWiringDone = true;
     syncHiddenFocus();
     registerIcons();
 
-    // Space and the media keys. These go through the raw keyboard event rather
-    // than registerAction because borealis' action system is keyed on
-    // ControllerButton and neither has a gamepad equivalent to bind to. The
-    // media codes are synthetic — see include/utils/media_keys.hpp.
+    // Space and media keys go through raw key events: borealis actions are keyed on ControllerButton, which neither has.
     m_inputManager = brls::Application::getPlatform()
                          ? brls::Application::getPlatform()->getInputManager() : nullptr;
     if (m_inputManager) {
@@ -1087,17 +915,13 @@ void PlayerActivity::onContentAvailable() {
                 if (k != brls::BRLS_KBD_KEY_SPACE &&
                     k != mediakey::PLAY_PAUSE && k != mediakey::STOP &&
                     k != mediakey::NEXT && k != mediakey::PREV) return;
-                // Only when this player is the activity on top: the event is
-                // global, and a Space typed into a search field elsewhere must
-                // not reach playback.
+                // Only when this player is on top: the event is global, and Space typed into a search field must not reach playback.
                 const auto stack = brls::Application::getActivitiesStack();
                 if (stack.empty() || stack.back() != this) return;
                 resetControlsIdleTimer();
 
                 if (k == mediakey::NEXT || k == mediakey::PREV) {
-                    // Skip tracks in a music queue, where that is what the key
-                    // means; in a video there is nothing to skip to, so fall
-                    // back to a seek of the configured interval.
+                    // Next/previous skips tracks in a music queue; a video has nothing to skip to, so seek instead.
                     const bool fwd = (k == mediakey::NEXT);
                     if (m_isQueueMode) {
                         fwd ? playNext() : playPrevious();
@@ -1115,11 +939,7 @@ void PlayerActivity::onContentAvailable() {
 
 void PlayerActivity::setBackgroundTransparent(bool transparent) {
 #ifdef __ANDROID__
-    // Toggled by the audio/video branches in loadMedia / loadFromQueue
-    // and reset on willDisappear. The opaque restore value must match the
-    // all-Plex background (palette::bg) that applyTheme() installs, so the
-    // GL clear can't leave a stale cool-grey behind once video ends. Both
-    // tables are updated for symmetry; only the active one is rendered.
+    // The opaque restore must match palette::bg so the GL clear leaves no stale grey once video ends.
     if (transparent) {
         brls::Theme::getDarkTheme().addColor("brls/clear", nvgRGBA(0, 0, 0, 0));
         brls::Theme::getLightTheme().addColor("brls/clear", nvgRGBA(0, 0, 0, 0));
@@ -1141,27 +961,20 @@ void PlayerActivity::willDisappear(bool resetState) {
         m_kbSubscribed = false;
     }
 
-    // Cancel any pending debounced seek so its commit can't fire after we leave
-    // (stop() passes finished=false, which the end callback ignores).
+    // Cancel any pending debounced seek so its commit cannot fire after we leave.
     m_seekCommitTimer.stop();
     m_seekTargetMs = -1.0;
 
     // Left the player — re-enable the SyncLounge auto-join prompt.
     s_active.store(false);
 
-    // Always restore the opaque clear when leaving the player so the
-    // rest of the app (library, settings, etc.) renders with its normal
-    // dark background instead of showing through to whatever sits
-    // behind the SDL surface.
+    // Restore the opaque clear so the rest of the app renders on its normal dark background.
     setBackgroundTransparent(false);
 
-    // Clear "video playing" state so onUserLeaveHint stops auto-triggering PiP
-    // once the user is no longer in the player activity.
+    // Clear "video playing" so onUserLeaveHint stops auto-triggering PiP outside the player.
     pip::setVideoPlaybackState(false, 0, 0);
 
-    // Tear down the video OS media session (media keys / overlay) if we set one
-    // up. Music's session is owned by MusicController, so this only fires for
-    // video; clearHandler() drops our transport closure so a late key is a no-op.
+    // Tear down the video OS media session; music's is owned by MusicController, so this is video only.
     if (m_videoOsActive) {
         m_videoOsActive = false;
         nowplaying::clear();
@@ -1169,14 +982,10 @@ void PlayerActivity::willDisappear(bool resetState) {
     }
 
     m_lyricsTimer.stop();   // nothing left to follow once the player is gone
-    // Both teardown paths below go through here, so stopping it once covers the
-    // background-music hand-off as well as the full destroy. It must not keep
-    // firing updateProgress() at an activity that is going away — and under the
-    // hand-off the controller's own poll takes over the watching.
+    // Both teardown paths pass here, so one stop covers the hand-off too; the controller's poll takes over.
     m_endWatchTimer.stop();
 
-    // Hand the display back to the mode it was in. Leaving a 24Hz mode set
-    // would make the whole UI redraw at 24Hz once the player is gone.
+    // Hand the display back: a 24Hz mode left set would redraw the whole UI at 24Hz.
     if (m_refreshRateApplied) {
         m_refreshRateApplied = false;
         platform::setPreferredRefreshRate(0.0f);
@@ -1185,8 +994,7 @@ void PlayerActivity::willDisappear(bool resetState) {
     // Re-enable background thumbnail loading now that playback is ending
     ImageLoader::setPaused(false);
 
-    // SyncLounge: we're leaving the player, so we're no longer playing this
-    // item — stop our outbound mediaUpdates from carrying stale media.
+    // Leaving the player, so stop outbound mediaUpdates carrying stale media.
     SyncLoungeSession::instance().clearLocalMedia();
 
 #ifdef __vita__
@@ -1202,8 +1010,7 @@ void PlayerActivity::willDisappear(bool resetState) {
         brls::Logger::info("PlayerActivity: Leaving with background music enabled, not stopping");
         m_updateTimer.stop();
         if (m_alive) m_alive->store(false);
-        // Hand off to the persistent controller: it keeps the OS media session
-        // live and takes over end-of-track + next/previous while mpv plays on.
+        // Hand off to the persistent controller: it keeps the OS session live and owns end-of-track while mpv plays on.
         MusicController::getInstance().detachForeground();
         return;
     }
@@ -1241,8 +1048,7 @@ void PlayerActivity::willDisappear(bool resetState) {
         double position = player.getPosition();
         double duration = 0.0;
 
-        // For music queue mode, prefer Plex API duration (full track length)
-        // over MPV duration which may only reflect buffered/demuxed portion
+        // Prefer Plex's duration over mpv's in queue mode; mpv may only know the demuxed portion.
         if (m_isQueueMode) {
             const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
             if (track && track->duration > 0) {
@@ -1289,9 +1095,7 @@ void PlayerActivity::willDisappear(bool resetState) {
 
     m_isPlaying = false;
 
-    // Music player is actually tearing down (not background music) — detach so
-    // the controller drops the dangling hooks and, with mpv now stopped, clears
-    // the OS media session/notification.
+    // Really tearing down, not backgrounding: detach so the controller drops its hooks and clears the OS session.
     if (m_isQueueMode) {
         MusicController::getInstance().detachForeground();
     }
@@ -1305,13 +1109,7 @@ void PlayerActivity::loadFromQueue() {
     }
     m_loadingMedia = true;
 
-    // Clear the end-of-track guard so this track's end is detected and triggers
-    // auto-advance to the next — otherwise it stays set from the previous track
-    // and playback stops at the end of the song. When loading off an ENDED track
-    // (auto-advance), stop() first: it sets the state to IDLE synchronously, so
-    // the update loop can't re-fire end-of-track on the still-ENDED player and
-    // skip this track before it finishes loading. (A normal resume is still
-    // playing, so hasEnded() is false and this is a no-op there.)
+    // Clear the end-of-track guard, and stop() first when auto-advancing so the loop cannot re-fire it.
     if (MpvPlayer::getInstance().hasEnded()) {
         MpvPlayer::getInstance().stop();
     }
@@ -1329,16 +1127,14 @@ void PlayerActivity::loadFromQueue() {
     brls::Logger::info("PlayerActivity: Loading track from queue: {} - {}",
                       track->artist, track->title);
 
-    // If the queue side sheet is open, rebuild it for the new current track
-    // (Now Playing + Up Next) on the next frame so it updates immediately.
+    // Queue sheet open: rebuild it for the new track on the next frame so it updates immediately.
     if (m_queueOverlayVisible) {
         brls::sync([this]() {
             if (m_queueOverlayVisible) populateQueueList();
         });
     }
 
-    // New track: the stream starts at the top again, so drop any offset a seek
-    // left behind (and the local mirror of it).
+    // New track: the stream restarts at the top, so drop any offset a seek left behind.
     MusicController::getInstance().resetStreamStartOffset();
     m_transcodeBaseOffsetMs = 0;
 
@@ -1347,8 +1143,7 @@ void PlayerActivity::loadFromQueue() {
     m_plexStreams.clear();
     m_partId = 0;
 
-    // If resuming and MPV is already playing/paused, just update the UI
-    // without restarting the track (user pressed circle to return to player)
+    // Resuming with mpv already playing: update the UI without restarting the track.
     MpvPlayer& resumePlayer = MpvPlayer::getInstance();
     if (m_isResuming && resumePlayer.isInitialized() &&
         (resumePlayer.isPlaying() || resumePlayer.isPaused())) {
@@ -1363,8 +1158,7 @@ void PlayerActivity::loadFromQueue() {
         if (titleLabel) titleLabel->setText(track->title);
         if (artistLabel) {
             artistLabel->setText(track->artist);
-            // Not in the mobile layout: music_artist above already shows this,
-            // and a second copy lands on top of the time row.
+            // Not on mobile: music_artist already shows this, and a second copy lands on the time row.
             artistLabel->setVisibility((m_mobileLayout || track->artist.empty())
                 ? brls::Visibility::GONE : brls::Visibility::VISIBLE);
         }
@@ -1402,10 +1196,7 @@ void PlayerActivity::loadFromQueue() {
         return;
     }
 
-    // Past the resume shortcut, so this really is a different track: the
-    // previous one's lyrics do not belong to it. loadMedia() does the same for
-    // video, but music auto-advance comes through here and never touches it —
-    // which left the finished track's lyrics on screen over the new one.
+    // Past the resume shortcut, so this is a different track; music auto-advance never cleared the old lyrics.
     if (m_lyricsOverlayVisible) hideLyricsOverlay();
     m_lyrics.clear();
     m_lyricRows.clear();
@@ -1424,9 +1215,7 @@ void PlayerActivity::loadFromQueue() {
     }
     if (artistLabel) {
         artistLabel->setText(track->artist);
-        // Only show the artist label if there's actually text to display —
-        // and never in the mobile layout, where music_artist already has it and
-        // a second copy collides with the time row.
+        // Artist label only when there is text, and never on mobile where music_artist already carries it.
         artistLabel->setVisibility((m_mobileLayout || track->artist.empty())
             ? brls::Visibility::GONE : brls::Visibility::VISIBLE);
     }
@@ -1438,8 +1227,7 @@ void PlayerActivity::loadFromQueue() {
     m_mediaKey = track->ratingKey;
     std::string url;
 
-    // Pause image loading and invalidate stale in-flight loads from previous
-    // pages before queuing any new loads for this track.
+    // Pause image loading and drop stale in-flight loads before queuing this track's.
     ImageLoader::setPaused(true);
     ImageLoader::cancelAll();
 
@@ -1464,10 +1252,7 @@ void PlayerActivity::loadFromQueue() {
         m_isLocalFile = false;  // Reset in case previous track was local
         PlexClient& client = PlexClient::getInstance();
 
-        // Resolved while the previous track was still playing? Use it. This is
-        // what keeps two blocking round-trips out of the gap between songs.
-        // See kPrefetchMaxAgeMs: the session a prefetch opened does not live
-        // forever, and using an expired one is answered 400.
+        // Use a prefetch resolved during the previous track; see kPrefetchMaxAgeMs, an expired session is answered 400.
         const int64_t prefetchAgeMs =
             m_prefetchAtMs > 0 ? (brls::getCPUTimeUsec() / 1000) - m_prefetchAtMs : 0;
         const bool prefetchStale = m_prefetchAtMs > 0 && prefetchAgeMs > kPrefetchMaxAgeMs;
@@ -1481,8 +1266,7 @@ void PlayerActivity::loadFromQueue() {
                                 !prefetchStale;
         if (prefetched) {
             url = m_prefetchUrl;
-            // The speculative resolve deliberately left the live session alone;
-            // now that this URL is the one being played, it becomes current.
+            // The speculative resolve left the live session alone; now this URL is playing, it becomes current.
             client.adoptTranscodeSession(m_prefetchSession);
             brls::Logger::info("PlayerActivity: using prefetched stream URL for {}",
                                track->ratingKey);
@@ -1499,9 +1283,7 @@ void PlayerActivity::loadFromQueue() {
             return;
         }
 
-        // Load album art from server - temporarily unpause so loadAsync
-        // accepts the request, then re-pause to block other page loads.
-        // The async worker no longer checks pause, so the load will complete.
+        // Unpause briefly so loadAsync accepts the album-art request, then re-pause to block other page loads.
         if (albumArt && !track->thumb.empty()) {
             PlexClient& artClient = PlexClient::getInstance();
             std::string thumbUrl = artClient.getThumbnailUrl(track->thumb, m_mobileLayout ? 900 : 300,
@@ -1521,9 +1303,7 @@ void PlayerActivity::loadFromQueue() {
     player.setAudioOnly(true);
     setBackgroundTransparent(false);  // audio-only: keep opaque
 
-    // Only clear image cache on first MPV init to free memory for the player.
-    // On subsequent track changes MPV is already allocated, and clearing the
-    // cache forces covers/queue thumbnails to be re-downloaded from the server.
+    // Clear the image cache only on first MPV init; later it just forces covers to be re-downloaded.
     if (!player.isInitialized()) {
         ImageLoader::clearCache();
     }
@@ -1560,9 +1340,7 @@ void PlayerActivity::prefetchNextTrack() {
     if (!next || next->ratingKey.empty()) return;
 
     const uint32_t version = queue.getVersion();
-    // Already resolved (or already tried and failed) for this exact track and
-    // queue state — nothing to do. Without this the once-a-second caller would
-    // re-resolve all the way through the song.
+    // Already resolved or already failed for this track and queue state; without it the 1s caller re-resolves forever.
     if (m_prefetchKey == next->ratingKey && m_prefetchVersion == version) return;
 
     // A downloaded track plays from disk; there is no URL to resolve.
@@ -1583,8 +1361,7 @@ void PlayerActivity::prefetchNextTrack() {
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
             m_prefetchInFlight = false;
-            // Recorded either way: on failure the empty URL is what stops this
-            // from being retried on every tick.
+            // Recorded either way: on failure the empty URL is what stops this from being retried on every tick.
             m_prefetchKey     = key;
             m_prefetchUrl     = ok ? url : std::string();
             m_prefetchAtMs    = ok ? (brls::getCPUTimeUsec() / 1000) : 0;
@@ -1603,17 +1380,14 @@ void PlayerActivity::loadMedia() {
     }
     m_loadingMedia = true;
 
-    // A content switch supersedes any pending debounced seek from the old item;
-    // clear the cached duration so a stale value can't bleed into the next item
-    // (the video path re-sets it from Plex metadata below).
+    // A content switch supersedes a pending seek; clear the cached duration so a stale value cannot bleed through.
     m_seekCommitTimer.stop();
     m_seekTargetMs = -1.0;
     m_mediaDurationMs = 0;
     m_syncRecoverAttempts = 0;
     m_directPlay = false;
 
-    // Same reason: auto-play-next reloads into this same activity, so the old
-    // item's poster must not survive into the next one's media session.
+    // Same reason: auto-play-next reloads into this activity, so the old poster must not survive into the next item.
     m_osArtUrl.clear();
     m_osArtist.clear();
     m_osAlbum.clear();
@@ -1669,10 +1443,7 @@ void PlayerActivity::loadMedia() {
         setBackgroundTransparent(!isAudioFile);
 
         if (!player.isInitialized()) {
-            // Defer MPV init + load to after activity transition completes.
-            // initRenderContext() creates GXM resources and loadUrl() spawns
-            // decoder threads that use the shared GXM context - both conflict
-            // with NanoVG drawing during the borealis show phase.
+            // Defer MPV init past the activity transition: GXM and NanoVG conflict during the show phase (see DESIGN_NOTES).
             m_pendingPlayUrl = m_directFilePath;
             m_pendingPlayTitle = m_streamTitle.empty() ? "Test File" : m_streamTitle;
             m_pendingIsAudio = isAudioFile;
@@ -1749,8 +1520,7 @@ void PlayerActivity::loadMedia() {
                 }
                 titleLabel->setText(title);
             }
-            // Offline: the cover is already a file on disk, so the session can
-            // show it with no server to reach.
+            // Offline: the cover is already a file on disk, so the session can show it with no server to reach.
             m_osArtUrl = dlItem.thumbPath;
             m_osArtist = dlItem.parentTitle;
             m_osAlbum.clear();
@@ -1767,8 +1537,7 @@ void PlayerActivity::loadMedia() {
         player.setAudioOnly(isAudioTrack);
         setBackgroundTransparent(!isAudioTrack);
 
-        // Resume from saved viewOffset if resumePlayback is enabled
-        // If near the end (>= 95% watched), start from beginning instead
+        // Resume from the saved viewOffset when enabled, but restart if 95% or more was already watched.
         if (Application::getInstance().getSettings().resumePlayback && dlItem.viewOffset > 0) {
             bool nearEnd = (dlItem.duration > 0 && dlItem.viewOffset >= dlItem.duration * 0.95);
             if (!nearEnd) {
@@ -1816,9 +1585,7 @@ void PlayerActivity::loadMedia() {
             m_grandparentRatingKey = item.grandparentRatingKey;
         }
 
-        // Poster + show/season line for the OS media session. The lock screen
-        // and the Android 13+ controls had a bare title on a grey card, while
-        // music showed full art.
+        // Poster and show/season for the OS media session; the lock screen had a bare title on a grey card.
         {
             const std::string art = !item.thumb.empty() ? item.thumb : item.grandparentThumb;
             m_osArtUrl = art.empty() ? "" : client.getThumbnailUrl(art, 512, 512);
@@ -1839,9 +1606,7 @@ void PlayerActivity::loadMedia() {
         }
         if (titleLabel) {
             if (m_videoOsd) {
-                // The OSD's top bar has two lines for this, so give it the show
-                // over the episode rather than one run-together string. The
-                // same pair the OS media session gets, below.
+                // The OSD's top bar has two lines, so give it show over episode rather than one run-together string.
                 if (item.mediaType == MediaType::EPISODE) {
                     setVideoOsdTitle(item.grandparentTitle.empty() ? item.title
                                                                    : item.grandparentTitle,
@@ -1859,9 +1624,7 @@ void PlayerActivity::loadMedia() {
             }
         }
 
-        // SyncLounge: report what we're playing so our outbound mediaUpdates
-        // carry real media (server/party show the title, with show+season for
-        // episodes); and re-arm the announce-once for this item.
+        // SyncLounge: report what we are playing so outbound mediaUpdates carry real media, and re-arm announce-once.
         SyncLoungeSession::instance().setLocalMedia(item.title, item.type, m_mediaKey,
                                                     item.grandparentTitle, item.parentTitle);
         m_syncLoungeAnnounced = false;
@@ -1872,10 +1635,7 @@ void PlayerActivity::loadMedia() {
             m_isPhoto = true;
             m_loadingMedia = false;
 
-            // A photo is not video, but nothing knows that until the metadata
-            // arrives — long after createContentView picked the layout. Strip
-            // the OSD back to its title bar: a transport, a scrubber and a
-            // fit toggle over a still image are all inert.
+            // A photo is not video, and nothing knows until metadata arrives; strip the OSD to its title bar, the rest is inert.
             if (m_videoOsd) {
                 if (centerControls) centerControls->setVisibility(brls::Visibility::GONE);
                 for (const char* id : {"player/osd_bottom", "player/osd_bottom_scrim",
@@ -1931,9 +1691,7 @@ void PlayerActivity::loadMedia() {
             }
         }
 
-        // Get transcode URL for video/audio (forces Plex to convert to Vita-compatible format)
-        // Only resume from viewOffset if resumePlayback is enabled
-        // If near the end (>= 95% watched), start from beginning instead
+        // Transcode URL for video/audio; resume from viewOffset only when enabled, and restart if 95% was watched.
         int resumeOffset = 0;
         if (Application::getInstance().getSettings().resumePlayback && item.viewOffset > 0) {
             bool nearEnd = (item.duration > 0 && item.viewOffset >= item.duration * 0.95);
@@ -1942,12 +1700,7 @@ void PlayerActivity::loadMedia() {
             }
         }
 
-        // SyncLounge: when following a watch party and we have a recent host
-        // position, open at the host's timecode (baked into the transcode
-        // offset) instead of our own resume point — so playback starts already
-        // in sync and there's no big corrective seek after load. Extrapolate a
-        // playing host forward by how long ago it reported. Same-content
-        // assumed; ignored if the host state is stale (> 60s) or out of range.
+        // Watch party: open at the host's timecode so playback starts in sync, with no corrective seek.
         if (SyncLoungeSession::instance().isConnected()) {
             auto rs = SyncLoungeSession::instance().remoteState();
             if (rs.valid && (rs.state == "playing" || rs.state == "paused")) {
@@ -1958,8 +1711,7 @@ void PlayerActivity::loadMedia() {
                     if (rs.state == "playing") hostMs += static_cast<double>(ageMs);
                     if (hostMs > 0 && (item.duration <= 0 || hostMs < item.duration)) {
                         resumeOffset = static_cast<int>(hostMs);
-                        // Suppress an immediate redundant correction in the
-                        // follow loop now that we open in sync.
+                        // Suppress an immediate redundant correction in the follow loop now that we open in sync.
                         m_lastSyncSeek = std::chrono::steady_clock::now();
                         brls::Logger::info(
                             "PlayerActivity: SyncLounge follow — starting at host offset {}ms (age {}ms)",
@@ -1969,16 +1721,11 @@ void PlayerActivity::loadMedia() {
             }
         }
         m_transcodeBaseOffsetMs = resumeOffset;
-        // Remember Plex's authoritative full length so the seek bar and seek
-        // clamps don't rely on mpv's duration, which reads stale right after a
-        // transcode reload and used to let the bar/offset run past the end.
+        // Remember Plex's full length: mpv's duration reads stale after a transcode reload and let the bar run past the end.
         m_mediaDurationMs = (item.duration > 0) ? (int)item.duration : 0;
         std::string url;
         if (client.getTranscodeUrl(m_mediaKey, url, resumeOffset)) {
-            // Direct play: the server returned the original file (not an HLS
-            // transcode). mpv owns the timeline, so play from 0 and seek to the
-            // resume point; seeks become local/instant instead of transcode
-            // restarts. Detected from the URL (transcode URLs hit start.m3u8).
+            // Direct play: the server returned the original file, so mpv owns the timeline and seeks are local, not restarts.
             m_directPlay = (url.find("/transcode/universal/start") == std::string::npos);
             if (m_directPlay) {
                 brls::Logger::info("PlayerActivity: direct play (original file), resume {}ms",
@@ -1986,9 +1733,7 @@ void PlayerActivity::loadMedia() {
                 m_transcodeBaseOffsetMs = 0;
                 if (resumeOffset > 0) m_pendingSeek = resumeOffset / 1000.0;
             }
-            // Pause image loading and free cache memory before initializing MPV.
-            // This stops background thumbnail fetches from competing with media
-            // streaming, and frees memory (Vita only has 256MB).
+            // Pause image loading and free the cache before MPV init; the Vita has 256MB and thumbnails compete with the stream.
             ImageLoader::setPaused(true);
             ImageLoader::cancelAll();
             ImageLoader::clearCache();
@@ -2001,11 +1746,7 @@ void PlayerActivity::loadMedia() {
 
             // Stream directly via MPV (transcode API returns mp4/mp3 stream)
             if (!player.isInitialized()) {
-                // Defer MPV init + load to after activity transition completes.
-                // initRenderContext() creates GXM resources (framebuffer, render target)
-                // and loadUrl() spawns decoder threads that use the shared GXM context
-                // via hwdec=vita-copy. Both conflict with NanoVG drawing during the
-                // borealis activity show phase, causing a consistent SIGSEGV.
+                // Defer MPV init past the activity transition; GXM and NanoVG conflict there (see DESIGN_NOTES).
                 brls::Logger::info("PlayerActivity: Deferring MPV init to after activity transition");
                 m_pendingPlayUrl = url;
                 m_pendingPlayTitle = item.title;
@@ -2039,20 +1780,13 @@ void PlayerActivity::loadMedia() {
 }
 
 void PlayerActivity::syncHiddenFocus() {
-    // Deliberately inert until onContentAvailable has finished wiring. That
-    // function calls loadFromQueue()/loadMedia() near the top, which reach here
-    // long before the button set-up further down runs, and borealis'
-    // setCustomNavigationRoute() calls fatal() — an uncaught std::logic_error —
-    // when the receiving view's focusable flag is already false. Clearing
-    // queueClearBtn that early aborted the process on every music track.
+    // Inert until onContentAvailable finishes wiring: clearing the button earlier fatal()s the process.
     if (!m_focusWiringDone) return;
 
     auto shown = [](brls::View* v) {
         return v && v->getVisibility() == brls::Visibility::VISIBLE;
     };
-    // The music transport starts GONE in XML and is only ever switched on for
-    // audio, so during video its five buttons would otherwise stay in the focus
-    // order behind the video surface.
+    // The music transport starts GONE and is only shown for audio, so in video its buttons would sit in the focus order unseen.
     const bool music = shown(musicTransport);
     if (musicPlayBtn) musicPlayBtn->setFocusable(music);
     if (musicPrevBtn) musicPrevBtn->setFocusable(music);
@@ -2068,10 +1802,7 @@ void PlayerActivity::updateProgress() {
     // Don't update if destroying or showing photo
     if (m_destroying || m_isPhoto) return;
 
-    // Mirror the OS media session for VIDEO so the media keys / overlay control it
-    // like they do music. Set it up on the first active frame (covers deferred
-    // loads + episode changes) and refresh each tick so play/pause + position stay
-    // current. Music goes through MusicController instead.
+    // Mirror the OS media session for video so media keys drive it like music; refreshed each tick to stay current.
     if (!m_isQueueMode) {
         MpvPlayer& osp = MpvPlayer::getInstance();
         if (osp.isInitialized() && (osp.isPlaying() || osp.isPaused())) {
@@ -2080,23 +1811,13 @@ void PlayerActivity::updateProgress() {
         }
     }
 
-    // Tick the diagnostic overlay every second alongside progress.
-    // No-op when the toggle is off; lazy-creates the views the first
-    // time it sees the toggle on so the panel doesn't sit in the view
-    // tree consuming layout passes when the user isn't using it.
+    // Tick the diagnostic overlay with progress; lazy-created, so it costs no layout passes while the toggle is off.
     updateMpvStatsOverlay();
 
-    // Keeps the audio/subtitle pills, the mute glyph and the speed honest after
-    // anything changes them — the track picker, a media key, the OS. No-op in
-    // the other two layouts.
+    // Keeps the pills, mute glyph and speed honest after anything changes them. No-op in the other two layouts.
     updateVideoOsd();
 
-    // Deferred MPV initialization (Phase 1 of 2):
-    // Create MPV and its GXM render context, but do NOT call loadUrl yet.
-    // loadUrl spawns decoder threads that use the shared GXM context via
-    // hwdec=vita-copy. If the decoder thread starts before NanoVG has drawn
-    // at least one clean frame after initRenderContext(), the concurrent GXM
-    // access crashes. So we schedule loadUrl via brls::sync for the NEXT frame.
+    // Phase 1 of 2: create MPV and its render context; loadUrl waits for the next frame.
     if (!m_pendingPlayUrl.empty()) {
         std::string url = m_pendingPlayUrl;
         std::string title = m_pendingPlayTitle;
@@ -2117,10 +1838,7 @@ void PlayerActivity::updateProgress() {
             }
         }
 
-        // Phase 2: schedule loadUrl for the NEXT main-loop iteration.
-        // brls::sync callbacks execute between frames, so NanoVG will draw one
-        // complete frame with the freshly-created GXM state before the decoder
-        // thread gets a chance to touch the shared GXM context.
+        // Phase 2: loadUrl next iteration, so NanoVG draws a full frame of fresh GXM state before the decoder touches it.
         auto alive = m_alive;
         const int64_t durationMs = m_pendingDurationMs;
         brls::sync([this, url, title, isAudio, alive, durationMs]() {
@@ -2136,9 +1854,7 @@ void PlayerActivity::updateProgress() {
                     videoView->setVideoVisible(true);
                     brls::Logger::debug("Video view enabled (deferred)");
                 }
-                // Mark video playback state so Android auto-enters PiP when
-                // the user hits Home. Only for actual video (not music) and
-                // not when running the queue-mode (music) player.
+                // Mark video playback so Android auto-enters PiP on Home; actual video only, never the music player.
                 if (!isAudio && !m_isQueueMode) {
                     pip::setVideoPlaybackState(true, 16, 9);
                 }
@@ -2176,8 +1892,7 @@ void PlayerActivity::updateProgress() {
     double position = player.getPosition();
     double duration = 0.0;
 
-    // For music queue mode, prefer Plex API duration (full track length)
-    // over MPV duration which may only reflect buffered/demuxed portion
+    // Prefer Plex's duration over mpv's in queue mode; mpv may only know the demuxed portion.
     if (m_isQueueMode) {
         const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
         if (track && track->duration > 0) {
@@ -2188,29 +1903,19 @@ void PlayerActivity::updateProgress() {
         duration = player.getDuration();
 
 
-    // A music seek can restart the transcode part-way into the track, after
-    // which mpv's clock runs from zero again. MusicController knows where the
-    // stream now starts; mirroring it here keeps every absolute-position
-    // calculation below (slider, time labels, markers) correct.
+    // A music seek can restart the transcode, after which mpv's clock runs from zero; mirror where the stream now starts.
     if (m_isQueueMode)
         m_transcodeBaseOffsetMs = (int)MusicController::getInstance().streamStartOffsetMs();
 
-    // Resolve the next track's stream URL while this one plays, so auto-advance
-    // only has to hand mpv a URL. Held off for the first few seconds so the
-    // extra round-trips don't compete with this track's own buffering, and a
-    // no-op on every tick after the first success (see prefetchNextTrack).
+    // Resolve the next track's URL while this one plays, held off 5s so it does not compete with this track's buffering.
     if (m_isQueueMode && position > 5.0) prefetchNextTrack();
 
-    // While a debounced seek is pending, showSeekPreview owns the slider + time
-    // labels (they point at the target, not the live position) — don't stomp it.
+    // While a seek is pending, showSeekPreview owns the slider and labels — they point at the target, not the position.
     if (duration > 0 && m_seekTargetMs < 0.0) {
-        // For transcoded streams with a resume offset, MPV position/duration are
-        // relative to the stream start (offset point). Compute absolute values
-        // for correct UI display.
+        // With a resume offset, mpv's position and duration are relative to the stream start; compute absolute for the UI.
         double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
         double absPosition = baseOffsetSec + position;
-        // Prefer Plex's authoritative length; baseOffset + mpv duration reads
-        // stale right after a transcode reload and would inflate the bar.
+        // Prefer Plex's length: baseOffset plus mpv duration reads stale after a transcode reload and inflates the bar.
         double absDuration = (m_mediaDurationMs > 0) ? (m_mediaDurationMs / 1000.0)
                                                      : (baseOffsetSec + duration);
         if (absDuration > 0.0 && absPosition > absDuration) absPosition = absDuration;
@@ -2221,8 +1926,7 @@ void PlayerActivity::updateProgress() {
             m_updatingSlider = false;
         }
 
-        // Update time labels: elapsed on left, remaining on right
-        // Format as H:MM:SS when duration >= 1 hour, otherwise M:SS
+        // Elapsed left, remaining right; H:MM:SS past an hour, otherwise M:SS.
         {
             int posTotal = (int)absPosition;
             int posHr  = posTotal / 3600;
@@ -2267,26 +1971,17 @@ void PlayerActivity::updateProgress() {
         }
     }
 
-    // ── SyncLounge: watch-party sync ──────────────────────────────────────
-    // When connected to a room: if we're host, broadcast our transport state
-    // and announce our media so the party follows us; otherwise switch to the
-    // host's matched content (if different), announce ours, and mirror the
-    // host's play/pause/seek.
+    // ─── SyncLounge: the host broadcasts, followers mirror its content and transport ───
     if (duration > 0 && SyncLoungeSession::instance().isConnected()) {
         SyncLoungeSession& sl = SyncLoungeSession::instance();
-        // Sanity-check the local position against Plex's REAL duration, not mpv's:
-        // a corrupt transcode can spike mpv's PTS so both position and duration
-        // read as a bogus huge value (~25h), which the old position<=duration
-        // check happily passed — then the host-follow re-seeks forever. Compare
-        // the absolute position to the authoritative length instead.
+        // Check against Plex's duration, not mpv's: a corrupt transcode spikes both mpv figures together.
         const double baseSec0   = m_transcodeBaseOffsetMs / 1000.0;
         const double absPosSec0  = baseSec0 + position;
         const double realDurSec = (m_mediaDurationMs > 0) ? (m_mediaDurationMs / 1000.0)
                                                           : (baseSec0 + duration);
         const bool localSane = position >= 0.0 && absPosSec0 <= realDurSec + 30.0;
 
-        // Party pause: when enabled, ANY member can pause/resume the whole
-        // party. Apply the latest action once (independent of host/follower).
+        // Party pause: when enabled any member can pause the whole party, so apply the latest action once.
         {
             auto pp = sl.partyPauseState();
             if (pp.seq != m_lastPartyPauseSeq) {
@@ -2296,11 +1991,7 @@ void PlayerActivity::updateProgress() {
             }
         }
 
-        // Follower content-switch FIRST: if the host is on different media than
-        // we are, switch to the matched local item BEFORE announcing — so
-        // opening content that differs from the host doesn't briefly announce /
-        // claim the wrong item. Exact match + fresh host + remote Plex only;
-        // loadMedia() then opens it at the host's position (see #1 above).
+        // Switch content before announcing, so a follower never briefly claims the wrong item.
         if (!sl.isHost()) {
             auto mr  = sl.match();
             auto rsm = sl.remoteState();
@@ -2328,18 +2019,12 @@ void PlayerActivity::updateProgress() {
             }
         }
 
-        // Announce our media once per loaded item so the party/server shows
-        // the right title even before any pause/play. Claims host only for a
-        // user-initiated NEW video (auto-loaded follows pass claimHost=false).
-        // `duration` is already > 0 here, so the values are valid.
+        // Announce once per loaded item so the party shows the right title; only a user-initiated new video claims host.
         if (localSane && !m_syncLoungeAnnounced) {
             const char* ast = player.isPlaying() ? "playing"
                             : player.isPaused()  ? "paused" : nullptr;
             if (ast) {
-                // Only claim host for genuinely NEW content. If we're opening the
-                // same item the host is already playing — e.g. clicking "Join"
-                // on the auto-join prompt — we're joining to follow, not taking
-                // over, so never claim host (even with room auto-host on).
+                // Only claim host for genuinely new content — opening the host's own item is joining to follow, not taking over.
                 bool claimHost = m_syncLoungeClaimHostOnAnnounce;
                 if (claimHost) {
                     auto mr = sl.match();
@@ -2353,9 +2038,7 @@ void PlayerActivity::updateProgress() {
         }
 
         if (sl.isHost()) {
-            // Host: publish our absolute timecode (matches the /:/timeline
-            // basis: transcode base offset + mpv position). Throttled inside
-            // reportLocalState.
+            // Host: publish the absolute timecode, on the same basis as /:/timeline. Throttled inside reportLocalState.
             if (localSane) {
                 const char* st = player.isPlaying() ? "playing"
                                : player.isPaused()  ? "paused"
@@ -2368,20 +2051,13 @@ void PlayerActivity::updateProgress() {
             }
         } else {
             auto rs = sl.remoteState();
-            // Only follow a RECENT host state. If the host's updates stop (they
-            // left or their connection dropped) the last state freezes; without
-            // this we'd keep seeking back to that stale frozen position forever.
+            // Only follow a recent host state; one frozen by a dropped host would have us seeking back to it forever.
             bool hostFresh = rs.valid &&
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - rs.at).count() < 12000;
             if (hostFresh && (rs.state == "playing" || rs.state == "paused")) {
                 if (!localSane) {
-                    // mpv's position is garbage — a corrupt transcode PTS spiked
-                    // it past the real end. An mpv-local seek can't escape it (it
-                    // lands right back in the bad segments and the host-follow
-                    // re-seeks forever), so restart the transcode at the host
-                    // offset for fresh segments. Hard rate-limit + a small cap so
-                    // a stream that won't recover doesn't loop indefinitely.
+                    // Corrupt PTS: restart the transcode at the host offset, rate-limited so a dead stream cannot loop.
                     auto now = std::chrono::steady_clock::now();
                     if (now - m_lastSyncSeek > std::chrono::seconds(8) &&
                         m_syncRecoverAttempts < 3) {
@@ -2408,12 +2084,7 @@ void PlayerActivity::updateProgress() {
                         player.play();
                     }
 
-                    // Correct large drift, but rate-limit hard. Seeking an HLS
-                    // transcode restarts it and the position takes several
-                    // seconds to settle, so a per-second re-seek would thrash
-                    // (the host also keeps advancing while we rebuffer). One
-                    // seek, then an 8s cooldown so it can settle before we
-                    // reconsider; a 10s threshold tolerates residual skew.
+                    // Correct large drift once, then cool down 8s — seeking an HLS transcode restarts it.
                     double drift = localPosSec - remotePosSec;
                     if (drift < 0) drift = -drift;
                     if (drift > 10.0) {
@@ -2446,10 +2117,7 @@ void PlayerActivity::updateProgress() {
         }
     }
 
-    // Live TV keep-alive: each /:/timeline ping resets the server's 300-sec
-    // rolling-subscription stop-grab timer. Without it the grab dies after
-    // ~5 min, the universal transcode session that's fed by it gets killed,
-    // and mpv starts getting 404s on the next playlist refresh.
+    // Live TV keep-alive: each timeline ping resets the 300s stop-grab timer, else the grab dies and mpv gets 404s.
     if (!m_liveSessionUuid.empty() && !m_destroying) {
         m_liveKeepaliveCounter++;
         if (m_liveKeepaliveCounter >= 5) {
@@ -2463,8 +2131,7 @@ void PlayerActivity::updateProgress() {
         }
     }
 
-    // Report timeline to Plex server periodically and on state changes
-    // This sends duration so Plex shows the full track/video length
+    // Report the timeline periodically and on state changes, with duration so Plex shows the full length.
     if (!m_mediaKey.empty() && !m_isLocalFile && !m_isDirectFile) {
         std::string currentState = player.isPlaying() ? "playing" :
                                    player.isPaused()  ? "paused"  : "stopped";
@@ -2479,9 +2146,7 @@ void PlayerActivity::updateProgress() {
             int timeMs = m_transcodeBaseOffsetMs + (int)(position * 1000);
             int durationMs = (m_mediaDurationMs > 0) ? m_mediaDurationMs : (int)(duration * 1000);
 
-            // A corrupt transcode can spike mpv's position past the real end.
-            // Posting that 400s on Plex and would poison the saved resume point
-            // (next open would try to resume hours in), so skip until it's sane.
+            // A corrupt transcode spikes the position; posting it 400s on Plex and would poison the saved resume point.
             bool posInsane = (m_mediaDurationMs > 0 && timeMs > m_mediaDurationMs + 30000);
             if (!posInsane) {
                 std::string ratingKey = m_mediaKey;
@@ -2503,9 +2168,7 @@ void PlayerActivity::updateProgress() {
         }
     }
 
-    // Detect playback end: check hasEnded() regardless of m_isPlaying
-    // to avoid missing the event if m_isPlaying was synced to false
-    // in a previous frame before the ENDED state was set.
+    // Check hasEnded() regardless of m_isPlaying, which may have synced false a frame before ENDED was set.
     if (player.hasEnded() && !m_endHandled) {
         m_endHandled = true;  // Prevent multiple triggers
         m_isPlaying = false;
@@ -2581,9 +2244,7 @@ void PlayerActivity::playNextEpisode() {
             // Fetch all seasons of the show
             std::vector<MediaItem> seasons;
             if (client.fetchChildren(showKey, seasons)) {
-                // Find current season's parentIndex, then look for next season
-                // Current season's parentIndex is stored in item.parentIndex during loadMedia
-                // but we can find it by matching seasonKey
+                // Find the current season's parentIndex by matching seasonKey, then look for the next season.
                 std::string nextSeasonKey;
                 bool foundCurrent = false;
                 for (const auto& season : seasons) {
@@ -2655,20 +2316,15 @@ void PlayerActivity::togglePlayPause() {
     }
     updatePlayPauseLabel();
 
-    // Keep the OS media notification's play/pause state in sync. m_isPlaying is
-    // the intended state we just set; publish it directly since MpvPlayer's state
-    // lags the command.
+    // Publish the intended state directly: MpvPlayer's own state lags the command we just issued.
     if (m_isQueueMode) MusicController::getInstance().publishNowPlaying(m_isPlaying ? 1 : 0);
     else if (m_videoOsActive) publishVideoNowPlaying();
 
-    // SyncLounge: a manual play/pause is a user action — announce it (and,
-    // under auto-host, claim host so the party follows the Vita).
+    // A manual play/pause is a user action, so announce it, and claim host when auto-host is on.
     double absMs = m_transcodeBaseOffsetMs + player.getPosition() * 1000.0;
     syncLoungeReportUserAction(m_isPlaying ? "playing" : "paused", absMs);
 
-    // When party-pausing is enabled, a manual pause/resume drives the whole
-    // party (any member can). Gated inside sendPartyPause (only sent when
-    // enabled — the server disconnects an unsolicited sender).
+    // With party-pausing on a manual pause drives the party; gated inside sendPartyPause, as the server drops unsolicited senders.
     SyncLoungeSession& slpp = SyncLoungeSession::instance();
     if (slpp.isConnected() && slpp.isPartyPauseEnabled())
         slpp.sendPartyPause(!m_isPlaying);
@@ -2680,10 +2336,7 @@ void PlayerActivity::setupVideoMediaSession() {
     m_videoOsActive = true;
     auto alive = m_alive;
 
-    // Take over the global transport handler for the duration of this video.
-    // alive-guarded so a key dispatched right as we tear down is a no-op; music
-    // reclaims the handler via MusicController::registerOsHandler() on its next
-    // attach.
+    // Own the global transport handler for this video; alive-guarded, and music reclaims it on its next attach.
     nowplaying::setHandler(
         [this, alive](nowplaying::Transport t) {
             if (!alive->load() || m_destroying) return;
@@ -2722,9 +2375,7 @@ void PlayerActivity::applyContentRefreshRate() {
     MpvPlayer& p = MpvPlayer::getInstance();
     if (!p.isPlaying()) return;
 
-    // container-fps is what the file declares; estimated-vf-fps is measured and
-    // only settles after a few frames, so it is the fallback rather than the
-    // first choice.
+    // container-fps is declared; estimated-vf-fps is measured and only settles after a few frames, so it is the fallback.
     double fps = 0.0;
     try {
         std::string v = p.getProperty("container-fps");
@@ -2733,8 +2384,7 @@ void PlayerActivity::applyContentRefreshRate() {
     } catch (const std::exception&) {
         return;   // unparseable: try again on the next tick
     }
-    // Anything outside this is a still, a bad reading, or a variable-rate file
-    // there is no single right mode for.
+    // Anything outside this is a still, a bad reading, or a variable-rate file there is no single right mode for.
     if (!std::isfinite(fps) || fps < 10.0 || fps > 121.0) return;
 
     m_refreshRateApplied = true;
@@ -2748,8 +2398,7 @@ void PlayerActivity::publishVideoNowPlaying() {
     nowplaying::Info info;
     if (titleLabel) info.title = titleLabel->getFullText();
 #ifdef __ANDROID__
-    // Android only: MPRIS (Linux) and SMTC (Windows) read the same struct, and
-    // their video controls are staying as they are.
+    // Android only: MPRIS and SMTC read the same struct, and their video controls stay as they are.
     info.artUrl = m_osArtUrl;
     info.artist = m_osArtist;
     info.album  = m_osAlbum;
@@ -2766,36 +2415,25 @@ void PlayerActivity::publishVideoNowPlaying() {
 void PlayerActivity::syncLoungeReportUserAction(const std::string& state, double absTimeMs) {
     SyncLoungeSession& sl = SyncLoungeSession::instance();
     if (!sl.isConnected()) return;
-    // mpv's position/duration can read NaN/0 for a moment right at a state
-    // change; never broadcast that (the server renders it as NaN:NaN). Skip
-    // the announce until the readings are valid — the periodic host broadcast
-    // (and the next action) cover the gap.
+    // mpv can read NaN/0 at a state change; never broadcast that — the periodic host broadcast covers the gap.
     double durMs = MpvPlayer::getInstance().getDuration() * 1000.0;
     if (!std::isfinite(absTimeMs) || absTimeMs < 0.0) return;
     if (!std::isfinite(durMs)    || durMs    <= 0.0) return;
-    // Pause/play/seek announce state but never claim host — only starting a
-    // new video does (the announce-on-load above).
+    // Pause, play and seek announce state but never claim host; only starting a new video does.
     sl.announceLocalMedia(state, absTimeMs, durMs, /*claimHost=*/false);
 }
 
-// Set an icon, or park it if the upload would be thrown away right now.
-// borealis' setImageFromRes() creates the texture immediately; with no GL
-// surface — the app backgrounded on Android — the call silently does nothing
-// and leaves the icon blank. The OS notification can reach play/pause, shuffle
-// and repeat while exactly that is true.
+// Park the icon when there is no GL surface; setImageFromRes would silently drop the upload.
 void PlayerActivity::setIconRes(brls::Image* img, const std::string& res) {
     if (!img) return;
     m_iconRes[img] = res;   // remembered whether or not the upload lands
     if (brls::Application::canUploadTextures()) img->setImageFromRes(res);
 }
 
-// What the XML loads at inflation. Recorded rather than re-set: the textures
-// are already good at this point, and these are the paths reapplyIcons() needs
-// if the context is later lost. Kept beside player.xml's image= attributes.
+// What the XML loads at inflation, recorded not re-set: these are the paths reapplyIcons() needs if the context is lost.
 void PlayerActivity::registerIcons() {
     auto note = [this](brls::Image* img, const char* res) {
-        // Only if nothing has set one already — the video branch picks
-        // seek-interval icons above, and those are the real resources.
+        // Only if nothing set one already; the video branch picks seek-interval icons, and those are the real resources.
         if (img && m_iconRes.find(img) == m_iconRes.end()) m_iconRes[img] = res;
     };
     note(shuffleIcon,     "icons/shuffle-disabled.png");
@@ -2814,10 +2452,7 @@ void PlayerActivity::registerIcons() {
     note(lyricsIcon,      "icons/subtitles.png");
 }
 
-// Re-upload every icon. Called on the edge where uploads become possible again,
-// which covers both a swap that was dropped while hidden and a texture the lost
-// EGL context invalidated — from here the two are indistinguishable, and
-// re-issuing a good icon costs a cache lookup.
+// Re-upload every icon: a swap dropped while hidden and a texture lost with the EGL context look the same from here.
 void PlayerActivity::reapplyIcons() {
     const bool safe = brls::Application::canUploadTextures();
     if (safe && !m_uploadsWereSafe) {
@@ -2907,12 +2542,7 @@ void PlayerActivity::hideTrackOverlay() {
     }
 }
 
-// A stream mpv can load by URL instead of asking the server to switch to it:
-// track lyrics, which are always a separate file. Returns null for anything
-// else, including sidecar subtitles on video — those still go through the
-// transcode path, which is what already works there.
-// Split a message on newlines so a multi-line reason renders as its own rows
-// rather than one clipped line.
+// Split a message on newlines so a multi-line reason renders as rows rather than one clipped line.
 static std::vector<std::string> splitLines(const std::string& text) {
     std::vector<std::string> out;
     std::string current;
@@ -2924,9 +2554,7 @@ static std::vector<std::string> splitLines(const std::string& text) {
     return out;
 }
 
-// Open the sheet on a message rather than a song: no lyrics, or the reason a
-// fetch came back empty. Rendered as ordinary untimed rows, so it scrolls and
-// dismisses exactly like real lyrics do.
+// Open the sheet on a message rather than a song, as untimed rows, so it scrolls and dismisses exactly like lyrics.
 void PlayerActivity::showLyricsMessage(const std::string& text) {
     m_lyrics.clear();
     for (const std::string& line : splitLines(text)) {
@@ -2961,9 +2589,7 @@ void PlayerActivity::loadAndShowLyrics(const PlexStream& stream) {
             m_lyricsLoading = false;
 
             if (!ok || lines.empty()) {
-                // Open the sheet anyway and say what went wrong there. A toast
-                // over the player is easy to miss, and the reason is the useful
-                // part when lyrics are the thing being debugged.
+                // Open the sheet and say what went wrong there; a toast over the player is easy to miss.
                 showLyricsMessage(status.empty() ? std::string("No lyrics for this track.")
                                                  : status);
                 return;
@@ -2979,8 +2605,7 @@ void PlayerActivity::loadAndShowLyrics(const PlexStream& stream) {
 void PlayerActivity::buildLyricsRows() {
     if (!lyricsList) return;
 
-    // Focus first: destroying focused children while they hold focus is what
-    // the queue sheet's own rebuild guards against too.
+    // Focus first: destroying focused children while they hold focus is what the queue rebuild guards against too.
     if (!lyricsList->getChildren().empty() && lyricsOverlayTitle) {
         lyricsOverlayTitle->setFocusable(true);
         brls::Application::giveFocus(lyricsOverlayTitle);
@@ -2991,8 +2616,7 @@ void PlayerActivity::buildLyricsRows() {
 
     for (const auto& line : m_lyrics) {
         auto* label = new brls::Label();
-        // A timed blank is a rest in the song; give it height so the scroll
-        // position still tracks the music through an instrumental break.
+        // A timed blank is a rest; give it height so the scroll still tracks the music through an instrumental break.
         label->setText(line.text.empty() ? " " : line.text);
         label->setFontSize(ui(17));
         label->setTextColor(nvgRGB(0x8A, 0x8A, 0x90));
@@ -3016,8 +2640,7 @@ void PlayerActivity::showLyricsOverlay() {
     lyricsOverlay->setVisibility(brls::Visibility::VISIBLE);
     syncHiddenFocus();
 
-    // Only worth ticking while the sheet is on screen, and only for a file that
-    // carries timings — an untimed one never moves.
+    // Only worth ticking while the sheet is up, and only for a file with timings — an untimed one never moves.
     if (!m_lyricsFailed && !m_lyrics.empty() && m_lyrics.front().timeMs >= 0) {
         m_lyricsTimer.setCallback([this]() { syncLyricsToPosition(); });
         m_lyricsTimer.start(250);
@@ -3048,14 +2671,11 @@ void PlayerActivity::hideLyricsOverlay() {
 void PlayerActivity::syncLyricsToPosition() {
     if (!m_lyricsOverlayVisible || m_lyrics.empty()) return;
 
-    // Absolute, not mpv's local clock: a seek can restart the transcode part-way
-    // into the track, and lyric timestamps are against the whole song.
+    // Absolute, not mpv's clock: a seek can restart the transcode, and lyric stamps are against the whole song.
     const int posMs = m_transcodeBaseOffsetMs
                     + (int)(MpvPlayer::getInstance().getPosition() * 1000.0);
 
-    // Last line whose stamp has passed. Linear from the current index rather
-    // than a search over the whole file: playback moves forward a line at a
-    // time, and a seek backwards is the only case that walks far.
+    // Last line whose stamp has passed, walked linearly from the current index; only a backward seek goes far.
     int idx = -1;
     for (size_t i = 0; i < m_lyrics.size(); i++) {
         if (m_lyrics[i].timeMs < 0) continue;
@@ -3074,9 +2694,7 @@ void PlayerActivity::syncLyricsToPosition() {
     brls::Label* row = m_lyricRows[(size_t)idx];
     row->setTextColor(nvgRGB(0xE5, 0xA0, 0x0D));
     row->setFontSize(ui(19));
-    // getY() is absolute, so subtract the content box's own origin to get the
-    // row's offset inside it, then bias upward so the current line sits a bit
-    // above centre with the next few visible below it.
+    // getY() is absolute, so subtract the content origin, then bias up so the next few lines stay visible below.
     if (lyricsScroll && lyricsList) {
         const float offset = (row->getY() - lyricsList->getY())
                            - lyricsScroll->getHeight() * 0.4f;
@@ -3127,8 +2745,7 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
     int plexStreamType = (mode == TrackSelectMode::VIDEO) ? 1 :
                          (mode == TrackSelectMode::AUDIO) ? 2 : 3;
 
-    // Collect Plex streams of the requested type
-    // For subtitles, also include streamType 4
+    // Collect Plex streams of the requested type For subtitles, also include streamType 4
     std::vector<const PlexStream*> plexTracksOfType;
     for (const auto& ps : m_plexStreams) {
         if (ps.streamType == plexStreamType ||
@@ -3137,9 +2754,7 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         }
     }
 
-    // For audio and subtitle modes, use Plex streams as the primary source
-    // because HLS transcoding only muxes the selected track into the stream,
-    // so MPV only sees 1 audio track. Plex metadata has all available tracks.
+    // Plex streams are primary for audio and subtitles: HLS muxes only the selected track, so mpv sees just one.
     bool usePlexStreams = (mode == TrackSelectMode::AUDIO || mode == TrackSelectMode::SUBTITLE)
                          && !plexTracksOfType.empty();
 
@@ -3315,8 +2930,7 @@ void PlayerActivity::populateTrackList(TrackSelectMode mode) {
         searchItem->addView(searchLabel);
 
         searchItem->registerClickAction([this](brls::View* view) {
-            // Defer to next frame to avoid destroying the clicked view
-            // while its click handler is still on the call stack
+            // Defer a frame so the clicked view is not destroyed while its own click handler is still on the stack.
             brls::sync([this]() {
                 populateSubtitleSearchResults();
             });
@@ -3332,8 +2946,7 @@ void PlayerActivity::populateSubtitleSearchResults() {
 
     trackOverlayTitle->setText("Searching Subtitles...");
 
-    // Transfer focus to the overlay title before clearing the track list,
-    // so the previously focused child can be safely destroyed
+    // Move focus to the overlay title before clearing the list, so the focused child can be destroyed safely.
     if (trackOverlayTitle) {
         trackOverlayTitle->setFocusable(true);
         brls::Application::giveFocus(trackOverlayTitle);
@@ -3396,8 +3009,7 @@ void PlayerActivity::populateSubtitleSearchResults() {
     // Store results for selection
     m_subtitleSearchResults = results;
 
-    // Transfer focus to the overlay title before clearing the track list,
-    // so the previously focused child can be safely destroyed
+    // Move focus to the overlay title before clearing the list, so the focused child can be destroyed safely.
     if (trackOverlayTitle) {
         trackOverlayTitle->setFocusable(true);
         brls::Application::giveFocus(trackOverlayTitle);
@@ -3526,16 +3138,12 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                         ps.selected = (ps.id == trackId);
                     }
                 }
-                // Stop the current transcode and start a new one at the same
-                // position so Plex re-muxes with the newly selected audio track.
-                // HLS only contains the selected audio, so a reload is needed,
-                // but we seek to the current position to avoid restarting.
+                // HLS carries only the selected audio, so restart the transcode at the current position to re-mux the new track.
                 {
                     double currentPos = player.getPosition();
                     int offsetMs = m_transcodeBaseOffsetMs + static_cast<int>(currentPos * 1000);
                     PlexClient& client = PlexClient::getInstance();
-                    // Stop existing transcode session so Plex doesn't keep
-                    // serving old audio segments
+                    // Stop existing transcode session so Plex doesn't keep serving old audio segments
                     client.stopTranscode();
                     std::string newUrl;
                     if (client.getTranscodeUrl(m_mediaKey, newUrl, offsetMs)) {
@@ -3577,10 +3185,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
                     }
                 }
             } else if (const PlexStream* lyrics = findSideloadableStream(trackId)) {
-                // Lyrics are a separate file on the server, not something the
-                // transcoder muxes in, so they are loaded straight into mpv.
-                // Going through setStreamSelection would restart the audio
-                // stream to no effect.
+                // Lyrics are a separate file, not muxed, so load them straight into mpv; setStreamSelection would restart audio for nothing.
                 for (auto& ps : m_plexStreams)
                     if (ps.streamType == 3 || ps.streamType == 4)
                         ps.selected = (ps.id == trackId);
@@ -3636,9 +3241,7 @@ void PlayerActivity::selectTrack(TrackSelectMode mode, int trackId) {
 void PlayerActivity::seek(int seconds) {
     MpvPlayer& player = MpvPlayer::getInstance();
 
-    // In a watch party only the host drives playback — a follower's manual
-    // fast-forward/rewind would just desync and get pulled back to the host, so
-    // block it outright.
+    // In a watch party only the host drives playback, so block a follower's skip rather than let it desync and snap back.
     {
         auto& sl = SyncLoungeSession::instance();
         if (sl.isConnected() && !sl.isHost()) {
@@ -3647,9 +3250,7 @@ void PlayerActivity::seek(int seconds) {
         }
     }
 
-    // Direct play, local file, or music (mp3, not HLS): mpv has the data, so
-    // seek locally and instantly — these never stall the way a forward seek on
-    // an HLS transcode does.
+    // Direct play, local file or music: mpv has the data, so seek locally and instantly.
     if (m_isLocalFile || m_isDirectFile || m_isQueueMode || m_directPlay) {
         double targetSec = std::max(0.0, player.getPosition() + seconds);
         player.seekRelative(seconds);
@@ -3659,10 +3260,7 @@ void PlayerActivity::seek(int seconds) {
         return;
     }
 
-    // Transcoded HLS video: fold this skip into the pending absolute target and
-    // debounce, so a burst of presses commits ONCE. commitTranscodeSeek() then
-    // decides local-seek vs transcode-restart. Accumulate from the pending
-    // target if one is in flight, else from the current absolute position.
+    // Transcoded HLS: fold the skip into the pending target and debounce, so a burst of presses commits once.
     double base = (m_seekTargetMs >= 0.0)
                       ? m_seekTargetMs
                       : (m_transcodeBaseOffsetMs + player.getPosition() * 1000.0);
@@ -3676,9 +3274,7 @@ double PlayerActivity::knownDurationMs() const {
 }
 
 bool PlayerActivity::restartTranscodeAtMs(int offsetMs) {
-    // Stop the current transcode and start a fresh one at offsetMs so Plex
-    // re-encodes from there. Used for far seeks and to escape a corrupt stream
-    // (bad-PTS / un-transcoded segments) that an mpv-local seek can't get out of.
+    // Restart the transcode at offsetMs: for far seeks, and to escape a corrupt stream an mpv-local seek cannot leave.
     double total = knownDurationMs();
     if (total > 5000.0 && offsetMs > (int)total - 5000) offsetMs = (int)total - 5000;
     if (offsetMs < 0) offsetMs = 0;
@@ -3693,19 +3289,16 @@ bool PlayerActivity::restartTranscodeAtMs(int offsetMs) {
 }
 
 void PlayerActivity::requestTranscodeSeek(double absMs) {
-    // Clamp to the real media length so a stale mpv duration (right after a
-    // reload) can't push the target past the end.
+    // Clamp to the real media length so a stale mpv duration (right after a reload) can't push the target past the end.
     double totalMs = knownDurationMs();
     if (absMs < 0.0) absMs = 0.0;
     if (totalMs > 0.0 && absMs > totalMs) absMs = totalMs;
     m_seekTargetMs = absMs;
 
-    // Show where we're heading while the debounce settles (otherwise the ~350 ms
-    // wait looks like a frozen UI).
+    // Show where we're heading while the debounce settles (otherwise the ~350 ms wait looks like a frozen UI).
     showSeekPreview(absMs, totalMs);
 
-    // (Re)arm the debounce: rewind resets the countdown without firing, so the
-    // commit happens once, ~350 ms after the last press/scrub.
+    // (Re)arm the debounce; rewind resets the countdown without firing, so the commit happens once after the last press.
     if (m_seekCommitTimer.isRunning())
         m_seekCommitTimer.rewind();
     else
@@ -3721,10 +3314,7 @@ void PlayerActivity::commitTranscodeSeek() {
     const double baseMs = m_transcodeBaseOffsetMs;
     const double curAbs = baseMs + player.getPosition() * 1000.0;
 
-    // The current transcode's m3u8 covers [baseMs, total], so anything already
-    // behind the play head is on hand and cheap to seek locally. Only a jump
-    // before the transcode's start, or one far ahead of the play head (beyond
-    // what Plex has likely produced), is worth a restart.
+    // The m3u8 covers [baseMs, total], so only a jump before its start or far past the play head is worth a restart.
     static constexpr double kLocalForwardMaxMs = 60000.0;  // 60 s; tune to taste
     bool mustRestart = (target < baseMs) ||
                        ((target - curAbs) > kLocalForwardMaxMs);
@@ -3732,8 +3322,7 @@ void PlayerActivity::commitTranscodeSeek() {
     if (!mustRestart) {
         player.seekTo(std::max(0.0, (target - baseMs) / 1000.0));
     } else {
-        // Tell Plex to re-transcode from the target instead of making mpv crawl
-        // across un-transcoded HLS. Mirrors the audio/subtitle reload path.
+        // Re-transcode from the target rather than make mpv crawl un-transcoded HLS; mirrors the audio reload path.
         player.showOSD("Seeking…", 1.5);  // "Seeking…"
         if (!restartTranscodeAtMs((int)target) && target >= baseMs) {
             // Restart failed — fall back to a best-effort local seek.
@@ -3745,8 +3334,7 @@ void PlayerActivity::commitTranscodeSeek() {
 }
 
 void PlayerActivity::showSeekPreview(double absMs, double totalMs) {
-    // Move the slider to the pending spot (guarded so it doesn't re-trigger the
-    // seek subscription) and reflect the target time in the labels + a short OSD.
+    // Move the slider to the pending spot, guarded so it cannot re-trigger the seek subscription.
     if (progressSlider && totalMs > 0.0) {
         m_updatingSlider = true;
         progressSlider->setProgress((float)std::min(1.0, std::max(0.0, absMs / totalMs)));
@@ -3867,10 +3455,7 @@ void PlayerActivity::updateShuffleIcon() {
         ? "icons/shuffle-variant.png" : "icons/shuffle-disabled.png");
 }
 
-// OS media controls (lock screen / notification / SMTC / MPRIS) asked for an
-// explicit shuffle / repeat state. Reuse the on-screen toggle paths so the
-// server-side play-queue sync + icon refresh + OSD stay identical to a tap;
-// MusicController re-publishes the now-playing snapshot afterwards.
+// OS media controls asked for a shuffle/repeat state; reuse the on-screen paths so sync, icons and OSD match a tap.
 void PlayerActivity::setShuffleFromOs(bool on) {
     if (!m_isQueueMode) return;
     if (on != MusicQueue::getInstance().isShuffleEnabled()) toggleShuffle();
@@ -3886,12 +3471,7 @@ void PlayerActivity::setRepeatFromOs(RepeatMode mode) {
 }
 
 
-// Whether there is room for the collapsed queue sheet. The handoff's frame is a
-// tall phone (412x915, so 1280x2841 in borealis units); on a much shorter one —
-// an unfolded foldable, a landscape window — reserving the sheet's height would
-// leave the cover a stamp. Better to drop the sheet there than to wreck the
-// thing the layout is built around. The Queue button in the header still opens
-// the full list either way.
+// Whether there is room for the collapsed queue sheet; drop it rather than shrink the cover to a stamp.
 bool PlayerActivity::mobileSheetFits() const {
     const float vh = platform::viewportHeight();
     if (vh <= 0.f) return false;
@@ -3901,60 +3481,28 @@ bool PlayerActivity::mobileSheetFits() const {
 void PlayerActivity::applyMusicLayoutForViewport() {
     if (!albumArt) return;
 
-    // Compute a target cover size that fills the available width
-    // without crowding the controls. The XML defaults to 220×220 which
-    // is right for Vita / Switch landscape; on a portrait phone we want
-    // something closer to ~55% of the viewport width so the cover
-    // actually fills the space instead of floating tiny in the middle.
-    // Cap the height to ~45% of the viewport so the music_info and
-    // music_transport rows below it still have somewhere to land.
+    // Size the cover to fill the width without crowding the controls, capped so the rows below still fit.
     float vw = platform::viewportWidth();
     float vh = platform::viewportHeight();
     if (vw <= 0 || vh <= 0) return;
 
-    // The mobile layout is built around a big cover — the handoff draws it 300
-    // wide in a 412 frame — so it gets a much larger share of the width than the
-    // classic player, where the cover shares the screen with a control column.
+    // The mobile layout is built around a big cover, so it takes a much larger share of the width than the classic player.
     float byWidth  = vw * (m_mobileLayout ? 0.78f : 0.55f);
     float byHeight = vh * (m_mobileLayout ? 0.42f : 0.45f);
     float target   = std::min(byWidth, byHeight);
 
-    // A fraction of the height is not enough on its own: everything under the
-    // cover has a fixed height, so on a shorter screen — or as soon as a long
-    // title wraps to two lines — the column overflows and the last thing on it,
-    // the play button, gets clipped off the bottom. Flex grow cannot save it
-    // either; it only shares out space that is already spare.
-    //
-    // So also fit the cover to what is actually left. The budget below is the
-    // rest of the mobile column, in the same logical units the XML uses: header
-    // 162 + 31 margin, cover's 56 bottom margin, a 68pt title with its 16 margin
-    // over a 43pt artist (~150 — both are singleLine, so neither can grow), the
-    // controls block (46 + 64 slider + 6 + ~45 labels = 161), the transport
-    // (40 + 224), and 80 of breathing room so the circle is never flush against
-    // the edge.
+    // Also fit the cover to the height actually left: everything under it is fixed, so a fraction alone clips the play button.
     if (m_mobileLayout) {
         float chrome = kMobileChrome;
-        // The collapsed queue sheet is absolutely positioned along the bottom,
-        // so the column must leave its height clear or the transport ends up
-        // behind it — but only when the sheet is actually shown.
+        // The collapsed sheet is absolutely positioned, so leave its height clear or the transport lands behind it.
         if (mobileSheetFits()) chrome += kMobileSheetHeight;
         target = std::min(target, vh - chrome);
     }
 
-    // Don't shrink below the original 220px design size — every
-    // platform has at least enough room for that on landscape. The mobile
-    // layout gets a lower floor: on a short screen, holding 220 here would put
-    // back the overflow the fit above exists to avoid.
+    // Never below the 220px design size, except on mobile where a short screen would put back the overflow this avoids.
     const float floorPx = m_mobileLayout ? 150.f : 220.f;
     if (target < floorPx) target = floorPx;
-    // And don't blow up beyond 480 in either direction; pushed any
-    // bigger the cover starts dominating the layout on big tablets
-    // and the controls feel orphaned at the bottom.
-    //
-    // The mobile layout is the exception: dominating is the point there, and
-    // this cap was what kept the cover at ~37% of the width on a phone —
-    // 480 of borealis' ~1280 logical units — instead of the 73% the design
-    // draws. The proportional limits above already bound it on both axes.
+    // Cap at 480 except on mobile, where a dominating cover is the design and the cap made it far too small.
     if (!m_mobileLayout && target > 480.f) target = 480.f;
 
     albumArt->setWidth(target);
@@ -4027,10 +3575,7 @@ void PlayerActivity::updateQueueDisplay() {
 
     updateMobileSheet();
 
-    // Refresh the queue side sheet if it's open. Rebuild when the queue
-    // version changed (size/order/shuffle) or when the song advanced -
-    // playTrack/playNext don't bump the version, so the current index is
-    // watched separately to keep Now Playing + Up Next in sync.
+    // Rebuild the sheet on a version change or a track advance; playTrack/playNext do not bump the version.
     if (m_queueOverlayVisible && queueList && !m_queueBatchActive) {
         if (m_cachedQueueVersion != queue.getVersion() ||
             m_lastRenderedCurrentIndex != queue.getCurrentIndex()) {
@@ -4040,10 +3585,7 @@ void PlayerActivity::updateQueueDisplay() {
 }
 
 
-// The collapsed queue sheet along the bottom of the mobile layout: how much is
-// left to play, and what comes next. Its views live only in player_mobile.xml,
-// so they are looked up by id rather than bound — getView returns null in the
-// classic layout and every use below tolerates that.
+// The collapsed queue sheet: what is left and what is next. Its views exist only on mobile, so they are looked up, not bound.
 void PlayerActivity::updateMobileSheet() {
     if (!m_mobileLayout || !m_isQueueMode) return;
 
@@ -4060,8 +3602,7 @@ void PlayerActivity::updateMobileSheet() {
     MusicQueue& queue = MusicQueue::getInstance();
     const QueueItem* next = queue.peekNextTrack();
 
-    // Nothing after this track (end of a queue with repeat off) — the sheet has
-    // nothing to say, so it gets out of the way rather than showing an empty row.
+    // Nothing after this track, so the sheet gets out of the way rather than showing an empty row.
     if (!next) {
         sheet->setVisibility(brls::Visibility::GONE);
         return;
@@ -4093,8 +3634,7 @@ void PlayerActivity::updateMobileSheet() {
         }
     }
 
-    // Cover for the next track. Only re-fetched when it actually changes — this
-    // runs once a second off updateQueueDisplay.
+    // Next track's cover, re-fetched only when it changes — this runs once a second.
     auto* thumb = dynamic_cast<brls::Image*>(getView("player/sheet_next_thumb"));
     if (thumb && next->ratingKey != m_sheetThumbKey) {
         m_sheetThumbKey = next->ratingKey;
@@ -4119,9 +3659,7 @@ void PlayerActivity::updateMobileSheet() {
 void PlayerActivity::wireMobileSheet() {
     if (!m_mobileLayout) return;
 
-    // Lyrics fill the screen in this layout, so the scrim the classic one
-    // dismisses through has nothing to occupy. Back still works; this is the
-    // visible way out for touch.
+    // Lyrics fill this layout, so the classic scrim has nothing to occupy; this is the visible way out for touch.
     if (auto* close = dynamic_cast<brls::Box*>(getView("player/lyrics_close"))) {
         close->registerClickAction([this](brls::View*) {
             hideLyricsOverlay();
@@ -4133,9 +3671,7 @@ void PlayerActivity::wireMobileSheet() {
     auto* sheet = dynamic_cast<brls::Box*>(getView("player/sheet"));
     if (!sheet) return;
 
-    // Tap anywhere on the sheet to open the full queue. The handoff wants a
-    // drag as well; that needs gesture plumbing the sheet does not have yet, so
-    // the grab handle is decorative until then.
+    // Tap the sheet to open the full queue; the grab handle is decorative until drag gestures are plumbed in.
     sheet->registerClickAction([this](brls::View*) {
         showQueueOverlay();
         return true;
@@ -4143,14 +3679,7 @@ void PlayerActivity::wireMobileSheet() {
     sheet->addGestureRecognizer(new brls::TapGestureRecognizer(sheet));
 }
 
-// ─── The video OSD ─────────────────────────────────────────────────────
-//
-// player_mobile.xml carries both mobile designs, so building one means hiding
-// the other's views and restyling the three they share. Runs once, from
-// onContentAvailable, after the mode-specific button wiring.
-//
-// Everything reached by getView() here exists in this layout only; the other
-// two return null and every use tolerates it.
+// ─── The video OSD: one file carries both mobile designs, so building one hides the other's views ───
 void PlayerActivity::wireVideoOsd() {
     if (!m_videoOsd) return;
 
@@ -4165,15 +3694,7 @@ void PlayerActivity::wireVideoOsd() {
         b->addGestureRecognizer(new brls::TapGestureRecognizer(b));
     };
 
-    // The music design's own furniture. Hidden rather than deleted: the ids
-    // have to survive for the contract, and the activity may still touch them.
-    //
-    // The two spacers matter more than they look. They draw nothing, but they
-    // are full-width boxes that grow to fill the column, and borealis hit-tests
-    // every visible box — the lower one is declared after player/controls, so
-    // left up it covers the scrubber and the pills and silently takes their
-    // taps. The top bar comes after it in turn, which is why that half of the
-    // OSD kept working.
+    // Hide the music design's furniture; the spacers must go too, since visible boxes still swallow taps.
     for (const char* id : {"player/music_seek", "player/sheet",
                            "player/spacer_upper", "player/spacer_lower"}) {
         if (brls::View* v = getView(id)) v->setVisibility(brls::Visibility::GONE);
@@ -4181,9 +3702,7 @@ void PlayerActivity::wireVideoOsd() {
     if (albumArtContainer) albumArtContainer->setVisibility(brls::Visibility::GONE);
     if (musicInfo)        musicInfo->setVisibility(brls::Visibility::GONE);
     if (musicTransport)   musicTransport->setVisibility(brls::Visibility::GONE);
-    // The music header (queue / lyrics buttons and the source line) is the one
-    // block with no id of its own; its three children carry them, and clearing
-    // focusability keeps them out of the focus order as well as off the screen.
+    // The music header has no id of its own, so clear its three children to keep them out of the focus order.
     for (brls::View* v : {(brls::View*)queueBtn, (brls::View*)lyricsBtn, (brls::View*)queueLabel}) {
         if (!v) continue;
         v->setFocusable(false);
@@ -4192,14 +3711,10 @@ void PlayerActivity::wireVideoOsd() {
     if (queueBtn && queueBtn->getParent())
         queueBtn->getParent()->setVisibility(brls::Visibility::GONE);
 
-    // The music layout paints palette::bg over the whole screen. On Android the
-    // mpv surface composites *behind* the borealis frame and shows through only
-    // where the frame is unpainted, so an opaque root hides the picture
-    // completely -- this is what "video plays but the screen stays grey" was.
+    // Android composites the mpv surface behind the frame, so an opaque root hides the picture entirely.
     if (playerContainer) playerContainer->setBackgroundColor(nvgRGBA(0, 0, 0, 0));
 
-    // Re-anchor the controls to the bottom edge. They sit in the column for
-    // music; over video they float on the scrim.
+    // Re-anchor the controls to the bottom edge. They sit in the column for music; over video they float on the scrim.
     if (controlsBox) {
         controlsBox->setPositionType(brls::PositionType::ABSOLUTE);
         controlsBox->setPositionBottom(0.0f);
@@ -4207,8 +3722,7 @@ void PlayerActivity::wireVideoOsd() {
         controlsBox->setPositionRight(0.0f);
     }
 
-    // Move the three shared views into the video row: music stacks the bar over
-    // the times, the OSD runs elapsed, bar and remaining inline.
+    // Move the shared views into the video row: music stacks bar over times, the OSD runs them inline.
     auto* scrubRow = box("player/video_scrub_row");
     auto* musicRow = box("player/time_row");
     if (scrubRow && musicRow && progressSlider && timeElapsedLabel && timeRemainingLabel) {
@@ -4225,8 +3739,7 @@ void PlayerActivity::wireVideoOsd() {
         timeElapsedLabel->setTextColor(nvgRGB(0xE2, 0xE2, 0xE6));
         timeRemainingLabel->setFontSize(16);
         timeRemainingLabel->setTextColor(nvgRGB(0x8C, 0x8C, 0x93));
-        // 46 tall gives the 32dp touch target the handoff asks for; the bar and
-        // knob are centred in whatever height the box is given.
+        // 46 tall gives the 32dp touch target; bar and knob centre in whatever height the box gets.
         progressSlider->setHeight(46.0f);
         progressSlider->setWidth(brls::View::AUTO);
         progressSlider->setGrow(1.0f);
@@ -4235,9 +3748,7 @@ void PlayerActivity::wireVideoOsd() {
         progressSlider->setPointerSize(20.0f);
     }
 
-    // The subtitle line stays hidden until setVideoOsdTitle() has something to
-    // put on it, so a movie with no second line gets a title rather than a
-    // title and a blank.
+    // The subtitle line stays hidden until it has text, so a film gets a title rather than a title and a blank.
     if (brls::View* v = getView("player/osd_bottom")) v->setVisibility(brls::Visibility::VISIBLE);
     if (brls::View* v = getView("player/subs_pill")) v->setVisibility(brls::Visibility::VISIBLE);
 
@@ -4248,34 +3759,12 @@ void PlayerActivity::wireVideoOsd() {
         if (m_isQueueMode) playNext();
         else               playNextEpisode();
     });
-    // This file starts the OSD hidden, because music never wants it and the
-    // centre transport is GONE there — but m_controlsVisible starts true. Put
-    // the two in step here rather than leaving the first frame showing nothing
-    // and the first tap appearing to do the wrong thing.
+    // The OSD starts hidden here but m_controlsVisible starts true; put them in step so the first tap behaves.
     showControls();
     updateVideoOsd();
 }
 
-// How much bigger the OSD should be than the handoff drew it.
-//
-// borealis' logical space is a fixed 1280 wide and only the height varies with
-// the screen's aspect — contentWidth is always ORIGINAL_WINDOW_WIDTH — so every
-// size in the layout is a constant fraction of the screen's WIDTH. On the frame
-// the handoff drew, 915x412, which is 1280x576 here, that lands where it should.
-// On a shape with far more height per unit of width it does not: an unfolded
-// foldable is about 1280x1436, so the same controls sit in two and a half times
-// the vertical field and read as small islands.
-//
-// Two obvious rules both miss. Keeping a constant fraction of the short edge is
-// what "the same size" means on paper, but on a physically larger display it
-// overshoots badly — a play button around 150dp. Keeping a constant dp size is
-// the other end, and is exactly what we have now, which is too small. The
-// square root sits between them: 1.0x on the landscape phone the handoff drew,
-// which is the one shape already known to look right, and about 1.5x on an
-// unfolded foldable.
-//
-// The cap is a judgement, not a derivation — if the OSD comes out too large or
-// still too small on a given screen, this constant is the one to move.
+// How much bigger the OSD should be than the handoff drew it; sqrt of the aspect ratio (see DESIGN_NOTES).
 float PlayerActivity::videoOsdScale() const {
     const float w = platform::viewportWidth();    // always 1280 under borealis
     const float h = platform::viewportHeight();
@@ -4283,19 +3772,14 @@ float PlayerActivity::videoOsdScale() const {
     return std::clamp(std::sqrt(std::min(w, h) / kVideoOsdBaseHeight), 1.0f, 1.6f);
 }
 
-// Re-sizes the OSD for the current viewport. Cheap to call repeatedly: it does
-// nothing at all unless the factor actually moved, which is what lets it run
-// off the per-second tick and so catch a fold, a rotation or a desktop resize
-// without needing a signal for each.
+// Re-size the OSD for the viewport; a no-op unless the factor moved, so it can run off the per-second tick.
 void PlayerActivity::applyVideoOsdForViewport() {
     if (!m_videoOsd) return;
     const float k = videoOsdScale();
     if (std::abs(k - m_videoOsdScale) < 0.01f) return;
     m_videoOsdScale = k;
 
-    // Base values are the ones in player_mobile.xml, which are the handoff's at
-    // 1280/915. Passing 0 for a dimension leaves it alone — the pills are sized
-    // by their text, so only their height and radius are set here.
+    // Base values are player_mobile.xml's; passing 0 leaves a dimension alone, since the pills are sized by their text.
     auto box = [&](const char* id, float w, float h, float r) {
         brls::View* v = getView(id);
         if (!v) return;
@@ -4357,15 +3841,10 @@ void PlayerActivity::applyVideoOsdForViewport() {
                        k, platform::viewportWidth(), platform::viewportHeight());
 }
 
-// Pill text and the two toggle glyphs. Cheap enough to run on the per-second
-// tick, which is also what keeps the audio and subtitle pills honest after the
-// track picker changes something.
+// Pill text and the two toggle glyphs, cheap enough for the per-second tick that keeps them honest.
 void PlayerActivity::updateVideoOsd() {
     if (!m_videoOsd) return;
-    // Catches a fold, a rotation or a desktop resize without needing a signal
-    // for each — unfolding a foldable that was already portrait does not flip
-    // isPortrait(), so the orientation callback would miss exactly the case
-    // this exists for. No-op unless the factor actually moved.
+    // Catches a fold, rotation or resize without a signal each — unfolding an already-portrait device never flips isPortrait().
     applyVideoOsdForViewport();
     auto& player = MpvPlayer::getInstance();
 
@@ -4376,25 +3855,19 @@ void PlayerActivity::updateVideoOsd() {
         char buf[16];
         snprintf(buf, sizeof(buf), "%.2f", s);
         std::string txt = buf;
-        // Trim to the shortest honest form: 1.00 -> "1", 1.50 -> "1.5",
-        // 1.25 stays. The common case should read as no change at all.
+        // Trim to the shortest honest form: 1.00 reads "1", 1.50 reads "1.5", 1.25 stays.
         while (txt.size() > 1 && txt.back() == '0') txt.pop_back();
         if (!txt.empty() && txt.back() == '.') txt.pop_back();
         l->setText(txt + "x");
     }
 
-    // "Audio · English", "Subs · Off" -- the selected track, not just the
-    // control's name, which is the whole reason these are pills and not glyphs.
+    // "Audio · English", "Subs · Off" — the selected track, which is why these are pills and not glyphs.
     if (auto* l = label("player/audio_label"))
         l->setText("Audio  " + trackSummary(TrackSelectMode::AUDIO));
     if (auto* l = label("player/subs_label"))
         l->setText("Subs  " + trackSummary(TrackSelectMode::SUBTITLE));
 
-    // Next only means anything with something after this. Outside a queue that
-    // is the same test auto-play-next makes: an episode whose season we know
-    // and that is not a local file. It cannot promise the episode exists
-    // without a lookup, which is not worth doing on a timer -- pressing it when
-    // there is nothing next is a no-op, not a failure.
+    // Next needs something after this; pressing it with nothing next is a no-op, not a failure.
     if (brls::View* v = getView("player/next_btn")) {
         const bool next = m_isQueueMode
             ? MusicQueue::getInstance().hasNext()
@@ -4403,10 +3876,7 @@ void PlayerActivity::updateVideoOsd() {
     }
 }
 
-// What the audio and subtitle pills say after the control's name. Plex
-// describes the streams it is serving; mpv is the fallback, and the only answer
-// at all for a local file. Reads the cached stream list -- never fetches, since
-// this runs on the per-second tick.
+// What the pills say after the control's name. Plex first, mpv as fallback; reads the cache, never fetches.
 std::string PlayerActivity::trackSummary(TrackSelectMode mode) const {
     const bool audio  = (mode == TrackSelectMode::AUDIO);
     const int  wanted = audio ? 2 : 3;
@@ -4443,10 +3913,7 @@ void PlayerActivity::cycleSpeed() {
     updateVideoOsd();
 }
 
-// The OSD's top bar prints the show over the episode, where the other layouts
-// print one "Show - Episode" line. Falls back to the single line when there is
-// no second part to show, so a movie gets a title and its year rather than a
-// title and a blank.
+// The OSD prints show over episode, falling back to one line so a film gets a title and year, not a blank.
 void PlayerActivity::setVideoOsdTitle(const std::string& title, const std::string& subtitle) {
     if (titleLabel) titleLabel->setText(title);
     if (!artistLabel) return;
@@ -4470,8 +3937,7 @@ void PlayerActivity::showQueueOverlay() {
         syncHiddenFocus();
 
         queueOverlay->registerAction("Back", brls::ControllerButton::BUTTON_B, [this](brls::View* view) {
-            // While a track is grabbed, B drops it (keeps the queue open) rather
-            // than closing — press again to close.
+            // While a track is grabbed, B drops it (keeps the queue open) rather than closing — press again to close.
             if (m_queueGrabActive) { setQueueGrab(false); return true; }
             hideQueueOverlay();
             return true;
@@ -4490,17 +3956,12 @@ void PlayerActivity::showQueueOverlay() {
             moveFocusedQueueTrack(1);
             return true;
         });
-        // START picks up / drops the focused track for reorder. On Android TV
-        // hold-center fires GUIDE, which the player's GUIDE handler re-dispatches
-        // to the focused view's START action — landing here — so bare D-pad
-        // remotes (no L/R bumpers) can reorder too.
+        // START grabs/drops the focused track; Android TV's hold-centre arrives as GUIDE and is re-dispatched here.
         queueOverlay->registerAction("Move", brls::ControllerButton::BUTTON_START, [this](brls::View* view) {
             toggleQueueGrab();
             return true;
         });
-        // While grabbed, Up/Down move the held track; otherwise return false so
-        // borealis does its normal list navigation (it only navigates when the
-        // button isn't consumed by an action).
+        // While grabbed, up/down move the held track; otherwise return false so borealis navigates normally.
         queueOverlay->registerAction("", brls::ControllerButton::BUTTON_NAV_UP, [this](brls::View* view) {
             if (!m_queueGrabActive) return false;
             moveFocusedQueueTrack(-1);
@@ -4513,9 +3974,7 @@ void PlayerActivity::showQueueOverlay() {
         }, /*hidden*/ true, /*allowRepeating*/ true);
     }
 
-    // Rebuild when the queue changed (version) or when the song advanced -
-    // playTrack/playNext don't bump the version, so we also watch the current
-    // index. Otherwise reuse the cached rows for an instant reopen.
+    // Rebuild on a version change or a track advance, else reuse the cached rows for an instant reopen.
     MusicQueue& queue = MusicQueue::getInstance();
     bool needRebuild = !queueList || queueList->getChildren().empty()
         || m_cachedQueueVersion == 0
@@ -4660,14 +4119,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     // Row -> track mapping (looked up dynamically by the handlers below)
     m_queueRowData[row] = {trackIdx, track.title, removeBtn};
 
-    // Swipe left to remove this track from the queue. The row reddens as it
-    // goes, mirroring the gold lift a grab gives: the tint deepens with the
-    // swipe and saturates once past the commit distance, so letting go there is
-    // clearly going to delete rather than a guess about how far is far enough.
-    //
-    // Whatever the row's resting colour is depends on focus and on whether a
-    // track is being held, so an abandoned swipe restores it from the same rule
-    // the focus handler uses rather than assuming transparent.
+    // Swipe left to remove: the row reddens with the swipe and saturates past the commit distance.
     auto restoreRowTint = [this, row]() {
         if (row == m_focusedQueueRow) {
             row->setBackgroundColor(m_queueGrabActive ? nvgRGBA(229, 160, 13, 90)
@@ -4676,42 +4128,21 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
             row->setBackgroundColor(nvgRGBA(0, 0, 0, 0));
         }
     };
-    // How far is "far enough" has to scale with the layout. 120 units is about
-    // 9% of the 1280-wide logical space — a flick on a phone, and easy to fire
-    // by accident while scrolling. ui() puts it near a third of the width there
-    // and leaves the classic player where it was.
+    // Commit distance scales with the layout: a fixed 120 units is a flick on a phone and fires while scrolling.
     const float kCommitPx = ui(120.0f);
-    // The commit distance is long enough that spreading the tint across all of
-    // it leaves the red barely there for most of the swipe. Saturate well
-    // before the end instead, so the colour is doing its job as a warning
-    // rather than as a progress bar.
+    // Saturate the tint well before the commit distance, so the colour warns rather than acting as a progress bar.
     const float kTintFullPx = kCommitPx * 0.4f;
     const float kRestPx     = ui(4.0f);
     row->addGestureRecognizer(new brls::PanGestureRecognizer(
         [this, row, restoreRowTint, kCommitPx, kTintFullPx, kRestPx](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
-            // STAY is the state for every frame of a pan in progress; UNSURE
-            // and START each fire exactly once and both report a zero delta
-            // (the recognizer rebases startPosition when it promotes UNSURE to
-            // START). Leaving STAY out meant the only frames this ever saw had
-            // nothing to draw, so the row never actually followed the finger
-            // and the tint never left its resting value.
+            // STAY is every frame of a pan; UNSURE and START fire once each and both report a zero delta.
             if (status.state == brls::GestureState::UNSURE ||
                 status.state == brls::GestureState::START ||
                 status.state == brls::GestureState::STAY) {
                 float deltaX = status.position.x - status.startPosition.x;
                 if (deltaX > 0) { row->setTranslationX(0); restoreRowTint(); return; }
                 row->setTranslationX(deltaX);
-                // No opacity fade on the row: view alpha multiplies through to
-                // the background, so fading the row and tinting it red fight
-                // each other and both come out weak. The slide plus the colour
-                // are the cue.
-                //
-                // Ramp from zero, not from a floor: swiping back has to clear
-                // the red as the finger returns, not only once it lifts. The
-                // curve is steep so the red still shows up immediately. Within
-                // a few units of rest the row is treated as unswiped and gets
-                // its real colour back, otherwise a focused row would look
-                // unfocused mid-swipe.
+                // Slide plus colour, no alpha fade — view alpha multiplies through and weakens both cues.
                 float d = std::abs(deltaX);
                 if (d < kRestPx) {
                     restoreRowTint();
@@ -4737,18 +4168,13 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 restoreRowTint();
             } else if (status.state == brls::GestureState::FAILED ||
                        status.state == brls::GestureState::INTERRUPTED) {
-                // A swipe that turns into a vertical drag gets interrupted
-                // rather than failed, and without this the row keeps whatever
-                // offset and red it had reached.
+                // A swipe turning into a vertical drag is interrupted, not failed; without this the row keeps its offset and red.
                 row->setTranslationX(0);
                 restoreRowTint();
             }
         }, brls::PanAxis::HORIZONTAL));
 
-    // Vertical pan: hold briefly to drag-reorder, otherwise scroll the list.
-    // Touch users get reordering back without an L/R controller; the dragged
-    // row follows the finger while neighbours slide out of the way, and the
-    // drop commits via moveTrack + rebuild.
+    // Vertical pan: hold briefly to drag-reorder, otherwise scroll — this is how touch reorders without bumpers.
     row->addGestureRecognizer(new brls::PanGestureRecognizer(
         [this, row, restoreRowTint](brls::PanGestureStatus status, brls::Sound* soundToPlay) {
             const float rowH = queueRowPitch();
@@ -4804,21 +4230,11 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 float eff = (status.position.y - m_dragState.dragStartY) + scrollDelta;
                 row->setTranslationY(eff);
 
-                // Auto-scroll while the finger sits near the top/bottom edge of
-                // the viewport, so a drag can reach rows past the visible window.
-                // STAY fires every frame the finger is held, so this keeps
-                // scrolling even when the finger isn't moving.
+                // Auto-scroll near the edges so a drag can reach off-screen rows; STAY fires every frame, even when still.
                 if (queueScroll) {
-                    // Both of these used to be bare literals, which made the
-                    // mobile layout the slow one: 9 units a frame is a sixth of
-                    // a classic row but only a thirteenth of a mobile row, so
-                    // the same code crawled at under half the speed on the
-                    // layout with the taller rows. Rate is in rows now, so the
-                    // two layouts move at the same pace down the list.
+                    // Rate is in rows, not units, so the taller mobile rows scroll at the same pace as the classic ones.
                     const float EDGE = ui(44.0f);
-                    // ...and it ramps with how deep into the zone the finger
-                    // is: a creep at the boundary to place a track exactly,
-                    // fast at the very edge to cross a long queue.
+                    // Ramped by depth into the zone: a creep at the boundary to place exactly, fast at the edge to cross a long queue.
                     const float SLOW = rowH * 0.03f;
                     const float FAST = rowH * 0.18f;
                     float viewH = queueScroll->getHeight();
@@ -4834,23 +4250,23 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                         float speed = SLOW + (FAST - SLOW) * std::min(1.0f, above / EDGE);
                         queueScroll->setContentOffsetY(std::max(0.0f, scrollY - speed), false);
                     }
-                    // Re-read the scroll offset so the dragged row stays under the
-                    // finger and the target index reflects the new scroll position.
+                    // Re-read the offset so the row stays under the finger and the target reflects the new scroll position.
                     scrollDelta = queueScroll->getContentOffsetY() - m_dragState.dragStartScrollY;
                     eff = (status.position.y - m_dragState.dragStartY) + scrollDelta;
                     row->setTranslationY(eff);
                 }
 
                 int origIdx = m_dragState.originalDisplayIdx;
-                int childCount = queueList ? (int)queueList->getChildren().size() : 0;
+                // Rows only: queueList also holds the "+N more" label, whose slot has no row behind it.
+                const int rowCount = (int)m_queueRowData.size();
                 int newTarget = origIdx + (int)std::lround(eff / rowH);
                 if (newTarget < 0) newTarget = 0;
-                if (newTarget > childCount - 1) newTarget = childCount - 1;
+                if (newTarget > rowCount - 1) newTarget = rowCount - 1;
                 m_dragState.targetDisplayIdx = newTarget;
 
                 if (queueList) {
                     auto& children = queueList->getChildren();
-                    for (int i = 0; i < (int)children.size(); i++) {
+                    for (int i = 0; i < std::min((int)children.size(), rowCount); i++) {
                         if (i == origIdx) continue;
                         float shift = 0.0f;
                         if (newTarget > origIdx && i > origIdx && i <= newTarget) shift = -rowH;
@@ -4872,22 +4288,31 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 if (didDrag && status.state == brls::GestureState::END &&
                     origIdx >= 0 && targetIdx >= 0 && origIdx != targetIdx && fromTrack >= 0) {
                     MusicQueue& queue = MusicQueue::getInstance();
-                    bool shuffled = queue.isShuffleEnabled();
-                    const auto& sOrder = queue.getShuffleOrder();
-                    int targetPlayPos = targetIdx + m_queueWindowStart;
-                    int toTrack = (shuffled && targetPlayPos < (int)sOrder.size())
-                                    ? sOrder[targetPlayPos] : targetPlayPos;
-                    if (toTrack >= 0 && toTrack < queue.getQueueSize() && toTrack != fromTrack) {
+                    const bool shuffled = queue.isShuffleEnabled();
+
+                    // Work in play order, as the bumper path does: while shuffling a row's slot and its track index differ.
+                    const int playFrom = m_queueWindowStart + origIdx;
+                    const int playTo   = m_queueWindowStart + targetIdx;
+
+                    if (playTo >= 0 && playTo < queue.getQueueSize() && playTo != playFrom) {
+                        // Anchor the move to the track that will precede it: the target when dragging down, the row above when dragging up.
                         if (queue.isServerSynced()) {
-                            const auto& q = queue.getQueue();
+                            const auto& q  = queue.getQueue();
+                            const auto& so = queue.getShuffleOrder();
+                            auto absAt = [&](int playPos) -> int {
+                                if (!shuffled) return playPos;
+                                return (playPos >= 0 && playPos < (int)so.size()) ? so[playPos] : -1;
+                            };
                             int pqItemID = (fromTrack < (int)q.size()) ? q[fromTrack].playQueueItemID : 0;
-                            int afterPQItemID = (toTrack > 0 && toTrack - 1 < (int)q.size())
-                                                    ? q[toTrack - 1].playQueueItemID : 0;
+                            int anchorAbs = absAt((playTo > playFrom) ? playTo : playTo - 1);
+                            int afterPQItemID = (anchorAbs >= 0 && anchorAbs < (int)q.size())
+                                                    ? q[anchorAbs].playQueueItemID : 0;
                             if (pqItemID > 0)
                                 PlexClient::getInstance().movePlayQueueItem(
                                     queue.getPlayQueueID(), pqItemID, afterPQItemID);
                         }
-                        queue.moveTrack(fromTrack, toTrack);
+                        // moveInPlayOrder, not moveTrack: while shuffling, play order is the shuffle order and m_queue must not move.
+                        queue.moveInPlayOrder(playFrom, playTo);
                         committed = true;
                         brls::sync([this, targetIdx]() {
                             populateQueueList();
@@ -4916,9 +4341,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
             }
         }, brls::PanAxis::VERTICAL));
 
-    // Tap / A to play this track (suppressed right after a drag-reorder). While
-    // a track is grabbed for reorder, A/OK drops it instead of playing — so
-    // click-to-play still works normally whenever nothing is grabbed.
+    // Tap to play, suppressed right after a drag; while a track is grabbed, A drops it instead.
     row->registerClickAction([this, row](brls::View* view) {
         if (m_dragState.justEnded) {
             m_dragState.justEnded = false;
@@ -4937,8 +4360,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
     });
     row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
 
-    // On focus: reveal this row's remove affordance, tint its background, and
-    // lazy-load nearby thumbnails. Restores the previously focused row.
+    // On focus: reveal the remove affordance, tint the row, lazy-load nearby thumbnails, restore the previous row.
     row->getFocusEvent()->subscribe([this, row](brls::View*) {
         if (m_focusedQueueRow && m_focusedQueueRow != row) {
             m_focusedQueueRow->setBackgroundColor(nvgRGBA(0, 0, 0, 0));
@@ -4951,9 +4373,7 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
             }
         }
         m_focusedQueueRow = row;
-        // Grabbed rows get a gold "lifted" tint (re-applied here so it survives
-        // the rebuild + re-focus that each move triggers); otherwise the normal
-        // focus tint.
+        // Grabbed rows keep a gold lift, re-applied so it survives the rebuild and re-focus each move triggers.
         row->setBackgroundColor(m_queueGrabActive ? nvgRGBA(229, 160, 13, 90)
                                                   : nvgRGB(58, 58, 70));
         auto it = m_queueRowData.find(row);
@@ -4974,8 +4394,7 @@ void PlayerActivity::populateQueueList() {
 
     m_queueBatchActive = false;  // Cancel any in-progress batched population
 
-    // Park focus on the Clear button before tearing down rows so we never
-    // destroy the focused view out from under borealis.
+    // Park focus on Clear before tearing down rows, so the focused view is never destroyed under borealis.
     m_focusedQueueRow = nullptr;
     m_grabLift.reset(0.0f);  // stop any in-flight lift before rows are destroyed
     if (!queueList->getChildren().empty() && queueClearBtn) {
@@ -5000,8 +4419,7 @@ void PlayerActivity::populateQueueList() {
     // Refresh the "Now Playing" header from the current track
     updateNowPlayingBlock();
 
-    // Position of the current track in *play order* (shuffle position when
-    // shuffling). Everything after it is "Up Next".
+    // Position in play order (the shuffle position when shuffling); everything after it is "Up Next".
     int currentPlayPos = shuffled ? queue.getShufflePosition() : currentIndex;
     int firstUpNext = currentPlayPos + 1;
     int upcoming = (count > firstUpNext) ? (count - firstUpNext) : 0;
@@ -5016,8 +4434,7 @@ void PlayerActivity::populateQueueList() {
         }
     }
 
-    // Window the render so a huge shuffle-all queue doesn't spawn thousands of
-    // rows. Only ever expands toward the end (downward).
+    // Window the render so a huge shuffle-all queue cannot spawn thousands of rows; it only grows downward.
     m_queueWindowStart = firstUpNext < 0 ? 0 : firstUpNext;
     m_queueWindowEnd = std::min(count, m_queueWindowStart + QUEUE_RENDER_LIMIT);
     int windowSize = std::max(0, m_queueWindowEnd - m_queueWindowStart);
@@ -5062,8 +4479,7 @@ void PlayerActivity::populateQueueList() {
         linkFirstRowToClear();
         loadQueueThumbsAroundIndex(0);
         if (m_queueOverlayVisible && queueList && !queueList->getChildren().empty()) {
-            // After a reorder, land on the moved track's new slot; otherwise the
-            // first row.
+            // After a reorder, land on the moved track's new slot; otherwise the first row.
             int fc = (m_queueFocusTargetChild >= 0) ? m_queueFocusTargetChild : 0;
             fc = std::min(std::max(fc, 0), (int)queueList->getChildren().size() - 1);
             brls::Application::giveFocus(queueList->getChildren()[fc]);
@@ -5145,11 +4561,7 @@ void PlayerActivity::removeQueueTrackByIndex(int trackIdx) {
 }
 
 void PlayerActivity::linkFirstRowToClear() {
-    // The up-next list lives in a ScrollingFrame, which traps UP navigation at
-    // its first row. Route UP off that row to the Clear button sitting above the
-    // list so focus can escape upward. (Entering the list via DOWN from Clear is
-    // not trapped, so it needs no route.) The route points from the ephemeral
-    // row to the stable Clear button, so it can't dangle across rebuilds.
+    // A ScrollingFrame traps UP at its first row, so route that row to the stable Clear button above.
     if (!queueList || !queueClearBtn) return;
     auto& children = queueList->getChildren();
     if (!children.empty()) {
@@ -5185,17 +4597,12 @@ void PlayerActivity::moveFocusedQueueTrack(int direction) {
     MusicQueue& queue = MusicQueue::getInstance();
     const bool shuffled = queue.isShuffleEnabled();
 
-    // Work in PLAY order. A row's position in the rendered window is its play
-    // position (window child index + window start); when shuffled that's a
-    // shuffle-order index, otherwise an absolute queue index. The track each row
-    // shows is its stored (absolute) trackIdx.
+    // Work in play order: a row's slot is window start plus child index, while the track it shows is absolute.
     const int playFrom = m_queueWindowStart + childIdx;
     const int playTo   = m_queueWindowStart + targetChild;
     const int absFrom  = itFrom->second.trackIdx;
 
-    // Server sync: move the item after its new play-order predecessor (the track
-    // that will sit just before it). Resolve neighbours through the shuffle order
-    // when shuffled so the anchor is the right track, not an absolute neighbour.
+    // Move the item after its new play-order predecessor, resolved through the shuffle order when shuffling.
     if (queue.isServerSynced()) {
         const auto& q  = queue.getQueue();
         const auto& so = queue.getShuffleOrder();
@@ -5212,32 +4619,21 @@ void PlayerActivity::moveFocusedQueueTrack(int direction) {
         }
     }
 
-    // Reorder play order: the shuffle order when shuffled (m_queue untouched),
-    // the queue itself otherwise.
+    // Reorder play order: the shuffle order when shuffled (m_queue untouched), the queue itself otherwise.
     queue.moveInPlayOrder(playFrom, playTo);
 
-    // Swap the two adjacent row views in place — never a full rebuild. This
-    // covers every adjacent reorder (mid-list, first row, shuffled), so moving a
-    // track (including to the very top) doesn't tear down and rebuild the list:
-    // no cover-reload flicker, and the row keeps focus since its view isn't
-    // destroyed.
+    // Swap the two rows in place rather than rebuilding: no cover flicker, and focus survives.
     brls::View* rowFrom = children[childIdx];
     queueList->removeView(rowFrom, /*free=*/false);  // detach, don't destroy
     queueList->addView(rowFrom, targetChild);        // re-insert at new slot
-    // Non-shuffled: moveInPlayOrder swapped the two tracks' absolute indices, so
-    // swap the rows' stored trackIdx to match. Shuffled: m_queue (and each row's
-    // absolute trackIdx) is unchanged, so the rows keep their trackIdx as-is.
+    // Unshuffled, the two tracks' absolute indices swapped, so swap the rows' trackIdx; shuffled, m_queue is untouched.
     if (!shuffled) std::swap(itFrom->second.trackIdx, itTo->second.trackIdx);
-    // Row order (and possibly the first row) changed — keep the UP->Clear escape
-    // routes correct around the swap.
+    // Row order (and possibly the first row) changed — keep the UP->Clear escape routes correct around the swap.
     refixQueueUpRoutes(std::min(childIdx, targetChild));
-    // The row never lost focus, so giveFocus is a no-op and won't scroll; scroll
-    // the moved row into view explicitly so grab-mode hold-to-move follows it.
+    // The row never lost focus, so giveFocus will not scroll; scroll it in explicitly so hold-to-move follows it.
     brls::Application::giveFocus(rowFrom);
     scrollQueueToChild(targetChild);
-    // moveInPlayOrder bumped the queue version; sync our cache so the periodic
-    // refresh (which rebuilds on a version change) doesn't tear down and rebuild
-    // the list we just hand-edited.
+    // moveInPlayOrder bumped the version, so sync the cache or the periodic refresh rebuilds what we just hand-edited.
     m_cachedQueueVersion = queue.getVersion();
     m_lastRenderedCurrentIndex = queue.getCurrentIndex();
 }
@@ -5245,12 +4641,7 @@ void PlayerActivity::moveFocusedQueueTrack(int direction) {
 void PlayerActivity::refixQueueUpRoutes(int lo) {
     if (!queueList || !queueClearBtn) return;
     auto& ch = queueList->getChildren();
-    // Re-point the rows whose correct upward neighbour could have changed: the
-    // two swapped rows (lo, lo+1) and the one just below (lo+2), whose neighbour
-    // is now a different object. Row 0 escapes to Clear; the rest point at the
-    // row above. Rows outside this window keep their existing (still-correct)
-    // routes. Only track rows are focusable / routable — skip the "+N more"
-    // label.
+    // Re-point only the rows whose upward neighbour changed; skip the non-focusable "+N more" label.
     for (int i = std::max(0, lo); i <= lo + 2 && i < (int)ch.size(); i++) {
         if (m_queueRowData.find(ch[i]) == m_queueRowData.end()) continue;
         if (i == 0) {
@@ -5263,11 +4654,7 @@ void PlayerActivity::refixQueueUpRoutes(int lo) {
 
 float PlayerActivity::queueMaxScroll() {
     if (!queueScroll || !queueList) return 0.0f;
-    // ScrollingFrame clamps itself against its content view's measured height,
-    // so anything we compute independently -- a row count times an assumed
-    // pitch, plus an assumed padding -- can only ever disagree with it, and
-    // then a scroll either overshoots and snaps back or stops short of the
-    // end. Ask the same question it asks.
+    // Ask ScrollingFrame's own content height; a figure derived from row counts can only disagree with it.
     float contentH = queueList->getHeight();
     if (contentH <= 0.0f)   // not laid out yet: estimate from what we build
         contentH = (float)queueList->getChildren().size() * queueRowPitch();
@@ -5280,8 +4667,7 @@ void PlayerActivity::scrollQueueToChild(int idx) {
     float viewH = queueScroll->getHeight();
     if (viewH <= 0.0f) return;
     float maxScroll = queueMaxScroll();
-    // Center the row (clamped at the ends), matching the list's CENTERED nav so
-    // a grab-mode move keeps the held row centered as the list scrolls under it.
+    // Centre the row, clamped at the ends, matching the list's CENTERED nav so a held row stays put as it scrolls.
     float newOffset = (idx * rowH + rowH / 2.0f) - viewH / 2.0f;
     newOffset = std::min(std::max(newOffset, 0.0f), maxScroll);
     if (std::abs(newOffset - queueScroll->getContentOffsetY()) > 0.5f)
@@ -5294,8 +4680,7 @@ void PlayerActivity::toggleQueueGrab() {
         setQueueGrab(false);
         return;
     }
-    // Only pick up an actual up-next track row — not the Clear button, the
-    // "+N more" label, or the empty-state text.
+    // Only pick up an actual up-next track row — not the Clear button, the "+N more" label, or the empty-state text.
     brls::View* focused = brls::Application::getCurrentFocus();
     if (!focused || m_queueRowData.find(focused) == m_queueRowData.end())
         return;
@@ -5304,13 +4689,11 @@ void PlayerActivity::toggleQueueGrab() {
 
 void PlayerActivity::setQueueGrab(bool on) {
     m_queueGrabActive = on;
-    // Lift the grabbed (focused) row with a gold tint, mirroring the sidebar
-    // editor's grabbed-row cue; restore the normal focus tint on drop.
+    // Gold tint for the grabbed row, mirroring the sidebar editor's cue; the normal focus tint returns on drop.
     if (m_focusedQueueRow) {
         m_focusedQueueRow->setBackgroundColor(on ? nvgRGBA(229, 160, 13, 90)
                                                   : nvgRGB(58, 58, 70));
-        // Slide the row out (pop on pickup) / settle it back (on drop), with a
-        // shadow while held so the lift reads physically, not just by colour.
+        // Pop on pickup, settle on drop, with a shadow while held so the lift reads physically rather than by colour alone.
         animateGrabLift(on);
     }
     if (on) {
@@ -5321,12 +4704,7 @@ void PlayerActivity::setQueueGrab(bool on) {
 void PlayerActivity::animateGrabLift(bool lifted) {
     brls::Box* row = m_focusedQueueRow;
     if (!row) return;
-    // Capture the specific row so the animation always targets it (not whoever
-    // holds focus later) — a quick drop-then-navigate can't tug a different
-    // row. The m_queueRowData lookup guards against the row being torn down by
-    // a rebuild mid-animation (populateQueueList clears the map first).
-    // Detach any prior end callback first so the reset() below can't fire a
-    // stale shadow-cleanup (e.g. a re-pickup that interrupts a settle-back).
+    // Capture this row so a later focus change cannot tug a different one, and drop any stale end callback.
     m_grabLift.setEndCallback([](bool) {});
     m_grabLift.reset(m_grabLift.getValue());
     if (lifted) {
@@ -5416,8 +4794,7 @@ void PlayerActivity::populateQueueBatch() {
         loadQueueThumbsAroundIndex(childFocusIdx);
         linkFirstRowToClear();
 
-        // Give focus to the current track now that all rows exist — or, after a
-        // reorder, to the moved track's new slot.
+        // Give focus to the current track now that all rows exist — or, after a reorder, to the moved track's new slot.
         if (m_queueOverlayVisible && queueList && !queueList->getChildren().empty()) {
             if (m_queueFocusTargetChild >= 0) childFocusIdx = m_queueFocusTargetChild;
             childFocusIdx = std::min(childFocusIdx, (int)queueList->getChildren().size() - 1);
@@ -5498,14 +4875,11 @@ void PlayerActivity::expandQueueBatch() {
 void PlayerActivity::loadQueueThumbsAroundIndex(int displayIndex) {
     if (m_deferredThumbs.empty()) return;
 
-    // Load thumbnails for a window around the given display index
-    // Queue scroll is 320px with ~62px rows = ~5 visible rows
+    // Load thumbnails for a window around this row; the 320px scroll shows about five 62px rows.
     int start = std::max(0, displayIndex - QUEUE_THUMB_BUFFER);
     int end = std::min((int)m_deferredThumbs.size(), displayIndex + QUEUE_THUMB_BUFFER + 6);
 
-    // Temporarily unpause so loadAsync accepts the requests, then re-pause.
-    // The async workers no longer check the pause flag, so queued loads
-    // will complete even after we re-pause here.
+    // Unpause so loadAsync accepts the requests, then re-pause; the workers no longer check the flag, so they finish.
     ImageLoader::setPaused(false);
 
     PlexClient& client = PlexClient::getInstance();
@@ -5559,8 +4933,7 @@ void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB, bool skipTh
     brls::Box* rowA = (brls::Box*)children[displayIdxA];
     brls::Box* rowB = (brls::Box*)children[displayIdxB];
 
-    // Row structure: [thumb(Image)] [textBox(Box)] [durLbl(Label, optional)]
-    // textBox children: [titleLbl(Label)] [artistLbl(Label, optional)]
+    // Row is [thumb][textBox][durLbl?], and textBox is [titleLbl][artistLbl?].
     auto& childrenA = rowA->getChildren();
     auto& childrenB = rowB->getChildren();
     if (childrenA.size() < 2 || childrenB.size() < 2) return;
@@ -5576,9 +4949,7 @@ void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB, bool skipTh
     QueueRowData dataB = itB->second;
     itA->second = dataB;
     itB->second = dataA;
-    // Swap trackIdx back - moveTrack already rearranged the queue array
-    // so each display position's trackIdx should stay pointing to its
-    // corresponding queue slot (the items swapped in the queue too)
+    // Swap trackIdx back: moveTrack already rearranged the queue, so each slot's index must follow its own position.
     std::swap(itA->second.trackIdx, itB->second.trackIdx);
 
     // --- Swap thumbnail images ---
@@ -5595,8 +4966,7 @@ void PlayerActivity::swapQueueRows(int displayIdxA, int displayIdxB, bool skipTh
         // Re-point image pointers to their current rows
         dtA.image = thumbA;
         dtB.image = thumbB;
-        // Reload thumbnails to reflect the swap (skip during chained swaps
-        // to avoid race conditions - caller will reload after all swaps)
+        // Reload thumbnails for the swap, skipped during chained swaps since the caller reloads once at the end.
         if (!skipThumbReload) {
             PlexClient& swapClient = PlexClient::getInstance();
             if (dtA.loaded && !dtA.thumbPath.empty()) {
@@ -5731,17 +5101,10 @@ void PlayerActivity::reassignQueueRange(int origIdx, int targetIdx) {
     bool shuffled = queue.isShuffleEnabled();
     const auto& shuffleOrder = queue.getShuffleOrder();
 
-    // Move the dragged row widget using borealis's own API so the Yoga
-    // layout engine properly recalculates positions. The widget keeps
-    // its loaded cover texture - no re-fetch needed.
+    // Move the widget through borealis' own API so Yoga recalculates; it keeps its cover texture, so nothing re-fetches.
     brls::View* draggedView = children[origIdx];
     queueList->removeView(draggedView, false);  // detach without deleting
-    // After removal, indices above origIdx shift down by 1.
-    // To land at the correct final position we must adjust:
-    // Moving down (orig < target): target was shifted down, so insert at target
-    //   (the gap closes above, target-1 is now correct but addView inserts
-    //    BEFORE the element at that index, so we still use target)
-    // Moving up (orig > target): nothing above target shifted, insert at target
+    // After removal everything above origIdx shifts down one, so insert at targetIdx either way.
     queueList->addView(draggedView, (size_t)targetIdx);
 
     // Rotate the deferred thumbnails to stay in sync with children order
@@ -5759,10 +5122,7 @@ void PlayerActivity::reassignQueueRange(int origIdx, int targetIdx) {
         }
     }
 
-    // Update lightweight metadata for each row in the affected range:
-    // QueueRowData trackIdx and current-track highlight colors.
-    // The view content (cover, title text, artist, duration) moved with
-    // the widget - we only fix the metadata mapping.
+    // Only the metadata needs fixing — trackIdx and the current-track tint; the content moved with the widget.
     for (int di = rangeStart; di <= rangeEnd && di < (int)children.size(); di++) {
         brls::Box* rowBox = (brls::Box*)children[di];
 
@@ -5856,10 +5216,7 @@ void PlayerActivity::removeQueueRow(int displayIdx) {
     if (m_queueWindowEnd > 0) m_queueWindowEnd--;
     m_queueTotalCount = MusicQueue::getInstance().getQueueSize();
 
-    // Update track index mappings - indices in MusicQueue shifted after removeTrack
-    // We need to update any entries that had track indices > the removed one
-    // The removeTrack already happened, so indices have been adjusted in the queue
-    // Rebuild the map from the queue's current state
+    // removeTrack already shifted the queue's indices, so rebuild the row map from its current state.
     MusicQueue& queue = MusicQueue::getInstance();
     const auto& tracks = queue.getQueue();
     bool shuffled = queue.isShuffleEnabled();
@@ -5936,9 +5293,7 @@ void PlayerActivity::playFromQueue(int index) {
 
     MusicQueue& queue = MusicQueue::getInstance();
     if (queue.playTrack(index)) {
-        // Hide queue overlay first (safe - just changes visibility). Only when
-        // it's actually up: this also runs for a row picked in the OS up-next
-        // list, and hideQueueOverlay() moves focus.
+        // Hide the overlay first, and only when it is up: this also runs for a row picked in the OS up-next list.
         if (m_queueOverlayVisible) hideQueueOverlay();
 
         // Stop current playback
@@ -5953,9 +5308,7 @@ void PlayerActivity::playFromQueue(int index) {
 // Controls visibility toggle (like Suwayomi reader settings show/hide)
 
 void PlayerActivity::updateSkipButton(double positionMs) {
-    // Watch party followers don't skip on their own — the host drives and the
-    // follower seeks to match. Suppress auto-skip and hide the manual skip
-    // button so a follower can't desync past the intro/credits independently.
+    // Followers do not skip on their own, so suppress auto-skip and hide the button rather than let them desync.
     {
         auto& sl = SyncLoungeSession::instance();
         if (sl.isConnected() && !sl.isHost()) {
@@ -6063,8 +5416,7 @@ void PlayerActivity::skipToMarkerEnd() {
     if (seekToSec > 0) {
         MpvPlayer::getInstance().seekTo(seekToSec);
         brls::Logger::info("PlayerActivity: Manually skipped {} to {}ms", m_activeMarkerType, m_activeMarkerEndMs);
-        // Host: announce the skip so the party jumps with us right away instead
-        // of waiting for the periodic state broadcast.
+        // Host: announce the skip so the party jumps at once instead of waiting for the periodic broadcast.
         syncLoungeReportUserAction(MpvPlayer::getInstance().isPaused() ? "paused" : "playing",
                                    m_activeMarkerEndMs);
 
@@ -6079,18 +5431,7 @@ void PlayerActivity::skipToMarkerEnd() {
     if (skipBtn) skipBtn->setVisibility(brls::Visibility::GONE);
 }
 
-// Enable/disable the A (click) action on every control in a subtree.
-//
-// hideControls() cannot move focus off the controls — giveFocus() resolves
-// through getDefaultFocus(), which refuses a view that isn't VISIBLE, so the
-// button that had focus keeps it while invisible. borealis dispatches A from
-// the focused view upward and stops at the first handler that consumes it, so
-// that invisible button, not the activity, is what answers the press. Marking
-// its action unavailable lets A fall through to the activity handler, which
-// raises the OSD instead.
-// Only views that actually carry the action are touched: setActionAvailable()
-// fires the global hints-update event whether or not it matched, and this runs
-// on every auto-hide.
+// An invisible focused button still answers A, so mark its action unavailable and let the press fall through.
 static void setSubtreeClickAvailable(brls::View* v, bool available) {
     if (!v) return;
     for (const auto& a : v->getActions()) {
@@ -6118,10 +5459,7 @@ void PlayerActivity::resetControlsIdleTimer() {
     m_controlsIdleSeconds = 0;
 }
 
-// The video OSD's top bar and bottom scrim are not children of controlsBox or
-// centerControls, so they have to be raised and lowered alongside them or the
-// title and the gradients stay on screen over a hidden OSD. Null in the other
-// two layouts, where getView() simply finds nothing.
+// The OSD's top bar and bottom scrim are not children of the control boxes, so they must be raised and lowered too.
 void PlayerActivity::setVideoOsdChromeVisible(bool visible) {
     if (!m_videoOsd) return;
     const auto vis = visible ? brls::Visibility::VISIBLE : brls::Visibility::GONE;
@@ -6173,36 +5511,16 @@ void PlayerActivity::hideControls() {
         centerControls->setVisibility(brls::Visibility::GONE);
     }
     setVideoOsdChromeVisible(false);
-    // Focus stays on whichever control had it, so hand A back to the activity —
-    // otherwise the press lands on an invisible button (queue, audio, subtitles)
-    // and opens its overlay over a hidden OSD.
+    // Focus stays where it was, so hand A back to the activity or the press opens an overlay over a hidden OSD.
     setSubtreeClickAvailable(controlsBox, false);
     setSubtreeClickAvailable(centerControls, false);
 }
 
-// ─── MPV stats overlay ─────────────────────────────────────────────────
-//
-// Fires once per second from updateProgress(). The whole point is to
-// surface enough information that you can tell why playback is choppy
-// without an adb cable:
-//
-//   - decoder-frame-drop-count   high → decode can't keep up (try
-//                                 hwdec change, profile=fast,
-//                                 vd-lavc-fast).
-//   - frame-drop-count           high → vo/display dropping frames
-//                                 (try video-sync change or vo=gpu).
-//   - estimated-vf-fps vs        big gap → render path is the
-//     container-fps               bottleneck.
-//   - paused-for-cache true /    network can't sustain bitrate; lower
-//     low cache-speed             quality or use the local network.
-//
-// The label is built lazily so toggling the setting off doesn't leave
-// any view tree overhead behind.
+// ─── MPV stats overlay: once a second, enough to diagnose choppy playback without adb (see DESIGN_NOTES) ───
 void PlayerActivity::updateMpvStatsOverlay() {
     bool wanted = Application::getInstance().getSettings().showMpvStats;
 
-    // Tear down when the toggle is off so we don't pay layout / paint
-    // cost while the user isn't looking at stats.
+    // Tear down when the toggle is off so we don't pay layout / paint cost while the user isn't looking at stats.
     if (!wanted) {
         if (m_mpvStatsBox && playerContainer) {
             playerContainer->removeView(m_mpvStatsBox);
@@ -6234,19 +5552,13 @@ void PlayerActivity::updateMpvStatsOverlay() {
         return;
     }
 
-    // Trim helper — mpv returns "" for missing properties, "yes"/"no"
-    // for flags, and a number/string otherwise. We just feed them
-    // straight into the label.
+    // mpv returns "" for missing properties and "yes"/"no" for flags; both go straight into the label.
     auto get = [&p](const char* name) -> std::string {
         std::string v = p.getProperty(name);
         return v.empty() ? std::string("?") : v;
     };
 
-    // Format cache-speed (bytes/sec) the same way switchfin does in
-    // mpv_core.cpp so the units match what the user sees in logs.
-    // snprintf instead of fmt::format because the rest of the project
-    // only pulls fmt in via borealis::Logger and that symbol isn't
-    // guaranteed to be linked here.
+    // Format cache-speed as switchfin does so units match the logs; snprintf, since fmt may not be linked here.
     auto fmtSpeed = [&]() -> std::string {
         std::string raw = p.getProperty("cache-speed");
         if (raw.empty()) return "?";
@@ -6273,8 +5585,7 @@ void PlayerActivity::updateMpvStatsOverlay() {
     std::string body;
     body.reserve(256);
 
-    // Audio-only leaves every video property unset, which rendered as a column
-    // of "?". Asked of mpv, not m_isQueueMode, so a videoless file reads right.
+    // Audio-only leaves the video properties unset, which read as a column of "?"; ask mpv, not m_isQueueMode.
     const bool hasVideo = !p.getProperty("video-codec").empty();
 
     if (hasVideo) {

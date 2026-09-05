@@ -231,8 +231,7 @@ bool supports4KDecode() {
 // switches refresh rates nor sees HDR capabilities here, so both stay no-ops.
 void setPreferredRefreshRate(float) {}
 bool displaySupportsHdr() { return false; }
-// No way to ask what the audio sink accepts, so everything is decoded to PCM
-// exactly as before.
+// No way to ask what the audio sink accepts, so everything is decoded to PCM exactly as before.
 int passthroughCodecs() { return 0; }
 // No platform caption preferences here, so subtitles keep the app's styling.
 const CaptionStyle& getSystemCaptionStyle() {
@@ -240,6 +239,7 @@ const CaptionStyle& getSystemCaptionStyle() {
     return none;
 }
 // No deep-link plumbing on this port; nothing ever hands us a URL.
+void offerDeepLink(const std::string&) {}
 std::string takePendingDeepLink() { return {}; }
 void setDeepLinkHandler(std::function<void()>) {}
 

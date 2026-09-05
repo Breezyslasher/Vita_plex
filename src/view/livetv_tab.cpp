@@ -93,8 +93,7 @@ public:
     }
 
 private:
-    // Return the first focusable descendant of `root` whose horizontal
-    // range [X, X+W) contains the probe X.
+    // Return the first focusable descendant of `root` whose horizontal range [X, X+W) contains the probe X.
     static brls::View* findFocusableContainingX(brls::View* root, float x) {
         if (!root || root->getVisibility() != brls::Visibility::VISIBLE) return nullptr;
         if (root->isFocusable()) {
@@ -519,8 +518,7 @@ void LiveTVTab::draw(NVGcontext* vg, float x, float y, float width, float height
     const int64_t pf1 = brls::getCPUTimeUsec();
     m_perfCullUs += pf1 - pf0;
 
-    // Slide the cyan "now" line each frame so it tracks the wall clock
-    // even when the guide grid itself doesn't rebuild.
+    // Slide the cyan "now" line each frame so it tracks the wall clock even when the guide grid itself doesn't rebuild.
     updateCurrentTimeLine();
 
     // Horizontal scroll sync. Each guide row has its own HScrollingFrame
@@ -1042,8 +1040,7 @@ void LiveTVTab::buildHero() {
         onChannelSelected(m_heroChannel);
         return true;
     });
-    // Touch support: a tap on the button triggers the primary action
-    // (BUTTON_A click) just like the dpad would.
+    // Touch support: a tap on the button triggers the primary action (BUTTON_A click) just like the dpad would.
     m_heroWatchBtn->addGestureRecognizer(new brls::TapGestureRecognizer(m_heroWatchBtn));
     btnRow->addView(m_heroWatchBtn);
 
@@ -1846,8 +1843,7 @@ bool LiveTVTab::streamGuideRowCells(GuideRowCursor& cur, int64_t deadlineUs) {
         progCell->setFocusable(true);
         progCell->setHideHighlightBackground(true);
 
-        // Label-less cell — text painted in batch by draw() via
-        // nvgTextBatchBegin/End. See the main loop above.
+        // Label-less cell — text painted in batch by draw() via nvgTextBatchBegin/End. See the main loop above.
         EpgCellInfo info;
         info.cell = progCell;
         info.scroll = programsScroll;
@@ -2023,8 +2019,7 @@ void LiveTVTab::buildEPGGrid() {
     int gridHours = m_hoursToShow;
     int totalSlots = gridHours * 2;
 
-    // Time header — each 30-min slot. Bold muted labels, left hairline
-    // separating slots.
+    // Time header — each 30-min slot. Bold muted labels, left hairline separating slots.
     for (int i = 0; i < totalSlots; i++) {
         int64_t slotTime = m_guideStartTime + (i * 1800);
 
@@ -2303,8 +2298,7 @@ void LiveTVTab::loadScheduled() {
                     objEnd++;
                 }
                 std::string obj = resp.body.substr(objStart, objEnd - objStart);
-                // Restrict to the nested Metadata object so the grab's own
-                // "key" doesn't shadow Metadata.key.
+                // Restrict to the nested Metadata object so the grab's own "key" doesn't shadow Metadata.key.
                 size_t md = obj.find("\"Metadata\"");
                 std::string metaObj = (md == std::string::npos) ? obj : obj.substr(md);
                 std::string mk = client.extractJsonValuePublic(metaObj, "key");

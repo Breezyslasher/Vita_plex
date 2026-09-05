@@ -771,8 +771,7 @@ void openRecordOptionsDialog(const MediaItem& item, RecordingTemplate tmpl,
             });
         settingsBox->addView(stW->newAiringsRowBox);
 
-        // Every row picks the same two ways: left/right steps in place,
-        // click opens a dropdown of the whole ladder.
+        // Every row picks the same two ways: left/right steps in place, click opens a dropdown of the whole ladder.
         auto offsetRow = [&settingsBox, stW](const char* label, const char* pickerTitle,
                                              SettingRowState* rowState, int RecordingPrefs::*field) {
             settingsBox->addView(makeSettingRow(label, rowState,
@@ -1007,8 +1006,7 @@ void openRecordOptionsDialog(const MediaItem& item, RecordingTemplate tmpl,
     scrim->addGestureRecognizer(new brls::TapGestureRecognizer(scrim,
         []() { brls::Application::popActivity(); }));
 
-    // Keep the dialog inside the viewport on 544-tall screens: the panel
-    // is near full height there by design.
+    // Keep the dialog inside the viewport on 544-tall screens: the panel is near full height there by design.
     (void)screenH;
 
     brls::Application::pushActivity(new OverlayActivity(scrim));
@@ -1099,8 +1097,7 @@ void showOptionPicker(const std::string& title, const std::vector<std::string>& 
     panel->addView(list);
     scrim->addView(panel);
 
-    // Cap the panel so a long library list scrolls the screen's worth it
-    // has rather than growing past the viewport.
+    // Cap the panel so a long library list scrolls the screen's worth it has rather than growing past the viewport.
     if (44.0f * (float)options.size() + 60.0f > screenH - 80.0f) {
         panel->setHeight(screenH - 80.0f);
     }

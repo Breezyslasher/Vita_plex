@@ -150,8 +150,7 @@ const VideoConstraints& getVideoConstraints() {
 }
 
 bool supports4KDecode() {
-    // Software decode on a desktop CPU handles 2160p; mpv falls back to it when
-    // no hardware path exists.
+    // Software decode on a desktop CPU handles 2160p; mpv falls back to it when no hardware path exists.
     return true;
 }
 
@@ -159,17 +158,37 @@ bool supports4KDecode() {
 // switches refresh rates nor sees HDR capabilities here, so both stay no-ops.
 void setPreferredRefreshRate(float) {}
 bool displaySupportsHdr() { return false; }
-// No way to ask what the audio sink accepts, so everything is decoded to PCM
-// exactly as before.
+// No way to ask what the audio sink accepts, so everything is decoded to PCM exactly as before.
 int passthroughCodecs() { return 0; }
 // No platform caption preferences here, so subtitles keep the app's styling.
 const CaptionStyle& getSystemCaptionStyle() {
     static const CaptionStyle none;
     return none;
 }
-// No deep-link plumbing on this port; nothing ever hands us a URL.
-std::string takePendingDeepLink() { return {}; }
-void setDeepLinkHandler(std::function<void()>) {}
+// Deep links arrive as argv[1] and are collected once the UI is up.
+namespace {
+std::string g_pendingDeepLink;
+std::function<void()> g_deepLinkHandler;
+}
+
+void offerDeepLink(const std::string& url) {
+    if (url.empty()) return;
+    g_pendingDeepLink = url;
+    if (g_deepLinkHandler) g_deepLinkHandler();
+}
+
+std::string takePendingDeepLink() {
+    std::string out;
+    out.swap(g_pendingDeepLink);
+    return out;
+}
+
+void setDeepLinkHandler(std::function<void()> onLinkArrived) {
+    g_deepLinkHandler = std::move(onLinkArrived);
+    // A link that arrived on the command line is already waiting by the time
+    // MainActivity registers, so tell it straight away.
+    if (g_deepLinkHandler && !g_pendingDeepLink.empty()) g_deepLinkHandler();
+}
 
 bool init() {
     if (!::vitaplex::HttpClient::globalInit()) {

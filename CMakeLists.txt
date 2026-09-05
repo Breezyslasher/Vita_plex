@@ -355,6 +355,9 @@ if(PLATFORM_ANDROID)
     # Media browsing bridge (Android Auto / Assistant / Wear) — native half of
     # org.VitaPlex.app.LibraryBrowserService.
     list(APPEND APP_SOURCES src/platform/android_media_browser.cpp)
+    # Download notifications — native half of
+    # org.VitaPlex.app.DownloadNotification (see utils/shell_integration.hpp).
+    list(APPEND APP_SOURCES src/utils/shell_integration_android.cpp)
 endif()
 
 
@@ -962,6 +965,135 @@ int main() {
             message(STATUS "WinRT SMTC unavailable — disabled. Probe output:\n${_smtc_out}")
         endif()
 
+        # Windows shell integration: taskbar progress bar, AppUserModelID, and
+        # a toast when a download finishes (see utils/shell_integration.hpp).
+        # The first two are plain COM and always available; the toast needs the
+        # WinRT notification headers, which older mingw-w64 does not ship, so
+        # probe for them the same way SMTC's optional pieces are probed. Without
+        # them notify() flashes the taskbar button instead, which needs nothing.
+        target_sources(${PROJECT_NAME} PRIVATE src/utils/shell_integration_win.cpp)
+        # shlwapi: propvarutil.h's InitPropVariantFromString is an inline that
+        # calls SHStrDupW, so it is a link-time dependency of the shortcut code
+        # even though nothing here names it.
+        target_link_libraries(${PROJECT_NAME} ole32 shell32 shlwapi propsys user32 uuid)
+
+        set(_toast_probe "${CMAKE_BINARY_DIR}/toast_probe.cpp")
+        file(WRITE "${_toast_probe}" [==[
+#include <windows.h>
+#include <roapi.h>
+#include <wrl.h>
+#include <wrl/wrappers/corewrappers.h>
+#include <windows.ui.notifications.h>
+#include <windows.data.xml.dom.h>
+using Microsoft::WRL::ComPtr;
+using Microsoft::WRL::Wrappers::HStringReference;
+namespace WUN = ABI::Windows::UI::Notifications;
+namespace WDX = ABI::Windows::Data::Xml::Dom;
+int main() {
+    ComPtr<WUN::IToastNotificationManagerStatics> mgr;
+    RoGetActivationFactory(
+        HStringReference(RuntimeClass_Windows_UI_Notifications_ToastNotificationManager).Get(),
+        IID_PPV_ARGS(&mgr));
+    ComPtr<WUN::IToastNotifier> notifier;
+    mgr->CreateToastNotifierWithId(HStringReference(L"x").Get(), &notifier);
+    ComPtr<WDX::IXmlDocument> doc;
+    RoActivateInstance(HStringReference(RuntimeClass_Windows_Data_Xml_Dom_XmlDocument).Get(),
+                       (IInspectable**)doc.GetAddressOf());
+    ComPtr<WDX::IXmlDocumentIO> io;
+    doc.As(&io);
+    io->LoadXml(HStringReference(L"<toast/>").Get());
+    ComPtr<WUN::IToastNotificationFactory> f;
+    RoGetActivationFactory(
+        HStringReference(RuntimeClass_Windows_UI_Notifications_ToastNotification).Get(),
+        IID_PPV_ARGS(&f));
+    ComPtr<WUN::IToastNotification> toast;
+    f->CreateToastNotification(doc.Get(), &toast);
+    notifier->Show(toast.Get());
+    return 0;
+}
+]==])
+        try_compile(VITAPLEX_HAVE_TOAST "${CMAKE_BINARY_DIR}/toast_probe_bin"
+            SOURCES "${_toast_probe}"
+            LINK_LIBRARIES runtimeobject ole32
+            CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON
+            OUTPUT_VARIABLE _toast_out)
+        if(VITAPLEX_HAVE_TOAST)
+            message(STATUS "Toast notifications enabled")
+            target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_HAVE_TOAST=1)
+            target_link_libraries(${PROJECT_NAME} runtimeobject)
+
+            # Live download progress inside the toast. Needs the data-binding
+            # half of the API — NotificationData, IToastNotification2::put_Data
+            # and IToastNotifier2::UpdateWithTag — which is newer than the base
+            # toast interfaces and missing from some mingw-w64 header sets.
+            # Probed separately so a gap here costs only the text in the toast:
+            # the taskbar progress bar and the completion toast are unaffected.
+            #
+            # This probe deliberately mirrors the call sequence in
+            # shell_integration_win.cpp, so if it compiles, that code does too.
+            set(_toastprog_probe "${CMAKE_BINARY_DIR}/toastprog_probe.cpp")
+            file(WRITE "${_toastprog_probe}" [==[
+#include <windows.h>
+#include <roapi.h>
+#include <wrl.h>
+#include <wrl/wrappers/corewrappers.h>
+#include <windows.ui.notifications.h>
+#include <windows.foundation.collections.h>
+using Microsoft::WRL::ComPtr;
+using Microsoft::WRL::Wrappers::HStringReference;
+namespace WUN = ABI::Windows::UI::Notifications;
+int main() {
+    ComPtr<IInspectable> insp;
+    RoActivateInstance(
+        HStringReference(RuntimeClass_Windows_UI_Notifications_NotificationData).Get(), &insp);
+    ComPtr<WUN::INotificationData> data;
+    insp.As(&data);
+    ComPtr<ABI::Windows::Foundation::Collections::IMap<HSTRING, HSTRING>> values;
+    data->get_Values(&values);
+    boolean replaced = false;
+    values->Insert(HStringReference(L"progressValue").Get(),
+                   HStringReference(L"0.5").Get(), &replaced);
+    data->put_SequenceNumber(1);
+    ComPtr<WUN::IToastNotification> toast;
+    ComPtr<WUN::IToastNotification2> toast2;
+    toast.As(&toast2);
+    toast2->put_Tag(HStringReference(L"t").Get());
+    toast2->put_Data(data.Get());
+    ComPtr<WUN::IToastNotifier> notifier;
+    ComPtr<WUN::IToastNotifier2> notifier2;
+    notifier.As(&notifier2);
+    WUN::NotificationUpdateResult r = WUN::NotificationUpdateResult_Failed;
+    notifier2->UpdateWithTag(data.Get(), HStringReference(L"t").Get(), &r);
+    ComPtr<WUN::IToastNotificationManagerStatics2> mgr2;
+    RoGetActivationFactory(
+        HStringReference(RuntimeClass_Windows_UI_Notifications_ToastNotificationManager).Get(),
+        IID_PPV_ARGS(&mgr2));
+    ComPtr<WUN::IToastNotificationHistory> history;
+    mgr2->get_History(&history);
+    history->RemoveGroupedTagWithId(HStringReference(L"t").Get(),
+                                    HStringReference(L"").Get(),
+                                    HStringReference(L"a").Get());
+    return 0;
+}
+]==])
+            try_compile(VITAPLEX_HAVE_TOAST_PROGRESS
+                "${CMAKE_BINARY_DIR}/toastprog_probe_bin"
+                SOURCES "${_toastprog_probe}"
+                LINK_LIBRARIES runtimeobject ole32
+                CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON
+                OUTPUT_VARIABLE _toastprog_out)
+            if(VITAPLEX_HAVE_TOAST_PROGRESS)
+                message(STATUS "Live download progress in the toast enabled")
+                target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_HAVE_TOAST_PROGRESS=1)
+            else()
+                message(STATUS "Toast data-binding API unavailable — download progress "
+                               "shows on the taskbar button only. Probe output:\n${_toastprog_out}")
+            endif()
+        else()
+            message(STATUS "WinRT toast headers unavailable — download notifications "
+                           "fall back to flashing the taskbar button. Probe output:\n${_toast_out}")
+        endif()
+
         # Embed a Win32 version resource so the .exe identifies itself as
         # "VitaPlex" (FileDescription/ProductName). Without it an unpackaged exe
         # has no identity and Windows labels the media overlay "Unknown app";
@@ -980,6 +1112,9 @@ int main() {
             if(DBUS_FOUND)
                 message(STATUS "MPRIS media controls enabled (dbus-1 ${DBUS_VERSION})")
                 target_sources(${PROJECT_NAME} PRIVATE src/utils/now_playing_mpris.cpp)
+                # Same bus, same availability check: desktop notifications and
+                # the launcher progress bar (see utils/shell_integration.hpp).
+                target_sources(${PROJECT_NAME} PRIVATE src/utils/shell_integration_dbus.cpp)
                 target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_MPRIS=1)
                 target_link_libraries(${PROJECT_NAME} PkgConfig::DBUS)
             else()

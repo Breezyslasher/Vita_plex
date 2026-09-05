@@ -174,8 +174,7 @@ constexpr bool kSourceIsDynamic = true;
 constexpr InputSource kDefaultSource = InputSource::KeyboardMouse;
 #endif
 
-// Tracker state. Atomic so reads from the draw thread are race-free
-// against UI-thread writes from brls input events.
+// Tracker state. Atomic so reads from the draw thread are race-free against UI-thread writes from brls input events.
 std::atomic<InputSource> g_source{kDefaultSource};
 std::mutex g_callbacksMutex;
 std::vector<std::function<void()>> g_callbacks;

@@ -13,6 +13,7 @@
 #include "view/settings_tab.hpp"
 #include "view/livetv_actions.hpp"
 #include "utils/app_update.hpp"
+#include "utils/shell_integration.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
 #include "app/plex_palette.hpp"
@@ -166,8 +167,7 @@ SettingsTab::SettingsTab() {
     m_railContainer->setWidth(railWidthForViewport());
     m_railContainer->setBackgroundColor(tok::railBg());
 
-    // Rail header — "Settings" and the signed-in user. Mirrors the
-    // tab header that the main app uses above the sidebar.
+    // Rail header — "Settings" and the signed-in user. Mirrors the tab header that the main app uses above the sidebar.
     auto* railHeader = new brls::Box();
     railHeader->setAxis(brls::Axis::COLUMN);
     railHeader->setPaddingLeft(18);
@@ -205,8 +205,7 @@ SettingsTab::SettingsTab() {
 
     m_railContainer->addView(railHeader);
 
-    // Scrollable list of rail rows — twelve sections fit on desktop,
-    // overflow scrolls on a Vita-sized viewport.
+    // Scrollable list of rail rows — twelve sections fit on desktop, overflow scrolls on a Vita-sized viewport.
     m_railScroll = new brls::ScrollingFrame();
     m_railScroll->setGrow(1.0f);
     m_railScroll->setFocusable(false);  // descend straight onto a row
@@ -408,8 +407,7 @@ brls::Box* SettingsTab::makeRailRow(const std::string& iconPath,
     row->setPaddingRight(10);
     row->setFocusable(true);
 
-    // Teal left-edge bar (4px). Hidden until paintRailRowSelection()
-    // toggles it on for the active row.
+    // Teal left-edge bar (4px). Hidden until paintRailRowSelection() toggles it on for the active row.
     auto* leftBar = new brls::Box();
     leftBar->setPositionType(brls::PositionType::ABSOLUTE);
     leftBar->setPositionLeft(0);
@@ -422,8 +420,7 @@ brls::Box* SettingsTab::makeRailRow(const std::string& iconPath,
     leftBar->setId("rail/selected-bar");
     row->addView(leftBar);
 
-    // Icon — borealis Image with FIT scaling so non-square assets keep
-    // their aspect on the small chip.
+    // Icon — borealis Image with FIT scaling so non-square assets keep their aspect on the small chip.
     auto* icon = new brls::Image();
     icon->setWidth(20);
     icon->setHeight(20);
@@ -441,8 +438,7 @@ brls::Box* SettingsTab::makeRailRow(const std::string& iconPath,
     label->setId("rail/label");
     row->addView(label);
 
-    // Right chevron — `right.png` is small enough to read as a hint
-    // without crowding the row.
+    // Right chevron — `right.png` is small enough to read as a hint without crowding the row.
     auto* chevron = new brls::Image();
     chevron->setWidth(14);
     chevron->setHeight(14);
@@ -1287,6 +1283,26 @@ brls::Box* SettingsTab::createDownloadsSection() {
     });
     box->addView(m_deleteAfterWatchToggle);
 
+#if defined(_WIN32)
+    // Windows only, and deliberately so: this is the one part of the desktop
+    // integration that writes something to the machine. Windows refuses to show
+    // a toast from an unpackaged app unless a Start Menu shortcut exists with a
+    // matching AppUserModelID, so turning this off downgrades the
+    // download-finished notification to a flashing taskbar button — which is
+    // the trade a portable install wants. Toggling it off deletes the shortcut.
+    {
+        auto* shortcutToggle = new brls::BooleanCell();
+        shortcutToggle->init("Start Menu Shortcut (needed for notifications)",
+                             settings.windowsStartMenuShortcut,
+                             [&settings](bool value) {
+            settings.windowsStartMenuShortcut = value;
+            vitaplex::shell::setShortcutAllowed(value);
+            Application::getInstance().saveSettings();
+        });
+        box->addView(shortcutToggle);
+    }
+#endif
+
     // Download quality. Original keeps the source as-is on HEVC-capable
     // platforms (fast, no transcode); a lower tier forces a server-side
     // transcode to that size — smaller files, faster on the Vita, plays
@@ -2071,8 +2087,7 @@ void SettingsTab::onNetworkTest() {
             }
         }
 
-        // ── Build dialog on main thread ──
-        // Capture results by value for the lambda
+        // ── Build dialog on main thread ── Capture results by value for the lambda
         brls::sync([=]() {
             brls::Box* content = new brls::Box();
             content->setAxis(brls::Axis::COLUMN);

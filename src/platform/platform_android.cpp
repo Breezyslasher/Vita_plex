@@ -320,6 +320,10 @@ namespace {
 std::function<void()> g_deepLinkHandler;
 }
 
+// Android delivers links to the activity, which holds them until
+// takePendingDeepLink() below asks. Nothing is offered from a command line.
+void offerDeepLink(const std::string&) {}
+
 std::string takePendingDeepLink() {
     JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
     if (!env) return {};

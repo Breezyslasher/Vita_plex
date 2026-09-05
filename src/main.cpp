@@ -21,6 +21,7 @@
 #endif
 #include "app/application.hpp"
 #include "utils/app_update.hpp"
+#include "utils/shell_integration.hpp"
 #include "app/plex_client.hpp"
 #include "view/media_item_cell.hpp"
 #include "view/recycling_grid.hpp"
@@ -72,6 +73,18 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
     // Where our own executable lives — on Switch the updater replaces it.
     if (argc > 0) vitaplex::app_update::setSelfPath(argv[0]);
 
+    // A URL on the command line is how a desktop deep link arrives: the
+    // .desktop declares x-scheme-handler/plex and x-scheme-handler/vitaplex,
+    // and the shell runs Exec with the URL appended. MainActivity already knows
+    // what to do with one; this is the only piece that was missing.
+    if (argc > 1 && argv[1]) {
+        const std::string arg = argv[1];
+        if (arg.rfind("plex://", 0) == 0 || arg.rfind("vitaplex://", 0) == 0 ||
+            arg.rfind("https://app.plex.tv", 0) == 0) {
+            vitaplex::platform::offerDeepLink(arg);
+        }
+    }
+
     brls::Logger::setLogLevel(brls::LogLevel::LOG_DEBUG);
 
     // Bootstrap the current platform: load native modules, init networking,
@@ -85,6 +98,12 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
         }
         return 1;
     }
+
+    // Declare this process's identity to the shell before any window exists —
+    // on Windows the AppUserModelID is what the taskbar groups the button
+    // under, and what a toast is later sent as, and it has to be set first.
+    // No-op on every other platform.
+    vitaplex::shell::init();
 
     // Initialize Borealis
     if (!brls::Application::init()) {
@@ -128,6 +147,10 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
         }
         return 1;
     }
+
+    // Settings are loaded by now, so the shell can be told whether it may write
+    // the Start Menu shortcut that toasts are keyed on. Windows-only in effect.
+    vitaplex::shell::setShortcutAllowed(app.getSettings().windowsStartMenuShortcut);
 
     // Run application (blocking)
     app.run();

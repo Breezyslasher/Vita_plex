@@ -68,6 +68,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
+    <!-- Keep offline downloads running once the app is backgrounded. Downloads
+         run on a thread in the app process, so without a foreground slot the
+         system is free to reclaim that process mid-album. dataSync is the type
+         Android defines for exactly this, and from targetSdk 34 its own
+         permission is required alongside FOREGROUND_SERVICE. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
     <!-- Hold the CPU (and Wi-Fi radio, via ACCESS_WIFI_STATE above) awake while
          streaming music in the background, so the screen-off device can't suspend
          the CPU / park the Wi-Fi radio and stall the transcode stream. -->
@@ -178,6 +185,15 @@
                 <action android:name="android.intent.action.MEDIA_BUTTON" />
             </intent-filter>
         </service>
+
+        <!-- Holds a foreground slot while offline downloads run, so the process
+             survives being backgrounded. Started by DownloadNotification on the
+             first progress report and stopped when the queue drains; never
+             bound, and no intent-filter — nothing outside the app starts it. -->
+        <service
+            android:name="org.VitaPlex.app.DownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- Headset, Bluetooth and keyboard media keys. Declaring the receiver
              is what lets MediaSessionCompat register a media-button component:

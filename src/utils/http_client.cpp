@@ -392,8 +392,7 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
         curl_easy_setopt(curl, CURLOPT_NOBODY, 1L);
     }
 
-    // Perform request. Redact tokens from the logged URL — req.url commonly
-    // contains ?X-Plex-Token=<long-lived-secret>.
+    // Perform request. Redact tokens from the logged URL — req.url commonly contains ?X-Plex-Token=<long-lived-secret>.
     brls::Logger::debug("HTTP {} {}", req.method, redactTokensInUrl(req.url));
     CURLcode res = curl_easy_perform(curl);
 

@@ -846,8 +846,7 @@ SearchTab::~SearchTab() {
 
 void SearchTab::willDisappear(bool resetState) {
     brls::Box::willDisappear(resetState);
-    // Leaving the tab with the keyboard still up would keep it on screen over
-    // whatever comes next.
+    // Leaving the tab with the keyboard still up would keep it on screen over whatever comes next.
     endNativeTextInput();
     if (m_alive) *m_alive = false;
     if (m_imgAlive) *m_imgAlive = false;
