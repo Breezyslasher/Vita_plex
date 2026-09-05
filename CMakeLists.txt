@@ -745,6 +745,41 @@ if(PLATFORM_PSV)
         ScePromoterUtil_stub
         SceSysmodule_stub
     )
+
+    # Download notifications through SceNotificationUtil — the same popup and
+    # notification-list entry the system uses for its own downloads, including
+    # the BGDL progress form (see utils/shell_integration.hpp).
+    #
+    # Probed rather than assumed: the header is generated from vita-headers and
+    # an older SDK may predate it. Compiled, not linked — a cross toolchain has
+    # no business producing an executable for a feature check.
+    include(CheckCXXSourceCompiles)
+    set(_saved_try_type "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+    check_cxx_source_compiles("
+#include <psp2/notificationutil.h>
+#include <psp2/sysmodule.h>
+int main() {
+    SceNotificationUtilProgressInitParam   a = {};
+    SceNotificationUtilProgressUpdateParam b = {};
+    SceNotificationUtilProgressFinishParam c = {};
+    b.targetProgress = 0.5f;
+    sceNotificationUtilProgressBegin(&a);
+    sceNotificationUtilProgressUpdate(&b);
+    sceNotificationUtilProgressFinish(&c);
+    sceNotificationUtilSendNotification((const SceWChar16*)0);
+    return SCE_SYSMODULE_NOTIFICATION_UTIL;
+}" VITAPLEX_HAVE_PSV_NOTIFY)
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_saved_try_type}")
+
+    target_sources(${PROJECT_NAME} PRIVATE src/utils/shell_integration_psv.cpp)
+    if(VITAPLEX_HAVE_PSV_NOTIFY)
+        message(STATUS "Vita download notifications enabled")
+        target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_HAVE_PSV_NOTIFY=1)
+        target_link_libraries(${PROJECT_NAME} SceNotificationUtil_stub)
+    else()
+        message(STATUS "SceNotificationUtil unavailable — no Vita download notifications")
+    endif()
 elseif(PLATFORM_SWITCH)
     # Required for __wrap_pthread_create in src/utils/switch_stubs.c — floors
     # libmpv/ffmpeg thread stacks above libnx's 128 KB default so they stop
@@ -773,6 +808,35 @@ elseif(PLATFORM_PS4)
         # at update time, since VitaPlex can't replace its own running title.
         SceSystemService
     )
+
+    # The SceShellUI popup for a finished download (see
+    # utils/shell_integration.hpp). sceKernelSendNotificationRequest lives in
+    # libkernel, which is already linked, so there is nothing to add here — but
+    # OrbisNotificationRequest is a reverse-engineered declaration and older
+    # toolchains do not carry it, hence the probe. Compiled, not linked: a
+    # cross toolchain has no business producing an executable for a check.
+    include(CheckCXXSourceCompiles)
+    set(_saved_try_type "${CMAKE_TRY_COMPILE_TARGET_TYPE}")
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
+    check_cxx_source_compiles("
+#include <orbis/libkernel.h>
+int main() {
+    OrbisNotificationRequest req = {};
+    req.type            = NotificationRequest;
+    req.targetId        = -1;
+    req.useIconImageUri = 0;
+    req.message[0]      = 0;
+    return sceKernelSendNotificationRequest(0, &req, sizeof(req), 0);
+}" VITAPLEX_HAVE_PS4_NOTIFY)
+    set(CMAKE_TRY_COMPILE_TARGET_TYPE "${_saved_try_type}")
+
+    target_sources(${PROJECT_NAME} PRIVATE src/utils/shell_integration_ps4.cpp)
+    if(VITAPLEX_HAVE_PS4_NOTIFY)
+        message(STATUS "PS4 download notifications enabled")
+        target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_HAVE_PS4_NOTIFY=1)
+    else()
+        message(STATUS "OrbisNotificationRequest unavailable — no PS4 download notifications")
+    endif()
 elseif(PLATFORM_IOS OR PLATFORM_TVOS)
     # System frameworks that mpv + SDL2 + borealis need on iOS/tvOS.
     # Metal is added even though we render with GLES because libplacebo
