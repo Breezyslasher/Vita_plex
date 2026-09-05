@@ -5774,6 +5774,16 @@ static void parsePlayQueueItems(const std::string& json, PlexClient& client,
             item.duration = client.extractJsonIntPublic(obj, "duration");
             item.index = client.extractJsonIntPublic(obj, "index");
             item.type = client.extractJsonValuePublic(obj, "type");
+            // Without this the item stays MediaType::UNKNOWN, and everything
+            // downstream that asks "is this music?" answers no — most visibly
+            // MusicQueue::isMusicQueue(), which is what picks the Now Playing
+            // layout. A queue of tracks then opens in the video player.
+            //
+            // It went unnoticed because createPlayQueue was failing: the caller
+            // fell back to building the queue client-side from MediaItems that
+            // already carried a type. Fixing the play queue is what first put
+            // this path in front of anyone.
+            item.mediaType = client.parseMediaTypePublic(item.type);
             // 0-10, 0 when unrated. Server play queues are the usual source for
             // music, so without this the media session's heart would only be
             // right for offline / client-side queues.

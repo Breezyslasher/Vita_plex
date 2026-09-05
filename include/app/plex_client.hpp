@@ -670,6 +670,9 @@ public:
 
     // Public API URL builder (used by Live TV tab for DVR operations)
     std::string buildApiUrlPublic(const std::string& endpoint) { return buildApiUrl(endpoint); }
+    // Same, for the play-queue parser: it lives outside the class and needs the
+    // "track"/"episode"/"movie" string turned into a MediaType.
+    MediaType parseMediaTypePublic(const std::string& typeStr) { return parseMediaType(typeStr); }
 
 private:
     PlexClient() = default;
