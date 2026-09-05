@@ -109,10 +109,9 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
         std::string uri;
         if (!tracks[0].parentRatingKey.empty()) {
             uri = client.buildPlayQueueDirectoryURI(tracks[0].parentRatingKey);
-        } else if (tracks.size() == 1) {
-            uri = client.buildPlayQueueURI(tracks[0].ratingKey);
         } else {
-            // Multiple tracks without parent - use first track's URI
+            // No container to name. For a single track that is exactly right;
+            // for several it is a lie, and the check below is what catches it.
             uri = client.buildPlayQueueURI(tracks[0].ratingKey);
         }
 
@@ -123,7 +122,28 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
         // used to still count as success, which left neither branch below
         // building anything — so "Play Now (Clear Queue)" quietly went on
         // playing whatever was already queued.
-        serverOk = client.createPlayQueue(uri, queueType, pq, startKey) && !pq.items.empty();
+        const bool created =
+            client.createPlayQueue(uri, queueType, pq, startKey) && !pq.items.empty();
+
+        // Nor is a queue that does not hold what was asked for. Playing a
+        // playlist, an album or an artist built a server queue of ONE track and
+        // then adopted it over the full list the caller had already assembled —
+        // 4026 tracks replaced by the one whose URI happened to be sent. The
+        // source URI is not naming these containers in a way this server
+        // expands, and until it does, a short queue is a wrong queue.
+        //
+        // Count rather than contents: Plex returns a window of a long queue, so
+        // playQueueTotalCount is the figure to compare, and more than requested
+        // is fine — a container may legitimately hold extra.
+        const int serverCount = pq.playQueueTotalCount > 0 ? pq.playQueueTotalCount
+                                                           : (int)pq.items.size();
+        serverOk = created && serverCount >= (int)tracks.size();
+        if (created && !serverOk) {
+            brls::Logger::warning(
+                "PlayerActivity: server play queue {} came back with {} item(s) for a "
+                "{}-track request — keeping the client-side queue",
+                pq.playQueueID, serverCount, tracks.size());
+        }
         if (serverOk) {
             queue.setFromPlayQueue(pq, pq.playQueueShuffled);
             serverShuffled = pq.playQueueShuffled;

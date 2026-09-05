@@ -521,14 +521,25 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "2MiB");
 #endif
 
-    // NOTE: ffmpeg's HTTP reconnect (stream-lavf-o=reconnect=1,...) belongs
-    // here — a dropped connection should resume rather than read as
-    // end-of-stream, which is what makes a track end early. It was set here and
-    // backed out: music began failing to open at all, HTTP 400 from the server,
-    // and stream-lavf-o was the only thing in that build touching how streams
-    // are opened. Whether it was actually the cause is unproven, so it stays
-    // out until the 400 is understood, rather than being carried along as a
-    // suspect.
+    // Resume a dropped HTTP connection instead of reporting end-of-stream.
+    //
+    // Without this, ffmpeg's HTTP reader treats any mid-transfer disconnect as
+    // a clean end of file. A device log caught exactly that — "tcp: ffurl_read
+    // returned <error>" followed by "lavf: EOF reached" 46 seconds short of the
+    // end of a track — and everything downstream then behaves as though the
+    // song had finished. Reconnecting is the only part of this that addresses
+    // the fault rather than its symptoms.
+    //
+    // reconnect_streamed covers the non-seekable case, the transcode endpoints,
+    // which ffmpeg otherwise refuses to retry at all.
+    //
+    // This was set once before and backed out when music stopped opening with
+    // HTTP 400. That turned out to be two unrelated bugs — a direct-play
+    // decision sent to the transcode endpoint, and a prefetched URL whose
+    // transcode session had been reaped — both since fixed. The suspicion was
+    // reasonable at the time and wrong.
+    mpv_set_option_string(m_mpv, "stream-lavf-o",
+                          "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5");
 
     // ========================================
     // Network settings for streaming
