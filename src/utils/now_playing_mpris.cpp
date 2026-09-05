@@ -51,6 +51,12 @@ constexpr const char* IFACE_INTRO = "org.freedesktop.DBus.Introspectable";
 // --- shared state (guarded by g_mutex) -------------------------------------
 std::mutex g_mutex;
 Info g_info;                 // last published snapshot
+// Set when the position jumps in a way playing forward cannot explain, so
+// the bus thread emits Seeked. The spec requires that signal whenever the
+// position changes discontinuously; without it the GNOME/KDE media widget
+// keeps counting from where it thought we were and drifts the moment you
+// seek in the app.
+std::atomic<bool> g_seeked{false};
 bool g_active = false;       // false => PlaybackStatus "Stopped"
 long long g_trackNo = 0;     // bumped on track identity change (mpris:trackid)
 
@@ -279,6 +285,7 @@ const char* INTROSPECT_XML =
     "<method name=\"PlayPause\"/><method name=\"Stop\"/><method name=\"Play\"/>"
     "<method name=\"Seek\"><arg type=\"x\" direction=\"in\"/></method>"
     "<method name=\"SetPosition\"><arg type=\"o\" direction=\"in\"/><arg type=\"x\" direction=\"in\"/></method>"
+    "<signal name=\"Seeked\"><arg type=\"x\"/></signal>"
     "<property name=\"PlaybackStatus\" type=\"s\" access=\"read\"/>"
     "<property name=\"Metadata\" type=\"a{sv}\" access=\"read\"/>"
     "<property name=\"CanGoNext\" type=\"b\" access=\"read\"/>"
@@ -422,6 +429,21 @@ DBusHandlerResult onMessage(DBusConnection* conn, DBusMessage* msg, void*) {
     return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
 }
 
+// org.mpris.MediaPlayer2.Player.Seeked(x position_us). The spec requires it
+// whenever the position changes in a way a client extrapolating from the last
+// value could not have predicted. Position itself is deliberately not a
+// PropertiesChanged property, so this signal is the only way a shell learns
+// that a seek happened.
+void emitSeeked(DBusConnection* conn, int64_t positionUs) {
+    DBusMessage* sig = dbus_message_new_signal(OBJECT_PATH, IFACE_PLAYER, "Seeked");
+    if (!sig) return;
+    DBusMessageIter it;
+    dbus_message_iter_init_append(sig, &it);
+    dbus_message_iter_append_basic(&it, DBUS_TYPE_INT64, &positionUs);
+    dbus_connection_send(conn, sig, nullptr);
+    dbus_message_unref(sig);
+}
+
 void emitPropertiesChanged(DBusConnection* conn) {
     Snapshot s = snapshot();
     DBusMessage* sig = dbus_message_new_signal(OBJECT_PATH, IFACE_PROPS, "PropertiesChanged");
@@ -485,6 +507,8 @@ void threadMain() {
         dbus_connection_read_write_dispatch(conn, 200);  // handles incoming, 200ms tick
         if (g_dirty.exchange(false))
             emitPropertiesChanged(conn);
+        if (g_seeked.exchange(false))
+            emitSeeked(conn, snapshot().info.positionMs * 1000);
     }
 
     dbus_bus_release_name(conn, BUS_NAME, nullptr);
@@ -512,6 +536,15 @@ void mprisUpdate(const Info& info) {
                                g_info.artist != info.artist ||
                                g_info.album != info.album;
         if (identityChanged || !g_active) g_trackNo++;
+        // A jump within the same track is a seek. Compared against the last
+        // published position rather than wall-clock: updates arrive about once
+        // a second while playing, so anything beyond a couple of seconds did
+        // not get there by playing. A track change is not a seek — the new
+        // track starts wherever it starts.
+        if (!identityChanged && g_active) {
+            const int64_t delta = info.positionMs - g_info.positionMs;
+            if (delta < -2000 || delta > 4000) g_seeked.store(true);
+        }
         g_info = info;
         g_active = true;
     }
