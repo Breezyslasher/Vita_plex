@@ -185,6 +185,11 @@ void Application::showHomeUserPicker(std::function<void()> onComplete) {
         app.setCurrentHomeUserUuid(user.uuid);
         app.setCurrentHomeUserTitle(user.title);
         app.saveSettings();
+        // Say which account every request from here on belongs to. A non-owner
+        // is refused by the endpoints Plex scopes to the server owner, so a log
+        // that doesn't name the user can't be read.
+        brls::Logger::info("Home user switch: now running as '{}' ({})",
+                           user.title, user.admin ? "server owner" : "NOT the server owner");
         return true;
     };
 
@@ -428,10 +433,16 @@ bool Application::loadSettings() {
     m_currentHomeUserUuid  = extractString("currentHomeUserUuid");
     m_currentHomeUserTitle = extractString("currentHomeUserTitle");
 
-    brls::Logger::info("loadSettings: authToken={}, serverUrl={}, username={}",
+    // homeUser is the one that matters when reading a log: every request below
+    // carries that user's per-server token, and a non-owner is refused by the
+    // endpoints Plex scopes to the server owner. Without it there is no way to
+    // tell from a log which account a run was made under.
+    brls::Logger::info("loadSettings: authToken={}, serverUrl={}, username={}, homeUser={}",
                        m_authToken.empty() ? "(empty)" : "(set)",
                        m_serverUrl.empty() ? "(empty)" : m_serverUrl,
-                       m_username.empty()  ? "(empty)" : m_username);
+                       m_username.empty()  ? "(empty)" : m_username,
+                       m_currentHomeUserTitle.empty() ? "(none — server owner)"
+                                                      : m_currentHomeUserTitle);
 
     // UI settings
     m_settings.theme = static_cast<AppTheme>(extractInt("theme"));
