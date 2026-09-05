@@ -394,8 +394,9 @@ ComPtr<WUN::IToastNotifier> progressNotifier() {
 // Fill a NotificationData with the three bound fields plus a sequence number.
 // The sequence number is what lets the platform discard an update that arrives
 // out of order; it must increase, and 0 means "always apply".
-bool buildData(ComPtr<WUN::INotificationData>& data, const std::wstring& status,
-               double fraction, const std::wstring& valueText) {
+bool buildData(ComPtr<WUN::INotificationData>& data, const std::wstring& title,
+               const std::wstring& status, double fraction,
+               const std::wstring& valueText) {
     ComPtr<IInspectable> insp;
     if (FAILED(RoActivateInstance(
             HStringReference(RuntimeClass_Windows_UI_Notifications_NotificationData).Get(), &insp)))
@@ -418,6 +419,12 @@ bool buildData(ComPtr<WUN::INotificationData>& data, const std::wstring& status,
                    HStringReference(valueText.c_str()).Get(), &replaced);
     values->Insert(HStringReference(L"progressStatus").Get(),
                    HStringReference(status.c_str()).Get(), &replaced);
+    // Bound, not baked into the XML, so it follows the queue onto the next
+    // track. A value set here is inserted as a string rather than parsed, so
+    // unlike the XML path it needs no escaping — a title with & or < in it is
+    // safe as it stands.
+    values->Insert(HStringReference(L"progressTitle").Get(),
+                   HStringReference(title.c_str()).Get(), &replaced);
     data->put_SequenceNumber(++g_progressSeq);
     return true;
 }
@@ -430,9 +437,18 @@ bool showProgressToast(const std::wstring& title, const std::wstring& status,
     ComPtr<WUN::IToastNotifier> notifier = progressNotifier();
     if (!notifier) return false;
 
+    // The track name lives in the progress element's own title attribute, not
+    // in a <text>. Only the progress attributes support data binding, and a
+    // <text> is fixed at the moment the toast is posted — so a name put there
+    // stayed on the first track of a queue for the whole run while the bar
+    // underneath it moved on to the rest of the album.
+    //
+    // That leaves <text> for a heading that genuinely does not change. It
+    // cannot be dropped: ToastGeneric needs at least one.
     const std::wstring xml =
-        L"<toast><visual><binding template=\"ToastGeneric\"><text>" + xmlEscape(title) +
-        L"</text><progress value=\"{progressValue}\" "
+        L"<toast><visual><binding template=\"ToastGeneric\">"
+        L"<text>Downloading</text>"
+        L"<progress title=\"{progressTitle}\" value=\"{progressValue}\" "
         L"valueStringOverride=\"{progressValueString}\" status=\"{progressStatus}\"/>"
         L"</binding></visual></toast>";
 
@@ -468,7 +484,7 @@ bool showProgressToast(const std::wstring& title, const std::wstring& status,
     ComPtr<WUN::IToastNotification4> toast4;
     if (FAILED(toast.As(&toast4))) return false;
     ComPtr<WUN::INotificationData> data;
-    if (!buildData(data, status, fraction, valueText)) return false;
+    if (!buildData(data, title, status, fraction, valueText)) return false;
     if (FAILED(toast4->put_Data(data.Get()))) return false;
 
     if (FAILED(notifier->Show(toast.Get()))) return false;
@@ -479,15 +495,15 @@ bool showProgressToast(const std::wstring& title, const std::wstring& status,
 // Push new values into the toast already on screen. Returns false when the
 // platform says the toast is gone — dismissed, or never shown — so the caller
 // can stop rather than keep pushing into nothing.
-bool updateProgressToast(const std::wstring& status, double fraction,
-                         const std::wstring& valueText) {
+bool updateProgressToast(const std::wstring& title, const std::wstring& status,
+                         double fraction, const std::wstring& valueText) {
     ComPtr<WUN::IToastNotifier> notifier = progressNotifier();
     if (!notifier) return false;
     ComPtr<WUN::IToastNotifier2> notifier2;
     if (FAILED(notifier.As(&notifier2))) return false;
 
     ComPtr<WUN::INotificationData> data;
-    if (!buildData(data, status, fraction, valueText)) return false;
+    if (!buildData(data, title, status, fraction, valueText)) return false;
 
     WUN::NotificationUpdateResult result = WUN::NotificationUpdateResult_Failed;
     if (FAILED(notifier2->UpdateWithTag(data.Get(),
@@ -608,12 +624,12 @@ void setProgress(double fraction, const std::string& title,
     // and the right one stays empty, since an indeterminate bar has no
     // percentage to override.
     const bool indeterminate = fraction < 0.0;
-    const std::wstring wStatus = indeterminate ? wDetail : L"Downloading";
+    const std::wstring wStatus = indeterminate ? wDetail : std::wstring();
     const std::wstring wValue  = indeterminate ? std::wstring() : wDetail;
 
     if (!g_progressLive) {
         if (!showProgressToast(wTitle, wStatus, fraction, wValue)) s_giveUp = true;
-    } else if (!updateProgressToast(wStatus, fraction, wValue)) {
+    } else if (!updateProgressToast(wTitle, wStatus, fraction, wValue)) {
         // Dismissed, or gone. Stop pushing; the taskbar bar carries on.
         g_progressLive = false;
         s_giveUp       = true;
