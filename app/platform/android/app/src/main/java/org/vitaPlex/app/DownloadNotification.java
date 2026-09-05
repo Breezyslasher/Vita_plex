@@ -1,5 +1,6 @@
 package org.VitaPlex.app;
 
+import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -22,6 +23,11 @@ import androidx.core.app.NotificationCompat;
  *                this and also what stops a stray swipe from looking like a
  *                cancel. It is removed when the queue empties.
  *
+ *                This one is also DownloadService's foreground notification —
+ *                the service is what keeps the download running once the app
+ *                is backgrounded — so both refer to the same PROGRESS_ID and
+ *                only one notification ever appears.
+ *
  *   DONE_ID      A one-shot summary when everything finishes. Dismissable,
  *                and it opens the app when tapped.
  *
@@ -34,10 +40,16 @@ public final class DownloadNotification {
     private static final String TAG = "VitaPlexDownloads";
 
     private static final String CHANNEL_ID   = "vitaplex_downloads";
-    private static final int    PROGRESS_ID  = 0x56444C50;  // "VDLP"
-    private static final int    DONE_ID      = 0x56444C44;  // "VDLD"
+    // Package-visible: DownloadService foregrounds this exact notification, so
+    // the two must agree on the id or the shade shows both.
+    static final int PROGRESS_ID = 0x56444C50;  // "VDLP"
+    private static final int DONE_ID = 0x56444C44;  // "VDLD"
 
     private static boolean sChannelCreated = false;
+    private static boolean sServiceStarted = false;
+    // Latest reported progress, so the service can rebuild the same
+    // notification when it foregrounds without being handed one.
+    private static volatile float sFraction = -1.0f;
 
     private DownloadNotification() {}
 
@@ -91,33 +103,89 @@ public final class DownloadNotification {
             if (nm == null) return;
 
             if (!visible) {
+                stopService(ctx);   // clears the notification with it
                 nm.cancel(PROGRESS_ID);
+                sFraction = -1.0f;
                 return;
             }
+            sFraction = fraction;
             ensureChannel(ctx);
 
-            final boolean indeterminate = fraction < 0.0f;
-            final int pct = indeterminate
-                ? 0
-                : Math.max(0, Math.min(100, Math.round(fraction * 100.0f)));
+            // First progress of a run: hand the work to a foreground service so
+            // the system leaves the process alone once the app is backgrounded.
+            // It posts the same notification itself; posting again here as well
+            // would be harmless but pointless.
+            if (!sServiceStarted) {
+                startService(ctx);
+                return;
+            }
 
-            NotificationCompat.Builder b =
-                new NotificationCompat.Builder(ctx, CHANNEL_ID)
-                    .setSmallIcon(android.R.drawable.stat_sys_download)
-                    .setContentTitle("Downloading")
-                    .setContentText(indeterminate ? null : pct + "%")
-                    .setProgress(100, pct, indeterminate)
-                    .setCategory(NotificationCompat.CATEGORY_PROGRESS)
-                    .setPriority(NotificationCompat.PRIORITY_LOW)
-                    .setOngoing(true)
-                    // This is re-posted roughly once a second. Without it every
-                    // repost would re-alert.
-                    .setOnlyAlertOnce(true)
-                    .setContentIntent(openApp(ctx));
-
-            nm.notify(PROGRESS_ID, b.build());
+            Notification n = buildProgress(ctx);
+            if (n != null) nm.notify(PROGRESS_ID, n);
         } catch (Throwable t) {
             Log.w(TAG, "setProgress failed", t);
+        }
+    }
+
+    /**
+     * The ongoing progress notification for the latest reported fraction.
+     * DownloadService foregrounds this; setProgress re-posts it on each update.
+     * Returns null if there is nothing in flight to describe.
+     */
+    static Notification buildProgress(Context ctx) {
+        if (ctx == null) return null;
+        ensureChannel(ctx);
+
+        final float fraction = sFraction;
+        final boolean indeterminate = fraction < 0.0f;
+        final int pct = indeterminate
+            ? 0
+            : Math.max(0, Math.min(100, Math.round(fraction * 100.0f)));
+
+        return new NotificationCompat.Builder(ctx, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle("Downloading")
+            .setContentText(indeterminate ? null : pct + "%")
+            .setProgress(100, pct, indeterminate)
+            .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            // This is re-posted roughly once a second. Without it every repost
+            // would re-alert.
+            .setOnlyAlertOnce(true)
+            .setContentIntent(openApp(ctx))
+            .build();
+    }
+
+    private static void startService(Context ctx) {
+        try {
+            Intent i = new Intent(ctx, DownloadService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ctx.startForegroundService(i);
+            } else {
+                ctx.startService(i);
+            }
+            sServiceStarted = true;
+        } catch (Throwable t) {
+            // Android 12+ refuses this from the background. Fall back to a plain
+            // notification: the download keeps going for as long as the process
+            // does, which is exactly the old behaviour.
+            Log.w(TAG, "startForegroundService failed", t);
+            try {
+                NotificationManager nm = manager(ctx);
+                Notification n = buildProgress(ctx);
+                if (nm != null && n != null) nm.notify(PROGRESS_ID, n);
+            } catch (Throwable ignored) {}
+        }
+    }
+
+    private static void stopService(Context ctx) {
+        if (!sServiceStarted) return;
+        sServiceStarted = false;
+        try {
+            ctx.stopService(new Intent(ctx, DownloadService.class));
+        } catch (Throwable t) {
+            Log.w(TAG, "stopService failed", t);
         }
     }
 
