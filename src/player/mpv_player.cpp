@@ -521,20 +521,14 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "2MiB");
 #endif
 
-    // Resume a dropped HTTP connection instead of reporting end-of-stream.
-    //
-    // Without this, ffmpeg's HTTP reader treats any mid-transfer disconnect —
-    // a reset by the server, a Wi-Fi blip, a transcode session torn down early
-    // — as a clean end of file. mpv then raises eof-reached exactly as it does
-    // at the real end of a track, and the queue advances mid-song. Turning
-    // reconnect on makes those transient drops resume where they left off,
-    // which is where the fix belongs: the stream shouldn't end in the first
-    // place.
-    //
-    // reconnect_streamed covers the non-seekable case (the transcode
-    // endpoints), where ffmpeg would otherwise refuse to retry at all.
-    mpv_set_option_string(m_mpv, "stream-lavf-o",
-                          "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5");
+    // NOTE: ffmpeg's HTTP reconnect (stream-lavf-o=reconnect=1,...) belongs
+    // here — a dropped connection should resume rather than read as
+    // end-of-stream, which is what makes a track end early. It was set here and
+    // backed out: music began failing to open at all, HTTP 400 from the server,
+    // and stream-lavf-o was the only thing in that build touching how streams
+    // are opened. Whether it was actually the cause is unproven, so it stays
+    // out until the 400 is understood, rather than being carried along as a
+    // suspect.
 
     // ========================================
     // Network settings for streaming
@@ -1362,10 +1356,17 @@ void MpvPlayer::eventMainLoop() {
             case MPV_EVENT_LOG_MESSAGE: {
                 if (event->data) {
                     mpv_event_log_message* msg = (mpv_event_log_message*)event->data;
+                    // mpv quotes the whole URL back in its stream errors, and
+                    // our URLs carry X-Plex-Token. Logged raw, that put the
+                    // user's long-lived token in a log they then paste into a
+                    // bug report — which is exactly what redactTokensInUrl
+                    // exists to stop. Every level goes through it; the cost is
+                    // a copy on a line we were already formatting.
+                    const std::string text = redactTokensInUrl(msg->text ? msg->text : "");
                     if (msg->log_level <= MPV_LOG_LEVEL_ERROR) {
-                        brls::Logger::error("mpv {}: {}", msg->prefix, msg->text);
+                        brls::Logger::error("mpv {}: {}", msg->prefix, text);
                     } else if (msg->log_level <= MPV_LOG_LEVEL_WARN) {
-                        brls::Logger::warning("mpv {}: {}", msg->prefix, msg->text);
+                        brls::Logger::warning("mpv {}: {}", msg->prefix, text);
 #if defined(__PS4__) || defined(__ANDROID__)
                     } else {
                         // Pipe info/verbose through borealis::Logger::info on
@@ -1373,7 +1374,7 @@ void MpvPlayer::eventMainLoop() {
                         // mpv for actually surfaces in adb logcat. Removable
                         // once the Android direct-surface path is verified
                         // stable.
-                        brls::Logger::info("mpv {}: {}", msg->prefix, msg->text);
+                        brls::Logger::info("mpv {}: {}", msg->prefix, text);
 #endif
                     }
                 }
