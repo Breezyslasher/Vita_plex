@@ -7,3 +7,13 @@ Icon=io.github.breezyslasher.VitaPlex
 Terminal=false
 Categories=AudioVideo;Video;Player;Network;
 Keywords=Plex;Media;Video;Streaming;
+# Ties the window to this launcher. GLFW sets the WM_CLASS class part from the
+# window title when the class hints are left empty, and the title is "VitaPlex"
+# (src/main.cpp) — without this line the shell cannot match the window to
+# io.github.breezyslasher.VitaPlex.desktop, so it shows a generic icon and does
+# not group the window under the launcher.
+StartupWMClass=VitaPlex
+# Registers VitaPlex as the handler for Plex links. The app already knows what
+# to do with one (MainActivity::consumeDeepLink); this is what makes a browser
+# offer it.
+MimeType=x-scheme-handler/plex;x-scheme-handler/vitaplex;
