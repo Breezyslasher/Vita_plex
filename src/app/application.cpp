@@ -167,11 +167,16 @@ void Application::showHomeUserPicker(std::function<void()> onComplete) {
         }
     }
 
+    // Did the picker actually switch, or did the user back out? Only a real
+    // switch invalidates what's on screen, and the picker reports "resolved"
+    // either way, so trySwitch records it for the completion handler below.
+    auto switched = std::make_shared<bool>(false);
+
     // The verbatim switch / token-store logic, lifted out of the old dropdown
     // handler and returning success so the picker can flash the PIN dots on a
     // wrong PIN. Plex Home /switch is a quick call; keep it synchronous as
     // before. Presentation lives in view/home_user_picker.hpp.
-    auto trySwitch = [](const HomeUser& user, const std::string& pin) -> bool {
+    auto trySwitch = [switched](const HomeUser& user, const std::string& pin) -> bool {
         Application& app = Application::getInstance();
         std::string newToken;
         if (!PlexClient::getInstance().switchHomeUser(
@@ -190,10 +195,40 @@ void Application::showHomeUserPicker(std::function<void()> onComplete) {
         // that doesn't name the user can't be read.
         brls::Logger::info("Home user switch: now running as '{}' ({})",
                            user.title, user.admin ? "server owner" : "NOT the server owner");
+        *switched = true;
         return true;
     };
 
-    homepicker::show(users, selected, trySwitch, onComplete);
+    // Everything on screen was fetched with the previous user's token: the
+    // library list, the home rails, continue-watching, watched state. Plex
+    // shares libraries per user, so the new user may not even have the
+    // libraries still listed in the sidebar — opening one would fail, and it
+    // would look like a broken endpoint rather than a stale view.
+    //
+    // rebuildSidebar() re-fetches /library/sections and drops every tab, so
+    // each one is rebuilt by its factory on next focus and refetches under the
+    // new token. MainActivity is the first activity on the stack and borealis
+    // refuses to pop that, so refreshing it in place is the way to do this.
+    //
+    // Deferred to the next frame rather than run here: this lands inside the
+    // picker's own pop callback, and clearing tabs while that teardown is still
+    // unwinding the focus stack is asking for trouble. MainActivity is
+    // re-resolved inside the callback so a logout mid-switch can't leave a
+    // dangling pointer (same pattern as the Live TV probe).
+    auto finish = [switched, onComplete]() {
+        // Caller's handler first — the Settings one repaints labels on views
+        // that rebuildSidebar() is about to destroy.
+        if (onComplete) onComplete();
+        if (!*switched) return;
+        brls::sync([]() {
+            if (auto* main = MainActivity::getInstance()) {
+                brls::Logger::info("Home user switch: reloading libraries for the new user");
+                main->rebuildSidebar();
+            }
+        });
+    };
+
+    homepicker::show(users, selected, trySwitch, finish);
 }
 
 void Application::pushMainActivity() {
