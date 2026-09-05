@@ -21,6 +21,13 @@
 #include <TargetConditionals.h>
 #endif
 
+#if defined(_WIN32)
+// Only the Windows branch of getDesktopDataDir() needs it, and the console
+// toolchains are happier not seeing it at all.
+#include <filesystem>
+#include <system_error>
+#endif
+
 #if defined(__vita__)
     static constexpr const char* PLATFORM_DATA_DIR = "ux0:data/VitaPlex";
 #elif defined(__SWITCH__)
@@ -53,6 +60,29 @@
     inline const std::string& getDesktopDataDir() {
         static std::string s_dir;
         if (s_dir.empty()) {
+#if defined(_WIN32)
+            // Windows has neither $HOME nor XDG_DATA_HOME, so the branch below
+            // fell all the way through to "./VitaPlex" — a path relative to the
+            // working directory. That is wrong twice over: an install under
+            // Program Files cannot write next to its own exe, and the working
+            // directory depends on how the app was launched, so the same
+            // install could read a different data directory from one start to
+            // the next. %LOCALAPPDATA% is where this belongs.
+            //
+            // An existing install already has its settings, downloads and cache
+            // in the old spot, and moving them out from under it would read as
+            // losing them. So a "VitaPlex" directory that is already there wins,
+            // and only fresh installs get the correct location.
+            std::error_code ec;
+            const char* localApp = std::getenv("LOCALAPPDATA");
+            if (std::filesystem::is_directory("VitaPlex", ec)) {
+                s_dir = "./VitaPlex";
+            } else if (localApp && *localApp) {
+                s_dir = std::string(localApp) + "\\VitaPlex";
+            } else {
+                s_dir = "./VitaPlex";
+            }
+#else
             const char* xdgData = std::getenv("XDG_DATA_HOME");
             const char* home    = std::getenv("HOME");
             if (xdgData && xdgData[0] == '/') {
@@ -62,6 +92,7 @@
             } else {
                 s_dir = "./VitaPlex";
             }
+#endif
         }
         return s_dir;
     }
