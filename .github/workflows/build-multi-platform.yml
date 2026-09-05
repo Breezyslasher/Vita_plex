@@ -1621,14 +1621,23 @@ jobs:
 
           echo "DLLs bundled into build/:"
           ls -1 build/*.dll
-      # Windows gets both shapes: the portable folder uploaded below, and this
-      # installer. Per-user, into %LOCALAPPDATA%\Programs, so neither install nor
-      # the in-app updater ever needs elevation.
+      - name: Upload mingw artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VitaPlex-mingw-${{ matrix.arch }}-${{ github.run_number }}
+          path: |
+            build/VitaPlex.exe
+            build/*.dll
+            build/resources/
+      # Windows gets both shapes: the portable folder above, and this installer.
+      # Per-user, into %LOCALAPPDATA%\Programs, so neither install nor the
+      # in-app updater ever needs elevation.
       #
-      # makensis ships on the x64 image but not necessarily on the arm64 one, so
-      # a missing makensis skips the step rather than failing the build — the
-      # portable artifact is unaffected either way.
+      # It runs after the portable upload and is continue-on-error on purpose:
+      # the zip is the primary artifact and an installer problem must not cost
+      # it, nor fail the job and block the release job's !failure() guard.
       - name: Build Windows installer
+        continue-on-error: true
         run: |
           set -eu
           MAKENSIS=""
@@ -1641,13 +1650,20 @@ jobs:
             echo "makensis not present on this runner — skipping the installer"
             exit 0
           fi
+          # Absolute, native Windows paths. NSIS resolves a relative File path
+          # against the .nsi's own directory rather than the working directory,
+          # so -DSRCDIR=build sent it looking in app/platform/windows/build and
+          # it failed with "no files found".
+          SRC_WIN=$(cygpath -w "$PWD/build")
+          OUT_WIN=$(cygpath -w "$PWD/build/VitaPlex-Setup-${{ matrix.arch }}.exe")
+          NSI_WIN=$(cygpath -w "$PWD/app/platform/windows/installer.nsi")
           "$MAKENSIS" -V2 \
             -DVERSION="${APP_VERSION}" \
             -DDISPLAY_VERSION="${APP_DISPLAY_VERSION}" \
-            -DSRCDIR="build" \
-            -DOUTFILE="build/VitaPlex-Setup-${{ matrix.arch }}.exe" \
-            app/platform/windows/installer.nsi
-          ls -la build/VitaPlex-Setup-${{ matrix.arch }}.exe
+            -DSRCDIR="$SRC_WIN" \
+            -DOUTFILE="$OUT_WIN" \
+            "$NSI_WIN"
+          ls -la "build/VitaPlex-Setup-${{ matrix.arch }}.exe"
         env:
           # version_number is already the four-part form VIProductVersion wants
           # (1.3.8.1862); version is the display string ("Beta 1.3.8.1862").
@@ -1659,14 +1675,6 @@ jobs:
         with:
           name: VitaPlex-setup-${{ matrix.arch }}-${{ github.run_number }}
           path: build/VitaPlex-Setup-${{ matrix.arch }}.exe
-      - name: Upload mingw artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: VitaPlex-mingw-${{ matrix.arch }}-${{ github.run_number }}
-          path: |
-            build/VitaPlex.exe
-            build/*.dll
-            build/resources/
 
   # ───────────────────────────────────────────────
   # Debian package-like build
