@@ -221,13 +221,22 @@ toast. Re-posting there would be the Linux "closing it reopened it" bug in
 Windows dress, so that result is taken as final for the run and only the
 taskbar bar continues.
 
-`NotificationData`, `IToastNotification2::put_Data` and `IToastNotifier2` are
-newer than the base toast interfaces and are missing from some mingw-w64 header
+`NotificationData`, `IToastNotification4::put_Data` and `IToastNotifier2` are
+newer than the base toast interfaces and are absent from older mingw-w64 header
 sets, so they sit behind their own `try_compile` probe
 (`VITAPLEX_HAVE_TOAST_PROGRESS`). The probe deliberately mirrors the call
 sequence in the source, so a probe that compiles means the real code compiles.
 A gap there costs only the text: the taskbar bar and the completion toast are
 unaffected.
+
+The interface number matters, and getting it wrong is why Windows shipped for
+a while with no progress toast. `put_Data` is on `IToastNotification4`;
+`IToastNotification2` carries only `Tag`, `Group` and `SuppressPopup`. Asking 2
+for `put_Data` made the probe fail, and that failure looked exactly like the
+header set lacking the API — so the diagnosis was "mingw-w64 does not ship it"
+when the headers had it all along. A probe that fails for a reason inside your
+own code is indistinguishable from one that fails for a reason outside it,
+which is worth remembering before blaming a toolchain.
 
 ### Windows: portable and installer, both per-user
 

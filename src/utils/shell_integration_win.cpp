@@ -454,14 +454,22 @@ bool showProgressToast(const std::wstring& title, const std::wstring& status,
     ComPtr<WUN::IToastNotification> toast;
     if (FAILED(factory->CreateToastNotification(doc.Get(), &toast))) return false;
 
-    // The tag is how Update() finds this toast later.
+    // The tag is how Update() finds this toast later. Tag, Group and
+    // SuppressPopup are all IToastNotification2 has.
     ComPtr<WUN::IToastNotification2> toast2;
     if (FAILED(toast.As(&toast2))) return false;
     if (FAILED(toast2->put_Tag(HStringReference(kProgressTag).Get()))) return false;
 
+    // Data is on IToastNotification4, not 2 — asking 2 for it is what disabled
+    // this whole path. The compiler said so plainly ("IToastNotification2 has
+    // no member named put_Data") and I read it as mingw-w64 missing the API
+    // rather than as the wrong interface, so the probe kept failing and Windows
+    // silently got no progress toast at all.
+    ComPtr<WUN::IToastNotification4> toast4;
+    if (FAILED(toast.As(&toast4))) return false;
     ComPtr<WUN::INotificationData> data;
     if (!buildData(data, status, fraction, valueText)) return false;
-    if (FAILED(toast2->put_Data(data.Get()))) return false;
+    if (FAILED(toast4->put_Data(data.Get()))) return false;
 
     if (FAILED(notifier->Show(toast.Get()))) return false;
     g_progressLive = true;

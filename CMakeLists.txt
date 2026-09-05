@@ -1069,11 +1069,18 @@ int main() {
             endif()
 
             # Live download progress inside the toast. Needs the data-binding
-            # half of the API — NotificationData, IToastNotification2::put_Data
+            # half of the API — NotificationData, IToastNotification4::put_Data
             # and IToastNotifier2::UpdateWithTag — which is newer than the base
-            # toast interfaces and missing from some mingw-w64 header sets.
+            # toast interfaces and absent from older mingw-w64 header sets.
             # Probed separately so a gap here costs only the text in the toast:
             # the taskbar progress bar and the completion toast are unaffected.
+            #
+            # Note the 4. This probe and the code it mirrors both asked
+            # IToastNotification2 for put_Data, which lives on 4 — 2 carries
+            # only Tag, Group and SuppressPopup. The probe failed for that
+            # reason and the failure was read as "mingw-w64 does not ship the
+            # API", so Windows shipped with no progress toast at all while the
+            # headers had it the whole time.
             #
             # This probe deliberately mirrors the call sequence in
             # shell_integration_win.cpp, so if it compiles, that code does too.
@@ -1104,7 +1111,9 @@ int main() {
     ComPtr<WUN::IToastNotification2> toast2;
     toast.As(&toast2);
     toast2->put_Tag(HStringReference(L"t").Get());
-    toast2->put_Data(data.Get());
+    ComPtr<WUN::IToastNotification4> toast4;
+    toast.As(&toast4);
+    toast4->put_Data(data.Get());
     ComPtr<WUN::IToastNotifier> notifier;
     ComPtr<WUN::IToastNotifier2> notifier2;
     notifier.As(&notifier2);
