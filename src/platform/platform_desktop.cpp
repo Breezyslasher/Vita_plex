@@ -15,6 +15,12 @@
 #include <fstream>
 #include <thread>
 
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#include <fcntl.h>
+#endif
+
 namespace vitaplex {
 namespace platform {
 
@@ -190,7 +196,38 @@ void setDeepLinkHandler(std::function<void()> onLinkArrived) {
     if (g_deepLinkHandler && !g_pendingDeepLink.empty()) g_deepLinkHandler();
 }
 
+#ifdef _WIN32
+// The Windows build links the GUI subsystem, so double-clicking it no longer
+// opens a console. That also means a build started FROM a console has nowhere
+// to write: the standard handles are closed and every log line is discarded.
+//
+// AttachConsole borrows the parent's console when there is one, which is
+// exactly the terminal the user typed into. It fails harmlessly when there
+// isn't (double-clicked, or launched from Explorer or the Start Menu), and
+// that failure is the normal case — hence no logging on the way out.
+//
+// Appending rather than truncating matters: two runs from the same console
+// would otherwise overwrite each other's output.
+void attachParentConsole() {
+    if (!AttachConsole(ATTACH_PARENT_PROCESS)) return;
+
+    std::freopen("CONOUT$", "a", stdout);
+    std::freopen("CONOUT$", "a", stderr);
+    std::freopen("CONIN$", "r", stdin);
+
+    // borealis logs UTF-8; without this the console renders it as mojibake.
+    SetConsoleOutputCP(CP_UTF8);
+
+    // The shell printed its prompt the moment it launched a GUI-subsystem
+    // process, so our first line would land on the same row as that prompt.
+    std::fputc('\n', stdout);
+}
+#endif
+
 bool init() {
+#ifdef _WIN32
+    attachParentConsole();
+#endif
     if (!::vitaplex::HttpClient::globalInit()) {
         brls::Logger::error("Failed to initialize curl");
         return false;

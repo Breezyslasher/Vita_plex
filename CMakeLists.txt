@@ -376,6 +376,15 @@ else()
     add_executable(${PROJECT_NAME} ${APP_SOURCES})
 endif()
 
+if(WIN32)
+    # Link the GUI subsystem instead of the console one. Windows gives every
+    # console-subsystem process a console window, which is the black terminal
+    # that used to sit behind the app. mingw-w64 still uses main() here — no
+    # WinMain needed — and platform::init() re-attaches stdout to the parent
+    # console when the app was started from one, so logs are not lost.
+    set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE ON)
+endif()
+
 target_include_directories(${PROJECT_NAME} PRIVATE ${APP_INCLUDES})
 if(PLATFORM_DESKTOP AND APPLE)
     target_include_directories(${PROJECT_NAME} PRIVATE
