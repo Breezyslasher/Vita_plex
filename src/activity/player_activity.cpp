@@ -2313,6 +2313,18 @@ void PlayerActivity::togglePlayPause() {
     } else if (player.isPaused()) {
         player.play();
         m_isPlaying = true;
+    } else if (player.hasEnded()) {
+        // The last track of a queue (or a lone file) has finished. mpv is
+        // parked at EOF with the file still loaded, which is neither playing
+        // nor paused — so both branches above missed and this button did
+        // nothing at all. Start the finished track again from the top, which
+        // is what the screen still shows.
+        //
+        // m_endHandled has to come back down or the replayed track would run
+        // off the end in silence: the tick only acts on hasEnded() once.
+        m_endHandled = false;
+        player.play();      // play() rewinds out of ENDED; see MpvPlayer
+        m_isPlaying = true;
     }
     updatePlayPauseLabel();
 
