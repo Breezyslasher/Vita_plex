@@ -264,6 +264,13 @@ private:
     std::string m_prefetchUrl;       // empty = resolve was attempted and failed
     std::string m_prefetchSession;   // transcode session negotiated for that URL
     uint32_t m_prefetchVersion = 0;  // MusicQueue version the entry was built at
+    int64_t  m_prefetchAtMs = 0;     // when the entry was resolved
+    // A prefetched URL carries the transcode session /decision opened for it,
+    // and Plex reaps a session nobody has started streaming. A device log
+    // caught a decision taken at 02:04:36 still being handed to mpv at
+    // 02:07:07 — the server answered 400, so the track after a long one
+    // would not play at all. Past this age, resolve again.
+    static constexpr int64_t kPrefetchMaxAgeMs = 60000;
     bool m_prefetchInFlight = false;
 
     void updateNowPlayingBlock();   // Refresh the "Now Playing" header from the current track
@@ -447,6 +454,9 @@ private:
     double m_pendingSeek = 0.0;    // Pending seek position (set when resuming)
     int m_transcodeBaseOffsetMs = 0;  // Base offset (ms) used to start current transcode
     int m_mediaDurationMs = 0;        // Full media length (ms) from Plex metadata; 0 = unknown
+    // Track length (ms) handed to loadUrl so the player can tell an early
+    // end-of-stream from a real one; see MpvPlayer::loadUrl. 0 = unknown.
+    int64_t m_pendingDurationMs = 0;
     bool m_updatingSlider = false;  // Guard to prevent slider update from triggering seek
     brls::RepeatingTimer m_updateTimer;
     // Debounce for transcode seeks: each skip/scrub rewinds it, and its end

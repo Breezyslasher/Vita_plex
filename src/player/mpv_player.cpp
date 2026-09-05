@@ -719,7 +719,12 @@ void MpvPlayer::setAudioOnly(bool audioOnly) {
     m_audioOnly = audioOnly;
 }
 
-bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
+bool MpvPlayer::loadUrl(const std::string& url, const std::string& title,
+                        int64_t expectedDurationMs) {
+    // Set before anything can fail, and unconditionally, so a value from the
+    // previous track can never be read against this one.
+    m_expectedDurationMs.store(expectedDurationMs);
+
     // A terminated core accepts commands and never runs them, so rebuild
     // it before loading rather than queueing into a dead handle. init()
     // re-attaches the Android surface via rebindIfReady().
@@ -1553,9 +1558,19 @@ void MpvPlayer::handlePropertyChange(mpv_event_property* prop, uint64_t id) {
                     // So only believe it near the end of the track. A live
                     // stream reports no usable duration, and must still be able
                     // to end, so those are let through.
+                    //
+                    // Which duration matters. mpv's own comes from the stream it
+                    // is reading, so a truncated stream shrinks it to match the
+                    // position — the two agree precisely because the stream
+                    // broke, and comparing them passes every time. A device log
+                    // caught it doing exactly that: "EOF reached at 156.2/156.6s"
+                    // on a track the server had been told all along was 203s.
+                    // So prefer the server's length whenever the caller knew it.
                     constexpr double kEofSlackSec = 5.0;
                     const double pos = m_playbackInfo.position;
-                    const double dur = m_playbackInfo.duration;
+                    const int64_t expectedMs = m_expectedDurationMs.load();
+                    const double dur = expectedMs > 0 ? expectedMs / 1000.0
+                                                      : m_playbackInfo.duration;
 
                     if (dur <= 0.0 || pos >= dur - kEofSlackSec) {
                         brls::Logger::debug("MpvPlayer: EOF reached at {:.1f}/{:.1f}s", pos, dur);

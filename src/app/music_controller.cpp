@@ -183,6 +183,15 @@ void MusicController::handleTrackEnded(const QueueItem* nextTrack) {
     }
 }
 
+// A prefetched URL carries the transcode session that /decision opened for it,
+// and Plex reaps a session nobody has started streaming. A device log caught the
+// consequence: a decision taken at 02:04:36 was still being handed to mpv at
+// 02:07:07 — two and a half minutes later — and the server answered 400, so the
+// track after a long one simply would not play. Past this age, resolve again.
+static constexpr int64_t kPrefetchMaxAgeMs = 60000;
+
+static int64_t nowMs() { return brls::getCPUTimeUsec() / 1000; }
+
 bool MusicController::loadCurrentHeadless() {
     const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
     if (!track) return false;
@@ -190,9 +199,18 @@ bool MusicController::loadCurrentHeadless() {
     std::string url;
     DownloadItem dl;
     PlexClient& client = PlexClient::getInstance();
+    const int64_t prefetchAgeMs = m_prefetchAtMs > 0 ? nowMs() - m_prefetchAtMs : 0;
+    const bool prefetchStale = m_prefetchAtMs > 0 && prefetchAgeMs > kPrefetchMaxAgeMs;
     const bool prefetched = !m_prefetchUrl.empty() &&
                             m_prefetchKey == track->ratingKey &&
-                            m_prefetchVersion == MusicQueue::getInstance().getVersion();
+                            m_prefetchVersion == MusicQueue::getInstance().getVersion() &&
+                            !prefetchStale;
+    if (prefetchStale && !m_prefetchUrl.empty()) {
+        brls::Logger::info("MusicController: prefetched URL for {} is {}s old — resolving again",
+                           m_prefetchKey, prefetchAgeMs / 1000);
+        m_prefetchUrl.clear();
+        m_prefetchSession.clear();
+    }
     if (DownloadsManager::getInstance().getDownloadCopy(track->ratingKey, dl) &&
         dl.state == DownloadState::COMPLETED && !dl.localPath.empty()) {
         url = dl.localPath;
@@ -223,7 +241,7 @@ bool MusicController::loadCurrentHeadless() {
     }
     player.setAudioOnly(true);
     if (player.hasEnded()) player.stop();  // clear ENDED so the new load isn't re-ended
-    if (!player.loadUrl(url, track->title)) {
+    if (!player.loadUrl(url, track->title, (int64_t)track->duration * 1000)) {
         brls::Logger::error("MusicController: loadUrl failed for {}", url);
         return false;
     }
@@ -266,6 +284,7 @@ void MusicController::prefetchNextTrack() {
             m_prefetchUrl     = ok ? url : std::string();
             m_prefetchSession = ok ? session : std::string();
             m_prefetchVersion = version;
+            m_prefetchAtMs    = ok ? nowMs() : 0;
         });
     });
 }

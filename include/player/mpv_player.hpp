@@ -78,7 +78,16 @@ public:
     bool isInitialized() const { return m_mpv != nullptr; }
 
     // Playback control
-    bool loadUrl(const std::string& url, const std::string& title = "");
+    //
+    // expectedDurationMs is the track length according to the server, when the
+    // caller knows it. It is not used for display — it is what tells an early
+    // end-of-stream apart from a real one. mpv's own duration comes from the
+    // stream it is reading, so when that stream is cut short the duration
+    // shrinks to match the position and the two can no longer be compared
+    // against each other. Pass 0 when unknown (live, local files); the check
+    // then falls back to mpv's figure.
+    bool loadUrl(const std::string& url, const std::string& title = "",
+                 int64_t expectedDurationMs = 0);
     bool loadFile(const std::string& path);
     void play();
     void pause();
@@ -218,6 +227,9 @@ private:
     MpvPlaybackInfo m_playbackInfo;
     std::string m_errorMessage;
     std::string m_currentUrl;
+    // Server-reported length of the loaded track, milliseconds; 0 when unknown.
+    // See loadUrl().
+    std::atomic<int64_t> m_expectedDurationMs{0};
     bool m_subtitlesVisible = true;
     std::atomic<bool> m_stopping{false};        // Shutdown in progress (accessed from mpv thread)
     bool m_commandPending = false;  // Async command pending

@@ -1185,6 +1185,7 @@ void PlayerActivity::willDisappear(bool resetState) {
     // Clear any pending deferred init (user backed out before timer fired)
     m_pendingPlayUrl.clear();
     m_pendingPlayTitle.clear();
+    m_pendingDurationMs = 0;
 
     // Hide video view
     if (videoView) {
@@ -1429,9 +1430,19 @@ void PlayerActivity::loadFromQueue() {
 
         // Resolved while the previous track was still playing? Use it. This is
         // what keeps two blocking round-trips out of the gap between songs.
+        // See kPrefetchMaxAgeMs: the session a prefetch opened does not live
+        // forever, and using an expired one is answered 400.
+        const int64_t prefetchAgeMs =
+            m_prefetchAtMs > 0 ? (brls::getCPUTimeUsec() / 1000) - m_prefetchAtMs : 0;
+        const bool prefetchStale = m_prefetchAtMs > 0 && prefetchAgeMs > kPrefetchMaxAgeMs;
+        if (prefetchStale && !m_prefetchUrl.empty()) {
+            brls::Logger::info("PlayerActivity: prefetched URL for {} is {}s old — resolving again",
+                               m_prefetchKey, prefetchAgeMs / 1000);
+        }
         const bool prefetched = !m_prefetchUrl.empty() &&
                                 m_prefetchKey == track->ratingKey &&
-                                m_prefetchVersion == queue.getVersion();
+                                m_prefetchVersion == queue.getVersion() &&
+                                !prefetchStale;
         if (prefetched) {
             url = m_prefetchUrl;
             // The speculative resolve deliberately left the live session alone;
@@ -1444,6 +1455,7 @@ void PlayerActivity::loadFromQueue() {
         m_prefetchKey.clear();
         m_prefetchUrl.clear();
         m_prefetchSession.clear();
+        m_prefetchAtMs = 0;
 
         if (!prefetched && !client.getTranscodeUrl(track->ratingKey, url, 0)) {
             brls::Logger::error("Failed to get transcode URL for track: {}", track->ratingKey);
@@ -1485,6 +1497,7 @@ void PlayerActivity::loadFromQueue() {
         // Defer MPV init + load to after activity transition completes
         m_pendingPlayUrl = url;
         m_pendingPlayTitle = track->title;
+        m_pendingDurationMs = (int64_t)track->duration * 1000;
         m_pendingIsAudio = true;
         m_isPlaying = true;
         m_loadingMedia = false;
@@ -1492,7 +1505,7 @@ void PlayerActivity::loadFromQueue() {
     }
 
     // Player already initialized (track change) - load immediately
-    if (!player.loadUrl(url, track->title)) {
+    if (!player.loadUrl(url, track->title, (int64_t)track->duration * 1000)) {
         brls::Logger::error("Failed to load URL: {}", redactTokensInUrl(url));
         m_loadingMedia = false;
         return;
@@ -1538,6 +1551,7 @@ void PlayerActivity::prefetchNextTrack() {
             // from being retried on every tick.
             m_prefetchKey     = key;
             m_prefetchUrl     = ok ? url : std::string();
+            m_prefetchAtMs    = ok ? (brls::getCPUTimeUsec() / 1000) : 0;
             m_prefetchSession = ok ? session : std::string();
             m_prefetchVersion = version;
             if (ok) brls::Logger::debug("PlayerActivity: prefetched stream URL for {}", key);
@@ -2072,14 +2086,15 @@ void PlayerActivity::updateProgress() {
         // complete frame with the freshly-created GXM state before the decoder
         // thread gets a chance to touch the shared GXM context.
         auto alive = m_alive;
-        brls::sync([this, url, title, isAudio, alive]() {
+        const int64_t durationMs = m_pendingDurationMs;
+        brls::sync([this, url, title, isAudio, alive, durationMs]() {
             if (!alive->load() || m_destroying) return;
 
             brls::Logger::info("PlayerActivity: Deferred MPV load (phase 2: loadUrl)...");
 
             MpvPlayer& player = MpvPlayer::getInstance();
 
-            if (player.loadUrl(url, title)) {
+            if (player.loadUrl(url, title, durationMs)) {
                 if (videoView && !isAudio) {
                     videoView->setVisibility(brls::Visibility::VISIBLE);
                     videoView->setVideoVisible(true);
