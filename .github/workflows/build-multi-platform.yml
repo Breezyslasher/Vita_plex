@@ -1636,6 +1636,20 @@ jobs:
       # It runs after the portable upload and is continue-on-error on purpose:
       # the zip is the primary artifact and an installer problem must not cost
       # it, nor fail the job and block the release job's !failure() guard.
+      # NSIS is not on the windows-latest image — the first run of this step
+      # found nothing there and silently produced no installer, while the arm64
+      # image happened to have it. Install it rather than hope: choco is
+      # preinstalled on both Windows runners and puts makensis where the build
+      # step looks. pwsh because choco is a Windows tool, not an MSYS2 one.
+      - name: Ensure NSIS
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $nsis = "C:\Program Files (x86)\NSIS\makensis.exe"
+          if (-not (Test-Path $nsis)) {
+            choco install nsis -y --no-progress
+          }
+          if (Test-Path $nsis) { & $nsis /VERSION } else { Write-Host "NSIS still absent" }
       - name: Build Windows installer
         continue-on-error: true
         run: |
@@ -1643,13 +1657,23 @@ jobs:
           MAKENSIS=""
           for c in "/c/Program Files (x86)/NSIS/makensis.exe" \
                    "/c/Program Files/NSIS/makensis.exe" \
+                   "/c/Program Files (x86)/NSIS/Bin/makensis.exe" \
                    "$(command -v makensis || true)"; do
             [ -n "$c" ] && [ -x "$c" ] && MAKENSIS="$c" && break
           done
           if [ -z "$MAKENSIS" ]; then
-            echo "makensis not present on this runner — skipping the installer"
+            # Say where it looked. The previous silence here read as "the step
+            # ran fine" while it had quietly produced nothing.
+            echo "makensis not found. Looked in:"
+            echo "  /c/Program Files (x86)/NSIS/makensis.exe"
+            echo "  /c/Program Files/NSIS/makensis.exe"
+            echo "  /c/Program Files (x86)/NSIS/Bin/makensis.exe"
+            echo "  \$PATH"
+            ls -la "/c/Program Files (x86)/NSIS" 2>&1 || true
+            echo "No installer will be produced for this arch."
             exit 0
           fi
+          echo "using $MAKENSIS"
           # Absolute, native Windows paths. NSIS resolves a relative File path
           # against the .nsi's own directory rather than the working directory,
           # so -DSRCDIR=build sent it looking in app/platform/windows/build and
