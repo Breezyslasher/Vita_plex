@@ -676,13 +676,14 @@ void MusicTab::playPlaylistWithQueue(const std::string& playlistId, int startInd
                 tracks.push_back(item.media);
             }
 
-            brls::sync([tracks, startIndex, userPickedTrack, aliveWeak]() {
+            brls::sync([tracks, startIndex, userPickedTrack, aliveWeak, playlistId]() {
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
                 // Create player with queue
                 brls::Application::pushActivity(
-                    PlayerActivity::createWithQueue(tracks, startIndex, userPickedTrack)
+                    PlayerActivity::createWithQueue(tracks, startIndex, userPickedTrack,
+                                                    playlistId)
                 );
             });
         } else {
@@ -886,11 +887,12 @@ void MusicTab::showPlaylistOptionsDialog(const Playlist& playlist) {
                 for (const auto& item : items) {
                     tracks.push_back(item.media);
                 }
-                brls::sync([tracks]() {
+                brls::sync([tracks, playlistId]() {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
                         brls::Application::pushActivity(
-                            PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false));
+                            PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false,
+                                                            playlistId));
                     } else {
                         queue.addTracks(tracks);
                         brls::Application::notify("Playlist added to queue");

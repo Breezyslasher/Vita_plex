@@ -2043,12 +2043,13 @@ void LibrarySectionTab::playPlaylistWithQueue(const std::string& playlistId, int
                 tracks.push_back(item.media);
             }
 
-            brls::sync([tracks, startIndex, userPickedTrack, aliveWeak]() {
+            brls::sync([tracks, startIndex, userPickedTrack, aliveWeak, playlistId]() {
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
                 brls::Application::pushActivity(
-                    PlayerActivity::createWithQueue(tracks, startIndex, userPickedTrack)
+                    PlayerActivity::createWithQueue(tracks, startIndex, userPickedTrack,
+                                                    playlistId)
                 );
             });
         } else {
