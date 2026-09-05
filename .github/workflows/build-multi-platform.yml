@@ -1621,6 +1621,25 @@ jobs:
 
           echo "DLLs bundled into build/:"
           ls -1 build/*.dll
+      # Authenticode signing is what removes SmartScreen's "Unknown publisher"
+      # prompt. It needs a real certificate, so the step is gated on a secret
+      # and does nothing without one — forks and PR builds are unaffected, the
+      # same way UPDATE_SIGNING_KEY gates the updater's own signatures.
+      #
+      # It runs here, before the portable upload, so the zip carries a signed
+      # exe, and before the installer, so the installer packages the signed
+      # one rather than a copy that would have to be re-signed inside it.
+      #
+      # Deliberately not continue-on-error: with a certificate configured, a
+      # signing failure that quietly shipped unsigned binaries would defeat
+      # the point. Without one the script exits 0, so this cannot break a
+      # build that has no cert.
+      - name: Sign VitaPlex.exe
+        shell: pwsh
+        env:
+          WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: ./app/platform/windows/sign.ps1 build/VitaPlex.exe
       - name: Upload mingw artifact
         uses: actions/upload-artifact@v4
         with:
@@ -1695,6 +1714,17 @@ jobs:
           # (1.3.8.1862); version is the display string ("Beta 1.3.8.1862").
           APP_VERSION: ${{ needs.resolve-version.outputs.version_number }}
           APP_DISPLAY_VERSION: ${{ needs.resolve-version.outputs.version }}
+      # The installer is a second exe and carries its own signature; signing
+      # the payload inside it does not sign it. This is the one users actually
+      # double-click, so it is the one SmartScreen judges. A run where the
+      # installer was never built passes a path that does not exist, which the
+      # script skips rather than failing on.
+      - name: Sign Windows installer
+        shell: pwsh
+        env:
+          WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: ./app/platform/windows/sign.ps1 build/VitaPlex-Setup-${{ matrix.arch }}.exe
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         if: hashFiles(format('build/VitaPlex-Setup-{0}.exe', matrix.arch)) != ''
