@@ -57,6 +57,51 @@ DBusConnection* bus() {
 dbus_uint32_t    g_progressId     = 0;
 DBusPendingCall* g_pending        = nullptr;
 bool             g_progressBroken = false;
+// Latched when the user closes the progress popup themselves. Dismissing it
+// destroys it, so the next replaces_id names nothing and the daemon makes a
+// fresh popup — which reads as the notification refusing to go away. Taking
+// the dismissal as "stop showing me this" is both the correct reading and the
+// only way to honour it.
+bool             g_progressDismissed = false;
+
+// NotificationClosed(id, reason). reason 2 is "dismissed by the user"; 3 is
+// "closed by a CloseNotification call", which is our own teardown and must not
+// count. Installed once, on the first progress post.
+DBusHandlerResult closedFilter(DBusConnection*, DBusMessage* msg, void*) {
+    if (dbus_message_is_signal(msg, "org.freedesktop.Notifications", "NotificationClosed")) {
+        dbus_uint32_t id = 0, reason = 0;
+        DBusMessageIter it;
+        if (dbus_message_iter_init(msg, &it)) {
+            dbus_message_iter_get_basic(&it, &id);
+            if (dbus_message_iter_next(&it)) dbus_message_iter_get_basic(&it, &reason);
+        }
+        if (id != 0 && id == g_progressId && reason == 2) {
+            g_progressDismissed = true;
+            brls::Logger::debug("shell: progress notification dismissed — not reposting");
+        }
+    }
+    return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+}
+
+void ensureClosedFilter() {
+    static bool s_done = false;
+    if (s_done) return;
+    DBusConnection* conn = bus();
+    if (!conn) return;
+    s_done = true;
+    DBusError err;
+    dbus_error_init(&err);
+    dbus_bus_add_match(conn,
+                       "type='signal',interface='org.freedesktop.Notifications',"
+                       "member='NotificationClosed'",
+                       &err);
+    if (dbus_error_is_set(&err)) {
+        brls::Logger::debug("shell: cannot watch NotificationClosed ({})", err.message);
+        dbus_error_free(&err);
+        return;
+    }
+    dbus_connection_add_filter(conn, closedFilter, nullptr, nullptr);
+}
 
 // One Notify call. replacesId 0 posts a new notification; a previous id
 // updates that one in place, which is what makes a progress notification a
@@ -121,6 +166,12 @@ dbus_uint32_t postNotification(const std::string& summary, const std::string& bo
         // A download reporting itself must never interrupt what the user is doing.
         unsigned char urgency = 0;
         hint("urgency", DBUS_TYPE_BYTE, "y", &urgency);
+        // transient: a live indicator, not a record. Without it the shell keeps
+        // the popup in its notification list, where a progress line that is
+        // already finished is just clutter — the completion notice is the entry
+        // worth keeping.
+        dbus_bool_t transient = TRUE;
+        hint("transient", DBUS_TYPE_BOOLEAN, "b", &transient);
     }
     dbus_message_iter_close_container(&it, &hints);
 
@@ -150,8 +201,15 @@ dbus_uint32_t postNotification(const std::string& summary, const std::string& bo
 // waited on and nothing has to integrate this private connection with a main
 // loop.
 void pumpPendingId() {
-    if (!g_pending) return;
     DBusConnection* conn = bus();
+    // Always drain, even with no reply outstanding: NotificationClosed arrives
+    // as a signal at whatever moment the user clicks the popup away, and this
+    // once-a-second tick is the only thing dispatching this connection.
+    if (conn && !g_pending) {
+        dbus_connection_read_write(conn, 0);
+        while (dbus_connection_dispatch(conn) == DBUS_DISPATCH_DATA_REMAINS) {}
+    }
+    if (!g_pending) return;
     // read_write_dispatch dispatches one message per call, and the bus puts its
     // own NameAcquired signal in the queue ahead of our reply — so a single
     // call collected nothing and the id took three ticks to surface even from
@@ -287,13 +345,16 @@ void setProgress(double fraction, const std::string& title,
         if (g_pending) { dbus_pending_call_cancel(g_pending); dbus_pending_call_unref(g_pending); }
         g_pending        = nullptr;
         g_progressId     = 0;
-        g_progressBroken = false;      // a new run gets a fresh try
+        g_progressBroken    = false;   // a new run gets a fresh try
+        g_progressDismissed = false;
         return;
     }
 
     // Has the id from the opening Notify arrived since the last tick?
     pumpPendingId();
-    if (g_progressBroken) return;      // launcher bar only; never spam popups
+    // Dismissed, or the daemon would not name the notification: either way stop
+    // posting. The launcher bar carries on for desktops that draw it.
+    if (g_progressBroken || g_progressDismissed) return;
 
     // -1 while the size is unknown, so a daemon that draws the hint shows an
     // empty bar rather than a misleading 0%.
@@ -308,6 +369,7 @@ void setProgress(double fraction, const std::string& title,
     // difference between one notification and sixty.
     if (g_progressId == 0) {
         if (g_pending) return;         // opening call still in flight
+        ensureClosedFilter();          // before the first post, so no close is missed
         // timeout 0 means "until dismissed": a progress popup that expires after
         // a few seconds and returns a second later is worse than none.
         postNotification(summary, detail, 0, pct, /*timeoutMs=*/0,

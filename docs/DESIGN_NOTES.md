@@ -247,9 +247,23 @@ reply, so a single call collected nothing and the id took three ticks to appear
 even from an instant daemon. Read once with a small bounded wait, then drain
 with `dbus_connection_dispatch` until the reply lands or the queue empties.
 
+Dismissing the popup destroys it, so the next `replaces_id` names nothing and
+the daemon makes a *new* one — the notification appears to refuse to go away.
+The backend watches `NotificationClosed(id, reason)` and latches on reason 2
+(dismissed by the user), after which nothing more is posted for that run. Reason
+3 is our own `CloseNotification` at the end and must not count. The signal only
+arrives if something dispatches the connection, so the progress tick drains it
+every second whether or not a reply is outstanding.
+
+The progress popup carries the `transient` hint: it is a live indicator, not a
+record, and should not pile up in the shell's notification list. Only the
+completion notice is worth keeping there.
+
 This is verified against a real session bus (`dbus-run-session`) and a stub
 notification service that logs the `replaces_id` of every call, at daemon reply
-delays of 0 ms, 800 ms and 3 s. In all three, exactly one progress popup.
+delays of 0 ms, 800 ms and 3 s, plus a run where the stub emits
+NotificationClosed part-way. In all of them, exactly one progress popup, and
+after a dismissal nothing further is posted.
 
 `expire_timeout` is 0 — until dismissed. A progress popup that expires after a
 few seconds and returns a second later is worse than none.
