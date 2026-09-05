@@ -137,14 +137,53 @@ std::wstring shortcutPath() {
 // Settings-controlled, Windows-only. On by default so toasts work out of the box.
 bool g_shortcutAllowed = true;
 
-// Write the Start Menu shortcut a toast needs, once. Windows looks the running app's
-// AppUserModelID up there and drops any toast it cannot attribute. Per-user, so no
-// elevation; an existing one is left alone in case the user moved or renamed it.
+// Does this existing shortcut already carry our AppUserModelID? A shortcut
+// without it is worse than none: Windows finds it, cannot attribute the app,
+// and drops every toast without a word. One left by an installer, or made by
+// hand from the exe, looks fine in the Start Menu and silently breaks
+// notifications — so an existing file is inspected and repaired, never trusted.
+bool shortcutHasAumid(const std::wstring& path, bool repair) {
+    ensureCom();
+    ComPtr<IShellLinkW> link;
+    if (FAILED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&link))))
+        return false;
+    ComPtr<IPersistFile> file;
+    if (FAILED(link.As(&file))) return false;
+    if (FAILED(file->Load(path.c_str(), repair ? STGM_READWRITE : STGM_READ))) return false;
+
+    ComPtr<IPropertyStore> store;
+    if (FAILED(link.As(&store))) return false;
+
+    PROPVARIANT pv;
+    PropVariantInit(&pv);
+    bool ok = false;
+    if (SUCCEEDED(store->GetValue(PKEY_AppUserModel_ID, &pv)) && pv.vt == VT_LPWSTR &&
+        pv.pwszVal && wcscmp(pv.pwszVal, kAumid) == 0) {
+        ok = true;
+    }
+    PropVariantClear(&pv);
+    if (ok || !repair) return ok;
+
+    // Present but unstamped (or stamped with something else) — put ours on it.
+    PROPVARIANT set;
+    if (FAILED(InitPropVariantFromString(kAumid, &set))) return false;
+    HRESULT hr = store->SetValue(PKEY_AppUserModel_ID, set);
+    PropVariantClear(&set);
+    if (FAILED(hr) || FAILED(store->Commit())) return false;
+    if (FAILED(file->Save(path.c_str(), TRUE))) return false;
+    brls::Logger::info("shell: stamped the AppUserModelID onto an existing Start Menu shortcut");
+    return true;
+}
+
+// The Start Menu shortcut a toast needs. Per-user, so no elevation; created if
+// absent, repaired if present without our id.
 bool ensureShortcut() {
     if (!g_shortcutAllowed) return false;
     const std::wstring path = shortcutPath();
     if (path.empty()) return false;
-    if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) return true;
+    if (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
+        return shortcutHasAumid(path, /*repair=*/true);
 
     const std::wstring exe = exePath();
     if (exe.empty()) return false;
@@ -223,7 +262,11 @@ std::wstring xmlEscape(const std::wstring& in) {
 
 // Returns false if anything at all went wrong, so the caller can fall back rather than leave the user with nothing.
 bool showToast(const std::wstring& summary, const std::wstring& body) {
-    if (!ensureShortcut()) return false;
+    if (!ensureShortcut()) {
+        brls::Logger::warning("shell: no usable Start Menu shortcut — Windows will not "
+                              "show a toast without one; falling back to the taskbar flash");
+        return false;
+    }
 
     ComPtr<WUN::IToastNotificationManagerStatics> mgr;
     if (FAILED(RoGetActivationFactory(
@@ -259,7 +302,16 @@ bool showToast(const std::wstring& summary, const std::wstring& body) {
     if (FAILED(mgr->CreateToastNotifierWithId(HStringReference(kAumid).Get(), &notifier)))
         return false;
 
-    return SUCCEEDED(notifier->Show(toast.Get()));
+    const HRESULT hr = notifier->Show(toast.Get());
+    if (FAILED(hr)) {
+        // The usual causes are notifications switched off for this app, Focus
+        // Assist, or an AppUserModelID the shell cannot resolve to the shortcut.
+        brls::Logger::warning("shell: toast Show failed ({:#x}) — falling back to the "
+                              "taskbar flash", (unsigned)hr);
+        return false;
+    }
+    brls::Logger::debug("shell: toast shown");
+    return true;
 }
 
 #if defined(VITAPLEX_HAVE_TOAST_PROGRESS)

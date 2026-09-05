@@ -229,6 +229,25 @@ sequence in the source, so a probe that compiles means the real code compiles.
 A gap there costs only the text: the taskbar bar and the completion toast are
 unaffected.
 
+### Windows: portable and installer, both per-user
+
+The zip is a portable folder and stays supported. The NSIS installer is the same
+payload plus a Start Menu entry, an Add/Remove Programs record and an
+uninstaller.
+
+It installs **per-user**, into `%LOCALAPPDATA%\Programs\VitaPlex`, and that is
+not about avoiding a UAC prompt for its own sake: the app updates itself, and an
+app under `Program Files` cannot rewrite its own exe without elevation or a
+privileged helper. Per-user means no prompt at install, at update, or at
+uninstall. Uninstalling deliberately leaves `%LOCALAPPDATA%\VitaPlex` alone —
+an uninstall is not a request to delete a downloaded library.
+
+The installer does not stamp the AppUserModelID onto the shortcut; that needs an
+NSIS plugin absent from stock runners. The app does it at first run instead,
+which also repairs a shortcut a user made by hand — the case that silently broke
+toasts, since Windows finds such a shortcut, cannot attribute the app, and drops
+every toast without a word.
+
 ### Windows: toasts need a Start Menu shortcut
 
 Windows will not show a toast from an unpackaged app unless a Start Menu
