@@ -5836,6 +5836,22 @@ bool PlexClient::createPlayQueue(const std::string& uri, const std::string& type
     req.url = url;
     req.method = "POST";
     req.headers["Accept"] = "application/json";
+    // A play queue is created for a device and belongs to it, so identify
+    // ourselves. This is the one difference between the POSTs to this server
+    // that work — /:/timeline and the Live TV tune both send these — and this
+    // one, which sent nothing but Accept and was answered 400. The spec does
+    // not list the header as required here, but the spec also does not
+    // describe a 400 for a well-formed request, and it has already been wrong
+    // about this server once.
+    {
+        const auto& vc = platform::getVideoConstraints();
+        req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+        req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+        req.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+        req.headers["X-Plex-Platform"] = vc.plexPlatform;
+        req.headers["X-Plex-Device"] = vc.plexDevice;
+        req.headers["X-Plex-Device-Name"] = vc.plexDevice;
+    }
     HttpResponse resp = client.request(req);
 
     if (resp.statusCode != 200) {
@@ -5866,6 +5882,15 @@ bool PlexClient::createPlayQueueFromPlaylist(int playlistID, const std::string& 
     req.url = url;
     req.method = "POST";
     req.headers["Accept"] = "application/json";
+    {
+        const auto& vc = platform::getVideoConstraints();
+        req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+        req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+        req.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+        req.headers["X-Plex-Platform"] = vc.plexPlatform;
+        req.headers["X-Plex-Device"] = vc.plexDevice;
+        req.headers["X-Plex-Device-Name"] = vc.plexDevice;
+    }
     HttpResponse resp = client.request(req);
 
     if (resp.statusCode != 200) {
