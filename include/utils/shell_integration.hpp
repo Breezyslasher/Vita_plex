@@ -42,13 +42,19 @@ void notify(const std::string& summary, const std::string& body);
 // Report ongoing background work, 0.0-1.0. Negative means "working, size not
 // known yet" where the backend can draw that. Call with visible=false to take
 // it away; left behind, it sits at whatever fraction the work stopped on.
-void setProgress(double fraction, bool visible);
+//
+// title and detail are for backends with somewhere to put text — Android's
+// notification uses them as its two lines. The launcher bar on Linux and the
+// taskbar bar on Windows draw a fraction and nothing else, so they ignore both;
+// pass them anyway rather than making the caller ask which backend it has.
+void setProgress(double fraction, const std::string& title,
+                 const std::string& detail, bool visible);
 
 #else
 
 inline void init() {}
 inline void notify(const std::string&, const std::string&) {}
-inline void setProgress(double, bool) {}
+inline void setProgress(double, const std::string&, const std::string&, bool) {}
 
 #endif
 

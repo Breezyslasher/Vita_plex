@@ -324,6 +324,7 @@ void DownloadsManager::startDownloads() {
         // if it is reached, and a run can end without getting there.
         m_runCompleted = 0;
         m_runLastTitle.clear();
+        m_lastProgressBytes = 0;
         brls::Logger::info("DownloadsManager: Download thread started");
 
         while (m_downloading.load()) {
@@ -396,7 +397,7 @@ void DownloadsManager::startDownloads() {
             m_runCompleted = 0;
             m_runLastTitle.clear();
             brls::sync([done, title]() {
-                shell::setProgress(0.0, false);
+                shell::setProgress(0.0, "", "", false);
                 if (done == 1) {
                     shell::notify("Download complete", title);
                 } else if (done > 1) {
@@ -1196,6 +1197,18 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
             item.transcodeProgressPercent = progress;
         }
 
+        // Surface the server-side prepare in the notification too. No bytes flow
+        // during this phase, so the byte callbacks never run and the download
+        // otherwise looks stalled for however many minutes the transcode takes.
+        {
+            const double frac = (item.transcodeProgressPercent > 0)
+                                    ? item.transcodeProgressPercent / 100.0
+                                    : -1.0;
+            brls::sync([frac, title = item.title]() {
+                shell::setProgress(frac, title, "Preparing on server", true);
+            });
+        }
+
         if (status != lastStatus) {
             brls::Logger::info(
                 "DownloadsManager: Queue item {} status={} progress={}% elapsed={}s",
@@ -1245,6 +1258,74 @@ static bool tryDownloadQueueApi(const std::string& serverUrl, const std::string&
 
     brls::Logger::info("DownloadsManager: Download Queue media URL ready");
     return true;
+}
+
+void DownloadsManager::reportShellProgress(const DownloadItem& item) {
+    // Once a second: this runs per chunk, and neither a D-Bus signal nor a
+    // notification repost is worth doing at that rate.
+    const int64_t nowMs = brls::getCPUTimeUsec() / 1000;
+    if (nowMs - m_lastLauncherMs < 1000) return;
+    const int64_t elapsedMs = nowMs - m_lastLauncherMs;
+    m_lastLauncherMs = nowMs;
+
+    // Negative means "working, size unknown" — an HLS download before its
+    // segment count settles. Better an indeterminate bar than a 0% that looks
+    // stuck.
+    const double frac = item.totalBytes > 0
+                            ? (double)item.downloadedBytes / (double)item.totalBytes
+                            : -1.0;
+    // Posted to the UI thread, which is where every backend wants to be called.
+    brls::sync([frac, title = item.title, detail = progressDetail(item, elapsedMs)]() {
+        shell::setProgress(frac, title, detail, true);
+    });
+}
+
+std::string DownloadsManager::progressDetail(const DownloadItem& item, int64_t elapsedMs) {
+    // How far through the run. Counted live rather than snapshotted at the
+    // start, so an item queued while the worker is draining is included.
+    int remaining = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (const auto& d : m_downloads) {
+            if (d.state == DownloadState::QUEUED || d.state == DownloadState::DOWNLOADING)
+                remaining++;
+        }
+    }
+    const int position = m_runCompleted + 1;
+    const int total    = m_runCompleted + std::max(remaining, 1);
+
+    auto human = [](double bytes) {
+        static const char* kUnits[] = {"B", "KB", "MB", "GB"};
+        int u = 0;
+        while (bytes >= 1024.0 && u < 3) { bytes /= 1024.0; u++; }
+        char buf[32];
+        snprintf(buf, sizeof(buf), bytes < 10.0 && u > 0 ? "%.1f %s" : "%.0f %s", bytes, kUnits[u]);
+        return std::string(buf);
+    };
+
+    std::string out;
+    if (total > 1) out = std::to_string(position) + " of " + std::to_string(total);
+
+    // Size, when the server told us one. A HLS download does not know its total
+    // until the segment count settles, so it shows what has arrived instead.
+    if (item.totalBytes > 0) {
+        if (!out.empty()) out += " \xC2\xB7 ";
+        out += human((double)item.downloadedBytes) + " / " + human((double)item.totalBytes);
+    } else if (item.downloadedBytes > 0) {
+        if (!out.empty()) out += " \xC2\xB7 ";
+        out += human((double)item.downloadedBytes);
+    }
+
+    // Rate over the interval just elapsed rather than a running average, so a
+    // stall shows up immediately instead of decaying out of sight.
+    if (elapsedMs > 0 && m_lastProgressBytes > 0 && item.downloadedBytes > m_lastProgressBytes) {
+        const double perSec =
+            (double)(item.downloadedBytes - m_lastProgressBytes) * 1000.0 / (double)elapsedMs;
+        if (!out.empty()) out += " \xC2\xB7 ";
+        out += human(perSec) + "/s";
+    }
+    m_lastProgressBytes = item.downloadedBytes;
+    return out;
 }
 
 void DownloadsManager::downloadItem(DownloadItem& item) {
@@ -1684,26 +1765,8 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                             cb(item.downloadedBytes, item.totalBytes);
                         }
 
-                        // Progress in the shell — the launcher bar on Linux, the
-                        // ongoing notification on Android. Throttled to once a
-                        // second, since this runs per chunk, and posted to the
-                        // UI thread, which is where both backends want to be
-                        // called from.
-                        {
-                            const int64_t nowMs = brls::getCPUTimeUsec() / 1000;
-                            if (nowMs - m_lastLauncherMs >= 1000) {
-                                m_lastLauncherMs = nowMs;
-                                // Negative means "working, size unknown" — a HLS
-                                // download before its segment count is settled.
-                                // Better an indeterminate bar than a 0% that
-                                // looks stuck.
-                                const double frac =
-                                    item.totalBytes > 0
-                                        ? (double)item.downloadedBytes / (double)item.totalBytes
-                                        : -1.0;
-                                brls::sync([frac]() { shell::setProgress(frac, true); });
-                            }
-                        }
+                        reportShellProgress(item);
+
                         return m_downloading.load() && item.state != DownloadState::CANCELLED;
                     },
                     [&](int64_t total) {
@@ -1912,6 +1975,7 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                     item.downloadedBytes += size;
                     auto cb = m_progressCallback;
                     if (cb) cb(item.downloadedBytes, item.totalBytes);
+                    reportShellProgress(item);
                     return m_downloading.load() && item.state != DownloadState::CANCELLED;
                 },
                 /*sizeCallback*/ nullptr,   // full size comes from startCallback (correct for 206 + 200)

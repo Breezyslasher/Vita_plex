@@ -300,7 +300,9 @@ void notify(const std::string& summary, const std::string& body) {
     flashTaskbar();
 }
 
-void setProgress(double fraction, bool visible) {
+// The taskbar bar is a fraction and a state; there is no text on it, so the
+// title and detail are unused here.
+void setProgress(double fraction, const std::string&, const std::string&, bool visible) {
     ComPtr<ITaskbarList3> tb = taskbar();
     if (!tb) return;
     HWND hwnd = appHwnd();

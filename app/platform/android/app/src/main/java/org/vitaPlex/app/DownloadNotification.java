@@ -49,7 +49,9 @@ public final class DownloadNotification {
     private static boolean sServiceStarted = false;
     // Latest reported progress, so the service can rebuild the same
     // notification when it foregrounds without being handed one.
-    private static volatile float sFraction = -1.0f;
+    private static volatile float  sFraction = -1.0f;
+    private static volatile String sTitle    = "Downloading";
+    private static volatile String sDetail   = "";
 
     private DownloadNotification() {}
 
@@ -95,7 +97,8 @@ public final class DownloadNotification {
      * whose segment count has not been established yet — and draws the
      * indeterminate bar rather than a misleading 0%.
      */
-    public static void setProgress(final float fraction, final boolean visible) {
+    public static void setProgress(final float fraction, final String title,
+                                   final String detail, final boolean visible) {
         try {
             Context ctx = VitaPlexActivity.getAppContext();
             if (ctx == null) return;
@@ -106,9 +109,13 @@ public final class DownloadNotification {
                 stopService(ctx);   // clears the notification with it
                 nm.cancel(PROGRESS_ID);
                 sFraction = -1.0f;
+                sTitle    = "Downloading";
+                sDetail   = "";
                 return;
             }
             sFraction = fraction;
+            if (title  != null && !title.isEmpty())  sTitle  = title;
+            if (detail != null)                      sDetail = detail;
             ensureChannel(ctx);
 
             // First progress of a run: hand the work to a foreground service so
@@ -142,10 +149,14 @@ public final class DownloadNotification {
             ? 0
             : Math.max(0, Math.min(100, Math.round(fraction * 100.0f)));
 
+        // Title is what is downloading, detail the live line under it —
+        // "3 of 12 · 45% · 1.2 MB/s". A bare percentage told the user nothing
+        // they could not already see from the bar.
         return new NotificationCompat.Builder(ctx, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("Downloading")
-            .setContentText(indeterminate ? null : pct + "%")
+            .setContentTitle(sTitle)
+            .setContentText(sDetail.isEmpty() ? (indeterminate ? null : pct + "%") : sDetail)
+            .setSubText(indeterminate ? null : pct + "%")
             .setProgress(100, pct, indeterminate)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
             .setPriority(NotificationCompat.PRIORITY_LOW)

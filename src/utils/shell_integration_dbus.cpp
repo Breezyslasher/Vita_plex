@@ -158,7 +158,9 @@ void emitLauncherUpdate(const char* key1, int type1, const void* val1, const cha
 
 } // namespace
 
-void setProgress(double fraction, bool visible) {
+// The launcher protocol carries a progress fraction and nothing else, so the
+// title and detail have nowhere to go here.
+void setProgress(double fraction, const std::string&, const std::string&, bool visible) {
     if (fraction < 0.0) fraction = 0.0;
     if (fraction > 1.0) fraction = 1.0;
     dbus_bool_t vis = visible ? TRUE : FALSE;

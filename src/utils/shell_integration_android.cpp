@@ -71,24 +71,32 @@ void notify(const std::string& summary, const std::string& body) {
     e->DeleteLocalRef(cls);
 }
 
-void setProgress(double fraction, bool visible) {
+void setProgress(double fraction, const std::string& title,
+                 const std::string& detail, bool visible) {
     JNIEnv* e = env();
     if (!e) return;
     jclass cls = findClass(e);
     if (!cls) return;
 
-    jmethodID mid = e->GetStaticMethodID(cls, "setProgress", "(FZ)V");
+    jmethodID mid = e->GetStaticMethodID(
+        cls, "setProgress", "(FLjava/lang/String;Ljava/lang/String;Z)V");
     if (!mid) {
         if (e->ExceptionCheck()) e->ExceptionClear();
         e->DeleteLocalRef(cls);
         return;
     }
 
-    // Negative is meaningful on the Java side (indeterminate), so only the upper end is clamped.
+    // Negative is meaningful on the Java side (indeterminate), so only the
+    // upper end is clamped.
     if (fraction > 1.0) fraction = 1.0;
-    e->CallStaticVoidMethod(cls, mid, (jfloat)fraction, (jboolean)(visible ? JNI_TRUE : JNI_FALSE));
+    jstring jTitle  = e->NewStringUTF(title.c_str());
+    jstring jDetail = e->NewStringUTF(detail.c_str());
+    e->CallStaticVoidMethod(cls, mid, (jfloat)fraction, jTitle, jDetail,
+                            (jboolean)(visible ? JNI_TRUE : JNI_FALSE));
     if (e->ExceptionCheck()) e->ExceptionClear();
 
+    e->DeleteLocalRef(jDetail);
+    e->DeleteLocalRef(jTitle);
     e->DeleteLocalRef(cls);
 }
 
