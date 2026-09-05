@@ -10,7 +10,7 @@
  */
 
 #include "app/downloads_manager.hpp"
-#include "utils/desktop_shell.hpp"
+#include "utils/shell_integration.hpp"
 #include "app/plex_client.hpp"
 #include "app/application.hpp"
 #include "utils/http_client.hpp"
@@ -320,6 +320,10 @@ void DownloadsManager::startDownloads() {
     // that can overflow the Vita's default 256KB thread stack.
     asyncRunLargeStack([this]() {
         m_downloadThreadActive.store(true);
+        // Fresh run, fresh tally — the drain path clears these too, but only
+        // if it is reached, and a run can end without getting there.
+        m_runCompleted = 0;
+        m_runLastTitle.clear();
         brls::Logger::info("DownloadsManager: Download thread started");
 
         while (m_downloading.load()) {
@@ -382,9 +386,28 @@ void DownloadsManager::startDownloads() {
         m_downloading.store(false);
         m_downloadThreadActive.store(false);
 
-        // Nothing left downloading: take the bar off the launcher icon. Left
-        // behind, it would sit at whatever fraction the last item stopped on.
-        brls::sync([]() { desktopshell::setLauncherProgress(0.0, false); });
+        // Nothing left downloading: take the progress indicator away, then say
+        // what came of it. One notification for the whole run — the point is
+        // "your downloads are ready", and the user was not watching for each
+        // track of an album to land.
+        {
+            const int    done  = m_runCompleted;
+            const std::string title = m_runLastTitle;
+            m_runCompleted = 0;
+            m_runLastTitle.clear();
+            brls::sync([done, title]() {
+                shell::setProgress(0.0, false);
+                if (done == 1) {
+                    shell::notify("Download complete", title);
+                } else if (done > 1) {
+                    shell::notify("Downloads complete",
+                                  std::to_string(done) + " items are now available offline");
+                }
+                // done == 0 means the run finished without completing anything
+                // — cancelled, paused or failed. Those report themselves in
+                // the downloads list; a notification would only be noise.
+            });
+        }
 
         // Now safe to purge cancelled items since no references are held
         {
@@ -1661,19 +1684,24 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                             cb(item.downloadedBytes, item.totalBytes);
                         }
 
-                        // Progress bar on the launcher icon. Throttled to once a
-                        // second — this runs per chunk, and a D-Bus signal per
-                        // chunk would be absurd — and posted to the UI thread,
-                        // because the bus connection belongs to it.
-                        if (item.totalBytes > 0) {
+                        // Progress in the shell — the launcher bar on Linux, the
+                        // ongoing notification on Android. Throttled to once a
+                        // second, since this runs per chunk, and posted to the
+                        // UI thread, which is where both backends want to be
+                        // called from.
+                        {
                             const int64_t nowMs = brls::getCPUTimeUsec() / 1000;
                             if (nowMs - m_lastLauncherMs >= 1000) {
                                 m_lastLauncherMs = nowMs;
+                                // Negative means "working, size unknown" — a HLS
+                                // download before its segment count is settled.
+                                // Better an indeterminate bar than a 0% that
+                                // looks stuck.
                                 const double frac =
-                                    (double)item.downloadedBytes / (double)item.totalBytes;
-                                brls::sync([frac]() {
-                                    desktopshell::setLauncherProgress(frac, true);
-                                });
+                                    item.totalBytes > 0
+                                        ? (double)item.downloadedBytes / (double)item.totalBytes
+                                        : -1.0;
+                                brls::sync([frac]() { shell::setProgress(frac, true); });
                             }
                         }
                         return m_downloading.load() && item.state != DownloadState::CANCELLED;
@@ -1920,9 +1948,11 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     } else if (success && m_downloading.load()) {
         item.state = DownloadState::COMPLETED;
         brls::Logger::info("DownloadsManager: Completed download of {}", item.title);
-        // A download usually finishes while the user is doing something else,
-        // which is exactly when the shell should say so. No-op off Linux.
-        desktopshell::notify("Download complete", item.title);
+        // Remember it for the summary the worker posts once the queue drains.
+        // Notifying here instead would mean one per item, and an album is
+        // queued as twenty of them.
+        m_runCompleted++;
+        m_runLastTitle = item.title;
 
         // Download cover art for music tracks
         if (!item.thumbUrl.empty() && !item.thumbPath.empty()) {

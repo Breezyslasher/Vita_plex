@@ -1,11 +1,11 @@
 /**
- * VitaPlex - Linux desktop shell integration (see the header).
+ * VitaPlex - shell integration, D-Bus backend (see the header).
  *
  * Compiled only when VITAPLEX_MPRIS is defined — the same dbus-1 check that
  * gates the media controls, since both want a session bus.
  */
 
-#include "utils/desktop_shell.hpp"
+#include "utils/shell_integration.hpp"
 
 #if defined(VITAPLEX_MPRIS)
 
@@ -15,7 +15,7 @@
 #include <cstring>
 
 namespace vitaplex {
-namespace desktopshell {
+namespace shell {
 
 namespace {
 
@@ -37,7 +37,7 @@ DBusConnection* bus() {
         dbus_error_init(&err);
         DBusConnection* c = dbus_bus_get_private(DBUS_BUS_SESSION, &err);
         if (dbus_error_is_set(&err)) {
-            brls::Logger::debug("desktopshell: no session bus ({})", err.message);
+            brls::Logger::debug("shell: no session bus ({})", err.message);
             dbus_error_free(&err);
             return nullptr;
         }
@@ -155,22 +155,14 @@ void emitLauncherUpdate(const char* key1, int type1, const void* val1, const cha
 
 } // namespace
 
-void setLauncherProgress(double fraction, bool visible) {
+void setProgress(double fraction, bool visible) {
     if (fraction < 0.0) fraction = 0.0;
     if (fraction > 1.0) fraction = 1.0;
     dbus_bool_t vis = visible ? TRUE : FALSE;
     emitLauncherUpdate("progress", DBUS_TYPE_DOUBLE, &fraction, "d",
                        "progress-visible", &vis);
 }
-
-void setLauncherCount(int64_t count, bool visible) {
-    dbus_int64_t c = (dbus_int64_t)count;
-    dbus_bool_t vis = visible ? TRUE : FALSE;
-    emitLauncherUpdate("count", DBUS_TYPE_INT64, &c, "x",
-                       "count-visible", &vis);
-}
-
-} // namespace desktopshell
+} // namespace shell
 } // namespace vitaplex
 
 #endif // VITAPLEX_MPRIS

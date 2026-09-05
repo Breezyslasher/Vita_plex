@@ -355,6 +355,9 @@ if(PLATFORM_ANDROID)
     # Media browsing bridge (Android Auto / Assistant / Wear) — native half of
     # org.VitaPlex.app.LibraryBrowserService.
     list(APPEND APP_SOURCES src/platform/android_media_browser.cpp)
+    # Download notifications — native half of
+    # org.VitaPlex.app.DownloadNotification (see utils/shell_integration.hpp).
+    list(APPEND APP_SOURCES src/utils/shell_integration_android.cpp)
 endif()
 
 
@@ -981,8 +984,8 @@ int main() {
                 message(STATUS "MPRIS media controls enabled (dbus-1 ${DBUS_VERSION})")
                 target_sources(${PROJECT_NAME} PRIVATE src/utils/now_playing_mpris.cpp)
                 # Same bus, same availability check: desktop notifications and
-                # the launcher progress bar (see utils/desktop_shell.hpp).
-                target_sources(${PROJECT_NAME} PRIVATE src/utils/desktop_shell.cpp)
+                # the launcher progress bar (see utils/shell_integration.hpp).
+                target_sources(${PROJECT_NAME} PRIVATE src/utils/shell_integration_dbus.cpp)
                 target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_MPRIS=1)
                 target_link_libraries(${PROJECT_NAME} PkgConfig::DBUS)
             else()

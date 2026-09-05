@@ -200,9 +200,14 @@ private:
 
     std::deque<DownloadItem> m_downloads;
     mutable std::mutex m_mutex;
-    // Last time the launcher progress bar was updated, ms. The byte
-    // callback fires per chunk; this keeps it to one D-Bus signal a second.
+    // Last time the shell progress indicator was updated, ms. The byte
+    // callback fires per chunk; this keeps it to one update a second.
     int64_t m_lastLauncherMs = 0;
+    // What to say when the queue drains. Written by downloadItem and read at
+    // the end of the worker — both on the download thread, so unsynchronised
+    // is correct here rather than merely convenient.
+    int m_runCompleted = 0;
+    std::string m_runLastTitle;
     std::atomic<bool> m_downloading{false};
     std::atomic<bool> m_downloadThreadActive{false};
     bool m_initialized = false;
