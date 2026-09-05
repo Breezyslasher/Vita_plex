@@ -292,8 +292,14 @@ void openLogFile() {
             const uint64_t ms =
                 std::chrono::duration_cast<std::chrono::milliseconds>(time.time_since_epoch())
                     .count() % 1000;
+            // Redacted at the sink, not trusted to every caller. A log is
+            // something users paste into a bug report, and an X-Plex-Token in
+            // one is a credential for the whole server. Individual call sites
+            // do redact, but that has now been got wrong three times — one
+            // missed site is a leak, and this line cannot be missed.
             std::fprintf(g_logFile, "%02d:%02d:%02d.%03d [%s] %s\n", tm.tm_hour, tm.tm_min,
-                         tm.tm_sec, (int)ms, levelStr, log.c_str());
+                         tm.tm_sec, (int)ms, levelStr,
+                         ::vitaplex::redactTokensInUrl(log).c_str());
         });
     brls::Logger::info("Log file: {}", getLogPath());
 #endif

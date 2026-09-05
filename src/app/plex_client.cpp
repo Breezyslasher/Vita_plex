@@ -861,7 +861,8 @@ bool PlexClient::connectToServer(const std::string& url) {
 }
 
 bool PlexClient::connectToServer(const std::string& url, int timeoutSeconds) {
-    brls::Logger::info("Connecting to server: {} (timeout: {}s)", url, timeoutSeconds);
+    brls::Logger::info("Connecting to server: {} (timeout: {}s)", redactTokensInUrl(url),
+                       timeoutSeconds);
 
     // Normalize URL - ensure http/https is lowercase
     m_serverUrl = url;
@@ -2805,7 +2806,7 @@ bool PlexClient::getPlaybackUrl(const std::string& ratingKey, std::string& url) 
     // Build stream URL from Part key The Part key is something like /library/parts/12345/1234567890/file.mkv
     url = m_serverUrl + partKey + "?X-Plex-Token=" + m_authToken;
 
-    brls::Logger::info("getPlaybackUrl: Stream URL = {}", url);
+    brls::Logger::info("getPlaybackUrl: Stream URL = {}", redactTokensInUrl(url));
     return true;
 }
 
@@ -3594,7 +3595,7 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
     const char* container = isAudio ? "mp3" : "m3u8";
     snprintf(buf, sizeof(buf), "/%s/:/transcode/universal/start.%s?", transcodeType, container);
     url = m_serverUrl + buf + startQuery;
-    brls::Logger::info("getTranscodeUrl: Transcode URL = {}", url);
+    brls::Logger::info("getTranscodeUrl: Transcode URL = {}", redactTokensInUrl(url));
 
     return true;
 }
@@ -5880,7 +5881,8 @@ bool PlexClient::createPlayQueue(const std::string& uri, const std::string& type
         // Logging the status alone left a 400 on this call looking like a
         // network blip for as long as it took to notice the URI was wrong.
         brls::Logger::error("createPlayQueue: Failed ({}) uri={} body: {}",
-                            resp.statusCode, uri, redactBodyForLog(resp.body.substr(0, 300)));
+                            resp.statusCode, redactTokensInUrl(uri),
+                            redactBodyForLog(resp.body.substr(0, 300)));
         if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
     }

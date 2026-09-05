@@ -1955,8 +1955,12 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                 }
             };
 
+            // Through the redactor, never raw: this line printed a live
+            // X-Plex-Token straight into the log, which is a credential for the
+            // whole server. HttpClient's own line right below it was already
+            // redacted, so a pasted log looked safe while this one sat above it.
             brls::Logger::debug("DownloadsManager: Downloading from {} (resume offset {})",
-                                url, resumeOffset);
+                                redactTokensInUrl(url), resumeOffset);
 
             HttpClient http;
             success = http.downloadFile(url,

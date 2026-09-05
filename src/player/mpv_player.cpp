@@ -1453,7 +1453,7 @@ void MpvPlayer::eventMainLoop() {
                         }
                         brls::Logger::error("MpvPlayer: {} (reason={}, error={}, url={})",
                                            m_errorMessage, (int)end->reason, end->error,
-                                           m_currentUrl.substr(0, 120));
+                                           redactTokensInUrl(m_currentUrl.substr(0, 120)));
                         setState(MpvPlayerState::ERROR);
                     } else {
                         setState(MpvPlayerState::IDLE);

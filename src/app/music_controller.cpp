@@ -10,6 +10,7 @@
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
 #include "utils/async.hpp"
+#include "utils/http_client.hpp"  // redactTokensInUrl
 
 namespace vitaplex {
 
@@ -242,7 +243,7 @@ bool MusicController::loadCurrentHeadless() {
     player.setAudioOnly(true);
     if (player.hasEnded()) player.stop();  // clear ENDED so the new load isn't re-ended
     if (!player.loadUrl(url, track->title, (int64_t)track->duration * 1000)) {
-        brls::Logger::error("MusicController: loadUrl failed for {}", url);
+        brls::Logger::error("MusicController: loadUrl failed for {}", redactTokensInUrl(url));
         return false;
     }
     m_endHandled = false;
