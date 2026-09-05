@@ -10,6 +10,13 @@
 
 #include <windows.h>
 
+/*
+ * Application icon. Windows takes the lowest-numbered icon resource as the
+ * one for the exe, so this is what Explorer, the taskbar and Alt-Tab show.
+ * Without it the binary carried the toolchain default.
+ */
+1 ICON "vitaplex.ico"
+
 VS_VERSION_INFO VERSIONINFO
  FILEVERSION    1,2,4,0
  PRODUCTVERSION 1,2,4,0

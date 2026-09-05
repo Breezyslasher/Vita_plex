@@ -55,8 +55,15 @@ VIAddVersionKey "ProductVersion"  "${DISPLAY_VERSION}"
 VIAddVersionKey "LegalCopyright"  "${PUBLISHER}"
 
 !define MUI_ABORTWARNING
-!define MUI_ICON   "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
-!define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
+; The app's own icon, not NSIS' generic one — it is also what the setup exe
+; itself shows in Explorer and on the taskbar while installing. ICONDIR is
+; passed in by the build; the fallback keeps a manual `makensis installer.nsi`
+; from the repo root working.
+!ifndef ICONDIR
+  !define ICONDIR "app\platform\windows"
+!endif
+!define MUI_ICON   "${ICONDIR}\vitaplex.ico"
+!define MUI_UNICON "${ICONDIR}\vitaplex.ico"
 
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES

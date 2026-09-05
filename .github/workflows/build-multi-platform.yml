@@ -1681,11 +1681,13 @@ jobs:
           SRC_WIN=$(cygpath -w "$PWD/build")
           OUT_WIN=$(cygpath -w "$PWD/build/VitaPlex-Setup-${{ matrix.arch }}.exe")
           NSI_WIN=$(cygpath -w "$PWD/app/platform/windows/installer.nsi")
+          ICO_WIN=$(cygpath -w "$PWD/app/platform/windows")
           "$MAKENSIS" -V2 \
             -DVERSION="${APP_VERSION}" \
             -DDISPLAY_VERSION="${APP_DISPLAY_VERSION}" \
             -DSRCDIR="$SRC_WIN" \
             -DOUTFILE="$OUT_WIN" \
+            -DICONDIR="$ICO_WIN" \
             "$NSI_WIN"
           ls -la "build/VitaPlex-Setup-${{ matrix.arch }}.exe"
         env:
