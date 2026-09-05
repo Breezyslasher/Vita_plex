@@ -5788,16 +5788,33 @@ static void parsePlayQueueItems(const std::string& json, PlexClient& client,
     }
 }
 
+// A play-queue source URI names the provider that holds the item:
+//
+//     server://{machineIdentifier}/{providerId}/{path}
+//
+// which for anything in the library is com.plexapp.plugins.library, e.g.
+// server://546684a3…/com.plexapp.plugins.library/library/metadata/2814936.
+// The path stays unescaped here; createPlayQueue percent-encodes the whole
+// URI once when it goes in as a query parameter.
+//
+// These used to build library://{machineIdentifier}/item/… — which mixes the
+// two documented shapes, since a library:// authority is a library *section*
+// UUID, not a machine identifier. The server answered 400, PlayerActivity
+// quietly fell back to a client-side queue, and music kept playing without a
+// server play queue: no playQueueItemID on timeline reports, no continuity to
+// other clients, no server-side shuffle or repeat.
+static constexpr const char* kLibraryProviderId = "com.plexapp.plugins.library";
+
 std::string PlexClient::buildPlayQueueURI(const std::string& ratingKey) {
-    // library://{machineId}/item/%2Flibrary%2Fmetadata%2F{ratingKey}
-    return "library://" + m_currentServer.machineIdentifier +
-           "/item/%2Flibrary%2Fmetadata%2F" + ratingKey;
+    return "server://" + m_currentServer.machineIdentifier + "/" +
+           kLibraryProviderId + "/library/metadata/" + ratingKey;
 }
 
 std::string PlexClient::buildPlayQueueDirectoryURI(const std::string& ratingKey) {
-    // library://{machineId}/directory/%2Flibrary%2Fmetadata%2F{ratingKey}%2Fchildren
-    return "library://" + m_currentServer.machineIdentifier +
-           "/directory/%2Flibrary%2Fmetadata%2F" + ratingKey + "%2Fchildren";
+    // An album or season: the queue is its children, and the server expands
+    // them in order.
+    return "server://" + m_currentServer.machineIdentifier + "/" +
+           kLibraryProviderId + "/library/metadata/" + ratingKey + "/children";
 }
 
 bool PlexClient::createPlayQueue(const std::string& uri, const std::string& type,
@@ -5822,7 +5839,11 @@ bool PlexClient::createPlayQueue(const std::string& uri, const std::string& type
     HttpResponse resp = client.request(req);
 
     if (resp.statusCode != 200) {
-        brls::Logger::error("createPlayQueue: Failed ({})", resp.statusCode);
+        // The body is where Plex says what it objected to, and it is short.
+        // Logging the status alone left a 400 on this call looking like a
+        // network blip for as long as it took to notice the URI was wrong.
+        brls::Logger::error("createPlayQueue: Failed ({}) uri={} body: {}",
+                            resp.statusCode, uri, redactBodyForLog(resp.body.substr(0, 300)));
         if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
     }
@@ -5848,7 +5869,8 @@ bool PlexClient::createPlayQueueFromPlaylist(int playlistID, const std::string& 
     HttpResponse resp = client.request(req);
 
     if (resp.statusCode != 200) {
-        brls::Logger::error("createPlayQueueFromPlaylist: Failed ({})", resp.statusCode);
+        brls::Logger::error("createPlayQueueFromPlaylist: Failed ({}) body: {}",
+                            resp.statusCode, redactBodyForLog(resp.body.substr(0, 300)));
         if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
     }
