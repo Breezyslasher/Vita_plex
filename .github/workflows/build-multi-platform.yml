@@ -173,8 +173,24 @@ jobs:
         uses: actions/download-artifact@v4
       - name: Package Windows assets
         run: |
-          for p in VitaPlex-windows-*; do
-            [[ -d $p ]] && 7z a -mx=9 $p.7z ./$p/* && rm -rf $p
+          # build-mingw uploads these as VitaPlex-mingw-*; this globbed
+          # VitaPlex-windows-* and so matched nothing. Latent rather than
+          # costly — every recent release came from the pre-release job, which
+          # globs the right name — but a tag-triggered release would have
+          # shipped without a Windows build at all.
+          for p in VitaPlex-mingw-*; do
+            [[ -d $p ]] || continue
+            out="VitaPlex-windows-${p#VitaPlex-mingw-}"
+            7z a -mx=9 "$out.7z" ./$p/* && rm -rf $p
+          done
+          # The installer is a separate artifact; lift the exe out of its
+          # directory so the upload glob below can name it.
+          for p in VitaPlex-setup-*; do
+            [[ -d $p ]] || continue
+            for exe in "$p"/*.exe; do
+              [ -f "$exe" ] && mv "$exe" "./$(basename "$exe")"
+            done
+            rm -rf "$p"
           done
       # Sign every asset so the in-app updater can verify authenticity before
       # installing (see src/utils/update_verify.cpp): detached ECDSA-P256 /
@@ -198,6 +214,7 @@ jobs:
           signed=0
           for f in \
               VitaPlex-windows-*.7z \
+              VitaPlex-Setup-*.exe \
               VitaPlex-macos-*/* \
               VitaPlex-switch-*/*.nro \
               VitaPlex-nx-*/*.nro \
@@ -222,6 +239,8 @@ jobs:
           files: |
             VitaPlex-windows-*.7z
             VitaPlex-windows-*.7z.sig
+            VitaPlex-Setup-*.exe
+            VitaPlex-Setup-*.exe.sig
             VitaPlex-macos-*/*
             VitaPlex-switch-*/*.nro
             VitaPlex-switch-*/*.nro.sig
@@ -290,6 +309,18 @@ jobs:
             [ -d "$dir" ] || continue
             arch=$(echo "$dir" | sed -E 's/VitaPlex-mingw-([^-]+)-.*/\1/')
             (cd "$dir" && zip -r "../release/VitaPlex.${FVER}-windows-${arch}.zip" .)
+          done
+
+          # Windows installer. Its own artifact (VitaPlex-setup-*), so the loop
+          # above cannot see it — and anything not copied into release/ here is
+          # silently dropped, since that directory is what gets signed and
+          # uploaded. The step is skipped on a runner without makensis, so a
+          # missing installer is not an error.
+          for dir in VitaPlex-setup-*; do
+            [ -d "$dir" ] || continue
+            arch=$(echo "$dir" | sed -E 's/VitaPlex-setup-([^-]+)-.*/\1/')
+            exe=$(find "$dir" -name "*.exe" | head -1)
+            [ -n "$exe" ] && cp "$exe" "release/VitaPlex.${FVER}-windows-${arch}-setup.exe"
           done
 
           # AppImages
