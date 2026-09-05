@@ -3442,6 +3442,14 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
         // Audio: HTTP progressive download of mp3
         queryParams += "&protocol=http";
         queryParams += "&musicBitrate=320";
+#if defined(__vita__) || defined(__PS4__)
+        // These two decode a much narrower set of audio than mpv does on a
+        // desktop, and the audio profile we send says only "I can take an mp3
+        // transcode" — it declares no direct-play capability for the server to
+        // judge. Asking for direct play here invites a FLAC or ALAC the port
+        // cannot open, so tell the server not to offer it and take the mp3.
+        queryParams += "&directPlay=0";
+#endif
     } else {
         // Video: HLS (HTTP Live Streaming) with TS segments.
         // This matches switchfin's proven Vita configuration:
@@ -3553,12 +3561,19 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
     }
 
     // If the server chose DIRECT PLAY (the user enabled it and the file is
-    // compatible), stream the original file directly. start.m3u8 is the HLS
-    // transcode endpoint and 400s for a direct-play decision — you can't ask for
-    // an HLS playlist of a file that's meant to be played as-is. mpv seeks the
-    // file via HTTP range requests, so no offset goes in the URL; the player
-    // detects the direct URL and seeks to the resume point itself.
-    if (settings.directPlay && !settings.forceTranscode && !isAudio &&
+    // compatible), stream the original file directly. The /start endpoints are
+    // transcode endpoints and 400 for a direct-play decision — you can't ask for
+    // an HLS playlist, or an mp3 transcode, of a file that is meant to be played
+    // as-is. mpv seeks the file via HTTP range requests, so no offset goes in
+    // the URL; the player detects the direct URL and seeks to the resume point
+    // itself.
+    //
+    // This used to be video-only. Audio fell through to start.mp3 and took the
+    // 400 the comment above describes — a track the server had judged directly
+    // playable simply would not start, which is what "music works on one device
+    // and not another" turns out to be: the same code, a different decision.
+    // The constrained ports opt out earlier by never asking for direct play.
+    if (settings.directPlay && !settings.forceTranscode &&
         decisionResp.statusCode == 200 &&
         (decisionResp.body.find("\"decision\":\"directplay\"") != std::string::npos ||
          decisionResp.body.find("Direct play OK") != std::string::npos)) {
@@ -5726,9 +5741,40 @@ static void parsePlayQueueItems(const std::string& json, PlexClient& client,
     size_t arrStart = json.find('[', metaPos);
     if (arrStart == std::string::npos) return;
 
+    // Where the Metadata array actually ends.
+    //
+    // This used to be json.find(']', arrStart) — the FIRST ']' after the array
+    // opened. Every Metadata entry contains nested arrays of its own (Media,
+    // Part, Stream, Genre), so that ']' lands inside the first entry, and the
+    // loop below broke as soon as it moved past it. Exactly one item was ever
+    // parsed, however many the server sent: a play queue of 4026 tracks
+    // arrived, was reported as 4026 by playQueueTotalCount, and became a queue
+    // of one. Match the bracket properly instead, skipping over quoted strings
+    // so a ']' inside a title cannot end the array early.
+    size_t arrEnd = std::string::npos;
+    {
+        int bracketDepth = 0;
+        bool inString = false;
+        for (size_t i = arrStart; i < json.size(); i++) {
+            const char c = json[i];
+            if (inString) {
+                if (c == '\\') { i++; continue; }   // skip the escaped char
+                if (c == '"') inString = false;
+                continue;
+            }
+            if (c == '"') { inString = true; continue; }
+            if (c == '[') bracketDepth++;
+            else if (c == ']') {
+                if (--bracketDepth == 0) { arrEnd = i; break; }
+            }
+        }
+    }
+
     // Parse each object in the Metadata array
     size_t pos = arrStart;
     while ((pos = json.find('{', pos)) != std::string::npos) {
+        if (arrEnd != std::string::npos && pos > arrEnd) break;
+
         // Find matching closing brace
         int depth = 1;
         size_t objEnd = pos + 1;
@@ -5737,10 +5783,6 @@ static void parsePlayQueueItems(const std::string& json, PlexClient& client,
             else if (json[objEnd] == '}') depth--;
             objEnd++;
         }
-
-        // Check if we've gone past the Metadata array
-        size_t arrEnd = json.find(']', arrStart);
-        if (arrEnd != std::string::npos && pos > arrEnd) break;
 
         std::string obj = json.substr(pos, objEnd - pos);
 
@@ -5759,6 +5801,16 @@ static void parsePlayQueueItems(const std::string& json, PlexClient& client,
             item.duration = client.extractJsonIntPublic(obj, "duration");
             item.index = client.extractJsonIntPublic(obj, "index");
             item.type = client.extractJsonValuePublic(obj, "type");
+            // Without this the item stays MediaType::UNKNOWN, and everything
+            // downstream that asks "is this music?" answers no — most visibly
+            // MusicQueue::isMusicQueue(), which is what picks the Now Playing
+            // layout. A queue of tracks then opens in the video player.
+            //
+            // It went unnoticed because createPlayQueue was failing: the caller
+            // fell back to building the queue client-side from MediaItems that
+            // already carried a type. Fixing the play queue is what first put
+            // this path in front of anyone.
+            item.mediaType = client.parseMediaTypePublic(item.type);
             // 0-10, 0 when unrated. Server play queues are the usual source for
             // music, so without this the media session's heart would only be
             // right for offline / client-side queues.
@@ -5773,16 +5825,33 @@ static void parsePlayQueueItems(const std::string& json, PlexClient& client,
     }
 }
 
+// A play-queue source URI names the provider that holds the item:
+//
+//     server://{machineIdentifier}/{providerId}/{path}
+//
+// which for anything in the library is com.plexapp.plugins.library, e.g.
+// server://546684a3…/com.plexapp.plugins.library/library/metadata/2814936.
+// The path stays unescaped here; createPlayQueue percent-encodes the whole
+// URI once when it goes in as a query parameter.
+//
+// These used to build library://{machineIdentifier}/item/… — which mixes the
+// two documented shapes, since a library:// authority is a library *section*
+// UUID, not a machine identifier. The server answered 400, PlayerActivity
+// quietly fell back to a client-side queue, and music kept playing without a
+// server play queue: no playQueueItemID on timeline reports, no continuity to
+// other clients, no server-side shuffle or repeat.
+static constexpr const char* kLibraryProviderId = "com.plexapp.plugins.library";
+
 std::string PlexClient::buildPlayQueueURI(const std::string& ratingKey) {
-    // library://{machineId}/item/%2Flibrary%2Fmetadata%2F{ratingKey}
-    return "library://" + m_currentServer.machineIdentifier +
-           "/item/%2Flibrary%2Fmetadata%2F" + ratingKey;
+    return "server://" + m_currentServer.machineIdentifier + "/" +
+           kLibraryProviderId + "/library/metadata/" + ratingKey;
 }
 
 std::string PlexClient::buildPlayQueueDirectoryURI(const std::string& ratingKey) {
-    // library://{machineId}/directory/%2Flibrary%2Fmetadata%2F{ratingKey}%2Fchildren
-    return "library://" + m_currentServer.machineIdentifier +
-           "/directory/%2Flibrary%2Fmetadata%2F" + ratingKey + "%2Fchildren";
+    // An album or season: the queue is its children, and the server expands
+    // them in order.
+    return "server://" + m_currentServer.machineIdentifier + "/" +
+           kLibraryProviderId + "/library/metadata/" + ratingKey + "/children";
 }
 
 bool PlexClient::createPlayQueue(const std::string& uri, const std::string& type,
@@ -5804,10 +5873,30 @@ bool PlexClient::createPlayQueue(const std::string& uri, const std::string& type
     req.url = url;
     req.method = "POST";
     req.headers["Accept"] = "application/json";
+    // A play queue is created for a device and belongs to it, so identify
+    // ourselves. This is the one difference between the POSTs to this server
+    // that work — /:/timeline and the Live TV tune both send these — and this
+    // one, which sent nothing but Accept and was answered 400. The spec does
+    // not list the header as required here, but the spec also does not
+    // describe a 400 for a well-formed request, and it has already been wrong
+    // about this server once.
+    {
+        const auto& vc = platform::getVideoConstraints();
+        req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+        req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+        req.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+        req.headers["X-Plex-Platform"] = vc.plexPlatform;
+        req.headers["X-Plex-Device"] = vc.plexDevice;
+        req.headers["X-Plex-Device-Name"] = vc.plexDevice;
+    }
     HttpResponse resp = client.request(req);
 
     if (resp.statusCode != 200) {
-        brls::Logger::error("createPlayQueue: Failed ({})", resp.statusCode);
+        // The body is where Plex says what it objected to, and it is short.
+        // Logging the status alone left a 400 on this call looking like a
+        // network blip for as long as it took to notice the URI was wrong.
+        brls::Logger::error("createPlayQueue: Failed ({}) uri={} body: {}",
+                            resp.statusCode, uri, redactBodyForLog(resp.body.substr(0, 300)));
         if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
     }
@@ -5819,8 +5908,12 @@ bool PlexClient::createPlayQueue(const std::string& uri, const std::string& type
 }
 
 bool PlexClient::createPlayQueueFromPlaylist(int playlistID, const std::string& type,
-                                              PlayQueueContainer& result, int shuffle) {
+                                              PlayQueueContainer& result, int shuffle,
+                                              const std::string& key) {
     std::string params = "?type=" + type + "&playlistID=" + std::to_string(playlistID);
+    if (!key.empty()) {
+        params += "&key=" + HttpClient::urlEncode("/library/metadata/" + key);
+    }
     if (shuffle) params += "&shuffle=1";
 
     std::string url = buildApiUrl("/playQueues" + params);
@@ -5830,10 +5923,20 @@ bool PlexClient::createPlayQueueFromPlaylist(int playlistID, const std::string& 
     req.url = url;
     req.method = "POST";
     req.headers["Accept"] = "application/json";
+    {
+        const auto& vc = platform::getVideoConstraints();
+        req.headers["X-Plex-Client-Identifier"] = PLEX_CLIENT_ID;
+        req.headers["X-Plex-Product"] = PLEX_CLIENT_NAME;
+        req.headers["X-Plex-Version"] = PLEX_CLIENT_VERSION;
+        req.headers["X-Plex-Platform"] = vc.plexPlatform;
+        req.headers["X-Plex-Device"] = vc.plexDevice;
+        req.headers["X-Plex-Device-Name"] = vc.plexDevice;
+    }
     HttpResponse resp = client.request(req);
 
     if (resp.statusCode != 200) {
-        brls::Logger::error("createPlayQueueFromPlaylist: Failed ({})", resp.statusCode);
+        brls::Logger::error("createPlayQueueFromPlaylist: Failed ({}) body: {}",
+                            resp.statusCode, redactBodyForLog(resp.body.substr(0, 300)));
         if (isAuthError(resp.statusCode)) handleUnauthorized();
         return false;
     }

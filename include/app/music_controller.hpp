@@ -178,6 +178,7 @@ private:
     std::string m_prefetchUrl;       // empty = resolve was attempted and failed
     std::string m_prefetchSession;   // transcode session negotiated for that URL
     uint32_t m_prefetchVersion = 0;  // MusicQueue version the entry was built at
+    int64_t  m_prefetchAtMs = 0;     // when the entry was resolved
     bool m_prefetchInFlight = false;
     ForegroundHooks m_fg;
     brls::RepeatingTimer m_pollTimer;  // headless end-of-track watcher

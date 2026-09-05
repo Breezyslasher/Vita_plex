@@ -521,6 +521,26 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "demuxer-max-back-bytes", "2MiB");
 #endif
 
+    // Resume a dropped HTTP connection instead of reporting end-of-stream.
+    //
+    // Without this, ffmpeg's HTTP reader treats any mid-transfer disconnect as
+    // a clean end of file. A device log caught exactly that — "tcp: ffurl_read
+    // returned <error>" followed by "lavf: EOF reached" 46 seconds short of the
+    // end of a track — and everything downstream then behaves as though the
+    // song had finished. Reconnecting is the only part of this that addresses
+    // the fault rather than its symptoms.
+    //
+    // reconnect_streamed covers the non-seekable case, the transcode endpoints,
+    // which ffmpeg otherwise refuses to retry at all.
+    //
+    // This was set once before and backed out when music stopped opening with
+    // HTTP 400. That turned out to be two unrelated bugs — a direct-play
+    // decision sent to the transcode endpoint, and a prefetched URL whose
+    // transcode session had been reaped — both since fixed. The suspicion was
+    // reasonable at the time and wrong.
+    mpv_set_option_string(m_mpv, "stream-lavf-o",
+                          "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5");
+
     // ========================================
     // Network settings for streaming
     // ========================================
@@ -710,7 +730,12 @@ void MpvPlayer::setAudioOnly(bool audioOnly) {
     m_audioOnly = audioOnly;
 }
 
-bool MpvPlayer::loadUrl(const std::string& url, const std::string& title) {
+bool MpvPlayer::loadUrl(const std::string& url, const std::string& title,
+                        int64_t expectedDurationMs) {
+    // Set before anything can fail, and unconditionally, so a value from the
+    // previous track can never be read against this one.
+    m_expectedDurationMs.store(expectedDurationMs);
+
     // A terminated core accepts commands and never runs them, so rebuild
     // it before loading rather than queueing into a dead handle. init()
     // re-attaches the Android surface via rebindIfReady().
@@ -1347,10 +1372,17 @@ void MpvPlayer::eventMainLoop() {
             case MPV_EVENT_LOG_MESSAGE: {
                 if (event->data) {
                     mpv_event_log_message* msg = (mpv_event_log_message*)event->data;
+                    // mpv quotes the whole URL back in its stream errors, and
+                    // our URLs carry X-Plex-Token. Logged raw, that put the
+                    // user's long-lived token in a log they then paste into a
+                    // bug report — which is exactly what redactTokensInUrl
+                    // exists to stop. Every level goes through it; the cost is
+                    // a copy on a line we were already formatting.
+                    const std::string text = redactTokensInUrl(msg->text ? msg->text : "");
                     if (msg->log_level <= MPV_LOG_LEVEL_ERROR) {
-                        brls::Logger::error("mpv {}: {}", msg->prefix, msg->text);
+                        brls::Logger::error("mpv {}: {}", msg->prefix, text);
                     } else if (msg->log_level <= MPV_LOG_LEVEL_WARN) {
-                        brls::Logger::warning("mpv {}: {}", msg->prefix, msg->text);
+                        brls::Logger::warning("mpv {}: {}", msg->prefix, text);
 #if defined(__PS4__) || defined(__ANDROID__)
                     } else {
                         // Pipe info/verbose through borealis::Logger::info on
@@ -1358,7 +1390,7 @@ void MpvPlayer::eventMainLoop() {
                         // mpv for actually surfaces in adb logcat. Removable
                         // once the Android direct-surface path is verified
                         // stable.
-                        brls::Logger::info("mpv {}: {}", msg->prefix, msg->text);
+                        brls::Logger::info("mpv {}: {}", msg->prefix, text);
 #endif
                     }
                 }
@@ -1521,12 +1553,50 @@ void MpvPlayer::handlePropertyChange(mpv_event_property* prop, uint64_t id) {
         case 7: // eof-reached
             if (prop->format == MPV_FORMAT_FLAG && prop->data) {
                 bool eof = *(int*)prop->data != 0;
-                if (eof) {
-                    brls::Logger::debug("MpvPlayer: EOF reached");
-                    // In audio-only mode on Vita, EVENT_END_FILE may not fire,
-                    // so transition to ENDED here to trigger auto-advance
-                    if (m_state == MpvPlayerState::PLAYING || m_state == MpvPlayerState::PAUSED) {
+                if (eof && (m_state == MpvPlayerState::PLAYING || m_state == MpvPlayerState::PAUSED)) {
+                    // This is what ends a track. keep-open=yes stops mpv
+                    // unloading the file at the end, so MPV_EVENT_END_FILE does
+                    // not fire for a normal finish on any platform — only for a
+                    // stop, an error or a redirect. eof-reached is the signal.
+                    //
+                    // The catch is that the demuxer raises it for a truncated
+                    // read exactly as it does for the real end of a file. A
+                    // dropped connection, a transcode session the server tore
+                    // down, a stall ffmpeg gave up on: all of them arrive here
+                    // as "finished". Acting on that mid-track is heard as the
+                    // music randomly skipping to the next song.
+                    //
+                    // So only believe it near the end of the track. A live
+                    // stream reports no usable duration, and must still be able
+                    // to end, so those are let through.
+                    //
+                    // Which duration matters. mpv's own comes from the stream it
+                    // is reading, so a truncated stream shrinks it to match the
+                    // position — the two agree precisely because the stream
+                    // broke, and comparing them passes every time. A device log
+                    // caught it doing exactly that: "EOF reached at 156.2/156.6s"
+                    // on a track the server had been told all along was 203s.
+                    // So prefer the server's length whenever the caller knew it.
+                    constexpr double kEofSlackSec = 5.0;
+                    const double pos = m_playbackInfo.position;
+                    const int64_t expectedMs = m_expectedDurationMs.load();
+                    const double dur = expectedMs > 0 ? expectedMs / 1000.0
+                                                      : m_playbackInfo.duration;
+
+                    if (dur <= 0.0 || pos >= dur - kEofSlackSec) {
+                        brls::Logger::debug("MpvPlayer: EOF reached at {:.1f}/{:.1f}s", pos, dur);
                         setState(MpvPlayerState::ENDED);
+                    } else {
+                        // Not the end of the track — the stream died early.
+                        // Report it rather than skipping: silently advancing is
+                        // what made this look random instead of like a network
+                        // fault.
+                        m_errorMessage = "Stream ended early";
+                        brls::Logger::error(
+                            "MpvPlayer: stream ended at {:.1f}s of {:.1f}s — treating as a "
+                            "broken stream, not end of track (url={})",
+                            pos, dur, m_currentUrl.substr(0, 120));
+                        setState(MpvPlayerState::ERROR);
                     }
                 }
             }

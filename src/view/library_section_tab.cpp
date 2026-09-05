@@ -1742,13 +1742,17 @@ void LibrarySectionTab::performPlaylistTrackAction(size_t trackIndex) {
             case TrackDefaultAction::PLAY_NOW_CLEAR:
             default:
                 brls::Application::pushActivity(
-                    PlayerActivity::createWithQueue(m_playlistTracks, trackIndex));
+                    PlayerActivity::createWithQueue(m_playlistTracks, trackIndex,
+                                                       /*userPickedTrack=*/true,
+                                                       m_currentPlaylistId));
                 break;
 
             case TrackDefaultAction::PLAY_NEXT:
                 if (queue.isEmpty()) {
                     brls::Application::pushActivity(
-                        PlayerActivity::createWithQueue(m_playlistTracks, trackIndex));
+                        PlayerActivity::createWithQueue(m_playlistTracks, trackIndex,
+                                                       /*userPickedTrack=*/true,
+                                                       m_currentPlaylistId));
                 } else {
                     queue.insertTrackAfterCurrent(track);
                     brls::Application::notify("Playing next: " + track.title);
@@ -1758,7 +1762,9 @@ void LibrarySectionTab::performPlaylistTrackAction(size_t trackIndex) {
             case TrackDefaultAction::ADD_TO_BOTTOM:
                 if (queue.isEmpty()) {
                     brls::Application::pushActivity(
-                        PlayerActivity::createWithQueue(m_playlistTracks, trackIndex));
+                        PlayerActivity::createWithQueue(m_playlistTracks, trackIndex,
+                                                       /*userPickedTrack=*/true,
+                                                       m_currentPlaylistId));
                 } else {
                     queue.addTrack(track);
                     brls::Application::notify("Added to queue: " + track.title);
@@ -1768,7 +1774,9 @@ void LibrarySectionTab::performPlaylistTrackAction(size_t trackIndex) {
             case TrackDefaultAction::PLAY_NOW_REPLACE:
                 if (queue.isEmpty()) {
                     brls::Application::pushActivity(
-                        PlayerActivity::createWithQueue(m_playlistTracks, trackIndex));
+                        PlayerActivity::createWithQueue(m_playlistTracks, trackIndex,
+                                                       /*userPickedTrack=*/true,
+                                                       m_currentPlaylistId));
                 } else {
                     queue.insertTrackAfterCurrent(track);
                     if (queue.playNext()) {
@@ -1799,12 +1807,16 @@ void LibrarySectionTab::performPlaylistTrackAction(size_t trackIndex) {
                 const MediaItem& t = m_playlistTracks[trackIndex];
                 if (act == TrackDefaultAction::PLAY_NOW_CLEAR) {
                     brls::Application::pushActivity(
-                        PlayerActivity::createWithQueue(m_playlistTracks, trackIndex));
+                        PlayerActivity::createWithQueue(m_playlistTracks, trackIndex,
+                                                       /*userPickedTrack=*/true,
+                                                       m_currentPlaylistId));
                 } else if (act == TrackDefaultAction::PLAY_NEXT) {
                     MusicQueue& q = MusicQueue::getInstance();
                     if (q.isEmpty()) {
                         brls::Application::pushActivity(
-                            PlayerActivity::createWithQueue(m_playlistTracks, trackIndex));
+                            PlayerActivity::createWithQueue(m_playlistTracks, trackIndex,
+                                                       /*userPickedTrack=*/true,
+                                                       m_currentPlaylistId));
                     } else {
                         q.insertTrackAfterCurrent(t);
                         brls::Application::notify("Playing next: " + t.title);
@@ -1813,7 +1825,9 @@ void LibrarySectionTab::performPlaylistTrackAction(size_t trackIndex) {
                     MusicQueue& q = MusicQueue::getInstance();
                     if (q.isEmpty()) {
                         brls::Application::pushActivity(
-                            PlayerActivity::createWithQueue(m_playlistTracks, trackIndex));
+                            PlayerActivity::createWithQueue(m_playlistTracks, trackIndex,
+                                                       /*userPickedTrack=*/true,
+                                                       m_currentPlaylistId));
                     } else {
                         q.addTrack(t);
                         brls::Application::notify("Added to queue: " + t.title);
@@ -1822,7 +1836,9 @@ void LibrarySectionTab::performPlaylistTrackAction(size_t trackIndex) {
                     MusicQueue& q = MusicQueue::getInstance();
                     if (q.isEmpty()) {
                         brls::Application::pushActivity(
-                            PlayerActivity::createWithQueue(m_playlistTracks, trackIndex));
+                            PlayerActivity::createWithQueue(m_playlistTracks, trackIndex,
+                                                       /*userPickedTrack=*/true,
+                                                       m_currentPlaylistId));
                     } else {
                         q.insertTrackAfterCurrent(t);
                         if (q.playNext()) {
@@ -1881,11 +1897,12 @@ void LibrarySectionTab::showPlaylistContextMenu(const Playlist& playlist) {
                 for (const auto& item : items) {
                     tracks.push_back(item.media);
                 }
-                brls::sync([tracks]() {
+                brls::sync([tracks, playlistId]() {
                     MusicQueue& queue = MusicQueue::getInstance();
                     if (queue.isEmpty()) {
                         brls::Application::pushActivity(
-                            PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false));
+                            PlayerActivity::createWithQueue(tracks, 0, /*userPickedTrack=*/false,
+                                                            playlistId));
                     } else {
                         queue.addTracks(tracks);
                         brls::Application::notify("Playlist added to queue");
@@ -2026,12 +2043,13 @@ void LibrarySectionTab::playPlaylistWithQueue(const std::string& playlistId, int
                 tracks.push_back(item.media);
             }
 
-            brls::sync([tracks, startIndex, userPickedTrack, aliveWeak]() {
+            brls::sync([tracks, startIndex, userPickedTrack, aliveWeak, playlistId]() {
                 auto alive = aliveWeak.lock();
                 if (!alive || !*alive) return;
 
                 brls::Application::pushActivity(
-                    PlayerActivity::createWithQueue(tracks, startIndex, userPickedTrack)
+                    PlayerActivity::createWithQueue(tracks, startIndex, userPickedTrack,
+                                                    playlistId)
                 );
             });
         } else {

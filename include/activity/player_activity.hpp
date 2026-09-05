@@ -50,8 +50,12 @@ public:
     // the top of a list they pressed Play on. It only matters when "Shuffle New
     // Queues" is on: a chosen track still plays first, while a container is
     // opened on a random one instead of always its first track.
+    // playlistId, when the queue came from one, is what the server play queue is
+    // built from: POST /playQueues documents playlistID as the source for a
+    // playlist, and a first-track URI in its place yields a queue of one track.
     static PlayerActivity* createWithQueue(const std::vector<MediaItem>& tracks, int startIndex = 0,
-                                           bool userPickedTrack = true);
+                                           bool userPickedTrack = true,
+                                           const std::string& playlistId = "");
 
     // Resume existing queue (return to player without resetting queue)
     static PlayerActivity* createResumeQueue();
@@ -264,6 +268,13 @@ private:
     std::string m_prefetchUrl;       // empty = resolve was attempted and failed
     std::string m_prefetchSession;   // transcode session negotiated for that URL
     uint32_t m_prefetchVersion = 0;  // MusicQueue version the entry was built at
+    int64_t  m_prefetchAtMs = 0;     // when the entry was resolved
+    // A prefetched URL carries the transcode session /decision opened for it,
+    // and Plex reaps a session nobody has started streaming. A device log
+    // caught a decision taken at 02:04:36 still being handed to mpv at
+    // 02:07:07 — the server answered 400, so the track after a long one
+    // would not play at all. Past this age, resolve again.
+    static constexpr int64_t kPrefetchMaxAgeMs = 60000;
     bool m_prefetchInFlight = false;
 
     void updateNowPlayingBlock();   // Refresh the "Now Playing" header from the current track
@@ -447,6 +458,9 @@ private:
     double m_pendingSeek = 0.0;    // Pending seek position (set when resuming)
     int m_transcodeBaseOffsetMs = 0;  // Base offset (ms) used to start current transcode
     int m_mediaDurationMs = 0;        // Full media length (ms) from Plex metadata; 0 = unknown
+    // Track length (ms) handed to loadUrl so the player can tell an early
+    // end-of-stream from a real one; see MpvPlayer::loadUrl. 0 = unknown.
+    int64_t m_pendingDurationMs = 0;
     bool m_updatingSlider = false;  // Guard to prevent slider update from triggering seek
     brls::RepeatingTimer m_updateTimer;
     // Debounce for transcode seeks: each skip/scrub rewinds it, and its end

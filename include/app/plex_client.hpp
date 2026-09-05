@@ -576,9 +576,13 @@ public:
                          PlayQueueContainer& result,
                          const std::string& key = "",
                          int shuffle = 0, int repeat = 0, int continuous = 0);
-    // Create a play queue from a playlist ID
+    // Create a play queue from a playlist ID. This is the documented source for
+    // a playlist — POST /playQueues takes "either a URI, or a playlist", and
+    // playlistID is the playlist half. `key` is the ratingKey to open on, which
+    // the spec calls "the key of the first item to play".
     bool createPlayQueueFromPlaylist(int playlistID, const std::string& type,
-                                     PlayQueueContainer& result, int shuffle = 0);
+                                     PlayQueueContainer& result, int shuffle = 0,
+                                     const std::string& key = "");
     // Retrieve an existing play queue
     bool getPlayQueue(int playQueueID, PlayQueueContainer& result);
     // Add items to an existing play queue (party mode / play next)
@@ -670,6 +674,9 @@ public:
 
     // Public API URL builder (used by Live TV tab for DVR operations)
     std::string buildApiUrlPublic(const std::string& endpoint) { return buildApiUrl(endpoint); }
+    // Same, for the play-queue parser: it lives outside the class and needs the
+    // "track"/"episode"/"movie" string turned into a MediaType.
+    MediaType parseMediaTypePublic(const std::string& typeStr) { return parseMediaType(typeStr); }
 
 private:
     PlexClient() = default;

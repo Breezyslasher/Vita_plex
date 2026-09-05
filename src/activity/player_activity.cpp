@@ -79,7 +79,8 @@ PlayerActivity* PlayerActivity::createForStream(const std::string& streamUrl, co
 }
 
 PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tracks, int startIndex,
-                                                bool userPickedTrack) {
+                                                bool userPickedTrack,
+                                                const std::string& playlistId) {
     PlayerActivity* activity = new PlayerActivity("", false);
     activity->m_isQueueMode = true;
 
@@ -109,10 +110,9 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
         std::string uri;
         if (!tracks[0].parentRatingKey.empty()) {
             uri = client.buildPlayQueueDirectoryURI(tracks[0].parentRatingKey);
-        } else if (tracks.size() == 1) {
-            uri = client.buildPlayQueueURI(tracks[0].ratingKey);
         } else {
-            // Multiple tracks without parent - use first track's URI
+            // No container to name. For a single track that is exactly right;
+            // for several it is a lie, and the check below is what catches it.
             uri = client.buildPlayQueueURI(tracks[0].ratingKey);
         }
 
@@ -123,7 +123,43 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
         // used to still count as success, which left neither branch below
         // building anything — so "Play Now (Clear Queue)" quietly went on
         // playing whatever was already queued.
-        serverOk = client.createPlayQueue(uri, queueType, pq, startKey) && !pq.items.empty();
+        // A playlist has its own source parameter. POST /playQueues takes
+        // "either a URI, or a playlist", and sending a first-track URI for a
+        // playlist is what produced a queue of one track out of four thousand.
+        bool created = false;
+        if (!playlistId.empty()) {
+            int pid = 0;
+            try { pid = std::stoi(playlistId); } catch (...) { pid = 0; }
+            if (pid > 0) {
+                created = client.createPlayQueueFromPlaylist(pid, queueType, pq, 0, startKey)
+                          && !pq.items.empty();
+            }
+        }
+        if (!created && playlistId.empty()) {
+            created = client.createPlayQueue(uri, queueType, pq, startKey) && !pq.items.empty();
+        }
+
+        // Nor is a queue that does not hold what was asked for. Playing a
+        // playlist, an album or an artist built a server queue of ONE track and
+        // then adopted it over the full list the caller had already assembled —
+        // 4026 tracks replaced by the one whose URI happened to be sent. The
+        // source URI is not naming these containers in a way this server
+        // expands, and until it does, a short queue is a wrong queue.
+        //
+        // What arrived, not what the server says it holds. Plex returns a
+        // window onto a long queue: a 4026-track playlist came back with
+        // playQueueTotalCount=4026 and a couple of dozen items, and adopting it
+        // on the strength of the count left a queue of what was in the window.
+        // We can only play what we were sent, and the client-side list is
+        // already complete, so it wins whenever the window is short.
+        const int serverCount = (int)pq.items.size();
+        serverOk = created && serverCount >= (int)tracks.size();
+        if (created && !serverOk) {
+            brls::Logger::warning(
+                "PlayerActivity: server play queue {} came back with {} item(s) for a "
+                "{}-track request — keeping the client-side queue",
+                pq.playQueueID, serverCount, tracks.size());
+        }
         if (serverOk) {
             queue.setFromPlayQueue(pq, pq.playQueueShuffled);
             serverShuffled = pq.playQueueShuffled;
@@ -1185,6 +1221,7 @@ void PlayerActivity::willDisappear(bool resetState) {
     // Clear any pending deferred init (user backed out before timer fired)
     m_pendingPlayUrl.clear();
     m_pendingPlayTitle.clear();
+    m_pendingDurationMs = 0;
 
     // Hide video view
     if (videoView) {
@@ -1429,9 +1466,19 @@ void PlayerActivity::loadFromQueue() {
 
         // Resolved while the previous track was still playing? Use it. This is
         // what keeps two blocking round-trips out of the gap between songs.
+        // See kPrefetchMaxAgeMs: the session a prefetch opened does not live
+        // forever, and using an expired one is answered 400.
+        const int64_t prefetchAgeMs =
+            m_prefetchAtMs > 0 ? (brls::getCPUTimeUsec() / 1000) - m_prefetchAtMs : 0;
+        const bool prefetchStale = m_prefetchAtMs > 0 && prefetchAgeMs > kPrefetchMaxAgeMs;
+        if (prefetchStale && !m_prefetchUrl.empty()) {
+            brls::Logger::info("PlayerActivity: prefetched URL for {} is {}s old — resolving again",
+                               m_prefetchKey, prefetchAgeMs / 1000);
+        }
         const bool prefetched = !m_prefetchUrl.empty() &&
                                 m_prefetchKey == track->ratingKey &&
-                                m_prefetchVersion == queue.getVersion();
+                                m_prefetchVersion == queue.getVersion() &&
+                                !prefetchStale;
         if (prefetched) {
             url = m_prefetchUrl;
             // The speculative resolve deliberately left the live session alone;
@@ -1444,6 +1491,7 @@ void PlayerActivity::loadFromQueue() {
         m_prefetchKey.clear();
         m_prefetchUrl.clear();
         m_prefetchSession.clear();
+        m_prefetchAtMs = 0;
 
         if (!prefetched && !client.getTranscodeUrl(track->ratingKey, url, 0)) {
             brls::Logger::error("Failed to get transcode URL for track: {}", track->ratingKey);
@@ -1485,6 +1533,7 @@ void PlayerActivity::loadFromQueue() {
         // Defer MPV init + load to after activity transition completes
         m_pendingPlayUrl = url;
         m_pendingPlayTitle = track->title;
+        m_pendingDurationMs = (int64_t)track->duration * 1000;
         m_pendingIsAudio = true;
         m_isPlaying = true;
         m_loadingMedia = false;
@@ -1492,7 +1541,7 @@ void PlayerActivity::loadFromQueue() {
     }
 
     // Player already initialized (track change) - load immediately
-    if (!player.loadUrl(url, track->title)) {
+    if (!player.loadUrl(url, track->title, (int64_t)track->duration * 1000)) {
         brls::Logger::error("Failed to load URL: {}", redactTokensInUrl(url));
         m_loadingMedia = false;
         return;
@@ -1538,6 +1587,7 @@ void PlayerActivity::prefetchNextTrack() {
             // from being retried on every tick.
             m_prefetchKey     = key;
             m_prefetchUrl     = ok ? url : std::string();
+            m_prefetchAtMs    = ok ? (brls::getCPUTimeUsec() / 1000) : 0;
             m_prefetchSession = ok ? session : std::string();
             m_prefetchVersion = version;
             if (ok) brls::Logger::debug("PlayerActivity: prefetched stream URL for {}", key);
@@ -2072,14 +2122,15 @@ void PlayerActivity::updateProgress() {
         // complete frame with the freshly-created GXM state before the decoder
         // thread gets a chance to touch the shared GXM context.
         auto alive = m_alive;
-        brls::sync([this, url, title, isAudio, alive]() {
+        const int64_t durationMs = m_pendingDurationMs;
+        brls::sync([this, url, title, isAudio, alive, durationMs]() {
             if (!alive->load() || m_destroying) return;
 
             brls::Logger::info("PlayerActivity: Deferred MPV load (phase 2: loadUrl)...");
 
             MpvPlayer& player = MpvPlayer::getInstance();
 
-            if (player.loadUrl(url, title)) {
+            if (player.loadUrl(url, title, durationMs)) {
                 if (videoView && !isAudio) {
                     videoView->setVisibility(brls::Visibility::VISIBLE);
                     videoView->setVideoVisible(true);
