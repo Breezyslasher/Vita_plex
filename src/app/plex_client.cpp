@@ -3189,7 +3189,12 @@ bool PlexClient::searchSubtitles(const std::string& ratingKey, const std::string
     HttpResponse resp = client.request(req);
 
     if (resp.statusCode != 200) {
-        brls::Logger::error("searchSubtitles: Failed: {}", resp.statusCode);
+        // openapi.json marks GET /library/metadata/{ids}/subtitles as
+        // user_token:["admin"], so a non-owner account is expected to be
+        // refused here. Log the body — the status alone doesn't distinguish
+        // "not entitled" from "no results".
+        brls::Logger::error("searchSubtitles: Failed: HTTP {} body: {}",
+                            resp.statusCode, resp.body.substr(0, 200));
         return false;
     }
 
@@ -3841,6 +3846,75 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
     req.headers["Accept"] = "application/json";
     req.timeout = 15;
 
+    // Shared by both channel-list sources below.
+    //
+    // A virtual channel number ("6.1") is both the display number and, for
+    // providers that hand out nothing better, the channel identifier.
+    auto applyVcn = [](LiveTVChannel& channel, const std::string& vcn) {
+        if (vcn.empty()) return;
+        channel.channelIdentifier = vcn;
+        size_t dotPos = vcn.find('.');
+        if (dotPos != std::string::npos) {
+            int major = atoi(vcn.substr(0, dotPos).c_str());
+            int minor = atoi(vcn.substr(dotPos + 1).c_str());
+            channel.channelNumber = major * 10 + minor;
+        } else {
+            channel.channelNumber = atoi(vcn.c_str()) * 10;
+        }
+    };
+
+    // Cross-reference a parsed EPG channel with ChannelMapping to (a) get the
+    // device identifier for tuning and (b) drop channels that aren't actually
+    // mapped to a tuner on this server. Without (b), the EPG was showing every
+    // channel the lineup *covers* (~106 on a typical OTA list) rather than the
+    // ones the user's DVR is set up to receive, so the grid was full of "No
+    // guide data" rows for channels the user can't tune anyway.
+    //
+    // Dedupe keys off the mapping's channelKey when one matched: two lineup
+    // entries can resolve to the *same* physical channel via different
+    // identifiers (lineup key vs lineupIdentifier), so channel.key alone left
+    // duplicates of 4.1 / 4.2 / 4.3, 22.3 / 22.4, etc.
+    std::set<std::string> seenChannelKeys;
+    auto commitChannel = [&](LiveTVChannel& channel, const std::string& identifier) {
+        const ChannelMapping* matchedMapping = nullptr;
+        for (const auto& mapping : m_channelMappings) {
+            if (!channel.key.empty() && channel.key == mapping.channelKey) {
+                matchedMapping = &mapping;
+                break;
+            }
+            if (!identifier.empty() && identifier == mapping.lineupIdentifier) {
+                matchedMapping = &mapping;
+                if (channel.key.empty()) channel.key = mapping.channelKey;
+                break;
+            }
+        }
+        if (matchedMapping) {
+            channel.channelIdentifier = matchedMapping->deviceIdentifier;
+        }
+
+        // If we have no ChannelMapping data at all (some EPG providers don't),
+        // fall back to the old behaviour so the EPG isn't empty.
+        if (!matchedMapping && !m_channelMappings.empty()) return;
+        if (channel.callSign.empty() && channel.title.empty()) return;
+
+        std::string dedupeKey = matchedMapping
+            ? matchedMapping->channelKey
+            : (!channel.key.empty()
+                ? channel.key
+                : (!channel.channelIdentifier.empty()
+                    ? channel.channelIdentifier
+                    : channel.callSign));
+        if (seenChannelKeys.insert(dedupeKey).second) {
+            channels.push_back(channel);
+        }
+    };
+
+    auto countWithLogos = [](const std::vector<LiveTVChannel>& list) {
+        size_t n = 0;
+        for (const auto& c : list) if (!c.thumb.empty()) n++;
+        return n;
+    };
+
     // Official API: GET /livetv/epg/channels?lineup={lineupUri}
     // Returns Channel array with: callSign, identifier, channelVcn, hd, thumb, title, key
     if (!m_lineupUri.empty()) {
@@ -3881,11 +3955,9 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
             // one section of the JSON — once as the lineup's Channel
             // object and again as a ChannelMapping's nested copy — and
             // our "find every \"callSign\" then walk back to its
-            // enclosing object" parser catches all of them. Dedupe by
-            // channel.key (or VCN as a fallback for entries without a
-            // key) before pushing so the EPG doesn't show double rows
-            // for 4.1, 4.2, 4.3 etc.
-            std::set<std::string> seenChannelKeys;
+            // enclosing object" parser catches all of them. commitChannel
+            // dedupes so the EPG doesn't show double rows for 4.1, 4.2,
+            // 4.3 etc.
             size_t pos = 0;
             while ((pos = resp.body.find("\"callSign\"", pos)) != std::string::npos) {
                 size_t objStart = resp.body.rfind('{', pos);
@@ -3911,18 +3983,7 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
                 channel.thumb = extractJsonValue(obj, "thumb");
 
                 // channelVcn is the virtual channel number like "2.1"
-                std::string vcn = extractJsonValue(obj, "channelVcn");
-                if (!vcn.empty()) {
-                    channel.channelIdentifier = vcn;
-                    size_t dotPos = vcn.find('.');
-                    if (dotPos != std::string::npos) {
-                        int major = atoi(vcn.substr(0, dotPos).c_str());
-                        int minor = atoi(vcn.substr(dotPos + 1).c_str());
-                        channel.channelNumber = major * 10 + minor;
-                    } else {
-                        channel.channelNumber = atoi(vcn.c_str()) * 10;
-                    }
-                }
+                applyVcn(channel, extractJsonValue(obj, "channelVcn"));
 
                 // identifier field from EPG
                 std::string identifier = extractJsonValue(obj, "identifier");
@@ -3930,63 +3991,87 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
                     channel.channelIdentifier = identifier;
                 }
 
-                // Cross-reference with ChannelMapping to (a) get the
-                // device identifier for tuning and (b) drop channels
-                // that aren't actually mapped to a tuner on this
-                // server. Without (b), the EPG was showing every
-                // channel the lineup *covers* (~106 on a typical
-                // OTA list) rather than the ones the user's DVR is
-                // set up to receive (~32 here), so the grid was full
-                // of "No guide data" rows for channels the user
-                // can't tune anyway.
-                const ChannelMapping* matchedMapping = nullptr;
-                for (const auto& mapping : m_channelMappings) {
-                    if (!channel.key.empty() && channel.key == mapping.channelKey) {
-                        matchedMapping = &mapping;
-                        break;
-                    }
-                    if (!identifier.empty() && identifier == mapping.lineupIdentifier) {
-                        matchedMapping = &mapping;
-                        if (channel.key.empty()) channel.key = mapping.channelKey;
-                        break;
-                    }
-                }
-                if (matchedMapping) {
-                    channel.channelIdentifier = matchedMapping->deviceIdentifier;
-                }
-
-                // Only include channels the user can actually tune.
-                // If we have no ChannelMapping data at all (some EPG
-                // providers don't), fall back to the old behaviour so
-                // the EPG isn't empty.
-                if (matchedMapping || m_channelMappings.empty()) {
-                    if (!channel.callSign.empty() || !channel.title.empty()) {
-                        // Dedupe by the mapping's channelKey when one
-                        // matched — two lineup entries can resolve to
-                        // the *same* physical channel via different
-                        // identifiers (lineup key vs lineupIdentifier),
-                        // so keying off channel.key alone wasn't enough
-                        // and the EPG was still showing duplicates of
-                        // 4.1 / 4.2 / 4.3, 22.3 / 22.4, etc.
-                        std::string dedupeKey = matchedMapping
-                            ? matchedMapping->channelKey
-                            : (!channel.key.empty()
-                                ? channel.key
-                                : (!channel.channelIdentifier.empty()
-                                    ? channel.channelIdentifier
-                                    : channel.callSign));
-                        if (seenChannelKeys.insert(dedupeKey).second) {
-                            channels.push_back(channel);
-                        }
-                    }
-                }
+                commitChannel(channel, identifier);
 
                 pos = objEnd;
             }
 
             if (!channels.empty()) {
-                brls::Logger::info("fetchLiveTVChannels: Found {} channels from EPG lineup", channels.size());
+                brls::Logger::info("fetchLiveTVChannels: Found {} channels from EPG lineup ({} with logos)",
+                                   channels.size(), countWithLogos(channels));
             }
+        } else {
+            // Worth its own line: on a non-owner account this comes back 403
+            // and the guide silently fell through to the ChannelMapping
+            // fallback below, which has no logos and no real channel titles.
+            brls::Logger::warning("fetchLiveTVChannels: /livetv/epg/channels returned HTTP {} ({} bytes)",
+                                  resp.statusCode, resp.body.length());
+        }
+    }
+
+    // Second source: GET /{epgProviderKey}/lineups/dvr/channels — documented in
+    // openapi.json as
+    //   /tv.plex.providers.epg.{identifier}:{deviceId}/lineups/dvr/channels
+    // with the same summary as /livetv/epg/channels above ("Get channels for a
+    // lineup within an EPG provider"), needing no lineup parameter, and
+    // carrying title / callSign / thumb plus vcn and gridKey.
+    //
+    // Why a second source at all: /livetv/epg/* is the DVR *setup* namespace —
+    // its neighbours are countries, languages, regions, lineups, channelmap —
+    // and it answers 403 for a non-owner account, which left the guide falling
+    // through to the ChannelMapping fallback below: no station logos, and
+    // "Ch 5.1" where the channel name should be. This path sits under the
+    // provider prefix the grid, watchnow, hub and search requests already use
+    // successfully on those same accounts.
+    //
+    // It runs only when the first source produced nothing, so an owner account
+    // — for which /livetv/epg/channels answers 200 — never reaches it.
+    if (channels.empty() && !m_epgProviderKey.empty()) {
+        std::string url = buildApiUrl("/" + m_epgProviderKey + "/lineups/dvr/channels");
+        req.url = url;
+        brls::Logger::debug("fetchLiveTVChannels: GET /{}/lineups/dvr/channels", m_epgProviderKey);
+
+        HttpResponse resp = client.request(req);
+        if (resp.statusCode == 200 && !resp.body.empty()) {
+            // Same "find every callSign, walk back to its enclosing object"
+            // parser as above; only the field names differ (vcn rather than
+            // channelVcn, gridKey/id rather than key/identifier). gridKey
+            // carries the same value as ChannelMapping.channelKey, so
+            // commitChannel's tuner cross-reference matches on it unchanged.
+            size_t pos = 0;
+            while ((pos = resp.body.find("\"callSign\"", pos)) != std::string::npos) {
+                size_t objStart = resp.body.rfind('{', pos);
+                if (objStart == std::string::npos) { pos++; continue; }
+
+                int braceCount = 1;
+                size_t objEnd = objStart + 1;
+                while (braceCount > 0 && objEnd < resp.body.length()) {
+                    if (resp.body[objEnd] == '{') braceCount++;
+                    else if (resp.body[objEnd] == '}') braceCount--;
+                    objEnd++;
+                }
+
+                std::string obj = resp.body.substr(objStart, objEnd - objStart);
+
+                LiveTVChannel channel;
+                channel.callSign = extractJsonValue(obj, "callSign");
+                channel.title    = extractJsonValue(obj, "title");
+                if (channel.title.empty()) channel.title = channel.callSign;
+                channel.thumb    = extractJsonValue(obj, "thumb");
+                channel.key      = extractJsonValue(obj, "gridKey");
+                if (channel.key.empty()) channel.key = extractJsonValue(obj, "id");
+
+                applyVcn(channel, extractJsonValue(obj, "vcn"));
+                commitChannel(channel, channel.key);
+
+                pos = objEnd;
+            }
+
+            brls::Logger::info("fetchLiveTVChannels: Found {} channels from EPG provider {} ({} with logos)",
+                               channels.size(), m_epgProviderKey, countWithLogos(channels));
+        } else {
+            brls::Logger::warning("fetchLiveTVChannels: /{}/lineups/dvr/channels returned HTTP {} ({} bytes)",
+                                  m_epgProviderKey, resp.statusCode, resp.body.length());
         }
     }
 
@@ -4045,7 +4130,12 @@ bool PlexClient::fetchLiveTVChannels(std::vector<LiveTVChannel>& channels) {
             }
 
             if (!channels.empty()) {
-                brls::Logger::info("fetchLiveTVChannels: Found {} channels from DVR ChannelMapping", channels.size());
+                // Last resort. ChannelMapping carries no thumb and no station
+                // name, so the guide ends up with blank logos and "Ch 5.1"
+                // titles — if you see this line, both EPG sources above failed.
+                brls::Logger::warning("fetchLiveTVChannels: Found {} channels from DVR ChannelMapping "
+                                      "— no logos or station names available from this source",
+                                      channels.size());
             }
         }
     }
