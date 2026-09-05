@@ -4842,15 +4842,19 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 }
 
                 int origIdx = m_dragState.originalDisplayIdx;
-                int childCount = queueList ? (int)queueList->getChildren().size() : 0;
+                // Rows only. queueList also carries the trailing "+N more"
+                // label whenever the render window is short of the full queue,
+                // and clamping against the child count would let a drag to the
+                // bottom target its slot — an index with no row behind it.
+                const int rowCount = (int)m_queueRowData.size();
                 int newTarget = origIdx + (int)std::lround(eff / rowH);
                 if (newTarget < 0) newTarget = 0;
-                if (newTarget > childCount - 1) newTarget = childCount - 1;
+                if (newTarget > rowCount - 1) newTarget = rowCount - 1;
                 m_dragState.targetDisplayIdx = newTarget;
 
                 if (queueList) {
                     auto& children = queueList->getChildren();
-                    for (int i = 0; i < (int)children.size(); i++) {
+                    for (int i = 0; i < std::min((int)children.size(), rowCount); i++) {
                         if (i == origIdx) continue;
                         float shift = 0.0f;
                         if (newTarget > origIdx && i > origIdx && i <= newTarget) shift = -rowH;
@@ -4872,22 +4876,39 @@ void PlayerActivity::createQueueRow(int displayIdx, int trackIdx, const QueueIte
                 if (didDrag && status.state == brls::GestureState::END &&
                     origIdx >= 0 && targetIdx >= 0 && origIdx != targetIdx && fromTrack >= 0) {
                     MusicQueue& queue = MusicQueue::getInstance();
-                    bool shuffled = queue.isShuffleEnabled();
-                    const auto& sOrder = queue.getShuffleOrder();
-                    int targetPlayPos = targetIdx + m_queueWindowStart;
-                    int toTrack = (shuffled && targetPlayPos < (int)sOrder.size())
-                                    ? sOrder[targetPlayPos] : targetPlayPos;
-                    if (toTrack >= 0 && toTrack < queue.getQueueSize() && toTrack != fromTrack) {
+                    const bool shuffled = queue.isShuffleEnabled();
+
+                    // Work in PLAY order, exactly as the L/R bumper path does. A
+                    // row's slot in the window is its play position; the track it
+                    // shows is its absolute index, and while shuffling the two are
+                    // different numbers for the same row.
+                    const int playFrom = m_queueWindowStart + origIdx;
+                    const int playTo   = m_queueWindowStart + targetIdx;
+
+                    if (playTo >= 0 && playTo < queue.getQueueSize() && playTo != playFrom) {
+                        // Server sync: anchor the move to the track that will end
+                        // up just before it. Dragging down, that is whatever sits
+                        // at the target now (everything shifts up when the dragged
+                        // row leaves); dragging up, it is the row above the target.
                         if (queue.isServerSynced()) {
-                            const auto& q = queue.getQueue();
+                            const auto& q  = queue.getQueue();
+                            const auto& so = queue.getShuffleOrder();
+                            auto absAt = [&](int playPos) -> int {
+                                if (!shuffled) return playPos;
+                                return (playPos >= 0 && playPos < (int)so.size()) ? so[playPos] : -1;
+                            };
                             int pqItemID = (fromTrack < (int)q.size()) ? q[fromTrack].playQueueItemID : 0;
-                            int afterPQItemID = (toTrack > 0 && toTrack - 1 < (int)q.size())
-                                                    ? q[toTrack - 1].playQueueItemID : 0;
+                            int anchorAbs = absAt((playTo > playFrom) ? playTo : playTo - 1);
+                            int afterPQItemID = (anchorAbs >= 0 && anchorAbs < (int)q.size())
+                                                    ? q[anchorAbs].playQueueItemID : 0;
                             if (pqItemID > 0)
                                 PlexClient::getInstance().movePlayQueueItem(
                                     queue.getPlayQueueID(), pqItemID, afterPQItemID);
                         }
-                        queue.moveTrack(fromTrack, toTrack);
+                        // moveInPlayOrder, not moveTrack: while shuffling, play
+                        // order lives in the shuffle order and the queue itself
+                        // must not be touched.
+                        queue.moveInPlayOrder(playFrom, playTo);
                         committed = true;
                         brls::sync([this, targetIdx]() {
                             populateQueueList();
