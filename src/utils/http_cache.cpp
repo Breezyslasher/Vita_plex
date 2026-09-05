@@ -4,6 +4,7 @@
 
 #include "utils/http_cache.hpp"
 #include "platform/paths.hpp"
+#include "utils/http_client.hpp"  // redactTokensInUrl
 
 #include <borealis.hpp>
 #include <cstdint>
@@ -89,7 +90,7 @@ void HttpCache::put(const std::string& url, const std::string& body,
     const int64_t ts = static_cast<int64_t>(std::time(nullptr));
     f.write(reinterpret_cast<const char*>(&ts), sizeof(ts));
     f.write(body.data(), static_cast<std::streamsize>(body.size()));
-    brls::Logger::debug("HttpCache STORE ({} bytes): {}", body.size(), url);
+    brls::Logger::debug("HttpCache STORE ({} bytes): {}", body.size(), redactTokensInUrl(url));
 }
 
 void HttpCache::clear() {

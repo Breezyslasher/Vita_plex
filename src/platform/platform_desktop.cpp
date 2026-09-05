@@ -10,10 +10,20 @@
 
 #include <borealis.hpp>
 #include "utils/http_client.hpp"
+#include "platform/paths.hpp"
 
+#include <chrono>
 #include <cstdio>
+#include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <thread>
+
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#include <fcntl.h>
+#endif
 
 namespace vitaplex {
 namespace platform {
@@ -190,7 +200,39 @@ void setDeepLinkHandler(std::function<void()> onLinkArrived) {
     if (g_deepLinkHandler && !g_pendingDeepLink.empty()) g_deepLinkHandler();
 }
 
+#ifdef _WIN32
+// The Windows build links the GUI subsystem, so double-clicking it no longer
+// opens a console. That also means a build started FROM a console has nowhere
+// to write: the standard handles are closed and every log line is discarded.
+//
+// AttachConsole borrows the parent's console when there is one, which is
+// exactly the terminal the user typed into. It fails harmlessly when there
+// isn't (double-clicked, or launched from Explorer or the Start Menu), and
+// that failure is the normal case — hence no logging on the way out.
+//
+// Appending rather than truncating matters: two runs from the same console
+// would otherwise overwrite each other's output.
+void attachParentConsole() {
+    if (!AttachConsole(ATTACH_PARENT_PROCESS)) return;
+
+    std::freopen("CONOUT$", "a", stdout);
+    std::freopen("CONOUT$", "a", stderr);
+    std::freopen("CONIN$", "r", stdin);
+
+    // borealis logs UTF-8; without this the console renders it as mojibake.
+    SetConsoleOutputCP(CP_UTF8);
+
+    // The shell printed its prompt the moment it launched a GUI-subsystem
+    // process, so our first line would land on the same row as that prompt.
+    std::fputc('\n', stdout);
+}
+#endif
+
 bool init() {
+#ifdef _WIN32
+    attachParentConsole();
+    openLogFile();
+#endif
     if (!::vitaplex::HttpClient::globalInit()) {
         brls::Logger::error("Failed to initialize curl");
         return false;
@@ -200,14 +242,77 @@ bool init() {
 
 void shutdown() {
     ::vitaplex::HttpClient::globalCleanup();
+    closeLogFile();
 }
 
+#ifdef _WIN32
+FILE* g_logFile = nullptr;
+#endif
+
+// Linux and macOS keep their log on stdout, where a terminal or the journal
+// picks it up. Windows cannot: the app links the GUI subsystem, so a
+// double-clicked build has no stdout to write to, and the console window that
+// used to carry the log is the thing that was removed. Without a file there is
+// no way for anyone to send a log at all.
 std::string getLogPath() {
+#ifdef _WIN32
+    return platformPath("vitaplex.log");
+#else
     return std::string{};
+#endif
 }
 
-void openLogFile() {}
-void closeLogFile() {}
+void openLogFile() {
+#ifdef _WIN32
+    if (g_logFile) return;
+    std::error_code ec;
+    std::filesystem::create_directories(getDesktopDataDir(), ec);
+
+    // Truncated per run rather than appended: this is for "it just did the
+    // wrong thing, send me the log", and an unbounded file that nobody ever
+    // rotates is its own problem.
+    g_logFile = std::fopen(getLogPath().c_str(), "w");
+    if (!g_logFile) return;
+    // Line-buffered, so a crash still leaves everything up to the last line.
+    setvbuf(g_logFile, nullptr, _IOLBF, 0);
+
+    brls::Logger::getLogEvent()->subscribe(
+        [](brls::Logger::TimePoint time, brls::LogLevel level, std::string log) {
+            if (!g_logFile) return;
+            const char* levelStr = "UNKNOWN";
+            switch (level) {
+                case brls::LogLevel::LOG_ERROR:   levelStr = "ERROR";   break;
+                case brls::LogLevel::LOG_WARNING: levelStr = "WARNING"; break;
+                case brls::LogLevel::LOG_INFO:    levelStr = "INFO";    break;
+                case brls::LogLevel::LOG_DEBUG:   levelStr = "DEBUG";   break;
+                case brls::LogLevel::LOG_VERBOSE: levelStr = "VERBOSE"; break;
+            }
+            std::time_t tt = std::chrono::system_clock::to_time_t(time);
+            std::tm tm = *std::localtime(&tt);
+            const uint64_t ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(time.time_since_epoch())
+                    .count() % 1000;
+            // Redacted at the sink, not trusted to every caller. A log is
+            // something users paste into a bug report, and an X-Plex-Token in
+            // one is a credential for the whole server. Individual call sites
+            // do redact, but that has now been got wrong three times — one
+            // missed site is a leak, and this line cannot be missed.
+            std::fprintf(g_logFile, "%02d:%02d:%02d.%03d [%s] %s\n", tm.tm_hour, tm.tm_min,
+                         tm.tm_sec, (int)ms, levelStr,
+                         ::vitaplex::redactTokensInUrl(log).c_str());
+        });
+    brls::Logger::info("Log file: {}", getLogPath());
+#endif
+}
+
+void closeLogFile() {
+#ifdef _WIN32
+    if (g_logFile) {
+        std::fclose(g_logFile);
+        g_logFile = nullptr;
+    }
+#endif
+}
 
 bool readLocalFile(const std::string& path,
                    std::vector<uint8_t>& out,
