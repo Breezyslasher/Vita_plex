@@ -202,6 +202,33 @@ is not writable, and the working directory depends on how the app was launched.
 It now resolves `%LOCALAPPDATA%\VitaPlex`, except that an existing `VitaPlex`
 directory still wins so no one's settings move.
 
+### Windows: progress is the taskbar button, and optionally the toast
+
+`ITaskbarList3::SetProgressValue` draws on the taskbar button. That is the
+native idiom for a download here — browsers and Steam do the same — it needs
+nothing registered, and it is always available. It carries no text, though.
+
+The text goes in a toast, and Windows solves the "one popup that updates"
+problem the opposite way round from freedesktop. Rather than replacing a
+notification by id, the toast is posted **once** with a `<progress>` element
+whose fields are data bindings (`{progressValue}`, `{progressValueString}`,
+`{progressStatus}`), and later values are pushed with
+`IToastNotifier2::UpdateWithTag` against the toast's tag. Nothing is re-posted,
+so there is no id to lose and no way to accidentally spawn a second popup.
+
+`UpdateWithTag` returns `NotificationNotFound` once the user dismisses the
+toast. Re-posting there would be the Linux "closing it reopened it" bug in
+Windows dress, so that result is taken as final for the run and only the
+taskbar bar continues.
+
+`NotificationData`, `IToastNotification2::put_Data` and `IToastNotifier2` are
+newer than the base toast interfaces and are missing from some mingw-w64 header
+sets, so they sit behind their own `try_compile` probe
+(`VITAPLEX_HAVE_TOAST_PROGRESS`). The probe deliberately mirrors the call
+sequence in the source, so a probe that compiles means the real code compiles.
+A gap there costs only the text: the taskbar bar and the completion toast are
+unaffected.
+
 ### Windows: toasts need a Start Menu shortcut
 
 Windows will not show a toast from an unpackaged app unless a Start Menu

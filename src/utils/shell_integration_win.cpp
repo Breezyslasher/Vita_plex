@@ -262,6 +262,145 @@ bool showToast(const std::wstring& summary, const std::wstring& body) {
     return SUCCEEDED(notifier->Show(toast.Get()));
 }
 
+#if defined(VITAPLEX_HAVE_TOAST_PROGRESS)
+
+// A progress toast is Windows' answer to replaces_id, and it works the other
+// way round: the toast is posted once with a <progress> element whose fields
+// are data bindings, and later values are pushed with Update() against the
+// toast's tag. Nothing is re-posted, so there is only ever one popup and no id
+// to lose track of.
+constexpr const wchar_t* kProgressTag = L"vitaplex-download";
+UINT32 g_progressSeq = 0;
+bool   g_progressLive = false;
+
+ComPtr<WUN::IToastNotifier> progressNotifier() {
+    static ComPtr<WUN::IToastNotifier> s_notifier;
+    if (s_notifier) return s_notifier;
+    ComPtr<WUN::IToastNotificationManagerStatics> mgr;
+    if (FAILED(RoGetActivationFactory(
+            HStringReference(RuntimeClass_Windows_UI_Notifications_ToastNotificationManager).Get(),
+            IID_PPV_ARGS(&mgr))))
+        return nullptr;
+    mgr->CreateToastNotifierWithId(HStringReference(kAumid).Get(), &s_notifier);
+    return s_notifier;
+}
+
+// Fill a NotificationData with the three bound fields plus a sequence number.
+// The sequence number is what lets the platform discard an update that arrives
+// out of order; it must increase, and 0 means "always apply".
+bool buildData(ComPtr<WUN::INotificationData>& data, const std::wstring& status,
+               double fraction, const std::wstring& valueText) {
+    ComPtr<IInspectable> insp;
+    if (FAILED(RoActivateInstance(
+            HStringReference(RuntimeClass_Windows_UI_Notifications_NotificationData).Get(), &insp)))
+        return false;
+    if (FAILED(insp.As(&data))) return false;
+
+    ComPtr<ABI::Windows::Foundation::Collections::IMap<HSTRING, HSTRING>> values;
+    if (FAILED(data->get_Values(&values))) return false;
+
+    boolean replaced = false;
+    wchar_t num[32];
+    // A negative fraction means the size is unknown; "indeterminate" is the
+    // value the progress element defines for exactly that.
+    if (fraction < 0.0) wcscpy_s(num, L"indeterminate");
+    else                swprintf_s(num, L"%.3f", fraction > 1.0 ? 1.0 : fraction);
+
+    values->Insert(HStringReference(L"progressValue").Get(),
+                   HStringReference(num).Get(), &replaced);
+    values->Insert(HStringReference(L"progressValueString").Get(),
+                   HStringReference(valueText.c_str()).Get(), &replaced);
+    values->Insert(HStringReference(L"progressStatus").Get(),
+                   HStringReference(status.c_str()).Get(), &replaced);
+    data->put_SequenceNumber(++g_progressSeq);
+    return true;
+}
+
+// Post the one progress toast. Its <progress> fields are bindings, so every
+// later change goes through updateProgressToast rather than a new toast.
+bool showProgressToast(const std::wstring& title, const std::wstring& status,
+                       double fraction, const std::wstring& valueText) {
+    if (!ensureShortcut()) return false;
+    ComPtr<WUN::IToastNotifier> notifier = progressNotifier();
+    if (!notifier) return false;
+
+    const std::wstring xml =
+        L"<toast><visual><binding template=\"ToastGeneric\"><text>" + xmlEscape(title) +
+        L"</text><progress value=\"{progressValue}\" "
+        L"valueStringOverride=\"{progressValueString}\" status=\"{progressStatus}\"/>"
+        L"</binding></visual></toast>";
+
+    ComPtr<WDX::IXmlDocument> doc;
+    if (FAILED(RoActivateInstance(
+            HStringReference(RuntimeClass_Windows_Data_Xml_Dom_XmlDocument).Get(),
+            (IInspectable**)doc.GetAddressOf())))
+        return false;
+    ComPtr<WDX::IXmlDocumentIO> io;
+    if (FAILED(doc.As(&io)) ||
+        FAILED(io->LoadXml(HStringReference(xml.c_str()).Get())))
+        return false;
+
+    ComPtr<WUN::IToastNotificationFactory> factory;
+    if (FAILED(RoGetActivationFactory(
+            HStringReference(RuntimeClass_Windows_UI_Notifications_ToastNotification).Get(),
+            IID_PPV_ARGS(&factory))))
+        return false;
+    ComPtr<WUN::IToastNotification> toast;
+    if (FAILED(factory->CreateToastNotification(doc.Get(), &toast))) return false;
+
+    // The tag is how Update() finds this toast later.
+    ComPtr<WUN::IToastNotification2> toast2;
+    if (FAILED(toast.As(&toast2))) return false;
+    if (FAILED(toast2->put_Tag(HStringReference(kProgressTag).Get()))) return false;
+
+    ComPtr<WUN::INotificationData> data;
+    if (!buildData(data, status, fraction, valueText)) return false;
+    if (FAILED(toast2->put_Data(data.Get()))) return false;
+
+    if (FAILED(notifier->Show(toast.Get()))) return false;
+    g_progressLive = true;
+    return true;
+}
+
+// Push new values into the toast already on screen. Returns false when the
+// platform says the toast is gone — dismissed, or never shown — so the caller
+// can stop rather than keep pushing into nothing.
+bool updateProgressToast(const std::wstring& status, double fraction,
+                         const std::wstring& valueText) {
+    ComPtr<WUN::IToastNotifier> notifier = progressNotifier();
+    if (!notifier) return false;
+    ComPtr<WUN::IToastNotifier2> notifier2;
+    if (FAILED(notifier.As(&notifier2))) return false;
+
+    ComPtr<WUN::INotificationData> data;
+    if (!buildData(data, status, fraction, valueText)) return false;
+
+    WUN::NotificationUpdateResult result = WUN::NotificationUpdateResult_Failed;
+    if (FAILED(notifier2->UpdateWithTag(data.Get(),
+                                        HStringReference(kProgressTag).Get(), &result)))
+        return false;
+    // NotificationNotFound is the user having dismissed it. Re-posting would be
+    // the Linux "closing it reopened it" bug in Windows dress, so treat it as
+    // final for this run.
+    return result == WUN::NotificationUpdateResult_Succeeded;
+}
+
+void hideProgressToast() {
+    if (!g_progressLive) return;
+    g_progressLive = false;
+    ComPtr<WUN::IToastNotificationManagerStatics2> mgr2;
+    if (FAILED(RoGetActivationFactory(
+            HStringReference(RuntimeClass_Windows_UI_Notifications_ToastNotificationManager).Get(),
+            IID_PPV_ARGS(&mgr2))))
+        return;
+    ComPtr<WUN::IToastNotificationHistory> history;
+    if (FAILED(mgr2->get_History(&history))) return;
+    history->RemoveGroupedTagWithId(HStringReference(kProgressTag).Get(),
+                                    HStringReference(L"").Get(),
+                                    HStringReference(kAumid).Get());
+}
+
+#endif // VITAPLEX_HAVE_TOAST_PROGRESS
 #endif // VITAPLEX_HAVE_TOAST
 
 } // namespace
@@ -302,24 +441,50 @@ void notify(const std::string& summary, const std::string& body) {
 
 // The taskbar bar is a fraction and a state; there is no text on it, so the
 // title and detail are unused here.
-void setProgress(double fraction, const std::string&, const std::string&, bool visible) {
-    ComPtr<ITaskbarList3> tb = taskbar();
-    if (!tb) return;
-    HWND hwnd = appHwnd();
-    if (!hwnd) return;
+void setProgress(double fraction, const std::string& title,
+                 const std::string& detail, bool visible) {
+    // The taskbar button first. This is the native idiom for a download on
+    // Windows — it is what browsers use — and unlike the toast below it needs
+    // nothing registered and is always available.
+    if (ComPtr<ITaskbarList3> tb = taskbar()) {
+        if (HWND hwnd = appHwnd()) {
+            if (!visible) {
+                tb->SetProgressState(hwnd, TBPF_NOPROGRESS);
+            } else if (fraction < 0.0) {
+                // Size unknown — the marquee, rather than a 0% that reads as stalled.
+                tb->SetProgressState(hwnd, TBPF_INDETERMINATE);
+            } else {
+                const double f = fraction > 1.0 ? 1.0 : fraction;
+                tb->SetProgressState(hwnd, TBPF_NORMAL);
+                tb->SetProgressValue(hwnd, (ULONGLONG)(f * 1000.0), 1000ULL);
+            }
+        }
+    }
 
+#if defined(VITAPLEX_HAVE_TOAST_PROGRESS)
+    // And the text, which the taskbar bar has nowhere to put. One toast, posted
+    // once and then updated in place through its tag — Windows' equivalent of
+    // replaces_id, and it cannot drift out of sync because nothing is re-posted.
+    static bool s_giveUp = false;
     if (!visible) {
-        tb->SetProgressState(hwnd, TBPF_NOPROGRESS);
+        hideProgressToast();
+        s_giveUp = false;                    // a new run gets a fresh try
         return;
     }
-    if (fraction < 0.0) {
-        // Working, size unknown — the marquee, rather than a 0% that reads as stalled.
-        tb->SetProgressState(hwnd, TBPF_INDETERMINATE);
-        return;
+    if (s_giveUp) return;
+    const std::wstring wTitle  = widen(title.empty() ? "Downloading" : title);
+    const std::wstring wDetail = widen(detail);
+    if (!g_progressLive) {
+        if (!showProgressToast(wTitle, wDetail, fraction, wDetail)) s_giveUp = true;
+    } else if (!updateProgressToast(wDetail, fraction, wDetail)) {
+        // Dismissed, or gone. Stop pushing; the taskbar bar carries on.
+        g_progressLive = false;
+        s_giveUp       = true;
     }
-    if (fraction > 1.0) fraction = 1.0;
-    tb->SetProgressState(hwnd, TBPF_NORMAL);
-    tb->SetProgressValue(hwnd, (ULONGLONG)(fraction * 1000.0), 1000ULL);
+#else
+    (void)title;
+    (void)detail;
+#endif
 }
 
 } // namespace shell
