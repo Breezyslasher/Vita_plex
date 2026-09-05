@@ -214,6 +214,29 @@ button.
 `SHStrDupW`, so **shlwapi** is a link dependency of the shortcut code even
 though nothing names it.
 
+### Linux: two ways to show progress, and no desktop has both
+
+The launcher progress bar is `com.canonical.Unity.LauncherEntry`, a Unity-era
+protocol. KDE Plasma and the Ubuntu dock implement it; **Cinnamon, stock GNOME
+and most tiling setups do not**, and since it is a bare signal nothing reports
+that it went nowhere. On those desktops the notification is the only thing the
+user sees, which is why it carries the text rather than leaving a bar to speak
+for itself.
+
+The progress notification is a single popup that updates in place: the first
+`Notify` is sent with `replaces_id = 0` and blocks briefly (300 ms) to learn the
+id, and every update after that passes that id back and is fire-and-forget. Not
+doing this produces one popup per second.
+
+`expire_timeout` is 0 — until dismissed. A progress popup that expires after a
+few seconds and returns a second later is worse than none.
+
+The `value` hint (int32, 0-100) is not in the freedesktop spec, but it is the
+long-standing convention for a progress bar inside a notification and is read by
+Plasma, Xfce and dunst. A daemon that does not know it ignores it and shows the
+text, so it costs nothing to send. `urgency = 0` keeps a download from
+interrupting anything.
+
 ### Linux: Flatpak name ownership
 
 The default session-bus policy lets an app own `$FLATPAK_ID` and its subnames.
