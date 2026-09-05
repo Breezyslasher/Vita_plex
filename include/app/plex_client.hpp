@@ -576,9 +576,13 @@ public:
                          PlayQueueContainer& result,
                          const std::string& key = "",
                          int shuffle = 0, int repeat = 0, int continuous = 0);
-    // Create a play queue from a playlist ID
+    // Create a play queue from a playlist ID. This is the documented source for
+    // a playlist — POST /playQueues takes "either a URI, or a playlist", and
+    // playlistID is the playlist half. `key` is the ratingKey to open on, which
+    // the spec calls "the key of the first item to play".
     bool createPlayQueueFromPlaylist(int playlistID, const std::string& type,
-                                     PlayQueueContainer& result, int shuffle = 0);
+                                     PlayQueueContainer& result, int shuffle = 0,
+                                     const std::string& key = "");
     // Retrieve an existing play queue
     bool getPlayQueue(int playQueueID, PlayQueueContainer& result);
     // Add items to an existing play queue (party mode / play next)

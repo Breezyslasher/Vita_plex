@@ -5881,8 +5881,12 @@ bool PlexClient::createPlayQueue(const std::string& uri, const std::string& type
 }
 
 bool PlexClient::createPlayQueueFromPlaylist(int playlistID, const std::string& type,
-                                              PlayQueueContainer& result, int shuffle) {
+                                              PlayQueueContainer& result, int shuffle,
+                                              const std::string& key) {
     std::string params = "?type=" + type + "&playlistID=" + std::to_string(playlistID);
+    if (!key.empty()) {
+        params += "&key=" + HttpClient::urlEncode("/library/metadata/" + key);
+    }
     if (shuffle) params += "&shuffle=1";
 
     std::string url = buildApiUrl("/playQueues" + params);

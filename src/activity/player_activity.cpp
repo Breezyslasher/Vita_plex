@@ -79,7 +79,8 @@ PlayerActivity* PlayerActivity::createForStream(const std::string& streamUrl, co
 }
 
 PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tracks, int startIndex,
-                                                bool userPickedTrack) {
+                                                bool userPickedTrack,
+                                                const std::string& playlistId) {
     PlayerActivity* activity = new PlayerActivity("", false);
     activity->m_isQueueMode = true;
 
@@ -122,8 +123,21 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
         // used to still count as success, which left neither branch below
         // building anything — so "Play Now (Clear Queue)" quietly went on
         // playing whatever was already queued.
-        const bool created =
-            client.createPlayQueue(uri, queueType, pq, startKey) && !pq.items.empty();
+        // A playlist has its own source parameter. POST /playQueues takes
+        // "either a URI, or a playlist", and sending a first-track URI for a
+        // playlist is what produced a queue of one track out of four thousand.
+        bool created = false;
+        if (!playlistId.empty()) {
+            int pid = 0;
+            try { pid = std::stoi(playlistId); } catch (...) { pid = 0; }
+            if (pid > 0) {
+                created = client.createPlayQueueFromPlaylist(pid, queueType, pq, 0, startKey)
+                          && !pq.items.empty();
+            }
+        }
+        if (!created && playlistId.empty()) {
+            created = client.createPlayQueue(uri, queueType, pq, startKey) && !pq.items.empty();
+        }
 
         // Nor is a queue that does not hold what was asked for. Playing a
         // playlist, an album or an artist built a server queue of ONE track and

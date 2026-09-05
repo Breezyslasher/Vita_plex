@@ -50,8 +50,12 @@ public:
     // the top of a list they pressed Play on. It only matters when "Shuffle New
     // Queues" is on: a chosen track still plays first, while a container is
     // opened on a random one instead of always its first track.
+    // playlistId, when the queue came from one, is what the server play queue is
+    // built from: POST /playQueues documents playlistID as the source for a
+    // playlist, and a first-track URI in its place yields a queue of one track.
     static PlayerActivity* createWithQueue(const std::vector<MediaItem>& tracks, int startIndex = 0,
-                                           bool userPickedTrack = true);
+                                           bool userPickedTrack = true,
+                                           const std::string& playlistId = "");
 
     // Resume existing queue (return to player without resetting queue)
     static PlayerActivity* createResumeQueue();
