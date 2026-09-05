@@ -596,9 +596,24 @@ void setProgress(double fraction, const std::string& title,
     if (s_giveUp) return;
     const std::wstring wTitle  = widen(title.empty() ? "Downloading" : title);
     const std::wstring wDetail = widen(detail);
+
+    // <progress> has two text slots under the bar, and they are not
+    // interchangeable: status sits below-left and is meant for the stage
+    // ("Downloading"), valueStringOverride sits below-right and replaces the
+    // percentage. Passing the same detail to both printed it twice, and the
+    // left copy was truncated mid-word where the two competed for width.
+    //
+    // A negative fraction means the size is not known yet, and there the
+    // detail IS the stage ("Preparing on server") — so it takes the left slot
+    // and the right one stays empty, since an indeterminate bar has no
+    // percentage to override.
+    const bool indeterminate = fraction < 0.0;
+    const std::wstring wStatus = indeterminate ? wDetail : L"Downloading";
+    const std::wstring wValue  = indeterminate ? std::wstring() : wDetail;
+
     if (!g_progressLive) {
-        if (!showProgressToast(wTitle, wDetail, fraction, wDetail)) s_giveUp = true;
-    } else if (!updateProgressToast(wDetail, fraction, wDetail)) {
+        if (!showProgressToast(wTitle, wStatus, fraction, wValue)) s_giveUp = true;
+    } else if (!updateProgressToast(wStatus, fraction, wValue)) {
         // Dismissed, or gone. Stop pushing; the taskbar bar carries on.
         g_progressLive = false;
         s_giveUp       = true;
