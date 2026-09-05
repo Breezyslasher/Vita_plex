@@ -763,8 +763,7 @@ void SyncLoungeSession::emitMediaUpdate(const std::string& state, double timeMs,
         if (!m_localRatingKey.empty()) {
             media = "{\"title\":\"" + jsonEscape(m_localTitle) +
                     "\",\"type\":\"" + jsonEscape(m_localType) + "\"";
-            // Episodes: include show + season so the server renders
-            // "Show - Episode" instead of "undefined - Episode".
+            // Episodes: include show + season so the server renders "Show - Episode" instead of "undefined - Episode".
             if (!m_localGrandparentTitle.empty())
                 media += ",\"grandparentTitle\":\"" + jsonEscape(m_localGrandparentTitle) + "\"";
             if (!m_localParentTitle.empty())

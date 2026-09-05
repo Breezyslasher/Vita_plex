@@ -28,8 +28,7 @@ public:
     void setOnItemSelected(std::function<void(const MediaItem&)> callback);
     void setOnItemStartAction(std::function<void(const MediaItem&)> callback);
 
-    // Called automatically when user scrolls to the bottom.
-    // Owner should fetch the next page and call appendItems().
+    // Called automatically when user scrolls to the bottom. Owner should fetch the next page and call appendItems().
     void setOnLoadMore(std::function<void()> callback);
 
     // Tell the grid whether more items are available on the server
@@ -72,8 +71,7 @@ private:
     // Lets draw() flip whole rows to INVISIBLE in one call when they
     // scroll off-screen, instead of paying the per-view frame() cost.
     std::vector<brls::Box*> m_rows;
-    // Direct cell pointers so we can scan the visible range without
-    // traversing every row->getChildren() each frame.
+    // Direct cell pointers so we can scan the visible range without traversing every row->getChildren() each frame.
     std::vector<MediaItemCell*> m_cells;
 
     int m_columns = 6;

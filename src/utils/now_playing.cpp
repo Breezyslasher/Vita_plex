@@ -138,8 +138,7 @@ void update(const Info& info) {
 
     // Repeat mode as an int the Java side maps to its drawables: 0 off, 1 all, 2 one.
     jint jRepeat = info.repeat == RepeatMode::All ? 1 : (info.repeat == RepeatMode::One ? 2 : 0);
-    // Show the repeat/shuffle actions only when the publisher wants them (music,
-    // not video).
+    // Show the repeat/shuffle actions only when the publisher wants them (music, not video).
     jboolean jShowModes = (info.showRepeat || info.showShuffle) ? JNI_TRUE : JNI_FALSE;
 
     env->CallStaticVoidMethod(cls, mid, jMediaId, jTitle, jArtist, jAlbum, jArt,

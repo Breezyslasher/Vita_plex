@@ -84,8 +84,7 @@ void setProgress(double fraction, bool visible) {
         return;
     }
 
-    // Negative is meaningful on the Java side (indeterminate), so only the
-    // upper end is clamped.
+    // Negative is meaningful on the Java side (indeterminate), so only the upper end is clamped.
     if (fraction > 1.0) fraction = 1.0;
     e->CallStaticVoidMethod(cls, mid, (jfloat)fraction, (jboolean)(visible ? JNI_TRUE : JNI_FALSE));
     if (e->ExceptionCheck()) e->ExceptionClear();

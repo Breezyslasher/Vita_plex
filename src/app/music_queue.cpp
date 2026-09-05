@@ -378,8 +378,7 @@ const QueueItem* MusicQueue::peekNextTrack() const {
         nextIndex = m_currentIndex;
     } else if (m_shuffleEnabled) {
         int pos = m_shufflePosition + 1;
-        // Off the end, playNext() reshuffles — which track follows is not
-        // decided yet, so there is nothing to report.
+        // Off the end, playNext() reshuffles — which track follows is not decided yet, so there is nothing to report.
         if (pos < 0 || pos >= (int)m_shuffleOrder.size()) return nullptr;
         nextIndex = m_shuffleOrder[pos];
     } else {

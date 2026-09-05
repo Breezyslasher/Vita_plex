@@ -24,8 +24,7 @@
 #include <unistd.h>
 #endif
 
-// ED25519 implementation (simplified from ref10/TweetNaCl)
-// This is a minimal implementation for JWT signing
+// ED25519 implementation (simplified from ref10/TweetNaCl) This is a minimal implementation for JWT signing
 
 namespace {
 
@@ -491,8 +490,7 @@ std::string JwtAuth::createPinVerificationJwt(const std::string& clientId) {
 }
 
 bool JwtAuth::sign(const uint8_t* message, size_t messageLen, uint8_t* signature) const {
-    // Simplified ED25519 signing
-    // Full implementation would use proper curve operations
+    // Simplified ED25519 signing Full implementation would use proper curve operations
 
     // Hash the private key seed
     uint8_t hash[64];

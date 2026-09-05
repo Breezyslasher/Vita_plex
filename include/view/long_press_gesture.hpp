@@ -16,14 +16,12 @@ struct LongPressGestureStatus {
     brls::Point position;
 };
 
-// Long press gesture recognizer
-// Fires when user holds touch for a specified duration without moving
+// Long press gesture recognizer Fires when user holds touch for a specified duration without moving
 class LongPressGestureRecognizer : public brls::GestureRecognizer {
 public:
     using Callback = std::function<void(LongPressGestureStatus)>;
 
-    // Constructor with callback and optional hold duration
-    // Default hold duration is 400ms
+    // Constructor with callback and optional hold duration Default hold duration is 400ms
     LongPressGestureRecognizer(brls::View* view, Callback callback, int holdDurationMs = 400);
 
     brls::GestureState recognitionLoop(brls::TouchState touch, brls::MouseState mouse,

@@ -22,8 +22,7 @@
 #endif
 
 #if defined(_WIN32)
-// Only the Windows branch of getDesktopDataDir() needs it, and the console
-// toolchains are happier not seeing it at all.
+// Only the Windows branch of getDesktopDataDir() needs it, and the console toolchains are happier not seeing it at all.
 #include <filesystem>
 #include <system_error>
 #endif

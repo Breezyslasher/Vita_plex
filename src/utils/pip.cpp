@@ -131,8 +131,7 @@ bool enter(int videoWidth, int videoHeight) {
     g_savedState.bordered = (SDL_GetWindowFlags(win) & SDL_WINDOW_BORDERLESS) == 0;
 
     if (g_savedState.fullscreen) {
-        // Leave fullscreen before resizing so the OS treats the window as a
-        // normal floating one.
+        // Leave fullscreen before resizing so the OS treats the window as a normal floating one.
         SDL_SetWindowFullscreen(win, 0);
     }
     SDL_GetWindowPosition(win, &g_savedState.x, &g_savedState.y);

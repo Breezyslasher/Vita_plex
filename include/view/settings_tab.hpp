@@ -87,8 +87,7 @@ private:
 
     void onLogout();
     void onNetworkTest();
-    // Connect / disconnect the persistent SyncLounge session that an active
-    // player follows. See SyncLoungeSession.
+    // Connect / disconnect the persistent SyncLounge session that an active player follows. See SyncLoungeSession.
     void onSyncLoungeConnect();
     // Open the party-members dialog (who's in the room; host can transfer host).
     void onSyncLoungeMembers();
@@ -166,11 +165,9 @@ private:
     brls::BooleanCell* m_audioPassthroughToggle = nullptr;
     brls::BooleanCell* m_directPlayToggle = nullptr;
 
-    // Network section (split out of Transcoding so it gets its own rail
-    // row; the cell + handler are unchanged).
+    // Network section (split out of Transcoding so it gets its own rail row; the cell + handler are unchanged).
     brls::DetailCell*   m_connectionTimeoutSelector = nullptr;
-    // HTTP response cache controls live in Network too — keeps all the
-    // server-traffic settings in one place.
+    // HTTP response cache controls live in Network too — keeps all the server-traffic settings in one place.
     brls::DetailCell*   m_cacheLifetimeSelector = nullptr;
     brls::DetailCell*   m_clearCacheCell        = nullptr;
 

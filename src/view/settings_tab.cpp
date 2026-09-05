@@ -167,8 +167,7 @@ SettingsTab::SettingsTab() {
     m_railContainer->setWidth(railWidthForViewport());
     m_railContainer->setBackgroundColor(tok::railBg());
 
-    // Rail header — "Settings" and the signed-in user. Mirrors the
-    // tab header that the main app uses above the sidebar.
+    // Rail header — "Settings" and the signed-in user. Mirrors the tab header that the main app uses above the sidebar.
     auto* railHeader = new brls::Box();
     railHeader->setAxis(brls::Axis::COLUMN);
     railHeader->setPaddingLeft(18);
@@ -206,8 +205,7 @@ SettingsTab::SettingsTab() {
 
     m_railContainer->addView(railHeader);
 
-    // Scrollable list of rail rows — twelve sections fit on desktop,
-    // overflow scrolls on a Vita-sized viewport.
+    // Scrollable list of rail rows — twelve sections fit on desktop, overflow scrolls on a Vita-sized viewport.
     m_railScroll = new brls::ScrollingFrame();
     m_railScroll->setGrow(1.0f);
     m_railScroll->setFocusable(false);  // descend straight onto a row
@@ -409,8 +407,7 @@ brls::Box* SettingsTab::makeRailRow(const std::string& iconPath,
     row->setPaddingRight(10);
     row->setFocusable(true);
 
-    // Teal left-edge bar (4px). Hidden until paintRailRowSelection()
-    // toggles it on for the active row.
+    // Teal left-edge bar (4px). Hidden until paintRailRowSelection() toggles it on for the active row.
     auto* leftBar = new brls::Box();
     leftBar->setPositionType(brls::PositionType::ABSOLUTE);
     leftBar->setPositionLeft(0);
@@ -423,8 +420,7 @@ brls::Box* SettingsTab::makeRailRow(const std::string& iconPath,
     leftBar->setId("rail/selected-bar");
     row->addView(leftBar);
 
-    // Icon — borealis Image with FIT scaling so non-square assets keep
-    // their aspect on the small chip.
+    // Icon — borealis Image with FIT scaling so non-square assets keep their aspect on the small chip.
     auto* icon = new brls::Image();
     icon->setWidth(20);
     icon->setHeight(20);
@@ -442,8 +438,7 @@ brls::Box* SettingsTab::makeRailRow(const std::string& iconPath,
     label->setId("rail/label");
     row->addView(label);
 
-    // Right chevron — `right.png` is small enough to read as a hint
-    // without crowding the row.
+    // Right chevron — `right.png` is small enough to read as a hint without crowding the row.
     auto* chevron = new brls::Image();
     chevron->setWidth(14);
     chevron->setHeight(14);
@@ -2092,8 +2087,7 @@ void SettingsTab::onNetworkTest() {
             }
         }
 
-        // ── Build dialog on main thread ──
-        // Capture results by value for the lambda
+        // ── Build dialog on main thread ── Capture results by value for the lambda
         brls::sync([=]() {
             brls::Box* content = new brls::Box();
             content->setAxis(brls::Axis::COLUMN);

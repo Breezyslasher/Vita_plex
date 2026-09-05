@@ -77,8 +77,7 @@ MediaItemCell::MediaItemCell()
     m_descriptionLabel = new brls::Label();
     m_descriptionLabel->setFontSize(ic.descriptionFontSize);
     m_descriptionLabel->setHorizontalAlign(brls::HorizontalAlign::CENTER);
-    // One line only: the cell budgets a single line here, and a wrapped
-    // detail would push into the artwork above it.
+    // One line only: the cell budgets a single line here, and a wrapped detail would push into the artwork above it.
     m_descriptionLabel->setSingleLine(true);
     m_descriptionLabel->setVisibility(brls::Visibility::GONE);
     this->addView(m_descriptionLabel);
@@ -294,8 +293,7 @@ void MediaItemCell::loadThumbnail() {
                     m_item.mediaType == MediaType::MUSIC_ALBUM ||
                     m_item.mediaType == MediaType::MUSIC_TRACK ||
                     m_item.type == "playlist");
-    // Keep this in step with setItem(): the requested image dimensions have
-    // to match the shape the cell laid out.
+    // Keep this in step with setItem(): the requested image dimensions have to match the shape the cell laid out.
     const bool poster = m_preferPoster && !m_item.grandparentThumb.empty();
     bool isEpisode = (m_item.mediaType == MediaType::EPISODE) && !poster;
     bool isClip = (m_item.mediaType == MediaType::CLIP) && !poster;

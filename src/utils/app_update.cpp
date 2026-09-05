@@ -83,11 +83,9 @@ namespace {
 
 constexpr const char* kRepo = "Breezyslasher/Vita_plex";
 
-// True while a check or an install is running, so the settings cell and
-// the startup check can't race each other.
+// True while a check or an install is running, so the settings cell and the startup check can't race each other.
 std::atomic<bool> s_busy{false};
-// Set by the progress dialog's Cancel; the download's write callback
-// checks it and aborts the transfer.
+// Set by the progress dialog's Cancel; the download's write callback checks it and aborts the transfer.
 std::atomic<bool> s_cancel{false};
 
 std::string s_selfPath;
@@ -347,8 +345,7 @@ std::string assetSuffix() {
     return "-windows-x64.zip";
 #endif
 #elif VITAPLEX_MACOS_DESKTOP
-    // Only when we can actually swap the .app bundle; a loose binary drops
-    // through to the browser.
+    // Only when we can actually swap the .app bundle; a loose binary drops through to the browser.
     if (macAppBundlePath().empty()) return {};
 #if defined(__aarch64__) || defined(__arm64__)
     return "-macOS-Silicon.dmg";
@@ -997,8 +994,7 @@ void startInstall(const ReleaseInfo rel) {
             return;
         }
 #elif defined(__SWITCH__)
-        // The romfs is mapped from the running NRO: unmount before
-        // replacing the file, exactly as pleNx does.
+        // The romfs is mapped from the running NRO: unmount before replacing the file, exactly as pleNx does.
         romfsExit();
         std::string target = s_selfPath;
         if (target.size() < 4 || target.compare(target.size() - 4, 4, ".nro") != 0)
@@ -1182,8 +1178,7 @@ void startInstall(const ReleaseInfo rel) {
                 s_busy = false;
                 return;
             }
-            // VitaPlex data paths carry no single quotes, so single-quoting
-            // each is enough to keep the shell happy.
+            // VitaPlex data paths carry no single quotes, so single-quoting each is enough to keep the shell happy.
             fprintf(sf,
                 "#!/bin/sh\n"
                 "PID=%d\n"
@@ -1374,8 +1369,7 @@ ParsedNotes parseNotes(const std::string& md) {
                 if (close != std::string::npos) {
                     n.lead = cleanInline(body.substr(2, close - 2));
                     std::string rest = body.substr(close + 2);
-                    // The lead line stands alone, so the " — " joiner would
-                    // dangle at the start of the description.
+                    // The lead line stands alone, so the " — " joiner would dangle at the start of the description.
                     size_t r = 0;
                     while (r < rest.size() &&
                            (rest[r] == ' ' || rest[r] == '-' ||
@@ -1551,8 +1545,7 @@ void showNotesSheet(const ReleaseInfo rel) {
             auto* col = new brls::Box();
             col->setAxis(brls::Axis::COLUMN);
             col->setShrink(1.0f);
-            // A borealis label is single-colour, so the bold lead gets its
-            // own line and the description wraps below it.
+            // A borealis label is single-colour, so the bold lead gets its own line and the description wraps below it.
             if (!n.lead.empty())
                 col->addView(makeLabel(n.lead, 13.5f, nvgRGB(0xe7, 0xe7, 0xea)));
             if (!n.text.empty()) {
@@ -1596,8 +1589,7 @@ void showNotesSheet(const ReleaseInfo rel) {
     fspacer->setGrow(1.0f);
     footer->addView(fspacer);
 
-    // The primary mirrors the offer's action so the user can act from
-    // here without going back.
+    // The primary mirrors the offer's action so the user can act from here without going back.
     brls::Box* primary = nullptr;
 #if defined(__SWITCH__) || defined(__PSV__) || defined(ANDROID) || defined(__PS4__) || (defined(__linux__) && !defined(ANDROID)) || defined(_WIN32) || VITAPLEX_MACOS_DESKTOP
     if (!rel.assetUrl.empty()) {
@@ -1696,8 +1688,7 @@ void offerUpdate(const ReleaseInfo rel) {
     panel->setBorderThickness(1.0f);
     panel->setCornerRadius(16.0f);
     panel->setShadowType(brls::ShadowType::GENERIC);
-    // The gold strip runs flush along the top edge; the panel's rounded
-    // corners clip its ends.
+    // The gold strip runs flush along the top edge; the panel's rounded corners clip its ends.
     panel->setClipsToBounds(true);
 
     auto* strip = new brls::Box();
@@ -1983,8 +1974,7 @@ void checkForUpdates(bool manual) {
             return;
         }
 
-        // The startup check respects a skipped release; the settings cell
-        // always shows what it found.
+        // The startup check respects a skipped release; the settings cell always shows what it found.
         if (!manual &&
             rel.tag == Application::getInstance().getSettings().skippedUpdateVersion) {
             brls::Logger::info("app_update: {} available but skipped by user", rel.tag);

@@ -122,8 +122,7 @@ struct MediaItem {
     };
     std::vector<Person> cast;
 
-    // Trim heavy fields not needed for grid/list display.
-    // Call this on items stored in bulk lists to reduce memory.
+    // Trim heavy fields not needed for grid/list display. Call this on items stored in bulk lists to reduce memory.
     void trimForGrid() {
         // Keep first 60 chars of summary (only used in focus tooltip)
         if (summary.length() > 60) {
@@ -233,8 +232,7 @@ struct ChannelProgram {
     std::string ratingKey;   // EPG rating key (e.g., "plex://episode/...")
     std::string metadataKey; // EPG metadata path (e.g., "/tv.plex.providers.epg.cloud:40/metadata/...")
     std::string thumb;       // Show/episode artwork URL (gracenote, etc.) — used by the
-                             // Live TV hero so it can show the show's poster instead of
-                             // the channel's station logo.
+                             // Live TV hero so it can show the show's poster instead of the channel's station logo.
 };
 
 // DVR ChannelMapping entry (from official /livetv/dvrs API)

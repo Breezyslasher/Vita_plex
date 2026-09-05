@@ -104,8 +104,7 @@ void notify(const std::string& summary, const std::string& body) {
 
     dbus_message_iter_append_basic(&it, DBUS_TYPE_INT32, &timeout);
 
-    // No reply wanted: the returned notification id is only useful for
-    // replacing or closing one, and we do neither.
+    // No reply wanted: the returned notification id is only useful for replacing or closing one, and we do neither.
     dbus_message_set_no_reply(msg, TRUE);
     dbus_connection_send(conn, msg, nullptr);
     dbus_connection_flush(conn);

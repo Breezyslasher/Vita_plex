@@ -56,8 +56,7 @@ private:
     MediaItem m_item;
     std::string m_originalTitle;  // Store original truncated title
 
-    // Alive flag - set to false in destructor to prevent use-after-free
-    // in async image loader callbacks
+    // Alive flag - set to false in destructor to prevent use-after-free in async image loader callbacks
     std::shared_ptr<std::atomic<bool>> m_alive;
 
     // Transparent placeholder Box that reserves layout space for the

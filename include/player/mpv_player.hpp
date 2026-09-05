@@ -227,8 +227,7 @@ private:
     MpvPlaybackInfo m_playbackInfo;
     std::string m_errorMessage;
     std::string m_currentUrl;
-    // Server-reported length of the loaded track, milliseconds; 0 when unknown.
-    // See loadUrl().
+    // Server-reported length of the loaded track, milliseconds; 0 when unknown. See loadUrl().
     std::atomic<int64_t> m_expectedDurationMs{0};
     bool m_subtitlesVisible = true;
     std::atomic<bool> m_stopping{false};        // Shutdown in progress (accessed from mpv thread)

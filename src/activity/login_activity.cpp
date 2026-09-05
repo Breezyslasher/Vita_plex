@@ -538,8 +538,7 @@ void LoginActivity::renderPinTiles(bool expired) {
 
     const std::string& code = m_pinAuth.code;
     if (code.empty()) {
-        // Nothing to lay out, but the row still has to be re-measured — see the
-        // invalidate() at the end.
+        // Nothing to lay out, but the row still has to be re-measured — see the invalidate() at the end.
         pinTilesBox->invalidate();
         return;
     }
@@ -963,8 +962,7 @@ void LoginActivity::connectToSelectedServer(const PlexServer& server) {
     // ── Connecting card (same shell, swapped into the modal) ────────
     const float vw      = brls::Application::contentWidth;
     const bool  narrow  = platform::isPortrait() || vw < 600;
-    // Contained, centered width (matches the server-select panel) rather
-    // than filling a portrait / narrow viewport.
+    // Contained, centered width (matches the server-select panel) rather than filling a portrait / narrow viewport.
     const float dialogW = std::max(320.0f, std::min(vw - 32.0f, 520.0f));
     const float innerW  = std::max(220.0f, dialogW - 60.0f);
 
@@ -1469,8 +1467,7 @@ void LoginActivity::onPinLoginPressed(bool isRetry) {
             auto alive = m_alive;
             brls::delay(delayMs, [this, alive]() {
                 if (!alive || !*alive) return;
-                // Only if the user is still on the PIN view — they may have
-                // switched to credentials while we waited.
+                // Only if the user is still on the PIN view — they may have switched to credentials while we waited.
                 if (pinView && pinView->getVisibility() != brls::Visibility::VISIBLE) return;
                 onPinLoginPressed(/*isRetry=*/true);
             });

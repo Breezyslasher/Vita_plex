@@ -1863,8 +1863,7 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
             bool alreadyComplete = false;   // server said 416 → file is whole
             bool openFailed = false;
 
-            // Decide append-vs-truncate the instant the final status is known,
-            // before any body byte is delivered.
+            // Decide append-vs-truncate the instant the final status is known, before any body byte is delivered.
             auto onStart = [&](int statusCode, int64_t fullSize) {
                 if (statusCode == 416) {
                     // Range past end of file — it's already fully downloaded.
@@ -2237,8 +2236,7 @@ void DownloadsManager::loadState() {
 
     brls::Logger::info("DownloadsManager: Loading saved state...");
 
-    // Parse the JSON array of download items
-    // Find the "downloads" array
+    // Parse the JSON array of download items Find the "downloads" array
     size_t arrStart = content.find("[");
     if (arrStart == std::string::npos) {
         brls::Logger::error("DownloadsManager: Invalid state file format");

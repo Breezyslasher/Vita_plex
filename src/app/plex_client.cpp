@@ -685,8 +685,7 @@ bool PlexClient::fetchServers(std::vector<PlexServer>& servers, bool* offline) {
 
     servers.clear();
 
-    // Parse server resources - look for devices that provide "server"
-    // Response is an array of resources
+    // Parse server resources - look for devices that provide "server" Response is an array of resources
     size_t pos = 0;
     while ((pos = resp.body.find("\"name\"", pos)) != std::string::npos) {
         // Find the start of this object (go back to find opening brace)
@@ -1370,8 +1369,7 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
     item.index = extractJsonInt(resp.body, "index");
     item.parentIndex = extractJsonInt(resp.body, "parentIndex");
 
-    // Extract part path for downloads from Media[0].Part[0].key
-    // Look for "Part":[{"key":"/library/parts/...
+    // Extract part path for downloads from Media[0].Part[0].key Look for "Part":[{"key":"/library/parts/...
     size_t partPos = resp.body.find("\"Part\":");
     if (partPos != std::string::npos) {
         size_t partKeyPos = resp.body.find("\"key\":", partPos);
@@ -1475,8 +1473,7 @@ bool PlexClient::fetchMediaDetails(const std::string& ratingKey, MediaItem& item
                 person.tag = extractJsonValue(obj, "tag");
                 person.role = jobLabel.empty() ? extractJsonValue(obj, "role") : jobLabel;
                 person.thumb = extractJsonValue(obj, "thumb");
-                // Prefer the server-provided filter ("actor=12345"); otherwise
-                // build it from the numeric tag id.
+                // Prefer the server-provided filter ("actor=12345"); otherwise build it from the numeric tag id.
                 person.filter = extractJsonValue(obj, "filter");
                 if (person.filter.empty()) {
                     int tagId = extractJsonInt(obj, "id");
@@ -1502,8 +1499,7 @@ bool PlexClient::fetchByPersonFilter(const std::string& sectionKey, const std::s
     if (sectionKey.empty() || filter.empty()) return false;
 
     HttpClient client;
-    // e.g. /library/sections/2/all?actor=12345 — every title in this section
-    // the person is credited on.
+    // e.g. /library/sections/2/all?actor=12345 — every title in this section the person is credited on.
     std::string url = buildApiUrl("/library/sections/" + sectionKey + "/all?" + filter);
 
     HttpRequest req;
@@ -2786,8 +2782,7 @@ bool PlexClient::getPlaybackUrl(const std::string& ratingKey, std::string& url) 
         return false;
     }
 
-    // Find the Part key in the response
-    // Look for "Part":[{"key":"/library/parts/..."
+    // Find the Part key in the response Look for "Part":[{"key":"/library/parts/..."
     size_t partPos = resp.body.find("\"Part\"");
     if (partPos == std::string::npos) {
         brls::Logger::error("getPlaybackUrl: No Part found in metadata");
@@ -2807,8 +2802,7 @@ bool PlexClient::getPlaybackUrl(const std::string& ratingKey, std::string& url) 
         return false;
     }
 
-    // Build stream URL from Part key
-    // The Part key is something like /library/parts/12345/1234567890/file.mkv
+    // Build stream URL from Part key The Part key is something like /library/parts/12345/1234567890/file.mkv
     url = m_serverUrl + partKey + "?X-Plex-Token=" + m_authToken;
 
     brls::Logger::info("getPlaybackUrl: Stream URL = {}", url);
@@ -3301,8 +3295,7 @@ bool PlexClient::searchSubtitles(const std::string& ratingKey, const std::string
 
 bool PlexClient::selectSearchedSubtitle(const std::string& ratingKey, int partId,
                                          const std::string& subtitleKey) {
-    // Plex API: PUT /library/metadata/{id}/subtitles
-    //   with key and partId as query parameters
+    // Plex API: PUT /library/metadata/{id}/subtitles with key and partId as query parameters
     brls::Logger::debug("selectSearchedSubtitle: ratingKey={} partId={} key={}", ratingKey, partId, subtitleKey);
 
     HttpClient client;
@@ -3721,8 +3714,7 @@ bool PlexClient::probeLiveTV() {
 }
 
 void PlexClient::checkLiveTVAvailability() {
-    // Official Plex API: GET /livetv/dvrs
-    // Returns DVR list with key, lineup, uuid, Device array, and ChannelMapping
+    // Official Plex API: GET /livetv/dvrs Returns DVR list with key, lineup, uuid, Device array, and ChannelMapping
     HttpClient client;
     std::string url = buildApiUrl("/livetv/dvrs");
     HttpRequest req;
@@ -3744,8 +3736,7 @@ void PlexClient::checkLiveTVAvailability() {
         brls::Logger::debug("DVR response (first 1000): {}",
                             resp.body.substr(0, 1000));
 
-        // Parse DVR key - the "key" field is the DVR ID (e.g., "28")
-        // Per openapi.json example: "key": "28"
+        // Parse DVR key - the "key" field is the DVR ID (e.g., "28") Per openapi.json example: "key": "28"
         std::string key = extractJsonValue(resp.body, "key");
         if (!key.empty()) {
             // Key may be just a number like "28" or a path like "/livetv/dvrs/28"
@@ -4540,8 +4531,7 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
                     int64_t progEnd   = svToInt64(endsAtStr);
                     if (progEnd < (int64_t)now) continue;
 
-                    // Channel is fixed by the channelGridKey query, so no
-                    // cross-matching needed.
+                    // Channel is fixed by the channelGridKey query, so no cross-matching needed.
                     bool duplicate = false;
                     for (const auto& existing : channel.programs) {
                         if (existing.startTime == progStart && existing.title == displayTitle) {
@@ -4629,8 +4619,7 @@ static void forEachJsonObject(std::string_view body, std::string_view arrayKey, 
 
     pos++;
     while (pos < body.size()) {
-        // Between entries there is only whitespace and commas, so this
-        // scan needs no string tracking of its own.
+        // Between entries there is only whitespace and commas, so this scan needs no string tracking of its own.
         while (pos < body.size() && body[pos] != '{' && body[pos] != ']') pos++;
         if (pos >= body.size() || body[pos] == ']') break;
 
@@ -5282,8 +5271,7 @@ bool PlexClient::buildLiveSessionStreamUrl(const std::string& liveSessionId, std
     std::string q;
     q += "path=" + encodedPath;
     q += "&mediaIndex=0&partIndex=0";
-    // Live source is mpeg2video, so the video stream must be transcoded; audio
-    // can be direct-streamed.
+    // Live source is mpeg2video, so the video stream must be transcoded; audio can be direct-streamed.
     q += "&directPlay=0&directStream=0&directStreamAudio=1";
     q += "&protocol=hls&fastSeek=1&hasMDE=1&location=lan&audioBoost=100";
     snprintf(buf, sizeof(buf), "&videoBitrate=%d", bitrate); q += buf;
@@ -5367,8 +5355,7 @@ std::string PlexClient::getThumbnailUrl(const std::string& thumb, int width, int
 bool PlexClient::fetchMusicPlaylists(std::vector<Playlist>& playlists) {
     playlists.clear();
 
-    // GET /playlists?playlistType=audio&smart=0
-    // Returns non-smart (dumb) audio playlists
+    // GET /playlists?playlistType=audio&smart=0 Returns non-smart (dumb) audio playlists
     std::string url = buildApiUrl("/playlists?playlistType=audio");
 
     HttpClient client;
@@ -5379,8 +5366,7 @@ bool PlexClient::fetchMusicPlaylists(std::vector<Playlist>& playlists) {
         return false;
     }
 
-    // Parse JSON response
-    // Look for "Metadata" array
+    // Parse JSON response Look for "Metadata" array
     size_t metadataPos = response.find("\"Metadata\"");
     if (metadataPos == std::string::npos) {
         brls::Logger::debug("fetchMusicPlaylists: No playlists found");
@@ -5499,8 +5485,7 @@ bool PlexClient::fetchPlaylistItems(const std::string& playlistId, std::vector<P
 }
 
 bool PlexClient::createPlaylist(const std::string& title, const std::string& playlistType, Playlist& result) {
-    // POST /playlists?type=15&title={title}&smart=0&playlistType={type}
-    // type=15 is the Plex type for playlists
+    // POST /playlists?type=15&title={title}&smart=0&playlistType={type} type=15 is the Plex type for playlists
     std::string url = buildApiUrl("/playlists?type=15&title=" + HttpClient::urlEncode(title) +
                                   "&smart=0&playlistType=" + playlistType);
 
@@ -5848,8 +5833,7 @@ std::string PlexClient::buildPlayQueueURI(const std::string& ratingKey) {
 }
 
 std::string PlexClient::buildPlayQueueDirectoryURI(const std::string& ratingKey) {
-    // An album or season: the queue is its children, and the server expands
-    // them in order.
+    // An album or season: the queue is its children, and the server expands them in order.
     return "server://" + m_currentServer.machineIdentifier + "/" +
            kLibraryProviderId + "/library/metadata/" + ratingKey + "/children";
 }

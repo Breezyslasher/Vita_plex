@@ -179,8 +179,7 @@ private:
     // layout's cover and sheet, so they keep meaning exactly what they did.
     bool m_mobileLayout = false;
     bool m_videoOsd     = false;
-    // Both read m_isQueueMode, so they can only be asked once the activity
-    // exists.
+    // Both read m_isQueueMode, so they can only be asked once the activity exists.
     bool useMobileLayout() const;   // reads the Player layout setting
     bool useVideoOsd() const;       // reads the Video player layout setting
     bool controlsCanHide() const;   // false for photos and for music
@@ -361,8 +360,7 @@ private:
     };
     std::unordered_map<brls::View*, QueueRowData> m_queueRowData;
 
-    // Lazy thumbnail loading for queue rows - only loads covers for
-    // visible rows instead of all tracks at once
+    // Lazy thumbnail loading for queue rows - only loads covers for visible rows instead of all tracks at once
     struct DeferredThumb {
         brls::Image* image;
         std::string thumbPath;      // Raw Plex thumb path (resolved lazily)
@@ -650,8 +648,7 @@ private:
     BRLS_BIND(brls::Box, musicTransport, "player/music_transport");
     BRLS_BIND(brls::Box, musicPlayBtn, "player/music_play_btn");
     BRLS_BIND(brls::Image, musicPlayIcon, "player/music_play_icon");
-    // Bound only so their resource can be re-applied after a lost GL context;
-    // neither is ever swapped at runtime.
+    // Bound only so their resource can be re-applied after a lost GL context; neither is ever swapped at runtime.
     BRLS_BIND(brls::Image, musicPrevIcon, "player/music_prev_icon");
     BRLS_BIND(brls::Image, musicNextIcon, "player/music_next_icon");
     BRLS_BIND(brls::Box, musicPrevBtn, "player/music_prev_btn");

@@ -295,8 +295,7 @@ int main(int, char*[]) {
     g_ui.note    = "Do not power off or press the PS button";
     render();
 
-    // Give the shell a moment to finish tearing down VitaPlex so the promoter
-    // no longer sees the title as in use.
+    // Give the shell a moment to finish tearing down VitaPlex so the promoter no longer sees the title as in use.
     sceKernelDelayThread(3 * 1000 * 1000);
 
     SceIoStat st;

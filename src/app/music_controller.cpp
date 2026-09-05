@@ -278,8 +278,7 @@ void MusicController::prefetchNextTrack() {
         const bool ok = PlexClient::getInstance().getTranscodeUrlSpeculative(key, url, session);
         brls::sync([this, key, version, url, session, ok]() {
             m_prefetchInFlight = false;
-            // Recorded either way: on failure the empty URL is what keeps this
-            // from being retried on every tick.
+            // Recorded either way: on failure the empty URL is what keeps this from being retried on every tick.
             m_prefetchKey     = key;
             m_prefetchUrl     = ok ? url : std::string();
             m_prefetchSession = ok ? session : std::string();
@@ -334,8 +333,7 @@ void MusicController::publishNowPlaying(int playingOverride, long long positionO
     info.userRating = t->userRating;
     info.showRepeat = true;    // music exposes repeat + shuffle (video doesn't)
     info.showShuffle = true;
-    // Before update(), so the playback state it builds already carries the
-    // skip-to-item action and the active row id.
+    // Before update(), so the playback state it builds already carries the skip-to-item action and the active row id.
     publishQueue();
     nowplaying::update(info);
 
@@ -554,8 +552,7 @@ void MusicController::startSleepTimer(int minutes) {
 
         m_sleepTimer.stop();
         m_sleepMinutes = 0;
-        // Pause rather than stop: the queue and position survive, so picking it
-        // back up in the morning is one press.
+        // Pause rather than stop: the queue and position survive, so picking it back up in the morning is one press.
         MpvPlayer& p = MpvPlayer::getInstance();
         if (p.isInitialized() && p.isPlaying()) playPause(false);
         brls::Application::notify("Sleep timer - playback paused");

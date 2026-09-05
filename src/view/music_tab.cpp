@@ -644,8 +644,7 @@ void MusicTab::onPlaylistSelected(const Playlist& playlist) {
                 m_viewingPlaylist = true;
                 m_contentGrid->setDataSource(m_items);
 
-                // Transfer focus to the content grid so the playlist button
-                // doesn't keep its hover state
+                // Transfer focus to the content grid so the playlist button doesn't keep its hover state
                 if (!m_items.empty()) {
                     brls::Application::giveFocus(m_contentGrid);
                 }
@@ -718,8 +717,7 @@ void MusicTab::onCollectionSelected(const MediaItem& collection) {
                 m_currentPlaylistId = "";
                 m_contentGrid->setDataSource(m_items);
 
-                // Transfer focus to the content grid so the collection button
-                // doesn't keep its hover state
+                // Transfer focus to the content grid so the collection button doesn't keep its hover state
                 if (!m_items.empty()) {
                     brls::Application::giveFocus(m_contentGrid);
                 }

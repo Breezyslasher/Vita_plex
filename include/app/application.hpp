@@ -321,8 +321,7 @@ public:
     static std::string getThemeString(AppTheme theme);
     static std::string getSubtitleSizeString(SubtitleSize size);
 
-    // Quality tiers in ladder order (best first) for the settings pickers,
-    // filtered to what this platform can decode.
+    // Quality tiers in ladder order (best first) for the settings pickers, filtered to what this platform can decode.
     static std::vector<VideoQuality> qualityLadder();
     // Device-level, not port-level — see platform::supports4KDecode().
     static bool supports4K();

@@ -134,19 +134,12 @@ std::wstring shortcutPath() {
     return std::wstring(programs) + kShortcutName;
 }
 
-// Write the Start Menu shortcut a toast needs, once. It carries the same
-// AppUserModelID the process sets, which is the whole point: Windows looks the
-// running app's id up in the Start Menu and refuses to show anything it cannot
-// attribute.
-//
-// Per-user, so no elevation. If one is already there it is left alone — the
-// user may have moved or renamed it, and rewriting it every launch would undo
-// that.
-// Settings-controlled, and only exposed on Windows. Default on so the toast
-// works out of the box; a portable install turns it off and gets the taskbar
-// flash instead, leaving nothing behind on the machine.
+// Settings-controlled, Windows-only. On by default so toasts work out of the box.
 bool g_shortcutAllowed = true;
 
+// Write the Start Menu shortcut a toast needs, once. Windows looks the running app's
+// AppUserModelID up there and drops any toast it cannot attribute. Per-user, so no
+// elevation; an existing one is left alone in case the user moved or renamed it.
 bool ensureShortcut() {
     if (!g_shortcutAllowed) return false;
     const std::wstring path = shortcutPath();
@@ -195,8 +188,7 @@ bool ensureShortcut() {
 void flashTaskbar() {
     HWND hwnd = appHwnd();
     if (!hwnd) return;
-    // Only if we're not already the foreground window: flashing the window the
-    // user is looking at is pure noise.
+    // Only if we're not already the foreground window: flashing the window the user is looking at is pure noise.
     if (GetForegroundWindow() == hwnd) return;
     FLASHWINFO fi = {};
     fi.cbSize    = sizeof(fi);
@@ -229,8 +221,7 @@ std::wstring xmlEscape(const std::wstring& in) {
     return out;
 }
 
-// Returns false if anything at all went wrong, so the caller can fall back
-// rather than leave the user with nothing.
+// Returns false if anything at all went wrong, so the caller can fall back rather than leave the user with nothing.
 bool showToast(const std::wstring& summary, const std::wstring& body) {
     if (!ensureShortcut()) return false;
 
@@ -293,8 +284,7 @@ void setShortcutAllowed(bool allowed) {
         ensureShortcut();
         return;
     }
-    // Turned off: take the shortcut away rather than leaving one behind that
-    // the setting says should not exist.
+    // Turned off: take the shortcut away rather than leaving one behind that the setting says should not exist.
     const std::wstring path = shortcutPath();
     if (!path.empty() && GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
         if (DeleteFileW(path.c_str()))
@@ -321,8 +311,7 @@ void setProgress(double fraction, bool visible) {
         return;
     }
     if (fraction < 0.0) {
-        // Working, size unknown — the marquee, rather than a 0% that reads as
-        // stalled.
+        // Working, size unknown — the marquee, rather than a 0% that reads as stalled.
         tb->SetProgressState(hwnd, TBPF_INDETERMINATE);
         return;
     }

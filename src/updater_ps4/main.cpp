@@ -245,8 +245,7 @@ void uiInit() {
         }
         std::fclose(f);
     }
-    // Always logged, whatever happened above — a silent return here is exactly
-    // what hid the previous failure.
+    // Always logged, whatever happened above — a silent return here is exactly what hid the previous failure.
     vlog("ps4 updater: ui ready %dx%d (icon %s)", g_scrW, g_scrH,
          g_icon ? "loaded" : "MISSING");
 }
@@ -278,8 +277,7 @@ void uiFrame(float t, float fraction = -1.0f) {
     int e1 = SDL_SetRenderDrawColor(g_ren, 0x14, 0x14, 0x16, 0xFF);
     int e2 = SDL_RenderClear(g_ren);
 
-    // Report what the renderer actually does, once, instead of inferring it
-    // from a photo of the TV.
+    // Report what the renderer actually does, once, instead of inferring it from a photo of the TV.
     static bool s_firstFrame = true;
     if (s_firstFrame) {
         s_firstFrame = false;
@@ -387,8 +385,7 @@ int loadSysModule(const char* name) {
     return handle;
 }
 
-// Resolve one export; logs and reports failure so a missing symbol is visible
-// instead of faulting on a null call.
+// Resolve one export; logs and reports failure so a missing symbol is visible instead of faulting on a null call.
 bool resolve(int handle, const char* name, void** out) {
     int ret = sceKernelDlsym(handle, name, out);
     vlog("ps4 updater:   dlsym %s -> %d (%p)", name, ret, *out);

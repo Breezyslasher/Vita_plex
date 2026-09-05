@@ -100,8 +100,7 @@ public:
     // again. PlayerActivity's own load path calls this too.
     void resetStreamStartOffset() { m_streamStartOffsetMs = 0; }
     void stopPlayback();                       // Stop key: halt mpv + clear session
-    // Jump straight to a row of the published queue (absolute queue index), as
-    // picked in the OS up-next list.
+    // Jump straight to a row of the published queue (absolute queue index), as picked in the OS up-next list.
     void playQueueIndex(int index);
     // "Like this track" from the OS controls: writes the Plex user rating of the
     // currently playing track (10 for liked, 0 to clear).

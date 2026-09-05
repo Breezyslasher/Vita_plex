@@ -276,8 +276,7 @@ int installUpdaterApp(std::string& err) {
 }
 
 bool isUpdaterInstalled() {
-    // Must not call into AppInstUtil before its module is loaded — doing so
-    // faulted the whole app (CE-34878-0).
+    // Must not call into AppInstUtil before its module is loaded — doing so faulted the whole app (CE-34878-0).
     if (!ensureInstallerModules()) return false;
     int exists = 0;
     int ret = sceAppInstUtilAppExists(kUpdaterTitle, &exists);

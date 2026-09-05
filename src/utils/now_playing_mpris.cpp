@@ -81,8 +81,7 @@ const char* statusOf(const Snapshot& s) {
     return s.info.playing ? "Playing" : "Paused";
 }
 
-// MPRIS wants a URI for mpris:artUrl. Pass http(s) through; turn a local path
-// into a file:// URI; drop anything else.
+// MPRIS wants a URI for mpris:artUrl. Pass http(s) through; turn a local path into a file:// URI; drop anything else.
 std::string artUri(const std::string& art) {
     if (art.empty()) return "";
     if (art.rfind("http://", 0) == 0 || art.rfind("https://", 0) == 0 ||
