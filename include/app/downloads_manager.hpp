@@ -200,6 +200,9 @@ private:
 
     std::deque<DownloadItem> m_downloads;
     mutable std::mutex m_mutex;
+    // Last time the launcher progress bar was updated, ms. The byte
+    // callback fires per chunk; this keeps it to one D-Bus signal a second.
+    int64_t m_lastLauncherMs = 0;
     std::atomic<bool> m_downloading{false};
     std::atomic<bool> m_downloadThreadActive{false};
     bool m_initialized = false;

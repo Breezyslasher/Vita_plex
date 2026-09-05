@@ -10,6 +10,7 @@
  */
 
 #include "app/downloads_manager.hpp"
+#include "utils/desktop_shell.hpp"
 #include "app/plex_client.hpp"
 #include "app/application.hpp"
 #include "utils/http_client.hpp"
@@ -380,6 +381,10 @@ void DownloadsManager::startDownloads() {
         }
         m_downloading.store(false);
         m_downloadThreadActive.store(false);
+
+        // Nothing left downloading: take the bar off the launcher icon. Left
+        // behind, it would sit at whatever fraction the last item stopped on.
+        brls::sync([]() { desktopshell::setLauncherProgress(0.0, false); });
 
         // Now safe to purge cancelled items since no references are held
         {
@@ -1655,6 +1660,22 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
                         if (cb) {
                             cb(item.downloadedBytes, item.totalBytes);
                         }
+
+                        // Progress bar on the launcher icon. Throttled to once a
+                        // second — this runs per chunk, and a D-Bus signal per
+                        // chunk would be absurd — and posted to the UI thread,
+                        // because the bus connection belongs to it.
+                        if (item.totalBytes > 0) {
+                            const int64_t nowMs = brls::getCPUTimeUsec() / 1000;
+                            if (nowMs - m_lastLauncherMs >= 1000) {
+                                m_lastLauncherMs = nowMs;
+                                const double frac =
+                                    (double)item.downloadedBytes / (double)item.totalBytes;
+                                brls::sync([frac]() {
+                                    desktopshell::setLauncherProgress(frac, true);
+                                });
+                            }
+                        }
                         return m_downloading.load() && item.state != DownloadState::CANCELLED;
                     },
                     [&](int64_t total) {
@@ -1899,6 +1920,9 @@ void DownloadsManager::downloadItem(DownloadItem& item) {
     } else if (success && m_downloading.load()) {
         item.state = DownloadState::COMPLETED;
         brls::Logger::info("DownloadsManager: Completed download of {}", item.title);
+        // A download usually finishes while the user is doing something else,
+        // which is exactly when the shell should say so. No-op off Linux.
+        desktopshell::notify("Download complete", item.title);
 
         // Download cover art for music tracks
         if (!item.thumbUrl.empty() && !item.thumbPath.empty()) {

@@ -980,6 +980,9 @@ int main() {
             if(DBUS_FOUND)
                 message(STATUS "MPRIS media controls enabled (dbus-1 ${DBUS_VERSION})")
                 target_sources(${PROJECT_NAME} PRIVATE src/utils/now_playing_mpris.cpp)
+                # Same bus, same availability check: desktop notifications and
+                # the launcher progress bar (see utils/desktop_shell.hpp).
+                target_sources(${PROJECT_NAME} PRIVATE src/utils/desktop_shell.cpp)
                 target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_MPRIS=1)
                 target_link_libraries(${PROJECT_NAME} PkgConfig::DBUS)
             else()
