@@ -60,12 +60,6 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 
-    <!-- Android TV home-screen channels + the system Watch Next row. Both live
-         in the TV provider, which is absent on phones — the code checks for it
-         rather than assuming, so these are inert there. -->
-    <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
-    <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
-
     <!-- Post the music media-session notification (runtime grant on Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
