@@ -5741,9 +5741,40 @@ static void parsePlayQueueItems(const std::string& json, PlexClient& client,
     size_t arrStart = json.find('[', metaPos);
     if (arrStart == std::string::npos) return;
 
+    // Where the Metadata array actually ends.
+    //
+    // This used to be json.find(']', arrStart) — the FIRST ']' after the array
+    // opened. Every Metadata entry contains nested arrays of its own (Media,
+    // Part, Stream, Genre), so that ']' lands inside the first entry, and the
+    // loop below broke as soon as it moved past it. Exactly one item was ever
+    // parsed, however many the server sent: a play queue of 4026 tracks
+    // arrived, was reported as 4026 by playQueueTotalCount, and became a queue
+    // of one. Match the bracket properly instead, skipping over quoted strings
+    // so a ']' inside a title cannot end the array early.
+    size_t arrEnd = std::string::npos;
+    {
+        int bracketDepth = 0;
+        bool inString = false;
+        for (size_t i = arrStart; i < json.size(); i++) {
+            const char c = json[i];
+            if (inString) {
+                if (c == '\\') { i++; continue; }   // skip the escaped char
+                if (c == '"') inString = false;
+                continue;
+            }
+            if (c == '"') { inString = true; continue; }
+            if (c == '[') bracketDepth++;
+            else if (c == ']') {
+                if (--bracketDepth == 0) { arrEnd = i; break; }
+            }
+        }
+    }
+
     // Parse each object in the Metadata array
     size_t pos = arrStart;
     while ((pos = json.find('{', pos)) != std::string::npos) {
+        if (arrEnd != std::string::npos && pos > arrEnd) break;
+
         // Find matching closing brace
         int depth = 1;
         size_t objEnd = pos + 1;
@@ -5752,10 +5783,6 @@ static void parsePlayQueueItems(const std::string& json, PlexClient& client,
             else if (json[objEnd] == '}') depth--;
             objEnd++;
         }
-
-        // Check if we've gone past the Metadata array
-        size_t arrEnd = json.find(']', arrStart);
-        if (arrEnd != std::string::npos && pos > arrEnd) break;
 
         std::string obj = json.substr(pos, objEnd - pos);
 

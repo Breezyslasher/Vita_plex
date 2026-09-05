@@ -146,11 +146,13 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
         // source URI is not naming these containers in a way this server
         // expands, and until it does, a short queue is a wrong queue.
         //
-        // Count rather than contents: Plex returns a window of a long queue, so
-        // playQueueTotalCount is the figure to compare, and more than requested
-        // is fine — a container may legitimately hold extra.
-        const int serverCount = pq.playQueueTotalCount > 0 ? pq.playQueueTotalCount
-                                                           : (int)pq.items.size();
+        // What arrived, not what the server says it holds. Plex returns a
+        // window onto a long queue: a 4026-track playlist came back with
+        // playQueueTotalCount=4026 and a couple of dozen items, and adopting it
+        // on the strength of the count left a queue of what was in the window.
+        // We can only play what we were sent, and the client-side list is
+        // already complete, so it wins whenever the window is short.
+        const int serverCount = (int)pq.items.size();
         serverOk = created && serverCount >= (int)tracks.size();
         if (created && !serverOk) {
             brls::Logger::warning(
