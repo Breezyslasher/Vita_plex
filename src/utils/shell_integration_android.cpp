@@ -43,6 +43,10 @@ jclass findClass(JNIEnv* e) {
 
 } // namespace
 
+// Nothing to do up front: the notification channel is created on first
+// use, and the app is already identified to the system by its package.
+void init() {}
+
 void notify(const std::string& summary, const std::string& body) {
     JNIEnv* e = env();
     if (!e) return;

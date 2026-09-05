@@ -21,6 +21,7 @@
 #endif
 #include "app/application.hpp"
 #include "utils/app_update.hpp"
+#include "utils/shell_integration.hpp"
 #include "app/plex_client.hpp"
 #include "view/media_item_cell.hpp"
 #include "view/recycling_grid.hpp"
@@ -98,6 +99,12 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
         return 1;
     }
 
+    // Declare this process's identity to the shell before any window exists —
+    // on Windows the AppUserModelID is what the taskbar groups the button
+    // under, and what a toast is later sent as, and it has to be set first.
+    // No-op on every other platform.
+    vitaplex::shell::init();
+
     // Initialize Borealis
     if (!brls::Application::init()) {
         brls::Logger::error("Failed to initialize Borealis");
@@ -140,6 +147,10 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
         }
         return 1;
     }
+
+    // Settings are loaded by now, so the shell can be told whether it may write
+    // the Start Menu shortcut that toasts are keyed on. Windows-only in effect.
+    vitaplex::shell::setShortcutAllowed(app.getSettings().windowsStartMenuShortcut);
 
     // Run application (blocking)
     app.run();

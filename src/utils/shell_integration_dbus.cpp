@@ -52,6 +52,10 @@ DBusConnection* bus() {
 
 } // namespace
 
+// Nothing to declare to this shell up front — the bus connection opens
+// lazily on first use, and D-Bus has no equivalent of an AppUserModelID.
+void init() {}
+
 void notify(const std::string& summary, const std::string& body) {
     DBusConnection* conn = bus();
     if (!conn) return;

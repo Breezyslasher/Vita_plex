@@ -565,6 +565,7 @@ bool Application::loadSettings() {
     m_settings.directPlay = extractBool("directPlay", false);
 
     // Download settings
+    m_settings.windowsStartMenuShortcut = extractBool("windowsStartMenuShortcut", true);
     m_settings.deleteAfterWatch = extractBool("deleteAfterWatch", false);
     {
         int dq = extractInt("downloadQuality");   // 0 (ORIGINAL) when absent
@@ -729,6 +730,7 @@ bool Application::saveSettings() {
     json += "  \"maxBitrate\": " + std::to_string(m_settings.maxBitrate) + ",\n";
     json += "  \"connectionTimeout\": " + std::to_string(m_settings.connectionTimeout) + ",\n";
     json += "  \"directPlay\": " + b(m_settings.directPlay) + ",\n";
+    json += "  \"windowsStartMenuShortcut\": " + b(m_settings.windowsStartMenuShortcut) + ",\n";
     json += "  \"deleteAfterWatch\": " + b(m_settings.deleteAfterWatch) + ",\n";
     json += "  \"downloadQuality\": " + std::to_string(static_cast<int>(m_settings.downloadQuality)) + ",\n";
     json += "  \"downloadKeepOriginalAudio\": " + b(m_settings.downloadKeepOriginalAudio) + ",\n";

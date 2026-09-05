@@ -166,6 +166,15 @@ struct AppSettings {
     std::string syncLoungeServer = "https://server.synclounge.tv";
     std::string syncLoungeRoom;
 
+    // Windows Settings
+    // Whether the app may write a Start Menu shortcut for itself. Windows will
+    // not show a toast from an unpackaged app unless one exists carrying a
+    // matching AppUserModelID, so this is what decides between a real
+    // notification and a flashing taskbar button when a download finishes.
+    // On by default; a portable install turns it off and leaves nothing behind.
+    // Ignored (and not shown) anywhere but Windows.
+    bool windowsStartMenuShortcut = true;
+
     // Download Settings
     bool deleteAfterWatch = false;     // Auto-delete after fully watched
     // Download quality. ORIGINAL keeps the source as-is on HEVC-capable

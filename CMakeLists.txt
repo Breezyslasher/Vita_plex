@@ -965,6 +965,67 @@ int main() {
             message(STATUS "WinRT SMTC unavailable — disabled. Probe output:\n${_smtc_out}")
         endif()
 
+        # Windows shell integration: taskbar progress bar, AppUserModelID, and
+        # a toast when a download finishes (see utils/shell_integration.hpp).
+        # The first two are plain COM and always available; the toast needs the
+        # WinRT notification headers, which older mingw-w64 does not ship, so
+        # probe for them the same way SMTC's optional pieces are probed. Without
+        # them notify() flashes the taskbar button instead, which needs nothing.
+        target_sources(${PROJECT_NAME} PRIVATE src/utils/shell_integration_win.cpp)
+        # shlwapi: propvarutil.h's InitPropVariantFromString is an inline that
+        # calls SHStrDupW, so it is a link-time dependency of the shortcut code
+        # even though nothing here names it.
+        target_link_libraries(${PROJECT_NAME} ole32 shell32 shlwapi propsys user32 uuid)
+
+        set(_toast_probe "${CMAKE_BINARY_DIR}/toast_probe.cpp")
+        file(WRITE "${_toast_probe}" [==[
+#include <windows.h>
+#include <roapi.h>
+#include <wrl.h>
+#include <wrl/wrappers/corewrappers.h>
+#include <windows.ui.notifications.h>
+#include <windows.data.xml.dom.h>
+using Microsoft::WRL::ComPtr;
+using Microsoft::WRL::Wrappers::HStringReference;
+namespace WUN = ABI::Windows::UI::Notifications;
+namespace WDX = ABI::Windows::Data::Xml::Dom;
+int main() {
+    ComPtr<WUN::IToastNotificationManagerStatics> mgr;
+    RoGetActivationFactory(
+        HStringReference(RuntimeClass_Windows_UI_Notifications_ToastNotificationManager).Get(),
+        IID_PPV_ARGS(&mgr));
+    ComPtr<WUN::IToastNotifier> notifier;
+    mgr->CreateToastNotifierWithId(HStringReference(L"x").Get(), &notifier);
+    ComPtr<WDX::IXmlDocument> doc;
+    RoActivateInstance(HStringReference(RuntimeClass_Windows_Data_Xml_Dom_XmlDocument).Get(),
+                       (IInspectable**)doc.GetAddressOf());
+    ComPtr<WDX::IXmlDocumentIO> io;
+    doc.As(&io);
+    io->LoadXml(HStringReference(L"<toast/>").Get());
+    ComPtr<WUN::IToastNotificationFactory> f;
+    RoGetActivationFactory(
+        HStringReference(RuntimeClass_Windows_UI_Notifications_ToastNotification).Get(),
+        IID_PPV_ARGS(&f));
+    ComPtr<WUN::IToastNotification> toast;
+    f->CreateToastNotification(doc.Get(), &toast);
+    notifier->Show(toast.Get());
+    return 0;
+}
+]==])
+        try_compile(VITAPLEX_HAVE_TOAST "${CMAKE_BINARY_DIR}/toast_probe_bin"
+            SOURCES "${_toast_probe}"
+            LINK_LIBRARIES runtimeobject ole32
+            CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON
+            OUTPUT_VARIABLE _toast_out)
+        if(VITAPLEX_HAVE_TOAST)
+            message(STATUS "Toast notifications enabled")
+            target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_HAVE_TOAST=1)
+            target_link_libraries(${PROJECT_NAME} runtimeobject)
+        else()
+            message(STATUS "WinRT toast headers unavailable — download notifications "
+                           "fall back to flashing the taskbar button. Probe output:\n${_toast_out}")
+        endif()
+
         # Embed a Win32 version resource so the .exe identifies itself as
         # "VitaPlex" (FileDescription/ProductName). Without it an unpackaged exe
         # has no identity and Windows labels the media overlay "Unknown app";

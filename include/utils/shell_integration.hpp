@@ -27,22 +27,39 @@
 namespace vitaplex {
 namespace shell {
 
-#if defined(VITAPLEX_MPRIS) || defined(__ANDROID__)
+#if defined(VITAPLEX_MPRIS) || defined(__ANDROID__) || defined(_WIN32)
+
+// Called once at startup, before any window exists. Only Windows does anything
+// with it: it declares the process's AppUserModelID, which is the identity the
+// shell groups the taskbar button under and sends toasts as.
+void init();
 
 // Tell the user something finished. Fire and forget: no notification daemon,
 // or a revoked Android notification permission, is not an error worth
 // surfacing — and never worth failing the job that triggered it.
 void notify(const std::string& summary, const std::string& body);
 
-// Report ongoing background work, 0.0-1.0. Call with visible=false to take it
-// away; left behind, it sits at whatever fraction the work stopped on.
+// Report ongoing background work, 0.0-1.0. Negative means "working, size not
+// known yet" where the backend can draw that. Call with visible=false to take
+// it away; left behind, it sits at whatever fraction the work stopped on.
 void setProgress(double fraction, bool visible);
 
 #else
 
+inline void init() {}
 inline void notify(const std::string&, const std::string&) {}
 inline void setProgress(double, bool) {}
 
+#endif
+
+// Windows only, and only meaningful there: whether the app may write the Start
+// Menu shortcut that toast notifications are keyed on. A portable install can
+// turn it off and leave nothing behind on the machine, at the cost of a
+// flashing taskbar button instead of a toast. No-op elsewhere.
+#if defined(_WIN32)
+void setShortcutAllowed(bool allowed);
+#else
+inline void setShortcutAllowed(bool) {}
 #endif
 
 } // namespace shell

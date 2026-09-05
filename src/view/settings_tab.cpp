@@ -13,6 +13,7 @@
 #include "view/settings_tab.hpp"
 #include "view/livetv_actions.hpp"
 #include "utils/app_update.hpp"
+#include "utils/shell_integration.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
 #include "app/plex_palette.hpp"
@@ -1286,6 +1287,26 @@ brls::Box* SettingsTab::createDownloadsSection() {
         Application::getInstance().saveSettings();
     });
     box->addView(m_deleteAfterWatchToggle);
+
+#if defined(_WIN32)
+    // Windows only, and deliberately so: this is the one part of the desktop
+    // integration that writes something to the machine. Windows refuses to show
+    // a toast from an unpackaged app unless a Start Menu shortcut exists with a
+    // matching AppUserModelID, so turning this off downgrades the
+    // download-finished notification to a flashing taskbar button — which is
+    // the trade a portable install wants. Toggling it off deletes the shortcut.
+    {
+        auto* shortcutToggle = new brls::BooleanCell();
+        shortcutToggle->init("Start Menu Shortcut (needed for notifications)",
+                             settings.windowsStartMenuShortcut,
+                             [&settings](bool value) {
+            settings.windowsStartMenuShortcut = value;
+            vitaplex::shell::setShortcutAllowed(value);
+            Application::getInstance().saveSettings();
+        });
+        box->addView(shortcutToggle);
+    }
+#endif
 
     // Download quality. Original keeps the source as-is on HEVC-capable
     // platforms (fast, no transcode); a lower tier forces a server-side
