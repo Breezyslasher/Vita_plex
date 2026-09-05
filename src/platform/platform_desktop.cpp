@@ -167,9 +167,30 @@ const CaptionStyle& getSystemCaptionStyle() {
     static const CaptionStyle none;
     return none;
 }
-// No deep-link plumbing on this port; nothing ever hands us a URL.
-std::string takePendingDeepLink() { return {}; }
-void setDeepLinkHandler(std::function<void()>) {}
+// Deep links arrive as argv[1] and are collected once the UI is up.
+namespace {
+std::string g_pendingDeepLink;
+std::function<void()> g_deepLinkHandler;
+}
+
+void offerDeepLink(const std::string& url) {
+    if (url.empty()) return;
+    g_pendingDeepLink = url;
+    if (g_deepLinkHandler) g_deepLinkHandler();
+}
+
+std::string takePendingDeepLink() {
+    std::string out;
+    out.swap(g_pendingDeepLink);
+    return out;
+}
+
+void setDeepLinkHandler(std::function<void()> onLinkArrived) {
+    g_deepLinkHandler = std::move(onLinkArrived);
+    // A link that arrived on the command line is already waiting by the time
+    // MainActivity registers, so tell it straight away.
+    if (g_deepLinkHandler && !g_pendingDeepLink.empty()) g_deepLinkHandler();
+}
 
 bool init() {
     if (!::vitaplex::HttpClient::globalInit()) {

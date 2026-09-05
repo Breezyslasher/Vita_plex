@@ -290,6 +290,11 @@ const CaptionStyle& getSystemCaptionStyle();
  * to do with one that arrives while the app is already running — it is invoked
  * on the UI thread. Both are no-ops on ports with no link plumbing.
  */
+// Hand the platform layer a URL the OS launched us with. On desktop that is
+// argv[1] — a browser opening a plex:// link runs the Exec line with the URL
+// appended — and there is nowhere else for it to arrive from. A no-op on the
+// consoles, and unused on Android, where links come through the activity.
+void offerDeepLink(const std::string& url);
 std::string takePendingDeepLink();
 void setDeepLinkHandler(std::function<void()> onLinkArrived);
 

@@ -139,6 +139,7 @@ const CaptionStyle& getSystemCaptionStyle() {
     return none;
 }
 // No deep-link plumbing on this port; nothing ever hands us a URL.
+void offerDeepLink(const std::string&) {}
 std::string takePendingDeepLink() { return {}; }
 void setDeepLinkHandler(std::function<void()>) {}
 
