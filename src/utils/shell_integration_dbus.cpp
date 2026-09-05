@@ -50,6 +50,14 @@ DBusConnection* bus() {
     return conn;
 }
 
+// The progress notification on screen, 0 when there is none or its id has not
+// come back yet. g_pending is the in-flight Notify whose reply carries that id;
+// g_progressBroken latches when the daemon will not give us one, so we stop
+// posting rather than post a new popup every second.
+dbus_uint32_t    g_progressId     = 0;
+DBusPendingCall* g_pending        = nullptr;
+bool             g_progressBroken = false;
+
 // One Notify call. replacesId 0 posts a new notification; a previous id
 // updates that one in place, which is what makes a progress notification a
 // single popup that changes rather than one per second.
@@ -118,28 +126,66 @@ dbus_uint32_t postNotification(const std::string& summary, const std::string& bo
 
     dbus_message_iter_append_basic(&it, DBUS_TYPE_INT32, &timeoutMs);
 
-    dbus_uint32_t id = 0;
     if (wantId) {
-        // Blocking, but only for the first post of a run, and with a short
-        // timeout so a wedged daemon cannot stall the UI thread.
-        DBusError err;
-        dbus_error_init(&err);
-        DBusMessage* reply =
-            dbus_connection_send_with_reply_and_block(conn, msg, 300, &err);
-        if (reply) {
-            dbus_message_get_args(reply, nullptr, DBUS_TYPE_UINT32, &id, DBUS_TYPE_INVALID);
-            dbus_message_unref(reply);
-        } else if (dbus_error_is_set(&err)) {
-            brls::Logger::debug("shell: Notify failed ({})", err.message);
-            dbus_error_free(&err);
-        }
+        // Asynchronous, deliberately. Blocking here was wrong twice over: it
+        // stalled the UI thread on a service that may be slow to answer — on
+        // Cinnamon the daemon lives inside the GJS shell process — and any
+        // timeout short enough to be safe was short enough to miss the reply.
+        // Missing it left the id at 0, and every later tick then posted a fresh
+        // notification instead of replacing one, which is notification spam for
+        // the length of the download.
+        dbus_connection_send_with_reply(conn, msg, &g_pending, 5000);
+        dbus_connection_flush(conn);
     } else {
         dbus_message_set_no_reply(msg, TRUE);
         dbus_connection_send(conn, msg, nullptr);
         dbus_connection_flush(conn);
     }
     dbus_message_unref(msg);
-    return id;
+    return 0;
+}
+
+// Collect the id the daemon assigned, if the reply has landed. Called from the
+// once-a-second progress tick, so the pending call is polled rather than
+// waited on and nothing has to integrate this private connection with a main
+// loop.
+void pumpPendingId() {
+    if (!g_pending) return;
+    DBusConnection* conn = bus();
+    // read_write_dispatch dispatches one message per call, and the bus puts its
+    // own NameAcquired signal in the queue ahead of our reply — so a single
+    // call collected nothing and the id took three ticks to surface even from
+    // an instant daemon, losing the first seconds of every download. Read once,
+    // bounded, then drain the queue until the reply turns up or it empties.
+    if (conn) {
+        dbus_connection_read_write(conn, 25);
+        while (!dbus_pending_call_get_completed(g_pending) &&
+               dbus_connection_dispatch(conn) == DBUS_DISPATCH_DATA_REMAINS) {
+        }
+    }
+    if (!dbus_pending_call_get_completed(g_pending)) return;
+
+    if (DBusMessage* reply = dbus_pending_call_steal_reply(g_pending)) {
+        dbus_uint32_t id = 0;
+        DBusError err;
+        dbus_error_init(&err);
+        if (dbus_message_get_args(reply, &err, DBUS_TYPE_UINT32, &id, DBUS_TYPE_INVALID) &&
+            id != 0) {
+            g_progressId = id;
+            brls::Logger::debug("shell: progress notification id {}", id);
+        } else {
+            // An error reply, or a daemon that answered with nothing usable.
+            // Give up on replacing rather than spam: the launcher bar carries on.
+            g_progressBroken = true;
+            brls::Logger::debug("shell: no usable notification id ({}) — progress "
+                                "notification disabled for this run",
+                                dbus_error_is_set(&err) ? err.message : "no id in reply");
+        }
+        if (dbus_error_is_set(&err)) dbus_error_free(&err);
+        dbus_message_unref(reply);
+    }
+    dbus_pending_call_unref(g_pending);
+    g_pending = nullptr;
 }
 
 void closeNotification(dbus_uint32_t id) {
@@ -157,9 +203,6 @@ void closeNotification(dbus_uint32_t id) {
     dbus_connection_flush(conn);
     dbus_message_unref(msg);
 }
-
-// The progress notification currently on screen, 0 when there is none.
-dbus_uint32_t g_progressId = 0;
 
 } // namespace
 
@@ -239,10 +282,18 @@ void setProgress(double fraction, const std::string& title,
     }
 
     if (!visible) {
+        pumpPendingId();               // so a late id can still be closed
         closeNotification(g_progressId);
-        g_progressId = 0;
+        if (g_pending) { dbus_pending_call_cancel(g_pending); dbus_pending_call_unref(g_pending); }
+        g_pending        = nullptr;
+        g_progressId     = 0;
+        g_progressBroken = false;      // a new run gets a fresh try
         return;
     }
+
+    // Has the id from the opening Notify arrived since the last tick?
+    pumpPendingId();
+    if (g_progressBroken) return;      // launcher bar only; never spam popups
 
     // -1 while the size is unknown, so a daemon that draws the hint shows an
     // empty bar rather than a misleading 0%.
@@ -250,14 +301,22 @@ void setProgress(double fraction, const std::string& title,
                                    : (int)((fraction > 1.0 ? 1.0 : fraction) * 100.0 + 0.5);
     const std::string summary = title.empty() ? std::string("Downloading") : title;
 
-    // timeout 0 means "until dismissed": a progress popup that expires after a
-    // few seconds and returns a second later is worse than none. The first post
-    // learns the id; every later one replaces that same notification, so this
-    // stays one popup that updates rather than one per second.
-    const dbus_uint32_t id = postNotification(summary, detail, g_progressId, pct,
-                                              /*timeoutMs=*/0, /*lowUrgency=*/true,
-                                              /*wantId=*/g_progressId == 0);
-    if (g_progressId == 0 && id != 0) g_progressId = id;
+    // Exactly one notification is ever posted without a replaces id: the first.
+    // Until its reply names the id, later ticks are dropped rather than posted,
+    // because posting them would each create a popup of their own. That costs a
+    // second or two of staleness at the start of a download and is the whole
+    // difference between one notification and sixty.
+    if (g_progressId == 0) {
+        if (g_pending) return;         // opening call still in flight
+        // timeout 0 means "until dismissed": a progress popup that expires after
+        // a few seconds and returns a second later is worse than none.
+        postNotification(summary, detail, 0, pct, /*timeoutMs=*/0,
+                         /*lowUrgency=*/true, /*wantId=*/true);
+        return;
+    }
+
+    postNotification(summary, detail, g_progressId, pct, /*timeoutMs=*/0,
+                     /*lowUrgency=*/true, /*wantId=*/false);
 }
 } // namespace shell
 } // namespace vitaplex

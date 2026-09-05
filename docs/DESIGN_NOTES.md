@@ -223,10 +223,33 @@ that it went nowhere. On those desktops the notification is the only thing the
 user sees, which is why it carries the text rather than leaving a bar to speak
 for itself.
 
-The progress notification is a single popup that updates in place: the first
-`Notify` is sent with `replaces_id = 0` and blocks briefly (300 ms) to learn the
-id, and every update after that passes that id back and is fire-and-forget. Not
-doing this produces one popup per second.
+The progress notification is a single popup that updates in place, and getting
+that right on a slow desktop took three goes.
+
+`Notify` returns the id it assigned, and every later update must pass that id
+back as `replaces_id`. The first attempt asked for it with
+`dbus_connection_send_with_reply_and_block` and a 300 ms timeout. That is wrong
+twice: it blocks the UI thread on a service that may be slow — on Cinnamon the
+daemon lives inside the GJS shell process — and when the reply misses the
+timeout the id stays 0, so every following tick posts a *new* notification.
+One slow first reply and the user gets a popup a second for the whole download.
+
+So the opening `Notify` is sent asynchronously and its reply polled from the
+same once-a-second tick. Until the id arrives, later ticks are **dropped rather
+than posted**, because posting them is exactly what creates the extra popups. If
+the reply never comes, that latches and the progress notification is abandoned
+for the run — the launcher bar carries on. Worst case is a stale popup; it is
+never a stream of them.
+
+Polling needs care. `dbus_connection_read_write_dispatch` dispatches only one
+message per call, and the bus queues its own `NameAcquired` signal ahead of the
+reply, so a single call collected nothing and the id took three ticks to appear
+even from an instant daemon. Read once with a small bounded wait, then drain
+with `dbus_connection_dispatch` until the reply lands or the queue empties.
+
+This is verified against a real session bus (`dbus-run-session`) and a stub
+notification service that logs the `replaces_id` of every call, at daemon reply
+delays of 0 ms, 800 ms and 3 s. In all three, exactly one progress popup.
 
 `expire_timeout` is 0 — until dismissed. A progress popup that expires after a
 few seconds and returns a second later is worse than none.
