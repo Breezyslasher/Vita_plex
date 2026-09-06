@@ -327,6 +327,37 @@ void PlayerActivity::onContentAvailable() {
             }));
     }
 
+    // Tap the cover to read along. The art is the biggest target on the music
+    // screen and does nothing else on a tap, so it is the natural second way in
+    // — the lyrics button stays where it is.
+    //
+    // Deliberately not focusable: a d-pad reaching the artwork would be in the
+    // way on the consoles, and this only ever needs to answer a pointer.
+    //
+    // The swipe below shares this view, and borealis' tap recogniser only fails
+    // when the pointer leaves the view's bounds — a swipe that stays inside the
+    // artwork, which is every swipe, would otherwise change the track AND open
+    // lyrics. So the start position is kept and a press that travelled is not a
+    // tap.
+    if (albumArtContainer) {
+        albumArtContainer->addGestureRecognizer(new brls::TapGestureRecognizer(
+            [this](brls::TapGestureStatus status, brls::Sound*) {
+                if (status.state == brls::GestureState::UNSURE ||
+                    status.state == brls::GestureState::START) {
+                    m_coverTapStart = status.position;
+                    return;
+                }
+                if (status.state != brls::GestureState::END) return;
+                const float dx = status.position.x - m_coverTapStart.x;
+                const float dy = status.position.y - m_coverTapStart.y;
+                const float slop = ui(kCoverTapSlop);
+                if (dx * dx + dy * dy > slop * slop) return;   // a swipe, not a tap
+                if (!m_isQueueMode || !MusicQueue::getInstance().isMusicQueue()) return;
+                if (m_lyricsOverlayVisible || m_queueOverlayVisible) return;
+                openLyrics();
+            }));
+    }
+
     // Add horizontal swipe gesture on album art area for prev/next track (music mode)
     if (albumArtContainer) {
         albumArtContainer->addGestureRecognizer(new brls::PanGestureRecognizer(
@@ -678,16 +709,8 @@ void PlayerActivity::onContentAvailable() {
             lyricsBtn->setVisibility(brls::Visibility::VISIBLE);
             lyricsBtn->setFocusable(true);
             setIconRes(lyricsIcon, "icons/subtitles.png");
-            lyricsBtn->registerClickAction([this](brls::View* view) {
-                // One lyrics file needs no picker; the picker stays for the rare track carrying several.
-                fetchPlexStreams();
-                std::vector<const PlexStream*> found;
-                for (const auto& ps : m_plexStreams)
-                    if (ps.streamType == 4 && !ps.key.empty()) found.push_back(&ps);
-
-                if (found.size() == 1)  loadAndShowLyrics(*found.front());
-                else if (found.empty()) showLyricsMessage("This track has no lyrics.");
-                else                    showTrackOverlay(TrackSelectMode::SUBTITLE);
+            lyricsBtn->registerClickAction([this](brls::View*) {
+                openLyrics();
                 return true;
             });
             lyricsBtn->addGestureRecognizer(new brls::TapGestureRecognizer(lyricsBtn));
@@ -2658,6 +2681,19 @@ static std::vector<std::string> splitLines(const std::string& text) {
 }
 
 // Open the sheet on a message rather than a song, as untimed rows, so it scrolls and dismisses exactly like lyrics.
+// Reached from the lyrics button and from tapping the cover.
+void PlayerActivity::openLyrics() {
+    // One lyrics file needs no picker; the picker stays for the rare track carrying several.
+    fetchPlexStreams();
+    std::vector<const PlexStream*> found;
+    for (const auto& ps : m_plexStreams)
+        if (ps.streamType == 4 && !ps.key.empty()) found.push_back(&ps);
+
+    if (found.size() == 1)  loadAndShowLyrics(*found.front());
+    else if (found.empty()) showLyricsMessage("This track has no lyrics.");
+    else                    showTrackOverlay(TrackSelectMode::SUBTITLE);
+}
+
 void PlayerActivity::showLyricsMessage(const std::string& text) {
     m_lyrics.clear();
     for (const std::string& line : splitLines(text)) {

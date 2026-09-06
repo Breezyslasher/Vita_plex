@@ -107,6 +107,12 @@ private:
     // Lyrics are drawn by the app: music plays with vo=null, so a subtitle handed to mpv has no surface to land on.
     const PlexStream* findSideloadableStream(int trackId) const;
     void loadAndShowLyrics(const PlexStream& stream);
+    void openLyrics();   // the lyrics button and a tap on the cover both land here
+    // Where a press on the cover began, so a swipe is not mistaken for a tap.
+    brls::Point m_coverTapStart {};
+    // Scaled like the swipe threshold it sits under (ui(60) to change
+    // track), so the two keep their proportions on every layout.
+    static constexpr float kCoverTapSlop = 8.0f;
     void showLyricsMessage(const std::string& text);   // sheet with a reason, not a song
     void showLyricsOverlay();
     void hideLyricsOverlay();
