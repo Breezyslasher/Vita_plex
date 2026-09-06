@@ -90,7 +90,7 @@
         marginTop="31">
 
         <brls:Box
-            id="player/queue_btn"
+            id="player/lyrics_btn"
             width="137"
             height="137"
             axis="row"
@@ -99,10 +99,10 @@
             cornerRadius="68"
             focusable="true">
             <brls:Image
-                id="player/queue_icon"
+                id="player/lyrics_icon"
                 width="65"
                 height="65"
-                image="@res/icons/format-list-group.png"
+                image="@res/icons/subtitles.png"
                 scalingType="fit"/>
         </brls:Box>
 
@@ -118,7 +118,7 @@
             grow="1"/>
 
         <brls:Box
-            id="player/lyrics_btn"
+            id="player/queue_btn"
             width="137"
             height="137"
             axis="row"
@@ -127,10 +127,10 @@
             cornerRadius="68"
             focusable="true">
             <brls:Image
-                id="player/lyrics_icon"
+                id="player/queue_icon"
                 width="65"
                 height="65"
-                image="@res/icons/subtitles.png"
+                image="@res/icons/format-list-group.png"
                 scalingType="fit"/>
         </brls:Box>
     </brls:Box>
@@ -1137,10 +1137,12 @@
                 cornerRadius="68"
                 shrink="0"
                 focusable="true">
+                <!-- The player's own queue glyph, so the same button means
+                     the same thing on both screens. -->
                 <brls:Image
                     width="65"
                     height="65"
-                    image="@res/icons/menu.png"
+                    image="@res/icons/format-list-group.png"
                     scalingType="fit"/>
             </brls:Box>
         </brls:Box>
