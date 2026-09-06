@@ -312,43 +312,8 @@ void PlayerActivity::onContentAvailable() {
     // Set up controls
     if (progressSlider) {
         progressSlider->setProgress(0.0f);
-        progressSlider->getProgressEvent()->subscribe([this](float progress) {
-            // Skip if this is a programmatic update (not user interaction)
-            if (m_updatingSlider) return;
-            resetControlsIdleTimer();
-            // Watch party: only the host may scrub, since the 1s tick snaps a follower's thumb back.
-            {
-                auto& sl = SyncLoungeSession::instance();
-                if (sl.isConnected() && !sl.isHost()) {
-                    MpvPlayer::getInstance().showOSD("Only the host can seek", 1.5);
-                    return;
-                }
-            }
-            // Seek to position
-            MpvPlayer& player = MpvPlayer::getInstance();
-            double duration = 0.0;
-            // Prefer Plex's duration over mpv's in queue mode; mpv may only know the demuxed portion.
-            if (m_isQueueMode) {
-                const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
-                if (track && track->duration > 0)
-                    duration = (double)track->duration;
-            }
-            if (duration <= 0)
-                duration = player.getDuration();
-            // Direct play, local files and music seek locally; a transcoded video takes the debounced path.
-            if (m_isQueueMode && !m_isLocalFile) {
-                // A streamed music transcode cannot seek in place, so MusicController restarts it at the target.
-                double absDuration = m_transcodeBaseOffsetMs / 1000.0 + duration;
-                MusicController::getInstance().seekToMs(
-                    (long long)(std::max(0.0, absDuration * progress) * 1000.0));
-            } else if (m_isLocalFile || m_isDirectFile || m_isQueueMode || m_directPlay) {
-                double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
-                double absDuration = baseOffsetSec + duration;
-                player.seekTo(std::max(0.0, absDuration * progress - baseOffsetSec));
-            } else {
-                requestTranscodeSeek(progress * knownDurationMs());
-            }
-        });
+        progressSlider->getProgressEvent()->subscribe(
+            [this](float progress) { seekToFraction(progress); });
     }
 
     // Register tap gesture on container to toggle controls (like Suwayomi reader)
@@ -1956,6 +1921,12 @@ void PlayerActivity::updateProgress() {
             if (timeElapsedLabel) timeElapsedLabel->setText(elapsedStr);
             if (timeRemainingLabel) timeRemainingLabel->setText(remainStr);
 
+            // The full-screen lyrics view has its own scrubber and clocks;
+            // write them from here so the two can never disagree.
+            updateLyricsTransport(absDuration > 0.0
+                                      ? (float)(absPosition / absDuration) : -1.0f,
+                                  elapsedStr, remainStr);
+
             // Keep legacy time label updated for video mode
             if (timeLabel) {
                 char timeStr[48];
@@ -2474,10 +2445,130 @@ void PlayerActivity::reapplyIcons() {
     m_uploadsWereSafe = safe;
 }
 
+// Both scrubbers seek through here: the player's own and the full-screen
+// lyrics one. Which of the four paths applies depends on transcode state, and
+// a second copy of that decision would drift from this one.
+void PlayerActivity::seekToFraction(float progress) {
+    // Skip if this is a programmatic update (not user interaction)
+    if (m_updatingSlider) return;
+    resetControlsIdleTimer();
+    // Watch party: only the host may scrub, since the 1s tick snaps a follower's thumb back.
+    {
+        auto& sl = SyncLoungeSession::instance();
+        if (sl.isConnected() && !sl.isHost()) {
+            MpvPlayer::getInstance().showOSD("Only the host can seek", 1.5);
+            return;
+        }
+    }
+    // Seek to position
+    MpvPlayer& player = MpvPlayer::getInstance();
+    double duration = 0.0;
+    // Prefer Plex's duration over mpv's in queue mode; mpv may only know the demuxed portion.
+    if (m_isQueueMode) {
+        const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
+        if (track && track->duration > 0)
+            duration = (double)track->duration;
+    }
+    if (duration <= 0)
+        duration = player.getDuration();
+    // Direct play, local files and music seek locally; a transcoded video takes the debounced path.
+    if (m_isQueueMode && !m_isLocalFile) {
+        // A streamed music transcode cannot seek in place, so MusicController restarts it at the target.
+        double absDuration = m_transcodeBaseOffsetMs / 1000.0 + duration;
+        MusicController::getInstance().seekToMs(
+            (long long)(std::max(0.0, absDuration * progress) * 1000.0));
+    } else if (m_isLocalFile || m_isDirectFile || m_isQueueMode || m_directPlay) {
+        double baseOffsetSec = m_transcodeBaseOffsetMs / 1000.0;
+        double absDuration = baseOffsetSec + duration;
+        player.seekTo(std::max(0.0, absDuration * progress - baseOffsetSec));
+    } else {
+        requestTranscodeSeek(progress * knownDurationMs());
+    }
+}
+
+// Tap a lyric line. Expressed against the same fraction the scrubbers use so
+// there is one seek path in this class, not two that disagree about transcodes.
+void PlayerActivity::seekToAbsoluteMs(int ms) {
+    const double totalMs = knownDurationMs();
+    if (totalMs <= 0.0) return;
+    seekToFraction((float)std::min(1.0, std::max(0.0, (double)ms / totalMs)));
+}
+
+// Found by id, not bound: these ids live only in player_mobile.xml and
+// BRLS_BIND asserts on one the classic layout does not declare. Once per
+// activity — the views outlive every open and close of the overlay.
+void PlayerActivity::wireLyricsView() {
+    if (m_lyricsWired || !m_mobileLayout) return;
+    m_lyricsWired = true;
+
+    auto box = [this](const char* id) { return dynamic_cast<brls::Box*>(getView(id)); };
+    auto tap = [](brls::Box* b, std::function<void()> fn) {
+        if (!b) return;
+        b->registerClickAction([fn](brls::View*) { fn(); return true; });
+        b->addGestureRecognizer(new brls::TapGestureRecognizer(b));
+    };
+
+    m_lyricsTrackTitle  = dynamic_cast<brls::Label*>(getView("player/lyrics_track_title"));
+    m_lyricsTrackArtist = dynamic_cast<brls::Label*>(getView("player/lyrics_track_artist"));
+    m_lyricsElapsed     = dynamic_cast<brls::Label*>(getView("player/lyrics_elapsed"));
+    m_lyricsRemaining   = dynamic_cast<brls::Label*>(getView("player/lyrics_remaining"));
+    m_lyricsPlayIcon    = dynamic_cast<brls::Image*>(getView("player/lyrics_play_icon"));
+    m_lyricsProgress    = dynamic_cast<brls::Slider*>(getView("player/lyrics_progress"));
+
+    if (m_lyricsProgress) {
+        // 13px knob in the handoff's frame.
+        m_lyricsProgress->setPointerSize(ui(13));
+        m_lyricsProgress->getProgressEvent()->subscribe(
+            [this](float progress) { seekToFraction(progress); });
+    }
+
+    tap(box("player/lyrics_back"),      [this] { hideLyricsOverlay(); });
+    // Straight to the queue: the two full-screen panels swap without a trip
+    // back through the player.
+    tap(box("player/lyrics_queue_btn"), [this] { hideLyricsOverlay(); showQueueOverlay(); });
+    tap(box("player/lyrics_prev_btn"),  [this] { playPrevious(); });
+    tap(box("player/lyrics_play_btn"),  [this] { togglePlayPause(); });
+    tap(box("player/lyrics_next_btn"),  [this] { playNext(); });
+}
+
+// The header names what is playing, so it has to follow the queue.
+void PlayerActivity::updateLyricsHeader() {
+    if (!m_lyricsTrackTitle && !m_lyricsTrackArtist) return;
+    std::string title, artist;
+    if (m_isQueueMode) {
+        if (const QueueItem* t = MusicQueue::getInstance().getCurrentTrack()) {
+            title  = t->title;
+            artist = t->artist;
+        }
+    }
+    if (title.empty() && titleLabel)  title  = titleLabel->getFullText();
+    if (artist.empty() && artistLabel) artist = artistLabel->getFullText();
+    if (m_lyricsTrackTitle)  m_lyricsTrackTitle->setText(title);
+    if (m_lyricsTrackArtist) m_lyricsTrackArtist->setText(artist);
+}
+
+// Mirror of the player's own scrubber. The lyrics view carries its own copies
+// rather than borrowing the player's views, so both are written from the one
+// place that already computes these strings.
+void PlayerActivity::updateLyricsTransport(float fraction, const char* elapsed,
+                                           const char* remaining) {
+    if (!m_lyricsOverlayVisible) return;
+    if (m_lyricsProgress && fraction >= 0.0f) {
+        m_updatingSlider = true;
+        m_lyricsProgress->setProgress(fraction);
+        m_updatingSlider = false;
+    }
+    if (m_lyricsElapsed && elapsed)     m_lyricsElapsed->setText(elapsed);
+    if (m_lyricsRemaining && remaining) m_lyricsRemaining->setText(remaining);
+}
+
 void PlayerActivity::updatePlayPauseLabel() {
     const char* res = m_isPlaying ? "icons/pause.png" : "icons/play.png";
     setIconRes(playPauseIcon, res);
     setIconRes(musicPlayIcon, res);   // music transport's own play button
+    // The lyrics button is a gold disc, where a white glyph is the weakest
+    // contrast pairing on that screen, so it takes the inked pair instead.
+    setIconRes(m_lyricsPlayIcon, m_isPlaying ? "icons/pause-ink.png" : "icons/play-ink.png");
 }
 
 void PlayerActivity::cycleAudioTrack() {
@@ -2626,29 +2717,66 @@ void PlayerActivity::buildLyricsRows() {
     m_lyricRows.clear();
     m_lyricRows.reserve(m_lyrics.size());
 
-    for (const auto& line : m_lyrics) {
+    const bool synced = !m_lyricsFailed && !m_lyrics.empty()
+                     && m_lyrics.front().timeMs >= 0;
+
+    for (size_t i = 0; i < m_lyrics.size(); i++) {
+        const auto& line = m_lyrics[i];
         auto* label = new brls::Label();
         // A timed blank is a rest; give it height so the scroll still tracks the music through an instrumental break.
         label->setText(line.text.empty() ? " " : line.text);
-        label->setFontSize(ui(17));
         label->setTextColor(nvgRGB(0x8A, 0x8A, 0x90));
-        label->setMarginBottom(ui(10));
+        if (m_mobileLayout) {
+            // Centred as a column, 5px of air either side, and never shorter
+            // than a 40dp touch target so tap-to-seek has something to hit.
+            // Minimum rather than fixed: a wrapped lyric must still grow.
+            label->setFontSize(ui(kLyricRest));
+            label->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+            label->setMarginTop(ui(5));
+            label->setMarginBottom(ui(5));
+            label->setMinHeight(ui(40));
+        } else {
+            // The classic side sheet is untouched by this handoff.
+            label->setFontSize(17);
+            label->setMarginBottom(10);
+        }
+
+        // Tap a line to jump to it. Unsynced files carry timeMs == -1 on every
+        // line, so there is nowhere to jump and the line stays inert — the user
+        // just scrolls it like a lyric sheet.
+        if (m_mobileLayout && line.timeMs >= 0) {
+            const int targetMs = line.timeMs;
+            label->setFocusable(true);
+            label->registerClickAction([this, targetMs](brls::View*) {
+                seekToAbsoluteMs(targetMs);
+                return true;
+            });
+            label->addGestureRecognizer(new brls::TapGestureRecognizer(label));
+        }
+
         lyricsList->addView(label);
         m_lyricRows.push_back(label);
     }
 
     if (lyricsOverlayTitle) {
-        const bool synced = !m_lyricsFailed && !m_lyrics.empty()
-                         && m_lyrics.front().timeMs >= 0;
-        lyricsOverlayTitle->setText(m_lyricsFailed ? "Lyrics unavailable"
-                                  : synced         ? "Lyrics"
-                                                   : "Lyrics (not timed)");
+        // Mobile puts a SYNCED / UNSYNCED badge under the artist; the classic
+        // sheet has no header line of its own, so it keeps the wordier text.
+        if (m_mobileLayout) {
+            lyricsOverlayTitle->setText(m_lyricsFailed ? "" : synced ? "SYNCED" : "UNSYNCED");
+        } else {
+            lyricsOverlayTitle->setText(m_lyricsFailed ? "Lyrics unavailable"
+                                      : synced         ? "Lyrics"
+                                                       : "Lyrics (not timed)");
+        }
     }
 }
 
 void PlayerActivity::showLyricsOverlay() {
     if (!lyricsOverlay) return;
+    wireLyricsView();          // no-op after the first open, and on classic
     m_lyricsOverlayVisible = true;
+    updateLyricsHeader();
+    updatePlayPauseLabel();    // the mini transport's own play/pause glyph
     lyricsOverlay->setVisibility(brls::Visibility::VISIBLE);
     syncHiddenFocus();
 
@@ -2696,20 +2824,43 @@ void PlayerActivity::syncLyricsToPosition() {
     }
     if (idx == m_lyricsIndex) return;
 
-    if (m_lyricsIndex >= 0 && m_lyricsIndex < (int)m_lyricRows.size()) {
-        m_lyricRows[(size_t)m_lyricsIndex]->setTextColor(nvgRGB(0x8A, 0x8A, 0x90));
-        m_lyricRows[(size_t)m_lyricsIndex]->setFontSize(ui(17));
-    }
+    // Three states, not two: a line already sung is dimmer than one still to
+    // come, so the eye can tell at a glance which way the song is going. Only
+    // the span between the old and new index changes, so a backward seek costs
+    // no more than a forward one.
+    const int prev = m_lyricsIndex;
     m_lyricsIndex = idx;
+    const float restSize = m_mobileLayout ? ui(kLyricRest) : 17.0f;
+    const int lo = std::min(prev, idx), hi = std::max(prev, idx);
+    for (int i = std::max(0, lo); i <= hi && i < (int)m_lyricRows.size(); i++) {
+        brls::Label* r = m_lyricRows[(size_t)i];
+        r->setFontSize(restSize);
+        // The classic sheet has only two states, so everything not active
+        // stays the one grey it always was.
+        r->setTextColor(m_mobileLayout && i < idx
+                            ? nvgRGB(0x5C, 0x5C, 0x63)    // sung
+                            : nvgRGB(0x8A, 0x8A, 0x90));  // still to come
+    }
     if (idx < 0 || idx >= (int)m_lyricRows.size()) return;
 
     brls::Label* row = m_lyricRows[(size_t)idx];
-    row->setTextColor(nvgRGB(0xE5, 0xA0, 0x0D));
-    row->setFontSize(ui(19));
-    // getY() is absolute, so subtract the content origin, then bias up so the next few lines stay visible below.
+    if (m_mobileLayout) {
+        row->setTextColor(nvgRGB(0xFF, 0xC2, 0x3D));
+        row->setFontSize(ui(kLyricActive));
+        row->setLineHeight(1.28f);
+    } else {
+        row->setTextColor(nvgRGB(0xE5, 0xA0, 0x0D));
+        row->setFontSize(19.0f);
+    }
+    // getY() is absolute, so subtract the content origin. The active line sits
+    // at the middle of the column in the full-screen layout — the eye stays in
+    // one place while the words move past it. The sheet keeps its old bias,
+    // which suits a short panel with the next lines listed below.
     if (lyricsScroll && lyricsList) {
+        const float anchor = m_mobileLayout ? 0.5f : 0.4f;
         const float offset = (row->getY() - lyricsList->getY())
-                           - lyricsScroll->getHeight() * 0.4f;
+                           - lyricsScroll->getHeight() * anchor
+                           + row->getHeight() * 0.5f * (m_mobileLayout ? 1.0f : 0.0f);
         lyricsScroll->setContentOffsetY(offset < 0.0f ? 0.0f : offset, true);
     }
 }

@@ -1024,10 +1024,22 @@
 
     </brls:Box>
 
-    <!-- Lyrics side sheet. Mirrors the queue sheet's geometry so the two read
-         as the same kind of panel. The app draws lyrics itself: music plays
-         with vo=null and no render context, so mpv has no surface to put a
-         subtitle on. -->
+    <!-- Lyrics, full screen (design handoff M1).
+
+         Not a sheet any more. On a phone the old 460-wide panel was nearly the
+         whole screen with a scrim down one edge that had nothing behind it, so
+         the art gives way to the lyric column outright and a mini transport is
+         pinned at the bottom.
+
+         The background is a flat wash rather than a fill: the player's own
+         album-art backdrop stays visible through it, and the wash is only there
+         to hold lyric text above the contrast floor.
+
+         Sizes are the handoff's 412-wide frame scaled by 1280/412 = 3.107, the
+         same factor kMobileUiScale applies to the rows built in code.
+
+         The app draws lyrics itself: music plays with vo=null and no render
+         context, so mpv has no surface to put a subtitle on. -->
     <brls:Box
         id="player/lyrics_overlay"
         width="100%"
@@ -1040,44 +1052,164 @@
         positionLeft="0"
         positionRight="0"
         positionBottom="0"
-        backgroundColor="#2D2D2D"
+        backgroundColor="#0A0A0C80"
         visibility="gone">
 
-        <!-- No scrim strip on a phone: the sheet is the whole screen, so there
-             is nothing beside it to tap. Kept (zero-sized) because the code
-             wires a dismiss tap to it. -->
+        <!-- Full screen, so there is no strip beside the panel to tap. Kept at
+             zero size because hideLyricsOverlay's dismiss tap is wired to it. -->
         <brls:Box
             id="player/lyrics_scrim"
             width="0"
             height="0"/>
 
+        <!-- ── Header: collapse · track · queue ─────────────────────────── -->
         <brls:Box
             width="100%"
+            axis="row"
+            alignItems="center"
+            paddingTop="56"
+            paddingLeft="56"
+            paddingRight="56">
+
+            <brls:Box
+                id="player/lyrics_back"
+                width="137"
+                height="137"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="68"
+                shrink="0"
+                focusable="true">
+                <brls:Image
+                    width="68"
+                    height="68"
+                    image="@res/icons/chevron-down.png"
+                    scalingType="fit"/>
+            </brls:Box>
+
+            <brls:Box
+                width="auto"
+                grow="1"
+                shrink="1"
+                axis="column"
+                alignItems="center"
+                justifyContent="center"
+                marginLeft="37"
+                marginRight="37">
+                <brls:Label
+                    id="player/lyrics_track_title"
+                    text=""
+                    fontSize="44"
+                    textColor="#FFFFFF"
+                    horizontalAlign="center"
+                    singleLine="true"/>
+                <brls:Label
+                    id="player/lyrics_track_artist"
+                    text=""
+                    fontSize="36"
+                    textColor="#B4B4BA"
+                    horizontalAlign="center"
+                    singleLine="true"/>
+                <!-- SYNCED / UNSYNCED. Also the focus anchor the lyric list
+                     hands focus to while it is being rebuilt. -->
+                <brls:Label
+                    id="player/lyrics_overlay_title"
+                    text=""
+                    fontSize="37"
+                    textColor="#8A8A90"
+                    horizontalAlign="center"
+                    singleLine="true"
+                    marginTop="6"/>
+            </brls:Box>
+
+            <brls:Box
+                id="player/lyrics_queue_btn"
+                width="137"
+                height="137"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="68"
+                shrink="0"
+                focusable="true">
+                <brls:Image
+                    width="65"
+                    height="65"
+                    image="@res/icons/menu.png"
+                    scalingType="fit"/>
+            </brls:Box>
+        </brls:Box>
+
+        <!-- ── Lyric column ────────────────────────────────────────────────
+             Centred, and vertically centred as a block: syncLyricsToPosition
+             anchors the active line at the column midpoint rather than a third
+             of the way down, so the eye stays in one place. -->
+        <brls:ScrollingFrame
+            id="player/lyrics_scroll"
+            width="100%"
             grow="1"
+            shrink="1"
+            paddingLeft="81"
+            paddingRight="81">
+            <brls:Box
+                id="player/lyrics_list"
+                width="100%"
+                axis="column"
+                alignItems="stretch"
+                justifyContent="center"/>
+        </brls:ScrollingFrame>
+
+        <!-- ── Mini transport ──────────────────────────────────────────────
+             A duplicate of the player's scrubber and buttons rather than the
+             same views moved in and out. wireVideoOsd reparents player/progress
+             once at build time and never puts it back; doing that on every open
+             and close is a restore bug waiting to happen, so these are their own
+             views and the tick writes both. No shuffle or repeat: those stay on
+             the main player. -->
+        <brls:Box
+            width="100%"
             axis="column"
             alignItems="stretch"
-            backgroundColor="#2D2D2D"
-            paddingTop="68"
-            paddingLeft="68"
-            paddingRight="68"
-            paddingBottom="19">
+            paddingLeft="62"
+            paddingRight="62"
+            paddingBottom="81"
+            shrink="0">
 
             <brls:Box
                 width="100%"
                 axis="row"
-                alignItems="center"
-                marginBottom="43">
+                alignItems="center">
                 <brls:Label
-                    id="player/lyrics_overlay_title"
-                    text="Lyrics"
+                    id="player/lyrics_elapsed"
+                    text="0:00"
+                    fontSize="36"
+                    textColor="#B4B4BA"
+                    shrink="0"/>
+                <brls:Slider
+                    id="player/lyrics_progress"
                     grow="1"
-                    fontSize="65"
-                    textColor="#FFFFFF"/>
-                <!-- Full-screen here, so there is no scrim beside the sheet to
-                     tap. Back still closes it; this gives touch a visible way
-                     out too. Mobile-only, so it is found by id, not bound. -->
+                    shrink="1"
+                    height="99"
+                    marginLeft="37"
+                    marginRight="37"/>
+                <brls:Label
+                    id="player/lyrics_remaining"
+                    text="0:00"
+                    fontSize="36"
+                    textColor="#8A8A90"
+                    shrink="0"/>
+            </brls:Box>
+
+            <brls:Box
+                width="100%"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                marginTop="34">
+
                 <brls:Box
-                    id="player/lyrics_close"
+                    id="player/lyrics_prev_btn"
                     width="137"
                     height="137"
                     axis="row"
@@ -1086,26 +1218,50 @@
                     cornerRadius="68"
                     focusable="true">
                     <brls:Image
-                        width="60"
-                        height="60"
-                        image="@res/icons/cross.png"
+                        width="87"
+                        height="87"
+                        image="@res/icons/skip-previous.png"
+                        scalingType="fit"/>
+                </brls:Box>
+
+                <brls:Box
+                    id="player/lyrics_play_btn"
+                    width="199"
+                    height="199"
+                    axis="row"
+                    justifyContent="center"
+                    alignItems="center"
+                    cornerRadius="99"
+                    backgroundColor="#E5A00D"
+                    marginLeft="124"
+                    marginRight="124"
+                    focusable="true">
+                    <!-- Inked dark rather than white: a white glyph on #E5A00D
+                         is the weakest contrast pairing on this screen. -->
+                    <brls:Image
+                        id="player/lyrics_play_icon"
+                        width="75"
+                        height="75"
+                        image="@res/icons/pause-ink.png"
+                        scalingType="fit"/>
+                </brls:Box>
+
+                <brls:Box
+                    id="player/lyrics_next_btn"
+                    width="137"
+                    height="137"
+                    axis="row"
+                    justifyContent="center"
+                    alignItems="center"
+                    cornerRadius="68"
+                    focusable="true">
+                    <brls:Image
+                        width="87"
+                        height="87"
+                        image="@res/icons/skip-next.png"
                         scalingType="fit"/>
                 </brls:Box>
             </brls:Box>
-
-            <brls:ScrollingFrame
-                id="player/lyrics_scroll"
-                width="100%"
-                grow="1">
-                <brls:Box
-                    id="player/lyrics_list"
-                    width="100%"
-                    axis="column"
-                    alignItems="stretch"
-                    paddingTop="6"
-                    paddingBottom="25"/>
-            </brls:ScrollingFrame>
-
         </brls:Box>
 
     </brls:Box>
