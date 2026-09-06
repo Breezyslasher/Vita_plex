@@ -220,6 +220,10 @@ private:
     void handleEvent(mpv_event* event);
     void handlePropertyChange(mpv_event_property* prop, uint64_t id);
     void setState(MpvPlayerState newState);
+    // ENDED still has the file loaded (keep-open=yes), so it is seekable;
+    // seeking out of it resumes. See the definitions in mpv_player.cpp.
+    bool canSeekNow() const;
+    void resumeIfEnded();
 
     mpv_handle* m_mpv = nullptr;
     mpv_render_context* m_mpvRenderCtx = nullptr;

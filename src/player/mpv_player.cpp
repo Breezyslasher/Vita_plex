@@ -4,6 +4,7 @@
  * Using software rendering with NanoVG display
  */
 
+#include <algorithm>   // std::max in seekRelative
 #include "player/mpv_player.hpp"
 #include "app/application.hpp"
 #include "platform/platform.hpp"
@@ -863,6 +864,14 @@ bool MpvPlayer::loadFile(const std::string& path) {
 void MpvPlayer::play() {
     if (!m_mpv || m_stopping) return;
 
+    // From the end, clearing "pause" achieves nothing — the position is
+    // already at EOF, so mpv unpauses and immediately has nothing to play.
+    // Rewinding is what makes "play" mean what it says here, and seekTo
+    // resumes on the way out of ENDED. This is the central fix: every caller
+    // gets it, including the OS media controls and the queue row that maps
+    // "tap the track already playing" onto resume.
+    if (m_state == MpvPlayerState::ENDED) { seekTo(0); return; }
+
     int paused = 0;
     mpv_set_property_async(m_mpv, 0, "pause", MPV_FORMAT_FLAG, &paused);
 }
@@ -876,6 +885,9 @@ void MpvPlayer::pause() {
 
 void MpvPlayer::togglePause() {
     if (!m_mpv || m_stopping) return;
+
+    // Cycling "pause" at EOF flips a flag and plays nothing. Same as play().
+    if (m_state == MpvPlayerState::ENDED) { seekTo(0); return; }
 
     const char* cmd[] = {"cycle", "pause", NULL};
     mpv_command_async(m_mpv, 0, cmd);
@@ -928,11 +940,30 @@ void MpvPlayer::stop() {
     setState(MpvPlayerState::IDLE);
 }
 
+// ENDED is seekable and used to be refused, which is what made every control
+// dead once the last track of a queue finished. keep-open=yes leaves the file
+// loaded and parked at EOF rather than unloading it, so the media is still
+// there to seek within — the state means "played to the end", not "gone".
+bool MpvPlayer::canSeekNow() const {
+    return m_state == MpvPlayerState::PLAYING ||
+           m_state == MpvPlayerState::PAUSED  ||
+           m_state == MpvPlayerState::ENDED;
+}
+
+// Seeking away from the end is a request to hear it again, so it resumes.
+// Nothing else will do it: the pause observer only ever switches between
+// PLAYING and PAUSED, so it cannot take the state out of ENDED on its own.
+void MpvPlayer::resumeIfEnded() {
+    if (m_state != MpvPlayerState::ENDED) return;
+    int paused = 0;
+    mpv_set_property_async(m_mpv, 0, "pause", MPV_FORMAT_FLAG, &paused);
+    setState(MpvPlayerState::PLAYING);
+}
+
 void MpvPlayer::seekTo(double seconds) {
     if (!m_mpv || m_stopping) return;
 
-    // Don't seek if not actively playing/paused
-    if (m_state != MpvPlayerState::PLAYING && m_state != MpvPlayerState::PAUSED) {
+    if (!canSeekNow()) {
         brls::Logger::debug("MpvPlayer: Cannot seek in state {}", (int)m_state);
         return;
     }
@@ -942,13 +973,21 @@ void MpvPlayer::seekTo(double seconds) {
 
     const char* cmd[] = {"seek", timeStr, "absolute", NULL};
     mpv_command_async(m_mpv, CMD_SEEK, cmd);
+    resumeIfEnded();
 }
 
 void MpvPlayer::seekRelative(double seconds) {
     if (!m_mpv || m_stopping) return;
 
-    // Don't seek if not actively playing/paused
-    if (m_state != MpvPlayerState::PLAYING && m_state != MpvPlayerState::PAUSED) return;
+    if (!canSeekNow()) return;
+
+    // From the end, "relative" has nowhere forward to go and the skip-back
+    // buttons did nothing. Resolve it against the current position and let
+    // seekTo handle it, which also resumes.
+    if (m_state == MpvPlayerState::ENDED) {
+        seekTo(std::max(0.0, getPosition() + seconds));
+        return;
+    }
 
     // Clamp backward seeks to avoid seeking before stream start (position 0).
     // On transcoded HLS streams, seeking before 0 can cause MPV to reset to

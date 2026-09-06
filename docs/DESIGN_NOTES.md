@@ -336,6 +336,54 @@ The default session-bus policy lets an app own `$FLATPAK_ID` and its subnames.
 no media controls appeared. GLFW derives WM_CLASS from the window title, which
 is why `StartupWMClass=VitaPlex` matches `createWindow("VitaPlex")`.
 
+### Vita: notifications yes, background downloads no
+
+`SceNotificationUtil` gives the real thing — the system popup, an entry in the
+notification list, and via `sceNotificationUtilProgressBegin/Update/Finish` the
+same BGDL progress notification a system download draws. The header settles the
+one question that would otherwise need a device: `sceNotificationUtilBgAppInitialize`
+"does not need to be called for normal applications", so a plain VPK can drive
+the progress form without being a registered background app.
+
+Two shapes in that API are load-bearing and easy to get wrong.
+`sceNotificationUtilSendNotification` wants a **0x410-byte buffer**, not a
+pointer to a short string. The progress structs cap text at
+`SCE_NOTIFICATIONUTIL_TEXT_MAX` (63) UTF-16 units, each array followed by a
+separator that must be zero — so zero-initialise and truncate, and the
+separator doubles as the terminator. Track titles exceed 63 units routinely, so
+truncation is the normal path, not the error path.
+
+What this does **not** do is keep downloading once VitaPlex is suspended, and
+that gap is not closeable from here. Better Homebrew Browser manages it, and
+looking at how is what settles the question: it ships `bhbb_dl`, a taiHEN
+`.suprx` plugin linking `ScePaf*` and generating stubs for **`SceLsdb`** — the
+system's own download-list database — built with `VDSuiteSignElf` and
+`VDSuiteCreateStubs`, which are Sony's official SDK tools. Its downloads are
+not an imitation of the store's; they are entries in the store's actual queue.
+Matching that would mean a proprietary toolchain, a kernel plugin, and a
+different distribution model for an Apache-2.0 repo. Notifications are the part
+that is reachable with open vitasdk, so notifications are the part we do.
+
+### PS4: the popup, and nothing to hang progress on
+
+`sceKernelSendNotificationRequest` writes to `/dev/notification0`, which
+SceShellUI listens on — the top-right popup, drawn over a running application.
+It is in libkernel, already linked. `OrbisNotificationRequest` is a
+reverse-engineered declaration, hence the configure probe.
+
+There is deliberately no progress form. The PS4's progress lives in the system
+download list, which a homebrew application cannot enter, and posting a fresh
+popup every second would bury the notification area. `setProgress` is a no-op
+here on purpose rather than by omission.
+
+### Switch: not possible
+
+libnx's `notif` service is an alarm scheduler — `notifRegisterAlarmSetting`,
+`notifUpdateAlarmSetting` and so on. There is no call that displays a message
+from a running application, so Switch falls through to the header's inline
+no-ops. This is worth writing down only because "add notifications to Switch
+too" looks like an oversight rather than a platform limit.
+
 ---
 
 ## Layout and UI

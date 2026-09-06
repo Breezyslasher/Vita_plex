@@ -5,19 +5,27 @@
  * say something when a background job finishes while the user is elsewhere,
  * and show how far along that job is without being looked at.
  *
- * Both exist on Linux and on Android, by completely different means — a
- * session-bus call on one, a NotificationManager post on the other — so the
- * interface is the concept and each backend does it its own way:
+ * Every platform that has this at all does it by completely different means,
+ * so the interface is the concept and each backend does it its own way:
  *
  *   Linux    org.freedesktop.Notifications, plus the launcher progress bar
  *            (com.canonical.Unity.LauncherEntry) that KDE Plasma and the
  *            Ubuntu dock draw over the app icon.
+ *   Windows  A toast keyed on the process AppUserModelID, with a <progress>
+ *            element updated in place, plus the taskbar button's own bar.
  *   Android  A notification on the "Downloads" channel, and an ongoing
  *            notification carrying a progress bar — which is where Android
  *            puts this, there being no launcher icon to draw on.
+ *   Vita     SceNotificationUtil, including its BGDL progress form, so a
+ *            download looks like any other download on the console.
+ *   PS4      The SceShellUI popup via sceKernelSendNotificationRequest.
+ *            Text only — the system download list is not reachable from a
+ *            homebrew app, so there is nowhere to put progress.
  *
- * Everywhere else the inline no-ops below are what callers link against, so
- * no call site needs an #ifdef.
+ * Switch has no equivalent: libnx's notif service schedules alarms and
+ * cannot show a message from a running application, so it falls through to
+ * the inline no-ops below — as does every other platform, so that no call
+ * site needs an #ifdef.
  */
 
 #pragma once
@@ -27,11 +35,13 @@
 namespace vitaplex {
 namespace shell {
 
-#if defined(VITAPLEX_MPRIS) || defined(__ANDROID__) || defined(_WIN32)
+#if defined(VITAPLEX_MPRIS) || defined(__ANDROID__) || defined(_WIN32) || \
+    defined(__vita__) || defined(__PS4__)
 
-// Called once at startup, before any window exists. Only Windows does anything
-// with it: it declares the process's AppUserModelID, which is the identity the
-// shell groups the taskbar button under and sends toasts as.
+// Called once at startup, before any window exists. Windows declares the
+// process's AppUserModelID here — the identity the shell groups the taskbar
+// button under and sends toasts as — and the Vita loads the notification
+// sysmodule. Everywhere else it does nothing.
 void init();
 
 // Tell the user something finished. Fire and forget: no notification daemon,

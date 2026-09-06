@@ -112,6 +112,28 @@ private:
     void hideLyricsOverlay();
     void buildLyricsRows();
     void syncLyricsToPosition();   // highlight + scroll the line that is playing
+    // Full-screen mobile lyrics (design handoff M1). The header, mini transport
+    // and their ids exist only in player_mobile.xml, so everything below is
+    // found by id rather than bound — BRLS_BIND asserts on an id the classic
+    // layout does not declare, which is why player/lyrics_close already is.
+    void wireLyricsView();                   // once, on the first open
+    void updateLyricsHeader();               // track title and artist
+    void updateLyricsTransport(float fraction, const char* elapsed, const char* remaining);
+    brls::Label*  m_lyricsTrackTitle  = nullptr;
+    brls::Label*  m_lyricsTrackArtist = nullptr;
+    brls::Slider* m_lyricsProgress    = nullptr;
+    brls::Label*  m_lyricsElapsed     = nullptr;
+    brls::Label*  m_lyricsRemaining   = nullptr;
+    brls::Image*  m_lyricsPlayIcon    = nullptr;
+    bool          m_lyricsWired       = false;
+    // Both scrubbers seek the same way; the rules are fiddly enough (music
+    // transcode restart vs direct vs debounced video) that one copy is the
+    // only way they stay in step.
+    void seekToFraction(float progress);
+    void seekToAbsoluteMs(int ms);   // tap a lyric line to jump to it
+    // Handoff type sizes, in its 412-wide frame; ui() scales them.
+    static constexpr float kLyricRest   = 19.0f;
+    static constexpr float kLyricActive = 27.0f;
 
     std::vector<LyricLine> m_lyrics;
     std::vector<brls::Label*> m_lyricRows;
