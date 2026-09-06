@@ -1031,9 +1031,13 @@
          the art gives way to the lyric column outright and a mini transport is
          pinned at the bottom.
 
-         The background is a flat wash rather than a fill: the player's own
-         album-art backdrop stays visible through it, and the wash is only there
-         to hold lyric text above the contrast floor.
+         The background is opaque. The handoff describes a wash over "the
+         existing player background (album-art gradient)", but this layout has
+         no such backdrop — there is no gradient view behind the furniture, so
+         a 50% wash simply showed the player through it: art, title, seek bar
+         and transport all reading through the lyrics. The token background
+         gives the same dark ground the design wanted. If a blurred-art
+         backdrop is ever added here, the wash can come back with it.
 
          Sizes are the handoff's 412-wide frame scaled by 1280/412 = 3.107, the
          same factor kMobileUiScale applies to the rows built in code.
@@ -1052,7 +1056,7 @@
         positionLeft="0"
         positionRight="0"
         positionBottom="0"
-        backgroundColor="#0A0A0C80"
+        backgroundColor="#1B1B1D"
         visibility="gone">
 
         <!-- Full screen, so there is no strip beside the panel to tap. Kept at
