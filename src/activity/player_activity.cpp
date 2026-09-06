@@ -2668,19 +2668,6 @@ void PlayerActivity::hideTrackOverlay() {
     }
 }
 
-// Split a message on newlines so a multi-line reason renders as rows rather than one clipped line.
-static std::vector<std::string> splitLines(const std::string& text) {
-    std::vector<std::string> out;
-    std::string current;
-    for (char c : text) {
-        if (c == '\n') { out.push_back(current); current.clear(); }
-        else            { current += c; }
-    }
-    out.push_back(current);
-    return out;
-}
-
-// Open the sheet on a message rather than a song, as untimed rows, so it scrolls and dismisses exactly like lyrics.
 // Reached from the lyrics button and from tapping the cover.
 void PlayerActivity::openLyrics() {
     // One lyrics file needs no picker; the picker stays for the rare track carrying several.
@@ -2694,17 +2681,20 @@ void PlayerActivity::openLyrics() {
     else                    showTrackOverlay(TrackSelectMode::SUBTITLE);
 }
 
+// Say it over the player; do not open a screen to announce an absence.
+//
+// This used to build the message into the lyric list and show the overlay,
+// which on the full-screen layout means the track name at the top, an empty
+// column, a transport, and the chevron as the only way out — it reads as
+// broken rather than as an answer. brls::Application::notify draws it over
+// whatever is on screen and the player stays put.
+//
+// It has to be borealis' notification rather than mpv's OSD: music plays with
+// vo=null and no render context, which is the same reason the app draws lyrics
+// itself instead of handing them to mpv as subtitles.
 void PlayerActivity::showLyricsMessage(const std::string& text) {
-    m_lyrics.clear();
-    for (const std::string& line : splitLines(text)) {
-        LyricLine l;
-        l.timeMs = -1;
-        l.text = line;
-        m_lyrics.push_back(std::move(l));
-    }
     m_lyricsFailed = true;
-    buildLyricsRows();
-    showLyricsOverlay();
+    brls::Application::notify(text);
 }
 
 void PlayerActivity::loadAndShowLyrics(const PlexStream& stream) {
