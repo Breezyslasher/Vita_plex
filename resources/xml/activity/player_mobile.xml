@@ -1149,15 +1149,18 @@
             id="player/lyrics_scroll"
             width="100%"
             grow="1"
-            shrink="1"
-            paddingLeft="81"
-            paddingRight="81">
+            shrink="1">
+            <!-- The column insets live here, not on the frame: borealis throws
+                 outright if a ScrollingFrame is given padding, and says so —
+                 "please set padding on the content view instead". -->
             <brls:Box
                 id="player/lyrics_list"
                 width="100%"
                 axis="column"
                 alignItems="stretch"
-                justifyContent="center"/>
+                justifyContent="center"
+                paddingLeft="81"
+                paddingRight="81"/>
         </brls:ScrollingFrame>
 
         <!-- ── Mini transport ──────────────────────────────────────────────
