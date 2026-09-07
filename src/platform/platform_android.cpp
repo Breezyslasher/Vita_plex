@@ -11,8 +11,11 @@
 
 #include <borealis.hpp>
 #include "utils/http_client.hpp"
+#include "platform/paths.hpp"   // platformPath for the log file
 
+#include <chrono>
 #include <cstdio>
+#include <ctime>
 #include <fstream>
 #include <thread>
 #include <jni.h>
@@ -368,6 +371,9 @@ bool init() {
     // first. Must run BEFORE brls::Application::init().
     extractAndroidAssets();
 
+    // After the assets, because it writes into the same directory those set up.
+    openLogFile();
+
     if (!::vitaplex::HttpClient::globalInit()) {
         brls::Logger::error("Failed to initialize curl");
         return false;
@@ -377,14 +383,69 @@ bool init() {
 
 void shutdown() {
     ::vitaplex::HttpClient::globalCleanup();
+    closeLogFile();
 }
 
+namespace {
+FILE* g_logFile = nullptr;
+}
+
+// Android already has logcat, and this does not replace it: borealis writes
+// every line through __android_log_print from inside Logger::log, while the
+// log event below fires separately. So both happen, and the file is purely
+// additive.
+//
+// The file exists because logcat needs a PC. It lives in internal storage,
+// which a file manager cannot reach either — the way to read it on the device
+// is Settings > System > View Log, which is what makes this worth writing at
+// all rather than a file nobody can open.
 std::string getLogPath() {
-    return std::string{};
+    return platformPath("vitaplex.log");
 }
 
-void openLogFile() {}
-void closeLogFile() {}
+void openLogFile() {
+    if (g_logFile) return;
+    g_logFile = std::fopen(getLogPath().c_str(), "w");   // truncate per run
+    if (!g_logFile) {
+        brls::Logger::warning("Could not open the log file at {}", getLogPath());
+        return;
+    }
+    // Line buffered, so a crash keeps everything up to the last line — which
+    // is the case this file is for.
+    setvbuf(g_logFile, nullptr, _IOLBF, 0);
+
+    brls::Logger::getLogEvent()->subscribe(
+        [](brls::Logger::TimePoint time, brls::LogLevel level, std::string log) {
+            if (!g_logFile) return;
+            const char* levelStr = "UNKNOWN";
+            switch (level) {
+                case brls::LogLevel::LOG_ERROR:   levelStr = "ERROR";   break;
+                case brls::LogLevel::LOG_WARNING: levelStr = "WARNING"; break;
+                case brls::LogLevel::LOG_INFO:    levelStr = "INFO";    break;
+                case brls::LogLevel::LOG_DEBUG:   levelStr = "DEBUG";   break;
+                case brls::LogLevel::LOG_VERBOSE: levelStr = "VERBOSE"; break;
+            }
+            std::time_t tt = std::chrono::system_clock::to_time_t(time);
+            std::tm tm = *std::localtime(&tt);
+            const uint64_t ms =
+                std::chrono::duration_cast<std::chrono::milliseconds>(time.time_since_epoch())
+                    .count() % 1000;
+            // Redacted at the sink, not trusted to every caller: a log is
+            // something people paste into a bug report, and an X-Plex-Token in
+            // one is a credential for the whole server.
+            std::fprintf(g_logFile, "%02d:%02d:%02d.%03d [%s] %s\n", tm.tm_hour, tm.tm_min,
+                         tm.tm_sec, (int)ms, levelStr,
+                         ::vitaplex::redactTokensInUrl(log).c_str());
+        });
+    brls::Logger::info("Log file: {}", getLogPath());
+}
+
+void closeLogFile() {
+    if (g_logFile) {
+        std::fclose(g_logFile);
+        g_logFile = nullptr;
+    }
+}
 
 bool readLocalFile(const std::string& path,
                    std::vector<uint8_t>& out,

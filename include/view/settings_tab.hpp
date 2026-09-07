@@ -92,6 +92,7 @@ private:
     // Open the party-members dialog (who's in the room; host can transfer host).
     void onSyncLoungeMembers();
     void onTestLocalPlayback();
+    void onShowLog();   // read the log on the device, where logcat needs a PC
     void onThemeChanged(int index);
     void onQualityChanged(int index);
     // Picker position <-> VideoQuality. Not a cast: the enum is numbered in the

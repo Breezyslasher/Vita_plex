@@ -2927,6 +2927,27 @@ namespace {
 std::vector<LyricLine> parseLyricsBody(const std::string& body) {
     std::vector<LyricLine> out;
 
+    // Attribute values arrive escaped, and a lyric with an apostrophe in it is
+    // not rare — "&#39;" on screen would be worse than the empty line this
+    // replaces.
+    auto xmlUnescape = [](std::string t) {
+        static const std::pair<const char*, const char*> kEnts[] = {
+            {"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""},
+            {"&apos;", "'"}, {"&#39;", "'"}, {"&#x27;", "'"},
+            {"&nbsp;", " "},
+            {"&amp;", "&"},   // last: undoing it first would re-expand the rest
+        };
+        for (const auto& e : kEnts) {
+            size_t pos = 0;
+            const size_t len = strlen(e.first);
+            while ((pos = t.find(e.first, pos)) != std::string::npos) {
+                t.replace(pos, len, e.second);
+                pos += strlen(e.second);
+            }
+        }
+        return t;
+    };
+
     auto trim = [](std::string t) {
         const size_t a = t.find_first_not_of(" \t\r");
         const size_t b = t.find_last_not_of(" \t\r");
@@ -2982,20 +3003,46 @@ std::vector<LyricLine> parseLyricsBody(const std::string& body) {
                 break;
             }
 
-            // Everything up to </Line>, with the inner tags (<Span> and the
-            // like) stripped so the words survive whatever markup wraps them.
+            // The words, which live in one of two places depending on who wrote
+            // the document:
+            //
+            //   <Line startOffset="1000"><Span text="the words"/></Line>
+            //   <Line startOffset="1000"><Span>the words</Span></Line>
+            //
+            // Plex's lyricfind documents use the first — the text is an
+            // attribute and there is no character data at all. Reading only
+            // between the tags produced a line with a correct timestamp and no
+            // words, which rendered as an invisible row that still seeked when
+            // tapped. Both shapes are collected; a document that somehow used
+            // both would simply get both, in order.
             const size_t close = body.find("</Line>", tagEnd);
             std::string text;
             if (close != std::string::npos) {
                 bool inTag = false;
                 for (size_t i = tagEnd + 1; i < close; i++) {
                     const char c = body[i];
-                    if (c == '<')      inTag = true;
+                    if (c == '<') {
+                        inTag = true;
+                        // text="..." on this inner tag, if it carries one.
+                        const size_t tagStop = body.find('>', i);
+                        if (tagStop != std::string::npos && tagStop < close) {
+                            const std::string inner = body.substr(i, tagStop - i);
+                            const size_t at = inner.find("text=\"");
+                            if (at != std::string::npos) {
+                                const size_t valStart = at + 6;
+                                const size_t valEnd = inner.find('"', valStart);
+                                if (valEnd != std::string::npos) {
+                                    if (!text.empty() && text.back() != ' ') text += ' ';
+                                    text += inner.substr(valStart, valEnd - valStart);
+                                }
+                            }
+                        }
+                    }
                     else if (c == '>') inTag = false;
                     else if (!inTag)   text += c;
                 }
             }
-            text = trim(text);
+            text = xmlUnescape(trim(text));
 
             LyricLine l;
             l.timeMs = ms;

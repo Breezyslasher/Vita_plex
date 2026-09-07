@@ -107,6 +107,20 @@ private:
     // Lyrics are drawn by the app: music plays with vo=null, so a subtitle handed to mpv has no surface to land on.
     const PlexStream* findSideloadableStream(int trackId) const;
     void loadAndShowLyrics(const PlexStream& stream);
+    void openLyrics();   // the lyrics button and a tap on the cover both land here
+    // Refill the open lyrics view for whatever is playing now. Closes it if the
+    // new track has none, since an open view with nothing in it says nothing.
+    void reloadLyricsForCurrentTrack();
+    // Which of a track's lyrics streams to use, honouring the provider setting.
+    // Returns nullptr when there are none, and the caller shows the picker when
+    // this returns null with several to choose from under AUTO.
+    const PlexStream* chooseLyricsStream(const std::vector<PlexStream>& streams,
+                                         bool* ambiguous = nullptr) const;
+    // Where a press on the cover began, so a swipe is not mistaken for a tap.
+    brls::Point m_coverTapStart {};
+    // Scaled like the swipe threshold it sits under (ui(60) to change
+    // track), so the two keep their proportions on every layout.
+    static constexpr float kCoverTapSlop = 8.0f;
     void showLyricsMessage(const std::string& text);   // sheet with a reason, not a song
     void showLyricsOverlay();
     void hideLyricsOverlay();
@@ -125,6 +139,10 @@ private:
     brls::Label*  m_lyricsElapsed     = nullptr;
     brls::Label*  m_lyricsRemaining   = nullptr;
     brls::Image*  m_lyricsPlayIcon    = nullptr;
+    brls::Box*    m_lyricsPlayBtn     = nullptr;
+    // Where focus belongs while the lyrics view is up. The full-screen layout
+    // has real controls to land on; the classic sheet has only its title.
+    brls::View*   lyricsFocusAnchor();
     bool          m_lyricsWired       = false;
     // Both scrubbers seek the same way; the rules are fiddly enough (music
     // transcode restart vs direct vs debounced video) that one copy is the

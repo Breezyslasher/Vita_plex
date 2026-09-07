@@ -582,6 +582,14 @@ bool Application::loadSettings() {
     m_settings.downloadIncludeSubtitles  = extractBool("downloadIncludeSubtitles", false);
 
     // Music settings
+    int lyricsProv = extractInt("lyricsProvider");
+    if (lyricsProv >= 0 && lyricsProv <= 2)
+        m_settings.lyricsProvider = static_cast<LyricsProvider>(lyricsProv);
+
+    int lyricsTim = extractInt("lyricsTiming");
+    if (lyricsTim >= 0 && lyricsTim <= 2)
+        m_settings.lyricsTiming = static_cast<LyricsTiming>(lyricsTim);
+
     int trackAction = extractInt("trackDefaultAction");
     if (trackAction >= 0 && trackAction <= 4) {
         m_settings.trackDefaultAction = static_cast<TrackDefaultAction>(trackAction);
@@ -734,6 +742,8 @@ bool Application::saveSettings() {
     json += "  \"downloadKeepOriginalAudio\": " + b(m_settings.downloadKeepOriginalAudio) + ",\n";
     json += "  \"downloadIncludeSubtitles\": " + b(m_settings.downloadIncludeSubtitles) + ",\n";
     json += "  \"trackDefaultAction\": " + std::to_string(static_cast<int>(m_settings.trackDefaultAction)) + ",\n";
+    json += "  \"lyricsProvider\": " + std::to_string(static_cast<int>(m_settings.lyricsProvider)) + ",\n";
+    json += "  \"lyricsTiming\": " + std::to_string(static_cast<int>(m_settings.lyricsTiming)) + ",\n";
     json += "  \"audioPassthrough\": " + b(m_settings.audioPassthrough) + ",\n";
     json += "  \"backgroundMusic\": " + b(m_settings.backgroundMusic) + ",\n";
     json += "  \"musicShuffleDefault\": " + b(m_settings.musicShuffleDefault) + ",\n";

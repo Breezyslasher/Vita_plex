@@ -327,6 +327,37 @@ void PlayerActivity::onContentAvailable() {
             }));
     }
 
+    // Tap the cover to read along. The art is the biggest target on the music
+    // screen and does nothing else on a tap, so it is the natural second way in
+    // — the lyrics button stays where it is.
+    //
+    // Deliberately not focusable: a d-pad reaching the artwork would be in the
+    // way on the consoles, and this only ever needs to answer a pointer.
+    //
+    // The swipe below shares this view, and borealis' tap recogniser only fails
+    // when the pointer leaves the view's bounds — a swipe that stays inside the
+    // artwork, which is every swipe, would otherwise change the track AND open
+    // lyrics. So the start position is kept and a press that travelled is not a
+    // tap.
+    if (albumArtContainer) {
+        albumArtContainer->addGestureRecognizer(new brls::TapGestureRecognizer(
+            [this](brls::TapGestureStatus status, brls::Sound*) {
+                if (status.state == brls::GestureState::UNSURE ||
+                    status.state == brls::GestureState::START) {
+                    m_coverTapStart = status.position;
+                    return;
+                }
+                if (status.state != brls::GestureState::END) return;
+                const float dx = status.position.x - m_coverTapStart.x;
+                const float dy = status.position.y - m_coverTapStart.y;
+                const float slop = ui(kCoverTapSlop);
+                if (dx * dx + dy * dy > slop * slop) return;   // a swipe, not a tap
+                if (!m_isQueueMode || !MusicQueue::getInstance().isMusicQueue()) return;
+                if (m_lyricsOverlayVisible || m_queueOverlayVisible) return;
+                openLyrics();
+            }));
+    }
+
     // Add horizontal swipe gesture on album art area for prev/next track (music mode)
     if (albumArtContainer) {
         albumArtContainer->addGestureRecognizer(new brls::PanGestureRecognizer(
@@ -678,16 +709,8 @@ void PlayerActivity::onContentAvailable() {
             lyricsBtn->setVisibility(brls::Visibility::VISIBLE);
             lyricsBtn->setFocusable(true);
             setIconRes(lyricsIcon, "icons/subtitles.png");
-            lyricsBtn->registerClickAction([this](brls::View* view) {
-                // One lyrics file needs no picker; the picker stays for the rare track carrying several.
-                fetchPlexStreams();
-                std::vector<const PlexStream*> found;
-                for (const auto& ps : m_plexStreams)
-                    if (ps.streamType == 4 && !ps.key.empty()) found.push_back(&ps);
-
-                if (found.size() == 1)  loadAndShowLyrics(*found.front());
-                else if (found.empty()) showLyricsMessage("This track has no lyrics.");
-                else                    showTrackOverlay(TrackSelectMode::SUBTITLE);
+            lyricsBtn->registerClickAction([this](brls::View*) {
+                openLyrics();
                 return true;
             });
             lyricsBtn->addGestureRecognizer(new brls::TapGestureRecognizer(lyricsBtn));
@@ -1161,8 +1184,14 @@ void PlayerActivity::loadFromQueue() {
         return;
     }
 
-    // Past the resume shortcut, so this is a different track; music auto-advance never cleared the old lyrics.
-    if (m_lyricsOverlayVisible) hideLyricsOverlay();
+    // Past the resume shortcut, so this is a different track. The full-screen
+    // lyrics view is somewhere you sit while an album plays, so it stays open
+    // and follows along rather than dropping you back to the player between
+    // every track; reloadLyricsForCurrentTrack refills it, and closes it if the
+    // next track has none. The old words go either way — they do not belong to
+    // this track.
+    const bool followLyrics = m_lyricsOverlayVisible;
+    m_lyricsTimer.stop();          // nothing to follow until the new words land
     m_lyrics.clear();
     m_lyricRows.clear();
     m_lyricsIndex = -1;
@@ -1190,6 +1219,10 @@ void PlayerActivity::loadFromQueue() {
 
     // Use the rating key to get the playback URL
     m_mediaKey = track->ratingKey;
+
+    // The new track is known, so the open lyrics view can start following it.
+    // Async inside, so this does not hold up loading the audio.
+    if (followLyrics) reloadLyricsForCurrentTrack();
     std::string url;
 
     // Pause image loading and drop stale in-flight loads before queuing this track's.
@@ -1358,7 +1391,9 @@ void PlayerActivity::loadMedia() {
     m_osAlbum.clear();
     m_refreshRateApplied = false;   // the next file gets its own rate
 
-    // The previous track's lyrics do not belong to this one.
+    // The previous track's lyrics do not belong to this one. loadMedia is the
+    // single-item path (a film, an episode, a track opened on its own) rather
+    // than the queue advancing, so there is nothing to follow: close it.
     if (m_lyricsOverlayVisible) hideLyricsOverlay();
     m_lyrics.clear();
     m_lyricRows.clear();
@@ -2514,6 +2549,7 @@ void PlayerActivity::wireLyricsView() {
     m_lyricsRemaining   = dynamic_cast<brls::Label*>(getView("player/lyrics_remaining"));
     m_lyricsPlayIcon    = dynamic_cast<brls::Image*>(getView("player/lyrics_play_icon"));
     m_lyricsProgress    = dynamic_cast<brls::Slider*>(getView("player/lyrics_progress"));
+    m_lyricsPlayBtn     = box("player/lyrics_play_btn");
 
     if (m_lyricsProgress) {
         // 13px knob in the handoff's frame.
@@ -2645,30 +2681,158 @@ void PlayerActivity::hideTrackOverlay() {
     }
 }
 
-// Split a message on newlines so a multi-line reason renders as rows rather than one clipped line.
-static std::vector<std::string> splitLines(const std::string& text) {
-    std::vector<std::string> out;
-    std::string current;
-    for (char c : text) {
-        if (c == '\n') { out.push_back(current); current.clear(); }
-        else            { current += c; }
-    }
-    out.push_back(current);
-    return out;
+// A lyrics stream's provider is not parsed into PlexStream, but the raw object
+// is kept, and that is what fetchLyrics already reads to name the provider. Same
+// source here rather than a new field for one comparison.
+static bool isLocalLyricsStream(const PlexStream& s) {
+    return s.rawJson.find("localmedia") != std::string::npos;
 }
 
-// Open the sheet on a message rather than a song, as untimed rows, so it scrolls and dismisses exactly like lyrics.
-void PlayerActivity::showLyricsMessage(const std::string& text) {
-    m_lyrics.clear();
-    for (const std::string& line : splitLines(text)) {
-        LyricLine l;
-        l.timeMs = -1;
-        l.text = line;
-        m_lyrics.push_back(std::move(l));
+// Does this stream look timed, before fetching it? codec carries the file
+// extension for lyrics — .lrc is timed, .txt is not — which is a hint and not
+// a promise: a lyricfind stream has no file behind it and can be either. Used
+// only to choose between streams; what actually arrived is judged below.
+static bool looksTimedLyricsStream(const PlexStream& s) {
+    return s.codec == "lrc";
+}
+
+// The definitive test, on parsed lines. Deliberately the same front()-based
+// rule the SYNCED badge and the sync timer already use, so a file cannot be
+// called synced in one place and unsynced in another.
+static bool lyricsAreTimed(const std::vector<LyricLine>& lines) {
+    return !lines.empty() && lines.front().timeMs >= 0;
+}
+
+// Are these the kind the user asked for?
+static bool lyricsWanted(const std::vector<LyricLine>& lines) {
+    if (lines.empty()) return false;
+    const LyricsTiming want = Application::getInstance().getSettings().lyricsTiming;
+    if (want == LyricsTiming::BOTH) return true;
+    return (want == LyricsTiming::TIMED_ONLY) == lyricsAreTimed(lines);
+}
+
+const PlexStream* PlayerActivity::chooseLyricsStream(const std::vector<PlexStream>& streams,
+                                                     bool* ambiguous) const {
+    if (ambiguous) *ambiguous = false;
+    std::vector<const PlexStream*> found;
+    for (const auto& ps : streams)
+        if (ps.streamType == 4 && !ps.key.empty()) found.push_back(&ps);
+
+    if (found.empty()) return nullptr;
+
+    // Timing first: it decides whether lyrics are usable at all, where the
+    // provider only decides which copy. Narrow to the wanted kind when the
+    // track offers it, and leave the list alone when it does not — the fetched
+    // lines are checked afterwards, so a wrong guess here costs nothing.
+    const LyricsTiming timing = Application::getInstance().getSettings().lyricsTiming;
+    if (timing != LyricsTiming::BOTH) {
+        const bool wantTimed = (timing == LyricsTiming::TIMED_ONLY);
+        std::vector<const PlexStream*> matching;
+        for (const auto* ps : found)
+            if (looksTimedLyricsStream(*ps) == wantTimed) matching.push_back(ps);
+        if (!matching.empty()) found = matching;
     }
+
+    if (found.size() == 1) return found.front();
+
+    const LyricsProvider pref = Application::getInstance().getSettings().lyricsProvider;
+    if (pref != LyricsProvider::AUTO) {
+        const bool wantLocal = (pref == LyricsProvider::LOCAL);
+        for (const auto* ps : found)
+            if (isLocalLyricsStream(*ps) == wantLocal) return ps;
+        // The preferred kind is not there. Falling back beats refusing: the
+        // setting is a preference, not a filter.
+        return found.front();
+    }
+
+    // AUTO with a real choice is the one case worth asking about.
+    if (ambiguous) *ambiguous = true;
+    return nullptr;
+}
+
+// The lyrics view stays open when the track changes, so this refills it.
+//
+// All of it is off the UI thread: fetchStreams and fetchLyrics are both blocking
+// HTTP, and an auto-advance mid-album must not stall the player to fetch words.
+void PlayerActivity::reloadLyricsForCurrentTrack() {
+    if (!m_lyricsOverlayVisible) return;
+
+    updateLyricsHeader();          // name the new track before its words arrive
+    m_lyrics.clear();
+    m_lyricsIndex = -1;
+    m_lyricsFailed = false;
+    buildLyricsRows();             // clears the previous track's words
+    m_lyricsTimer.stop();          // nothing to follow until the new lines land
+
+    const std::string ratingKey = m_mediaKey;
+    std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+    asyncRun([this, ratingKey, aliveWeak]() {
+        std::vector<PlexStream> streams;
+        int partId = 0;
+        PlexClient::getInstance().fetchStreams(ratingKey, streams, partId);
+
+        std::vector<LyricLine> lines;
+        std::string status;
+        bool ambiguous = false;
+        if (const PlexStream* pick = chooseLyricsStream(streams, &ambiguous)) {
+            PlexClient::getInstance().fetchLyrics(ratingKey, *pick, partId, lines, status);
+        } else if (ambiguous) {
+            // Several to choose from and no preference set. Following the album
+            // is not the moment to interrupt with a picker, so take the first.
+            for (const auto& ps : streams) {
+                if (ps.streamType != 4 || ps.key.empty()) continue;
+                PlexClient::getInstance().fetchLyrics(ratingKey, ps, partId, lines, status);
+                break;
+            }
+        }
+
+        brls::sync([this, lines, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+            if (!m_lyricsOverlayVisible) return;   // closed while we were fetching
+            // Nothing for this track, or not the kind that was asked for. An
+            // open view with no words in it says nothing, so hand the player
+            // back rather than sitting there empty for the rest of the album.
+            if (!lyricsWanted(lines)) {
+                hideLyricsOverlay();
+                return;
+            }
+            m_lyrics = lines;
+            m_lyricsFailed = false;
+            buildLyricsRows();
+            showLyricsOverlay();   // restarts the sync timer for the new track
+        });
+    });
+}
+
+// Reached from the lyrics button and from tapping the cover.
+void PlayerActivity::openLyrics() {
+    fetchPlexStreams();
+    bool ambiguous = false;
+    if (const PlexStream* pick = chooseLyricsStream(m_plexStreams, &ambiguous)) {
+        loadAndShowLyrics(*pick);
+    } else if (ambiguous) {
+        // Several, and no preference set: the picker is the honest answer.
+        showTrackOverlay(TrackSelectMode::SUBTITLE);
+    } else {
+        showLyricsMessage("This track has no lyrics.");
+    }
+}
+
+// Say it over the player; do not open a screen to announce an absence.
+//
+// This used to build the message into the lyric list and show the overlay,
+// which on the full-screen layout means the track name at the top, an empty
+// column, a transport, and the chevron as the only way out — it reads as
+// broken rather than as an answer. brls::Application::notify draws it over
+// whatever is on screen and the player stays put.
+//
+// It has to be borealis' notification rather than mpv's OSD: music plays with
+// vo=null and no render context, which is the same reason the app draws lyrics
+// itself instead of handing them to mpv as subtitles.
+void PlayerActivity::showLyricsMessage(const std::string& text) {
     m_lyricsFailed = true;
-    buildLyricsRows();
-    showLyricsOverlay();
+    brls::Application::notify(text);
 }
 
 void PlayerActivity::loadAndShowLyrics(const PlexStream& stream) {
@@ -2692,9 +2856,17 @@ void PlayerActivity::loadAndShowLyrics(const PlexStream& stream) {
             m_lyricsLoading = false;
 
             if (!ok || lines.empty()) {
-                // Open the sheet and say what went wrong there; a toast over the player is easy to miss.
                 showLyricsMessage(status.empty() ? std::string("No lyrics for this track.")
                                                  : status);
+                return;
+            }
+            // The stream's extension was only a hint; this is what actually
+            // arrived. Say which kind was rejected rather than "no lyrics",
+            // which would look like the track has none at all.
+            if (!lyricsWanted(lines)) {
+                showLyricsMessage(lyricsAreTimed(lines)
+                                      ? "Only timed lyrics for this track, and those are hidden."
+                                      : "Only unsynced lyrics for this track, and those are hidden.");
                 return;
             }
             m_lyrics = lines;
@@ -2705,13 +2877,26 @@ void PlayerActivity::loadAndShowLyrics(const PlexStream& stream) {
     });
 }
 
+// Focus lands on the play button in the full-screen layout, not on the header.
+//
+// player/lyrics_overlay_title is the SYNCED / UNSYNCED badge there, and borealis
+// draws a focus ring around whatever holds focus — so opening the view outlined
+// a word. The classic sheet keeps the badge, where that label is the panel's own
+// title and is the only thing to anchor to.
+brls::View* PlayerActivity::lyricsFocusAnchor() {
+    if (m_mobileLayout && m_lyricsPlayBtn) return m_lyricsPlayBtn;
+    return lyricsOverlayTitle;
+}
+
 void PlayerActivity::buildLyricsRows() {
     if (!lyricsList) return;
 
     // Focus first: destroying focused children while they hold focus is what the queue rebuild guards against too.
-    if (!lyricsList->getChildren().empty() && lyricsOverlayTitle) {
-        lyricsOverlayTitle->setFocusable(true);
-        brls::Application::giveFocus(lyricsOverlayTitle);
+    if (!lyricsList->getChildren().empty()) {
+        if (brls::View* anchor = lyricsFocusAnchor()) {
+            anchor->setFocusable(true);
+            brls::Application::giveFocus(anchor);
+        }
     }
     lyricsList->clearViews();
     m_lyricRows.clear();
@@ -2787,16 +2972,18 @@ void PlayerActivity::showLyricsOverlay() {
         syncLyricsToPosition();
     }
 
-    if (lyricsOverlayTitle) {
-        lyricsOverlayTitle->setFocusable(true);
-        brls::Application::giveFocus(lyricsOverlayTitle);
+    if (brls::View* anchor = lyricsFocusAnchor()) {
+        anchor->setFocusable(true);
+        brls::Application::giveFocus(anchor);
     }
 }
 
 void PlayerActivity::hideLyricsOverlay() {
     m_lyricsTimer.stop();
     m_lyricsOverlayVisible = false;
-    if (lyricsOverlayTitle) lyricsOverlayTitle->setFocusable(false);
+    // The play button is a real control and keeps its focusability; only the
+    // classic sheet's title was made focusable just to anchor focus.
+    if (lyricsOverlayTitle && !m_mobileLayout) lyricsOverlayTitle->setFocusable(false);
     if (lyricsOverlay) {
         lyricsOverlay->setVisibility(brls::Visibility::GONE);
         syncHiddenFocus();
