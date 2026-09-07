@@ -1184,8 +1184,14 @@ void PlayerActivity::loadFromQueue() {
         return;
     }
 
-    // Past the resume shortcut, so this is a different track; music auto-advance never cleared the old lyrics.
-    if (m_lyricsOverlayVisible) hideLyricsOverlay();
+    // Past the resume shortcut, so this is a different track. The full-screen
+    // lyrics view is somewhere you sit while an album plays, so it stays open
+    // and follows along rather than dropping you back to the player between
+    // every track; reloadLyricsForCurrentTrack refills it, and closes it if the
+    // next track has none. The old words go either way — they do not belong to
+    // this track.
+    const bool followLyrics = m_lyricsOverlayVisible;
+    m_lyricsTimer.stop();          // nothing to follow until the new words land
     m_lyrics.clear();
     m_lyricRows.clear();
     m_lyricsIndex = -1;
@@ -1213,6 +1219,10 @@ void PlayerActivity::loadFromQueue() {
 
     // Use the rating key to get the playback URL
     m_mediaKey = track->ratingKey;
+
+    // The new track is known, so the open lyrics view can start following it.
+    // Async inside, so this does not hold up loading the audio.
+    if (followLyrics) reloadLyricsForCurrentTrack();
     std::string url;
 
     // Pause image loading and drop stale in-flight loads before queuing this track's.
@@ -1381,7 +1391,9 @@ void PlayerActivity::loadMedia() {
     m_osAlbum.clear();
     m_refreshRateApplied = false;   // the next file gets its own rate
 
-    // The previous track's lyrics do not belong to this one.
+    // The previous track's lyrics do not belong to this one. loadMedia is the
+    // single-item path (a film, an episode, a track opened on its own) rather
+    // than the queue advancing, so there is nothing to follow: close it.
     if (m_lyricsOverlayVisible) hideLyricsOverlay();
     m_lyrics.clear();
     m_lyricRows.clear();
@@ -2668,17 +2680,104 @@ void PlayerActivity::hideTrackOverlay() {
     }
 }
 
-// Reached from the lyrics button and from tapping the cover.
-void PlayerActivity::openLyrics() {
-    // One lyrics file needs no picker; the picker stays for the rare track carrying several.
-    fetchPlexStreams();
+// A lyrics stream's provider is not parsed into PlexStream, but the raw object
+// is kept, and that is what fetchLyrics already reads to name the provider. Same
+// source here rather than a new field for one comparison.
+static bool isLocalLyricsStream(const PlexStream& s) {
+    return s.rawJson.find("localmedia") != std::string::npos;
+}
+
+const PlexStream* PlayerActivity::chooseLyricsStream(const std::vector<PlexStream>& streams,
+                                                     bool* ambiguous) const {
+    if (ambiguous) *ambiguous = false;
     std::vector<const PlexStream*> found;
-    for (const auto& ps : m_plexStreams)
+    for (const auto& ps : streams)
         if (ps.streamType == 4 && !ps.key.empty()) found.push_back(&ps);
 
-    if (found.size() == 1)  loadAndShowLyrics(*found.front());
-    else if (found.empty()) showLyricsMessage("This track has no lyrics.");
-    else                    showTrackOverlay(TrackSelectMode::SUBTITLE);
+    if (found.empty()) return nullptr;
+    if (found.size() == 1) return found.front();
+
+    const LyricsProvider pref = Application::getInstance().getSettings().lyricsProvider;
+    if (pref != LyricsProvider::AUTO) {
+        const bool wantLocal = (pref == LyricsProvider::LOCAL);
+        for (const auto* ps : found)
+            if (isLocalLyricsStream(*ps) == wantLocal) return ps;
+        // The preferred kind is not there. Falling back beats refusing: the
+        // setting is a preference, not a filter.
+        return found.front();
+    }
+
+    // AUTO with a real choice is the one case worth asking about.
+    if (ambiguous) *ambiguous = true;
+    return nullptr;
+}
+
+// The lyrics view stays open when the track changes, so this refills it.
+//
+// All of it is off the UI thread: fetchStreams and fetchLyrics are both blocking
+// HTTP, and an auto-advance mid-album must not stall the player to fetch words.
+void PlayerActivity::reloadLyricsForCurrentTrack() {
+    if (!m_lyricsOverlayVisible) return;
+
+    updateLyricsHeader();          // name the new track before its words arrive
+    m_lyrics.clear();
+    m_lyricsIndex = -1;
+    m_lyricsFailed = false;
+    buildLyricsRows();             // clears the previous track's words
+    m_lyricsTimer.stop();          // nothing to follow until the new lines land
+
+    const std::string ratingKey = m_mediaKey;
+    std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+    asyncRun([this, ratingKey, aliveWeak]() {
+        std::vector<PlexStream> streams;
+        int partId = 0;
+        PlexClient::getInstance().fetchStreams(ratingKey, streams, partId);
+
+        std::vector<LyricLine> lines;
+        std::string status;
+        bool ambiguous = false;
+        if (const PlexStream* pick = chooseLyricsStream(streams, &ambiguous)) {
+            PlexClient::getInstance().fetchLyrics(ratingKey, *pick, partId, lines, status);
+        } else if (ambiguous) {
+            // Several to choose from and no preference set. Following the album
+            // is not the moment to interrupt with a picker, so take the first.
+            for (const auto& ps : streams) {
+                if (ps.streamType != 4 || ps.key.empty()) continue;
+                PlexClient::getInstance().fetchLyrics(ratingKey, ps, partId, lines, status);
+                break;
+            }
+        }
+
+        brls::sync([this, lines, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+            if (!m_lyricsOverlayVisible) return;   // closed while we were fetching
+            if (lines.empty()) {
+                // Nothing for this track. An open view with no words in it says
+                // nothing, so hand the player back.
+                hideLyricsOverlay();
+                return;
+            }
+            m_lyrics = lines;
+            m_lyricsFailed = false;
+            buildLyricsRows();
+            showLyricsOverlay();   // restarts the sync timer for the new track
+        });
+    });
+}
+
+// Reached from the lyrics button and from tapping the cover.
+void PlayerActivity::openLyrics() {
+    fetchPlexStreams();
+    bool ambiguous = false;
+    if (const PlexStream* pick = chooseLyricsStream(m_plexStreams, &ambiguous)) {
+        loadAndShowLyrics(*pick);
+    } else if (ambiguous) {
+        // Several, and no preference set: the picker is the honest answer.
+        showTrackOverlay(TrackSelectMode::SUBTITLE);
+    } else {
+        showLyricsMessage("This track has no lyrics.");
+    }
 }
 
 // Say it over the player; do not open a screen to announce an absence.

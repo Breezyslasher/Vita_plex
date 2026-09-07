@@ -108,6 +108,14 @@ private:
     const PlexStream* findSideloadableStream(int trackId) const;
     void loadAndShowLyrics(const PlexStream& stream);
     void openLyrics();   // the lyrics button and a tap on the cover both land here
+    // Refill the open lyrics view for whatever is playing now. Closes it if the
+    // new track has none, since an open view with nothing in it says nothing.
+    void reloadLyricsForCurrentTrack();
+    // Which of a track's lyrics streams to use, honouring the provider setting.
+    // Returns nullptr when there are none, and the caller shows the picker when
+    // this returns null with several to choose from under AUTO.
+    const PlexStream* chooseLyricsStream(const std::vector<PlexStream>& streams,
+                                         bool* ambiguous = nullptr) const;
     // Where a press on the cover began, so a swipe is not mistaken for a tap.
     brls::Point m_coverTapStart {};
     // Scaled like the swipe threshold it sits under (ui(60) to change

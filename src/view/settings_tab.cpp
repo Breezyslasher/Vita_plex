@@ -965,6 +965,17 @@ brls::Box* SettingsTab::createMusicSection() {
     AppSettings& settings = app.getSettings();
     brls::Box* box = makeSectionBox();
 
+    // Which lyrics a track's own streams should be preferred from. Only bites
+    // when a track carries more than one; Auto asks, the other two decide.
+    box->addView(makePickerCell("Lyrics Source",
+        {"Auto (ask if several)", "Prefer local file", "Prefer Plex"},
+        static_cast<int>(settings.lyricsProvider),
+        [](int index) {
+            Application& app = Application::getInstance();
+            app.getSettings().lyricsProvider = static_cast<LyricsProvider>(index);
+            app.saveSettings();
+        }));
+
     // Default track action selector
     m_trackActionSelector = makePickerCell("Default Track Action",
         {"Play Next", "Play Now (Replace Current)", "Add to Bottom of Queue", "Play Now (Clear Queue)", "Ask Each Time"},
