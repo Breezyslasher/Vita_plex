@@ -2549,6 +2549,7 @@ void PlayerActivity::wireLyricsView() {
     m_lyricsRemaining   = dynamic_cast<brls::Label*>(getView("player/lyrics_remaining"));
     m_lyricsPlayIcon    = dynamic_cast<brls::Image*>(getView("player/lyrics_play_icon"));
     m_lyricsProgress    = dynamic_cast<brls::Slider*>(getView("player/lyrics_progress"));
+    m_lyricsPlayBtn     = box("player/lyrics_play_btn");
 
     if (m_lyricsProgress) {
         // 13px knob in the handoff's frame.
@@ -2876,13 +2877,26 @@ void PlayerActivity::loadAndShowLyrics(const PlexStream& stream) {
     });
 }
 
+// Focus lands on the play button in the full-screen layout, not on the header.
+//
+// player/lyrics_overlay_title is the SYNCED / UNSYNCED badge there, and borealis
+// draws a focus ring around whatever holds focus — so opening the view outlined
+// a word. The classic sheet keeps the badge, where that label is the panel's own
+// title and is the only thing to anchor to.
+brls::View* PlayerActivity::lyricsFocusAnchor() {
+    if (m_mobileLayout && m_lyricsPlayBtn) return m_lyricsPlayBtn;
+    return lyricsOverlayTitle;
+}
+
 void PlayerActivity::buildLyricsRows() {
     if (!lyricsList) return;
 
     // Focus first: destroying focused children while they hold focus is what the queue rebuild guards against too.
-    if (!lyricsList->getChildren().empty() && lyricsOverlayTitle) {
-        lyricsOverlayTitle->setFocusable(true);
-        brls::Application::giveFocus(lyricsOverlayTitle);
+    if (!lyricsList->getChildren().empty()) {
+        if (brls::View* anchor = lyricsFocusAnchor()) {
+            anchor->setFocusable(true);
+            brls::Application::giveFocus(anchor);
+        }
     }
     lyricsList->clearViews();
     m_lyricRows.clear();
@@ -2958,16 +2972,18 @@ void PlayerActivity::showLyricsOverlay() {
         syncLyricsToPosition();
     }
 
-    if (lyricsOverlayTitle) {
-        lyricsOverlayTitle->setFocusable(true);
-        brls::Application::giveFocus(lyricsOverlayTitle);
+    if (brls::View* anchor = lyricsFocusAnchor()) {
+        anchor->setFocusable(true);
+        brls::Application::giveFocus(anchor);
     }
 }
 
 void PlayerActivity::hideLyricsOverlay() {
     m_lyricsTimer.stop();
     m_lyricsOverlayVisible = false;
-    if (lyricsOverlayTitle) lyricsOverlayTitle->setFocusable(false);
+    // The play button is a real control and keeps its focusability; only the
+    // classic sheet's title was made focusable just to anchor focus.
+    if (lyricsOverlayTitle && !m_mobileLayout) lyricsOverlayTitle->setFocusable(false);
     if (lyricsOverlay) {
         lyricsOverlay->setVisibility(brls::Visibility::GONE);
         syncHiddenFocus();

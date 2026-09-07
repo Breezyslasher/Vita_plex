@@ -139,6 +139,10 @@ private:
     brls::Label*  m_lyricsElapsed     = nullptr;
     brls::Label*  m_lyricsRemaining   = nullptr;
     brls::Image*  m_lyricsPlayIcon    = nullptr;
+    brls::Box*    m_lyricsPlayBtn     = nullptr;
+    // Where focus belongs while the lyrics view is up. The full-screen layout
+    // has real controls to land on; the classic sheet has only its title.
+    brls::View*   lyricsFocusAnchor();
     bool          m_lyricsWired       = false;
     // Both scrubbers seek the same way; the rules are fiddly enough (music
     // transcode restart vs direct vs debounced video) that one copy is the
