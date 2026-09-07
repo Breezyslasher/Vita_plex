@@ -943,6 +943,20 @@ brls::Box* SettingsTab::createPlaybackSection() {
     });
     box->addView(testLocalCell);
 
+    // Reading the log on the device itself. Only offered where a log file
+    // exists: Linux and macOS log to stdout, where a terminal or the journal
+    // already has it, and getLogPath() is empty there.
+    if (!platform::getLogPath().empty()) {
+        auto* logCell = new brls::DetailCell();
+        logCell->setText("View Log");
+        logCell->setDetailText(platform::getLogPath());
+        logCell->registerClickAction([this](brls::View*) {
+            onShowLog();
+            return true;
+        });
+        box->addView(logCell);
+    }
+
     return box;
 }
 
@@ -2155,6 +2169,56 @@ void SettingsTab::onNetworkTest() {
             dialog->open();
         });
     });
+}
+
+// Show the tail of the log file in a dialog.
+//
+// Android has logcat, but logcat needs a PC. Every platform that writes a log
+// file gets this, so a problem can be read where it happened.
+void SettingsTab::onShowLog() {
+    const std::string path = platform::getLogPath();
+    std::ifstream f(path, std::ios::binary);
+    if (!f.is_open()) {
+        brls::Application::notify("No log file yet");
+        return;
+    }
+
+    // The tail, not the whole thing: a long session runs to megabytes, and the
+    // end is the part that explains whatever just happened.
+    constexpr std::streamoff kTailBytes = 16000;
+    f.seekg(0, std::ios::end);
+    const std::streamoff size = f.tellg();
+    f.seekg(size > kTailBytes ? size - kTailBytes : 0);
+    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    if (text.empty()) {
+        brls::Application::notify("The log is empty");
+        return;
+    }
+    // A partial first line from cutting mid-file reads as corruption.
+    if (size > kTailBytes) {
+        const std::size_t nl = text.find('\n');
+        if (nl != std::string::npos) text.erase(0, nl + 1);
+    }
+
+    auto* content = new brls::Box();
+    content->setAxis(brls::Axis::COLUMN);
+    content->setWidth(600.0f);
+
+    auto* scroll = new brls::ScrollingFrame();
+    scroll->setWidth(600.0f);
+    scroll->setHeight(360.0f);
+
+    auto* label = new brls::Label();
+    label->setText(text);
+    label->setFontSize(13.0f);
+    label->setIsWrapping(true);
+    label->setWidth(580.0f);
+    scroll->setContentView(label);
+    content->addView(scroll);
+
+    auto* dialog = new brls::Dialog(content);
+    dialog->addButton("Close", []() {});
+    dialog->open();
 }
 
 void SettingsTab::onTestLocalPlayback() {
