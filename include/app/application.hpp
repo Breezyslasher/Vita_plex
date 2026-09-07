@@ -93,6 +93,17 @@ enum class LyricsProvider {
     PLEX  = 2    // prefer Plex's provider
 };
 
+// Whether unsynced lyrics are wanted at all.
+//
+// A timed file (.lrc) highlights the line being sung; an untimed one (.txt) is
+// a wall of text the sync view cannot follow. Which of those is worth opening
+// is taste, so it is asked rather than assumed.
+enum class LyricsTiming {
+    BOTH       = 0,   // whatever the track has
+    TIMED_ONLY = 1,   // hide unsynced: only lyrics that follow the music
+    PLAIN_ONLY = 2    // hide timed: only the plain text
+};
+
 // Application settings structure
 struct AppSettings {
     // UI Settings
@@ -205,6 +216,7 @@ struct AppSettings {
     // Music Settings
     TrackDefaultAction trackDefaultAction = TrackDefaultAction::ASK_EACH_TIME;  // Default action for tracks
     LyricsProvider lyricsProvider = LyricsProvider::AUTO;   // which lyrics stream to favour
+    LyricsTiming   lyricsTiming   = LyricsTiming::BOTH;     // synced, unsynced, or both
     bool backgroundMusic = true;       // Allow leaving player without stopping music
     // Turn shuffle on whenever a new music queue starts. Mainly for remote
     // controllers: the framework MediaSession this app uses has no

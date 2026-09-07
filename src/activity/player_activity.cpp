@@ -2687,6 +2687,29 @@ static bool isLocalLyricsStream(const PlexStream& s) {
     return s.rawJson.find("localmedia") != std::string::npos;
 }
 
+// Does this stream look timed, before fetching it? codec carries the file
+// extension for lyrics — .lrc is timed, .txt is not — which is a hint and not
+// a promise: a lyricfind stream has no file behind it and can be either. Used
+// only to choose between streams; what actually arrived is judged below.
+static bool looksTimedLyricsStream(const PlexStream& s) {
+    return s.codec == "lrc";
+}
+
+// The definitive test, on parsed lines. Deliberately the same front()-based
+// rule the SYNCED badge and the sync timer already use, so a file cannot be
+// called synced in one place and unsynced in another.
+static bool lyricsAreTimed(const std::vector<LyricLine>& lines) {
+    return !lines.empty() && lines.front().timeMs >= 0;
+}
+
+// Are these the kind the user asked for?
+static bool lyricsWanted(const std::vector<LyricLine>& lines) {
+    if (lines.empty()) return false;
+    const LyricsTiming want = Application::getInstance().getSettings().lyricsTiming;
+    if (want == LyricsTiming::BOTH) return true;
+    return (want == LyricsTiming::TIMED_ONLY) == lyricsAreTimed(lines);
+}
+
 const PlexStream* PlayerActivity::chooseLyricsStream(const std::vector<PlexStream>& streams,
                                                      bool* ambiguous) const {
     if (ambiguous) *ambiguous = false;
@@ -2695,6 +2718,20 @@ const PlexStream* PlayerActivity::chooseLyricsStream(const std::vector<PlexStrea
         if (ps.streamType == 4 && !ps.key.empty()) found.push_back(&ps);
 
     if (found.empty()) return nullptr;
+
+    // Timing first: it decides whether lyrics are usable at all, where the
+    // provider only decides which copy. Narrow to the wanted kind when the
+    // track offers it, and leave the list alone when it does not — the fetched
+    // lines are checked afterwards, so a wrong guess here costs nothing.
+    const LyricsTiming timing = Application::getInstance().getSettings().lyricsTiming;
+    if (timing != LyricsTiming::BOTH) {
+        const bool wantTimed = (timing == LyricsTiming::TIMED_ONLY);
+        std::vector<const PlexStream*> matching;
+        for (const auto* ps : found)
+            if (looksTimedLyricsStream(*ps) == wantTimed) matching.push_back(ps);
+        if (!matching.empty()) found = matching;
+    }
+
     if (found.size() == 1) return found.front();
 
     const LyricsProvider pref = Application::getInstance().getSettings().lyricsProvider;
@@ -2752,9 +2789,10 @@ void PlayerActivity::reloadLyricsForCurrentTrack() {
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
             if (!m_lyricsOverlayVisible) return;   // closed while we were fetching
-            if (lines.empty()) {
-                // Nothing for this track. An open view with no words in it says
-                // nothing, so hand the player back.
+            // Nothing for this track, or not the kind that was asked for. An
+            // open view with no words in it says nothing, so hand the player
+            // back rather than sitting there empty for the rest of the album.
+            if (!lyricsWanted(lines)) {
                 hideLyricsOverlay();
                 return;
             }
@@ -2817,9 +2855,17 @@ void PlayerActivity::loadAndShowLyrics(const PlexStream& stream) {
             m_lyricsLoading = false;
 
             if (!ok || lines.empty()) {
-                // Open the sheet and say what went wrong there; a toast over the player is easy to miss.
                 showLyricsMessage(status.empty() ? std::string("No lyrics for this track.")
                                                  : status);
+                return;
+            }
+            // The stream's extension was only a hint; this is what actually
+            // arrived. Say which kind was rejected rather than "no lyrics",
+            // which would look like the track has none at all.
+            if (!lyricsWanted(lines)) {
+                showLyricsMessage(lyricsAreTimed(lines)
+                                      ? "Only timed lyrics for this track, and those are hidden."
+                                      : "Only unsynced lyrics for this track, and those are hidden.");
                 return;
             }
             m_lyrics = lines;

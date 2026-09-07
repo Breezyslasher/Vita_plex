@@ -976,6 +976,17 @@ brls::Box* SettingsTab::createMusicSection() {
             app.saveSettings();
         }));
 
+    // Unsynced lyrics cannot be followed by the sync view — whether they are
+    // worth opening anyway is taste.
+    box->addView(makePickerCell("Lyrics Timing",
+        {"Show both", "Timed only", "Unsynced only"},
+        static_cast<int>(settings.lyricsTiming),
+        [](int index) {
+            Application& app = Application::getInstance();
+            app.getSettings().lyricsTiming = static_cast<LyricsTiming>(index);
+            app.saveSettings();
+        }));
+
     // Default track action selector
     m_trackActionSelector = makePickerCell("Default Track Action",
         {"Play Next", "Play Now (Replace Current)", "Add to Bottom of Queue", "Play Now (Clear Queue)", "Ask Each Time"},
