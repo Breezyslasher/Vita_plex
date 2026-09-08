@@ -438,6 +438,53 @@ What would settle it: capture what Plex Web sends when casting a channel, and
 compare its `POST /playQueues` URI against the tune call above. Until then the
 control is hidden rather than offered and broken.
 
+### Word-by-word lyrics
+
+Two sources can carry word timing, and only one of them is documented.
+
+**Enhanced LRC ("A2")** is the confirmed one. A line reads
+
+```
+[00:12.34]<00:12.34>I <00:12.61>would <00:12.90>never <00:13.40>
+```
+
+— a stamp before each word, and usually one more at the end marking where the
+last word stops rather than starting another. Parsing these also fixed a bug
+that predates the feature: nothing knew what the angle brackets were, so a file
+like this displayed its own timestamps as part of the lyric. The stamps are
+stripped now whether or not the highlight is switched on.
+
+**Plex's own documents** are the unconfirmed one. Each `<Span>` is collected
+with whatever offset it carries, using the same two attribute names
+(`startOffset`, `startTimeOffset`) the enclosing `<Line>` already uses. Whether
+Plex's lyricfind documents actually stamp their Spans could not be established
+from anything published — so this reads the attributes if they are there and
+does nothing whatsoever if they are not. No request changed shape to get them.
+
+Word timing is used only when **every** span or word in a line is stamped, and
+only when there are at least two. A half-stamped line would stall the highlight
+partway across and read as a bug; a single stamped word is the line stamp again
+and buys nothing but a pile of extra views.
+
+The rendering is one `brls::Label` per word inside a wrapping row. borealis
+exposes most of yoga's style but not flex-wrap, so `setFlexWrap` reaches the
+node through `View::getYGNode()`, which is public — no subclass, no patch. The
+row needs a definite width for wrapping to happen at all, which it gets from
+`player/lyrics_list` being `alignItems="stretch"`.
+
+Sung words hold the highlight rather than dimming behind the cursor: a line is
+read as a whole, and one lit word between two greys is harder to follow than a
+line filling up.
+
+The sync timer runs at 80ms while any line is word-timed, against 250ms
+otherwise. A line lasts seconds and 250ms sits comfortably inside that; words
+arrive several a second and would visibly lag. A tick that crosses no word
+boundary returns having touched nothing, and the faster rate is never paid by a
+track without word timing.
+
+It is a setting (`lyricsWordByWord`, on by default) because a word-timed line
+costs one view per word, and a long song on a handheld is where that shows.
+
 ---
 
 ## Layout and UI

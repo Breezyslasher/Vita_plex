@@ -22,6 +22,8 @@
 // TARGET_OS_IOS, for the Auto branch of useMobileLayout().
 #include <TargetConditionals.h>
 #endif
+#include <yoga/Yoga.h>   // flex-wrap, which borealis does not expose
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -37,6 +39,19 @@ namespace vitaplex {
 
 // Base temp path for streamed audio (mpv's HTTP handling crashes on Vita); extension added from the real file type.
 
+namespace {
+
+// Let a row's children run onto a second line.
+//
+// A word-timed lyric is one label per word and is very often wider than the
+// column, so the row has to wrap. borealis exposes most of yoga's style but
+// not flex-wrap, so the node is set directly — getYGNode() is part of View's
+// public surface, which is why this needs no subclass and no patch.
+void setFlexWrap(brls::Box* box) {
+    YGNodeStyleSetFlexWrap(box->getYGNode(), YGWrapWrap);
+}
+
+}  // namespace
 
 std::atomic<bool> PlayerActivity::s_active{false};
 
@@ -1223,7 +1238,11 @@ void PlayerActivity::loadFromQueue() {
     m_lyricsTimer.stop();          // nothing to follow until the new words land
     m_lyrics.clear();
     m_lyricRows.clear();
+    m_lyricLabels.clear();
+    m_lyricWordRows.clear();
     m_lyricsIndex = -1;
+    m_lyricWordIndex = -1;
+    m_lyricsHaveWords = false;
 
     // Update display - use music info labels (between cover and play controls)
     if (musicTitleLabel) {
@@ -1426,7 +1445,11 @@ void PlayerActivity::loadMedia() {
     if (m_lyricsOverlayVisible) hideLyricsOverlay();
     m_lyrics.clear();
     m_lyricRows.clear();
+    m_lyricLabels.clear();
+    m_lyricWordRows.clear();
     m_lyricsIndex = -1;
+    m_lyricWordIndex = -1;
+    m_lyricsHaveWords = false;
 
     // Handle direct file playback (debug/testing)
     if (m_isDirectFile) {
@@ -3034,30 +3057,78 @@ void PlayerActivity::buildLyricsRows() {
     }
     lyricsList->clearViews();
     m_lyricRows.clear();
+    m_lyricLabels.clear();
+    m_lyricWordRows.clear();
     m_lyricRows.reserve(m_lyrics.size());
+    m_lyricLabels.reserve(m_lyrics.size());
+    m_lyricWordRows.reserve(m_lyrics.size());
+    m_lyricWordIndex = -1;
+    m_lyricsHaveWords = false;
 
     const bool synced = !m_lyricsFailed && !m_lyrics.empty()
                      && m_lyrics.front().timeMs >= 0;
+    // Word rows are the full-screen layout only: the classic side sheet is a
+    // narrow panel where a wrapped row of words would be mostly wrapping.
+    const bool wordByWord = m_mobileLayout &&
+                            Application::getInstance().getSettings().lyricsWordByWord;
 
     for (size_t i = 0; i < m_lyrics.size(); i++) {
         const auto& line = m_lyrics[i];
-        auto* label = new brls::Label();
-        // A timed blank is a rest; give it height so the scroll still tracks the music through an instrumental break.
-        label->setText(line.text.empty() ? " " : line.text);
-        label->setTextColor(nvgRGB(0x8A, 0x8A, 0x90));
-        if (m_mobileLayout) {
-            // Centred as a column, 5px of air either side, and never shorter
-            // than a 40dp touch target so tap-to-seek has something to hit.
-            // Minimum rather than fixed: a wrapped lyric must still grow.
-            label->setFontSize(ui(kLyricRest));
-            label->setHorizontalAlign(brls::HorizontalAlign::CENTER);
-            label->setMarginTop(ui(5));
-            label->setMarginBottom(ui(5));
-            label->setMinHeight(ui(40));
+        const bool asWords = wordByWord && !line.words.empty();
+
+        auto styleWord = [this](brls::Label* l) {
+            l->setTextColor(nvgRGB(0x8A, 0x8A, 0x90));
+            l->setFontSize(ui(kLyricRest));
+            l->setVerticalAlign(brls::VerticalAlign::BASELINE);
+        };
+
+        // The row: either one label for the whole line, or a wrapping row of
+        // one label per word.
+        brls::View* row = nullptr;
+        brls::Label* label = nullptr;
+        std::vector<brls::Label*> wordLabels;
+
+        if (asWords) {
+            auto* box = new brls::Box(brls::Axis::ROW);
+            setFlexWrap(box);
+            box->setJustifyContent(brls::JustifyContent::CENTER);
+            box->setAlignItems(brls::AlignItems::FLEX_END);
+            box->setMarginTop(ui(5));
+            box->setMarginBottom(ui(5));
+            box->setMinHeight(ui(40));
+            wordLabels.reserve(line.words.size());
+            for (size_t w = 0; w < line.words.size(); w++) {
+                auto* wl = new brls::Label();
+                wl->setText(line.words[w].text);
+                styleWord(wl);
+                // The space between words. It lives on the label rather than
+                // in the text so a wrap never leaves a stray space hanging at
+                // the end of a line.
+                if (w + 1 < line.words.size()) wl->setMarginRight(ui(6));
+                box->addView(wl);
+                wordLabels.push_back(wl);
+            }
+            row = box;
         } else {
-            // The classic side sheet is untouched by this handoff.
-            label->setFontSize(17);
-            label->setMarginBottom(10);
+            label = new brls::Label();
+            // A timed blank is a rest; give it height so the scroll still tracks the music through an instrumental break.
+            label->setText(line.text.empty() ? " " : line.text);
+            label->setTextColor(nvgRGB(0x8A, 0x8A, 0x90));
+            if (m_mobileLayout) {
+                // Centred as a column, 5px of air either side, and never shorter
+                // than a 40dp touch target so tap-to-seek has something to hit.
+                // Minimum rather than fixed: a wrapped lyric must still grow.
+                label->setFontSize(ui(kLyricRest));
+                label->setHorizontalAlign(brls::HorizontalAlign::CENTER);
+                label->setMarginTop(ui(5));
+                label->setMarginBottom(ui(5));
+                label->setMinHeight(ui(40));
+            } else {
+                // The classic side sheet is untouched by this handoff.
+                label->setFontSize(17);
+                label->setMarginBottom(10);
+            }
+            row = label;
         }
 
         // Tap a line to jump to it. Unsynced files carry timeMs == -1 on every
@@ -3065,16 +3136,19 @@ void PlayerActivity::buildLyricsRows() {
         // just scrolls it like a lyric sheet.
         if (m_mobileLayout && line.timeMs >= 0) {
             const int targetMs = line.timeMs;
-            label->setFocusable(true);
-            label->registerClickAction([this, targetMs](brls::View*) {
+            row->setFocusable(true);
+            row->registerClickAction([this, targetMs](brls::View*) {
                 seekToAbsoluteMs(targetMs);
                 return true;
             });
-            label->addGestureRecognizer(new brls::TapGestureRecognizer(label));
+            row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
         }
 
-        lyricsList->addView(label);
-        m_lyricRows.push_back(label);
+        lyricsList->addView(row);
+        m_lyricRows.push_back(row);
+        m_lyricLabels.push_back(label);
+        m_lyricWordRows.push_back(std::move(wordLabels));
+        if (asWords) m_lyricsHaveWords = true;
     }
 
     if (lyricsOverlayTitle) {
@@ -3102,7 +3176,11 @@ void PlayerActivity::showLyricsOverlay() {
     // Only worth ticking while the sheet is up, and only for a file with timings — an untimed one never moves.
     if (!m_lyricsFailed && !m_lyrics.empty() && m_lyrics.front().timeMs >= 0) {
         m_lyricsTimer.setCallback([this]() { syncLyricsToPosition(); });
-        m_lyricsTimer.start(250);
+        // A line lasts seconds and 250ms is comfortably inside that. Words do
+        // not: several a second, so at 250ms the highlight would visibly lag
+        // the voice. The faster rate is paid only where it buys something, and
+        // a tick that crosses no word boundary returns having touched nothing.
+        m_lyricsTimer.start(m_lyricsHaveWords ? 80 : 250);
         syncLyricsToPosition();
     }
 
@@ -3129,6 +3207,38 @@ void PlayerActivity::hideLyricsOverlay() {
     }
 }
 
+// Light the words of the active line up to where the singer has got to.
+//
+// Called on every tick, so it does as little as possible: it recolours only
+// the words between the last position and this one, and returns immediately
+// when nothing has crossed a word boundary — which is most ticks, since words
+// arrive a few per second and the timer runs faster than that.
+void PlayerActivity::syncLyricWords(int posMs) {
+    if (m_lyricsIndex < 0 || m_lyricsIndex >= (int)m_lyricWordRows.size()) return;
+    const auto& labels = m_lyricWordRows[(size_t)m_lyricsIndex];
+    if (labels.empty()) return;
+    const auto& words = m_lyrics[(size_t)m_lyricsIndex].words;
+    if (words.size() != labels.size()) return;   // rebuilt underneath us
+
+    int upTo = -1;
+    for (size_t i = 0; i < words.size(); i++) {
+        if (words[i].timeMs > posMs) break;
+        upTo = (int)i;
+    }
+    if (upTo == m_lyricWordIndex) return;
+
+    const int prev = m_lyricWordIndex;
+    m_lyricWordIndex = upTo;
+    // Sung words hold the highlight rather than dimming behind the cursor: the
+    // line is read as a whole, and a single lit word with grey either side is
+    // harder to follow than a line filling up.
+    const NVGcolor lit    = nvgRGB(0xFF, 0xC2, 0x3D);
+    const NVGcolor unlit  = nvgRGB(0x8A, 0x8A, 0x90);
+    const int lo = std::min(prev, upTo), hi = std::max(prev, upTo);
+    for (int i = std::max(0, lo); i <= hi && i < (int)labels.size(); i++)
+        labels[(size_t)i]->setTextColor(i <= upTo ? lit : unlit);
+}
+
 void PlayerActivity::syncLyricsToPosition() {
     if (!m_lyricsOverlayVisible || m_lyrics.empty()) return;
 
@@ -3143,7 +3253,12 @@ void PlayerActivity::syncLyricsToPosition() {
         if (m_lyrics[i].timeMs > posMs) break;
         idx = (int)i;
     }
-    if (idx == m_lyricsIndex) return;
+    // The line has not changed, but a word inside it may have. That is the
+    // only work a tick does most of the time, and it touches two labels.
+    if (idx == m_lyricsIndex) {
+        syncLyricWords(posMs);
+        return;
+    }
 
     // Three states, not two: a line already sung is dimmer than one still to
     // come, so the eye can tell at a glance which way the song is going. Only
@@ -3151,27 +3266,48 @@ void PlayerActivity::syncLyricsToPosition() {
     // no more than a forward one.
     const int prev = m_lyricsIndex;
     m_lyricsIndex = idx;
+    m_lyricWordIndex = -1;      // the new line starts with none of it sung
     const float restSize = m_mobileLayout ? ui(kLyricRest) : 17.0f;
+    const NVGcolor sung = nvgRGB(0x5C, 0x5C, 0x63);
+    const NVGcolor toCome = nvgRGB(0x8A, 0x8A, 0x90);
     const int lo = std::min(prev, idx), hi = std::max(prev, idx);
     for (int i = std::max(0, lo); i <= hi && i < (int)m_lyricRows.size(); i++) {
-        brls::Label* r = m_lyricRows[(size_t)i];
-        r->setFontSize(restSize);
         // The classic sheet has only two states, so everything not active
         // stays the one grey it always was.
-        r->setTextColor(m_mobileLayout && i < idx
-                            ? nvgRGB(0x5C, 0x5C, 0x63)    // sung
-                            : nvgRGB(0x8A, 0x8A, 0x90));  // still to come
+        const NVGcolor c = (m_mobileLayout && i < idx) ? sung : toCome;
+        // A word row has no label of its own; its words carry the whole line's
+        // look, and a line left behind loses its per-word colouring with it.
+        for (brls::Label* w : m_lyricWordRows[(size_t)i]) {
+            w->setFontSize(restSize);
+            w->setTextColor(c);
+        }
+        if (brls::Label* r = m_lyricLabels[(size_t)i]) {
+            r->setFontSize(restSize);
+            r->setTextColor(c);
+        }
     }
     if (idx < 0 || idx >= (int)m_lyricRows.size()) return;
 
-    brls::Label* row = m_lyricRows[(size_t)idx];
-    if (m_mobileLayout) {
-        row->setTextColor(nvgRGB(0xFF, 0xC2, 0x3D));
-        row->setFontSize(ui(kLyricActive));
-        row->setLineHeight(1.28f);
+    brls::View* row = m_lyricRows[(size_t)idx];
+    if (brls::Label* r = m_lyricLabels[(size_t)idx]) {
+        if (m_mobileLayout) {
+            r->setTextColor(nvgRGB(0xFF, 0xC2, 0x3D));
+            r->setFontSize(ui(kLyricActive));
+            r->setLineHeight(1.28f);
+        } else {
+            r->setTextColor(nvgRGB(0xE5, 0xA0, 0x0D));
+            r->setFontSize(19.0f);
+        }
     } else {
-        row->setTextColor(nvgRGB(0xE5, 0xA0, 0x0D));
-        row->setFontSize(19.0f);
+        // Word row: it grows to the active size as a whole, and the words then
+        // light one at a time within it. Sizing here rather than in
+        // syncLyricWords keeps the row's height settled before the scroll
+        // anchor below measures it.
+        for (brls::Label* w : m_lyricWordRows[(size_t)idx]) {
+            w->setFontSize(ui(kLyricActive));
+            w->setLineHeight(1.28f);
+        }
+        syncLyricWords(posMs);
     }
     // getY() is absolute, so subtract the content origin. The active line sits
     // at the middle of the column in the full-screen layout — the eye stays in

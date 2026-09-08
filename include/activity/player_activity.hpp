@@ -151,13 +151,26 @@ private:
     // only way they stay in step.
     void seekToFraction(float progress);
     void seekToAbsoluteMs(int ms);   // tap a lyric line to jump to it
+    // Per-word highlight within the active line; a no-op unless that line
+    // carries word timing.
+    void syncLyricWords(int posMs);
     // Handoff type sizes, in its 412-wide frame; ui() scales them.
     static constexpr float kLyricRest   = 19.0f;
     static constexpr float kLyricActive = 27.0f;
 
     std::vector<LyricLine> m_lyrics;
-    std::vector<brls::Label*> m_lyricRows;
+    // Three parallel views of the same rows, because a row is drawn one of two
+    // ways and each caller wants a different part of it:
+    //   m_lyricRows      the row itself — geometry, focus, tap-to-seek
+    //   m_lyricLabels    its single label, or null when the row is word-timed
+    //   m_lyricWordRows  its per-word labels, or empty when it is not
+    // A row is word-timed exactly when its m_lyricWordRows entry is non-empty.
+    std::vector<brls::View*>  m_lyricRows;
+    std::vector<brls::Label*> m_lyricLabels;
+    std::vector<std::vector<brls::Label*>> m_lyricWordRows;
     int  m_lyricsIndex = -1;            // row currently highlighted, -1 = none
+    int  m_lyricWordIndex = -1;         // last word lit within that row
+    bool m_lyricsHaveWords = false;     // any row word-timed: drives the tick rate
     bool m_lyricsOverlayVisible = false;
     bool m_lyricsLoading = false;
     bool m_lyricsFailed = false;    // sheet is showing a reason, not a song

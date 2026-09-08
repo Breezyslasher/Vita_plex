@@ -305,9 +305,20 @@ struct PlaylistItem {
 // Stream info from Plex metadata (audio/video/subtitle streams within a Part)
 // One line of a track's lyrics. timeMs is -1 for an unsynced file (a plain .txt
 // stream), in which case the lines are still in order but carry no timing.
+// One word (or syllable) of a line, with the moment it is sung.
+struct LyricWord {
+    int timeMs = -1;
+    std::string text;
+};
+
 struct LyricLine {
     int timeMs = -1;
     std::string text;
+    // Filled only when the source carries per-word timing: Enhanced LRC's
+    // angle-bracket tags, or a Plex document whose Spans are stamped. `text`
+    // is always the whole line either way, so anything that only wants to
+    // read or show the line never has to know which kind it got.
+    std::vector<LyricWord> words;
 };
 
 struct PlexStream {
