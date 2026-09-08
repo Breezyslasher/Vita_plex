@@ -601,7 +601,24 @@
                     grow="1"
                     fontSize="12"
                     textColor="#8A8A90"/>
-                <brls:Box
+                                <brls:Box
+                    id="player/queue_cast_btn"
+                    axis="row"
+                    alignItems="center"
+                    justifyContent="center"
+                    cornerRadius="6"
+                    paddingLeft="8"
+                    paddingRight="8"
+                    paddingTop="3"
+                    paddingBottom="3"
+                    marginRight="4"
+                    focusable="true">
+                    <brls:Label
+                        text="Play on..."
+                        fontSize="12"
+                        textColor="#E5A00D"/>
+                </brls:Box>
+<brls:Box
                     id="player/queue_clear_btn"
                     axis="row"
                     alignItems="center"

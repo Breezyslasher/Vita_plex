@@ -566,6 +566,45 @@ public:
         std::vector<PlayQueueItem> items;
     };
 
+    // ── Remote playback ("play on another device") ────────────────────────
+    //
+    // Plex publishes no spec for this; the shape below follows python-plexapi,
+    // which is the reference implementation everything else was built against.
+    //
+    // A player is discovered from the server's own /clients, which lists what
+    // has announced itself to this PMS. Commands go to /player/... and are
+    // addressed with X-Plex-Target-Client-Identifier — sent to the SERVER
+    // rather than to the player, which is plexapi's proxyThroughServer. The
+    // direct route needs the player reachable on its own LAN port; the proxied
+    // one only needs the server this app is already talking to, so it works
+    // from anywhere the app itself works.
+    struct PlexPlayer {
+        std::string name;               // "Living Room TV"
+        std::string machineIdentifier;  // the X-Plex-Target-Client-Identifier
+        std::string product;            // "Plex for Apple TV"
+        std::string host;
+        int         port = 0;
+        std::string protocolCapabilities;   // "timeline,playback,navigation,..."
+        // A client that cannot play is not somewhere to send music. Anything
+        // without this advertises itself for other reasons — a controller, a
+        // second screen — and would silently ignore playMedia.
+        bool canPlayback() const {
+            return protocolCapabilities.find("playback") != std::string::npos;
+        }
+    };
+
+    // GET /clients. Players that cannot play back are dropped.
+    bool fetchPlayers(std::vector<PlexPlayer>& out);
+
+    // GET /player/playback/playMedia, proxied through the server.
+    //
+    // The play queue is what makes this "send the queue" rather than "send one
+    // track": containerKey points the player at the same server-side queue this
+    // app is playing, so it picks up the whole list and its order.
+    bool playOnPlayer(const PlexPlayer& player, int playQueueID,
+                      const std::string& itemKey, int offsetMs = 0,
+                      const std::string& type = "music");
+
     // Create a play queue from a library URI (album, show, season, playlist, single item)
     // type: "audio", "video", "photo"
     // key: ratingKey of the item to start playing (optional, defaults to first)

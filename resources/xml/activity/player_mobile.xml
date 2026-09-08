@@ -989,6 +989,23 @@
                     fontSize="37"
                     textColor="#8A8A90"/>
                 <brls:Box
+                    id="player/queue_cast_btn"
+                    axis="row"
+                    alignItems="center"
+                    justifyContent="center"
+                    cornerRadius="19"
+                    paddingLeft="25"
+                    paddingRight="25"
+                    paddingTop="9"
+                    paddingBottom="9"
+                    marginRight="12"
+                    focusable="true">
+                    <brls:Label
+                        text="Play on..."
+                        fontSize="37"
+                        textColor="#E5A00D"/>
+                </brls:Box>
+                <brls:Box
                     id="player/queue_clear_btn"
                     axis="row"
                     alignItems="center"
