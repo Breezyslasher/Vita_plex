@@ -812,6 +812,24 @@ void PlayerActivity::onContentAvailable() {
             });
             videoBtn->addGestureRecognizer(new brls::TapGestureRecognizer(videoBtn));
         }
+
+        // "Play on..." — found by id rather than bound, so a layout without it
+        // simply has no button. Only shown when there is something a remote
+        // player could fetch: Live TV is a session this server opened for this
+        // client, and a file opened straight off disk has no ratingKey at all.
+        if (auto* cast = dynamic_cast<brls::Box*>(getView("player/cast_btn"))) {
+            const bool sendable = !m_mediaKey.empty() && m_liveSessionUuid.empty();
+            cast->setVisibility(sendable ? brls::Visibility::VISIBLE
+                                         : brls::Visibility::GONE);
+            cast->setFocusable(sendable);
+            if (sendable) {
+                cast->registerClickAction([this](brls::View*) {
+                    showPlayOnPicker();
+                    return true;
+                });
+                cast->addGestureRecognizer(new brls::TapGestureRecognizer(cast));
+            }
+        }
     }
 
     // Runs after the mode wiring that makes the audio/subtitle/video buttons visible; no-op in the other layouts.
@@ -2827,24 +2845,69 @@ void PlayerActivity::reloadLyricsForCurrentTrack() {
 // to point at, so this needs the server-synced queue and says so when there
 // isn't one.
 void PlayerActivity::showPlayOnPicker() {
-    MusicQueue& queue = MusicQueue::getInstance();
-    const int pqID = queue.getPlayQueueID();
-    if (pqID <= 0) {
-        brls::Application::notify("This queue is local to the app; nothing to send");
+    // Live TV is deliberately not offered: a tuned channel is a session this
+    // server opened for this client, not a library item another player could be
+    // pointed at. See DESIGN_NOTES.
+    if (!m_liveSessionUuid.empty()) {
+        brls::Application::notify("Live TV cannot be sent to another player");
         return;
     }
-    const QueueItem* track = queue.getCurrentTrack();
-    const std::string itemKey = track ? ("/library/metadata/" + track->ratingKey) : std::string();
+
+    MusicQueue& queue = MusicQueue::getInstance();
+    const bool music = m_isQueueMode && MusicQueue::getInstance().isMusicQueue();
+
+    // Music is already playing a server-side queue, so it is sent as it stands.
+    // A film or an episode has no queue at all — nothing was ever created for
+    // it — so one is made on the spot, which is also what plexapi does when
+    // handed a bare item.
+    int pqID = music ? queue.getPlayQueueID() : 0;
+    // playMedia's type is the player's, so it is "music" here where the queue
+    // API below calls the same thing "audio".
+    const std::string type = music ? "music" : "video";
+    std::string itemKey;
+    if (music) {
+        const QueueItem* track = queue.getCurrentTrack();
+        if (track) itemKey = "/library/metadata/" + track->ratingKey;
+        if (pqID <= 0) {
+            brls::Application::notify("This queue is local to the app; nothing to send");
+            return;
+        }
+    } else {
+        // A file opened straight off disk has no ratingKey, so there is nothing
+        // on the server for the other player to fetch.
+        if (m_mediaKey.empty()) {
+            brls::Application::notify("This file isn't on the server; nothing to send");
+            return;
+        }
+        itemKey = "/library/metadata/" + m_mediaKey;
+    }
+
     const int offsetMs = m_transcodeBaseOffsetMs
                        + (int)(MpvPlayer::getInstance().getPosition() * 1000.0);
 
     brls::Application::notify("Looking for players...");
+    const std::string mediaKey = m_mediaKey;
     std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
-    asyncRun([this, pqID, itemKey, offsetMs, aliveWeak]() {
+    asyncRun([this, pqID, itemKey, offsetMs, type, music, mediaKey, aliveWeak]() mutable {
+        // Both calls block, which is why this is off the UI thread.
+        if (!music) {
+            PlexClient::PlayQueueContainer pq;
+            const std::string uri = "server://" +
+                PlexClient::getInstance().getMachineIdentifier() +
+                "/com.plexapp.plugins.library/library/metadata/" + mediaKey;
+            if (PlexClient::getInstance().createPlayQueue(uri, "video", pq) && pq.playQueueID > 0) {
+                pqID = pq.playQueueID;
+            }
+        }
+        if (pqID <= 0) {
+            brls::sync([]() { brls::Application::notify("Could not build a queue to send"); });
+            return;
+        }
+
         std::vector<PlexClient::PlexPlayer> players;
         PlexClient::getInstance().fetchPlayers(players);
 
-        brls::sync([this, players, pqID, itemKey, offsetMs, aliveWeak]() {
+        brls::sync([this, players, pqID, itemKey, offsetMs, type, aliveWeak]() {
             auto alive = aliveWeak.lock();
             if (!alive || !*alive) return;
             if (players.empty()) {
@@ -2860,12 +2923,12 @@ void PlayerActivity::showPlayOnPicker() {
                 labels.push_back(p.product.empty() ? p.name : p.name + "  (" + p.product + ")");
 
             showOptionPicker("Play on", labels, 0,
-                [players, pqID, itemKey, offsetMs](int idx) {
+                [players, pqID, itemKey, offsetMs, type](int idx) {
                     if (idx < 0 || idx >= (int)players.size()) return;
                     const PlexClient::PlexPlayer picked = players[(size_t)idx];
-                    asyncRun([picked, pqID, itemKey, offsetMs]() {
+                    asyncRun([picked, pqID, itemKey, offsetMs, type]() {
                         const bool ok = PlexClient::getInstance()
-                            .playOnPlayer(picked, pqID, itemKey, offsetMs);
+                            .playOnPlayer(picked, pqID, itemKey, offsetMs, type);
                         brls::sync([picked, ok]() {
                             brls::Application::notify(ok ? "Playing on " + picked.name
                                                          : "Could not reach " + picked.name);
@@ -4172,10 +4235,18 @@ void PlayerActivity::wireVideoOsd() {
     // The subtitle line stays hidden until it has text, so a film gets a title rather than a title and a blank.
     if (brls::View* v = getView("player/osd_bottom")) v->setVisibility(brls::Visibility::VISIBLE);
     if (brls::View* v = getView("player/subs_pill")) v->setVisibility(brls::Visibility::VISIBLE);
+    // Only shown when there is something a remote player could fetch: Live TV is
+    // a session this server opened for this client, and a file opened straight
+    // off disk has no ratingKey at all.
+    if (brls::View* v = getView("player/cast_pill")) {
+        const bool sendable = !m_mediaKey.empty() && m_liveSessionUuid.empty();
+        v->setVisibility(sendable ? brls::Visibility::VISIBLE : brls::Visibility::GONE);
+    }
 
     tap(box("player/back_btn"),   [] { brls::Application::popActivity(); });
     tap(box("player/speed_btn"),  [this] { cycleSpeed(); });
     tap(box("player/subs_pill"),  [this] { showTrackOverlay(TrackSelectMode::SUBTITLE); });
+    tap(box("player/cast_pill"),  [this] { showPlayOnPicker(); });
     tap(box("player/next_btn"),   [this] {
         if (m_isQueueMode) playNext();
         else               playNextEpisode();
@@ -4250,12 +4321,15 @@ void PlayerActivity::applyVideoOsdForViewport() {
         progressSlider->setMargins(0.0f, 20.0f * k, 0.0f, 20.0f * k);
         progressSlider->setPointerSize(20.0f * k);
     }
-    for (const char* id : {"player/next_btn", "player/audio_btn", "player/subs_pill"})
+    for (const char* id : {"player/next_btn", "player/audio_btn", "player/cast_pill",
+                           "player/subs_pill"})
         box(id, 0, 42, 21);
     margins("player/next_btn", 0, 14, 0, 0);
     margins("player/audio_btn", 0, 14, 0, 0);
+    margins("player/cast_pill", 0, 14, 0, 0);
     font("player/next_label", 17);
     font("player/audio_label", 17);
+    font("player/cast_label", 17);
     font("player/subs_label", 17);
 
     brls::Logger::info("PlayerActivity: video OSD scaled {:.2f}x for a {}x{} viewport",

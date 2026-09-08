@@ -384,6 +384,60 @@ from a running application, so Switch falls through to the header's inline
 no-ops. This is worth writing down only because "add notifications to Switch
 too" looks like an oversight rather than a platform limit.
 
+### Sending playback to another Plex client
+
+Plex publishes no spec for remote control. The shape here follows
+python-plexapi, which is the reference every other implementation was built
+against.
+
+Discovery is the server's own `GET /clients`. Each player is a `<Server/>`
+element — named that way for historical reasons, not because it is one.
+Anything without `playback` in `protocolCapabilities` is dropped; it announced
+itself as a controller or second screen and would ignore `playMedia` in silence.
+
+The command is `GET /player/playback/playMedia` with
+`X-Plex-Target-Client-Identifier` naming the player, sent to the **server**
+rather than to the player. That is plexapi's `proxyThroughServer`, and it is
+what makes this usable: reaching a player directly needs it on its own LAN
+port, while the proxied route needs only the server the app is already talking
+to. `commandID` rises across the session so a player can discard a command that
+arrives out of order.
+
+It always sends a play queue, never a bare item. `containerKey` points the
+player at the same server-side queue, so the list and its order travel with it
+and both ends look at one object. Music already has such a queue; a film or an
+episode has none, so one is created on the spot — which is also what plexapi
+does when handed a bare item.
+
+Watch the two names for the same thing: `playMedia`'s `type` is the *player's*,
+so it is `music`, while `POST /playQueues` calls the same content `audio`.
+
+The control appears in three places because the layouts are separate, and each
+is looked up by id rather than bound, so a layout that omits it simply has no
+button: `player/queue_cast_btn` in the queue side-sheet (both layouts, music),
+`player/cast_btn` in the classic OSD's button row, and `player/cast_pill` in the
+mobile video OSD. All three are hidden unless there is something a remote player
+could fetch — a file opened straight off disk has no ratingKey, and Live TV is
+the case below.
+
+### Live TV cannot be sent, and why
+
+Tuning goes through `POST /livetv/dvrs/{id}/channels/{ch}/tune`, which opens a
+**session on this server for this client** and hands back a stream URL. That
+session is not a library item: an EPG programme's ratingKey is not a
+`/library/metadata` key, which is the same reason anything carrying
+`liveChannelKey` must be tuned and never played.
+
+So there is nothing for `containerKey` or `key` to address. Plex's own clients
+do cast Live TV, so a route exists — the EPG provider advertises the playqueue
+family — but the URI form was not something that could be confirmed from
+plexapi or Plex's published documentation, and a guessed one would produce a
+button that fails against a real DVR.
+
+What would settle it: capture what Plex Web sends when casting a channel, and
+compare its `POST /playQueues` URI against the tune call above. Until then the
+control is hidden rather than offered and broken.
+
 ---
 
 ## Layout and UI

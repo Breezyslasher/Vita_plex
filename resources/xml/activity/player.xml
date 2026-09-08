@@ -436,6 +436,28 @@
                     scalingType="fit"/>
             </brls:Box>
 
+            <!-- Hands the film or episode to another Plex client (video mode).
+                 Music reaches the same picker from the queue side-sheet, so
+                 this stays hidden there. -->
+            <brls:Box
+                id="player/cast_btn"
+                width="64"
+                height="64"
+                axis="row"
+                justifyContent="center"
+                alignItems="center"
+                cornerRadius="32"
+                marginLeft="16"
+                focusable="true"
+                visibility="gone">
+                <brls:Image
+                    id="player/cast_icon"
+                    width="34"
+                    height="34"
+                    image="@res/icons/cast.png"
+                    scalingType="fit"/>
+            </brls:Box>
+
             <!-- Queue list button (music queue mode) -->
             <brls:Box
                 id="player/queue_btn"
@@ -601,7 +623,7 @@
                     grow="1"
                     fontSize="12"
                     textColor="#8A8A90"/>
-                                <brls:Box
+                <brls:Box
                     id="player/queue_cast_btn"
                     axis="row"
                     alignItems="center"

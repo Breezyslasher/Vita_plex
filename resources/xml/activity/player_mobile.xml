@@ -432,6 +432,30 @@
                         textColor="#E6E6EA"/>
                 </brls:Box>
 
+                <!-- Hands the film or episode to another Plex client. Same pill
+                     shape as Subs. Hidden for Live TV, where there is no library
+                     item to point another player at. -->
+                <brls:Box
+                    id="player/cast_pill"
+                    height="42"
+                    axis="row"
+                    justifyContent="center"
+                    alignItems="center"
+                    cornerRadius="21"
+                    backgroundColor="#14141899"
+                    paddingLeft="17"
+                    paddingRight="17"
+                    marginRight="14"
+                    shrink="0"
+                    focusable="true"
+                    visibility="gone">
+                    <brls:Label
+                        id="player/cast_label"
+                        text="Play on..."
+                        fontSize="17"
+                        textColor="#E6E6EA"/>
+                </brls:Box>
+
                 <!-- Subtitles reach the same picker from two places in the
                      handoff — this pill and the top bar's glyph. player/sub_btn
                      is the glyph, so the pill is its own view wired to the same
