@@ -9,6 +9,7 @@
 #include "platform/platform.hpp"
 
 #include <borealis.hpp>
+#include <cstdint>
 #include <cstring>
 #include <ctime>
 #include <algorithm>
@@ -2924,34 +2925,105 @@ namespace {
 // transcoder (its documented response example is text/srt), and plain text.
 // Detected from the content rather than the extension, because the transcoder
 // converts and the extension no longer describes what came back.
+//
+// Every shape goes out through the same two steps — unescape, then flatten
+// whitespace — so a line that reaches a label has been through them once and
+// exactly once, whichever route it took. Escaped text in a transcoded SRT is
+// the transcoder's business, but it costs nothing to handle and a raw "&#34;"
+// on screen looks like a bug either way.
 std::vector<LyricLine> parseLyricsBody(const std::string& body) {
     std::vector<LyricLine> out;
 
-    // Attribute values arrive escaped, and a lyric with an apostrophe in it is
-    // not rare — "&#39;" on screen would be worse than the empty line this
-    // replaces.
-    auto xmlUnescape = [](std::string t) {
-        static const std::pair<const char*, const char*> kEnts[] = {
-            {"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""},
-            {"&apos;", "'"}, {"&#39;", "'"}, {"&#x27;", "'"},
-            {"&nbsp;", " "},
-            {"&amp;", "&"},   // last: undoing it first would re-expand the rest
-        };
-        for (const auto& e : kEnts) {
-            size_t pos = 0;
-            const size_t len = strlen(e.first);
-            while ((pos = t.find(e.first, pos)) != std::string::npos) {
-                t.replace(pos, len, e.second);
-                pos += strlen(e.second);
-            }
+    auto appendUtf8 = [](std::string& s, uint32_t cp) {
+        // Lone surrogates are not characters; a document carrying one is
+        // already broken, so it gets the replacement glyph rather than an
+        // encoding that no renderer accepts.
+        if (cp >= 0xD800 && cp <= 0xDFFF) cp = 0xFFFD;
+        if (cp < 0x80) {
+            s += (char)cp;
+        } else if (cp < 0x800) {
+            s += (char)(0xC0 | (cp >> 6));
+            s += (char)(0x80 | (cp & 0x3F));
+        } else if (cp < 0x10000) {
+            s += (char)(0xE0 | (cp >> 12));
+            s += (char)(0x80 | ((cp >> 6) & 0x3F));
+            s += (char)(0x80 | (cp & 0x3F));
+        } else {
+            s += (char)(0xF0 | (cp >> 18));
+            s += (char)(0x80 | ((cp >> 12) & 0x3F));
+            s += (char)(0x80 | ((cp >> 6) & 0x3F));
+            s += (char)(0x80 | (cp & 0x3F));
         }
-        return t;
     };
 
-    auto trim = [](std::string t) {
-        const size_t a = t.find_first_not_of(" \t\r");
-        const size_t b = t.find_last_not_of(" \t\r");
-        return a == std::string::npos ? std::string() : t.substr(a, b - a + 1);
+    // Attribute values arrive escaped, and a lyric with an apostrophe or a
+    // quoted line in it is not rare.
+    //
+    // One left-to-right pass rather than a table swept repeatedly: a table can
+    // only hold the references someone thought of, and Plex's lyricfind
+    // documents write a double quote as "&#34;", which is not a name at all.
+    // Decoding "&#N;" and "&#xN;" by value covers every numeric form instead of
+    // the two that were guessed. A single pass is also what makes "&amp;#34;"
+    // come out as the literal "&#34;" rather than a quote — the "&" it produces
+    // is never looked at again.
+    auto xmlUnescape = [&appendUtf8](const std::string& in) {
+        static const std::pair<const char*, const char*> kEnts[] = {
+            {"lt", "<"}, {"gt", ">"}, {"quot", "\""},
+            {"apos", "'"}, {"nbsp", " "}, {"amp", "&"},
+        };
+        std::string out;
+        out.reserve(in.size());
+        for (size_t i = 0; i < in.size(); i++) {
+            if (in[i] != '&') { out += in[i]; continue; }
+            const size_t semi = in.find(';', i + 1);
+            // A bare "&" is ordinary in a lyric, so a reference that does not
+            // close within a plausible span is text, not a broken entity.
+            if (semi == std::string::npos || semi - i > 10) { out += in[i]; continue; }
+            const std::string ent = in.substr(i + 1, semi - i - 1);
+
+            bool decoded = false;
+            if (ent.size() > 1 && ent[0] == '#') {
+                const bool hex = ent[1] == 'x' || ent[1] == 'X';
+                const char* digits = ent.c_str() + (hex ? 2 : 1);
+                char* end = nullptr;
+                const long cp = std::strtol(digits, &end, hex ? 16 : 10);
+                if (end && *end == '\0' && end != digits && cp > 0 && cp <= 0x10FFFF) {
+                    appendUtf8(out, (uint32_t)cp);
+                    decoded = true;
+                }
+            } else {
+                for (const auto& e : kEnts)
+                    if (ent == e.first) { out += e.second; decoded = true; break; }
+            }
+
+            // Anything unrecognised stays as written. "&notreal;" is more
+            // useful on screen than the nothing that swallowing it would leave.
+            if (!decoded) { out += in[i]; continue; }
+            i = semi;
+        }
+        return out;
+    };
+
+    // Trims, and flattens every run of whitespace to one space.
+    //
+    // The flattening is not cosmetic. A pretty-printed lyrics document puts a
+    // newline and an indent between <Line> and its <Span>, and that whitespace
+    // is character data like any other — it was reaching the label as a leading
+    // blank, and a line split across several spans came out stacked rather than
+    // joined.
+    auto squash = [](const std::string& t) {
+        std::string out;
+        out.reserve(t.size());
+        bool pendingSpace = false;
+        for (const char c : t) {
+            if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v') {
+                pendingSpace = !out.empty();
+                continue;
+            }
+            if (pendingSpace) { out += ' '; pendingSpace = false; }
+            out += c;
+        }
+        return out;
     };
 
     // "[mm:ss.xx]" leading stamps. Returns where the text begins.
@@ -3042,7 +3114,7 @@ std::vector<LyricLine> parseLyricsBody(const std::string& body) {
                     else if (!inTag)   text += c;
                 }
             }
-            text = xmlUnescape(trim(text));
+            text = squash(xmlUnescape(text));
 
             LyricLine l;
             l.timeMs = ms;
@@ -3067,13 +3139,13 @@ std::vector<LyricLine> parseLyricsBody(const std::string& body) {
             if (pending < 0) return;
             LyricLine l;
             l.timeMs = pending;
-            l.text = trim(text);
+            l.text = squash(xmlUnescape(text));
             out.push_back(l);
             pending = -1;
             text.clear();
         };
         while (std::getline(stream, raw)) {
-            const std::string line = trim(raw);
+            const std::string line = squash(raw);
             int ms = 0;
             if (srtStart(line, ms)) { flush(); pending = ms; continue; }
             if (line.empty()) { flush(); continue; }
@@ -3089,7 +3161,7 @@ std::vector<LyricLine> parseLyricsBody(const std::string& body) {
         if (!raw.empty() && raw.back() == '\r') raw.pop_back();
         std::vector<int> stamps;
         const size_t textStart = lrcStamps(raw, stamps);
-        const std::string text = trim(raw.substr(textStart));
+        const std::string text = squash(xmlUnescape(raw.substr(textStart)));
 
         if (stamps.empty()) {
             if (!raw.empty() && raw[0] == '[') continue;   // an LRC metadata tag
