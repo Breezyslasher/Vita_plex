@@ -6184,6 +6184,112 @@ std::string PlexClient::buildPlayQueueDirectoryURI(const std::string& ratingKey)
            kLibraryProviderId + "/library/metadata/" + ratingKey + "/children";
 }
 
+// ── Remote playback ─────────────────────────────────────────────────────────
+
+bool PlexClient::fetchPlayers(std::vector<PlexPlayer>& out) {
+    out.clear();
+    if (m_serverUrl.empty()) return false;
+
+    // /clients answers XML whatever Accept says, so it is parsed as XML rather
+    // than asked for as JSON like the rest of the API.
+    HttpClient client;
+    HttpResponse r = client.get(buildApiUrl("/clients"));
+    if (r.statusCode != 200) {
+        brls::Logger::warning("fetchPlayers: /clients gave {}", r.statusCode);
+        return false;
+    }
+
+    // Each player is one <Server .../> element. Named Server rather than
+    // Client, confusingly, because the element predates the current wording.
+    size_t pos = 0;
+    while ((pos = r.body.find("<Server", pos)) != std::string::npos) {
+        const size_t end = r.body.find('>', pos);
+        if (end == std::string::npos) break;
+        const std::string el = r.body.substr(pos, end - pos);
+
+        PlexPlayer p;
+        p.name                 = extractXmlAttrStr(el, "name");
+        p.machineIdentifier    = extractXmlAttrStr(el, "machineIdentifier");
+        p.product              = extractXmlAttrStr(el, "product");
+        p.host                 = extractXmlAttrStr(el, "host");
+        p.port                 = extractXmlAttr(el, "port");
+        p.protocolCapabilities = extractXmlAttrStr(el, "protocolCapabilities");
+
+        if (!p.machineIdentifier.empty() && p.canPlayback()) {
+            if (p.name.empty()) p.name = p.product.empty() ? p.machineIdentifier : p.product;
+            out.push_back(std::move(p));
+        }
+        pos = end + 1;
+    }
+
+    brls::Logger::info("fetchPlayers: {} player(s) can play back", out.size());
+    return true;
+}
+
+bool PlexClient::playOnPlayer(const PlexPlayer& player, int playQueueID,
+                              const std::string& itemKey, int offsetMs,
+                              const std::string& type) {
+    if (player.machineIdentifier.empty() || playQueueID <= 0) return false;
+    if (m_serverUrl.empty() || m_currentServer.machineIdentifier.empty()) return false;
+
+    // The player is told where to fetch from, so the server's own address has
+    // to be broken back out of the URL this app connects with. It is the
+    // address the player will use, which is why the app's working connection is
+    // the right one to hand over rather than any other the server advertises.
+    std::string proto = "http", address = m_serverUrl;
+    int port = 32400;
+    if (const size_t sep = address.find("://"); sep != std::string::npos) {
+        proto   = address.substr(0, sep);
+        address = address.substr(sep + 3);
+    }
+    while (!address.empty() && address.back() == '/') address.pop_back();
+    if (const size_t colon = address.rfind(':');
+        colon != std::string::npos && address.find('/', colon) == std::string::npos) {
+        port    = std::atoi(address.c_str() + colon + 1);
+        address = address.substr(0, colon);
+    } else {
+        port = (proto == "https") ? 443 : 32400;
+    }
+
+    // commandID must rise across a session: the player uses it to discard a
+    // command that arrives out of order.
+    static int s_commandID = 0;
+    ++s_commandID;
+
+    std::string ep = "/player/playback/playMedia"
+        "?providerIdentifier=com.plexapp.plugins.library"
+        "&machineIdentifier=" + HttpClient::urlEncode(m_currentServer.machineIdentifier) +
+        "&protocol=" + proto +
+        "&address="  + HttpClient::urlEncode(address) +
+        "&port="     + std::to_string(port) +
+        "&key="      + HttpClient::urlEncode(itemKey) +
+        "&offset="   + std::to_string(offsetMs < 0 ? 0 : offsetMs) +
+        "&type="     + type +
+        "&containerKey=" + HttpClient::urlEncode("/playQueues/" + std::to_string(playQueueID) +
+                                     "?window=100&own=1") +
+        "&commandID=" + std::to_string(s_commandID);
+    if (!m_authToken.empty()) ep += "&token=" + HttpClient::urlEncode(m_authToken);
+
+    HttpRequest req;
+    req.url    = buildApiUrl(ep);
+    req.method = "GET";
+    // Which player this is meant for. Without it the server has no idea who to
+    // hand the command to and answers 400.
+    req.headers["X-Plex-Target-Client-Identifier"] = player.machineIdentifier;
+    req.headers["X-Plex-Client-Identifier"]        = PLEX_CLIENT_NAME;
+    req.headers["Accept"] = "application/json";
+
+    HttpClient client;
+    HttpResponse r = client.request(req);
+    if (r.statusCode < 200 || r.statusCode >= 300) {
+        brls::Logger::error("playOnPlayer: {} -> {} ({})", player.name, r.statusCode,
+                            r.body.substr(0, 200));
+        return false;
+    }
+    brls::Logger::info("playOnPlayer: sent play queue {} to {}", playQueueID, player.name);
+    return true;
+}
+
 bool PlexClient::createPlayQueue(const std::string& uri, const std::string& type,
                                   PlayQueueContainer& result,
                                   const std::string& key,

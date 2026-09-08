@@ -16,6 +16,7 @@
 #include "utils/media_keys.hpp"
 #include "utils/pip.h"
 #include "view/video_view.hpp"
+#include "view/livetv_actions.hpp"   // showOptionPicker
 #include "platform/platform.hpp"
 #if defined(__APPLE__)
 // TARGET_OS_IOS, for the Auto branch of useMobileLayout().
@@ -735,6 +736,16 @@ void PlayerActivity::onContentAvailable() {
                 return true;
             });
             queueBtn->addGestureRecognizer(new brls::TapGestureRecognizer(queueBtn));
+        }
+
+        // Queue side-sheet "Play on..." — found by id rather than bound, so a
+        // layout without it simply has no button.
+        if (auto* cast = dynamic_cast<brls::Box*>(getView("player/queue_cast_btn"))) {
+            cast->registerClickAction([this](brls::View*) {
+                showPlayOnPicker();
+                return true;
+            });
+            cast->addGestureRecognizer(new brls::TapGestureRecognizer(cast));
         }
 
         // Queue side-sheet "Clear" control (wired once; lives in the hidden overlay)
@@ -2817,6 +2828,66 @@ void PlayerActivity::reloadLyricsForCurrentTrack() {
             m_lyricsFailed = false;
             buildLyricsRows();
             showLyricsOverlay();   // restarts the sync timer for the new track
+        });
+    });
+}
+
+// Hand what is playing here to another Plex client.
+//
+// It sends the play queue rather than the track: containerKey points the player
+// at the same server-side queue this app is playing, so the whole list and its
+// order go with it, and the two are looking at one object rather than two
+// copies that drift.
+//
+// That is also the requirement — a queue only the app knows about has nothing
+// to point at, so this needs the server-synced queue and says so when there
+// isn't one.
+void PlayerActivity::showPlayOnPicker() {
+    MusicQueue& queue = MusicQueue::getInstance();
+    const int pqID = queue.getPlayQueueID();
+    if (pqID <= 0) {
+        brls::Application::notify("This queue is local to the app; nothing to send");
+        return;
+    }
+    const QueueItem* track = queue.getCurrentTrack();
+    const std::string itemKey = track ? ("/library/metadata/" + track->ratingKey) : std::string();
+    const int offsetMs = m_transcodeBaseOffsetMs
+                       + (int)(MpvPlayer::getInstance().getPosition() * 1000.0);
+
+    brls::Application::notify("Looking for players...");
+    std::weak_ptr<std::atomic<bool>> aliveWeak = m_alive;
+    asyncRun([this, pqID, itemKey, offsetMs, aliveWeak]() {
+        std::vector<PlexClient::PlexPlayer> players;
+        PlexClient::getInstance().fetchPlayers(players);
+
+        brls::sync([this, players, pqID, itemKey, offsetMs, aliveWeak]() {
+            auto alive = aliveWeak.lock();
+            if (!alive || !*alive) return;
+            if (players.empty()) {
+                // /clients lists what has announced itself to this server, so an
+                // empty list is usually "nothing else is running" rather than a
+                // failure — say that rather than "error".
+                brls::Application::notify("No other Plex players found on this server");
+                return;
+            }
+            std::vector<std::string> labels;
+            labels.reserve(players.size());
+            for (const auto& p : players)
+                labels.push_back(p.product.empty() ? p.name : p.name + "  (" + p.product + ")");
+
+            showOptionPicker("Play on", labels, 0,
+                [players, pqID, itemKey, offsetMs](int idx) {
+                    if (idx < 0 || idx >= (int)players.size()) return;
+                    const PlexClient::PlexPlayer picked = players[(size_t)idx];
+                    asyncRun([picked, pqID, itemKey, offsetMs]() {
+                        const bool ok = PlexClient::getInstance()
+                            .playOnPlayer(picked, pqID, itemKey, offsetMs);
+                        brls::sync([picked, ok]() {
+                            brls::Application::notify(ok ? "Playing on " + picked.name
+                                                         : "Could not reach " + picked.name);
+                        });
+                    });
+                });
         });
     });
 }

@@ -108,6 +108,8 @@ private:
     const PlexStream* findSideloadableStream(int trackId) const;
     void loadAndShowLyrics(const PlexStream& stream);
     void openLyrics();   // the lyrics button and a tap on the cover both land here
+    // "Play on..." — hand the current server play queue to another Plex client.
+    void showPlayOnPicker();
     // Refill the open lyrics view for whatever is playing now. Closes it if the
     // new track has none, since an open view with nothing in it says nothing.
     void reloadLyricsForCurrentTrack();
