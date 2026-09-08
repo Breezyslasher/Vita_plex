@@ -365,6 +365,11 @@ set(APP_INCLUDES
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${BOREALIS_LIBRARY}/include
     ${BOREALIS_LIBRARY}/include/borealis/extern
+    # yogacore exports this too, so linking borealis would probably be enough.
+    # Named here because the app now includes <yoga/Yoga.h> directly for
+    # flex-wrap, and a transitive path that happens to work on one of seven
+    # toolchains is not something to find out about from a broken build.
+    ${BOREALIS_LIBRARY}/lib/extern/yoga
 )
 
 # ---------------------------------------------------------------------------

@@ -217,6 +217,12 @@ struct AppSettings {
     TrackDefaultAction trackDefaultAction = TrackDefaultAction::ASK_EACH_TIME;  // Default action for tracks
     LyricsProvider lyricsProvider = LyricsProvider::AUTO;   // which lyrics stream to favour
     LyricsTiming   lyricsTiming   = LyricsTiming::BOTH;     // synced, unsynced, or both
+    // Light each word as it is sung, where the source carries word timing
+    // (Enhanced LRC, or a Plex document with stamped Spans). Off falls back to
+    // lighting the whole line, which is all a plain .lrc can do anyway. It is
+    // a setting because a word-timed line costs one view per word, and a long
+    // song on a handheld is where that shows.
+    bool lyricsWordByWord = true;
     bool backgroundMusic = true;       // Allow leaving player without stopping music
     // Turn shuffle on whenever a new music queue starts. Mainly for remote
     // controllers: the framework MediaSession this app uses has no

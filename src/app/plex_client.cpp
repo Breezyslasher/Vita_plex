@@ -3122,21 +3122,86 @@ std::vector<LyricLine> parseLyricsBody(const std::string& body) {
         return out;
     };
 
+    // "mm:ss.xx" — the inside of a stamp, without its brackets. Same text
+    // whether it arrived in [] as a line stamp or in <> as a word stamp, so
+    // both readers below decide "is this a time?" the same way and neither
+    // mistakes "[ar: artist]" or an "<i>" for one.
+    auto parseTimeTag = [](const std::string& inside, int& outMs) -> bool {
+        const size_t colon = inside.find(':');
+        if (colon == std::string::npos || colon == 0) return false;
+        if (inside.find_first_not_of("0123456789") != colon) return false;
+        const std::string secs = inside.substr(colon + 1);
+        if (secs.empty() || secs.find_first_not_of("0123456789.,") != std::string::npos)
+            return false;
+        // atof wants a point; some writers use a comma for the fraction.
+        std::string dotted = secs;
+        for (char& c : dotted) if (c == ',') c = '.';
+        outMs = std::atoi(inside.substr(0, colon).c_str()) * 60000
+              + (int)(std::atof(dotted.c_str()) * 1000.0);
+        return true;
+    };
+
     // "[mm:ss.xx]" leading stamps. Returns where the text begins.
-    auto lrcStamps = [](const std::string& line, std::vector<int>& outMs) -> size_t {
+    auto lrcStamps = [&parseTimeTag](const std::string& line, std::vector<int>& outMs) -> size_t {
         size_t pos = 0;
         while (pos < line.size() && line[pos] == '[') {
             const size_t close = line.find(']', pos);
             if (close == std::string::npos) break;
-            const std::string inside = line.substr(pos + 1, close - pos - 1);
-            const size_t colon = inside.find(':');
-            if (colon == std::string::npos) break;                       // "[ar: ...]"
-            if (inside.find_first_not_of("0123456789") != colon) break;  // not a time
-            outMs.push_back(std::atoi(inside.substr(0, colon).c_str()) * 60000
-                          + (int)(std::atof(inside.substr(colon + 1).c_str()) * 1000.0));
+            int ms = 0;
+            if (!parseTimeTag(line.substr(pos + 1, close - pos - 1), ms)) break;
+            outMs.push_back(ms);
             pos = close + 1;
         }
         return pos;
+    };
+
+    // Enhanced LRC ("A2") word stamps: the rest of the line reads
+    //
+    //     <00:12.34>I <00:12.61>would <00:12.90>never <00:13.40>
+    //
+    // — a stamp before each word, and often one more at the end marking where
+    // the last word stops. Returns the line with the stamps taken out, and
+    // fills outWords when it found any.
+    //
+    // The strip is not optional. A file like this already displayed its
+    // timestamps as part of the lyric, because nothing here knew what the
+    // angle brackets were.
+    auto lrcWordStamps = [&parseTimeTag, &squash, &xmlUnescape](
+                             const std::string& rest, std::vector<LyricWord>& outWords) {
+        std::string plain;
+        int pendingMs = -1;
+        size_t pos = 0;      // start of the text not yet taken
+        size_t search = 0;   // where to look for the next '<'
+        auto flush = [&](const std::string& raw) {
+            plain += raw;
+            if (pendingMs < 0) return;
+            const std::string word = squash(xmlUnescape(raw));
+            // The trailing stamp has nothing after it; it ends the last word
+            // rather than starting another.
+            if (!word.empty()) outWords.push_back(LyricWord{pendingMs, word});
+            pendingMs = -1;
+        };
+        while (search < rest.size()) {
+            const size_t lt = rest.find('<', search);
+            if (lt == std::string::npos) break;
+            const size_t gt = rest.find('>', lt);
+            if (gt == std::string::npos) break;
+            int ms = 0;
+            if (!parseTimeTag(rest.substr(lt + 1, gt - lt - 1), ms)) {
+                // Not a stamp — "<3" and the like stay in the lyric, so the
+                // search moves on but the text is left for the next flush.
+                search = lt + 1;
+                continue;
+            }
+            flush(rest.substr(pos, lt - pos));
+            pendingMs = ms;
+            pos = search = gt + 1;
+        }
+        flush(rest.substr(pos));
+        // One stamped word is just the line stamp again, and buys nothing but
+        // a pile of extra views.
+        if (outWords.size() < 2) outWords.clear();
+        return plain;
     };
 
     // "00:00:02,499 --> 00:00:06,416". Only the start time matters here: the
@@ -3183,31 +3248,66 @@ std::vector<LyricLine> parseLyricsBody(const std::string& body) {
             // words, which rendered as an invisible row that still seeked when
             // tapped. Both shapes are collected; a document that somehow used
             // both would simply get both, in order.
+            // Each Span is collected with whatever offset it carries, so a
+            // document that stamps its Spans gives word-level timing for free.
+            // Whether Plex's lyricfind documents actually do could not be
+            // confirmed from anything published, so this reads the same two
+            // attribute names the Line above uses and does nothing at all when
+            // they are absent — the line still renders exactly as before.
             const size_t close = body.find("</Line>", tagEnd);
+            std::vector<LyricWord> spans;
             std::string text;
+            auto addSpan = [&](int spanMs, const std::string& raw) {
+                const std::string t = squash(xmlUnescape(raw));
+                if (t.empty()) return;                    // indentation between tags
+                if (!text.empty() && text.back() != ' ') text += ' ';
+                text += raw;
+                spans.push_back(LyricWord{spanMs, t});
+            };
             if (close != std::string::npos) {
-                bool inTag = false;
-                for (size_t i = tagEnd + 1; i < close; i++) {
-                    const char c = body[i];
-                    if (c == '<') {
-                        inTag = true;
-                        // text="..." on this inner tag, if it carries one.
-                        const size_t tagStop = body.find('>', i);
-                        if (tagStop != std::string::npos && tagStop < close) {
-                            const std::string inner = body.substr(i, tagStop - i);
-                            const size_t at = inner.find("text=\"");
-                            if (at != std::string::npos) {
-                                const size_t valStart = at + 6;
-                                const size_t valEnd = inner.find('"', valStart);
-                                if (valEnd != std::string::npos) {
-                                    if (!text.empty() && text.back() != ' ') text += ' ';
-                                    text += inner.substr(valStart, valEnd - valStart);
-                                }
-                            }
-                        }
+                int pendingMs = -1;   // an opening tag's offset, for <Span>text</Span>
+                size_t i = tagEnd + 1;
+                while (i < close) {
+                    if (body[i] != '<') {
+                        const size_t nextTag = std::min(body.find('<', i), close);
+                        addSpan(pendingMs, body.substr(i, nextTag - i));
+                        pendingMs = -1;
+                        i = nextTag;
+                        continue;
                     }
-                    else if (c == '>') inTag = false;
-                    else if (!inTag)   text += c;
+                    const size_t tagStop = body.find('>', i);
+                    if (tagStop == std::string::npos || tagStop >= close) break;
+                    const std::string inner = body.substr(i, tagStop - i);
+
+                    int spanMs = -1;
+                    for (const char* attr : {"startOffset=\"", "startTimeOffset=\""}) {
+                        const size_t at = inner.find(attr);
+                        if (at == std::string::npos) continue;
+                        spanMs = std::atoi(inner.c_str() + at + strlen(attr));
+                        break;
+                    }
+
+                    // The words live in one of two places depending on who
+                    // wrote the document:
+                    //
+                    //   <Line startOffset="1000"><Span text="the words"/></Line>
+                    //   <Line startOffset="1000"><Span>the words</Span></Line>
+                    //
+                    // Plex's lyricfind documents use the first — the text is an
+                    // attribute and there is no character data at all. Reading
+                    // only between the tags produced a line with a correct
+                    // timestamp and no words, which rendered as an invisible row
+                    // that still seeked when tapped.
+                    const size_t at = inner.find("text=\"");
+                    if (at != std::string::npos) {
+                        const size_t valStart = at + 6;
+                        const size_t valEnd = inner.find('"', valStart);
+                        if (valEnd != std::string::npos)
+                            addSpan(spanMs, inner.substr(valStart, valEnd - valStart));
+                    } else {
+                        pendingMs = spanMs;   // text follows this tag
+                    }
+                    i = tagStop + 1;
                 }
             }
             text = squash(xmlUnescape(text));
@@ -3215,6 +3315,12 @@ std::vector<LyricLine> parseLyricsBody(const std::string& body) {
             LyricLine l;
             l.timeMs = ms;
             l.text = text;
+            // Only when every span is stamped: a run where some are not would
+            // stall the highlight partway through the line, which reads as a
+            // bug rather than as a line without word timing.
+            bool allStamped = spans.size() >= 2;
+            for (const auto& s : spans) if (s.timeMs < 0) allStamped = false;
+            if (allStamped) l.words = std::move(spans);
             out.push_back(std::move(l));
 
             pos = (close == std::string::npos) ? tagEnd : close + 7;
@@ -3257,7 +3363,9 @@ std::vector<LyricLine> parseLyricsBody(const std::string& body) {
         if (!raw.empty() && raw.back() == '\r') raw.pop_back();
         std::vector<int> stamps;
         const size_t textStart = lrcStamps(raw, stamps);
-        const std::string text = squash(xmlUnescape(raw.substr(textStart)));
+        std::vector<LyricWord> words;
+        const std::string text =
+            squash(xmlUnescape(lrcWordStamps(raw.substr(textStart), words)));
 
         if (stamps.empty()) {
             if (!raw.empty() && raw[0] == '[') continue;   // an LRC metadata tag
@@ -3265,14 +3373,21 @@ std::vector<LyricLine> parseLyricsBody(const std::string& body) {
             LyricLine l;
             l.timeMs = -1;
             l.text = text;
+            // Word stamps without a line stamp are half a format; the line has
+            // nowhere to be placed, so its words have nothing to run against.
             out.push_back(std::move(l));
         } else {
             // One source line can carry several stamps for a repeated phrase.
+            // The words belong to the first: they are absolute times, so
+            // replaying them against a later stamp would run the highlight
+            // backwards.
+            bool first = true;
             for (int ms : stamps) {
                 LyricLine l;
                 l.timeMs = ms;
                 l.text = text;
-                out.push_back(l);
+                if (first) { l.words = words; first = false; }
+                out.push_back(std::move(l));
             }
         }
     }

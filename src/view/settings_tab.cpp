@@ -987,6 +987,21 @@ brls::Box* SettingsTab::createMusicSection() {
             app.saveSettings();
         }));
 
+    // Light each word as it is sung, where the file carries word timing.
+    // Nothing to set up: a track either has it or does not, and one that does
+    // not still lights whole lines. A setting because a word-timed line is one
+    // view per word, which is a real cost on a handheld.
+    {
+        auto* wordByWord = new brls::BooleanCell();
+        wordByWord->init("Word-by-Word Lyrics", settings.lyricsWordByWord,
+            [](bool value) {
+                Application& app = Application::getInstance();
+                app.getSettings().lyricsWordByWord = value;
+                app.saveSettings();
+            });
+        box->addView(wordByWord);
+    }
+
     // Default track action selector
     m_trackActionSelector = makePickerCell("Default Track Action",
         {"Play Next", "Play Now (Replace Current)", "Add to Bottom of Queue", "Play Now (Clear Queue)", "Ask Each Time"},
