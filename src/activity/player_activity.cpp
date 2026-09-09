@@ -3267,6 +3267,12 @@ void PlayerActivity::syncLyricsToPosition() {
     const int prev = m_lyricsIndex;
     m_lyricsIndex = idx;
     m_lyricWordIndex = -1;      // the new line starts with none of it sung
+    // setFontSize invalidates, and invalidate() relayouts the whole tree from
+    // the root — so a word row would pay one full pass per word. Colour is a
+    // plain assignment and costs nothing, which is why only size is guarded.
+    auto resize = [](brls::Label* l, float size) {
+        if (l->getFontSize() != size) l->setFontSize(size);
+    };
     const float restSize = m_mobileLayout ? ui(kLyricRest) : 17.0f;
     const NVGcolor sung = nvgRGB(0x5C, 0x5C, 0x63);
     const NVGcolor toCome = nvgRGB(0x8A, 0x8A, 0x90);
@@ -3278,11 +3284,11 @@ void PlayerActivity::syncLyricsToPosition() {
         // A word row has no label of its own; its words carry the whole line's
         // look, and a line left behind loses its per-word colouring with it.
         for (brls::Label* w : m_lyricWordRows[(size_t)i]) {
-            w->setFontSize(restSize);
+            resize(w, restSize);
             w->setTextColor(c);
         }
         if (brls::Label* r = m_lyricLabels[(size_t)i]) {
-            r->setFontSize(restSize);
+            resize(r, restSize);
             r->setTextColor(c);
         }
     }
@@ -3292,21 +3298,18 @@ void PlayerActivity::syncLyricsToPosition() {
     if (brls::Label* r = m_lyricLabels[(size_t)idx]) {
         if (m_mobileLayout) {
             r->setTextColor(nvgRGB(0xFF, 0xC2, 0x3D));
-            r->setFontSize(ui(kLyricActive));
+            resize(r, ui(kLyricActive));
             r->setLineHeight(1.28f);
         } else {
             r->setTextColor(nvgRGB(0xE5, 0xA0, 0x0D));
-            r->setFontSize(19.0f);
+            resize(r, 19.0f);
         }
     } else {
         // Word row: it grows to the active size as a whole, and the words then
         // light one at a time within it. Sizing here rather than in
         // syncLyricWords keeps the row's height settled before the scroll
         // anchor below measures it.
-        for (brls::Label* w : m_lyricWordRows[(size_t)idx]) {
-            w->setFontSize(ui(kLyricActive));
-            w->setLineHeight(1.28f);
-        }
+        for (brls::Label* w : m_lyricWordRows[(size_t)idx]) resize(w, ui(kLyricActive));
         syncLyricWords(posMs);
     }
     // getY() is absolute, so subtract the content origin. The active line sits
