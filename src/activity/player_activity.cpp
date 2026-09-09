@@ -3097,18 +3097,39 @@ void PlayerActivity::buildLyricsRows() {
             box->setMarginBottom(ui(5));
             box->setMinHeight(ui(40));
             wordLabels.reserve(line.words.size());
-            for (size_t w = 0; w < line.words.size(); w++) {
-                auto* wl = new brls::Label();
-                wl->setText(line.words[w].text);
-                styleWord(wl);
-                // The space between words. It lives on the label rather than
-                // in the text so a wrap never leaves a stray space hanging at
-                // the end of a line — and it is skipped where the source
-                // stamped inside a word, or "Tumble" would read "Tum ble".
-                if (w + 1 < line.words.size() && line.words[w].spaceAfter)
-                    wl->setMarginRight(ui(6));
-                box->addView(wl);
-                wordLabels.push_back(wl);
+            // Syllables of one word go in a nested row of their own.
+            //
+            // The wrap happens between the outer row's items, so whatever is
+            // one item cannot be split. Left flat, a stamp inside a word let
+            // the line break there: "ne" ending one line and "ver" starting
+            // the next, which reads as a typo rather than as hyphenation.
+            // A word written as a single stamp is added straight to the row,
+            // so the common case gains no views at all.
+            for (size_t w = 0; w < line.words.size(); ) {
+                size_t end = w;                       // last piece of this word
+                while (end + 1 < line.words.size() && !line.words[end].spaceAfter) end++;
+
+                brls::Box* group = nullptr;
+                if (end > w) {
+                    group = new brls::Box(brls::Axis::ROW);   // no wrap: yoga's default
+                    group->setAlignItems(brls::AlignItems::FLEX_END);
+                    group->setShrink(0.0f);                   // never squeeze a word
+                    box->addView(group);
+                }
+                for (size_t k = w; k <= end; k++) {
+                    auto* wl = new brls::Label();
+                    wl->setText(line.words[k].text);
+                    styleWord(wl);
+                    (group ? group : box)->addView(wl);
+                    wordLabels.push_back(wl);
+                }
+                // The gap between words lives on the view rather than in the
+                // text, so a wrap never leaves a space hanging at a line end.
+                if (end + 1 < line.words.size() && line.words[end].spaceAfter) {
+                    brls::View* last = group ? (brls::View*)group : (brls::View*)wordLabels.back();
+                    last->setMarginRight(ui(6));
+                }
+                w = end + 1;
             }
             row = box;
         } else {

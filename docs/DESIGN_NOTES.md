@@ -517,9 +517,22 @@ are affected; without this the track is unreadable rather than subtly off.
 The invariant to hold on to, and what the tests check: joining a line's words,
 with a space exactly where `spaceAfter` says, reproduces the line's text.
 
-One consequence left alone: nothing stops a wrap falling between two halves of
-a word. Yoga cannot be told to keep two children together, and a break there
-reads like hyphenation, so it is not worth a custom line-breaker.
+This has a second consequence, and the first attempt got it wrong by leaving
+it alone. With every piece a direct child of the wrapping row, the wrap can
+fall *between* two halves of a word — "ne" ending one line and "ver" starting
+the next. That does not read as hyphenation, it reads as a typo, and on a
+syllable-timed track it happens on most lines rather than rarely.
+
+Yoga cannot be told to keep two children together, but it does not need to be:
+a wrap falls between the row's *items*, so anything that is one item cannot be
+split. Syllables of one word therefore go in a nested non-wrapping row, and
+that group is the item the outer row sees. A word written as a single stamp is
+added straight to the row, so the ordinary case gains no views at all — across
+14 sampled files only one stamps inside words, and it accounts for every one
+of the 68 group boxes the corpus produces.
+
+The label vector stays flat and parallel to `line.words` whichever shape the
+tree takes, so the highlight is indifferent to the grouping.
 
 Lines whose words run past the next line's stamp are common — 47 of 123 in one
 sample, two singers at once. Only one line is active at a time, so the tail of
