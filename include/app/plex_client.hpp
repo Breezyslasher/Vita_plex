@@ -305,10 +305,17 @@ struct PlaylistItem {
 // Stream info from Plex metadata (audio/video/subtitle streams within a Part)
 // One line of a track's lyrics. timeMs is -1 for an unsynced file (a plain .txt
 // stream), in which case the lines are still in order but carry no timing.
-// One word (or syllable) of a line, with the moment it is sung.
+// One word — or syllable — of a line, with the moment it is sung.
+//
+// Syllable is not a figure of speech: files stamp inside a word, writing
+// "<00:09.93>Tum<00:10.18>ble" so the highlight can cross it as it is sung.
+// The two halves must still render as "Tumble", so each piece records whether
+// a space actually separated it from the next. Defaults to true, which is the
+// plain word-per-stamp case.
 struct LyricWord {
     int timeMs = -1;
     std::string text;
+    bool spaceAfter = true;
 };
 
 struct LyricLine {

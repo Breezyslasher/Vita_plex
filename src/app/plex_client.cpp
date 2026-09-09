@@ -3174,11 +3174,26 @@ std::vector<LyricLine> parseLyricsBody(const std::string& body) {
         size_t search = 0;   // where to look for the next '<'
         auto flush = [&](const std::string& raw) {
             plain += raw;
-            if (pendingMs < 0) return;
+            // Whether a space actually separated this piece from the next. A
+            // file that stamps inside a word writes "Tum" then "ble ", and
+            // rendering those with a gap between them spells "Tum ble".
+            const bool spaceAfter = !raw.empty() &&
+                (raw.back() == ' '  || raw.back() == '\t' ||
+                 raw.back() == '\r' || raw.back() == '\n');
+            if (pendingMs < 0) {
+                // Whitespace outside any stamp still separates what surrounds
+                // it, so it belongs to the piece before.
+                if (spaceAfter && !outWords.empty()) outWords.back().spaceAfter = true;
+                return;
+            }
             const std::string word = squash(xmlUnescape(raw));
-            // The trailing stamp has nothing after it; it ends the last word
-            // rather than starting another.
-            if (!word.empty()) outWords.push_back(LyricWord{pendingMs, word});
+            if (!word.empty()) {
+                outWords.push_back(LyricWord{pendingMs, word, spaceAfter});
+            } else if (spaceAfter && !outWords.empty()) {
+                // A stamp with only whitespace after it: the trailing stamp
+                // that ends the last word rather than starting another.
+                outWords.back().spaceAfter = true;
+            }
             pendingMs = -1;
         };
         while (search < rest.size()) {
