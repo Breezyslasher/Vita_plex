@@ -223,6 +223,17 @@ struct AppSettings {
     // a setting because a word-timed line costs one view per word, and a long
     // song on a handheld is where that shows.
     bool lyricsWordByWord = true;
+
+    // ── Remote control ────────────────────────────────────────────────────
+    // Let another Plex app drive playback here — the phone app, Plexamp, Plex
+    // Web. On by default, which is what every other Plex client does and what
+    // makes the app appear in a player list without being told to.
+    bool remoteControlEnabled = true;
+    // What a controller calls this player. Empty means "VitaPlex (Device)".
+    std::string remoteControlName;
+    // Stable per install, made on first use. A build-constant identifier would
+    // make two installs on one network indistinguishable to a server.
+    std::string clientUuid;
     bool backgroundMusic = true;       // Allow leaving player without stopping music
     // Turn shuffle on whenever a new music queue starts. Mainly for remote
     // controllers: the framework MediaSession this app uses has no
