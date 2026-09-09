@@ -429,7 +429,29 @@ boundary returns having touched nothing, and the faster rate is never paid by a
 track without word timing.
 
 It is a setting (`lyricsWordByWord`, on by default) because a word-timed line
-costs one view per word, and a long song on a handheld is where that shows.
+costs one view per word. A real file — Galway Girl, 50 lines — is 499 labels
+where it used to be 50.
+
+Two things keep that affordable, and both are worth knowing before anyone
+moves this code:
+
+`useMobileLayout()` is false on PSV, PS4, Switch and desktop, so word rows are
+only ever built on a phone. The handhelds keep the classic sheet and pay
+nothing at all.
+
+`Box::draw` culls only leaf children — "nested boxes will do that check
+themselves" — so a row that is a Box no longer gets skipped wholesale when it
+is offscreen; it is descended into, and its word labels are culled one by one
+instead. The text drawing is still skipped, which is the expensive part.
+
+The one thing that would hurt is resizing. `Label::setFontSize` calls
+`invalidate()`, which walks to the root and relayouts the entire tree, so a
+row changing size naively costs one full pass **per word**. Sizes are
+therefore only written when they actually change, and `setLineHeight` is not
+set on word labels at all — the flex row does the wrapping, so a one-word
+label's line height changes nothing. Colour is a plain member assignment with
+no invalidate, which is why the per-tick word highlight is free and only the
+line change touches layout.
 
 ---
 
