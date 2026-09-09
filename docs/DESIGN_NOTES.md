@@ -422,6 +422,38 @@ Sung words hold the highlight rather than dimming behind the cursor: a line is
 read as a whole, and one lit word between two greys is harder to follow than a
 line filling up.
 
+That choice turns out to matter for more than looks. Checked against 13 real
+files (1,327 lines, 9,656 words), one of which was picked as a negative control
+because its word timing runs backwards mid-line. It does — 20 lines of it — and
+the cause is not corruption:
+
+```
+[00:09.96]<00:09.96>Ellen <00:10.67>Pope <00:09.96>(Huh)
+```
+
+The background vocal is sung *with* the line, not after "Pope", and Enhanced
+LRC has no way to write "at the same time as", so the writer put the real time
+in. A renderer that moves a single cursor jumps backwards here. A renderer that
+fills a line up cannot: the lit set is a prefix, and a prefix only grows. Walked
+at the real 80ms tick across all 20 lines, the highlight never regresses once —
+`(Huh)` simply lights with "Pope" instead of before it.
+
+So "it looks fine on the broken file" is not evidence the word tags are being
+ignored, which is the obvious reading. The tags are parsed; this shape is
+degrading gracefully.
+
+Words are kept in the order written, never sorted. Sorting would silently
+invent a performance the file does not describe.
+
+Lines whose words run past the next line's stamp are common — 47 of 123 in one
+sample, two singers at once. Only one line is active at a time, so the tail of
+an overlapping line greys while it is still being sung. That is inherent to a
+single-active-line view and is what every mainstream lyrics pane does.
+
+A one-word line ("(What?)", "(Yeah)", "Darkchild") carries no word timing by
+the two-word rule and falls back to lighting whole. Real files are full of
+them: 29 of 170 lines in one sample.
+
 The sync timer runs at 80ms while any line is word-timed, against 250ms
 otherwise. A line lasts seconds and 250ms sits comfortably inside that; words
 arrive several a second and would visibly lag. A tick that crosses no word
@@ -429,8 +461,11 @@ boundary returns having touched nothing, and the faster rate is never paid by a
 track without word timing.
 
 It is a setting (`lyricsWordByWord`, on by default) because a word-timed line
-costs one view per word. A real file — Galway Girl, 50 lines — is 499 labels
-where it used to be 50.
+costs one view per word. Galway Girl, 50 lines, is 499 labels where it used to
+be 50; the worst of the sampled files is 196 lines and **2,212 labels**. That
+number is the reason the setting exists, and the reason to reach for a single
+custom view per line — one leaf that draws its own words with nanovg — if a
+dense track ever hitches. Nothing here has been profiled on a device.
 
 Two things keep that affordable, and both are worth knowing before anyone
 moves this code:
