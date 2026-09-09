@@ -2969,8 +2969,10 @@ void PlayerActivity::buildLyricsRows() {
                 styleWord(wl);
                 // The space between words. It lives on the label rather than
                 // in the text so a wrap never leaves a stray space hanging at
-                // the end of a line.
-                if (w + 1 < line.words.size()) wl->setMarginRight(ui(6));
+                // the end of a line — and it is skipped where the source
+                // stamped inside a word, or "Tumble" would read "Tum ble".
+                if (w + 1 < line.words.size() && line.words[w].spaceAfter)
+                    wl->setMarginRight(ui(6));
                 box->addView(wl);
                 wordLabels.push_back(wl);
             }

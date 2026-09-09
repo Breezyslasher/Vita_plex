@@ -445,6 +445,28 @@ degrading gracefully.
 Words are kept in the order written, never sorted. Sorting would silently
 invent a performance the file does not describe.
 
+**A stamp can land inside a word**, and this is common enough to be the first
+thing to get wrong:
+
+```
+[00:09.93]<00:09.93>Tum<00:10.18>ble <00:10.32>out <00:10.50>of <00:10.64>bed
+```
+
+"Tum" and "ble" are separate stamps with no space between them, so the
+highlight can cross a long syllable as it is sung. The line's own text comes
+out right either way — it is the raw run of characters — but the pieces are
+what get drawn, and drawing them evenly spaced spells "Tum ble". So each piece
+records whether whitespace actually followed it (`LyricWord::spaceAfter`), and
+the row's gap is applied only where it did. 34 of 40 lines in one sampled file
+are affected; without this the track is unreadable rather than subtly off.
+
+The invariant to hold on to, and what the tests check: joining a line's words,
+with a space exactly where `spaceAfter` says, reproduces the line's text.
+
+One consequence left alone: nothing stops a wrap falling between two halves of
+a word. Yoga cannot be told to keep two children together, and a break there
+reads like hyphenation, so it is not worth a custom line-breaker.
+
 Lines whose words run past the next line's stamp are common — 47 of 123 in one
 sample, two singers at once. Only one line is active at a time, so the tail of
 an overlapping line greys while it is still being sung. That is inherent to a
