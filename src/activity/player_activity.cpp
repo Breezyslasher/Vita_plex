@@ -225,17 +225,10 @@ bool PlayerActivity::useMobileLayout() const {
         case 2: return true;    // Mobile, everywhere — including handheld and TV
         default: break;         // Auto
     }
-    // Auto: big-art suits phone-shaped screens. Width, not platform, so tablets and resized windows fit too.
-#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IOS)
-    // platform::viewport* is what the rest of the player sizes from, and it is defined on every port.
-    const float vw = platform::viewportWidth();
-    const float vh = platform::viewportHeight();
-    if (vw <= 0.0f || vh <= 0.0f) return false;   // unknown: leave it classic
-    if (vh > vw) return true;                     // portrait phone/tablet
-    return vw < 600.0f;
-#else
-    return false;   // PSV / PS4 / Switch / desktop keep the classic player
-#endif
+    // Auto: big-art suits phone-shaped screens. Width, not platform, so tablets
+    // and resized windows fit too. The screen test itself lives in platform,
+    // because the dialogs need the same answer and a second copy would drift.
+    return platform::isPhoneScreen();
 }
 
 // The landscape OSD over video. Separate from useMobileLayout(): wanting one design says nothing about the other.

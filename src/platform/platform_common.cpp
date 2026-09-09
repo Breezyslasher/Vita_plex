@@ -12,6 +12,10 @@
 
 #include <borealis.hpp>
 
+#if defined(__APPLE__)
+#include <TargetConditionals.h>
+#endif
+
 #include <vector>
 
 namespace vitaplex {
@@ -31,6 +35,24 @@ float viewportWidth() {
 
 float viewportHeight() {
     return brls::Application::contentHeight;
+}
+
+bool isPhoneScreen() {
+#if defined(__ANDROID__) || (defined(__APPLE__) && TARGET_OS_IOS)
+    const float vw = viewportWidth();
+    const float vh = viewportHeight();
+    if (vw <= 0.0f || vh <= 0.0f) return false;   // unknown: assume not
+    if (vh > vw) return true;                     // portrait phone or tablet
+    return vw < 600.0f;                           // short-edge handset, landscape
+#else
+    return false;   // PSV / PS4 / Switch / desktop
+#endif
+}
+
+float uiScale() {
+    // The mobile designs are 412 units wide against a 1280-unit viewport.
+    // Anything drawn at handset scale multiplies by this to land right.
+    return isPhoneScreen() ? (1280.0f / 412.0f) : 1.0f;
 }
 
 // Orientation-change dispatch. We register a single brls window-size

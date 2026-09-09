@@ -174,6 +174,30 @@ float viewportWidth();
 float viewportHeight();
 
 /**
+ * True on a phone-shaped screen: the touch ports, when the viewport is
+ * portrait or its long edge is short enough to be a handset.
+ *
+ * This is the platform half of the player's mobile-layout decision, split
+ * out because dialogs need the same answer and had been drawn at desktop
+ * metrics on a phone — a 320-unit panel on a 1280-unit viewport, a quarter
+ * of the width, next to controls sized three times larger.
+ *
+ * It deliberately says nothing about *which* layout a view should use:
+ * PlayerActivity still weighs its own setting and mode first and only
+ * falls through to this.
+ */
+bool  isPhoneScreen();
+
+/**
+ * How much to multiply a design unit by on a phone, 1.0 everywhere else.
+ *
+ * The mobile designs are drawn 412 units wide and borealis' logical
+ * viewport is 1280, so anything authored at handset scale has to be
+ * multiplied to land at the right size.
+ */
+float uiScale();
+
+/**
  * Subscribe to viewport-orientation changes. Cb fires whenever
  * isPortrait() flips (NOT on every resize tick — just the orientation
  * boundary), so consumers can re-apply layout without thrash. The
