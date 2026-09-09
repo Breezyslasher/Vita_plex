@@ -422,9 +422,9 @@ Sung words hold the highlight rather than dimming behind the cursor: a line is
 read as a whole, and one lit word between two greys is harder to follow than a
 line filling up.
 
-That choice turns out to matter for more than looks. Checked against 13 real
-files (1,327 lines, 9,656 words), one of which was picked as a negative control
-because its word timing runs backwards mid-line. It does — 20 lines of it — and
+That choice turns out to matter for more than looks. Checked against a 4,299-file
+library (227,425 lines, 395,685 words), including a file picked as a negative
+control because its word timing runs backwards mid-line. It does — 20 lines of it — and
 the cause is not corruption:
 
 ```
@@ -463,6 +463,10 @@ are affected; without this the track is unreadable rather than subtly off.
 The invariant to hold on to, and what the tests check: joining a line's words,
 with a space exactly where `spaceAfter` says, reproduces the line's text.
 
+How common this is decides whether it is a nicety or the whole feature. Across
+a 4,299-file library: 1,171 files carry word timing, and **789 of them — two
+thirds — stamp inside words**. It is not an edge case.
+
 This has a second consequence, and the first attempt got it wrong by leaving
 it alone. With every piece a direct child of the wrapping row, the wrap can
 fall *between* two halves of a word — "ne" ending one line and "ver" starting
@@ -488,6 +492,24 @@ single-active-line view and is what every mainstream lyrics pane does.
 A one-word line ("(What?)", "(Yeah)", "Darkchild") carries no word timing by
 the two-word rule and falls back to lighting whole. Real files are full of
 them: 29 of 170 lines in one sample.
+
+What the library says about the rest of the format, so nobody re-derives it:
+every one of the 4,299 files is valid UTF-8, none carry a BOM, six use CRLF.
+No angle-bracket tag anywhere is anything but a time — there is no `<i>`/`<b>`
+markup to strip. Every line carrying word tags also carries a line stamp. The
+widest line is 29 stamps and the longest file 334 lines, which bounds a row and
+a screen respectively.
+
+Nine lines pair a stamp with a speaker cue in its own brackets —
+`[00:00.19][Missy Elliott:]`. The second bracket is not a time, so the stamp
+scan stops there and the cue survives as the line's text; only a genuine `[ar:
+…]`-style tag is dropped. There are no genuinely repeated time stamps in the
+whole library, so the rule that gives the words to the first one is untested by
+real data and kept as insurance.
+
+Two lines are lost, both `[00:49:00]` — a colon where the fraction separator
+should be. Both are empty markers, so nothing readable goes missing, and
+accepting a second colon would collide with `[hh:mm:ss]`. Left alone.
 
 The sync timer runs at 80ms while any line is word-timed, against 250ms
 otherwise. A line lasts seconds and 250ms sits comfortably inside that; words
