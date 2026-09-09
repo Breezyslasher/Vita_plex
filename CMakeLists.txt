@@ -286,6 +286,8 @@ set(APP_SOURCES
     src/utils/http_client.cpp
     src/utils/http_cache.cpp
     src/utils/https_proxy.cpp
+    src/utils/remote_control.cpp
+    src/utils/remote_control_protocol.cpp
     src/utils/image_loader.cpp
     src/utils/jwt_auth.cpp
     src/utils/update_verify.cpp

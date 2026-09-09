@@ -11,6 +11,7 @@
  */
 
 #include "view/settings_tab.hpp"
+#include "utils/remote_control.hpp"
 #include "view/livetv_actions.hpp"
 #include "utils/app_update.hpp"
 #include "utils/shell_integration.hpp"
@@ -1137,6 +1138,29 @@ brls::Box* SettingsTab::createNetworkSection() {
             onConnectionTimeoutChanged(index);
         });
     box->addView(m_connectionTimeoutSelector);
+
+    // Being controlled by another Plex app. On by default, which is what
+    // every other Plex client does — a player nobody can see is a player
+    // nobody uses — and off is one switch away.
+    if (RemoteControlServer::isSupported()) {
+        auto* remoteToggle = new brls::BooleanCell();
+        remoteToggle->init("Allow Remote Control", settings.remoteControlEnabled,
+            [](bool value) {
+                Application& app = Application::getInstance();
+                app.getSettings().remoteControlEnabled = value;
+                app.saveSettings();
+                // Takes effect now rather than at the next launch: the switch
+                // is the whole interaction, so it has to mean something.
+                RemoteControlServer::getInstance().applySetting();
+            });
+        box->addView(remoteToggle);
+
+        // What a controller lists this player as.
+        auto* nameCell = new brls::DetailCell();
+        nameCell->setText("Player Name");
+        nameCell->setDetailText(RemoteControlServer::deviceName());
+        box->addView(nameCell);
+    }
 
     // In-app updates: manual check now, plus the startup check toggle.
     auto* checkUpdatesCell = new brls::DetailCell();

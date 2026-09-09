@@ -3,6 +3,7 @@
  */
 
 #include "app/application.hpp"
+#include "utils/remote_control.hpp"
 #include "app/plex_client.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/plex_palette.hpp"
@@ -120,6 +121,11 @@ void Application::run() {
         pushLoginActivity();
     }
 
+    // Answer a Plex controller, if the setting says so. After the session is
+    // up: the identity it advertises includes a name the user may have set,
+    // and there is nothing to control before a server is connected anyway.
+    RemoteControlServer::getInstance().applySetting();
+
     // Main loop handled by Borealis
     while (brls::Application::mainLoop()) {
         // Application keeps running
@@ -127,6 +133,9 @@ void Application::run() {
 }
 
 void Application::shutdown() {
+    // Before saveSettings: stopping joins the socket threads, and they read
+    // settings while they run.
+    RemoteControlServer::getInstance().stop();
     saveSettings();
     m_initialized = false;
     brls::Logger::info("VitaPlex shutting down");
@@ -587,6 +596,9 @@ bool Application::loadSettings() {
         m_settings.lyricsProvider = static_cast<LyricsProvider>(lyricsProv);
 
     m_settings.lyricsWordByWord = extractBool("lyricsWordByWord", true);
+    m_settings.remoteControlEnabled = extractBool("remoteControlEnabled", true);
+    m_settings.remoteControlName = extractString("remoteControlName");
+    m_settings.clientUuid = extractString("clientUuid");
     int lyricsTim = extractInt("lyricsTiming");
     if (lyricsTim >= 0 && lyricsTim <= 2)
         m_settings.lyricsTiming = static_cast<LyricsTiming>(lyricsTim);
@@ -746,6 +758,9 @@ bool Application::saveSettings() {
     json += "  \"lyricsProvider\": " + std::to_string(static_cast<int>(m_settings.lyricsProvider)) + ",\n";
     json += "  \"lyricsTiming\": " + std::to_string(static_cast<int>(m_settings.lyricsTiming)) + ",\n";
     json += "  \"lyricsWordByWord\": " + b(m_settings.lyricsWordByWord) + ",\n";
+    json += "  \"remoteControlEnabled\": " + b(m_settings.remoteControlEnabled) + ",\n";
+    json += "  \"remoteControlName\": \"" + esc(m_settings.remoteControlName) + "\",\n";
+    json += "  \"clientUuid\": \"" + esc(m_settings.clientUuid) + "\",\n";
     json += "  \"audioPassthrough\": " + b(m_settings.audioPassthrough) + ",\n";
     json += "  \"backgroundMusic\": " + b(m_settings.backgroundMusic) + ",\n";
     json += "  \"musicShuffleDefault\": " + b(m_settings.musicShuffleDefault) + ",\n";

@@ -420,6 +420,58 @@ mobile video OSD. All three are hidden unless there is something a remote player
 could fetch — a file opened straight off disk has no ratingKey, and Live TV is
 the case below.
 
+### Being controlled by another Plex app
+
+The other direction from "Play on...". Two pieces have to exist, and neither
+is documented by Plex; the shapes below come from python-plexapi's own GDM
+module, which records exactly what it reads back from a real player.
+
+**Discovery.** A controller finds players over GDM. A player binds UDP
+**:32412**, joins **239.0.0.250**, and answers an `M-SEARCH * HTTP/1.0` with
+`HTTP/1.0 200 OK` and a header block. The reply has to leave *from* :32412 —
+replying from an ephemeral port is the classic way to be invisible to a
+controller that checks the source. It also announces itself unprompted with
+`HELLO * HTTP/1.0` to **239.0.0.250:32413**, so a controller that started
+listening later still finds it. `Content-Type: plex/media-player` is what
+separates a player from a server on the same protocol.
+
+**Control.** The controller then talks HTTP to the player on **:32500**:
+`/resources` for identity, `/player/timeline/poll` for state, and
+`/player/playback/*` for commands. `X-Plex-Target-Client-Identifier` names
+the intended player, and a command carrying someone else's is refused rather
+than obeyed. `commandID` rises per command; one arriving lower than the last
+is dropped, or a retransmit would undo something the user has since changed.
+
+A timeline answers with **three** `<Timeline>` elements, music/video/photo,
+with only the live one filled in. Sending just the active one leaves a
+controller unable to tell "not playing video" from "no answer".
+
+`Protocol-Capabilities` deliberately omits `navigation`: this app has no menu
+a controller could drive, and claiming it makes those buttons appear and do
+nothing.
+
+The identifier cannot be `PLEX_CLIENT_ID`. That is a build constant, so every
+install would claim one identity and a server could not tell two of them
+apart; one is made on first use and kept.
+
+**What this does not do.** A subscription (`/player/timeline/subscribe`) is
+answered but not serviced as a push — this player is polled. Saying yes to a
+subscription it will not honour would leave a controller waiting for updates
+that never arrive.
+
+**Where it runs.** PSV, PS4 and Switch are excluded outright: their socket
+layers do not offer the multicast join and reusable bind this needs, and a
+half-working discovery is worse than an honest "not on this platform". iOS
+refuses the multicast join without Apple's networking entitlement, so it is
+reachable but not discoverable — the join failing is logged and not fatal,
+since a broadcast M-SEARCH still arrives.
+
+The socket threads never ask the UI thread for state. A snapshot is published
+once a second from the UI side and read under a mutex; blocking a poll on the
+UI thread would stall it behind whatever the player is doing and deadlock
+outright if the UI thread were itself waiting. A second of staleness is what
+Plex's own timeline reporting carries anyway.
+
 ### Live TV cannot be sent, and why
 
 Tuning goes through `POST /livetv/dvrs/{id}/channels/{ch}/tune`, which opens a
