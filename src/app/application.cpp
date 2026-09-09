@@ -586,6 +586,7 @@ bool Application::loadSettings() {
     if (lyricsProv >= 0 && lyricsProv <= 2)
         m_settings.lyricsProvider = static_cast<LyricsProvider>(lyricsProv);
 
+    m_settings.lyricsWordByWord = extractBool("lyricsWordByWord", true);
     int lyricsTim = extractInt("lyricsTiming");
     if (lyricsTim >= 0 && lyricsTim <= 2)
         m_settings.lyricsTiming = static_cast<LyricsTiming>(lyricsTim);
@@ -744,6 +745,7 @@ bool Application::saveSettings() {
     json += "  \"trackDefaultAction\": " + std::to_string(static_cast<int>(m_settings.trackDefaultAction)) + ",\n";
     json += "  \"lyricsProvider\": " + std::to_string(static_cast<int>(m_settings.lyricsProvider)) + ",\n";
     json += "  \"lyricsTiming\": " + std::to_string(static_cast<int>(m_settings.lyricsTiming)) + ",\n";
+    json += "  \"lyricsWordByWord\": " + b(m_settings.lyricsWordByWord) + ",\n";
     json += "  \"audioPassthrough\": " + b(m_settings.audioPassthrough) + ",\n";
     json += "  \"backgroundMusic\": " + b(m_settings.backgroundMusic) + ",\n";
     json += "  \"musicShuffleDefault\": " + b(m_settings.musicShuffleDefault) + ",\n";

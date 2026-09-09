@@ -9,6 +9,7 @@
 #include "platform/platform.hpp"
 
 #include <borealis.hpp>
+#include <cstdint>
 #include <cstring>
 #include <ctime>
 #include <algorithm>
@@ -52,6 +53,30 @@ static std::string redactBodyForLog(const std::string& body) {
     return out;
 }
 
+// Encode one code point as UTF-8. Shared by the JSON and lyrics decoders,
+// which both turn a numeric escape back into characters.
+static void appendUtf8(std::string& s, uint32_t cp) {
+    // Lone surrogates are not characters; a document carrying one is already
+    // broken, so it gets the replacement glyph rather than an encoding no
+    // renderer accepts.
+    if (cp >= 0xD800 && cp <= 0xDFFF) cp = 0xFFFD;
+    if (cp < 0x80) {
+        s += (char)cp;
+    } else if (cp < 0x800) {
+        s += (char)(0xC0 | (cp >> 6));
+        s += (char)(0x80 | (cp & 0x3F));
+    } else if (cp < 0x10000) {
+        s += (char)(0xE0 | (cp >> 12));
+        s += (char)(0x80 | ((cp >> 6) & 0x3F));
+        s += (char)(0x80 | (cp & 0x3F));
+    } else {
+        s += (char)(0xF0 | (cp >> 18));
+        s += (char)(0x80 | ((cp >> 12) & 0x3F));
+        s += (char)(0x80 | ((cp >> 6) & 0x3F));
+        s += (char)(0x80 | (cp & 0x3F));
+    }
+}
+
 // --- Zero-copy JSON field extraction for the EPG grid parse ---
 // The grid response is ~0.5MB with ~550 program objects. The original
 // parse substr()'d every metadata/media object out of the body and
@@ -62,9 +87,14 @@ static std::string redactBodyForLog(const std::string& body) {
 // the fields that actually get stored are copied into std::strings.
 
 // Find the value of quotedKey (pass it WITH quotes, e.g. "\"title\"")
-// inside obj. Returns an empty view when missing or null. String values
-// return the raw (still-escaped) slice between the quotes — identical
-// semantics to extractJsonValue.
+// inside obj. Returns an empty view when missing or null.
+//
+// String values come back as the raw, still-escaped slice between the
+// quotes, because a view cannot own the decoded text. That is deliberate
+// and it is why this is not the function to reach for by default: use
+// jsonFieldString for anything stored or displayed, jsonFieldEquals to
+// compare against decoded text, and this one only where the slice is
+// parsed as a number or tested against a literal like "true".
 static std::string_view jsonFieldView(std::string_view obj, std::string_view quotedKey) {
     size_t keyPos = obj.find(quotedKey);
     if (keyPos == std::string_view::npos) return {};
@@ -89,6 +119,95 @@ static std::string_view jsonFieldView(std::string_view obj, std::string_view quo
     while (!value.empty() && (value.back() == ' ' || value.back() == '\n' || value.back() == '\r'))
         value.remove_suffix(1);
     return value;
+}
+
+// Turn a raw JSON string slice into the text it stands for.
+//
+// A track called
+//     Intro (Main Theme) (from "Naruto")
+// travels as
+//     "Intro (Main Theme) (from \"Naruto\")"
+// and the slice above still carries the backslashes, so the escapes have to
+// come off before anything displays or compares it. Decoding lives here, at
+// the one point a slice becomes a string, which is what lets the view stay
+// zero-copy.
+//
+// A value with no backslash in it — nearly all of them — costs one scan and
+// the same single allocation the caller was already making. That matters:
+// the EPG parse runs this over thousands of fields on a Vita.
+static std::string jsonUnescape(std::string_view v) {
+    if (v.find('\\') == std::string_view::npos) return std::string(v);
+
+    auto hex4 = [](std::string_view s, size_t at, uint32_t& out) {
+        if (at + 4 > s.size()) return false;
+        out = 0;
+        for (size_t i = at; i < at + 4; i++) {
+            const char c = s[i];
+            out <<= 4;
+            if      (c >= '0' && c <= '9') out |= (uint32_t)(c - '0');
+            else if (c >= 'a' && c <= 'f') out |= (uint32_t)(c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F') out |= (uint32_t)(c - 'A' + 10);
+            else return false;
+        }
+        return true;
+    };
+
+    std::string out;
+    out.reserve(v.size());
+    for (size_t i = 0; i < v.size(); i++) {
+        if (v[i] != '\\' || i + 1 >= v.size()) { out += v[i]; continue; }
+        const char e = v[i + 1];
+        switch (e) {
+            case '"':  out += '"';  i++; break;
+            case '\\': out += '\\'; i++; break;
+            case '/':  out += '/';  i++; break;
+            case 'b':  out += '\b'; i++; break;
+            case 'f':  out += '\f'; i++; break;
+            case 'n':  out += '\n'; i++; break;
+            case 'r':  out += '\r'; i++; break;
+            case 't':  out += '\t'; i++; break;
+            case 'u': {
+                uint32_t cp = 0;
+                if (!hex4(v, i + 2, cp)) { out += v[i]; break; }
+                i += 5;
+                // A code point above the BMP is written as a surrogate pair,
+                // and the two halves only mean anything together.
+                if (cp >= 0xD800 && cp <= 0xDBFF && i + 6 < v.size() &&
+                    v[i + 1] == '\\' && v[i + 2] == 'u') {
+                    uint32_t low = 0;
+                    if (hex4(v, i + 3, low) && low >= 0xDC00 && low <= 0xDFFF) {
+                        cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                        i += 6;
+                    }
+                }
+                appendUtf8(out, cp);
+                break;
+            }
+            // Not an escape JSON defines. Kept as written rather than
+            // guessed at — losing a character is worse than showing one.
+            default: out += v[i]; break;
+        }
+    }
+    return out;
+}
+
+// jsonFieldView plus the decode, for the fields that get stored rather than
+// compared.
+static std::string jsonFieldString(std::string_view obj, std::string_view quotedKey) {
+    return jsonUnescape(jsonFieldView(obj, quotedKey));
+}
+
+// Compare a raw slice against text that has already been decoded.
+//
+// The two sides of the EPG's channel matching come from different places —
+// one is a stored field, the other a slice read back out of the grid — so
+// they have to be compared in the same alphabet or a channel with an escape
+// in its name silently loses its programmes. A call sign holding a backslash
+// is close to unheard of, and that is the point: the common path stays a
+// plain view comparison that allocates nothing.
+static bool jsonFieldEquals(std::string_view raw, const std::string& decoded) {
+    if (raw.find('\\') == std::string_view::npos) return raw == decoded;
+    return jsonUnescape(raw) == decoded;
 }
 
 // atoll for a non-NUL-terminated slice (string_view has no c_str()).
@@ -161,7 +280,7 @@ std::string PlexClient::extractJsonValue(const std::string& json, const std::str
             valueEnd++;
         }
         if (valueEnd >= json.length()) return "";
-        return json.substr(valueStart + 1, valueEnd - valueStart - 1);
+        return jsonUnescape(std::string_view(json).substr(valueStart + 1, valueEnd - valueStart - 1));
     } else if (json[valueStart] == 'n' && json.substr(valueStart, 4) == "null") {
         return "";
     } else {
@@ -215,7 +334,7 @@ std::string PlexClient::extractJsonValueRange(const std::string& json, size_t st
             valueEnd++;
         }
         if (valueEnd >= end) return "";
-        return json.substr(valueStart + 1, valueEnd - valueStart - 1);
+        return jsonUnescape(std::string_view(json).substr(valueStart + 1, valueEnd - valueStart - 1));
     } else if (valueStart + 4 <= end && json[valueStart] == 'n' &&
                json[valueStart+1] == 'u' && json[valueStart+2] == 'l' && json[valueStart+3] == 'l') {
         return "";
@@ -2924,51 +3043,180 @@ namespace {
 // transcoder (its documented response example is text/srt), and plain text.
 // Detected from the content rather than the extension, because the transcoder
 // converts and the extension no longer describes what came back.
+//
+// Every shape goes out through the same two steps — unescape, then flatten
+// whitespace — so a line that reaches a label has been through them once and
+// exactly once, whichever route it took. Escaped text in a transcoded SRT is
+// the transcoder's business, but it costs nothing to handle and a raw "&#34;"
+// on screen looks like a bug either way.
 std::vector<LyricLine> parseLyricsBody(const std::string& body) {
     std::vector<LyricLine> out;
 
-    // Attribute values arrive escaped, and a lyric with an apostrophe in it is
-    // not rare — "&#39;" on screen would be worse than the empty line this
-    // replaces.
-    auto xmlUnescape = [](std::string t) {
+    // Attribute values arrive escaped, and a lyric with an apostrophe or a
+    // quoted line in it is not rare.
+    //
+    // One left-to-right pass rather than a table swept repeatedly: a table can
+    // only hold the references someone thought of, and Plex's lyricfind
+    // documents write a double quote as "&#34;", which is not a name at all.
+    // Decoding "&#N;" and "&#xN;" by value covers every numeric form instead of
+    // the two that were guessed. A single pass is also what makes "&amp;#34;"
+    // come out as the literal "&#34;" rather than a quote — the "&" it produces
+    // is never looked at again.
+    auto xmlUnescape = [](const std::string& in) {
         static const std::pair<const char*, const char*> kEnts[] = {
-            {"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""},
-            {"&apos;", "'"}, {"&#39;", "'"}, {"&#x27;", "'"},
-            {"&nbsp;", " "},
-            {"&amp;", "&"},   // last: undoing it first would re-expand the rest
+            {"lt", "<"}, {"gt", ">"}, {"quot", "\""},
+            {"apos", "'"}, {"nbsp", " "}, {"amp", "&"},
         };
-        for (const auto& e : kEnts) {
-            size_t pos = 0;
-            const size_t len = strlen(e.first);
-            while ((pos = t.find(e.first, pos)) != std::string::npos) {
-                t.replace(pos, len, e.second);
-                pos += strlen(e.second);
+        std::string out;
+        out.reserve(in.size());
+        for (size_t i = 0; i < in.size(); i++) {
+            if (in[i] != '&') { out += in[i]; continue; }
+            const size_t semi = in.find(';', i + 1);
+            // A bare "&" is ordinary in a lyric, so a reference that does not
+            // close within a plausible span is text, not a broken entity.
+            if (semi == std::string::npos || semi - i > 10) { out += in[i]; continue; }
+            const std::string ent = in.substr(i + 1, semi - i - 1);
+
+            bool decoded = false;
+            if (ent.size() > 1 && ent[0] == '#') {
+                const bool hex = ent[1] == 'x' || ent[1] == 'X';
+                const char* digits = ent.c_str() + (hex ? 2 : 1);
+                char* end = nullptr;
+                const long cp = std::strtol(digits, &end, hex ? 16 : 10);
+                if (end && *end == '\0' && end != digits && cp > 0 && cp <= 0x10FFFF) {
+                    appendUtf8(out, (uint32_t)cp);
+                    decoded = true;
+                }
+            } else {
+                for (const auto& e : kEnts)
+                    if (ent == e.first) { out += e.second; decoded = true; break; }
             }
+
+            // Anything unrecognised stays as written. "&notreal;" is more
+            // useful on screen than the nothing that swallowing it would leave.
+            if (!decoded) { out += in[i]; continue; }
+            i = semi;
         }
-        return t;
+        return out;
     };
 
-    auto trim = [](std::string t) {
-        const size_t a = t.find_first_not_of(" \t\r");
-        const size_t b = t.find_last_not_of(" \t\r");
-        return a == std::string::npos ? std::string() : t.substr(a, b - a + 1);
+    // Trims, and flattens every run of whitespace to one space.
+    //
+    // The flattening is not cosmetic. A pretty-printed lyrics document puts a
+    // newline and an indent between <Line> and its <Span>, and that whitespace
+    // is character data like any other — it was reaching the label as a leading
+    // blank, and a line split across several spans came out stacked rather than
+    // joined.
+    auto squash = [](const std::string& t) {
+        std::string out;
+        out.reserve(t.size());
+        bool pendingSpace = false;
+        for (const char c : t) {
+            if (c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '\f' || c == '\v') {
+                pendingSpace = !out.empty();
+                continue;
+            }
+            if (pendingSpace) { out += ' '; pendingSpace = false; }
+            out += c;
+        }
+        return out;
+    };
+
+    // "mm:ss.xx" — the inside of a stamp, without its brackets. Same text
+    // whether it arrived in [] as a line stamp or in <> as a word stamp, so
+    // both readers below decide "is this a time?" the same way and neither
+    // mistakes "[ar: artist]" or an "<i>" for one.
+    auto parseTimeTag = [](const std::string& inside, int& outMs) -> bool {
+        const size_t colon = inside.find(':');
+        if (colon == std::string::npos || colon == 0) return false;
+        if (inside.find_first_not_of("0123456789") != colon) return false;
+        const std::string secs = inside.substr(colon + 1);
+        if (secs.empty() || secs.find_first_not_of("0123456789.,") != std::string::npos)
+            return false;
+        // atof wants a point; some writers use a comma for the fraction.
+        std::string dotted = secs;
+        for (char& c : dotted) if (c == ',') c = '.';
+        outMs = std::atoi(inside.substr(0, colon).c_str()) * 60000
+              + (int)(std::atof(dotted.c_str()) * 1000.0);
+        return true;
     };
 
     // "[mm:ss.xx]" leading stamps. Returns where the text begins.
-    auto lrcStamps = [](const std::string& line, std::vector<int>& outMs) -> size_t {
+    auto lrcStamps = [&parseTimeTag](const std::string& line, std::vector<int>& outMs) -> size_t {
         size_t pos = 0;
         while (pos < line.size() && line[pos] == '[') {
             const size_t close = line.find(']', pos);
             if (close == std::string::npos) break;
-            const std::string inside = line.substr(pos + 1, close - pos - 1);
-            const size_t colon = inside.find(':');
-            if (colon == std::string::npos) break;                       // "[ar: ...]"
-            if (inside.find_first_not_of("0123456789") != colon) break;  // not a time
-            outMs.push_back(std::atoi(inside.substr(0, colon).c_str()) * 60000
-                          + (int)(std::atof(inside.substr(colon + 1).c_str()) * 1000.0));
+            int ms = 0;
+            if (!parseTimeTag(line.substr(pos + 1, close - pos - 1), ms)) break;
+            outMs.push_back(ms);
             pos = close + 1;
         }
         return pos;
+    };
+
+    // Enhanced LRC ("A2") word stamps: the rest of the line reads
+    //
+    //     <00:12.34>I <00:12.61>would <00:12.90>never <00:13.40>
+    //
+    // — a stamp before each word, and often one more at the end marking where
+    // the last word stops. Returns the line with the stamps taken out, and
+    // fills outWords when it found any.
+    //
+    // The strip is not optional. A file like this already displayed its
+    // timestamps as part of the lyric, because nothing here knew what the
+    // angle brackets were.
+    auto lrcWordStamps = [&parseTimeTag, &squash, &xmlUnescape](
+                             const std::string& rest, std::vector<LyricWord>& outWords) {
+        std::string plain;
+        int pendingMs = -1;
+        size_t pos = 0;      // start of the text not yet taken
+        size_t search = 0;   // where to look for the next '<'
+        auto flush = [&](const std::string& raw) {
+            plain += raw;
+            // Whether a space actually separated this piece from the next. A
+            // file that stamps inside a word writes "Tum" then "ble ", and
+            // rendering those with a gap between them spells "Tum ble".
+            const bool spaceAfter = !raw.empty() &&
+                (raw.back() == ' '  || raw.back() == '\t' ||
+                 raw.back() == '\r' || raw.back() == '\n');
+            if (pendingMs < 0) {
+                // Whitespace outside any stamp still separates what surrounds
+                // it, so it belongs to the piece before.
+                if (spaceAfter && !outWords.empty()) outWords.back().spaceAfter = true;
+                return;
+            }
+            const std::string word = squash(xmlUnescape(raw));
+            if (!word.empty()) {
+                outWords.push_back(LyricWord{pendingMs, word, spaceAfter});
+            } else if (spaceAfter && !outWords.empty()) {
+                // A stamp with only whitespace after it: the trailing stamp
+                // that ends the last word rather than starting another.
+                outWords.back().spaceAfter = true;
+            }
+            pendingMs = -1;
+        };
+        while (search < rest.size()) {
+            const size_t lt = rest.find('<', search);
+            if (lt == std::string::npos) break;
+            const size_t gt = rest.find('>', lt);
+            if (gt == std::string::npos) break;
+            int ms = 0;
+            if (!parseTimeTag(rest.substr(lt + 1, gt - lt - 1), ms)) {
+                // Not a stamp — "<3" and the like stay in the lyric, so the
+                // search moves on but the text is left for the next flush.
+                search = lt + 1;
+                continue;
+            }
+            flush(rest.substr(pos, lt - pos));
+            pendingMs = ms;
+            pos = search = gt + 1;
+        }
+        flush(rest.substr(pos));
+        // One stamped word is just the line stamp again, and buys nothing but
+        // a pile of extra views.
+        if (outWords.size() < 2) outWords.clear();
+        return plain;
     };
 
     // "00:00:02,499 --> 00:00:06,416". Only the start time matters here: the
@@ -3015,38 +3263,79 @@ std::vector<LyricLine> parseLyricsBody(const std::string& body) {
             // words, which rendered as an invisible row that still seeked when
             // tapped. Both shapes are collected; a document that somehow used
             // both would simply get both, in order.
+            // Each Span is collected with whatever offset it carries, so a
+            // document that stamps its Spans gives word-level timing for free.
+            // Whether Plex's lyricfind documents actually do could not be
+            // confirmed from anything published, so this reads the same two
+            // attribute names the Line above uses and does nothing at all when
+            // they are absent — the line still renders exactly as before.
             const size_t close = body.find("</Line>", tagEnd);
+            std::vector<LyricWord> spans;
             std::string text;
+            auto addSpan = [&](int spanMs, const std::string& raw) {
+                const std::string t = squash(xmlUnescape(raw));
+                if (t.empty()) return;                    // indentation between tags
+                if (!text.empty() && text.back() != ' ') text += ' ';
+                text += raw;
+                spans.push_back(LyricWord{spanMs, t});
+            };
             if (close != std::string::npos) {
-                bool inTag = false;
-                for (size_t i = tagEnd + 1; i < close; i++) {
-                    const char c = body[i];
-                    if (c == '<') {
-                        inTag = true;
-                        // text="..." on this inner tag, if it carries one.
-                        const size_t tagStop = body.find('>', i);
-                        if (tagStop != std::string::npos && tagStop < close) {
-                            const std::string inner = body.substr(i, tagStop - i);
-                            const size_t at = inner.find("text=\"");
-                            if (at != std::string::npos) {
-                                const size_t valStart = at + 6;
-                                const size_t valEnd = inner.find('"', valStart);
-                                if (valEnd != std::string::npos) {
-                                    if (!text.empty() && text.back() != ' ') text += ' ';
-                                    text += inner.substr(valStart, valEnd - valStart);
-                                }
-                            }
-                        }
+                int pendingMs = -1;   // an opening tag's offset, for <Span>text</Span>
+                size_t i = tagEnd + 1;
+                while (i < close) {
+                    if (body[i] != '<') {
+                        const size_t nextTag = std::min(body.find('<', i), close);
+                        addSpan(pendingMs, body.substr(i, nextTag - i));
+                        pendingMs = -1;
+                        i = nextTag;
+                        continue;
                     }
-                    else if (c == '>') inTag = false;
-                    else if (!inTag)   text += c;
+                    const size_t tagStop = body.find('>', i);
+                    if (tagStop == std::string::npos || tagStop >= close) break;
+                    const std::string inner = body.substr(i, tagStop - i);
+
+                    int spanMs = -1;
+                    for (const char* attr : {"startOffset=\"", "startTimeOffset=\""}) {
+                        const size_t at = inner.find(attr);
+                        if (at == std::string::npos) continue;
+                        spanMs = std::atoi(inner.c_str() + at + strlen(attr));
+                        break;
+                    }
+
+                    // The words live in one of two places depending on who
+                    // wrote the document:
+                    //
+                    //   <Line startOffset="1000"><Span text="the words"/></Line>
+                    //   <Line startOffset="1000"><Span>the words</Span></Line>
+                    //
+                    // Plex's lyricfind documents use the first — the text is an
+                    // attribute and there is no character data at all. Reading
+                    // only between the tags produced a line with a correct
+                    // timestamp and no words, which rendered as an invisible row
+                    // that still seeked when tapped.
+                    const size_t at = inner.find("text=\"");
+                    if (at != std::string::npos) {
+                        const size_t valStart = at + 6;
+                        const size_t valEnd = inner.find('"', valStart);
+                        if (valEnd != std::string::npos)
+                            addSpan(spanMs, inner.substr(valStart, valEnd - valStart));
+                    } else {
+                        pendingMs = spanMs;   // text follows this tag
+                    }
+                    i = tagStop + 1;
                 }
             }
-            text = xmlUnescape(trim(text));
+            text = squash(xmlUnescape(text));
 
             LyricLine l;
             l.timeMs = ms;
             l.text = text;
+            // Only when every span is stamped: a run where some are not would
+            // stall the highlight partway through the line, which reads as a
+            // bug rather than as a line without word timing.
+            bool allStamped = spans.size() >= 2;
+            for (const auto& s : spans) if (s.timeMs < 0) allStamped = false;
+            if (allStamped) l.words = std::move(spans);
             out.push_back(std::move(l));
 
             pos = (close == std::string::npos) ? tagEnd : close + 7;
@@ -3067,13 +3356,13 @@ std::vector<LyricLine> parseLyricsBody(const std::string& body) {
             if (pending < 0) return;
             LyricLine l;
             l.timeMs = pending;
-            l.text = trim(text);
+            l.text = squash(xmlUnescape(text));
             out.push_back(l);
             pending = -1;
             text.clear();
         };
         while (std::getline(stream, raw)) {
-            const std::string line = trim(raw);
+            const std::string line = squash(raw);
             int ms = 0;
             if (srtStart(line, ms)) { flush(); pending = ms; continue; }
             if (line.empty()) { flush(); continue; }
@@ -3089,7 +3378,9 @@ std::vector<LyricLine> parseLyricsBody(const std::string& body) {
         if (!raw.empty() && raw.back() == '\r') raw.pop_back();
         std::vector<int> stamps;
         const size_t textStart = lrcStamps(raw, stamps);
-        const std::string text = trim(raw.substr(textStart));
+        std::vector<LyricWord> words;
+        const std::string text =
+            squash(xmlUnescape(lrcWordStamps(raw.substr(textStart), words)));
 
         if (stamps.empty()) {
             if (!raw.empty() && raw[0] == '[') continue;   // an LRC metadata tag
@@ -3097,14 +3388,21 @@ std::vector<LyricLine> parseLyricsBody(const std::string& body) {
             LyricLine l;
             l.timeMs = -1;
             l.text = text;
+            // Word stamps without a line stamp are half a format; the line has
+            // nowhere to be placed, so its words have nothing to run against.
             out.push_back(std::move(l));
         } else {
             // One source line can carry several stamps for a repeated phrase.
+            // The words belong to the first: they are absolute times, so
+            // replaying them against a later stamp would run the highlight
+            // backwards.
+            bool first = true;
             for (int ms : stamps) {
                 LyricLine l;
                 l.timeMs = ms;
                 l.text = text;
-                out.push_back(l);
+                if (first) { l.words = words; first = false; }
+                out.push_back(std::move(l));
             }
         }
     }
@@ -4315,21 +4613,21 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
 
                     std::string displayTitle;
                     if (!grandparentTitle.empty() && gridType == 4) {
-                        displayTitle = std::string(grandparentTitle) + ": " + std::string(progTitle);
+                        displayTitle = jsonUnescape(grandparentTitle) + ": " + jsonUnescape(progTitle);
                     } else {
-                        displayTitle = std::string(progTitle);
+                        displayTitle = jsonUnescape(progTitle);
                     }
 
-                    std::string progRatingKey(jsonFieldView(metaObj, "\"ratingKey\""));
-                    std::string progMetadataKey(jsonFieldView(metaObj, "\"key\""));
+                    std::string progRatingKey = jsonFieldString(metaObj, "\"ratingKey\"");
+                    std::string progMetadataKey = jsonFieldString(metaObj, "\"key\"");
                     // Pull summary + thumb so the Live TV hero can show the show's
                     // description and poster, not just the title.
-                    std::string progSummary(jsonFieldView(metaObj, "\"summary\""));
+                    std::string progSummary = jsonFieldString(metaObj, "\"summary\"");
                     std::string_view progThumbV = jsonFieldView(metaObj, "\"thumb\"");
                     if (progThumbV.empty()) progThumbV = jsonFieldView(metaObj, "\"grandparentThumb\"");
                     if (progThumbV.empty()) progThumbV = jsonFieldView(metaObj, "\"parentThumb\"");
                     if (progThumbV.empty()) progThumbV = jsonFieldView(metaObj, "\"art\"");
-                    std::string progThumb(progThumbV);
+                    std::string progThumb = jsonUnescape(progThumbV);
 
                     // Parse Media array for channel + timing info
                     size_t mediaPos = metaObj.find("\"Media\"");
@@ -4374,23 +4672,23 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
 
                             // Match by channelIdentifier == channel.key
                             if (!matched && !chanId.empty() && !channel.key.empty()) {
-                                if (chanId == channel.key) matched = true;
+                                if (jsonFieldEquals(chanId, channel.key)) matched = true;
                             }
 
                             // Match by VCN == channelIdentifier
                             if (!matched && !chanVcn.empty() && !channel.channelIdentifier.empty()) {
-                                if (chanVcn == channel.channelIdentifier) matched = true;
+                                if (jsonFieldEquals(chanVcn, channel.channelIdentifier)) matched = true;
                             }
 
                             // Match by exact callSign
                             if (!matched && !chanCallSign.empty() && !channel.callSign.empty()) {
-                                if (chanCallSign == channel.callSign) matched = true;
+                                if (jsonFieldEquals(chanCallSign, channel.callSign)) matched = true;
                             }
 
                             // Match by channel title
                             if (!matched && !channel.title.empty()) {
-                                if ((!chanShortTitle.empty() && chanShortTitle == channel.title) ||
-                                    (!chanTitle.empty() && chanTitle == channel.title)) {
+                                if ((!chanShortTitle.empty() && jsonFieldEquals(chanShortTitle, channel.title)) ||
+                                    (!chanTitle.empty() && jsonFieldEquals(chanTitle, channel.title))) {
                                     matched = true;
                                 }
                             }
@@ -4539,17 +4837,17 @@ bool PlexClient::fetchEPGGrid(std::vector<LiveTVChannel>& channelsWithPrograms, 
                 if (progTitle.empty()) continue;
                 std::string_view grandparentTitle = jsonFieldView(metaObj, "\"grandparentTitle\"");
                 std::string displayTitle = (!grandparentTitle.empty())
-                    ? std::string(grandparentTitle) + ": " + std::string(progTitle)
-                    : std::string(progTitle);
+                    ? jsonUnescape(grandparentTitle) + ": " + jsonUnescape(progTitle)
+                    : jsonUnescape(progTitle);
 
-                std::string progRatingKey(jsonFieldView(metaObj, "\"ratingKey\""));
-                std::string progMetadataKey(jsonFieldView(metaObj, "\"key\""));
-                std::string progSummary(jsonFieldView(metaObj, "\"summary\""));
+                std::string progRatingKey = jsonFieldString(metaObj, "\"ratingKey\"");
+                std::string progMetadataKey = jsonFieldString(metaObj, "\"key\"");
+                std::string progSummary = jsonFieldString(metaObj, "\"summary\"");
                 std::string_view progThumbV = jsonFieldView(metaObj, "\"thumb\"");
                 if (progThumbV.empty()) progThumbV = jsonFieldView(metaObj, "\"grandparentThumb\"");
                 if (progThumbV.empty()) progThumbV = jsonFieldView(metaObj, "\"parentThumb\"");
                 if (progThumbV.empty()) progThumbV = jsonFieldView(metaObj, "\"art\"");
-                std::string progThumb(progThumbV);
+                std::string progThumb = jsonUnescape(progThumbV);
 
                 size_t mediaPos = metaObj.find("\"Media\"");
                 if (mediaPos == std::string_view::npos) continue;
@@ -4706,23 +5004,23 @@ static std::string lowerOf(std::string_view s) {
 // always the same one, however many channels the rail holds.
 static LiveTVChannel parseRecentChannelDirectory(std::string_view dir) {
     LiveTVChannel ch;
-    ch.key               = std::string(jsonFieldView(dir, "\"key\""));
-    ch.title             = std::string(jsonFieldView(dir, "\"title\""));
-    ch.callSign          = std::string(jsonFieldView(dir, "\"callSign\""));
-    ch.channelIdentifier = std::string(jsonFieldView(dir, "\"channelVcn\""));
+    ch.key               = jsonFieldString(dir, "\"key\"");
+    ch.title             = jsonFieldString(dir, "\"title\"");
+    ch.callSign          = jsonFieldString(dir, "\"callSign\"");
+    ch.channelIdentifier = jsonFieldString(dir, "\"channelVcn\"");
     if (ch.channelIdentifier.empty())
-        ch.channelIdentifier = std::string(jsonFieldView(dir, "\"identifier\""));
-    ch.thumb             = std::string(jsonFieldView(dir, "\"thumb\""));
+        ch.channelIdentifier = jsonFieldString(dir, "\"identifier\"");
+    ch.thumb             = jsonFieldString(dir, "\"thumb\"");
 
     // Read the programme from the nested object's own slice, so the
     // channel's title and key can't shadow the programme's.
     const size_t metaPos = dir.find("\"Metadata\"");
     if (metaPos != std::string_view::npos) {
         const std::string_view meta = dir.substr(metaPos);
-        ch.ratingKey      = std::string(jsonFieldView(meta, "\"ratingKey\""));
-        ch.currentProgram = std::string(jsonFieldView(meta, "\"grandparentTitle\""));
+        ch.ratingKey      = jsonFieldString(meta, "\"ratingKey\"");
+        ch.currentProgram = jsonFieldString(meta, "\"grandparentTitle\"");
         if (ch.currentProgram.empty())
-            ch.currentProgram = std::string(jsonFieldView(meta, "\"title\""));
+            ch.currentProgram = jsonFieldString(meta, "\"title\"");
         // Airing window of whatever is on the channel now, from Media[].
         ch.programStart   = svToInt64(jsonFieldView(meta, "\"beginsAt\""));
         ch.programEnd     = svToInt64(jsonFieldView(meta, "\"endsAt\""));
@@ -4735,19 +5033,19 @@ static LiveTVChannel parseRecentChannelDirectory(std::string_view dir) {
 // LiveTVChannel::key, which is what tuneChannel() resolves first.
 static LiveTVChannel parseLiveTVChannelEntry(std::string_view item) {
     LiveTVChannel ch;
-    ch.ratingKey         = std::string(jsonFieldView(item, "\"ratingKey\""));
-    ch.key               = std::string(jsonFieldView(item, "\"channelIdentifier\""));
-    ch.callSign          = std::string(jsonFieldView(item, "\"channelCallSign\""));
-    ch.channelIdentifier = std::string(jsonFieldView(item, "\"channelVcn\""));
-    ch.title             = std::string(jsonFieldView(item, "\"channelTitle\""));
-    if (ch.title.empty()) ch.title = std::string(jsonFieldView(item, "\"channelShortTitle\""));
-    ch.thumb = std::string(jsonFieldView(item, "\"channelThumb\""));
-    if (ch.thumb.empty()) ch.thumb = std::string(jsonFieldView(item, "\"thumb\""));
+    ch.ratingKey         = jsonFieldString(item, "\"ratingKey\"");
+    ch.key               = jsonFieldString(item, "\"channelIdentifier\"");
+    ch.callSign          = jsonFieldString(item, "\"channelCallSign\"");
+    ch.channelIdentifier = jsonFieldString(item, "\"channelVcn\"");
+    ch.title             = jsonFieldString(item, "\"channelTitle\"");
+    if (ch.title.empty()) ch.title = jsonFieldString(item, "\"channelShortTitle\"");
+    ch.thumb = jsonFieldString(item, "\"channelThumb\"");
+    if (ch.thumb.empty()) ch.thumb = jsonFieldString(item, "\"thumb\"");
 
     // Programme currently on that channel — the rail's caption.
-    ch.currentProgram = std::string(jsonFieldView(item, "\"grandparentTitle\""));
+    ch.currentProgram = jsonFieldString(item, "\"grandparentTitle\"");
     if (ch.currentProgram.empty())
-        ch.currentProgram = std::string(jsonFieldView(item, "\"title\""));
+        ch.currentProgram = jsonFieldString(item, "\"title\"");
     if (ch.title.empty()) ch.title = ch.currentProgram;
     return ch;
 }
@@ -4778,9 +5076,9 @@ static void collectLiveTVHubs(std::string_view body, std::string_view arrayKey,
                               std::vector<LiveTVHub>& out) {
     forEachJsonObject(body, arrayKey, [&out](std::string_view obj) {
         LiveTVHub h;
-        h.title = std::string(jsonFieldView(obj, "\"title\""));
-        h.key   = std::string(jsonFieldView(obj, "\"key\""));
-        h.type  = std::string(jsonFieldView(obj, "\"type\""));
+        h.title = jsonFieldString(obj, "\"title\"");
+        h.key   = jsonFieldString(obj, "\"key\"");
+        h.type  = jsonFieldString(obj, "\"type\"");
         if (!h.title.empty() && !h.key.empty()) out.push_back(std::move(h));
     });
 }
@@ -4897,8 +5195,8 @@ bool PlexClient::fetchLiveTVHomeRails(LiveTVHomeRails& rails) {
     };
 
     forEachJsonObject(resp.body, "\"Hub\"", [&](std::string_view hub) {
-        const std::string title = lowerOf(jsonFieldView(hub, "\"title\""));
-        const std::string key   = lowerOf(jsonFieldView(hub, "\"key\""));
+        const std::string title = lowerOf(jsonFieldString(hub, "\"title\""));
+        const std::string key   = lowerOf(jsonFieldString(hub, "\"key\""));
         seenTitles.push_back(title);
 
         // Every "… On Now" rail satisfies the generic on-now test, so a hub
@@ -4920,7 +5218,7 @@ bool PlexClient::fetchLiveTVHomeRails(LiveTVHomeRails& rails) {
             // what this response actually carries, so parsing fewer than
             // size entries means we dropped some, not that the server
             // withheld them.
-            recentKey   = std::string(jsonFieldView(hub, "\"key\""));
+            recentKey   = jsonFieldString(hub, "\"key\"");
             recentSize  = (int)svToInt64(jsonFieldView(hub, "\"size\""));
             recentTotal = (int)svToInt64(jsonFieldView(hub, "\"totalSize\""));
             recentMore  = jsonFieldView(hub, "\"more\"") == "true";
@@ -4937,7 +5235,7 @@ bool PlexClient::fetchLiveTVHomeRails(LiveTVHomeRails& rails) {
             else if (isSports) { rail = sportsOnNow; key = &sportsKey; more = &sportsMore; }
 
             if (rail->empty()) {
-                *key  = std::string(jsonFieldView(hub, "\"key\""));
+                *key  = jsonFieldString(hub, "\"key\"");
                 *more = jsonFieldView(hub, "\"more\"") == "true";
                 collectItems(hub, *rail);
             }
@@ -5036,14 +5334,14 @@ bool PlexClient::fetchLiveTVHomeRails(LiveTVHomeRails& rails) {
 
 MediaItem PlexClient::parseLiveTVHubItem(std::string_view obj) {
     MediaItem item;
-    item.ratingKey   = std::string(jsonFieldView(obj, "\"ratingKey\""));
-    item.key         = std::string(jsonFieldView(obj, "\"key\""));
-    item.title       = std::string(jsonFieldView(obj, "\"title\""));
-    item.summary     = std::string(jsonFieldView(obj, "\"summary\""));
-    item.thumb       = std::string(jsonFieldView(obj, "\"thumb\""));
-    if (item.thumb.empty()) item.thumb = std::string(jsonFieldView(obj, "\"grandparentThumb\""));
-    item.art         = std::string(jsonFieldView(obj, "\"art\""));
-    item.type        = std::string(jsonFieldView(obj, "\"type\""));
+    item.ratingKey   = jsonFieldString(obj, "\"ratingKey\"");
+    item.key         = jsonFieldString(obj, "\"key\"");
+    item.title       = jsonFieldString(obj, "\"title\"");
+    item.summary     = jsonFieldString(obj, "\"summary\"");
+    item.thumb       = jsonFieldString(obj, "\"thumb\"");
+    if (item.thumb.empty()) item.thumb = jsonFieldString(obj, "\"grandparentThumb\"");
+    item.art         = jsonFieldString(obj, "\"art\"");
+    item.type        = jsonFieldString(obj, "\"type\"");
     item.mediaType   = parseMediaType(item.type);
     item.year        = (int)svToInt64(jsonFieldView(obj, "\"year\""));
     item.duration    = (int)svToInt64(jsonFieldView(obj, "\"duration\""));
@@ -5055,17 +5353,17 @@ MediaItem PlexClient::parseLiveTVHubItem(std::string_view obj) {
     // hands back the digits either way.
     item.airStartAt  = svToInt64(jsonFieldView(obj, "\"beginsAt\""));
     item.airEndAt    = svToInt64(jsonFieldView(obj, "\"endsAt\""));
-    item.liveChannelKey   = std::string(jsonFieldView(obj, "\"channelIdentifier\""));
-    item.liveChannelTitle = std::string(jsonFieldView(obj, "\"channelTitle\""));
+    item.liveChannelKey   = jsonFieldString(obj, "\"channelIdentifier\"");
+    item.liveChannelTitle = jsonFieldString(obj, "\"channelTitle\"");
     item.isLiveTV = true;
     // The show's poster, kept separate from the episode still so a rail
     // can render either shape (see MediaItemCell::setPreferPoster).
-    item.grandparentThumb = std::string(jsonFieldView(obj, "\"grandparentThumb\""));
+    item.grandparentThumb = jsonFieldString(obj, "\"grandparentThumb\"");
     // Live TV entries title themselves by episode ("Ick, A Bod") while
     // the show name sits on grandparentTitle ("Elsbeth"). The official
     // client's rails lead with the show, so promote it and keep the
     // episode title alongside.
-    item.grandparentTitle = std::string(jsonFieldView(obj, "\"grandparentTitle\""));
+    item.grandparentTitle = jsonFieldString(obj, "\"grandparentTitle\"");
     if (!item.grandparentTitle.empty()) {
         item.parentTitle = item.title;
         item.title = item.grandparentTitle;
@@ -5103,7 +5401,7 @@ bool PlexClient::searchLiveTV(const std::string& query, std::vector<MediaItem>& 
     // silently dropped.
     std::vector<std::string> hubTitles;
     forEachJsonObject(resp.body, "\"Hub\"", [&](std::string_view hub) {
-        hubTitles.push_back(std::string(jsonFieldView(hub, "\"title\"")));
+        hubTitles.push_back(jsonFieldString(hub, "\"title\""));
         forEachJsonObject(hub, "\"Metadata\"", [&](std::string_view obj) {
             MediaItem item = parseLiveTVHubItem(obj);
             if (!item.ratingKey.empty() && !item.title.empty())

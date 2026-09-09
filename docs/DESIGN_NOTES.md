@@ -384,6 +384,167 @@ from a running application, so Switch falls through to the header's inline
 no-ops. This is worth writing down only because "add notifications to Switch
 too" looks like an oversight rather than a platform limit.
 
+### Word-by-word lyrics
+
+Two sources can carry word timing, and only one of them is documented.
+
+**Enhanced LRC ("A2")** is the confirmed one. A line reads
+
+```
+[00:12.34]<00:12.34>I <00:12.61>would <00:12.90>never <00:13.40>
+```
+
+— a stamp before each word, and usually one more at the end marking where the
+last word stops rather than starting another. Parsing these also fixed a bug
+that predates the feature: nothing knew what the angle brackets were, so a file
+like this displayed its own timestamps as part of the lyric. The stamps are
+stripped now whether or not the highlight is switched on.
+
+**Plex's own documents** are the unconfirmed one. Each `<Span>` is collected
+with whatever offset it carries, using the same two attribute names
+(`startOffset`, `startTimeOffset`) the enclosing `<Line>` already uses. Whether
+Plex's lyricfind documents actually stamp their Spans could not be established
+from anything published — so this reads the attributes if they are there and
+does nothing whatsoever if they are not. No request changed shape to get them.
+
+Word timing is used only when **every** span or word in a line is stamped, and
+only when there are at least two. A half-stamped line would stall the highlight
+partway across and read as a bug; a single stamped word is the line stamp again
+and buys nothing but a pile of extra views.
+
+The rendering is one `brls::Label` per word inside a wrapping row. borealis
+exposes most of yoga's style but not flex-wrap, so `setFlexWrap` reaches the
+node through `View::getYGNode()`, which is public — no subclass, no patch. The
+row needs a definite width for wrapping to happen at all, which it gets from
+`player/lyrics_list` being `alignItems="stretch"`.
+
+Sung words hold the highlight rather than dimming behind the cursor: a line is
+read as a whole, and one lit word between two greys is harder to follow than a
+line filling up.
+
+That choice turns out to matter for more than looks. Checked against a 4,299-file
+library (227,425 lines, 395,685 words), including a file picked as a negative
+control because its word timing runs backwards mid-line. It does — 20 lines of it — and
+the cause is not corruption:
+
+```
+[00:09.96]<00:09.96>Ellen <00:10.67>Pope <00:09.96>(Huh)
+```
+
+The background vocal is sung *with* the line, not after "Pope", and Enhanced
+LRC has no way to write "at the same time as", so the writer put the real time
+in. A renderer that moves a single cursor jumps backwards here. A renderer that
+fills a line up cannot: the lit set is a prefix, and a prefix only grows. Walked
+at the real 80ms tick across all 20 lines, the highlight never regresses once —
+`(Huh)` simply lights with "Pope" instead of before it.
+
+So "it looks fine on the broken file" is not evidence the word tags are being
+ignored, which is the obvious reading. The tags are parsed; this shape is
+degrading gracefully.
+
+Words are kept in the order written, never sorted. Sorting would silently
+invent a performance the file does not describe.
+
+**A stamp can land inside a word**, and this is common enough to be the first
+thing to get wrong:
+
+```
+[00:09.93]<00:09.93>Tum<00:10.18>ble <00:10.32>out <00:10.50>of <00:10.64>bed
+```
+
+"Tum" and "ble" are separate stamps with no space between them, so the
+highlight can cross a long syllable as it is sung. The line's own text comes
+out right either way — it is the raw run of characters — but the pieces are
+what get drawn, and drawing them evenly spaced spells "Tum ble". So each piece
+records whether whitespace actually followed it (`LyricWord::spaceAfter`), and
+the row's gap is applied only where it did. 34 of 40 lines in one sampled file
+are affected; without this the track is unreadable rather than subtly off.
+
+The invariant to hold on to, and what the tests check: joining a line's words,
+with a space exactly where `spaceAfter` says, reproduces the line's text.
+
+How common this is decides whether it is a nicety or the whole feature. Across
+a 4,299-file library: 1,171 files carry word timing, and **789 of them — two
+thirds — stamp inside words**. It is not an edge case.
+
+This has a second consequence, and the first attempt got it wrong by leaving
+it alone. With every piece a direct child of the wrapping row, the wrap can
+fall *between* two halves of a word — "ne" ending one line and "ver" starting
+the next. That does not read as hyphenation, it reads as a typo, and on a
+syllable-timed track it happens on most lines rather than rarely.
+
+Yoga cannot be told to keep two children together, but it does not need to be:
+a wrap falls between the row's *items*, so anything that is one item cannot be
+split. Syllables of one word therefore go in a nested non-wrapping row, and
+that group is the item the outer row sees. A word written as a single stamp is
+added straight to the row, so the ordinary case gains no views at all — across
+14 sampled files only one stamps inside words, and it accounts for every one
+of the 68 group boxes the corpus produces.
+
+The label vector stays flat and parallel to `line.words` whichever shape the
+tree takes, so the highlight is indifferent to the grouping.
+
+Lines whose words run past the next line's stamp are common — 47 of 123 in one
+sample, two singers at once. Only one line is active at a time, so the tail of
+an overlapping line greys while it is still being sung. That is inherent to a
+single-active-line view and is what every mainstream lyrics pane does.
+
+A one-word line ("(What?)", "(Yeah)", "Darkchild") carries no word timing by
+the two-word rule and falls back to lighting whole. Real files are full of
+them: 29 of 170 lines in one sample.
+
+What the library says about the rest of the format, so nobody re-derives it:
+every one of the 4,299 files is valid UTF-8, none carry a BOM, six use CRLF.
+No angle-bracket tag anywhere is anything but a time — there is no `<i>`/`<b>`
+markup to strip. Every line carrying word tags also carries a line stamp. The
+widest line is 29 stamps and the longest file 334 lines, which bounds a row and
+a screen respectively.
+
+Nine lines pair a stamp with a speaker cue in its own brackets —
+`[00:00.19][Missy Elliott:]`. The second bracket is not a time, so the stamp
+scan stops there and the cue survives as the line's text; only a genuine `[ar:
+…]`-style tag is dropped. There are no genuinely repeated time stamps in the
+whole library, so the rule that gives the words to the first one is untested by
+real data and kept as insurance.
+
+Two lines are lost, both `[00:49:00]` — a colon where the fraction separator
+should be. Both are empty markers, so nothing readable goes missing, and
+accepting a second colon would collide with `[hh:mm:ss]`. Left alone.
+
+The sync timer runs at 80ms while any line is word-timed, against 250ms
+otherwise. A line lasts seconds and 250ms sits comfortably inside that; words
+arrive several a second and would visibly lag. A tick that crosses no word
+boundary returns having touched nothing, and the faster rate is never paid by a
+track without word timing.
+
+It is a setting (`lyricsWordByWord`, on by default) because a word-timed line
+costs one view per word. Galway Girl, 50 lines, is 499 labels where it used to
+be 50; the worst of the sampled files is 196 lines and **2,212 labels**. That
+number is the reason the setting exists, and the reason to reach for a single
+custom view per line — one leaf that draws its own words with nanovg — if a
+dense track ever hitches. Nothing here has been profiled on a device.
+
+Two things keep that affordable, and both are worth knowing before anyone
+moves this code:
+
+`useMobileLayout()` is false on PSV, PS4, Switch and desktop, so word rows are
+only ever built on a phone. The handhelds keep the classic sheet and pay
+nothing at all.
+
+`Box::draw` culls only leaf children — "nested boxes will do that check
+themselves" — so a row that is a Box no longer gets skipped wholesale when it
+is offscreen; it is descended into, and its word labels are culled one by one
+instead. The text drawing is still skipped, which is the expensive part.
+
+The one thing that would hurt is resizing. `Label::setFontSize` calls
+`invalidate()`, which walks to the root and relayouts the entire tree, so a
+row changing size naively costs one full pass **per word**. Sizes are
+therefore only written when they actually change, and `setLineHeight` is not
+set on word labels at all — the flex row does the wrapping, so a one-word
+label's line height changes nothing. Colour is a plain member assignment with
+no invalidate, which is why the per-tick word highlight is free and only the
+line change touches layout.
+
 ---
 
 ## Layout and UI

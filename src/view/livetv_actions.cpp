@@ -1023,8 +1023,15 @@ void showOptionPicker(const std::string& title, const std::vector<std::string>& 
                       int selected, std::function<void(int)> onPick) {
     const float screenW = platform::viewportWidth();
     const float screenH = platform::viewportHeight();
-    float panelW = 320.0f;
-    if (panelW + 80.0f > screenW) panelW = screenW - 80.0f;
+    // Every number below is a handset design unit. On a phone the viewport is
+    // 1280 of them wide, so an unscaled panel came out a quarter of the width
+    // with 13-unit rows, next to a player whose controls are three times that.
+    const float k = platform::uiScale();
+    const bool  phone = k > 1.0f;
+    // A phone gives the panel most of the width; a TV or desktop keeps the
+    // narrow list, which is all a pointer or a stick needs.
+    float panelW = phone ? screenW * 0.86f : 320.0f;
+    if (panelW + 80.0f * k > screenW) panelW = screenW - 80.0f * k;
 
     auto* scrim = new brls::Box();
     scrim->setAxis(brls::Axis::COLUMN);
@@ -1040,13 +1047,13 @@ void showOptionPicker(const std::string& title, const std::vector<std::string>& 
     panel->setBackgroundColor(tok::panel());
     panel->setBorderColor(tok::panelLine());
     panel->setBorderThickness(1.0f);
-    panel->setCornerRadius(16.0f);
+    panel->setCornerRadius(16.0f * k);
     panel->setShadowType(brls::ShadowType::GENERIC);
 
     auto* header = new brls::Box();
     header->setAxis(brls::Axis::ROW);
-    header->setPadding(14.0f, 18.0f, 12.0f, 18.0f);
-    header->addView(makeLabel(title, 15.0f, tok::text()));
+    header->setPadding(14.0f * k, 18.0f * k, 12.0f * k, 18.0f * k);
+    header->addView(makeLabel(title, 15.0f * k, tok::text()));
     panel->addView(header);
 
     auto* rule = new brls::Rectangle();
@@ -1056,33 +1063,33 @@ void showOptionPicker(const std::string& title, const std::vector<std::string>& 
 
     auto* list = new brls::Box();
     list->setAxis(brls::Axis::COLUMN);
-    list->setPadding(8.0f, 8.0f, 12.0f, 8.0f);
+    list->setPadding(8.0f * k, 8.0f * k, 12.0f * k, 8.0f * k);
 
     brls::View* focusRow = nullptr;
     for (int i = 0; i < (int)options.size(); i++) {
         auto* row = new brls::Box();
         row->setAxis(brls::Axis::ROW);
         row->setAlignItems(brls::AlignItems::CENTER);
-        row->setHeight(40.0f);
-        row->setPadding(0.0f, 10.0f, 0.0f, 10.0f);
-        row->setCornerRadius(8.0f);
+        row->setHeight(40.0f * k);
+        row->setPadding(0.0f, 10.0f * k, 0.0f, 10.0f * k);
+        row->setCornerRadius(8.0f * k);
         row->setFocusable(true);
-        row->setHighlightCornerRadius(8.0f);
+        row->setHighlightCornerRadius(8.0f * k);
 
         const bool cur = (i == selected);
         // Gold dot marks the current value — the same mark the scope rows
         // and changed-value dots use, rather than a checkmark glyph the
         // fonts may not carry on every platform.
         auto* dot = new brls::Rectangle();
-        dot->setWidth(6.0f);
-        dot->setHeight(6.0f);
-        dot->setCornerRadius(3.0f);
+        dot->setWidth(6.0f * k);
+        dot->setHeight(6.0f * k);
+        dot->setCornerRadius(3.0f * k);
         dot->setColor(tok::gold());
-        dot->setMarginRight(10.0f);
+        dot->setMarginRight(10.0f * k);
         dot->setVisibility(cur ? brls::Visibility::VISIBLE : brls::Visibility::INVISIBLE);
         row->addView(dot);
 
-        row->addView(makeLabel(options[(size_t)i], 13.0f, cur ? tok::text() : tok::muted()));
+        row->addView(makeLabel(options[(size_t)i], 13.0f * k, cur ? tok::text() : tok::muted()));
 
         row->registerClickAction([i, onPick](brls::View*) {
             brls::Application::popActivity(brls::TransitionAnimation::FADE,
@@ -1098,8 +1105,8 @@ void showOptionPicker(const std::string& title, const std::vector<std::string>& 
     scrim->addView(panel);
 
     // Cap the panel so a long library list scrolls the screen's worth it has rather than growing past the viewport.
-    if (44.0f * (float)options.size() + 60.0f > screenH - 80.0f) {
-        panel->setHeight(screenH - 80.0f);
+    if ((44.0f * (float)options.size() + 60.0f) * k > screenH - 80.0f * k) {
+        panel->setHeight(screenH - 80.0f * k);
     }
 
     scrim->registerAction("Back", brls::ControllerButton::BUTTON_B,
