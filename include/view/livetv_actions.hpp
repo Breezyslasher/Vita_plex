@@ -30,8 +30,16 @@ namespace vitaplex {
 // dialog's rows and the settings pickers in place of brls::Dropdown.
 // onPick fires with the chosen index after the picker closes; cancelling
 // (B / tap outside) fires nothing.
+//
+// `scale` multiplies every metric. It defaults to 1 because the screens this
+// opens over — settings, the record dialog — are drawn at borealis' own scale
+// whatever the device is, and a picker three times their size over them is
+// exactly the bug this parameter replaced: the size belongs to the caller's
+// layout, not to the platform. Only the mobile player, which is itself scaled,
+// passes anything else.
 void showOptionPicker(const std::string& title, const std::vector<std::string>& options,
-                      int selected, std::function<void(int)> onPick);
+                      int selected, std::function<void(int)> onPick,
+                      float scale = 1.0f);
 
 // Tune the channel a programme is airing on and push the live player.
 void tuneLiveTVProgram(const MediaItem& item);

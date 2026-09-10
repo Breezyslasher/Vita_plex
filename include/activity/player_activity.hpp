@@ -152,6 +152,9 @@ private:
     // Per-word highlight within the active line; a no-op unless that line
     // carries word timing.
     void syncLyricWords(int posMs);
+    // The moment a tap at `p` on lyric row `rowIndex` is asking for: the word
+    // under it, else the line's own start.
+    int seekTargetForTap(size_t rowIndex, brls::Point p, int lineMs) const;
     // Handoff type sizes, in its 412-wide frame; ui() scales them.
     static constexpr float kLyricRest   = 19.0f;
     static constexpr float kLyricActive = 27.0f;

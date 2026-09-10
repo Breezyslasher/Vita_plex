@@ -1020,17 +1020,18 @@ void openRecordOptionsDialog(const MediaItem& item, RecordingTemplate tmpl,
 // dark panel, focusable rows, gold mark on the current value — replacing
 // brls::Dropdown, whose full-screen platter looked like a different app.
 void showOptionPicker(const std::string& title, const std::vector<std::string>& options,
-                      int selected, std::function<void(int)> onPick) {
+                      int selected, std::function<void(int)> onPick, float scale) {
     const float screenW = platform::viewportWidth();
     const float screenH = platform::viewportHeight();
-    // Every number below is a handset design unit. On a phone the viewport is
-    // 1280 of them wide, so an unscaled panel came out a quarter of the width
-    // with 13-unit rows, next to a player whose controls are three times that.
-    const float k = platform::uiScale();
-    const bool  phone = k > 1.0f;
-    // A phone gives the panel most of the width; a TV or desktop keeps the
-    // narrow list, which is all a pointer or a stick needs.
-    float panelW = phone ? screenW * 0.86f : 320.0f;
+    // Every number below is a design unit at the caller's scale. Asking the
+    // platform for it instead put a 3x picker over settings, which is drawn at
+    // borealis' own scale on every device — a giant dialog on a normal screen.
+    const float k = scale > 0.0f ? scale : 1.0f;
+    const bool  scaled = k > 1.0f;
+    // A scaled caller is the mobile player, whose screen is a phone's: give the
+    // panel most of the width. Otherwise the narrow list, which is all a
+    // pointer or a stick needs.
+    float panelW = scaled ? screenW * 0.86f : 320.0f;
     if (panelW + 80.0f * k > screenW) panelW = screenW - 80.0f * k;
 
     auto* scrim = new brls::Box();
