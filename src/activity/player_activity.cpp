@@ -3019,11 +3019,36 @@ void PlayerActivity::buildLyricsRows() {
         if (m_mobileLayout && line.timeMs >= 0) {
             const int targetMs = line.timeMs;
             row->setFocusable(true);
+            // Pressing A on a focused row jumps to the start of the line. A
+            // controller has no way to point at a word, so that stays the line.
             row->registerClickAction([this, targetMs](brls::View*) {
                 seekToAbsoluteMs(targetMs);
                 return true;
             });
-            row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
+
+            if (asWords) {
+                // A tap carries where it landed, so the word under the finger
+                // can be found without the words being focusable themselves.
+                // Making them focusable would work too, and would turn one
+                // D-pad step per line into one per word — several hundred down
+                // a song.
+                const size_t rowIndex = m_lyricRows.size();
+                row->addGestureRecognizer(new brls::TapGestureRecognizer(
+                    [this, row, rowIndex, targetMs](brls::TapGestureStatus status,
+                                                    brls::Sound* sound) {
+                        (void)sound;
+                        // What TapGestureRecognizer(view) does for itself, kept
+                        // here because this needs the position it does not pass on.
+                        if (status.state != brls::GestureState::INTERRUPTED &&
+                            status.state != brls::GestureState::FAILED)
+                            brls::Application::giveFocus(row);
+                        row->playClickAnimation(status.state != brls::GestureState::UNSURE);
+                        if (status.state == brls::GestureState::END)
+                            seekToAbsoluteMs(seekTargetForTap(rowIndex, status.position, targetMs));
+                    }));
+            } else {
+                row->addGestureRecognizer(new brls::TapGestureRecognizer(row));
+            }
         }
 
         lyricsList->addView(row);
@@ -3095,6 +3120,40 @@ void PlayerActivity::hideLyricsOverlay() {
 // the words between the last position and this one, and returns immediately
 // when nothing has crossed a word boundary — which is most ticks, since words
 // arrive a few per second and the timer runs faster than that.
+// Which moment a tap on a word-timed row is asking for.
+//
+// The row is one view, so the word has to be found from where the tap landed:
+// the label whose box contains the point, or failing that the nearest one on
+// the same wrapped line — a tap in the gap after a word means that word, not
+// the start of the line. A tap that matches nothing falls back to the line,
+// which is what the row did before there were words to aim at.
+int PlayerActivity::seekTargetForTap(size_t rowIndex, brls::Point p, int lineMs) const {
+    if (rowIndex >= m_lyricWordRows.size() || rowIndex >= m_lyrics.size()) return lineMs;
+    const auto& labels = m_lyricWordRows[rowIndex];
+    const auto& words  = m_lyrics[rowIndex].words;
+    if (labels.empty() || labels.size() != words.size()) return lineMs;
+
+    for (size_t i = 0; i < labels.size(); i++)
+        if (labels[i]->getFrame().pointInside(p)) return words[i].timeMs;
+
+    // Nothing directly under it: take the closest word sharing the tap's row,
+    // so the space between two words belongs to one of them.
+    int best = -1;
+    float bestDx = 0.0f;
+    for (size_t i = 0; i < labels.size(); i++) {
+        const brls::Rect f = labels[i]->getFrame();
+        if (p.y < f.getMinY() || p.y > f.getMaxY()) continue;
+        // Distance to the nearest edge, not to the centre. By centre, a tap a
+        // pixel off a long word goes to a short one further away, because the
+        // long word's middle is further from the finger.
+        const float dx = (p.x < f.getMinX()) ? (f.getMinX() - p.x)
+                       : (p.x > f.getMaxX()) ? (p.x - f.getMaxX())
+                                             : 0.0f;
+        if (best < 0 || dx < bestDx) { best = (int)i; bestDx = dx; }
+    }
+    return best >= 0 ? words[(size_t)best].timeMs : lineMs;
+}
+
 void PlayerActivity::syncLyricWords(int posMs) {
     if (m_lyricsIndex < 0 || m_lyricsIndex >= (int)m_lyricWordRows.size()) return;
     const auto& labels = m_lyricWordRows[(size_t)m_lyricsIndex];

@@ -422,6 +422,16 @@ Sung words hold the highlight rather than dimming behind the cursor: a line is
 read as a whole, and one lit word between two greys is harder to follow than a
 line filling up.
 
+Tapping a word jumps to that word rather than to the start of the line. The
+word is found from where the tap landed, not by making the words focusable: a
+tap carries its position, and focusable words would turn one D-pad step per
+line into one per word — several hundred down a song. A controller still gets
+the line, since it has no way to point at a word.
+
+Nearest is measured to a word's *edge*, not its centre. By centre, a tap a
+pixel off the end of a long word goes to a short word further away, because the
+long word's middle is further from the finger.
+
 That choice turns out to matter for more than looks. Checked against a 4,299-file
 library (227,425 lines, 395,685 words), including a file picked as a negative
 control because its word timing runs backwards mid-line. It does — 20 lines of it — and
