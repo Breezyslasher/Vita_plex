@@ -4497,72 +4497,13 @@ void MediaDetailView::performTrackActionStatic(const MediaItem& track) {
     TrackDefaultAction action = Application::getInstance().getSettings().trackDefaultAction;
 
     if (action == TrackDefaultAction::ASK_EACH_TIME) {
-        // Show a simplified action dialog (no playlist option without MediaDetailView context)
-        auto* dialog = new brls::Dialog("Choose Action");
-
-        auto* optionsBox = new brls::Box();
-        optionsBox->setAxis(brls::Axis::COLUMN);
-        optionsBox->setPadding(20);
-
-        auto addDialogButton = [&optionsBox](const std::string& text, std::function<bool(brls::View*)> action) {
-            auto* btn = new brls::Button();
-            btn->setText(text);
-            btn->setHeight(44);
-            btn->setMarginBottom(10);
-            btn->registerClickAction(action);
-            btn->addGestureRecognizer(new brls::TapGestureRecognizer(btn));
-            optionsBox->addView(btn);
-        };
-
-        MediaItem capturedTrack = track;
-
-        addDialogButton("Play Now (Clear Queue)", [capturedTrack, dialog](brls::View*) {
-            dialog->dismiss();
-            std::vector<MediaItem> single = {capturedTrack};
-            auto* playerActivity = PlayerActivity::createWithQueue(single, 0);
-            brls::Application::pushActivity(playerActivity);
-            return true;
-        });
-
-        addDialogButton("Play Next", [capturedTrack, dialog](brls::View*) {
-            dialog->dismiss();
-            MusicQueue& queue = MusicQueue::getInstance();
-            if (queue.isEmpty()) {
-                std::vector<MediaItem> single = {capturedTrack};
-                auto* playerActivity = PlayerActivity::createWithQueue(single, 0);
-                brls::Application::pushActivity(playerActivity);
-            } else {
-                queue.insertTrackAfterCurrent(capturedTrack);
-                brls::Application::notify("Playing next: " + capturedTrack.title);
-            }
-            return true;
-        });
-
-        addDialogButton("Add to Bottom of Queue", [capturedTrack, dialog](brls::View*) {
-            dialog->dismiss();
-            MusicQueue& queue = MusicQueue::getInstance();
-            if (queue.isEmpty()) {
-                std::vector<MediaItem> single = {capturedTrack};
-                auto* playerActivity = PlayerActivity::createWithQueue(single, 0);
-                brls::Application::pushActivity(playerActivity);
-            } else {
-                queue.addTrack(capturedTrack);
-                brls::Application::notify("Added to queue: " + capturedTrack.title);
-            }
-            return true;
-        });
-
-        addDialogButton("Cancel", [dialog](brls::View*) {
-            dialog->dismiss();
-            return true;
-        });
-
-        dialog->addView(optionsBox);
-        dialog->registerAction("Back", brls::ControllerButton::BUTTON_B, [dialog](brls::View*) {
-            dialog->dismiss();
-            return true;
-        });
-        brls::Application::pushActivity(new brls::Activity(dialog));
+        // The same popover every other track menu uses. This built its own
+        // brls::Dialog, which was both the odd one out visually and impossible
+        // to close: Dialog is a Box, Activity does not wrap its content in an
+        // AppletFrame, and View::dismiss() returns silently when it cannot find
+        // one above itself. Every button in it called dialog->dismiss() and
+        // nothing happened.
+        showTrackContextMenuStatic(track);
         return;
     }
 

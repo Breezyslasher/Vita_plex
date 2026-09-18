@@ -66,8 +66,20 @@ void MusicQueue::addTrack(const MediaItem& item) {
 
     // Update shuffle order if shuffling
     if (m_shuffleEnabled) {
-        // Insert new track at random position in remaining shuffle order
-        int insertPos = m_shufflePosition + 1 + (m_rng() % (m_shuffleOrder.size() - m_shufflePosition));
+        // Somewhere in the part not played yet, which is anywhere from just
+        // after the current position to the very end.
+        //
+        // The span has to be clamped first. m_shuffleOrder.size() is unsigned
+        // and m_shufflePosition is a signed int that is -1 before anything
+        // plays, so `size() - m_shufflePosition` is unsigned arithmetic: equal
+        // values give a modulo by zero, and a position past the end wraps to a
+        // number near SIZE_MAX and lands the insert far outside the vector.
+        // insertTrackAfterCurrent clamps for the same reason; this did not.
+        int tailStart = m_shufflePosition + 1;
+        if (tailStart < 0) tailStart = 0;
+        if (tailStart > (int)m_shuffleOrder.size()) tailStart = (int)m_shuffleOrder.size();
+        const int slots = (int)m_shuffleOrder.size() - tailStart + 1;   // never < 1
+        const int insertPos = tailStart + (int)(m_rng() % (unsigned)slots);
         m_shuffleOrder.insert(m_shuffleOrder.begin() + insertPos, index);
     }
 
