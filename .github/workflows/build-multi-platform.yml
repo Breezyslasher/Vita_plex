@@ -1065,20 +1065,35 @@ jobs:
         uses: actions/cache@v4
         with:
           path: portlib-cache
-          key: switch-portlibs-hacBrewPack-3.05-1_libuam-master-1_dav1d-1.5.3-1_mbedtls-3.6.7-1_libssh2-1.11.1-1_ffmpeg-7.1.5-5_${{ matrix.mpv_pkg }}
+          key: switch-portlibs-hacBrewPack-3.05-1_libuam-master-1_dav1d-1.5.4-1_mbedtls-3.6.7-1_libssh2-1.11.1-1_ffmpeg-7.1.5-5_${{ matrix.mpv_pkg }}
 
       - name: Install switchfin portlibs
         run: |
           BASE_URL="https://github.com/dragonflylee/switchfin/releases/download/switch-portlibs"
           set -eu
+          # NOTE: switch-portlibs is a ROLLING release, exactly like the Vita
+          # one — a version bump REPLACES the asset, so a stale pin here 404s
+          # and the build dies before it compiles a single file. curl's own
+          # error is a bare "(22) 404" with no filename, so name the URL.
+          # Current list: https://github.com/dragonflylee/switchfin/releases/tag/switch-portlibs
           fetch() {
             curl -fL --retry 4 --retry-all-errors \
-                 --speed-limit 102400 --speed-time 30 -o "$2" "$1"
+                 --speed-limit 102400 --speed-time 30 -o "$2" "$1" || {
+              echo "::error::cannot fetch $1 — pin is stale or the asset moved;" \
+                   "check https://github.com/dragonflylee/switchfin/releases/tag/switch-portlibs"
+              return 1
+            }
           }
           mkdir -p portlib-cache
+          # Keep this set on ONE switchfin build batch. The whole list below
+          # was built 2026-09-01 07:11-07:17, and ffmpeg-7.1.5-5 declares a
+          # hard `depend = switch-dav1d`. dav1d was pinned at 1.5.3-1 while
+          # ffmpeg was built in the same minute as 1.5.4-1, so the pin was
+          # already off-batch; it only kept working until upstream pruned
+          # 1.5.3-1. Bump versions as a set, not one at a time.
           for pkg in hacBrewPack-3.05-1-x86_64.pkg.tar.zst \
                      libuam-master-1-any.pkg.tar.zst \
-                     switch-dav1d-1.5.3-1-any.pkg.tar.zst \
+                     switch-dav1d-1.5.4-1-any.pkg.tar.zst \
                      switch-mbedtls-3.6.7-1-any.pkg.tar.zst \
                      switch-libssh2-1.11.1-1-any.pkg.tar.zst \
                      switch-ffmpeg-7.1.5-5-any.pkg.tar.zst \
@@ -1601,17 +1616,36 @@ jobs:
         uses: actions/cache@v4
         with:
           path: portlib-cache
-          key: mingw-portlibs-${{ matrix.env }}-glfw-3.5.0-1_curl-8.16.0-1_mpv-0.41.0-1_libwebp-1.6.0-1
+          key: mingw-portlibs-${{ matrix.env }}-glfw-3.5.0-1_curl-8.21.0-1_mpv-0.41.0-2_libwebp-1.6.0-1
 
       - name: Install dependency
         run: |
           set -eu
+          # NOTE: mingw-packages is a ROLLING release like the Vita and Switch
+          # ones. It replaces assets two ways: a version bump deletes the old
+          # file (curl-8.16.0-1 is simply gone), and a rebuild at the SAME
+          # pkgver-pkgrel silently swaps the contents in place.
+          #
+          # Keep this set on one switchfin build batch. glfw-3.5.0-1,
+          # libwebp-1.6.0-1, mpv-0.41.0-2 and curl-8.21.0-1 were all built
+          # 2026-09-17 07:59-08:24; glfw and libwebp kept their filenames, so
+          # only curl and mpv move here. mpv-0.41.0-1 still resolves, but it
+          # is a 2026-09-01 leftover and the only member that would be off
+          # batch — mpv does not link libcurl, so this is about keeping the
+          # set coherent, not an ABI break.
+          # Current list: https://github.com/dragonflylee/switchfin/releases/tag/mingw-packages
           mkdir -p portlib-cache
-          for pkg in glfw-3.5.0-1 curl-8.16.0-1 mpv-0.41.0-1 libwebp-1.6.0-1; do
+          for pkg in glfw-3.5.0-1 curl-8.21.0-1 mpv-0.41.0-2 libwebp-1.6.0-1; do
             f="portlib-cache/${MINGW_PACKAGE_PREFIX}-${pkg}-any.pkg.tar.zst"
+            url="https://github.com/dragonflylee/switchfin/releases/download/mingw-packages/${MINGW_PACKAGE_PREFIX}-${pkg}-any.pkg.tar.zst"
+            # curl reports a bare "(22) 404" with no filename, and this loop
+            # fetches four of them — say which one actually failed.
             [ -s "$f" ] || curl -fL --retry 4 --retry-all-errors \
-                 --speed-limit 102400 --speed-time 30 -o "$f" \
-                 "https://github.com/dragonflylee/switchfin/releases/download/mingw-packages/${MINGW_PACKAGE_PREFIX}-${pkg}-any.pkg.tar.zst"
+                 --speed-limit 102400 --speed-time 30 -o "$f" "$url" || {
+              echo "::error::cannot fetch ${MINGW_PACKAGE_PREFIX}-${pkg} — pin is stale" \
+                   "or the asset moved; check the mingw-packages release"
+              exit 1
+            }
           done
           pacman -U --noconfirm portlib-cache/*.pkg.tar.zst
       - name: Build
