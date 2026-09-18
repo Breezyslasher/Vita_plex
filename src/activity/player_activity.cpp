@@ -2214,9 +2214,34 @@ void PlayerActivity::updateProgress() {
         }
     }
 
+    // The latch below means "this arrival at EOF has been dealt with", so it
+    // has to come back down once the player has actually moved off the end.
+    // Everything that seeks out of ENDED resumes playback — the scrubber,
+    // Previous, play() from the OS media controls — and only the in-app
+    // play/pause button was clearing it. So after one "Queue ended", replaying
+    // the track left the latch stuck for the life of the activity: the track
+    // ran off the end in silence, MusicQueue::onTrackEnded() was never called
+    // again, and anything added with "Play Next" afterwards never loaded.
+    // Reopening the app was the only cure, because that built a new activity.
+    //
+    // Gated on the position having come back from where the end was handled,
+    // not merely on the state. seekTo() sets PLAYING before the seek has
+    // landed, so for a moment the player reads as playing while still parked
+    // at EOF; clearing on the state alone would let that bounce re-fire the
+    // handler and advance the queue when the user asked for a replay. And the
+    // credits auto-skip claims the latch while playing nowhere near the end,
+    // which m_endHandledAtSec (0 unless a real EOF set it) leaves alone.
+    if (m_endHandled && !player.hasEnded() &&
+        (player.isPlaying() || player.isPaused()) &&
+        position + 1.0 < m_endHandledAtSec) {
+        m_endHandled = false;
+        m_endHandledAtSec = 0.0;
+    }
+
     // Check hasEnded() regardless of m_isPlaying, which may have synced false a frame before ENDED was set.
     if (player.hasEnded() && !m_endHandled) {
         m_endHandled = true;  // Prevent multiple triggers
+        m_endHandledAtSec = position;  // where to consider the latch spent; see above
         m_isPlaying = false;
         brls::Logger::info("PlayerActivity: Playback ended (mediaType={}, queueMode={})",
             (int)m_mediaType, m_isQueueMode);
@@ -2368,7 +2393,11 @@ void PlayerActivity::togglePlayPause() {
         //
         // m_endHandled has to come back down or the replayed track would run
         // off the end in silence: the tick only acts on hasEnded() once.
+        // updateProgress does the same for every other way out of ENDED, which
+        // this button predates; both are kept, since clearing it here is
+        // immediate rather than a tick later.
         m_endHandled = false;
+        m_endHandledAtSec = 0.0;
         player.play();      // play() rewinds out of ENDED; see MpvPlayer
         m_isPlaying = true;
     }
