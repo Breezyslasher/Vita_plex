@@ -1405,6 +1405,14 @@ bool PlexClient::fetchChildren(const std::string& ratingKey, std::vector<MediaIt
         item.parentIndex = extractJsonInt(obj, "parentIndex");
         item.grandparentTitle = extractJsonValue(obj, "grandparentTitle");
         item.parentTitle = extractJsonValue(obj, "parentTitle");
+        // The parent/grandparent keys, not just their titles. /children sends
+        // both, and PlayerActivity builds its server play queue from the album
+        // URI "if available" — which it never was for a track opened from an
+        // album, because this is where such a track is parsed and the field
+        // was dropped. The queue then named the single track instead of its
+        // album, so Plex returned a one-item queue.
+        item.parentRatingKey = extractJsonValue(obj, "parentRatingKey");
+        item.grandparentRatingKey = extractJsonValue(obj, "grandparentRatingKey");
         item.leafCount = extractJsonInt(obj, "leafCount");
         item.viewedLeafCount = extractJsonInt(obj, "viewedLeafCount");
 

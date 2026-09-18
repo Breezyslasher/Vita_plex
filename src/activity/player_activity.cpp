@@ -2155,37 +2155,61 @@ void PlayerActivity::updateProgress() {
 
     // Report the timeline periodically and on state changes, with duration so Plex shows the full length.
     if (!m_mediaKey.empty() && !m_isLocalFile && !m_isDirectFile) {
-        std::string currentState = player.isPlaying() ? "playing" :
-                                   player.isPaused()  ? "paused"  : "stopped";
+        const bool playing = player.isPlaying();
+        const bool paused  = player.isPaused();
 
-        bool stateChanged = (currentState != m_lastTimelineState);
-        m_timelineCounter++;
+        // LOADING and BUFFERING are mid-track. Neither isPlaying() nor
+        // isPaused() holds there, so they used to read as "stopped" and
+        // announced the end of playback every time the queue advanced.
+        if (!player.isLoading()) {
+            std::string currentState = playing ? "playing" :
+                                       paused  ? "paused"  : "stopped";
 
-        if (stateChanged || m_timelineCounter >= 10) {
-            m_timelineCounter = 0;
-            m_lastTimelineState = currentState;
+            bool stateChanged = (currentState != m_lastTimelineState);
+            m_timelineCounter++;
 
-            int timeMs = m_transcodeBaseOffsetMs + (int)(position * 1000);
-            int durationMs = (m_mediaDurationMs > 0) ? m_mediaDurationMs : (int)(duration * 1000);
+            // Only a player that is still going has anything new to say. Plex
+            // wants one final "stopped" and then silence; repeating it sent a
+            // request every 10 seconds for as long as the activity stayed
+            // open, which after a queue ended with the screen off meant for as
+            // long as the phone sat in a pocket. A resume flips the state and
+            // starts the pings again through stateChanged.
+            const bool repeatDue = (playing || paused) && m_timelineCounter >= 10;
 
-            // A corrupt transcode spikes the position; posting it 400s on Plex and would poison the saved resume point.
-            bool posInsane = (m_mediaDurationMs > 0 && timeMs > m_mediaDurationMs + 30000);
-            if (!posInsane) {
-                std::string ratingKey = m_mediaKey;
-                int pqItemID = 0;
-                // In queue mode, use the current track's ratingKey and playQueueItemID
-                if (m_isQueueMode) {
-                    MusicQueue& queue = MusicQueue::getInstance();
-                    const QueueItem* track = queue.getCurrentTrack();
-                    if (track) {
-                        ratingKey = track->ratingKey;
-                        pqItemID = track->playQueueItemID;
+            if (stateChanged || repeatDue) {
+                m_timelineCounter = 0;
+                m_lastTimelineState = currentState;
+
+                int timeMs = m_transcodeBaseOffsetMs + (int)(position * 1000);
+                int durationMs = (m_mediaDurationMs > 0) ? m_mediaDurationMs : (int)(duration * 1000);
+
+                // A corrupt transcode spikes the position; posting it 400s on Plex and would poison the saved resume point.
+                bool posInsane = (m_mediaDurationMs > 0 && timeMs > m_mediaDurationMs + 30000);
+
+                // Judge the spike on the raw value above, then clamp the small
+                // one. mpv parks a few tens of milliseconds past the container
+                // duration at EOF, and Plex 400s a timeline whose time is
+                // beyond its duration — so the final report of a finished
+                // track, the one that matters, was the one being thrown away.
+                if (durationMs > 0 && timeMs > durationMs) timeMs = durationMs;
+
+                if (!posInsane) {
+                    std::string ratingKey = m_mediaKey;
+                    int pqItemID = 0;
+                    // In queue mode, use the current track's ratingKey and playQueueItemID
+                    if (m_isQueueMode) {
+                        MusicQueue& queue = MusicQueue::getInstance();
+                        const QueueItem* track = queue.getCurrentTrack();
+                        if (track) {
+                            ratingKey = track->ratingKey;
+                            pqItemID = track->playQueueItemID;
+                        }
                     }
-                }
 
-                std::string key = "/library/metadata/" + ratingKey;
-                PlexClient::getInstance().reportTimeline(
-                    ratingKey, key, currentState, timeMs, durationMs, pqItemID);
+                    std::string key = "/library/metadata/" + ratingKey;
+                    PlexClient::getInstance().reportTimeline(
+                        ratingKey, key, currentState, timeMs, durationMs, pqItemID);
+                }
             }
         }
     }
