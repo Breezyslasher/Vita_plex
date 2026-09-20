@@ -145,8 +145,24 @@ void MusicController::detachForeground() {
     m_hasForeground = false;
     m_fg = ForegroundHooks{};
     // Music still going (background music)? Take over headless driving.
+    //
+    // isLoading() belongs in this test, and leaving it out was a real bug. A
+    // track that has not finished opening yet is the case that needs the pump
+    // most: ENDED is only ever set from inside mpv's event loop, and once the
+    // player view is gone this poll is the only thing that runs it. Landing in
+    // the else branch there stopped the one remaining pump, so the state
+    // machine sat at LOADING while mpv played the whole track on its own
+    // thread, and the queue never advanced.
+    //
+    // It needed the handoff to happen during LOADING, which is why it only
+    // ever hit the first track of a session — the deferred mpv init adds about
+    // a second before PLAYING, and leaving the player inside that window was
+    // enough. Observed as exactly that: handoff at 00:03:15.052 with mpv still
+    // LOADING, then not one line logged for the next four and a half minutes
+    // while a 223-second track played out, and the queue advancing only when
+    // the player was reopened and its own timers took over again.
     MpvPlayer& p = MpvPlayer::getInstance();
-    if (p.isInitialized() && (p.isPlaying() || p.isPaused())) {
+    if (p.isInitialized() && (p.isPlaying() || p.isPaused() || p.isLoading())) {
         m_endHandled = p.hasEnded();
         startPolling();
         publishNowPlaying();
