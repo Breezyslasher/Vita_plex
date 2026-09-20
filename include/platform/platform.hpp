@@ -346,6 +346,18 @@ void shutdown();
 std::string getLogPath();
 
 /**
+ * Path the finished run's log is kept at, or "" when getLogPath() is empty.
+ * Derived from getLogPath() by inserting ".prev" before the extension.
+ */
+std::string previousLogPath();
+
+/**
+ * Moves an existing log to previousLogPath() so the new run can truncate
+ * without destroying it. Call before opening the log for writing.
+ */
+void rotateLogForNewRun();
+
+/**
  * Opens the platform log file (if any) and subscribes brls::Logger to it.
  * Idempotent. Called from init() but exposed for tests.
  */

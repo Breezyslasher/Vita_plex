@@ -405,6 +405,10 @@ std::string getLogPath() {
 
 void openLogFile() {
     if (g_logFile) return;
+    // Truncating per run kept this file bounded but destroyed the log of the
+    // session being reported whenever the workaround was "reopen the app".
+    // Keep the finished run; see rotateLogForNewRun.
+    rotateLogForNewRun();
     g_logFile = std::fopen(getLogPath().c_str(), "w");   // truncate per run
     if (!g_logFile) {
         brls::Logger::warning("Could not open the log file at {}", getLogPath());

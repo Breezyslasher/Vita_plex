@@ -955,6 +955,18 @@ brls::Box* SettingsTab::createPlaybackSection() {
             return true;
         });
         box->addView(logCell);
+
+        // The run before this one. A bug whose workaround is restarting the
+        // app is reported *after* the restart, by which point the log holding
+        // it is the previous one.
+        auto* prevLogCell = new brls::DetailCell();
+        prevLogCell->setText("View Previous Log");
+        prevLogCell->setDetailText("The run before this one");
+        prevLogCell->registerClickAction([this](brls::View*) {
+            onShowLog(platform::previousLogPath());
+            return true;
+        });
+        box->addView(prevLogCell);
     }
 
     return box;
@@ -2212,11 +2224,13 @@ void SettingsTab::onNetworkTest() {
 //
 // Android has logcat, but logcat needs a PC. Every platform that writes a log
 // file gets this, so a problem can be read where it happened.
-void SettingsTab::onShowLog() {
-    const std::string path = platform::getLogPath();
+void SettingsTab::onShowLog(const std::string& which) {
+    const std::string path = which.empty() ? platform::getLogPath() : which;
+    const bool isPrevious = !which.empty() && which != platform::getLogPath();
     std::ifstream f(path, std::ios::binary);
     if (!f.is_open()) {
-        brls::Application::notify("No log file yet");
+        brls::Application::notify(isPrevious ? "No previous run was logged"
+                                             : "No log file yet");
         return;
     }
 
