@@ -138,5 +138,13 @@ void rotateLogForNewRun() {
     std::rename(path.c_str(), prev.c_str());
 }
 
+#if !defined(__ANDROID__)
+// Everywhere else getLogPath() is a path the user can already open — a Vita
+// memory card, sdmc:, %LOCALAPPDATA%, ~/.local/share — so there is nothing to
+// hand to a share sheet even where one exists.
+bool canShareLogFile() { return false; }
+void shareLogFile(const std::string&) {}
+#endif
+
 }  // namespace platform
 }  // namespace vitaplex

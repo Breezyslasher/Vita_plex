@@ -403,6 +403,40 @@ std::string getLogPath() {
     return platformPath("vitaplex.log");
 }
 
+// The log is under Context.getFilesDir(), which is app-private internal
+// storage. That is a different directory from the Android/data/<pkg>/files
+// folder a file manager shows, and getFilesDir() is not reachable from one at
+// all — so without this the log can be read in Settings and never sent
+// anywhere. Reported as exactly that: "I looked into folder and no log file".
+bool canShareLogFile() { return true; }
+
+void shareLogFile(const std::string& path) {
+    JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    if (!env || path.empty()) return;
+
+    // ApkProvider serves by bare filename out of filesDir/VitaPlex and refuses
+    // anything with a separator in it, so hand it the name and not the path.
+    const std::size_t slash = path.find_last_of('/');
+    const std::string name = (slash == std::string::npos) ? path : path.substr(slash + 1);
+    if (name.empty()) return;
+
+    jclass cls = env->FindClass("org/VitaPlex/app/VitaPlexActivity");
+    if (!cls) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return;
+    }
+    jmethodID mid = env->GetStaticMethodID(cls, "shareLog", "(Ljava/lang/String;)V");
+    if (mid) {
+        jstring jname = env->NewStringUTF(name.c_str());
+        env->CallStaticVoidMethod(cls, mid, jname);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        if (jname) env->DeleteLocalRef(jname);
+    } else if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(cls);
+}
+
 void openLogFile() {
     if (g_logFile) return;
     // Truncating per run kept this file bounded but destroyed the log of the

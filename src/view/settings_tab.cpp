@@ -967,6 +967,28 @@ brls::Box* SettingsTab::createPlaybackSection() {
             return true;
         });
         box->addView(prevLogCell);
+
+        // Android only: the log is in app-private storage, so reading it here
+        // is the only way to see it and this is the only way to send it.
+        if (platform::canShareLogFile()) {
+            auto* sendCell = new brls::DetailCell();
+            sendCell->setText("Send Log");
+            sendCell->setDetailText("Share this run's log");
+            sendCell->registerClickAction([](brls::View*) {
+                platform::shareLogFile(platform::getLogPath());
+                return true;
+            });
+            box->addView(sendCell);
+
+            auto* sendPrevCell = new brls::DetailCell();
+            sendPrevCell->setText("Send Previous Log");
+            sendPrevCell->setDetailText("Share the run before this one");
+            sendPrevCell->registerClickAction([](brls::View*) {
+                platform::shareLogFile(platform::previousLogPath());
+                return true;
+            });
+            box->addView(sendPrevCell);
+        }
     }
 
     return box;

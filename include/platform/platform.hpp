@@ -358,6 +358,21 @@ std::string previousLogPath();
 void rotateLogForNewRun();
 
 /**
+ * Whether shareLogFile() can do anything on this platform.
+ */
+bool canShareLogFile();
+
+/**
+ * Hands a log file to the platform's share mechanism (Android's share sheet).
+ *
+ * On Android the log is in app-private internal storage, which no file manager
+ * can reach, so reading it in Settings is not enough — this is the only way to
+ * get the file off the device. A no-op where getLogPath() is already somewhere
+ * the user can open.
+ */
+void shareLogFile(const std::string& path);
+
+/**
  * Opens the platform log file (if any) and subscribes brls::Logger to it.
  * Idempotent. Called from init() but exposed for tests.
  */

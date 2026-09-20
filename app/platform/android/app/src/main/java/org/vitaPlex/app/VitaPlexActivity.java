@@ -17,6 +17,7 @@ import android.graphics.PixelFormat;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.media.MediaFormat;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -169,6 +170,45 @@ public class VitaPlexActivity extends SDLActivity
      */
     public static Context getAppContext() {
         return getContext();
+    }
+
+    /**
+     * Hand a log file to the system share sheet.
+     *
+     * The log is written to Context.getFilesDir(), which is app-private
+     * internal storage. That is NOT the Android/data/<pkg>/files folder a
+     * file manager shows — no file manager can reach getFilesDir() at all,
+     * so a log there can be read in Settings and never sent anywhere. This
+     * is the way off the device.
+     *
+     * `name` is a bare filename, not a path: ApkProvider resolves it inside
+     * filesDir/VitaPlex and refuses anything it does not serve.
+     */
+    public static void shareLog(final String name) {
+        final Activity activity = (Activity) mSingleton;
+        if (activity == null) return;
+        activity.runOnUiThread(new Runnable() {
+            @Override public void run() {
+                try {
+                    // Same provider the updater uses; content:// because a
+                    // file:// URI throws FileUriExposedException on API 24+.
+                    Uri uri = Uri.parse("content://" + activity.getPackageName()
+                                        + ".apkprovider/" + name);
+                    Intent send = new Intent(Intent.ACTION_SEND);
+                    send.setType("text/plain");
+                    send.putExtra(Intent.EXTRA_STREAM, uri);
+                    send.putExtra(Intent.EXTRA_SUBJECT, "VitaPlex log");
+                    send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    // The grant has to be on the chooser too, or the app the
+                    // user picks is handed a Uri it cannot open.
+                    Intent chooser = Intent.createChooser(send, "Send log");
+                    chooser.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    activity.startActivity(chooser);
+                } catch (Exception e) {
+                    Log.e(TAG, "shareLog(" + name + ") failed", e);
+                }
+            }
+        });
     }
 
     // Audio session id shared with mpv's AudioTrack output, so a system
