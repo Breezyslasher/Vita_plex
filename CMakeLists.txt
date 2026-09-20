@@ -733,15 +733,24 @@ if(PLATFORM_PSV)
     #   segment 1 overlaps
     #   Segmentation fault (core dumped)
     #
-    # The space available is whatever padding the linker left between the two
-    # segments, which is bounded by max-page-size — 0x1000 by default on this
-    # target. 4152 bytes does not fit in 4096, so whether the build packages at
-    # all came down to where segment 0 happened to end: it worked while the
-    # layout fell kindly and broke on the commit that shifted it, with no error
-    # in the code and after a clean compile and link. Raising max-page-size to
-    # 64K makes the gap large enough that the blob always fits, at the cost of
-    # up to 64K of padding in the VPK.
-    target_link_options(${PROJECT_NAME} PRIVATE "-Wl,-z,max-page-size=0x10000")
+    # Binutils defaults to -z separate-code, which splits the read-only and
+    # executable parts of the image into their own LOAD segments and packs them
+    # tightly instead of padding each out to a page. That leaves nothing after
+    # segment 0 for the blob, and whether a given build packages at all comes
+    # down to where segment 0 happens to end — it worked until a commit adding
+    # about a kilobyte shifted it, with no error in the code and after a clean
+    # compile and link. Confirmed as a layout matter and not a toolchain one by
+    # re-running the last commit that packaged, unchanged, on the same image:
+    # it still passed.
+    #
+    # -z noseparate-code returns to page-padded segments, so segment 0 ends on
+    # a page boundary with the rest of that page free.
+    #
+    # Raising max-page-size was tried first and did nothing, which is worth
+    # recording: the gap is (alignment - end-of-segment-0 mod alignment), so a
+    # bigger alignment moves the figure around without ever guaranteeing it is
+    # large enough. Padding is what is needed here, not alignment.
+    target_link_options(${PROJECT_NAME} PRIVATE "-Wl,-z,noseparate-code")
 
     target_link_libraries(${PROJECT_NAME}
         archive
