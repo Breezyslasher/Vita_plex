@@ -645,6 +645,32 @@ playlist refresh.
 
 ---
 
+## Timeline reporting
+
+Two rules, both learned from a log where the app pinged the server every ten
+seconds for nine minutes after a queue had finished, with the screen off.
+
+**A stopped session gets one report, not a heartbeat.** `playing` and `paused`
+are repeated on purpose — Plex keeps the session alive off those pings, which is
+what makes it resumable from another client and visible in Now Playing. `stopped`
+carries no session to keep, so repeating it is pure churn. The periodic repeat is
+therefore gated on the player still being in `playing` or `paused`; a resume is
+picked up by the state-change branch, not the timer.
+
+`LOADING` and `BUFFERING` are neither, so they used to fall through to `stopped`
+and announce the end of playback every time the queue advanced between tracks.
+They now report nothing and wait for the next real state.
+
+**`time` may not exceed `duration`.** mpv parks a few tens of milliseconds past
+the container length at EOF — 163085 against a 163000 ms track — and Plex answers
+`400` to a timeline beyond its own duration. The final report of a finished
+track, the one that sets the resume point, was the only one that ever hit this,
+so it was the only one being thrown away. It is clamped now. The separate
+`duration + 30s` guard still drops a genuinely corrupt transcode's position
+spike, and is judged on the raw value before the clamp.
+
+---
+
 ## Security
 
 mpv quotes the whole URL back in its stream errors, and every URL the client

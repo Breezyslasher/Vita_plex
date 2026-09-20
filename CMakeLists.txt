@@ -726,6 +726,32 @@ if(PLATFORM_PSV)
     # Required for __wrap_pthread_create in src/utils/vita_stubs.c
     target_link_options(${PROJECT_NAME} PRIVATE "-Wl,--wrap=pthread_create")
 
+    # vita-elf-create appends the SCE module data to the end of the first LOAD
+    # segment, and fails outright if that runs into the second:
+    #
+    #   Cannot allocate 4152 bytes for SCE data at end of segment 0;
+    #   segment 1 overlaps
+    #   Segmentation fault (core dumped)
+    #
+    # Binutils defaults to -z separate-code, which splits the read-only and
+    # executable parts of the image into their own LOAD segments and packs them
+    # tightly instead of padding each out to a page. That leaves nothing after
+    # segment 0 for the blob, and whether a given build packages at all comes
+    # down to where segment 0 happens to end — it worked until a commit adding
+    # about a kilobyte shifted it, with no error in the code and after a clean
+    # compile and link. Confirmed as a layout matter and not a toolchain one by
+    # re-running the last commit that packaged, unchanged, on the same image:
+    # it still passed.
+    #
+    # -z noseparate-code returns to page-padded segments, so segment 0 ends on
+    # a page boundary with the rest of that page free.
+    #
+    # Raising max-page-size was tried first and did nothing, which is worth
+    # recording: the gap is (alignment - end-of-segment-0 mod alignment), so a
+    # bigger alignment moves the figure around without ever guaranteeing it is
+    # large enough. Padding is what is needed here, not alignment.
+    target_link_options(${PROJECT_NAME} PRIVATE "-Wl,-z,noseparate-code")
+
     target_link_libraries(${PROJECT_NAME}
         archive
         zstd

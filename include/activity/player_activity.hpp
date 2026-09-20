@@ -365,6 +365,7 @@ private:
     std::string m_grandparentRatingKey;  // Show ratingKey for cross-season auto-play-next
     int m_episodeIndex = 0;         // Episode index within season for auto-play-next
     bool m_endHandled = false;      // Prevent multiple triggers when playback ends
+    double m_endHandledAtSec = 0.0; // Position m_endHandled was set at; the latch is spent once playback comes back before it
     bool m_isPlaying = false;
     bool m_isPhoto = false;
     bool m_isLocalFile = false;    // Playing from local download

@@ -149,6 +149,9 @@ std::string getLogPath() {
 
 void openLogFile() {
     if (g_logFile) return;
+    // Keep the finished run; truncating on launch destroyed the log of
+    // the session being reported. See rotateLogForNewRun.
+    rotateLogForNewRun();
     g_logFile = std::fopen(getLogPath().c_str(), "w");
     if (!g_logFile) return;
     // Line-buffered so a crash flushes the last log line to disk before

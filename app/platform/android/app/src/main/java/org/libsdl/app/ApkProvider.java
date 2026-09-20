@@ -12,25 +12,47 @@ import java.io.File;
 import java.io.FileNotFoundException;
 
 /**
- * Serves exactly one file — the downloaded update APK — to the system
- * package installer. file:// URIs throw FileUriExposedException on
- * API 24+, and the project deliberately carries no androidx dependency,
- * so this stands in for androidx FileProvider. It refuses every path
- * except {filesDir}/VitaPlex/update.apk: nothing else in the sandbox is
- * reachable through it.
+ * Serves a fixed handful of files out of {filesDir}/VitaPlex: the
+ * downloaded update APK, to the system package installer, and the two log
+ * files, to whatever the user picks from the share sheet. file:// URIs throw
+ * FileUriExposedException on API 24+, and the project deliberately carries no
+ * androidx dependency, so this stands in for androidx FileProvider.
+ *
+ * The allow-list is the whole security model. A provider that resolved an
+ * arbitrary path would be a way out of the sandbox, so resolve() takes a bare
+ * filename, refuses anything containing a separator, and matches it against
+ * SERVED by equality — nothing else in filesDir is reachable through it.
  */
 public class ApkProvider extends ContentProvider {
 
-    private File updateFile() {
-        return new File(new File(getContext().getFilesDir(), "VitaPlex"), "update.apk");
-    }
+    private static final String DIR = "VitaPlex";
+
+    private static final String[] SERVED = {
+        "update.apk",
+        "vitaplex.log",
+        "vitaplex.prev.log",
+    };
 
     private File resolve(Uri uri) throws FileNotFoundException {
-        if (!"/update.apk".equals(uri.getPath()))
+        String path = uri.getPath();
+        if (path == null)
             throw new FileNotFoundException("not served: " + uri);
-        File f = updateFile();
+        if (path.startsWith("/")) path = path.substring(1);
+        // No separators, so "..", nested paths and absolute paths cannot
+        // resolve to anything outside the directory below.
+        if (path.indexOf('/') >= 0 || path.indexOf('\\') >= 0)
+            throw new FileNotFoundException("not served: " + uri);
+
+        boolean served = false;
+        for (String s : SERVED) {
+            if (s.equals(path)) { served = true; break; }
+        }
+        if (!served)
+            throw new FileNotFoundException("not served: " + uri);
+
+        File f = new File(new File(getContext().getFilesDir(), DIR), path);
         if (!f.isFile())
-            throw new FileNotFoundException("no downloaded update at " + f);
+            throw new FileNotFoundException("no such file: " + f);
         return f;
     }
 
@@ -46,7 +68,12 @@ public class ApkProvider extends ContentProvider {
 
     @Override
     public String getType(Uri uri) {
-        return "application/vnd.android.package-archive";
+        String path = uri.getPath();
+        if (path != null && path.endsWith(".apk"))
+            return "application/vnd.android.package-archive";
+        // The installer only ever asks about the APK; everything else here is
+        // a log, and text/plain is what makes mail and chat apps accept it.
+        return "text/plain";
     }
 
     @Override

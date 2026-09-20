@@ -15,6 +15,7 @@
 #pragma once
 
 #include <borealis.hpp>
+#include <string>
 #include <vector>
 #include "app/application.hpp"   // VideoQuality, used in the picker helpers below
 
@@ -92,7 +93,9 @@ private:
     // Open the party-members dialog (who's in the room; host can transfer host).
     void onSyncLoungeMembers();
     void onTestLocalPlayback();
-    void onShowLog();   // read the log on the device, where logcat needs a PC
+    // Read a log on the device, where logcat needs a PC. Empty reads the
+    // current run; pass platform::previousLogPath() for the one before it.
+    void onShowLog(const std::string& which = std::string{});
     void onThemeChanged(int index);
     void onQualityChanged(int index);
     // Picker position <-> VideoQuality. Not a cast: the enum is numbered in the

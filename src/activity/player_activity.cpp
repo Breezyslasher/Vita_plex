@@ -2155,44 +2155,93 @@ void PlayerActivity::updateProgress() {
 
     // Report the timeline periodically and on state changes, with duration so Plex shows the full length.
     if (!m_mediaKey.empty() && !m_isLocalFile && !m_isDirectFile) {
-        std::string currentState = player.isPlaying() ? "playing" :
-                                   player.isPaused()  ? "paused"  : "stopped";
+        const bool playing = player.isPlaying();
+        const bool paused  = player.isPaused();
 
-        bool stateChanged = (currentState != m_lastTimelineState);
-        m_timelineCounter++;
+        // LOADING and BUFFERING are mid-track. Neither isPlaying() nor
+        // isPaused() holds there, so they used to read as "stopped" and
+        // announced the end of playback every time the queue advanced.
+        if (!player.isLoading()) {
+            std::string currentState = playing ? "playing" :
+                                       paused  ? "paused"  : "stopped";
 
-        if (stateChanged || m_timelineCounter >= 10) {
-            m_timelineCounter = 0;
-            m_lastTimelineState = currentState;
+            bool stateChanged = (currentState != m_lastTimelineState);
+            m_timelineCounter++;
 
-            int timeMs = m_transcodeBaseOffsetMs + (int)(position * 1000);
-            int durationMs = (m_mediaDurationMs > 0) ? m_mediaDurationMs : (int)(duration * 1000);
+            // Only a player that is still going has anything new to say. Plex
+            // wants one final "stopped" and then silence; repeating it sent a
+            // request every 10 seconds for as long as the activity stayed
+            // open, which after a queue ended with the screen off meant for as
+            // long as the phone sat in a pocket. A resume flips the state and
+            // starts the pings again through stateChanged.
+            const bool repeatDue = (playing || paused) && m_timelineCounter >= 10;
 
-            // A corrupt transcode spikes the position; posting it 400s on Plex and would poison the saved resume point.
-            bool posInsane = (m_mediaDurationMs > 0 && timeMs > m_mediaDurationMs + 30000);
-            if (!posInsane) {
-                std::string ratingKey = m_mediaKey;
-                int pqItemID = 0;
-                // In queue mode, use the current track's ratingKey and playQueueItemID
-                if (m_isQueueMode) {
-                    MusicQueue& queue = MusicQueue::getInstance();
-                    const QueueItem* track = queue.getCurrentTrack();
-                    if (track) {
-                        ratingKey = track->ratingKey;
-                        pqItemID = track->playQueueItemID;
+            if (stateChanged || repeatDue) {
+                m_timelineCounter = 0;
+                m_lastTimelineState = currentState;
+
+                int timeMs = m_transcodeBaseOffsetMs + (int)(position * 1000);
+                int durationMs = (m_mediaDurationMs > 0) ? m_mediaDurationMs : (int)(duration * 1000);
+
+                // A corrupt transcode spikes the position; posting it 400s on Plex and would poison the saved resume point.
+                bool posInsane = (m_mediaDurationMs > 0 && timeMs > m_mediaDurationMs + 30000);
+
+                // Judge the spike on the raw value above, then clamp the small
+                // one. mpv parks a few tens of milliseconds past the container
+                // duration at EOF, and Plex 400s a timeline whose time is
+                // beyond its duration — so the final report of a finished
+                // track, the one that matters, was the one being thrown away.
+                if (durationMs > 0 && timeMs > durationMs) timeMs = durationMs;
+
+                if (!posInsane) {
+                    std::string ratingKey = m_mediaKey;
+                    int pqItemID = 0;
+                    // In queue mode, use the current track's ratingKey and playQueueItemID
+                    if (m_isQueueMode) {
+                        MusicQueue& queue = MusicQueue::getInstance();
+                        const QueueItem* track = queue.getCurrentTrack();
+                        if (track) {
+                            ratingKey = track->ratingKey;
+                            pqItemID = track->playQueueItemID;
+                        }
                     }
-                }
 
-                std::string key = "/library/metadata/" + ratingKey;
-                PlexClient::getInstance().reportTimeline(
-                    ratingKey, key, currentState, timeMs, durationMs, pqItemID);
+                    std::string key = "/library/metadata/" + ratingKey;
+                    PlexClient::getInstance().reportTimeline(
+                        ratingKey, key, currentState, timeMs, durationMs, pqItemID);
+                }
             }
         }
+    }
+
+    // The latch below means "this arrival at EOF has been dealt with", so it
+    // has to come back down once the player has actually moved off the end.
+    // Everything that seeks out of ENDED resumes playback — the scrubber,
+    // Previous, play() from the OS media controls — and only the in-app
+    // play/pause button was clearing it. So after one "Queue ended", replaying
+    // the track left the latch stuck for the life of the activity: the track
+    // ran off the end in silence, MusicQueue::onTrackEnded() was never called
+    // again, and anything added with "Play Next" afterwards never loaded.
+    // Reopening the app was the only cure, because that built a new activity.
+    //
+    // Gated on the position having come back from where the end was handled,
+    // not merely on the state. seekTo() sets PLAYING before the seek has
+    // landed, so for a moment the player reads as playing while still parked
+    // at EOF; clearing on the state alone would let that bounce re-fire the
+    // handler and advance the queue when the user asked for a replay. And the
+    // credits auto-skip claims the latch while playing nowhere near the end,
+    // which m_endHandledAtSec (0 unless a real EOF set it) leaves alone.
+    if (m_endHandled && !player.hasEnded() &&
+        (player.isPlaying() || player.isPaused()) &&
+        position + 1.0 < m_endHandledAtSec) {
+        m_endHandled = false;
+        m_endHandledAtSec = 0.0;
     }
 
     // Check hasEnded() regardless of m_isPlaying, which may have synced false a frame before ENDED was set.
     if (player.hasEnded() && !m_endHandled) {
         m_endHandled = true;  // Prevent multiple triggers
+        m_endHandledAtSec = position;  // where to consider the latch spent; see above
         m_isPlaying = false;
         brls::Logger::info("PlayerActivity: Playback ended (mediaType={}, queueMode={})",
             (int)m_mediaType, m_isQueueMode);
@@ -2344,7 +2393,11 @@ void PlayerActivity::togglePlayPause() {
         //
         // m_endHandled has to come back down or the replayed track would run
         // off the end in silence: the tick only acts on hasEnded() once.
+        // updateProgress does the same for every other way out of ENDED, which
+        // this button predates; both are kept, since clearing it here is
+        // immediate rather than a tick later.
         m_endHandled = false;
+        m_endHandledAtSec = 0.0;
         player.play();      // play() rewinds out of ENDED; see MpvPlayer
         m_isPlaying = true;
     }

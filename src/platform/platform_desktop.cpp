@@ -270,7 +270,9 @@ void openLogFile() {
 
     // Truncated per run rather than appended: this is for "it just did the
     // wrong thing, send me the log", and an unbounded file that nobody ever
-    // rotates is its own problem.
+    // rotates is its own problem. The finished run is kept alongside, because
+    // a restart used to destroy the very session being reported.
+    rotateLogForNewRun();
     g_logFile = std::fopen(getLogPath().c_str(), "w");
     if (!g_logFile) return;
     // Line-buffered, so a crash still leaves everything up to the last line.

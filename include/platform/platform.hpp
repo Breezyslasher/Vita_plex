@@ -346,6 +346,33 @@ void shutdown();
 std::string getLogPath();
 
 /**
+ * Path the finished run's log is kept at, or "" when getLogPath() is empty.
+ * Derived from getLogPath() by inserting ".prev" before the extension.
+ */
+std::string previousLogPath();
+
+/**
+ * Moves an existing log to previousLogPath() so the new run can truncate
+ * without destroying it. Call before opening the log for writing.
+ */
+void rotateLogForNewRun();
+
+/**
+ * Whether shareLogFile() can do anything on this platform.
+ */
+bool canShareLogFile();
+
+/**
+ * Hands a log file to the platform's share mechanism (Android's share sheet).
+ *
+ * On Android the log is in app-private internal storage, which no file manager
+ * can reach, so reading it in Settings is not enough — this is the only way to
+ * get the file off the device. A no-op where getLogPath() is already somewhere
+ * the user can open.
+ */
+void shareLogFile(const std::string& path);
+
+/**
  * Opens the platform log file (if any) and subscribes brls::Logger to it.
  * Idempotent. Called from init() but exposed for tests.
  */
