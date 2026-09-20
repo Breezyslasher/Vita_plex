@@ -726,6 +726,23 @@ if(PLATFORM_PSV)
     # Required for __wrap_pthread_create in src/utils/vita_stubs.c
     target_link_options(${PROJECT_NAME} PRIVATE "-Wl,--wrap=pthread_create")
 
+    # vita-elf-create appends the SCE module data to the end of the first LOAD
+    # segment, and fails outright if that runs into the second:
+    #
+    #   Cannot allocate 4152 bytes for SCE data at end of segment 0;
+    #   segment 1 overlaps
+    #   Segmentation fault (core dumped)
+    #
+    # The space available is whatever padding the linker left between the two
+    # segments, which is bounded by max-page-size — 0x1000 by default on this
+    # target. 4152 bytes does not fit in 4096, so whether the build packages at
+    # all came down to where segment 0 happened to end: it worked while the
+    # layout fell kindly and broke on the commit that shifted it, with no error
+    # in the code and after a clean compile and link. Raising max-page-size to
+    # 64K makes the gap large enough that the blob always fits, at the cost of
+    # up to 64K of padding in the VPK.
+    target_link_options(${PROJECT_NAME} PRIVATE "-Wl,-z,max-page-size=0x10000")
+
     target_link_libraries(${PROJECT_NAME}
         archive
         zstd
