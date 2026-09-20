@@ -676,10 +676,79 @@ bool MpvPlayer::init() {
     brls::Logger::info("MpvPlayer: Initialized successfully");
     m_state = MpvPlayerState::IDLE;
     m_commandPending = false;
+    startEventThread();
     return true;
 }
 
+// mpv's events were drained only from PlayerActivity's timers — updateProgress
+// once a second and m_endWatchTimer every 250ms. Both are brls::RepeatingTimers
+// on a view, so the whole playback state machine advanced only while that view
+// was being ticked. mpv keeps decoding on its own thread regardless, so a track
+// could play to the end with nobody reading the events that say so.
+//
+// A log of exactly that: FILE_LOADED and PLAYBACK_RESTART for a track started
+// at 00:03:14 were not seen until 00:08:09, when the app came back to the
+// foreground. The track had played its full 223 seconds in between and the
+// queue never advanced, because as far as this class knew it was still LOADING.
+// Two timeline reports went out over that session where a comparable one sent
+// seventy-one.
+//
+// So the pump does not belong to a view. mpv calls onMpvWakeup whenever events
+// are queued; that callback runs on mpv's thread and is not allowed to re-enter
+// the mpv API, so all it does is signal this thread, which does the draining.
+// The timers still call update() and that stays harmless — eventMainLoop drains
+// whatever is there and returns.
+void MpvPlayer::onMpvWakeup(void* ctx) {
+    auto* self = static_cast<MpvPlayer*>(ctx);
+    if (!self) return;
+    {
+        std::lock_guard<std::mutex> lock(self->m_eventMutex);
+        self->m_eventPending = true;
+    }
+    self->m_eventCv.notify_one();
+}
+
+void MpvPlayer::startEventThread() {
+    if (m_eventThreadRun.load()) return;
+    m_eventThreadRun.store(true);
+    m_eventPending = true;   // drain anything queued before the callback was set
+
+    m_eventThread = std::thread([this]() {
+        while (m_eventThreadRun.load()) {
+            {
+                std::unique_lock<std::mutex> lock(m_eventMutex);
+                // The timeout is a safety net, not the mechanism: if a wakeup
+                // is ever missed the queue still drains a moment later rather
+                // than stalling until the next UI tick, which is the failure
+                // this whole thread exists to remove.
+                m_eventCv.wait_for(lock, std::chrono::milliseconds(250),
+                                   [this] { return m_eventPending || !m_eventThreadRun.load(); });
+                m_eventPending = false;
+            }
+            if (!m_eventThreadRun.load()) break;
+            if (m_mpv && !m_stopping.load()) eventMainLoop();
+        }
+    });
+    mpv_set_wakeup_callback(m_mpv, &MpvPlayer::onMpvWakeup, this);
+}
+
+void MpvPlayer::stopEventThread() {
+    // Drop the callback before the thread goes, so mpv cannot signal a
+    // condition variable that is about to be destroyed.
+    if (m_mpv) mpv_set_wakeup_callback(m_mpv, nullptr, nullptr);
+    if (!m_eventThreadRun.exchange(false)) return;
+    {
+        std::lock_guard<std::mutex> lock(m_eventMutex);
+        m_eventPending = true;
+    }
+    m_eventCv.notify_all();
+    if (m_eventThread.joinable()) m_eventThread.join();
+}
+
 void MpvPlayer::shutdown() {
+    // Before m_stopping and before the handle goes: the thread touches both.
+    stopEventThread();
+
     if (m_mpv) {
         brls::Logger::debug("MpvPlayer: Shutting down");
 
@@ -964,7 +1033,7 @@ void MpvPlayer::seekTo(double seconds) {
     if (!m_mpv || m_stopping) return;
 
     if (!canSeekNow()) {
-        brls::Logger::debug("MpvPlayer: Cannot seek in state {}", (int)m_state);
+        brls::Logger::debug("MpvPlayer: Cannot seek in state {}", (int)m_state.load());
         return;
     }
 
@@ -1360,14 +1429,21 @@ void MpvPlayer::setAndroidSurfaceSize(int width, int height) {
 void MpvPlayer::setState(MpvPlayerState newState) {
     brls::Logger::debug("MpvPlayer::setState entered with newState={}", (int)newState);
     if (m_state != newState) {
-        brls::Logger::debug("MpvPlayer: State change: {} -> {}", (int)m_state, (int)newState);
+        brls::Logger::debug("MpvPlayer: State change: {} -> {}", (int)m_state.load(), (int)newState);
         m_state = newState;
 
-        // Prevent screen from turning off during playback
+        // Prevent screen from turning off during playback.
+        //
+        // Deferred to the UI thread: setState now also runs on the event
+        // thread, and this reaches the platform layer (a JNI call on Android).
+        // It is cosmetic, so arriving a frame late is fine — unlike the state
+        // assignment above, which has to be immediate.
         bool playing = (newState == MpvPlayerState::PLAYING ||
                        newState == MpvPlayerState::BUFFERING);
-        brls::Application::getPlatform()->disableScreenDimming(playing,
-            "MpvPlayer", "VitaPlex");
+        brls::sync([playing]() {
+            brls::Application::getPlatform()->disableScreenDimming(playing,
+                "MpvPlayer", "VitaPlex");
+        });
 
 #ifdef __vita__
         // Throttle the borealis main loop during audio-only playback.
@@ -1396,6 +1472,10 @@ void MpvPlayer::update() {
 
 void MpvPlayer::eventMainLoop() {
     if (!m_mpv) return;
+
+    // See m_pumpMutex: the event thread and the UI thread both drain here.
+    std::lock_guard<std::recursive_mutex> pump(m_pumpMutex);
+    if (!m_mpv) return;   // shutdown may have won the race for the lock
 
     // Process all pending events (matching switchfin's approach)
     while (true) {
@@ -1658,6 +1738,12 @@ void MpvPlayer::handlePropertyChange(mpv_event_property* prop, uint64_t id) {
 
 void MpvPlayer::updatePlaybackInfo() {
     if (!m_mpv || m_state == MpvPlayerState::IDLE || m_state == MpvPlayerState::LOADING) return;
+
+    // m_playbackInfo is written here on the UI thread and by the observed
+    // property handlers on the event thread. Those run inside eventMainLoop,
+    // which holds this same lock, so taking it here is what keeps the struct
+    // from being written by both at once.
+    std::lock_guard<std::recursive_mutex> pump(m_pumpMutex);
 
     // Get video codec info if not yet fetched
     if (m_playbackInfo.videoCodec.empty() && m_state == MpvPlayerState::PLAYING) {

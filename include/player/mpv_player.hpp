@@ -8,7 +8,9 @@
 #include <string>
 #include <vector>
 #include <atomic>
+#include <condition_variable>
 #include <mutex>
+#include <thread>
 
 #include "app/application.hpp"
 
@@ -216,6 +218,12 @@ private:
     bool initRenderContext();
     void cleanupRenderContext();
     void eventMainLoop();
+
+    // Drains mpv's event queue independently of any UI timer. See the comment
+    // on startEventThread in mpv_player.cpp.
+    void startEventThread();
+    void stopEventThread();
+    static void onMpvWakeup(void* ctx);
     void updatePlaybackInfo();
     void handleEvent(mpv_event* event);
     void handlePropertyChange(mpv_event_property* prop, uint64_t id);
@@ -227,7 +235,9 @@ private:
 
     mpv_handle* m_mpv = nullptr;
     mpv_render_context* m_mpvRenderCtx = nullptr;
-    MpvPlayerState m_state = MpvPlayerState::IDLE;
+    // Atomic because the event thread writes it while the UI thread reads it
+    // through isPlaying()/hasEnded()/getState().
+    std::atomic<MpvPlayerState> m_state{MpvPlayerState::IDLE};
     MpvPlaybackInfo m_playbackInfo;
     std::string m_errorMessage;
     std::string m_currentUrl;
@@ -235,16 +245,32 @@ private:
     std::atomic<int64_t> m_expectedDurationMs{0};
     bool m_subtitlesVisible = true;
     std::atomic<bool> m_stopping{false};        // Shutdown in progress (accessed from mpv thread)
-    bool m_commandPending = false;  // Async command pending
+    // These three are set while handling events and read by callers on the UI
+    // thread, so they crossed threads the moment the pump moved off it.
+    std::atomic<bool> m_commandPending{false};  // Async command pending
     // Set when mpv reports the current file gone (END_FILE / IDLE). stop()
     // waits on this so the previous file's decoder is actually released
     // before the caller tears the event pump down — see stop().
-    bool m_fileUnloaded = true;
+    std::atomic<bool> m_fileUnloaded{true};
     // Set on MPV_EVENT_SHUTDOWN. The handle is dead once that arrives:
     // commands still queue and report success but never execute. loadUrl()
     // recreates the context instead of loading into the corpse.
-    bool m_coreShutdown = false;
+    std::atomic<bool> m_coreShutdown{false};
     bool m_audioOnly = false;       // Audio-only mode (no video decoding)
+
+    // The event pump. mpv wakes onMpvWakeup from its own thread; this thread
+    // does the draining, because the wakeup callback may not re-enter mpv.
+    std::thread m_eventThread;
+    std::mutex m_eventMutex;
+    std::condition_variable m_eventCv;
+    std::atomic<bool> m_eventThreadRun{false};
+    bool m_eventPending = false;    // guarded by m_eventMutex
+    // eventMainLoop() is now reachable from the event thread and from the UI
+    // thread (update(), and stop()'s bounded wait). mpv_wait_event on one
+    // handle is not safe concurrently, so the drain is serialised. Recursive
+    // because an event handler runs callbacks, and one of those reaching
+    // update() again must not deadlock the thread that is already draining.
+    std::recursive_mutex m_pumpMutex;
 
     // Static callback for render updates (called from MPV thread)
     static void onRenderUpdate(void* ctx);
