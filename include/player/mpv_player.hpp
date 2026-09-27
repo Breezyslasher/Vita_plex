@@ -59,6 +59,9 @@ struct MpvPlaybackInfo {
     std::string audioCodec;
     int audioChannels = 0;
     int sampleRate = 0;
+    // The rate handed to the audio output, after any resampling. On the Vita
+    // it also says which port ao_vita opened: BGM below 48 kHz, MAIN at 48.
+    int outSampleRate = 0;
     int subtitleTrack = 0;
     int audioTrack = 0;
     double cacheUsed = 0.0;
@@ -166,6 +169,18 @@ public:
     bool isSeekable() const;
     const MpvPlaybackInfo& getPlaybackInfo() const { return m_playbackInfo; }
     std::string getErrorMessage() const { return m_errorMessage; }
+
+    // A copy of what the event pump last saw, for code on another thread.
+    // Takes the pump lock and never calls into libmpv, so it is safe to call
+    // while the UI thread is tearing the player down.
+    struct Snapshot {
+        MpvPlayerState state = MpvPlayerState::IDLE;
+        bool initialized = false;
+        bool audioOnly = false;
+        double position = 0.0;
+        int outSampleRate = 0;
+    };
+    Snapshot snapshot();
 
     // OSD
     void showOSD(const std::string& text, double durationSec = 2.0);

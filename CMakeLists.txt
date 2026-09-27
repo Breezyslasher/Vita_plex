@@ -817,6 +817,18 @@ int main() {
     else()
         message(STATUS "SceNotificationUtil unavailable — no Vita download notifications")
     endif()
+
+    # The background-audio experiment (utils/background_audio.hpp): the BGM
+    # port calls come from SceAppMgr_stub, linked above; SceShell's music
+    # service is driven through the vendored libShellAudio, plus the one
+    # import stub vitasdk has no library for (lib/libshellaudio/README.md).
+    enable_language(ASM)
+    target_sources(${PROJECT_NAME} PRIVATE
+        src/utils/background_audio_psv.cpp
+        lib/libshellaudio/ShellAudio.c
+        lib/libshellaudio/shellsvc_stub.S)
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio)
 elseif(PLATFORM_SWITCH)
     # Required for __wrap_pthread_create in src/utils/switch_stubs.c — floors
     # libmpv/ffmpeg thread stacks above libnx's 128 KB default so they stop
