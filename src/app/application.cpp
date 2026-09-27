@@ -597,6 +597,7 @@ bool Application::loadSettings() {
     }
     m_settings.audioPassthrough = extractBool("audioPassthrough", false);
     m_settings.backgroundMusic = extractBool("backgroundMusic", true);
+    m_settings.vitaBackgroundAudio = extractBool("vitaBackgroundAudio", false);
     m_settings.musicShuffleDefault = extractBool("musicShuffleDefault", false);
 
     // Live TV / DVR settings
@@ -748,6 +749,7 @@ bool Application::saveSettings() {
     json += "  \"lyricsWordByWord\": " + b(m_settings.lyricsWordByWord) + ",\n";
     json += "  \"audioPassthrough\": " + b(m_settings.audioPassthrough) + ",\n";
     json += "  \"backgroundMusic\": " + b(m_settings.backgroundMusic) + ",\n";
+    json += "  \"vitaBackgroundAudio\": " + b(m_settings.vitaBackgroundAudio) + ",\n";
     json += "  \"musicShuffleDefault\": " + b(m_settings.musicShuffleDefault) + ",\n";
     json += "  \"defaultDvrShowSectionId\": \"" + esc(m_settings.defaultDvrShowSectionId) + "\",\n";
     json += "  \"defaultDvrShowSectionTitle\": \"" + esc(m_settings.defaultDvrShowSectionTitle) + "\",\n";

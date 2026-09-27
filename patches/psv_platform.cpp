@@ -41,6 +41,16 @@ extern "C" void vitaplex_set_audio_playback_active(bool active)
     s_audioPlaybackActive.store(active);
 }
 
+// How many times the UI loop has run. Read by the background-audio experiment
+// (utils/background_audio_psv.cpp) to tell whether this thread keeps going
+// while the app is not in front: the music queue only advances from here.
+static std::atomic<unsigned> s_mainLoopTicks{0};
+
+extern "C" unsigned vitaplex_main_loop_ticks(void)
+{
+    return s_mainLoopTicks.load(std::memory_order_relaxed);
+}
+
 // Video render hook - called at the start of mainLoopIteration(), BEFORE
 // NanoVG/GXM touches the GPU. This ensures mpv renders its frame to the
 // offscreen FBO without conflicting with NanoVG's active GXM scene.
@@ -164,6 +174,8 @@ void PsvPlatform::createWindow(std::string windowTitle, uint32_t windowWidth, ui
 
 bool PsvPlatform::mainLoopIteration()
 {
+    s_mainLoopTicks.fetch_add(1, std::memory_order_relaxed);
+
     // Render pending video frame BEFORE NanoVG touches GXM.
     // This guarantees no active GXM scene when mpv renders.
     if (s_videoFrameReady.load(std::memory_order_acquire) && s_videoRenderFunc) {

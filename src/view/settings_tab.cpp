@@ -13,6 +13,7 @@
 #include "view/settings_tab.hpp"
 #include "view/livetv_actions.hpp"
 #include "utils/app_update.hpp"
+#include "utils/background_audio.hpp"
 #include "utils/shell_integration.hpp"
 #include "app/application.hpp"
 #include "app/plex_client.hpp"
@@ -994,6 +995,30 @@ brls::Box* SettingsTab::createPlaybackSection() {
     return box;
 }
 
+// What a background-audio test found, in a dialog. Several lines and some of
+// them long, which a notification would cut off.
+static void showTestReport(const std::string& text) {
+    auto* content = new brls::Box();
+    content->setAxis(brls::Axis::COLUMN);
+    content->setWidth(600.0f);
+
+    auto* scroll = new brls::ScrollingFrame();
+    scroll->setWidth(600.0f);
+    scroll->setHeight(300.0f);
+
+    auto* label = new brls::Label();
+    label->setText(text);
+    label->setFontSize(16.0f);
+    label->setIsWrapping(true);
+    label->setWidth(580.0f);
+    scroll->setContentView(label);
+    content->addView(scroll);
+
+    auto* dialog = new brls::Dialog(content);
+    dialog->addButton("Close", []() {});
+    dialog->open();
+}
+
 brls::Box* SettingsTab::createMusicSection() {
     Application& app = Application::getInstance();
     AppSettings& settings = app.getSettings();
@@ -1096,6 +1121,58 @@ brls::Box* SettingsTab::createMusicSection() {
     musicInfoLabel->setMarginLeft(16);
     musicInfoLabel->setMarginTop(8);
     box->addView(musicInfoLabel);
+
+    // Vita: leaving the app itself still stops the music, whatever the toggle
+    // above says. These try the two ways past that on the console, and report
+    // what happened; see utils/background_audio.hpp. Absent elsewhere.
+    if (bgaudio::available()) {
+        auto* keepPlaying = new brls::BooleanCell();
+        keepPlaying->init("Keep Playing Outside VitaPlex (test)", settings.vitaBackgroundAudio,
+            [](bool value) {
+                Application& app = Application::getInstance();
+                app.getSettings().vitaBackgroundAudio = value;
+                app.saveSettings();
+                bgaudio::setKeepPlaying(value);
+            });
+        box->addView(keepPlaying);
+
+        auto* fileTest = new brls::DetailCell();
+        fileTest->setText("Test: System Player, Local File");
+        fileTest->setDetailText("An MP3/M4A/WAV download, or test.mp3");
+        fileTest->registerClickAction([](brls::View*) {
+            brls::Application::notify("Trying the system player...");
+            bgaudio::runShellFileTest(showTestReport);
+            return true;
+        });
+        box->addView(fileTest);
+
+        auto* streamTest = new brls::DetailCell();
+        streamTest->setText("Test: System Player, Streaming");
+        streamTest->setDetailText("The current track, from Plex");
+        streamTest->registerClickAction([](brls::View*) {
+            brls::Application::notify("Trying the stream in the system player; this can take a minute");
+            bgaudio::runShellStreamTest(showTestReport);
+            return true;
+        });
+        box->addView(streamTest);
+
+        auto* stopTest = new brls::DetailCell();
+        stopTest->setText("Stop System Player Test");
+        stopTest->registerClickAction([](brls::View*) {
+            brls::Application::notify(bgaudio::stopShellTest());
+            return true;
+        });
+        box->addView(stopTest);
+
+        auto* testInfoLabel = new brls::Label();
+        testInfoLabel->setText("Tests for playing on after leaving VitaPlex. Turn the toggle on, "
+                               "play music, press PS, and come back: a message says what "
+                               "happened, and the log has the detail.");
+        testInfoLabel->setFontSize(14);
+        testInfoLabel->setMarginLeft(16);
+        testInfoLabel->setMarginTop(8);
+        box->addView(testInfoLabel);
+    }
 
     return box;
 }

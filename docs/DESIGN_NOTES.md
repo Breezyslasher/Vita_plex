@@ -364,6 +364,67 @@ Matching that would mean a proprietary toolchain, a kernel plugin, and a
 different distribution model for an Apache-2.0 repo. Notifications are the part
 that is reachable with open vitasdk, so notifications are the part we do.
 
+### Vita: background audio (an experiment, not yet settled)
+
+The "Background Music" setting covers leaving the *player screen*; leaving the
+app, for the LiveArea or another app, still stops the music. ElevenMPV-A plays on
+in that situation, and it gets there two different ways, both reachable with
+vitasdk. `utils/background_audio.hpp` tries each on real hardware; Settings >
+Music carries the controls, and every step is logged under `[bgaudio]`.
+
+**The BGM port.** mpv's Vita audio output (switchfin's `ao_vita`) opens
+`sceAudioOutOpenPort(rate > 47999 ? MAIN : BGM, 1024, rate, …)`: read from the
+disassembly of the libmpv the CI links, so music, nearly always 44.1 kHz, is on
+the BGM port already. vita-headers documents `sceAppMgrAcquireBgmPort` as
+obtaining that port "even when it is not in front". ElevenMPV-A does exactly this
+for the formats it decodes in its own process (FLAC, Opus, its YouTube streams):
+it acquires at priority 0x81 and outputs on a BGM port. Its main loop also keeps
+running after `SCE_APP_EVENT_ON_DEACTIVATE`, where it merely lowers its own
+priority, which is evidence that a deactivated app is not frozen as a matter of
+course. One difference is untested: ElevenMPV-A's `param.sfo` says `CATEGORY`
+`gdc`, a non-game application, where VitaPlex is a game (`gd`). If this route
+works, it streams exactly as the app does now, with nothing to cache.
+
+The toggle "Keep Playing Outside VitaPlex (test)" acquires the port at 0x81 when
+music plays and has mpv resample to 44.1 kHz so 48 kHz music lands on it too. A
+watcher thread reads the AppMgr events, which nothing else in the app does. It
+logs a heartbeat every 4 s while the app is away, with the mpv position, how many
+times the UI loop ran, and how many files mpv loaded. A tick that comes late by
+more than 3 s means the process was held. On return a notification gives the
+verdict: how long the app was away, whether VitaPlex ran for it, and whether the
+track or the queue moved. The queue advances from the UI loop, so "UI stopped"
+there means the current track may finish but the next will not start.
+
+**SceShell's music service.** libShellAudio (`lib/libshellaudio`, MIT) drives
+the service the system Music app plays through, so audio handed to it outlives
+anything that happens to the app. The object `sceShellSvcGetSvcObj` returns is
+an IPMI client. Vita3K's client vtable puts `invokeSyncMethod` at 0x14, the slot
+libShellAudio calls, and its "events" are the service's method ids. vitasdk has
+no stub for that one function; `shellsvc_stub.S` supplies it, checked against
+the 3.60 firmware's exports and Vita3K's NID table. The shell decodes only MP3,
+AAC/M4A, WAV and ATRAC9, and ElevenMPV-A sends it local files only; its streams
+go through its own decoders and the BGM port. Whether the shell will open an
+http(s) URL is unknown, and that is what "Test: System Player, Streaming" is
+for. It gives the service the current track as an MP3 transcode (a fresh session
+per attempt) and, if the original is MP3 or AAC, as the file itself. Each is
+tried over https and plain http, and the report says which played. "Test: System
+Player, Local File" does the same with a download or a `test.mp3`, so the two
+failures can be told apart.
+
+What each outcome leads to:
+
+- VitaPlex keeps running with the port held: this becomes the feature. The
+  test label goes, the port is released when paused in the background (as
+  ElevenMPV-A does, so the system Music app can take over), and the power button
+  gets looked at.
+- The process is held but the shell plays a URL: streaming goes to the shell,
+  with the queue handed over one track at a time while the app is in front.
+- The process is held and the shell plays only files: the current and next few
+  tracks are cached as MP3 while the app is in front and handed over from disk.
+  Advancing past them without the app running would need the shell's track list
+  (`sceMusicPlayerServiceSetTrackList`, an undocumented 0x828-byte SQLite
+  command buffer), so that part would stay out of reach.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

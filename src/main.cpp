@@ -21,6 +21,7 @@
 #endif
 #include "app/application.hpp"
 #include "utils/app_update.hpp"
+#include "utils/background_audio.hpp"
 #include "utils/shell_integration.hpp"
 #include "app/plex_client.hpp"
 #include "view/media_item_cell.hpp"
@@ -151,6 +152,10 @@ extern "C" int VitaPlexMainEntry(int argc, char* argv[]) {
     // Settings are loaded by now, so the shell can be told whether it may write
     // the Start Menu shortcut that toasts are keyed on. Windows-only in effect.
     vitaplex::shell::setShortcutAllowed(app.getSettings().windowsStartMenuShortcut);
+
+    // The Vita background-audio experiment starts watching here when it is on.
+    // No-op on every other platform.
+    vitaplex::bgaudio::init(app.getSettings().vitaBackgroundAudio);
 
     // Run application (blocking)
     app.run();
