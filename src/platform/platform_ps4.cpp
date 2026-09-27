@@ -193,9 +193,12 @@ void openLogFile() {
                               .count() %
                           1000;
 
+            // Redacted at the sink, as on desktop and Android: one call site
+            // that forgets to redact would otherwise put an X-Plex-Token in
+            // a log that gets pasted into a bug report.
             fprintf(g_logFile, "%02d:%02d:%02d.%03d [%s] %s\n",
                     time_tm.tm_hour, time_tm.tm_min, time_tm.tm_sec,
-                    (int)ms, levelStr, log.c_str());
+                    (int)ms, levelStr, ::vitaplex::redactTokensInUrl(log).c_str());
         });
     brls::Logger::info("Log file initialized");
 }
