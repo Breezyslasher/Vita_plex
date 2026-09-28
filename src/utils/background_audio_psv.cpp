@@ -169,6 +169,17 @@ std::mutex g_shellMutex;
 std::atomic<bool> g_shellBusy{false};
 bool g_shellInit = false;     // guarded by g_shellMutex
 bool g_shellPlaying = false;  // guarded by g_shellMutex; a test left it playing
+int g_shellService = -1;      // guarded by g_shellMutex; the one g_shellInit refers to
+
+// Which service the next test uses: 0-4 the music player's client types,
+// kServiceAppBgm the application-BGM service. See the SceShell tests below.
+constexpr int kServiceAppBgm = 5;
+std::atomic<int> g_service{0};
+// Guarded by g_shellMutex: the last source seen playing, one for the music
+// player (all five client types share its one loaded file) and one for the
+// application-BGM service, which remembers its own.
+std::string g_shellLastSrc[2];
+int lastSrcSlot(int service) { return service == kServiceAppBgm ? 1 : 0; }
 
 // ── The watcher ──────────────────────────────────────────────────────────
 std::atomic<bool> g_watcherStarted{false};
@@ -192,20 +203,9 @@ std::string describeMpv(const MpvPlayer::Snapshot& s) {
     return b;
 }
 
-// Never waits for the shell lock: a test holds it for most of a minute, and a
-// watcher stuck here would read as the process having been stopped.
-std::string shellStatusLine() {
-    std::unique_lock<std::mutex> lock(g_shellMutex, std::try_to_lock);
-    if (!lock.owns_lock()) return ", system player test running";
-    if (!g_shellPlaying) return {};
-    SceMusicPlayerServicePlayStatusExtension st;
-    std::memset(&st, 0, sizeof(st));
-    const int rc = sceMusicPlayerServiceGetPlayStatusExtension(&st);
-    char b[80];
-    std::snprintf(b, sizeof(b), ", system player state %d at %s (%s)", st.currentState,
-                  mmss(st.currentTime).c_str(), hex(rc).c_str());
-    return b;
-}
+// ", system player …" for the watcher's lines, or empty. Defined with the
+// SceShell tests below; never waits for the shell lock.
+std::string shellStatusLine();
 
 // gapUs is how late the tick that read the event was. If the system froze the
 // process the moment the user left, the event is only read on the way back,
@@ -376,20 +376,92 @@ void startWatcher() {
 }
 
 // ── SceShell tests ───────────────────────────────────────────────────────
+//
+// The shell has two services that play a file handed to it. The music
+// player service takes a client type when it starts (libShellAudio maps 0-4
+// to 0x8-0x80; ElevenMPV-A always uses 0), and which type the system's own
+// quick menu controls answer to is unknown. The application-BGM service
+// (sceMusicInternalApp*) is a different interface, whose open call is named
+// SetUri. Which of these, if any, lights up the quick menu's Music controls,
+// and which takes a URL, is what the picker in settings is for.
 
 struct ShellTry {
-    bool played = false;
+    bool played = false;  // its clock was seen moving
+    bool maybe = false;   // accepted, but this service reports no clock
     std::string line;
 };
+
+std::string serviceName(int s) {
+    return s == kServiceAppBgm ? std::string("app background music")
+                               : "music player, type " + std::to_string(s);
+}
+
+// All of these must hold g_shellMutex, and act on whichever service
+// g_shellService says is running.
+bool appBgm() { return g_shellService == kServiceAppBgm; }
+
+int shellCommand(int eventId) {
+    return appBgm() ? sceMusicInternalAppSetPlaybackCommand(eventId, 0)
+                    : sceMusicPlayerServiceSendEvent(eventId, 0);
+}
+
+struct ShellClock {
+    int rc = 0;
+    int state = 0;
+    unsigned timeMs = 0;
+};
+
+ShellClock shellClock() {
+    ShellClock c;
+    if (appBgm()) {
+        SceMusicInternalAppResult res;
+        std::memset(&res, 0, sizeof(res));
+        c.rc = sceMusicInternalAppGetLastResult(&res);
+        c.state = res.state;
+        c.timeMs = res.time > 0 ? (unsigned)res.time : 0;
+    } else {
+        SceMusicPlayerServicePlayStatusExtension st;
+        std::memset(&st, 0, sizeof(st));
+        c.rc = sceMusicPlayerServiceGetPlayStatusExtension(&st);
+        c.state = st.currentState;
+        c.timeMs = st.currentTime;
+    }
+    return c;
+}
+
+// The music player service's loaded track length in ms, logged with its
+// title. Must hold g_shellMutex, with the music player service running.
+int playerDuration(const std::string& label) {
+    std::unique_ptr<SceMusicPlayerServiceTrackInfo> info(new SceMusicPlayerServiceTrackInfo());
+    const int rc = sceMusicPlayerServiceGetTrackInfo(info.get());
+    info->title[sizeof(info->title) - 1] = '\0';
+    brls::Logger::info("[bgaudio] system player: {}: track info {}, duration {} ms, title \"{}\"",
+                       label, hex(rc), info->duration, info->title);
+    return rc < 0 ? -1 : info->duration;
+}
+
+// A test holds the shell lock for most of a minute, and a watcher stuck
+// waiting for it would read as the process having been stopped.
+std::string shellStatusLine() {
+    std::unique_lock<std::mutex> lock(g_shellMutex, std::try_to_lock);
+    if (!lock.owns_lock()) return ", system player test running";
+    if (!g_shellPlaying) return {};
+    const ShellClock c = shellClock();
+    char b[80];
+    std::snprintf(b, sizeof(b), ", system player state %d at %s (%s)", c.state,
+                  mmss(c.timeMs).c_str(), hex(c.rc).c_str());
+    return b;
+}
 
 // Must hold g_shellMutex.
 void stopShellLocked(const char* why) {
     if (!g_shellInit) return;
-    const int rcStop = sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_STOP, 0);
-    const int rcTerm = sceMusicPlayerServiceTerminate();
-    brls::Logger::info("[bgaudio] system player: stop {}, terminate {} ({})", hex(rcStop),
-                       hex(rcTerm), why);
+    const int rcStop = shellCommand(SCE_MUSIC_EVENTID_STOP);
+    const int rcTerm = appBgm() ? sceMusicInternalAppTerminate() : sceMusicPlayerServiceTerminate();
+    brls::Logger::info("[bgaudio] system player ({}): stop {}, terminate {} ({})",
+                       serviceName(g_shellService), hex(rcStop), hex(rcTerm), why);
     g_shellInit = false;
+    g_shellService = -1;
     g_shellPlaying = false;
 }
 
@@ -407,21 +479,45 @@ ShellTry shellTry(const std::string& label, const std::string& src, bool leave) 
     std::vector<char> path(src.begin(), src.end());
     path.push_back('\0');
 
+    // One service at a time: libShellAudio keeps a single session for both.
+    const int service = g_service.load();
+    if (g_shellInit && g_shellService != service) stopShellLocked("switching service");
     if (!g_shellInit) {
-        const int rc = sceMusicPlayerServiceInitialize(0);
-        brls::Logger::info("[bgaudio] system player: initialize: {}", hex(rc));
+        const int rc = service == kServiceAppBgm ? sceMusicInternalAppInitialize(1)
+                                                 : sceMusicPlayerServiceInitialize(service);
+        brls::Logger::info("[bgaudio] system player ({}): initialize: {}", serviceName(service),
+                           hex(rc));
         if (rc < 0) {
-            r.line = label + ": the music service would not start (" + hex(rc) + ")";
+            r.line = label + ": the " + serviceName(service) + " service would not start (" +
+                     hex(rc) + ")";
             return r;
         }
         g_shellInit = true;
+        g_shellService = service;
     }
 
-    const int rcStop = sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_STOP, 0);
-    const int rcOpen = sceMusicPlayerServiceOpen(path.data(), nullptr);
-    const int rcPlay = sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_PLAY, 0);
-    brls::Logger::info("[bgaudio] system player: {} ({}): stop {}, open {}, play {}", label, src,
-                       hex(rcStop), hex(rcOpen), hex(rcPlay));
+    // What was loaded before this. The shell keeps its last file through stops
+    // and even through terminate and initialize, and when it cannot open a new
+    // source it says nothing and plays the old one, so "the clock moved" is not
+    // enough to count as playing: the new source has to be shown to have
+    // replaced the old. See the verdict below.
+    const ShellClock before = shellClock();
+    const int durBefore = appBgm() ? -1 : playerDuration(label + " (before)");
+
+    // The application-BGM service refuses commands before its first SetUri,
+    // and every attempt here ends stopped, so it needs no stop first.
+    const int rcStop = appBgm() ? 0 : shellCommand(SCE_MUSIC_EVENTID_STOP);
+    int rcOpen;
+    if (appBgm()) {
+        SceMusicOpt opt;
+        std::memset(&opt, 0, sizeof(opt));
+        rcOpen = sceMusicInternalAppSetUri(path.data(), &opt);
+    } else {
+        rcOpen = sceMusicPlayerServiceOpen(path.data(), nullptr);
+    }
+    const int rcPlay = shellCommand(SCE_MUSIC_EVENTID_PLAY);
+    brls::Logger::info("[bgaudio] system player ({}): {} ({}): stop {}, open {}, play {}",
+                       serviceName(service), label, src, hex(rcStop), hex(rcOpen), hex(rcPlay));
     if (rcOpen < 0) {
         r.line = label + ": refused (" + hex(rcOpen) + ")";
         return r;
@@ -429,49 +525,80 @@ ShellTry shellTry(const std::string& label, const std::string& src, bool leave) 
 
     // Up to 12 s for the clock to pass a second beyond where it was first
     // seen moving: a stream has to be fetched and buffered before it starts.
-    SceMusicPlayerServicePlayStatusExtension st;
+    ShellClock c;
     int lastState = -1;
     bool seenTime = false;
     unsigned firstTime = 0;
     const SceInt64 t0 = sceKernelGetSystemTimeWide();
     while (sceKernelGetSystemTimeWide() - t0 < 12 * 1000000LL) {
-        std::memset(&st, 0, sizeof(st));
-        const int rc = sceMusicPlayerServiceGetPlayStatusExtension(&st);
-        if (st.currentState != lastState) {
-            brls::Logger::info("[bgaudio] system player: {}: state {} at {} ({})", label,
-                               st.currentState, mmss(st.currentTime), hex(rc));
-            lastState = st.currentState;
+        c = shellClock();
+        if (c.state != lastState) {
+            brls::Logger::info("[bgaudio] system player: {}: state {} at {} ({})", label, c.state,
+                               mmss(c.timeMs), hex(c.rc));
+            lastState = c.state;
         }
-        if (st.currentTime > 0 && !seenTime) {
+        if (c.timeMs > 0 && !seenTime) {
             seenTime = true;
-            firstTime = st.currentTime;
+            firstTime = c.timeMs;
         }
-        if (seenTime && st.currentTime >= firstTime + 1000) {
+        if (seenTime && c.timeMs >= firstTime + 1000) {
             r.played = true;
             break;
         }
         sceKernelDelayThread(250 * 1000);
     }
 
-    std::unique_ptr<SceMusicPlayerServiceTrackInfo> info(new SceMusicPlayerServiceTrackInfo());
-    const int rcInfo = sceMusicPlayerServiceGetTrackInfo(info.get());
-    info->title[sizeof(info->title) - 1] = '\0';
-    brls::Logger::info("[bgaudio] system player: {}: track info {}, duration {} ms, title \"{}\"",
-                       label, hex(rcInfo), info->duration, info->title);
-
-    if (r.played) {
-        r.line = label + ": plays (" + mmss(firstTime) + " -> " + mmss(st.currentTime) + ")";
-    } else if (seenTime) {
-        r.line = label + ": started, then its clock stopped at " + mmss(st.currentTime);
+    int durAfter = -1;
+    if (appBgm()) {
+        // Layout unknown; logged whole in case it holds the clock after all.
+        unsigned char status[0x40];
+        std::memset(status, 0, sizeof(status));
+        const int rcStatus = sceMusicInternalAppGetPlaybackStatus(status);
+        std::string bytes;
+        for (unsigned char b : status) {
+            char h[4];
+            std::snprintf(h, sizeof(h), "%02X", b);
+            bytes += h;
+        }
+        brls::Logger::info("[bgaudio] system player: {}: playback status {}: {}", label,
+                           hex(rcStatus), bytes);
     } else {
-        r.line = label + ": no sound after 12s (state " + std::to_string(st.currentState) + ")";
+        durAfter = playerDuration(label);
+    }
+
+    // Did the new source replace the old one? A different length says so, as
+    // does the clock starting again from the top, and with nothing loaded
+    // before, whatever plays can only be the new source. The same source
+    // opened again needs none of that. The application-BGM service gives no
+    // length, so for it only the clock can tell.
+    const bool sameSource = src == g_shellLastSrc[lastSrcSlot(service)];
+    const bool clockWentBack = before.timeMs >= 3000 && firstTime + 2000 < before.timeMs;
+    const bool nothingBefore = before.timeMs == 0 && durBefore <= 0;
+    const bool replaced = sameSource || clockWentBack || nothingBefore ||
+                          (!appBgm() && durAfter != durBefore);
+
+    if (r.played && !replaced) {
+        r.played = false;
+        r.line = label + ": not opened. The system player went on with the file it had "
+                 "before (" + mmss(firstTime) + " into it)";
+    } else if (r.played) {
+        r.line = label + ": plays (" + mmss(firstTime) + " -> " + mmss(c.timeMs) + ")";
+    } else if (seenTime) {
+        r.line = label + ": started, then its clock stopped at " + mmss(c.timeMs);
+    } else if (appBgm() && rcPlay >= 0) {
+        // This service may simply not report a clock, so no verdict from here.
+        r.maybe = true;
+        r.line = label + ": accepted, but this service reports no progress; listen for it";
+    } else {
+        r.line = label + ": no sound after 12s (state " + std::to_string(c.state) + ")";
     }
     brls::Logger::info("[bgaudio] system player: {}", r.line);
 
-    if (r.played && leave) {
+    if (r.played || r.maybe) g_shellLastSrc[lastSrcSlot(service)] = src;
+    if ((r.played || r.maybe) && leave) {
         g_shellPlaying = true;
     } else {
-        sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_STOP, 0);
+        shellCommand(SCE_MUSIC_EVENTID_STOP);
         g_shellPlaying = false;
     }
     return r;
@@ -480,6 +607,15 @@ ShellTry shellTry(const std::string& label, const std::string& src, bool leave) 
 // The system player and mpv would otherwise both be heard.
 void pauseMpvForShell() {
     if (MpvPlayer::getInstance().isPlaying()) MusicController::getInstance().playPause(false);
+}
+
+// What to do with something a test left playing. `heard` is whether its clock
+// was seen moving; the application-BGM service may not report one.
+std::string listenAdvice(bool heard) {
+    return std::string(heard ? "Playing now. " : "It may be playing: if you hear it, it works. ") +
+           "Press PS and listen: if it keeps going outside VitaPlex, this works in the "
+           "background. While it plays, hold PS: do the quick menu's Music controls work "
+           "for it? \"Stop System Player Test\" ends it.";
 }
 
 void finishTest(const Report& done, const std::string& report) {
@@ -553,17 +689,17 @@ void runShellFileTest(Report done) {
     }
 
     pauseMpvForShell();
-    platform::launchThread([done, path]() {
+    const std::string service = serviceName(g_service.load());
+    platform::launchThread([done, path, service]() {
         ShellTry r;
         {
             std::lock_guard<std::mutex> lock(g_shellMutex);
             holdPort(kPortForShell, "system player test");
             r = shellTry("File " + baseName(path), path, true);
         }
-        std::string report = "System player, local file\n\n" + r.line + "\n\n";
-        report += r.played
-            ? "Playing now. Press PS and listen: if it keeps going outside VitaPlex, the system "
-              "player works here. \"Stop System Player Test\" ends it."
+        std::string report = "System player (" + service + "), local file\n\n" + r.line + "\n\n";
+        report += (r.played || r.maybe)
+            ? listenAdvice(r.played)
             : "The system player did not play it. The log has every return code "
               "(Settings > Interface > View Log, lines with [bgaudio]).";
         finishTest(done, report);
@@ -586,7 +722,8 @@ void runShellStreamTest(Report done) {
 
     const std::string ratingKey = track->ratingKey;
     const std::string title = track->title;
-    platform::launchThread([done, ratingKey, title]() {
+    const std::string service = serviceName(g_service.load());
+    platform::launchThread([done, ratingKey, title, service]() {
         PlexClient& plex = PlexClient::getInstance();
         std::vector<std::string> lines;
 
@@ -632,8 +769,10 @@ void runShellStreamTest(Report done) {
             return url;
         };
 
-        int firstPlayed = -1;
-        bool playingNow = false;
+        // The first form whose clock moved, failing that the first the service
+        // accepted without reporting a clock (application BGM may not).
+        int firstPlayed = -1, firstMaybe = -1;
+        ShellTry replay;
         {
             std::lock_guard<std::mutex> lock(g_shellMutex);
             holdPort(kPortForShell, "system player test");
@@ -646,14 +785,18 @@ void runShellStreamTest(Report done) {
                 const ShellTry r = shellTry(attempts[i].label, url, false);
                 lines.push_back(r.line);
                 if (r.played && firstPlayed < 0) firstPlayed = (int)i;
+                if (r.maybe && firstMaybe < 0) firstMaybe = (int)i;
             }
-            // Start the first form that worked again and leave it going, so the
-            // user can hear whether it carries on outside the app.
-            if (firstPlayed >= 0) {
-                const std::string url = urlFor(attempts[firstPlayed]);
-                playingNow = !url.empty() && shellTry(attempts[firstPlayed].label, url, true).played;
+            // Start the best form again and leave it going, so the user can
+            // hear whether it carries on outside the app.
+            const int best = firstPlayed >= 0 ? firstPlayed : firstMaybe;
+            if (best >= 0) {
+                const std::string url = urlFor(attempts[best]);
+                if (!url.empty()) replay = shellTry(attempts[best].label, url, true);
             }
         }
+        const int best = firstPlayed >= 0 ? firstPlayed : firstMaybe;
+        const bool playingNow = replay.played || replay.maybe;
         if (!haveDetails) {
             lines.push_back("Original file: could not read the track's details");
         } else if (!fileDecodes) {
@@ -662,23 +805,30 @@ void runShellStreamTest(Report done) {
                             ", which the shell does not decode");
         }
 
-        std::string report = "System player, streaming \"" + title + "\" from Plex\n\n";
+        std::string report =
+            "System player (" + service + "), streaming \"" + title + "\" from Plex\n\n";
         for (const auto& l : lines) report += l + "\n";
         report += "\n";
         if (playingNow) {
-            report += "Playing now: " + attempts[firstPlayed].label +
-                      ". Press PS and listen: if it keeps going, the system player can stream. "
-                      "\"Stop System Player Test\" ends it.";
-        } else if (firstPlayed >= 0) {
-            report += attempts[firstPlayed].label +
-                      " played during the test but did not start again afterwards. The log has "
-                      "the details (lines with [bgaudio]).";
+            report += attempts[best].label + ": " + listenAdvice(replay.played);
+        } else if (best >= 0) {
+            report += attempts[best].label +
+                      " looked like it worked during the test but did not start again afterwards. "
+                      "The log has the details (lines with [bgaudio]).";
         } else {
             report += "The system player did not play the stream in any form. The log has every "
                       "return code (lines with [bgaudio]).";
         }
         finishTest(done, report);
     });
+}
+
+int shellService() { return g_service; }
+
+void setShellService(int service) {
+    if (service < 0 || service > kServiceAppBgm) service = 0;
+    g_service = service;
+    brls::Logger::info("[bgaudio] system player tests will use {}", serviceName(service));
 }
 
 std::string stopShellTest() {

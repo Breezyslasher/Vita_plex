@@ -1136,6 +1136,14 @@ brls::Box* SettingsTab::createMusicSection() {
             });
         box->addView(keepPlaying);
 
+        // Which of the shell's services the two tests below go through. Not
+        // saved: it is for trying each in turn.
+        box->addView(makePickerCell("System Player Service (test)",
+            {"Music player, type 0", "Music player, type 1", "Music player, type 2",
+             "Music player, type 3", "Music player, type 4", "App background music"},
+            bgaudio::shellService(),
+            [](int index) { bgaudio::setShellService(index); }));
+
         auto* fileTest = new brls::DetailCell();
         fileTest->setText("Test: System Player, Local File");
         fileTest->setDetailText("An MP3/M4A/WAV download, or test.mp3");
