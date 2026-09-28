@@ -412,6 +412,7 @@ struct ShellTry {
     bool moved = false;   // the clock moved, whatever it was playing
     bool maybe = false;   // accepted, but this service reports no clock
     bool unsure = false;  // something played, but not known to be the new source
+    bool interrupted = false;  // VitaPlex was held part way, so it shows nothing
     std::string line;
 };
 
@@ -435,12 +436,17 @@ std::string shortName(int s) {
 // shellAudioGetCurrentBGMState: owner, priority, state and two fields nobody
 // has named). Only logged, next to each attempt: it does not depend on the
 // service's own status, which the application-BGM service does not fill in.
+// On a console the call was refused (0x8080201F), so once refused it is
+// logged no more.
+bool g_bgmStateRefused = false;
+
 std::string bgmState() {
     // 20 bytes by libShellAudio's reading; zeroed room for more in case the
     // system writes more, and anything it did write there is shown.
     int st[16];
     std::memset(st, 0, sizeof(st));
     const int rc = shellAudioGetCurrentBGMState(reinterpret_cast<SceShellAudioBGMState*>(st));
+    if (rc < 0) g_bgmStateRefused = true;
     char b[160];
     std::snprintf(b, sizeof(b), "%s: owner 0x%X, priority 0x%X, 0x%X, state 0x%X, 0x%X",
                   hex(rc).c_str(), (unsigned)st[0], (unsigned)st[1], (unsigned)st[2],
@@ -588,10 +594,20 @@ ShellTry shellTry(const std::string& label, const std::string& src, bool leave, 
     ShellClock c;
     int lastState = -1;
     bool seenTime = false;
-    unsigned firstTime = 0;
+    bool wentBack = false;
+    unsigned firstTime = 0, lastTime = 0;
     const SceInt64 t0 = sceKernelGetSystemTimeWide();
+    SceInt64 lastPoll = t0;
     for (;;) {
-        const SceInt64 elapsedMs = (sceKernelGetSystemTimeWide() - t0) / 1000;
+        const SceInt64 now = sceKernelGetSystemTimeWide();
+        // A poll seconds late means this process was held (PS pressed): the
+        // shell went on meanwhile, unwatched, so this attempt shows nothing.
+        if (now - lastPoll > 2 * 1000000LL) {
+            r.interrupted = true;
+            break;
+        }
+        lastPoll = now;
+        const SceInt64 elapsedMs = (now - t0) / 1000;
         if (elapsedMs >= t.maxMs) break;
         c = shellClock();
         if (c.state != lastState) {
@@ -599,6 +615,16 @@ ShellTry shellTry(const std::string& label, const std::string& src, bool leave, 
                                mmss(c.timeMs), hex(c.rc));
             lastState = c.state;
         }
+        // The first readings after an open can still be the old source's
+        // clock, stopped where it was; a new source then starts again from
+        // the top. So a clock going back starts the measure over, and shows
+        // the source changed.
+        if (seenTime && c.timeMs + 1000 < lastTime) {
+            wentBack = true;
+            seenTime = false;
+            r.moved = false;
+        }
+        lastTime = c.timeMs;
         if (c.timeMs > 0 && !seenTime) {
             seenTime = true;
             firstTime = c.timeMs;
@@ -607,8 +633,9 @@ ShellTry shellTry(const std::string& label, const std::string& src, bool leave, 
         if (r.moved && c.timeMs >= t.playToMs && elapsedMs >= t.minMs) break;
         sceKernelDelayThread(250 * 1000);
     }
-    r.played = r.moved;
-    brls::Logger::info("[bgaudio] system player: {}: BGM port {}", label, bgmState());
+    r.played = r.moved && !r.interrupted;
+    if (!g_bgmStateRefused)
+        brls::Logger::info("[bgaudio] system player: {}: BGM port {}", label, bgmState());
 
     int durAfter = -1;
     if (appBgm()) {
@@ -635,14 +662,20 @@ ShellTry shellTry(const std::string& label, const std::string& src, bool leave, 
     // it. Otherwise it cannot be told from here, since a new source of the
     // same length would look like the old one going on. The application-BGM
     // service gives no length.
+    // An old source at its very end would start again from the top too, so
+    // then the clock says nothing.
     const bool sameSource = src == g_shellLastSrc[lastSrcSlot(service)];
-    const bool clockTells = before.timeMs >= 3000;
+    const bool oldAtEnd = durBefore > 0 && before.timeMs + 2000 >= (unsigned)durBefore;
+    const bool clockTells = before.timeMs >= 3000 && !oldAtEnd;
     const bool nothingBefore = before.timeMs == 0 && durBefore <= 0;
     const bool lengthChanged = !appBgm() && durAfter != durBefore;
-    const bool replaced =
-        sameSource || (clockTells ? firstTime + 2000 < before.timeMs : nothingBefore || lengthChanged);
+    const bool replaced = sameSource || (wentBack && !oldAtEnd) ||
+                          (clockTells ? firstTime + 2000 < before.timeMs
+                                      : nothingBefore || lengthChanged);
 
-    if (r.played && !replaced) {
+    if (r.interrupted) {
+        r.line = label + ": interrupted, VitaPlex was put in the background during it";
+    } else if (r.played && !replaced) {
         r.played = false;
         r.unsure = !clockTells;
         r.line = r.unsure
@@ -1173,7 +1206,9 @@ void runShellStreamTest(Report done) {
             bool fetchedHttp = false;  // made an http request of the test server
             bool triedHttps = false;   // began a TLS handshake with it
             bool linkPlayed = false;
+            bool linkHeld = false;     // a link attempt VitaPlex was held through, twice
         };
+        int repeated = 0;   // attempts made again because VitaPlex was held
         std::vector<ServiceRun> runs;
         bool controlValid = !controlFile.empty();
         if (controlFile.empty()) {
@@ -1219,10 +1254,12 @@ void runShellStreamTest(Report done) {
                         platformPath("bgtest-disk-" + std::to_string(sv) + "." + ext);
                     diskFile = copyFile(controlFile, copy) ? copy : controlFile;
                     // The first try cannot tell when what was loaded before
-                    // is as long and had not played 3 s. The second can.
-                    for (int k = 0; k < 2; k++) {
+                    // is as long and had not played 3 s; the second can. A
+                    // try VitaPlex was held through is made again.
+                    for (int k = 0; k < 3; k++) {
                         run.disk = shellTry(tag + ", from disk", diskFile, false, sv, fromDisk);
-                        if (!run.disk.unsure) break;
+                        if (!run.disk.unsure && !run.disk.interrupted) break;
+                        if (run.disk.interrupted && k < 2) repeated++;
                     }
                     lines.push_back(run.disk.line);
 
@@ -1237,6 +1274,8 @@ void runShellStreamTest(Report done) {
                     if (sv == picked && !wifi.empty() && wifi != "127.0.0.1")
                         links.push_back({wifi, false});
                     for (const auto& link : links) {
+                        // Connections are counted over every try: one made
+                        // while VitaPlex was held still happened.
                         const int connBefore = server->connections();
                         const int tlsBefore = server->tlsHandshakes();
                         const long long sentBefore = server->bytesSent();
@@ -1244,11 +1283,18 @@ void runShellStreamTest(Report done) {
                                                 link.host + ":" + std::to_string(port) + server->path();
                         const std::string label = tag + (link.https ? ", https link" : ", http link") +
                                                   (link.host == "127.0.0.1" ? "" : " via " + link.host);
-                        ShellTry r = shellTry(label, url, false, sv, onLink);
+                        ShellTry r;
+                        for (int k = 0; k < 2; k++) {
+                            r = shellTry(label, url, false, sv, onLink);
+                            if (!r.interrupted) break;
+                            if (k == 0) repeated++;
+                        }
                         const int conns = server->connections() - connBefore;
                         const int tls = server->tlsHandshakes() - tlsBefore;
                         const long long kb = (server->bytesSent() - sentBefore) / 1024;
-                        if (conns == 0) {
+                        if (r.interrupted && conns == 0) {
+                            run.linkHeld = true;
+                        } else if (conns == 0) {
                             // Nothing was fetched, so nothing it played was the link.
                             r.played = false;
                             r.line = label + ": never connected to the server" +
@@ -1284,7 +1330,7 @@ void runShellStreamTest(Report done) {
         }
         if (controlDownloaded) removeTestFile(controlFile);
 
-        std::vector<std::string> fetchedHttp, triedHttps, fromDiskNames, noClock, notSeen;
+        std::vector<std::string> fetchedHttp, triedHttps, fromDiskNames, noClock, notSeen, held;
         bool anyLinkPlayed = false;
         // Plex's links go to the service that did best with the control:
         // played the link, else fetched it, else began https.
@@ -1299,7 +1345,8 @@ void runShellStreamTest(Report done) {
                 plexRank = rank;
                 plexService = run.service;
             }
-            if (run.disk.played) fromDiskNames.push_back(n);
+            if (run.linkHeld && !run.fetchedHttp && !run.triedHttps) held.push_back(n);
+            else if (run.disk.played) fromDiskNames.push_back(n);
             else if (run.disk.maybe) noClock.push_back(n);
             else notSeen.push_back(n);
         }
@@ -1391,6 +1438,13 @@ void runShellStreamTest(Report done) {
         std::string report = "System player, streaming \"" + title + "\"\n\n";
         for (const auto& l : lines) report += l + "\n";
         report += "\n";
+        if (repeated > 0)
+            report += "Leaving VitaPlex holds it, so " + std::to_string(repeated) +
+                      (repeated == 1 ? " step was" : " steps were") + " run again. ";
+        if (!held.empty())
+            report += joinNames(held) + ": VitaPlex was in the background during a link twice, so "
+                      "what " + (held.size() == 1 ? "that service does" : "those services do") +
+                      " with links is not known. Run the test again and stay in VitaPlex. ";
         if (controlValid && !linkTried) {
             if (fromDiskNames.empty()) {
                 report += "No service was seen playing the MP3 from the memory card, so this run "
