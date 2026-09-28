@@ -554,6 +554,20 @@ installs beside VitaPlex. As a non-game app it gets the activate and
 deactivate events, so the watcher's report on return ("Away 1:00. VitaPlex
 kept running...") applies to it unchanged.
 
+**VitaPlex BG works** (log `a93baa71`, build 1954). Sent away with PS 30.9 s
+into a track streamed from Plex (through the server's remote address, as it
+happened), it logged "away" every 4 s for almost five minutes with mpv playing
+and its position moving, the UI loop running, and the timeline reported to
+the server every 10 s. When the track ended it loaded the next from the play
+queue, a fresh transcode, and played that too, all while away. Two things
+remain:
+
+- It ignores the system's request to quit. The user opened another app and
+  confirmed the prompt to close VitaPlex BG; the request arrived, and it went
+  on playing. A game is never asked, so VitaPlex never answered it.
+- Sleep (the power button) turns off Wi-Fi, so the stream stops once mpv's
+  buffer runs out, about 30 s in that log.
+
 Both test apps were asked to quit a few seconds after being sent to the
 background a second time. That was the user: opening another app brought up
 the system's prompt to close the running one, and they confirmed it. So a
