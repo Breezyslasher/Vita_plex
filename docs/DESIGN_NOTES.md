@@ -404,12 +404,10 @@ no stub for that one function; `shellsvc_stub.S` supplies it, checked against
 the 3.60 firmware's exports and Vita3K's NID table. The shell decodes only MP3,
 AAC/M4A, WAV and ATRAC9, and ElevenMPV-A sends it local files only; its streams
 go through its own decoders and the BGM port. Whether the shell will open an
-http(s) URL is unknown, and that is what "Test: System Player, Streaming" is
-for. It gives the service the current track as an MP3 transcode (a fresh session
-per attempt) and, if the original is MP3 or AAC, as the file itself. Each is
-tried over https and plain http, and the report says which played. "Test: System
-Player, Local File" does the same with a download or a `test.mp3`, so the two
-failures can be told apart.
+http(s) URL was unknown, and that is what "Test: System Player, Streaming" is
+for; how it grew from build to build is below. "Test: System Player, Local
+File" plays a download or a `test.mp3` on the picked service, so a service that
+plays nothing at all can be told from one that plays no links.
 
 What each outcome leads to:
 
@@ -425,8 +423,8 @@ What each outcome leads to:
   (`sceMusicPlayerServiceSetTrackList`, an undocumented 0x828-byte SQLite
   command buffer), so that part would stay out of reach.
 
-**What the console showed** (a PS Vita on the first test build, logs
-`ea96fd9a` and `01daccd2`):
+**What the console showed** (a PS Vita, logs `ea96fd9a` and `01daccd2` on the
+first test build, `3bba2674` and `e764091b` on the second):
 
 - The shell plays a local file (a downloaded WAV). It carries on when VitaPlex is
   frozen, and when VitaPlex is closed by starting a game. The quick menu's Music
@@ -439,18 +437,25 @@ What each outcome leads to:
   playing, a false positive the user caught by ear ("it keeps playing the old
   download"). The test now counts only a new source that replaced the old one:
   a different length, or the clock starting again from the top.
-- That is not yet "the shell cannot stream". The transcode is the hardest case,
-  a live stream with no length and a 700-character query. The first build never
-  tried the plain file: it read the format from `MediaItem::audioCodec`, which
-  `fetchMediaDetails` never fills, so it always skipped, though the track was an
-  MP3. It never checked that the server takes plain http either. The stream test
-  now takes the format from the part's extension and asks the server about each
-  file link with VitaPlex's own client. It also runs a control first: VitaPlex
-  serves a file the shell has played from disk on the plainest possible link
-  (`http://127.0.0.1:port/…/track.mp3`, with a length and range support),
-  checks its own server by fetching from it, and logs every request the shell
-  makes. No request at all means this service does not fetch links, whatever
-  the link.
+- The first build never tried the plain file: it read the format from
+  `MediaItem::audioCodec`, which `fetchMediaDetails` never fills, so it always
+  skipped, though the track was an MP3. The second build took the format from
+  the part's extension, asked the server about each link with VitaPlex's own
+  client, and ran a control: VitaPlex served a file the shell had played from
+  disk on the plainest possible link (`http://127.0.0.1:port/…/track.wav`, with
+  a length and range support), fetched from it itself, and logged every request.
+- **Music player, type 0** (`3bba2674`): no request reached the control, on
+  127.0.0.1 or on the Wi-Fi address, while VitaPlex's own fetch got a 206. The
+  server answered Plex's MP3 file over http and https (206 `audio/mpeg`), and
+  the shell switched to neither.
+- **Application-BGM service** (`e764091b`, `SetUri`): no request reached the
+  control either, and this time it served an MP3 (a download), on 127.0.0.1 and
+  the Wi-Fi address. Plex's file over http and https gave no progress. This
+  service reports no clock (`GetLastResult` stays at state 0, 0:00). Its
+  playback status reply holds pieces of the URI that was set, at the URI's own
+  offsets, so most of that reply is a buffer the shell leaves unwritten; its
+  layout is unknown and nothing is read from it. Whether this service played
+  even a file from disk was never measured.
 - VitaPlex is **frozen** the moment PS takes it out of the foreground, with mpv
   playing and the BGM port held at 0x81. The watcher's first tick back was
   7.4 s late, the time away. No `ON_DEACTIVATE` or `ON_ACTIVATE` arrives, only
@@ -460,17 +465,51 @@ What each outcome leads to:
   port, not the BGM port assumed above. The 44.1 kHz resample only applies when
   mpv starts with the setting already on.
 
-So the in-process route fails as VitaPlex is packaged, and the shell route
-covers local files only. What is left to try is the packaging itself.
-vita-mksfoex names `ATTRIBUTE_BG_APP` (0x04000000), which neither VitaPlex nor
-ElevenMPV-A sets, and ElevenMPV-A is a non-game application (`gdc`). Its own
-code reads its memory budget and plans for 17 to 33 MB, which rules that out
-for VitaPlex, but not for a small helper app. `src/bgtest_psv` settles which,
-if any, is kept running: one beeping binary packaged three times, as VitaPlex
-is, as VitaPlex plus `BG_APP`, and as ElevenMPV-A is. The shell tests also gained
-a picker for the service they use (client types 0-4, and the application-BGM
-service with its `SetUri`), to see whether any of them lights up the quick menu's
-controls or takes a URL.
+**What ElevenMPV-A's source shows.** It is the one other app that plays through
+this service, written by libShellAudio's author, and it never hands the shell a
+link. `GetDecoderType` sends any `https://` path to its own `YoutubeDecoder`,
+which decodes in its own process onto a BGM port at 0x81; the shell only ever
+gets local MP3 and AAC files (`ShellCommonDecoder`). Its quick-menu controls are
+not the shell's either. It ships a SceShell plugin (`ElevenMPV-A-ShellPlugin`,
+loaded by taiHEN) that finds the quick menu's Music widgets by hash (rewind,
+play, fast-forward and two text lines), registers its own callbacks on the
+buttons that message the app over a message pipe, and writes the title and
+artist in. The plugin also hooks SceShell's import of
+`sceAppMgrGetCurrentBgmState2` to cap the BGM port priority it sees at 0x80.
+So dimmed controls are what a third-party source gets without code running
+inside SceShell, which a VPK cannot install.
+
+**The last test of links** ("Test: System Player, Streaming", third build)
+closes what the two controls left open: the WAV, and four services never tried.
+It downloads the first 2 MB of the current track as an MP3 (the file itself
+when it is an MP3, else the transcode, since the start of an M4A need not play
+without its index). Then on every service, the picked one first:
+
+1. From disk: a copy of the MP3 under a name of its own for that service, so one
+   service having opened it cannot count for the next. The clock runs to 3.5 s,
+   so the next attempt can tell a new source by the clock going back. A first
+   try that cannot tell (what was loaded before is as long and had not played
+   3 s) is repeated once.
+2. The same MP3 as a plain http link to VitaPlex's own server, and as an https
+   link to it. The server has no certificate, so https cannot play, but it
+   counts connections as they are accepted and recognises a TLS handshake
+   (a first byte of 0x16), so "began https" is seen too.
+
+Plex's own links are tried only on a service that fetched or began one of
+those, since on any other they cannot work. The BGM port's state
+(`sceAppMgrGetCurrentBgmState2`: owner, priority, state) is logged at every
+attempt as a second reading that does not depend on the service's own status.
+The report says, per service, whether it played the MP3 from disk and whether
+it connected over http or https.
+
+So the in-process route fails as VitaPlex is packaged, and on present evidence
+the shell route covers local files only. What is left to try is the packaging
+itself. vita-mksfoex names `ATTRIBUTE_BG_APP` (0x04000000), which neither
+VitaPlex nor ElevenMPV-A sets, and ElevenMPV-A is a non-game application
+(`gdc`). Its own code reads its memory budget and plans for 17 to 33 MB, which
+rules that out for VitaPlex, but not for a small helper app. `src/bgtest_psv`
+settles which, if any, is kept running: one beeping binary packaged three times,
+as VitaPlex is, as VitaPlex plus `BG_APP`, and as ElevenMPV-A is.
 
 ### PS4: the popup, and nothing to hang progress on
 
