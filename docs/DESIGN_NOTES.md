@@ -477,7 +477,13 @@ buttons that message the app over a message pipe, and writes the title and
 artist in. The plugin also hooks SceShell's import of
 `sceAppMgrGetCurrentBgmState2` to cap the BGM port priority it sees at 0x80.
 So dimmed controls are what a third-party source gets without code running
-inside SceShell, which a VPK cannot install.
+inside SceShell. ElevenMPV-A puts that code there itself: the plugin ships in
+its package (`module/shell_plugin.suprx`), and at start the app loads it into
+SceShell (`taiLoadStartModuleForPid` on NPXS19999's process), which any Vita
+with taiHEN allows. The plugin is written against Sony's PAF UI framework, for
+which vitasdk has no headers. Code in SceShell also keeps running whatever
+happens to the app that loaded it, which is a route to background playback in
+its own right, and an untried one here.
 
 **The last test of links** ("Test: System Player, Streaming", third build)
 closes what the two controls left open: the WAV, and four services never tried.
