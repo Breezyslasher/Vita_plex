@@ -665,13 +665,16 @@ jobs:
         with:
           name: VitaPlex-vita-${{ github.run_number }}
           path: build/VitaPlex.vpk
-      # The three background-test apps (src/bgtest_psv); separate so the
-      # VitaPlex artifact stays just VitaPlex.
+      # The background-test apps (src/bgtest_psv) and VitaPlex packaged as a
+      # non-game app (VitaPlexBG.vpk); separate so the VitaPlex artifact
+      # stays just VitaPlex.
       - name: Upload background test VPKs
         uses: actions/upload-artifact@v4
         with:
           name: VitaPlex-vita-bgtest-${{ github.run_number }}
-          path: build/VitaPlexBgTest-*.vpk
+          path: |
+            build/VitaPlexBgTest-*.vpk
+            build/VitaPlexBG.vpk
       - name: Upload ELF
         uses: actions/upload-artifact@v4
         with:
