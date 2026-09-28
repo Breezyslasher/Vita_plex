@@ -555,9 +555,13 @@ deactivate events, so the watcher's report on return ("Away 1:00. VitaPlex
 kept running...") applies to it unchanged.
 
 Both test apps were asked to quit a few seconds after being sent to the
-background a second time. Whether that was the user closing them or the
-system making room for VitaPlex, started as the test app's screen asks, is not
-known yet; the answer decides whether music can play on beside a game.
+background a second time. That was the user: opening another app brought up
+the system's prompt to close the running one, and they confirmed it. So a
+non-game app plays on in the LiveArea, but opening an app it cannot run
+beside closes it, with the user's say-so. Which apps those are (a game, other
+homebrew, system apps) is the next thing to note. If games are among them,
+the current song could be handed to the system player on the way out, which
+does play on during a game, though only that one song.
 
 The third run of the stream test (`668ce811`) went only as far as music player
 type 0, because PS was pressed twice during it. The http link got no connection
