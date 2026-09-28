@@ -316,17 +316,19 @@ void onRequestQuit() {
     releasePort(0, "app quitting");
 }
 
-void drainAppEvents(SceInt64 now, SceInt64 gapUs) {
+// True if a deactivate or activate event was among them.
+bool drainAppEvents(SceInt64 now, SceInt64 gapUs) {
     int n = 0;
     const int rc = sceAppMgrReceiveEventNum(&n);
-    if (rc < 0 || n <= 0) return;
+    if (rc < 0 || n <= 0) return false;
+    bool focus = false;
     for (int i = 0; i < n; i++) {
         AppEvent ev;
         std::memset(&ev, 0, sizeof(ev));
         if (sceAppMgrReceiveEvent(&ev) < 0) break;
         switch (ev.event) {
-            case kEventDeactivate:  onDeactivate(now, gapUs); break;
-            case kEventActivate:    onActivate(now); break;
+            case kEventDeactivate:  onDeactivate(now, gapUs); focus = true; break;
+            case kEventActivate:    onActivate(now); focus = true; break;
             case kEventResume:      brls::Logger::info("[bgaudio] app event: resume"); break;
             case kEventRequestQuit: onRequestQuit(); break;
             default:
@@ -334,6 +336,52 @@ void drainAppEvents(SceInt64 now, SceInt64 gapUs) {
                 break;
         }
     }
+    return focus;
+}
+
+// Where VitaPlex's own player was when PS was pressed, just before the
+// system held the process. Only the watcher thread, which runs the power
+// callback, touches these.
+MpvPlayer::Snapshot g_atPs;
+bool g_haveAtPs = false;
+
+// Whether VitaPlex has the system player going: a test running, or a file a
+// test left playing. Never waits for the shell lock.
+bool shellInUse() {
+    if (g_shellBusy) return true;
+    std::unique_lock<std::mutex> lock(g_shellMutex, std::try_to_lock);
+    return !lock.owns_lock() || g_shellPlaying;
+}
+
+// Back from being held with no deactivate event, as a game such as VitaPlex
+// is: says so on screen, with where its own player was when PS was pressed
+// and where it is now, so whether VitaPlex's music went on needs no log. The
+// system player plays on by itself, so what it had is named too: music heard
+// meanwhile may have been that.
+void reportHold(SceInt64 gapUs) {
+    const MpvPlayer::Snapshot now = MpvPlayer::getInstance().snapshot();
+    const bool wasPlaying = g_haveAtPs && g_atPs.initialized &&
+                            (g_atPs.state == MpvPlayerState::PLAYING ||
+                             g_atPs.state == MpvPlayerState::BUFFERING);
+    const bool shell = shellInUse();
+    const unsigned beforeMs = (unsigned)(std::max(0.0, g_atPs.position) * 1000);
+    const unsigned nowMs = (unsigned)(std::max(0.0, now.position) * 1000);
+    brls::Logger::info("[bgaudio] held {:.1f}s with no deactivate event: {} when PS was pressed, {} "
+                       "now; system player in use by VitaPlex: {}",
+                       gapUs / 1e6, g_haveAtPs ? describeMpv(g_atPs) : std::string("no PS press seen"),
+                       describeMpv(now), shell);
+
+    const int secs = (int)(gapUs / 1000000);
+    std::string msg = "VitaPlex was frozen for " + std::to_string(secs) + "s while you were away";
+    if (!wasPlaying)
+        msg += ".";
+    else if (nowMs < beforeMs + 1000)
+        msg += ", so its own music stopped at " + mmss(beforeMs) + ".";
+    else
+        msg += ", yet its music moved from " + mmss(beforeMs) + " to " + mmss(nowMs) + ".";
+    if (shell) msg += " The system player was playing for a test; it plays on by itself.";
+    g_haveAtPs = false;
+    brls::sync([msg]() { brls::Application::notify(msg); });
 }
 
 int powerCallback(int, int, int powerInfo, void*) {
@@ -355,6 +403,10 @@ int powerCallback(int, int, int powerInfo, void*) {
     }
     brls::Logger::info("[bgaudio] power callback {}{}{}", hex(powerInfo), what.empty() ? "" : ": ",
                        what);
+    if ((unsigned)powerInfo & SCE_POWER_CB_BUTTON_PS_PRESS) {
+        g_atPs = MpvPlayer::getInstance().snapshot();
+        g_haveAtPs = true;
+    }
     return 0;
 }
 
@@ -370,14 +422,18 @@ int watcherMain(SceSize, void*) {
         const SceInt64 now = sceKernelGetSystemTimeWide();
         const SceInt64 gap = now - last;
         last = now;
-        if (gap > kGapUs) {
+        const bool held = gap > kGapUs;
+        if (held) {
             // Nothing in this loop waits for long, so a tick this late means the
             // thread was not scheduled at all: the process was held, or the
             // console slept.
             brls::Logger::info("[bgaudio] watcher did not run for {:.1f}s", gap / 1e6);
             if (g_away && gap > g_awayLongestGapUs) g_awayLongestGapUs = gap;
         }
-        drainAppEvents(now, gap);
+        const bool focusEvent = drainAppEvents(now, gap);
+        // A game is sent neither event, so without this nothing would say,
+        // on the way back, that it was held.
+        if (held && !g_away && !focusEvent) reportHold(gap);
         if (g_away) {
             g_awayTicks++;
             if (g_awayTicks % kBeatTicks == 0) heartbeat(now);
