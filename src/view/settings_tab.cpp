@@ -1156,9 +1156,10 @@ brls::Box* SettingsTab::createMusicSection() {
 
         auto* streamTest = new brls::DetailCell();
         streamTest->setText("Test: System Player, Streaming");
-        streamTest->setDetailText("The current track, from Plex");
+        streamTest->setDetailText("The current track, on all six services");
         streamTest->registerClickAction([](brls::View*) {
-            brls::Application::notify("Trying the stream in the system player; this can take a minute");
+            brls::Application::notify("Trying links in the system player: about two minutes. "
+                                      "Stay in VitaPlex until the report shows.");
             bgaudio::runShellStreamTest(showTestReport);
             return true;
         });

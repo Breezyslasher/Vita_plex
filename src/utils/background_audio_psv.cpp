@@ -139,6 +139,16 @@ std::string baseName(const std::string& path) {
     return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
+// "a", "a and b", "a, b and c".
+std::string joinNames(const std::vector<std::string>& names) {
+    std::string s;
+    for (std::size_t i = 0; i < names.size(); i++) {
+        if (i > 0) s += i + 1 == names.size() ? " and " : ", ";
+        s += names[i];
+    }
+    return s;
+}
+
 std::atomic<bool> g_keepPlaying{false};
 
 // ── The BGM port ─────────────────────────────────────────────────────────
@@ -401,12 +411,47 @@ struct ShellTry {
     bool played = false;  // the new source was seen playing
     bool moved = false;   // the clock moved, whatever it was playing
     bool maybe = false;   // accepted, but this service reports no clock
+    bool unsure = false;  // something played, but not known to be the new source
     std::string line;
+};
+
+// How long shellTry watches, and how far it lets a source play.
+struct TryTiming {
+    int maxMs = 12000;      // no clock by then: no sound
+    int minMs = 0;          // watch at least this long, even once it plays
+    unsigned playToMs = 0;  // once playing, let the clock reach this
 };
 
 std::string serviceName(int s) {
     return s == kServiceAppBgm ? std::string("app background music")
                                : "music player, type " + std::to_string(s);
+}
+
+std::string shortName(int s) {
+    return s == kServiceAppBgm ? std::string("app BGM") : "type " + std::to_string(s);
+}
+
+// The BGM port as the system reports it (libShellAudio's
+// shellAudioGetCurrentBGMState: owner, priority, state and two fields nobody
+// has named). Only logged, next to each attempt: it does not depend on the
+// service's own status, which the application-BGM service does not fill in.
+std::string bgmState() {
+    // 20 bytes by libShellAudio's reading; zeroed room for more in case the
+    // system writes more, and anything it did write there is shown.
+    int st[16];
+    std::memset(st, 0, sizeof(st));
+    const int rc = shellAudioGetCurrentBGMState(reinterpret_cast<SceShellAudioBGMState*>(st));
+    char b[160];
+    std::snprintf(b, sizeof(b), "%s: owner 0x%X, priority 0x%X, 0x%X, state 0x%X, 0x%X",
+                  hex(rc).c_str(), (unsigned)st[0], (unsigned)st[1], (unsigned)st[2],
+                  (unsigned)st[3], (unsigned)st[4]);
+    std::string s = b;
+    for (int i = 5; i < 16; i++) {
+        if (st[i] == 0) continue;
+        std::snprintf(b, sizeof(b), ", [%d] 0x%X", i, (unsigned)st[i]);
+        s += b;
+    }
+    return s;
 }
 
 // All of these must hold g_shellMutex, and act on whichever service
@@ -480,8 +525,10 @@ void stopShellLocked(const char* why) {
 
 // Hands src to the shell's music player and watches whether its clock moves.
 // That, not the state it reports, is what counts as playing. Left playing
-// when it plays and `leave` is set; stopped otherwise. Must hold g_shellMutex.
-ShellTry shellTry(const std::string& label, const std::string& src, bool leave) {
+// when it plays and `leave` is set; stopped otherwise. `service` is one of the
+// picker's six; switching between them is handled here. Must hold g_shellMutex.
+ShellTry shellTry(const std::string& label, const std::string& src, bool leave, int service,
+                  const TryTiming& t = TryTiming()) {
     ShellTry r;
     // The shell takes at most 0x400 characters and would cut a longer one.
     if (src.size() > 0x400) {
@@ -493,7 +540,6 @@ ShellTry shellTry(const std::string& label, const std::string& src, bool leave) 
     path.push_back('\0');
 
     // One service at a time: libShellAudio keeps a single session for both.
-    const int service = g_service.load();
     if (g_shellInit && g_shellService != service) stopShellLocked("switching service");
     if (!g_shellInit) {
         const int rc = service == kServiceAppBgm ? sceMusicInternalAppInitialize(1)
@@ -536,14 +582,17 @@ ShellTry shellTry(const std::string& label, const std::string& src, bool leave) 
         return r;
     }
 
-    // Up to 12 s for the clock to pass a second beyond where it was first
-    // seen moving: a stream has to be fetched and buffered before it starts.
+    // Up to t.maxMs (12 s by default) for the clock to pass a second beyond
+    // where it was first seen moving: a stream has to be fetched and buffered
+    // before it starts.
     ShellClock c;
     int lastState = -1;
     bool seenTime = false;
     unsigned firstTime = 0;
     const SceInt64 t0 = sceKernelGetSystemTimeWide();
-    while (sceKernelGetSystemTimeWide() - t0 < 12 * 1000000LL) {
+    for (;;) {
+        const SceInt64 elapsedMs = (sceKernelGetSystemTimeWide() - t0) / 1000;
+        if (elapsedMs >= t.maxMs) break;
         c = shellClock();
         if (c.state != lastState) {
             brls::Logger::info("[bgaudio] system player: {}: state {} at {} ({})", label, c.state,
@@ -554,12 +603,12 @@ ShellTry shellTry(const std::string& label, const std::string& src, bool leave) 
             seenTime = true;
             firstTime = c.timeMs;
         }
-        if (seenTime && c.timeMs >= firstTime + 1000) {
-            r.played = r.moved = true;
-            break;
-        }
+        if (seenTime && c.timeMs >= firstTime + 1000) r.moved = true;
+        if (r.moved && c.timeMs >= t.playToMs && elapsedMs >= t.minMs) break;
         sceKernelDelayThread(250 * 1000);
     }
+    r.played = r.moved;
+    brls::Logger::info("[bgaudio] system player: {}: BGM port {}", label, bgmState());
 
     int durAfter = -1;
     if (appBgm()) {
@@ -579,21 +628,28 @@ ShellTry shellTry(const std::string& label, const std::string& src, bool leave) 
         durAfter = playerDuration(label);
     }
 
-    // Did the new source replace the old one? A different length says so, as
-    // does the clock starting again from the top, and with nothing loaded
-    // before, whatever plays can only be the new source. The same source
-    // opened again needs none of that. The application-BGM service gives no
-    // length, so for it only the clock can tell.
+    // Did the new source replace the old one? With the old one stopped 3 s or
+    // more into it, the clock says: a new source starts again from the top.
+    // Short of that, a different length says it did, as does there having
+    // been nothing loaded, and the same source opened again needs none of
+    // it. Otherwise it cannot be told from here, since a new source of the
+    // same length would look like the old one going on. The application-BGM
+    // service gives no length.
     const bool sameSource = src == g_shellLastSrc[lastSrcSlot(service)];
-    const bool clockWentBack = before.timeMs >= 3000 && firstTime + 2000 < before.timeMs;
+    const bool clockTells = before.timeMs >= 3000;
     const bool nothingBefore = before.timeMs == 0 && durBefore <= 0;
-    const bool replaced = sameSource || clockWentBack || nothingBefore ||
-                          (!appBgm() && durAfter != durBefore);
+    const bool lengthChanged = !appBgm() && durAfter != durBefore;
+    const bool replaced =
+        sameSource || (clockTells ? firstTime + 2000 < before.timeMs : nothingBefore || lengthChanged);
 
     if (r.played && !replaced) {
         r.played = false;
-        r.line = label + ": not opened. The system player went on with the file it had "
-                 "before (" + mmss(firstTime) + " into it)";
+        r.unsure = !clockTells;
+        r.line = r.unsure
+            ? label + ": something played, but neither the clock nor the length can tell "
+                      "whether it was this or the file loaded before"
+            : label + ": not opened. The system player went on with the file it had before (" +
+                  mmss(firstTime) + " into it)";
     } else if (r.played) {
         r.line = label + ": plays (" + mmss(firstTime) + " -> " + mmss(c.timeMs) + ")";
     } else if (seenTime) {
@@ -603,7 +659,8 @@ ShellTry shellTry(const std::string& label, const std::string& src, bool leave) 
         r.maybe = true;
         r.line = label + ": accepted, but this service reports no progress; listen for it";
     } else {
-        r.line = label + ": no sound after 12s (state " + std::to_string(c.state) + ")";
+        r.line = label + ": no sound after " + std::to_string(t.maxMs / 1000) + "s (state " +
+                 std::to_string(c.state) + ")";
     }
     brls::Logger::info("[bgaudio] system player: {}", r.line);
 
@@ -695,6 +752,65 @@ std::string describe(const ServerAnswer& a) {
            (a.type.empty() ? "" : " " + a.type) + ")";
 }
 
+// The first maxBytes of url, written to dest: enough of an MP3 for a player
+// to open and start, without waiting for a whole track. False, and nothing
+// left behind, if less than 64 KB arrived.
+bool downloadPrefix(const std::string& url, const std::string& dest, std::size_t maxBytes) {
+    FILE* f = std::fopen(dest.c_str(), "wb");
+    if (!f) return false;
+    std::size_t got = 0;
+    std::string err;
+    const SceInt64 t0 = sceKernelGetSystemTimeWide();
+    HttpClient client;
+    client.downloadFile(url, [&](const char* data, size_t size) {
+        const std::size_t take = std::min(size, maxBytes - got);
+        if (take > 0 && std::fwrite(data, 1, take, f) != take) return false;
+        got += take;
+        // Enough: stop the transfer here. A transcode comes no faster than
+        // the server makes it, so after 20 s whatever has come will do for
+        // attempts of a few seconds each.
+        const bool slow = got >= 256 * 1024 && sceKernelGetSystemTimeWide() - t0 > 20 * 1000000LL;
+        return got < maxBytes && !slow;
+    }, nullptr, {}, 0, nullptr, &err);
+    std::fclose(f);
+    brls::Logger::info("[bgaudio] control file: {} bytes into {}{}{}", got, dest,
+                       got < maxBytes && !err.empty() ? ", " : "",
+                       got < maxBytes ? err : std::string());
+    if (got < 64 * 1024) {
+        std::remove(dest.c_str());
+        return false;
+    }
+    return true;
+}
+
+// dest becomes a copy of src. False, and nothing left behind, if it could not
+// be made.
+bool copyFile(const std::string& src, const std::string& dest) {
+    FILE* in = std::fopen(src.c_str(), "rb");
+    if (!in) return false;
+    FILE* out = std::fopen(dest.c_str(), "wb");
+    if (!out) {
+        std::fclose(in);
+        return false;
+    }
+    std::vector<char> buf(64 * 1024);
+    bool ok = true;
+    for (std::size_t n; ok && (n = std::fread(buf.data(), 1, buf.size(), in)) > 0;)
+        ok = std::fwrite(buf.data(), 1, n, out) == n;
+    ok = ok && !std::ferror(in);
+    std::fclose(in);
+    if (std::fclose(out) != 0) ok = false;
+    if (!ok) std::remove(dest.c_str());
+    return ok;
+}
+
+// A test's own file, removed when done with. The shell may still have it
+// open, so a refusal is logged rather than taken for an error.
+void removeTestFile(const std::string& path) {
+    if (std::remove(path.c_str()) != 0)
+        brls::Logger::info("[bgaudio] could not remove {} (errno {})", path, errno);
+}
+
 std::string wifiAddress() {
     SceNetCtlInfo info;
     std::memset(&info, 0, sizeof(info));
@@ -708,8 +824,9 @@ std::string wifiAddress() {
 // ending in the file's own extension, no query string, a length and range
 // support, for a file it has already played from disk. Every request is
 // logged, so "the player never connected" can be told apart from "it
-// connected and could not play what it got". Serves one path, with a
-// per-run name in it, and only for the length of the test.
+// connected and could not play what it got". An https client is recognised
+// by its handshake and turned away. Serves one path, with a per-run name in
+// it, and only for the length of the test.
 class ControlServer : public std::enable_shared_from_this<ControlServer> {
 public:
     // Returns the port, or -1.
@@ -749,7 +866,9 @@ public:
     }
 
     const std::string& path() const { return m_path; }
-    int requests() const { return m_requests; }
+    // Counted as they are accepted, so none is put down to a later attempt.
+    int connections() const { return m_connections; }
+    int tlsHandshakes() const { return m_tls; }
     long long bytesSent() const { return m_sent; }
 
 private:
@@ -766,8 +885,9 @@ private:
             if (poll(&p, 1, 250) <= 0) continue;
             const int c = accept(m_fd, nullptr, nullptr);
             if (c < 0) continue;
+            const int id = ++m_connections;
             auto self = shared_from_this();
-            platform::launchThread([self, c]() { self->serve(c); });
+            platform::launchThread([self, c, id]() { self->serve(c, id); });
         }
         close(m_fd);
         m_fd = -1;
@@ -789,7 +909,7 @@ private:
         return size == 0;
     }
 
-    void serve(int c) {
+    void serve(int c, int id) {
         std::string req;
         char buf[2048];
         const SceInt64 t0 = sceKernelGetSystemTimeWide();
@@ -800,8 +920,20 @@ private:
             const int n = recv(c, buf, sizeof(buf), 0);
             if (n <= 0) break;
             req.append(buf, (std::size_t)n);
+            if ((unsigned char)req[0] == 0x16) break;
         }
-        m_requests++;
+
+        // 0x16 opens a TLS record: an https client's handshake. There is no
+        // certificate here to answer it with, but that it came at all shows
+        // the player tried the https link.
+        if (!req.empty() && (unsigned char)req[0] == 0x16) {
+            m_tls++;
+            brls::Logger::info("[bgaudio] control server: request {}: a TLS handshake ({} bytes), "
+                               "an https client; closed, as this server has no certificate",
+                               id, req.size());
+            close(c);
+            return;
+        }
 
         // "GET /path HTTP/1.1", then headers one to a line.
         const std::string first = req.substr(0, req.find("\r\n"));
@@ -824,7 +956,7 @@ private:
         }
         const std::string range = headerValue(headers, "Range");
         brls::Logger::info("[bgaudio] control server: request {}: {} {}, range '{}', "
-                           "user-agent '{}'", (int)m_requests, method, target, range,
+                           "user-agent '{}'", id, method, target, range,
                            headerValue(headers, "User-Agent"));
 
         FILE* f = target == m_path ? std::fopen(m_file.c_str(), "rb") : nullptr;
@@ -878,8 +1010,8 @@ private:
         }
         std::fclose(f);
         close(c);
-        brls::Logger::info("[bgaudio] control server: request {} done, {} of {} bytes sent",
-                           (int)m_requests, sent, to - from + 1);
+        brls::Logger::info("[bgaudio] control server: request {} done, {} of {} bytes sent", id,
+                           sent, to - from + 1);
     }
 
     std::string m_file, m_path;
@@ -887,7 +1019,8 @@ private:
     int m_port = 0;
     std::atomic<bool> m_stop{false};
     std::atomic<bool> m_running{false};
-    std::atomic<int> m_requests{0};
+    std::atomic<int> m_connections{0};
+    std::atomic<int> m_tls{0};
     std::atomic<long long> m_sent{0};
 };
 
@@ -944,7 +1077,7 @@ void runShellFileTest(Report done) {
         {
             std::lock_guard<std::mutex> lock(g_shellMutex);
             holdPort(kPortForShell, "system player test");
-            r = shellTry("File " + baseName(path), path, true);
+            r = shellTry("File " + baseName(path), path, true, g_service.load());
         }
         std::string report = "System player (" + service + "), local file\n\n" + r.line + "\n\n";
         report += (r.played || r.maybe)
@@ -955,19 +1088,25 @@ void runShellFileTest(Report done) {
     });
 }
 
-// Not a guess at what the shell wants but an experiment with a control. The
-// first build tried only Plex's live transcode, a link with no length and a
-// 700-character query, and never the plain file: it read the format from
-// MediaItem::audioCodec, which fetchMediaDetails does not fill, so it always
-// skipped. It also never checked that the server takes plain http. So:
+// Not a guess at what the shell wants but an experiment with controls. The
+// first build tried only Plex's live transcode. The next added Plex's own
+// file and a control, a plain link VitaPlex served itself, which the music
+// player (type 0) and then the application-BGM service never connected to on
+// a console. That left two things open: the control was a WAV there, and four
+// services were never tried. So now, on all six in turn:
 //
-//   1. The control. VitaPlex serves a file the shell has played from disk,
-//      on the plainest link there is, and logs every request. No request at
-//      all means the shell does not fetch links through this service.
-//   2. Plex's own file, when it is a format the shell decodes (the format
-//      from the part's extension), over http and https, each first checked
-//      with VitaPlex's own client so a server refusal reads as one.
-//   3. Plex's MP3 transcode, over http and https, as VitaPlex plays it.
+//   1. From disk: an MP3 of this track (its first 2 MB, from the server),
+//      opened by a path on the memory card. A service that cannot play that
+//      proves nothing by failing on a link.
+//   2. Links: the same MP3, served by VitaPlex on the plainest link there
+//      is (plain http, its own extension, no query string, a length and
+//      range support), every connection logged. None at all means the
+//      service never tried to fetch it, whatever it returned. Then an https
+//      link to the same server: with no certificate that cannot play, but a
+//      TLS handshake arriving shows the service does try https links.
+//   3. Plex's own file and its MP3 transcode, over http and https, but only
+//      on a service that tried one of those links: on any other they cannot
+//      work, and earlier runs showed they did not.
 void runShellStreamTest(Report done) {
     if (g_shellBusy.exchange(true)) {
         done("A system player test is already running.");
@@ -984,22 +1123,68 @@ void runShellStreamTest(Report done) {
 
     const std::string ratingKey = track->ratingKey;
     const std::string title = track->title;
-    const std::string service = serviceName(g_service.load());
-    const std::string controlFile = pickLocalFile();
-    platform::launchThread([done, ratingKey, title, service, controlFile]() {
+    const int picked = g_service.load();
+    const std::string localFile = pickLocalFile();
+    platform::launchThread([done, ratingKey, title, picked, localFile]() {
         PlexClient& plex = PlexClient::getInstance();
         std::vector<std::string> lines;
+
+        // What the server has for this track: the file's link, and the
+        // source of the MP3.
+        MediaItem item;
+        const bool haveDetails = plex.fetchMediaDetails(ratingKey, item);
+        const std::string fileExt = lowerExt(item.partPath);
+        const bool fileDecodes = haveDetails && !item.partPath.empty() && shellDecodes(fileExt);
+        const std::string fileUrl = fileDecodes
+            ? plex.getServerUrl() + item.partPath + "?X-Plex-Token=" + plex.getAuthToken()
+            : std::string();
+
+        // The MP3: the start of this track's own file when that is an MP3,
+        // else of its MP3 transcode (the start of an M4A need not play: its
+        // index can be at the end). A download the shell decodes only if
+        // neither can be had.
+        std::string controlFile;
+        bool controlDownloaded = false;
+        {
+            std::string src = fileExt == "mp3" ? fileUrl : std::string(), session;
+            if (src.empty()) plex.getTranscodeUrlSpeculative(ratingKey, src, session);
+            const std::string dest = platformPath("bgtest-control.mp3");
+            if (!src.empty() && downloadPrefix(src, dest, 2 * 1024 * 1024)) {
+                controlFile = dest;
+                controlDownloaded = true;
+            }
+            if (controlFile.empty()) controlFile = localFile;
+        }
+
         std::lock_guard<std::mutex> lock(g_shellMutex);
         holdPort(kPortForShell, "system player test");
+        brls::Logger::info("[bgaudio] BGM port before the test: {}", bgmState());
 
-        // 1. The control.
-        int controlRequests = 0;
-        bool controlPlayed = false;
+        // 1 and 2, on each service: the picked one first (its http link also
+        // on the Wi-Fi address), then the other five. From disk, the clock is
+        // let run to 3.5 s, so the attempt after it can tell a new source by
+        // the clock going back to the start. A link is given at least 4 s,
+        // time enough for a player that fetches to have connected.
+        const TryTiming fromDisk{8000, 0, 3500};
+        const TryTiming onLink{8000, 4000, 3500};
+        struct ServiceRun {
+            int service = 0;
+            ShellTry disk;
+            bool fetchedHttp = false;  // made an http request of the test server
+            bool triedHttps = false;   // began a TLS handshake with it
+            bool linkPlayed = false;
+        };
+        std::vector<ServiceRun> runs;
         bool controlValid = !controlFile.empty();
-        lines.push_back("Control: VitaPlex serving a file itself, on a plain http link");
         if (controlFile.empty()) {
-            lines.push_back("  skipped: no MP3, M4A, AAC or WAV download, or test.mp3, to serve");
+            lines.push_back("Control: skipped. No MP3 came from the server, and there is no MP3, "
+                            "M4A, AAC or WAV download, or test.mp3, to use instead");
         } else {
+            lines.push_back("Control: " +
+                            (controlDownloaded ? std::string("the first 2 MB of this track as an MP3")
+                                               : "your " + baseName(controlFile)) +
+                            ", played by each service from the memory card, then from a plain "
+                            "http link VitaPlex serves itself, and an https one to the same server");
             auto server = std::make_shared<ControlServer>();
             const int port = server->start(controlFile);
             if (port < 0) {
@@ -1014,42 +1199,116 @@ void runShellStreamTest(Report done) {
                 lines.push_back("  VitaPlex could not fetch from its own test server either (" +
                                 describe(self) + "), so the control shows nothing");
                 controlValid = false;
-                server->stop();
             } else {
-                lines.push_back("  VitaPlex fetched from it itself: it works");
-                std::vector<std::string> hosts = {"127.0.0.1"};
+                lines.push_back("  VitaPlex fetched from the link itself: it works");
+                std::vector<int> order = {picked};
+                for (int sv = 0; sv <= kServiceAppBgm; sv++)
+                    if (sv != picked) order.push_back(sv);
                 const std::string wifi = wifiAddress();
-                if (!wifi.empty() && wifi != "127.0.0.1") hosts.push_back(wifi);
-                for (const auto& host : hosts) {
-                    const int before = server->requests();
-                    const long long sentBefore = server->bytesSent();
-                    const std::string url =
-                        "http://" + host + ":" + std::to_string(port) + server->path();
-                    ShellTry r = shellTry("  " + baseName(controlFile) + " via " + host, url, false);
-                    const int reqs = server->requests() - before;
-                    const long long kb = (server->bytesSent() - sentBefore) / 1024;
-                    controlRequests += reqs;
-                    // The same file may already be loaded from the file test,
-                    // so a length check cannot see the switch; the server can.
-                    if (!r.played && r.moved && reqs > 0 && kb >= 64) {
-                        r.played = true;
-                        r.line = "  " + baseName(controlFile) + " via " + host + ": plays";
-                    }
-                    controlPlayed = controlPlayed || r.played;
-                    lines.push_back(r.line + (reqs == 0
-                        ? " [it never connected to the server]"
-                        : " [server: " + std::to_string(reqs) + " request(s), " +
-                              std::to_string(kb) + " KB sent]"));
-                }
-                server->stop();
-            }
-        }
+                const std::string ext = lowerExt(controlFile);
+                std::string diskFile;
+                for (int sv : order) {
+                    ServiceRun run;
+                    run.service = sv;
+                    const std::string tag = "  " + shortName(sv);
 
-        // 2. Plex's own file.
-        MediaItem item;
-        const bool haveDetails = plex.fetchMediaDetails(ratingKey, item);
-        const std::string fileExt = lowerExt(item.partPath);
-        const bool fileDecodes = haveDetails && !item.partPath.empty() && shellDecodes(fileExt);
+                    // A name of its own for each service, so that one service
+                    // having opened the file cannot count for the next.
+                    if (!diskFile.empty() && diskFile != controlFile) removeTestFile(diskFile);
+                    const std::string copy =
+                        platformPath("bgtest-disk-" + std::to_string(sv) + "." + ext);
+                    diskFile = copyFile(controlFile, copy) ? copy : controlFile;
+                    // The first try cannot tell when what was loaded before
+                    // is as long and had not played 3 s. The second can.
+                    for (int k = 0; k < 2; k++) {
+                        run.disk = shellTry(tag + ", from disk", diskFile, false, sv, fromDisk);
+                        if (!run.disk.unsure) break;
+                    }
+                    lines.push_back(run.disk.line);
+
+                    // Plex serves https as well as http. The test server
+                    // cannot finish an https connection, having no
+                    // certificate, but whether one is begun at all it sees.
+                    struct Link {
+                        std::string host;
+                        bool https;
+                    };
+                    std::vector<Link> links = {{"127.0.0.1", false}, {"127.0.0.1", true}};
+                    if (sv == picked && !wifi.empty() && wifi != "127.0.0.1")
+                        links.push_back({wifi, false});
+                    for (const auto& link : links) {
+                        const int connBefore = server->connections();
+                        const int tlsBefore = server->tlsHandshakes();
+                        const long long sentBefore = server->bytesSent();
+                        const std::string url = std::string(link.https ? "https://" : "http://") +
+                                                link.host + ":" + std::to_string(port) + server->path();
+                        const std::string label = tag + (link.https ? ", https link" : ", http link") +
+                                                  (link.host == "127.0.0.1" ? "" : " via " + link.host);
+                        ShellTry r = shellTry(label, url, false, sv, onLink);
+                        const int conns = server->connections() - connBefore;
+                        const int tls = server->tlsHandshakes() - tlsBefore;
+                        const long long kb = (server->bytesSent() - sentBefore) / 1024;
+                        if (conns == 0) {
+                            // Nothing was fetched, so nothing it played was the link.
+                            r.played = false;
+                            r.line = label + ": never connected to the server" +
+                                     (r.moved ? "; the file from before went on"
+                                              : r.maybe ? "" : ", and no sound");
+                        } else if (tls == conns) {
+                            r.played = false;
+                            run.triedHttps = true;
+                            r.line = label + ": connected and began https (" + std::to_string(tls) +
+                                     " TLS handshake(s)), which the test server cannot finish. "
+                                     "So it does try https links";
+                        } else {
+                            run.fetchedHttp = true;
+                            // The same MP3 is loaded under its disk name, so
+                            // the length cannot see a switch; the server can.
+                            if (!r.played && r.moved && kb >= 64) {
+                                r.played = true;
+                                r.line = label + ": plays";
+                            }
+                            r.line += " [server: " + std::to_string(conns) + " connection(s), " +
+                                      std::to_string(kb) + " KB sent]";
+                        }
+                        run.linkPlayed = run.linkPlayed || r.played;
+                        lines.push_back(r.line);
+                    }
+                    runs.push_back(run);
+                }
+                lines.push_back("  (type 0 to 4: the music player's five client types. app BGM: "
+                                "the app background music service.)");
+                if (!diskFile.empty() && diskFile != controlFile) removeTestFile(diskFile);
+            }
+            server->stop();
+        }
+        if (controlDownloaded) removeTestFile(controlFile);
+
+        std::vector<std::string> fetchedHttp, triedHttps, fromDiskNames, noClock, notSeen;
+        bool anyLinkPlayed = false;
+        // Plex's links go to the service that did best with the control:
+        // played the link, else fetched it, else began https.
+        int plexService = picked, plexRank = 0;
+        for (const auto& run : runs) {
+            const std::string n = shortName(run.service);
+            if (run.fetchedHttp) fetchedHttp.push_back(n);
+            if (run.triedHttps) triedHttps.push_back(n);
+            anyLinkPlayed = anyLinkPlayed || run.linkPlayed;
+            const int rank = run.linkPlayed ? 3 : run.fetchedHttp ? 2 : run.triedHttps ? 1 : 0;
+            if (rank > plexRank) {
+                plexRank = rank;
+                plexService = run.service;
+            }
+            if (run.disk.played) fromDiskNames.push_back(n);
+            else if (run.disk.maybe) noClock.push_back(n);
+            else notSeen.push_back(n);
+        }
+        const bool linkTried = plexRank > 0;
+
+        // 3. Plex's own file and its MP3 transcode: on a service that tried
+        // one of the control's links, or on the picked one when there was no
+        // control to ask.
+        const bool tryPlex = !controlValid || linkTried;
         const bool https = plex.getServerUrl().rfind("https://", 0) == 0;
         auto asHttp = [](std::string url) {
             if (url.rfind("https://", 0) == 0) url = "http://" + url.substr(8);
@@ -1061,24 +1320,26 @@ void runShellStreamTest(Report done) {
             bool http;
         };
         std::vector<Attempt> attempts;
-        const std::string fileUrl = fileDecodes
-            ? plex.getServerUrl() + item.partPath + "?X-Plex-Token=" + plex.getAuthToken()
-            : std::string();
-        lines.push_back("");
-        if (!haveDetails) {
-            lines.push_back("Plex's " + fileExt + " file: could not read the track's details");
-        } else if (!fileDecodes) {
-            lines.push_back("Plex's file: skipped, it is " +
-                            (fileExt.empty() ? std::string("an unknown format") : fileExt) +
-                            ", which the shell does not decode");
-        } else {
-            lines.push_back("Plex's " + fileExt + " file, as stored on the server");
-            attempts.push_back({"http", false, true});
-            if (https) attempts.push_back({"https", false, false});
+        if (tryPlex) {
+            lines.push_back("");
+            if (!haveDetails) {
+                lines.push_back("Plex's file: could not read the track's details");
+            } else if (!fileDecodes) {
+                lines.push_back("Plex's file: skipped, it is " +
+                                (fileExt.empty() ? std::string("an unknown format") : fileExt) +
+                                ", which the shell does not decode");
+            } else {
+                lines.push_back("Plex's " + fileExt + " file, as stored on the server (" +
+                                serviceName(plexService) + ")");
+                attempts.push_back({"http", false, true});
+                if (https) attempts.push_back({"https", false, false});
+            }
         }
         const std::size_t firstTranscode = attempts.size();
-        attempts.push_back({"http", true, true});
-        if (https) attempts.push_back({"https", true, false});
+        if (tryPlex) {
+            attempts.push_back({"http", true, true});
+            if (https) attempts.push_back({"https", true, false});
+        }
 
         int firstPlayed = -1, firstMaybe = -1;
         auto urlFor = [&](const Attempt& a) {
@@ -1096,7 +1357,8 @@ void runShellStreamTest(Report done) {
         for (std::size_t i = 0; i < attempts.size(); i++) {
             if (i == firstTranscode) {
                 lines.push_back("");
-                lines.push_back("Plex's MP3 transcode, as VitaPlex plays it");
+                lines.push_back("Plex's MP3 transcode, as VitaPlex plays it (" +
+                                serviceName(plexService) + ")");
             }
             const std::string url = urlFor(attempts[i]);
             if (url.empty()) {
@@ -1105,7 +1367,7 @@ void runShellStreamTest(Report done) {
             }
             const std::string server =
                 attempts[i].transcode ? std::string() : describe(askServer("file, " + attempts[i].label, url));
-            const ShellTry r = shellTry("  " + attempts[i].label, url, false);
+            const ShellTry r = shellTry("  " + attempts[i].label, url, false, plexService);
             lines.push_back(r.line + (server.empty() ? "" : " [" + server + "]"));
             if (r.played && firstPlayed < 0) firstPlayed = (int)i;
             if (r.maybe && firstMaybe < 0) firstMaybe = (int)i;
@@ -1118,31 +1380,62 @@ void runShellStreamTest(Report done) {
         ShellTry replay;
         if (best >= 0) {
             const std::string url = urlFor(attempts[best]);
-            if (!url.empty()) replay = shellTry("  " + attempts[best].label, url, true);
+            if (!url.empty()) replay = shellTry("  " + attempts[best].label, url, true, plexService);
         }
         const bool playingNow = replay.played || replay.maybe;
+        if (!playingNow) {
+            stopShellLocked("test over, nothing left playing");
+            releasePort(kPortForShell, "system player test over");
+        }
 
-        std::string report =
-            "System player (" + service + "), streaming \"" + title + "\"\n\n";
+        std::string report = "System player, streaming \"" + title + "\"\n\n";
         for (const auto& l : lines) report += l + "\n";
         report += "\n";
-        if (controlValid && controlRequests == 0) {
-            report += "The system player never connected to the plain link VitaPlex served "
-                      "it, for a file it plays from disk. So through this service it does not "
-                      "fetch links at all, whatever the link: that is not Plex, the "
-                      "certificate or the query string. ";
-        } else if (controlPlayed) {
-            report += "The system player can play a plain http link. ";
-        }
-        if (playingNow) {
-            report += "Plex: " + std::string(attempts[best].transcode ? "the transcode" : "the file") +
-                      " over " + attempts[best].label + ". " + listenAdvice(replay.played);
-        } else if (best >= 0) {
-            report += "A Plex link looked like it worked during the test but did not start again "
-                      "afterwards. The log has the details (lines with [bgaudio]).";
+        if (controlValid && !linkTried) {
+            if (fromDiskNames.empty()) {
+                report += "No service was seen playing the MP3 from the memory card, so this run "
+                          "shows nothing about links. The log has every return code (lines with "
+                          "[bgaudio]).";
+            } else {
+                const bool one = fromDiskNames.size() == 1;
+                report += joinNames(fromDiskNames) + " played the MP3 from the memory card, but " +
+                          (one ? "did not connect" : "none of them connected") +
+                          " to the same MP3 on a plain http link (one VitaPlex itself fetched from "
+                          "without trouble), or even " + (one ? "open" : "opened") +
+                          " a connection for an https link to it. ";
+                if (!noClock.empty())
+                    report += joinNames(noClock) + (noClock.size() == 1 ? " reports" : " report") +
+                              " no progress, so whether it played from the memory card could not "
+                              "be measured; it did not connect either. ";
+                if (!notSeen.empty())
+                    report += joinNames(notSeen) + (notSeen.size() == 1 ? " was" : " were") +
+                              " not seen playing it from the memory card, so what " +
+                              (notSeen.size() == 1 ? "it" : "they") +
+                              " did with the links shows nothing. ";
+                report += "So the system player does not fetch links, http or https. It cannot "
+                          "stream from Plex whatever the link, and that is not down to Plex, the "
+                          "certificate or the query string. Plex's own links were not tried for "
+                          "that reason.";
+            }
         } else {
-            report += "No Plex link played. The log has every return code and request "
-                      "(lines with [bgaudio]).";
+            if (!fetchedHttp.empty())
+                report += "Fetched the http link: " + joinNames(fetchedHttp) +
+                          (anyLinkPlayed ? ". The system player can play a plain http link. "
+                                         : ", but did not play it. ");
+            if (!triedHttps.empty())
+                report += "Began https on the https link: " + joinNames(triedHttps) +
+                          ". The test server cannot finish https, so Plex's own https link, "
+                          "above, is the test of that. ";
+            if (playingNow) {
+                report += "Plex: " + std::string(attempts[best].transcode ? "the transcode" : "the file") +
+                          " over " + attempts[best].label + ". " + listenAdvice(replay.played);
+            } else if (best >= 0) {
+                report += "A Plex link looked like it worked during the test but did not start "
+                          "again afterwards. The log has the details (lines with [bgaudio]).";
+            } else {
+                report += "No Plex link played. The log has every return code and request "
+                          "(lines with [bgaudio]).";
+            }
         }
         finishTest(done, report);
     });
