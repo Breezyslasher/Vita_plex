@@ -17,19 +17,31 @@
 #include "platform/paths.hpp"
 #include "platform/platform.hpp"
 #include "player/mpv_player.hpp"
+#include "utils/http_client.hpp"
 
 #include <borealis.hpp>
 
 #include <psp2/kernel/threadmgr.h>
+#include <psp2/net/netctl.h>
 #include <psp2/power.h>
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 #include "ShellAudio.h"
 
 #include <algorithm>
 #include <atomic>
 #include <cctype>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -386,7 +398,8 @@ void startWatcher() {
 // and which takes a URL, is what the picker in settings is for.
 
 struct ShellTry {
-    bool played = false;  // its clock was seen moving
+    bool played = false;  // the new source was seen playing
+    bool moved = false;   // the clock moved, whatever it was playing
     bool maybe = false;   // accepted, but this service reports no clock
     std::string line;
 };
@@ -542,7 +555,7 @@ ShellTry shellTry(const std::string& label, const std::string& src, bool leave) 
             firstTime = c.timeMs;
         }
         if (seenTime && c.timeMs >= firstTime + 1000) {
-            r.played = true;
+            r.played = r.moved = true;
             break;
         }
         sceKernelDelayThread(250 * 1000);
@@ -623,6 +636,261 @@ void finishTest(const Report& done, const std::string& report) {
     brls::sync([done, report]() { done(report); });
 }
 
+// A test.* file the user placed takes precedence, then any download in a
+// format the shell decodes. Empty when there is neither. Called on the UI
+// thread, where the downloads list is normally read.
+std::string pickLocalFile() {
+    for (const char* e : kShellExts) {
+        const std::string p = platformPath(std::string("test.") + e);
+        if (fileExists(p)) return p;
+    }
+    for (const auto& d : DownloadsManager::getInstance().getDownloads()) {
+        if (d.state == DownloadState::COMPLETED && d.mediaType == "track" &&
+            shellDecodes(lowerExt(d.localPath)) && fileExists(d.localPath))
+            return d.localPath;
+    }
+    return {};
+}
+
+std::string headerValue(const std::map<std::string, std::string>& headers, const char* name) {
+    for (const auto& kv : headers) {
+        if (kv.first.size() != std::strlen(name)) continue;
+        bool same = true;
+        for (std::size_t i = 0; i < kv.first.size() && same; i++)
+            same = std::tolower((unsigned char)kv.first[i]) == std::tolower((unsigned char)name[i]);
+        if (same) return kv.second;
+    }
+    return {};
+}
+
+// Whether a server serves a link, asked with VitaPlex's own HTTP client: the
+// first 4 KB, as a player's first read would be. Only for static files; a
+// transcode link would start a transcode to answer it.
+struct ServerAnswer {
+    int status = 0;
+    std::string type;
+    std::size_t bytes = 0;
+};
+
+ServerAnswer askServer(const std::string& label, const std::string& url) {
+    HttpClient client;
+    HttpRequest req;
+    req.url = url;
+    req.timeout = 10;
+    req.headers["Range"] = "bytes=0-4095";
+    const HttpResponse resp = client.request(req);
+    ServerAnswer a;
+    a.status = resp.statusCode;
+    a.type = headerValue(resp.headers, "Content-Type");
+    a.bytes = resp.body.size();
+    brls::Logger::info("[bgaudio] server check, {}: status {}, type '{}', {} bytes{}{}", label,
+                       a.status, a.type, a.bytes, resp.error.empty() ? "" : ", error: ",
+                       resp.error);
+    return a;
+}
+
+std::string describe(const ServerAnswer& a) {
+    if (a.status == 0) return "VitaPlex got no answer from the server";
+    return "the server answers it (" + std::to_string(a.status) +
+           (a.type.empty() ? "" : " " + a.type) + ")";
+}
+
+std::string wifiAddress() {
+    SceNetCtlInfo info;
+    std::memset(&info, 0, sizeof(info));
+    if (sceNetCtlInetGetInfo(SCE_NETCTL_INFO_GET_IP_ADDRESS, &info) < 0) return {};
+    return info.ip_address;
+}
+
+// ── The control: VitaPlex serving a file itself ──────────────────────────
+//
+// Hands the system player the plainest link there is: plain http, a path
+// ending in the file's own extension, no query string, a length and range
+// support, for a file it has already played from disk. Every request is
+// logged, so "the player never connected" can be told apart from "it
+// connected and could not play what it got". Serves one path, with a
+// per-run name in it, and only for the length of the test.
+class ControlServer : public std::enable_shared_from_this<ControlServer> {
+public:
+    // Returns the port, or -1.
+    int start(const std::string& file) {
+        m_file = file;
+        char dir[24];
+        std::snprintf(dir, sizeof(dir), "/t%08x",
+                      (unsigned)(sceKernelGetSystemTimeWide() ^ (uintptr_t)this));
+        m_path = std::string(dir) + "/track." + lowerExt(file);
+
+        m_fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (m_fd < 0) return fail("socket");
+        int one = 1;
+        setsockopt(m_fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+        sockaddr_in addr;
+        std::memset(&addr, 0, sizeof(addr));
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        addr.sin_port = htons(0);
+        if (bind(m_fd, (sockaddr*)&addr, sizeof(addr)) < 0) return fail("bind");
+        if (listen(m_fd, 4) < 0) return fail("listen");
+        socklen_t len = sizeof(addr);
+        if (getsockname(m_fd, (sockaddr*)&addr, &len) < 0) return fail("getsockname");
+        m_port = ntohs(addr.sin_port);
+
+        m_running = true;
+        auto self = shared_from_this();
+        platform::launchThread([self]() { self->acceptLoop(); });
+        brls::Logger::info("[bgaudio] control server: port {}, serving {} as {}", m_port, m_file,
+                           m_path);
+        return m_port;
+    }
+
+    void stop() {
+        m_stop = true;
+        for (int i = 0; i < 40 && m_running; i++) sceKernelDelayThread(50 * 1000);
+    }
+
+    const std::string& path() const { return m_path; }
+    int requests() const { return m_requests; }
+    long long bytesSent() const { return m_sent; }
+
+private:
+    int fail(const char* what) {
+        brls::Logger::info("[bgaudio] control server: {} failed, errno {}", what, errno);
+        if (m_fd >= 0) close(m_fd);
+        m_fd = -1;
+        return -1;
+    }
+
+    void acceptLoop() {
+        while (!m_stop) {
+            pollfd p = {m_fd, POLLIN, 0};
+            if (poll(&p, 1, 250) <= 0) continue;
+            const int c = accept(m_fd, nullptr, nullptr);
+            if (c < 0) continue;
+            auto self = shared_from_this();
+            platform::launchThread([self, c]() { self->serve(c); });
+        }
+        close(m_fd);
+        m_fd = -1;
+        m_running = false;
+    }
+
+    // Waits for the socket to take more, so a player that stops reading
+    // cannot hold this thread past the end of the test.
+    bool sendAll(int c, const char* data, std::size_t size) {
+        while (size > 0 && !m_stop) {
+            pollfd p = {c, POLLOUT, 0};
+            if (poll(&p, 1, 250) <= 0) continue;
+            const int n = send(c, data, size, 0);
+            if (n <= 0) return false;
+            data += n;
+            size -= (std::size_t)n;
+            m_sent += n;
+        }
+        return size == 0;
+    }
+
+    void serve(int c) {
+        std::string req;
+        char buf[2048];
+        const SceInt64 t0 = sceKernelGetSystemTimeWide();
+        while (req.find("\r\n\r\n") == std::string::npos && req.size() < 8192 && !m_stop &&
+               sceKernelGetSystemTimeWide() - t0 < 5 * 1000000LL) {
+            pollfd p = {c, POLLIN, 0};
+            if (poll(&p, 1, 250) <= 0) continue;
+            const int n = recv(c, buf, sizeof(buf), 0);
+            if (n <= 0) break;
+            req.append(buf, (std::size_t)n);
+        }
+        m_requests++;
+
+        // "GET /path HTTP/1.1", then headers one to a line.
+        const std::string first = req.substr(0, req.find("\r\n"));
+        const std::size_t sp1 = first.find(' ');
+        const std::size_t sp2 = sp1 == std::string::npos ? sp1 : first.find(' ', sp1 + 1);
+        const std::string method = first.substr(0, sp1);
+        const std::string target =
+            sp1 == std::string::npos ? std::string() : first.substr(sp1 + 1, sp2 - sp1 - 1);
+        std::map<std::string, std::string> headers;
+        for (std::size_t at = req.find("\r\n"); at != std::string::npos;) {
+            const std::size_t next = req.find("\r\n", at + 2);
+            const std::string line = req.substr(at + 2, next == std::string::npos ? next : next - at - 2);
+            const std::size_t colon = line.find(':');
+            if (colon != std::string::npos) {
+                std::size_t v = colon + 1;
+                while (v < line.size() && line[v] == ' ') v++;
+                headers[line.substr(0, colon)] = line.substr(v);
+            }
+            at = next;
+        }
+        const std::string range = headerValue(headers, "Range");
+        brls::Logger::info("[bgaudio] control server: request {}: {} {}, range '{}', "
+                           "user-agent '{}'", (int)m_requests, method, target, range,
+                           headerValue(headers, "User-Agent"));
+
+        FILE* f = target == m_path ? std::fopen(m_file.c_str(), "rb") : nullptr;
+        if (!f) {
+            const char* notFound = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n"
+                                   "Connection: close\r\n\r\n";
+            sendAll(c, notFound, std::strlen(notFound));
+            close(c);
+            return;
+        }
+        std::fseek(f, 0, SEEK_END);
+        const long long size = std::ftell(f);
+        long long from = 0, to = size - 1;
+        bool partial = false;
+        if (range.rfind("bytes=", 0) == 0) {
+            const std::string spec = range.substr(6);
+            const std::size_t dash = spec.find('-');
+            if (dash != std::string::npos) {
+                from = std::atoll(spec.substr(0, dash).c_str());
+                if (dash + 1 < spec.size()) to = std::atoll(spec.substr(dash + 1).c_str());
+                if (to >= size) to = size - 1;
+                partial = from > 0 || to < size - 1;
+            }
+        }
+        const std::string ext = lowerExt(m_file);
+        const char* type = ext == "mp3" ? "audio/mpeg"
+                         : ext == "wav" ? "audio/wav"
+                         : ext == "at9" ? "audio/at9" : "audio/mp4";
+        const std::string contentRange =
+            partial ? "Content-Range: bytes " + std::to_string(from) + "-" + std::to_string(to) +
+                          "/" + std::to_string(size) + "\r\n"
+                    : std::string();
+        char head[400];
+        std::snprintf(head, sizeof(head),
+                      "HTTP/1.1 %s\r\nContent-Type: %s\r\nContent-Length: %lld\r\n"
+                      "Accept-Ranges: bytes\r\n%sConnection: close\r\n\r\n",
+                      partial ? "206 Partial Content" : "200 OK", type, to - from + 1,
+                      contentRange.c_str());
+        bool ok = sendAll(c, head, std::strlen(head));
+        long long sent = 0;
+        if (ok && method != "HEAD") {
+            std::fseek(f, (long)from, SEEK_SET);
+            std::vector<char> chunk(32 * 1024);
+            while (ok && from + sent <= to) {
+                const std::size_t want = (std::size_t)std::min<long long>(chunk.size(), to - from - sent + 1);
+                const std::size_t got = std::fread(chunk.data(), 1, want, f);
+                if (got == 0) break;
+                ok = sendAll(c, chunk.data(), got);
+                if (ok) sent += (long long)got;
+            }
+        }
+        std::fclose(f);
+        close(c);
+        brls::Logger::info("[bgaudio] control server: request {} done, {} of {} bytes sent",
+                           (int)m_requests, sent, to - from + 1);
+    }
+
+    std::string m_file, m_path;
+    int m_fd = -1;
+    int m_port = 0;
+    std::atomic<bool> m_stop{false};
+    std::atomic<bool> m_running{false};
+    std::atomic<int> m_requests{0};
+    std::atomic<long long> m_sent{0};
+};
+
 }  // namespace
 
 void init(bool keepPlaying) {
@@ -661,26 +929,7 @@ void runShellFileTest(Report done) {
     }
     startWatcher();
 
-    // A test.* file the user placed takes precedence, then any download in a
-    // format the shell decodes. Picked here, on the UI thread, where the
-    // downloads list is normally read.
-    std::string path;
-    for (const char* e : kShellExts) {
-        const std::string p = platformPath(std::string("test.") + e);
-        if (fileExists(p)) {
-            path = p;
-            break;
-        }
-    }
-    if (path.empty()) {
-        for (const auto& d : DownloadsManager::getInstance().getDownloads()) {
-            if (d.state == DownloadState::COMPLETED && d.mediaType == "track" &&
-                shellDecodes(lowerExt(d.localPath)) && fileExists(d.localPath)) {
-                path = d.localPath;
-                break;
-            }
-        }
-    }
+    const std::string path = pickLocalFile();
     if (path.empty()) {
         g_shellBusy = false;
         done("No file to try. Download a track that is MP3, M4A, AAC or WAV, or put a "
@@ -706,6 +955,19 @@ void runShellFileTest(Report done) {
     });
 }
 
+// Not a guess at what the shell wants but an experiment with a control. The
+// first build tried only Plex's live transcode, a link with no length and a
+// 700-character query, and never the plain file: it read the format from
+// MediaItem::audioCodec, which fetchMediaDetails does not fill, so it always
+// skipped. It also never checked that the server takes plain http. So:
+//
+//   1. The control. VitaPlex serves a file the shell has played from disk,
+//      on the plainest link there is, and logs every request. No request at
+//      all means the shell does not fetch links through this service.
+//   2. Plex's own file, when it is a format the shell decodes (the format
+//      from the part's extension), over http and https, each first checked
+//      with VitaPlex's own client so a server refusal reads as one.
+//   3. Plex's MP3 transcode, over http and https, as VitaPlex plays it.
 void runShellStreamTest(Report done) {
     if (g_shellBusy.exchange(true)) {
         done("A system player test is already running.");
@@ -723,101 +985,164 @@ void runShellStreamTest(Report done) {
     const std::string ratingKey = track->ratingKey;
     const std::string title = track->title;
     const std::string service = serviceName(g_service.load());
-    platform::launchThread([done, ratingKey, title, service]() {
+    const std::string controlFile = pickLocalFile();
+    platform::launchThread([done, ratingKey, title, service, controlFile]() {
         PlexClient& plex = PlexClient::getInstance();
         std::vector<std::string> lines;
+        std::lock_guard<std::mutex> lock(g_shellMutex);
+        holdPort(kPortForShell, "system player test");
 
-        // What VitaPlex itself plays on the Vita: Plex's mp3 transcode, a
-        // stream made on the fly with no length and no range support.
-        // A fresh session for every attempt, so the server never sees one
-        // session asked for twice.
-        auto transcodeUrl = [&]() {
-            std::string url, session;
-            if (!plex.getTranscodeUrlSpeculative(ratingKey, url, session)) return std::string();
-            return url;
-        };
-        // The file as stored, when it is in a format the shell decodes: a
-        // plain download with a length, the kindest case for a player.
+        // 1. The control.
+        int controlRequests = 0;
+        bool controlPlayed = false;
+        bool controlValid = !controlFile.empty();
+        lines.push_back("Control: VitaPlex serving a file itself, on a plain http link");
+        if (controlFile.empty()) {
+            lines.push_back("  skipped: no MP3, M4A, AAC or WAV download, or test.mp3, to serve");
+        } else {
+            auto server = std::make_shared<ControlServer>();
+            const int port = server->start(controlFile);
+            if (port < 0) {
+                lines.push_back("  skipped: VitaPlex could not start its test server");
+                controlValid = false;
+            } else if (const ServerAnswer self = askServer(
+                           "control server self-check",
+                           "http://127.0.0.1:" + std::to_string(port) + server->path());
+                       self.status != 200 && self.status != 206) {
+                // Without this, "the player never connected" could be the
+                // server's fault rather than the player's.
+                lines.push_back("  VitaPlex could not fetch from its own test server either (" +
+                                describe(self) + "), so the control shows nothing");
+                controlValid = false;
+                server->stop();
+            } else {
+                lines.push_back("  VitaPlex fetched from it itself: it works");
+                std::vector<std::string> hosts = {"127.0.0.1"};
+                const std::string wifi = wifiAddress();
+                if (!wifi.empty() && wifi != "127.0.0.1") hosts.push_back(wifi);
+                for (const auto& host : hosts) {
+                    const int before = server->requests();
+                    const long long sentBefore = server->bytesSent();
+                    const std::string url =
+                        "http://" + host + ":" + std::to_string(port) + server->path();
+                    ShellTry r = shellTry("  " + baseName(controlFile) + " via " + host, url, false);
+                    const int reqs = server->requests() - before;
+                    const long long kb = (server->bytesSent() - sentBefore) / 1024;
+                    controlRequests += reqs;
+                    // The same file may already be loaded from the file test,
+                    // so a length check cannot see the switch; the server can.
+                    if (!r.played && r.moved && reqs > 0 && kb >= 64) {
+                        r.played = true;
+                        r.line = "  " + baseName(controlFile) + " via " + host + ": plays";
+                    }
+                    controlPlayed = controlPlayed || r.played;
+                    lines.push_back(r.line + (reqs == 0
+                        ? " [it never connected to the server]"
+                        : " [server: " + std::to_string(reqs) + " request(s), " +
+                              std::to_string(kb) + " KB sent]"));
+                }
+                server->stop();
+            }
+        }
+
+        // 2. Plex's own file.
         MediaItem item;
         const bool haveDetails = plex.fetchMediaDetails(ratingKey, item);
-        std::string codec = item.audioCodec;
-        for (auto& c : codec) c = (char)std::tolower((unsigned char)c);
-        const bool fileDecodes = haveDetails && !item.partPath.empty() &&
-                                 (codec == "mp3" || codec == "aac");
-        const std::string fileUrl =
-            fileDecodes ? plex.getServerUrl() + item.partPath + "?X-Plex-Token=" + plex.getAuthToken()
-                        : std::string();
-
+        const std::string fileExt = lowerExt(item.partPath);
+        const bool fileDecodes = haveDetails && !item.partPath.empty() && shellDecodes(fileExt);
+        const bool https = plex.getServerUrl().rfind("https://", 0) == 0;
+        auto asHttp = [](std::string url) {
+            if (url.rfind("https://", 0) == 0) url = "http://" + url.substr(8);
+            return url;
+        };
         struct Attempt {
             std::string label;
             bool transcode;
             bool http;
         };
         std::vector<Attempt> attempts;
-        const bool https = plex.getServerUrl().rfind("https://", 0) == 0;
-        attempts.push_back({https ? "MP3 stream, https" : "MP3 stream, http", true, false});
-        if (https) attempts.push_back({"MP3 stream, http", true, true});
-        if (fileDecodes) {
-            attempts.push_back({https ? "Original " + codec + " file, https"
-                                      : "Original " + codec + " file, http", false, false});
-            if (https) attempts.push_back({"Original " + codec + " file, http", false, true});
-        }
-
-        auto urlFor = [&](const Attempt& a) {
-            std::string url = a.transcode ? transcodeUrl() : fileUrl;
-            if (a.http && url.rfind("https://", 0) == 0) url = "http://" + url.substr(8);
-            return url;
-        };
-
-        // The first form whose clock moved, failing that the first the service
-        // accepted without reporting a clock (application BGM may not).
-        int firstPlayed = -1, firstMaybe = -1;
-        ShellTry replay;
-        {
-            std::lock_guard<std::mutex> lock(g_shellMutex);
-            holdPort(kPortForShell, "system player test");
-            for (std::size_t i = 0; i < attempts.size(); i++) {
-                const std::string url = urlFor(attempts[i]);
-                if (url.empty()) {
-                    lines.push_back(attempts[i].label + ": could not get a URL from the server");
-                    continue;
-                }
-                const ShellTry r = shellTry(attempts[i].label, url, false);
-                lines.push_back(r.line);
-                if (r.played && firstPlayed < 0) firstPlayed = (int)i;
-                if (r.maybe && firstMaybe < 0) firstMaybe = (int)i;
-            }
-            // Start the best form again and leave it going, so the user can
-            // hear whether it carries on outside the app.
-            const int best = firstPlayed >= 0 ? firstPlayed : firstMaybe;
-            if (best >= 0) {
-                const std::string url = urlFor(attempts[best]);
-                if (!url.empty()) replay = shellTry(attempts[best].label, url, true);
-            }
-        }
-        const int best = firstPlayed >= 0 ? firstPlayed : firstMaybe;
-        const bool playingNow = replay.played || replay.maybe;
+        const std::string fileUrl = fileDecodes
+            ? plex.getServerUrl() + item.partPath + "?X-Plex-Token=" + plex.getAuthToken()
+            : std::string();
+        lines.push_back("");
         if (!haveDetails) {
-            lines.push_back("Original file: could not read the track's details");
+            lines.push_back("Plex's " + fileExt + " file: could not read the track's details");
         } else if (!fileDecodes) {
-            lines.push_back("Original file: skipped, it is " +
-                            (codec.empty() ? std::string("an unknown format") : codec) +
+            lines.push_back("Plex's file: skipped, it is " +
+                            (fileExt.empty() ? std::string("an unknown format") : fileExt) +
                             ", which the shell does not decode");
+        } else {
+            lines.push_back("Plex's " + fileExt + " file, as stored on the server");
+            attempts.push_back({"http", false, true});
+            if (https) attempts.push_back({"https", false, false});
         }
+        const std::size_t firstTranscode = attempts.size();
+        attempts.push_back({"http", true, true});
+        if (https) attempts.push_back({"https", true, false});
+
+        int firstPlayed = -1, firstMaybe = -1;
+        auto urlFor = [&](const Attempt& a) {
+            std::string url;
+            if (a.transcode) {
+                // A fresh session for every attempt, so the server never sees
+                // one session asked for twice.
+                std::string session;
+                if (!plex.getTranscodeUrlSpeculative(ratingKey, url, session)) return std::string();
+            } else {
+                url = fileUrl;
+            }
+            return a.http ? asHttp(url) : url;
+        };
+        for (std::size_t i = 0; i < attempts.size(); i++) {
+            if (i == firstTranscode) {
+                lines.push_back("");
+                lines.push_back("Plex's MP3 transcode, as VitaPlex plays it");
+            }
+            const std::string url = urlFor(attempts[i]);
+            if (url.empty()) {
+                lines.push_back("  " + attempts[i].label + ": could not get a link from the server");
+                continue;
+            }
+            const std::string server =
+                attempts[i].transcode ? std::string() : describe(askServer("file, " + attempts[i].label, url));
+            const ShellTry r = shellTry("  " + attempts[i].label, url, false);
+            lines.push_back(r.line + (server.empty() ? "" : " [" + server + "]"));
+            if (r.played && firstPlayed < 0) firstPlayed = (int)i;
+            if (r.maybe && firstMaybe < 0) firstMaybe = (int)i;
+        }
+
+        // Start the best Plex form again and leave it going, so the user can
+        // hear whether it carries on outside the app. The control cannot be
+        // left going: its server stops with the test.
+        const int best = firstPlayed >= 0 ? firstPlayed : firstMaybe;
+        ShellTry replay;
+        if (best >= 0) {
+            const std::string url = urlFor(attempts[best]);
+            if (!url.empty()) replay = shellTry("  " + attempts[best].label, url, true);
+        }
+        const bool playingNow = replay.played || replay.maybe;
 
         std::string report =
-            "System player (" + service + "), streaming \"" + title + "\" from Plex\n\n";
+            "System player (" + service + "), streaming \"" + title + "\"\n\n";
         for (const auto& l : lines) report += l + "\n";
         report += "\n";
+        if (controlValid && controlRequests == 0) {
+            report += "The system player never connected to the plain link VitaPlex served "
+                      "it, for a file it plays from disk. So through this service it does not "
+                      "fetch links at all, whatever the link: that is not Plex, the "
+                      "certificate or the query string. ";
+        } else if (controlPlayed) {
+            report += "The system player can play a plain http link. ";
+        }
         if (playingNow) {
-            report += attempts[best].label + ": " + listenAdvice(replay.played);
+            report += "Plex: " + std::string(attempts[best].transcode ? "the transcode" : "the file") +
+                      " over " + attempts[best].label + ". " + listenAdvice(replay.played);
         } else if (best >= 0) {
-            report += attempts[best].label +
-                      " looked like it worked during the test but did not start again afterwards. "
-                      "The log has the details (lines with [bgaudio]).";
+            report += "A Plex link looked like it worked during the test but did not start again "
+                      "afterwards. The log has the details (lines with [bgaudio]).";
         } else {
-            report += "The system player did not play the stream in any form. The log has every "
-                      "return code (lines with [bgaudio]).";
+            report += "No Plex link played. The log has every return code and request "
+                      "(lines with [bgaudio]).";
         }
         finishTest(done, report);
     });
