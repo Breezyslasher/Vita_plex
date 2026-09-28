@@ -3,35 +3,62 @@
  * and records whether it keeps running once the user leaves it.
  *
  * VitaPlex is frozen by the system the moment the PS button takes it out of
- * the foreground: its watcher thread logged no tick for the whole time away,
- * with mpv playing and the BGM port held. ElevenMPV-A keeps running in the
- * same situation. The difference to test is the param.sfo: this one binary is
- * packaged three times, identical except for that (CMakeLists.txt, "Vita
- * background test"), and shows which of the three it is.
+ * the foreground. One binary, packaged several times with nothing different
+ * but the param.sfo (CMakeLists.txt, "Background test"), finds out which kind
+ * of app is not. On a console, the first three gave:
  *
- *   VPLXBGT01  a game, set up like VitaPlex. Expected to freeze: the control.
- *   VPLXBGT02  a game with ATTRIBUTE_BG_APP (0x04000000) set.
- *   VPLXBGT03  a non-game application (gdc) with ElevenMPV-A's attributes.
+ *   VPLXBGT01  a game, set up like VitaPlex: frozen (the control).
+ *   VPLXBGT02  a game with ATTRIBUTE_BG_APP (0x04000000): frozen as well.
+ *   VPLXBGT03  a non-game application (gdc) with ElevenMPV-A's attributes:
+ *              kept running and playing after PS, and it alone was sent
+ *              the activate and deactivate events.
  *
- * Nothing here is VitaPlex code; if one of them keeps beeping, the finding
- * goes into VitaPlex (or a helper app) and this goes away.
+ * So a non-game app can play in the background. What decides how VitaPlex
+ * can use that is what such an app is given, so each variant now also logs:
+ *
+ *   - its memory: the system's budget for it and the largest blocks it can
+ *     really allocate. ElevenMPV-A plans for as little as 17 MB, and VitaPlex
+ *     needs far more than that;
+ *   - whether its network works while it is in the background: every 5 s it
+ *     asks the Plex server in VitaPlex's settings for /identity, which needs
+ *     no sign-in, over plain http;
+ *
+ * and one more variant is packaged:
+ *
+ *   VPLXBGT04  the non-game app of VPLXBGT03 with VitaPlex's memory setting
+ *              (ATTRIBUTE2=12), to see whether that setting holds for one.
+ *
+ * Nothing here is VitaPlex code; what it finds goes into VitaPlex (or a
+ * helper app) and this goes away.
  */
 
 #include <psp2/appmgr.h>
 #include <psp2/audioout.h>
 #include <psp2/ctrl.h>
 #include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/sysmem.h>
 #include <psp2/kernel/threadmgr.h>
+#include <psp2/net/net.h>
+#include <psp2/net/netctl.h>
 #include <psp2/power.h>
 #include <psp2/sysmodule.h>
 #include <vita2d.h>
 
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <errno.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-// Small, so the non-game variant fits whatever budget it is given.
+// Small, so the non-game variants fit whatever budget they are given.
 int _newlib_heap_size_user = 8 * 1024 * 1024;
 
 // SceAppMgrUser / SceAppMgr; not declared by this SDK's headers.
@@ -47,6 +74,7 @@ int sceAppMgrAcquireBgmPortWithPriority(int priority);
 #define RATE  48000
 #define GRAIN 1024
 #define TWO_PI 6.283185307179586
+#define MB (1024 * 1024)
 
 static FILE* g_log;
 static char g_title[16] = "?";
@@ -60,6 +88,9 @@ static volatile SceInt64 g_lastGapUs;       // the most recent such gap
 static volatile int g_events;               // app events received
 static volatile int g_lastEvent;
 static volatile int g_quit;
+static volatile int g_away;                 // deactivated and not yet activated
+static char g_memLine[128] = "Memory: measuring";
+static char g_netLine[128] = "Network: starting";
 
 static double secs(void) { return (sceKernelGetSystemTimeWide() - g_t0) / 1e6; }
 
@@ -78,8 +109,213 @@ static const char* describe(void) {
     if (strcmp(g_title, "VPLXBGT01") == 0) return "a game, set up like VitaPlex (the control)";
     if (strcmp(g_title, "VPLXBGT02") == 0) return "a game with the BG_APP flag";
     if (strcmp(g_title, "VPLXBGT03") == 0) return "a non-game app, set up like ElevenMPV-A";
+    if (strcmp(g_title, "VPLXBGT04") == 0) return "a non-game app with VitaPlex's memory setting";
     return "unknown variant";
 }
+
+// ── Memory ───────────────────────────────────────────────────────────────
+
+// The largest single block of `type` the system gives now, in whole MB, found
+// by halving between 0 and `maxMb`. Each block is freed at once.
+static int largestBlockMb(SceKernelMemBlockType type, int maxMb) {
+    int lo = 0, hi = maxMb;
+    while (lo < hi) {
+        const int mid = (lo + hi + 1) / 2;
+        const SceUID b = sceKernelAllocMemBlock("BgTestProbe", type, (SceSize)mid * MB, NULL);
+        if (b >= 0) {
+            sceKernelFreeMemBlock(b);
+            lo = mid;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    return lo;
+}
+
+static int freeUserMb(void) {
+    SceKernelFreeMemorySizeInfo f;
+    memset(&f, 0, sizeof(f));
+    f.size = sizeof(f);
+    return sceKernelGetFreeMemorySize(&f) < 0 ? -1 : f.size_user / MB;
+}
+
+// What the system says this app may use, and what it can really have. Taken
+// after the display is up, with the 8 MB heap and the audio buffers already
+// allocated, so "free" is what a running app has left.
+static void reportMemory(void) {
+    SceAppMgrBudgetInfo b;
+    memset(&b, 0, sizeof(b));
+    b.size = sizeof(b);
+    const int rcBudget = sceAppMgrGetBudgetInfo(&b);
+    logLine("memory budget (0x%08X): mode %d; main %u MB, %u MB free; extra %s, %u MB, %u MB free; "
+            "phycont %u MB, %u MB free; cdram %u MB, %u MB free",
+            (unsigned)rcBudget, b.app_mode, b.total_user_rw_mem / MB, b.free_user_rw / MB,
+            b.extra_mem_allowed ? "allowed" : "not allowed", b.total_extra_mem / MB,
+            b.free_extra_mem / MB, b.total_phycont_mem / MB, b.free_phycont_mem / MB,
+            b.total_cdram_mem / MB, b.free_cdram_mem / MB);
+
+    SceKernelFreeMemorySizeInfo f;
+    memset(&f, 0, sizeof(f));
+    f.size = sizeof(f);
+    const int rcFree = sceKernelGetFreeMemorySize(&f);
+    logLine("free memory (0x%08X): main %d MB, cdram %d MB, phycont %d MB", (unsigned)rcFree,
+            f.size_user / MB, f.size_cdram / MB, f.size_phycont / MB);
+
+    const int mainMb = largestBlockMb(SCE_KERNEL_MEMBLOCK_TYPE_USER_RW, 512);
+    const int cdramMb = largestBlockMb(SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW, 512);
+    const int phycontMb = largestBlockMb(SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_PHYCONT_RW, 512);
+    logLine("largest block it could allocate: main %d MB, cdram %d MB, phycont %d MB", mainMb,
+            cdramMb, phycontMb);
+
+    snprintf(g_memLine, sizeof(g_memLine),
+             "Memory: budget %u MB, could allocate %d MB more (video %d MB)",
+             b.total_user_rw_mem / MB, mainMb, cdramMb);
+}
+
+// ── Network ──────────────────────────────────────────────────────────────
+
+static char g_netMemory[256 * 1024];
+
+// The Plex server in VitaPlex's settings, as an IPv4 address and a port.
+// Only "serverUrl" is read from the file. 0 on success.
+static int plexServer(char* ip, size_t ipSize, int* port, char* host, size_t hostSize) {
+    FILE* f = fopen("ux0:data/VitaPlex/settings.json", "r");
+    if (!f) return -1;
+    static char buf[32 * 1024];
+    const size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+
+    const char* k = strstr(buf, "\"serverUrl\"");
+    if (!k) return -2;
+    const char* v = strchr(k + 11, ':');
+    if (v) v = strchr(v, '"');
+    if (!v) return -2;
+    v++;
+    const char* end = strchr(v, '"');
+    if (!end || end == v) return -2;
+
+    const char* h = strstr(v, "://");
+    h = (h && h < end) ? h + 3 : v;
+    size_t i = 0;
+    while (h + i < end && h[i] != ':' && h[i] != '/' && i + 1 < hostSize) {
+        host[i] = h[i];
+        i++;
+    }
+    host[i] = '\0';
+    *port = (h + i < end && h[i] == ':') ? atoi(h + i + 1) : 32400;
+
+    // A plex.direct name carries its own address (192-168-1-28.<id>.plex.direct);
+    // otherwise the name is looked up.
+    int a, b, c, d;
+    if (sscanf(host, "%d-%d-%d-%d.", &a, &b, &c, &d) == 4 ||
+        sscanf(host, "%d.%d.%d.%d", &a, &b, &c, &d) == 4) {
+        snprintf(ip, ipSize, "%d.%d.%d.%d", a, b, c, d);
+        return 0;
+    }
+    struct hostent* he = gethostbyname(host);
+    if (!he || he->h_addrtype != AF_INET || !he->h_addr_list[0]) return -3;
+    inet_ntop(AF_INET, he->h_addr_list[0], ip, ipSize);
+    return 0;
+}
+
+// One plain http GET of /identity. Returns the status (200 when all is well),
+// or a negative step that failed; *bytes gets the size of the reply.
+static int getIdentity(const char* ip, int port, const char* host, int* bytes) {
+    *bytes = 0;
+    const int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((unsigned short)port);
+    if (inet_pton(AF_INET, ip, &addr.sin_addr) != 1 ||
+        connect(fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+        close(fd);
+        return -2;
+    }
+    char req[320];
+    const int len = snprintf(req, sizeof(req),
+                             "GET /identity HTTP/1.0\r\nHost: %s:%d\r\nAccept: */*\r\n\r\n", host,
+                             port);
+    if (send(fd, req, len, 0) != len) {
+        close(fd);
+        return -3;
+    }
+    char head[64];
+    int headLen = 0;
+    for (;;) {
+        struct pollfd p = {fd, POLLIN, 0};
+        if (poll(&p, 1, 5000) <= 0) break;
+        char buf[1024];
+        const int r = recv(fd, buf, sizeof(buf), 0);
+        if (r <= 0) break;
+        if (headLen < (int)sizeof(head) - 1) {
+            const int take = r < (int)sizeof(head) - 1 - headLen ? r : (int)sizeof(head) - 1 - headLen;
+            memcpy(head + headLen, buf, take);
+            headLen += take;
+        }
+        *bytes += r;
+    }
+    close(fd);
+    head[headLen] = '\0';
+    int status = 0;
+    if (sscanf(head, "HTTP/%*d.%*d %d", &status) != 1) return -4;
+    return status;
+}
+
+static int netMain(SceSize args, void* argp) {
+    (void)args;
+    (void)argp;
+    sceSysmoduleLoadModule(SCE_SYSMODULE_NET);
+    SceNetInitParam p;
+    p.memory = g_netMemory;
+    p.size = sizeof(g_netMemory);
+    p.flags = 0;
+    int rc = sceNetInit(&p);
+    if (rc >= 0 || rc == (int)0x80410201) rc = sceNetCtlInit();
+    if (rc < 0 && rc != (int)0x80412102) {
+        logLine("network: could not start (0x%08X)", (unsigned)rc);
+        snprintf(g_netLine, sizeof(g_netLine), "Network: could not start (0x%08X)", (unsigned)rc);
+        return 0;
+    }
+
+    char ip[48], host[160];
+    int port = 32400;
+    rc = plexServer(ip, sizeof(ip), &port, host, sizeof(host));
+    if (rc < 0) {
+        const char* why = rc == -1 ? "no VitaPlex settings file"
+                        : rc == -2 ? "no server in VitaPlex's settings"
+                                   : "the server's name could not be looked up";
+        logLine("network: not tested, %s", why);
+        snprintf(g_netLine, sizeof(g_netLine), "Network: not tested, %s", why);
+        return 0;
+    }
+    logLine("network: asking %s:%d (%s) for /identity every 5 s, over plain http", ip, port, host);
+
+    for (;;) {
+        const SceInt64 t = sceKernelGetSystemTimeWide();
+        int bytes = 0;
+        const int status = getIdentity(ip, port, host, &bytes);
+        const int ms = (int)((sceKernelGetSystemTimeWide() - t) / 1000);
+        const char* failed = status == -1 ? "no socket"
+                           : status == -2 ? "could not connect"
+                           : status == -3 ? "could not send"
+                           : status == -4 ? "no reply" : NULL;
+        if (failed) {
+            logLine("network%s: %s (errno %d) after %d ms", g_away ? ", away" : "", failed, errno, ms);
+            snprintf(g_netLine, sizeof(g_netLine), "Network: %s (at %.0fs)", failed, secs());
+        } else {
+            logLine("network%s: HTTP %d, %d bytes, %d ms", g_away ? ", away" : "", status, bytes, ms);
+            snprintf(g_netLine, sizeof(g_netLine), "Network: HTTP %d in %d ms (at %.0fs)", status,
+                     ms, secs());
+        }
+        sceKernelDelayThread(5 * 1000 * 1000);
+    }
+    return 0;
+}
+
+// ── Audio, power and app events ──────────────────────────────────────────
 
 // One short beep a second, at a volume that will not startle anyone.
 static int audioMain(SceSize args, void* argp) {
@@ -160,13 +396,16 @@ static int watcherMain(SceSize args, void* argp) {
                      : id == EVENT_ACTIVATE   ? " (activated)"
                      : id == EVENT_RESUME     ? " (resumed)"
                      : id == EVENT_REQUEST_QUIT ? " (asked to quit)" : "");
+                if (id == EVENT_DEACTIVATE) g_away = 1;
+                if (id == EVENT_ACTIVATE) g_away = 0;
                 if (id == EVENT_REQUEST_QUIT) g_quit = 1;
             }
         }
 
         // A line every 5 s, so the log shows it running (or not) while away.
         if (++beat % 20 == 0)
-            logLine("alive; audio has played %.0fs", (double)g_grains * GRAIN / RATE);
+            logLine("alive%s; audio has played %.0fs; %d MB free", g_away ? ", away" : "",
+                    (double)g_grains * GRAIN / RATE, freeUserMb());
     }
     return 0;
 }
@@ -200,6 +439,10 @@ int main(void) {
     vita2d_pgf* font = video > 0 ? vita2d_load_default_pgf() : NULL;
     logLine("display: %s", font ? "ok" : "none (running without a screen)");
 
+    reportMemory();
+    t = sceKernelCreateThread("BgTestNet", netMain, 0x10000100 + 10, 0x10000, 0, 0, NULL);
+    if (t >= 0) sceKernelStartThread(t, 0, NULL);
+
     const unsigned white = RGBA8(0xF2, 0xF2, 0xF2, 0xFF);
     const unsigned muted = RGBA8(0x9A, 0x9A, 0x9A, 0xFF);
     const unsigned gold  = RGBA8(0xE5, 0xA0, 0x0D, 0xFF);
@@ -216,22 +459,25 @@ int main(void) {
         }
         vita2d_start_drawing();
         vita2d_clear_screen();
-        drawText(font, 40, 60, gold, 1.3f, "VitaPlex background test");
-        drawText(font, 40, 100, white, 1.0f, "%s: %s", g_title, describe());
-        drawText(font, 40, 160, white, 1.0f, "It beeps once a second. Press PS and listen:");
-        drawText(font, 60, 195, muted, 1.0f, "keeps beeping: this kind of app runs in the background");
-        drawText(font, 60, 225, muted, 1.0f, "goes quiet: the system froze it");
-        drawText(font, 40, 265, white, 1.0f, "Then come back here. START quits.");
-        drawText(font, 40, 330, white, 1.0f, "Running %.0fs, audio played %.0fs", secs(),
+        drawText(font, 40, 50, gold, 1.3f, "VitaPlex background test");
+        drawText(font, 40, 85, white, 1.0f, "%s: %s", g_title, describe());
+        drawText(font, 40, 135, white, 1.0f, "It beeps once a second. Press PS and listen:");
+        drawText(font, 60, 165, muted, 1.0f, "keeps beeping: this kind of app runs in the background");
+        drawText(font, 60, 195, muted, 1.0f, "goes quiet: the system froze it");
+        drawText(font, 40, 230, white, 1.0f, "Then start VitaPlex: do the beeps go on beside it?");
+        drawText(font, 40, 260, white, 1.0f, "Come back here after. START quits.");
+        drawText(font, 40, 310, white, 1.0f, "Running %.0fs, audio played %.0fs", secs(),
                  (double)g_grains * GRAIN / RATE);
         if (g_lastGapUs > 0)
-            drawText(font, 40, 365, gold, 1.0f, "Last time away it was frozen for %.1fs "
+            drawText(font, 40, 340, gold, 1.0f, "Last time away it was frozen for %.1fs "
                      "(longest %.1fs)", g_lastGapUs / 1e6, g_longestGapUs / 1e6);
         else
-            drawText(font, 40, 365, white, 1.0f, "Never frozen so far");
-        drawText(font, 40, 400, muted, 1.0f, "App events: %d, last 0x%08X", g_events,
+            drawText(font, 40, 340, white, 1.0f, "Never frozen so far");
+        drawText(font, 40, 370, white, 1.0f, "%s", g_memLine);
+        drawText(font, 40, 400, white, 1.0f, "%s", g_netLine);
+        drawText(font, 40, 430, muted, 1.0f, "App events: %d, last 0x%08X", g_events,
                  (unsigned)g_lastEvent);
-        drawText(font, 40, 500, muted, 0.8f, "Log: %s", path);
+        drawText(font, 40, 510, muted, 0.8f, "Log: %s", path);
         vita2d_end_drawing();
         vita2d_swap_buffers();
         vita2d_wait_rendering_done();

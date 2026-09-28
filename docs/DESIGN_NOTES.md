@@ -509,13 +509,41 @@ The report says, per service, whether it played the MP3 from disk and whether
 it connected over http or https.
 
 So the in-process route fails as VitaPlex is packaged, and on present evidence
-the shell route covers local files only. What is left to try is the packaging
+the shell route covers local files only. What was left to try was the packaging
 itself. vita-mksfoex names `ATTRIBUTE_BG_APP` (0x04000000), which neither
 VitaPlex nor ElevenMPV-A sets, and ElevenMPV-A is a non-game application
-(`gdc`). Its own code reads its memory budget and plans for 17 to 33 MB, which
-rules that out for VitaPlex, but not for a small helper app. `src/bgtest_psv`
-settles which, if any, is kept running: one beeping binary packaged three times,
-as VitaPlex is, as VitaPlex plus `BG_APP`, and as ElevenMPV-A is.
+(`gdc`). `src/bgtest_psv` is one beeping binary packaged as VitaPlex is, as
+VitaPlex plus `BG_APP`, and as ElevenMPV-A is. On the console (logs `cfbcf9a7`,
+`778d6cd7`, `3aa821e5`):
+
+- As VitaPlex is (`VPLXBGT01`): frozen, 10.9 s with no tick, then only
+  `ON_RESUME`, as VitaPlex itself.
+- With `BG_APP` (`VPLXBGT02`): no line after the PS press, and not heard
+  (the user heard only `VPLXBGT03` in the background).
+- As ElevenMPV-A is (`VPLXBGT03`, `gdc`): **kept running**. It got
+  `ON_ACTIVATE` at start and `ON_DEACTIVATE` at the PS press, then logged "alive"
+  every 5 s, with the audio still going and heard, until it was closed.
+
+So a non-game app plays on in the background; a game does not, flag or no flag.
+What that allows for VitaPlex depends on what such an app is given. ElevenMPV-A
+reads its memory budget and plans for 17 to 33 MB, where VitaPlex runs on a
+172 MB heap. The test app now logs its budget (`sceAppMgrGetBudgetInfo`), what
+is free, and the largest blocks it can really allocate, and asks the Plex
+server in VitaPlex's settings for `/identity` over plain http every 5 s, in
+front and away. A fourth package (`VPLXBGT04`) is the non-game app with
+VitaPlex's extended memory (`ATTRIBUTE2=12`). Those numbers decide between
+VitaPlex itself as a non-game app and a small player app beside it.
+
+The third run of the stream test (`668ce811`) went only as far as music player
+type 0, because PS was pressed twice during it. The http link got no connection
+again. It also showed two faults in the test, both fixed: the first clock
+reading after an open can still be the old file's, stopped (state 2 at 0:08,
+then state 1 at 0:00), which the test took for the new file's start and so
+reported "clock stopped" for a file that played (the length changed from 1:19
+to 3:58, so it had loaded); and an attempt VitaPlex is held through shows
+nothing, so it is now noticed (a poll seconds late) and made again. The BGM
+state call is refused to an app (0x8080201F), so it is no longer logged after
+that.
 
 ### PS4: the popup, and nothing to hang progress on
 
