@@ -1411,6 +1411,56 @@ if(PLATFORM_PSV)
         FILE ${CMAKE_BINARY_DIR}/vitaplex_updater.vpk     updater.vpk
     )
 
+    # ── Background test (src/bgtest_psv) ────────────────────────────────
+    # One small binary packaged three times, identical but for param.sfo, to
+    # find out on hardware which kind of app the system keeps running once it
+    # leaves the foreground; VitaPlex itself is frozen. See the source's
+    # header for the three. vita_create_vpk is a macro that appends to these
+    # flag variables in this scope (the updater comment above has the same
+    # trap for FILE), so each package gets them fresh and they are put back
+    # afterwards. Built after the main vpk, so nothing leaks into it.
+    add_executable(vitaplex_bgtest src/bgtest_psv/main.c)
+    target_link_libraries(vitaplex_bgtest
+        vita2d freetype png z m
+        SceGxm_stub
+        SceDisplay_stub
+        SceCommonDialog_stub
+        ScePgf_stub
+        SceCtrl_stub
+        SceAudio_stub
+        SceAppMgr_stub
+        ScePower_stub
+        SceSysmodule_stub
+        SceIofilemgr_stub
+        SceLibKernel_stub)
+    target_link_options(vitaplex_bgtest PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
+    vita_create_self(vitaplex_bgtest.self vitaplex_bgtest UNSAFE)
+    set(_bgt_saved_sfo "${VITA_MKSFOEX_FLAGS}")
+    set(_bgt_saved_pack "${VITA_PACK_VPK_FLAGS}")
+    set(_bgt_saved_resources "${resources}")
+    foreach(_bgt
+            # title id | name | sfo flags. The first two are games like
+            # VitaPlex (extended memory as it has); the second adds
+            # ATTRIBUTE_BG_APP to VitaPlex's default ATTRIBUTE (0x8000).
+            # The third copies ElevenMPV-A's param.sfo: a non-game app.
+            "VPLXBGT01|BG Test 1 game|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12"
+            "VPLXBGT02|BG Test 2 BG flag|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -d ATTRIBUTE=0x04008000"
+            "VPLXBGT03|BG Test 3 non-game|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16")
+        string(REPLACE "|" ";" _bgt "${_bgt}")
+        list(GET _bgt 0 _bgt_id)
+        list(GET _bgt 1 _bgt_name)
+        list(GET _bgt 2 _bgt_flags)
+        set(VITA_MKSFOEX_FLAGS "${_bgt_flags}")
+        set(VITA_PACK_VPK_FLAGS "")
+        set(resources "")
+        vita_create_vpk(VitaPlexBgTest-${_bgt_id}.vpk ${_bgt_id} vitaplex_bgtest.self
+            VERSION 01.00
+            NAME "${_bgt_name}")
+    endforeach()
+    set(VITA_MKSFOEX_FLAGS "${_bgt_saved_sfo}")
+    set(VITA_PACK_VPK_FLAGS "${_bgt_saved_pack}")
+    set(resources "${_bgt_saved_resources}")
+
 elseif(PLATFORM_PS4)
     if(PS4)
         # PS4 variable is defined by the pacbrew toolchain

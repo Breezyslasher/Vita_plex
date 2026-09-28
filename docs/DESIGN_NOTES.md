@@ -425,6 +425,41 @@ What each outcome leads to:
   (`sceMusicPlayerServiceSetTrackList`, an undocumented 0x828-byte SQLite
   command buffer), so that part would stay out of reach.
 
+**What the console showed** (a PS Vita on the first test build, logs
+`ea96fd9a` and `01daccd2`):
+
+- The shell plays a local file (a downloaded WAV). It carries on when VitaPlex is
+  frozen, and when VitaPlex is closed by starting a game. The quick menu's Music
+  controls stay dimmed for it, with play showing ▶ while it plays, at client
+  type 0.
+- The shell does **not** open a URL. `Open` returns 0 for https and plain http
+  alike and changes nothing, so PLAY resumes whatever file it had before. It
+  keeps that file through stop, terminate and a fresh initialize, too. The
+  first test build took the moving clock as the stream playing, a false
+  positive the user caught by ear ("it keeps playing the old download"). The
+  test now counts only a new source that replaced the old one: a different
+  length, or the clock starting again from the top.
+- VitaPlex is **frozen** the moment PS takes it out of the foreground, with mpv
+  playing and the BGM port held at 0x81. The watcher's first tick back was
+  7.4 s late, the time away. No `ON_DEACTIVATE` or `ON_ACTIVATE` arrives, only
+  `ON_RESUME` on return. ElevenMPV-A handles those two events. The power
+  callback does see the PS button press itself.
+- Plex's MP3 transcode is 48 kHz, so on the Vita mpv plays music on the **MAIN**
+  port, not the BGM port assumed above. The 44.1 kHz resample only applies when
+  mpv starts with the setting already on.
+
+So the in-process route fails as VitaPlex is packaged, and the shell route
+covers local files only. What is left to try is the packaging itself.
+vita-mksfoex names `ATTRIBUTE_BG_APP` (0x04000000), which neither VitaPlex nor
+ElevenMPV-A sets, and ElevenMPV-A is a non-game application (`gdc`). Its own
+code reads its memory budget and plans for 17 to 33 MB, which rules that out
+for VitaPlex, but not for a small helper app. `src/bgtest_psv` settles which,
+if any, is kept running: one beeping binary packaged three times, as VitaPlex
+is, as VitaPlex plus `BG_APP`, and as ElevenMPV-A is. The shell tests also gained
+a picker for the service they use (client types 0-4, and the application-BGM
+service with its `SetUri`), to see whether any of them lights up the quick menu's
+controls or takes a URL.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which
