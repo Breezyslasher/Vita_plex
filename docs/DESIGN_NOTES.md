@@ -432,13 +432,25 @@ What each outcome leads to:
   frozen, and when VitaPlex is closed by starting a game. The quick menu's Music
   controls stay dimmed for it, with play showing ▶ while it plays, at client
   type 0.
-- The shell does **not** open a URL. `Open` returns 0 for https and plain http
-  alike and changes nothing, so PLAY resumes whatever file it had before. It
-  keeps that file through stop, terminate and a fresh initialize, too. The
-  first test build took the moving clock as the stream playing, a false
-  positive the user caught by ear ("it keeps playing the old download"). The
-  test now counts only a new source that replaced the old one: a different
-  length, or the clock starting again from the top.
+- The shell did not open **Plex's transcode link**. `Open` returned 0 for https
+  and plain http alike and changed nothing, so PLAY resumed whatever file it
+  had before. It keeps that file through stop, terminate and a fresh
+  initialize, too. The first test build took the moving clock as the stream
+  playing, a false positive the user caught by ear ("it keeps playing the old
+  download"). The test now counts only a new source that replaced the old one:
+  a different length, or the clock starting again from the top.
+- That is not yet "the shell cannot stream". The transcode is the hardest case,
+  a live stream with no length and a 700-character query. The first build never
+  tried the plain file: it read the format from `MediaItem::audioCodec`, which
+  `fetchMediaDetails` never fills, so it always skipped, though the track was an
+  MP3. It never checked that the server takes plain http either. The stream test
+  now takes the format from the part's extension and asks the server about each
+  file link with VitaPlex's own client. It also runs a control first: VitaPlex
+  serves a file the shell has played from disk on the plainest possible link
+  (`http://127.0.0.1:port/…/track.mp3`, with a length and range support),
+  checks its own server by fetching from it, and logs every request the shell
+  makes. No request at all means this service does not fetch links, whatever
+  the link.
 - VitaPlex is **frozen** the moment PS takes it out of the foreground, with mpv
   playing and the BGM port held at 0x81. The watcher's first tick back was
   7.4 s late, the time away. No `ON_DEACTIVATE` or `ON_ACTIVATE` arrives, only
