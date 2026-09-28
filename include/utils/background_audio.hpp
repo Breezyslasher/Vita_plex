@@ -58,6 +58,13 @@ void runShellStreamTest(Report done);
 // Stops whatever the tests left playing. Returns what happened.
 std::string stopShellTest();
 
+// Which shell service the tests use: 0-4 are the music player service's
+// client types (ElevenMPV-A uses 0), 5 the application-BGM service. Which of
+// them the quick menu's Music controls answer to, and whether any takes a
+// URL, is what switching between them finds out. Not saved.
+int shellService();
+void setShellService(int service);
+
 #else
 
 inline bool available() { return false; }
@@ -70,6 +77,8 @@ inline void onPlayerShutdown() {}
 inline void runShellFileTest(Report) {}
 inline void runShellStreamTest(Report) {}
 inline std::string stopShellTest() { return {}; }
+inline int shellService() { return 0; }
+inline void setShellService(int) {}
 
 #endif
 
