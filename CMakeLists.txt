@@ -1362,10 +1362,9 @@ if(PLATFORM_PSV)
         list(APPEND VITA_RES_FILE_ARGS FILE ${res} ${res})
     endforeach()
 
-    vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
-        VERSION ${VITA_VERSION}
-        NAME    ${VITA_APP_NAME}
-
+    # What goes into VitaPlex.vpk besides the eboot; VitaPlexBG.vpk below
+    # packs the same.
+    set(VITA_MAIN_VPK_FILES
         FILE app/platform/psv/sce_sys/icon0.png                      sce_sys/icon0.png
         FILE app/platform/psv/sce_sys/pic0.png                       sce_sys/pic0.png
         FILE app/platform/psv/sce_sys/livearea/contents/bg.png       sce_sys/livearea/contents/bg.png
@@ -1410,6 +1409,35 @@ if(PLATFORM_PSV)
         # vita_create_vpk above, so CMake builds the stub vpk first.
         FILE ${CMAKE_BINARY_DIR}/vitaplex_updater.vpk     updater.vpk
     )
+
+    vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
+        VERSION ${VITA_VERSION}
+        NAME    ${VITA_APP_NAME}
+        ${VITA_MAIN_VPK_FILES})
+
+    # ── VitaPlex as a non-game app (test) ───────────────────────────────
+    # The same eboot and files, packaged as the background test's VPLXBGT04
+    # is: a non-game application (gdc) with ElevenMPV-A's attributes and
+    # VitaPlex's extended memory. On a console that package kept running,
+    # network and audio included, after PS, where VitaPlex as a game is
+    # frozen, and it could allocate 342 MB of main memory against VitaPlex's
+    # 172 MB heap. It has a title id of its own so it installs beside
+    # VitaPlex; the two share ux0:data/VitaPlex, so only one should be open
+    # at a time. The same save-and-restore as the background test below,
+    # for the same reason (vita_create_vpk appends to these in this scope).
+    set(_bg_saved_sfo "${VITA_MKSFOEX_FLAGS}")
+    set(_bg_saved_pack "${VITA_PACK_VPK_FLAGS}")
+    set(_bg_saved_resources "${resources}")
+    set(VITA_MKSFOEX_FLAGS "-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16")
+    set(VITA_PACK_VPK_FLAGS "")
+    set(resources "")
+    vita_create_vpk(VitaPlexBG.vpk VPLEX0002 ${PROJECT_NAME}.self
+        VERSION ${VITA_VERSION}
+        NAME    "VitaPlex BG"
+        ${VITA_MAIN_VPK_FILES})
+    set(VITA_MKSFOEX_FLAGS "${_bg_saved_sfo}")
+    set(VITA_PACK_VPK_FLAGS "${_bg_saved_pack}")
+    set(resources "${_bg_saved_resources}")
 
     # ── Background test (src/bgtest_psv) ────────────────────────────────
     # One small binary packaged four times, identical but for param.sfo, to

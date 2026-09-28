@@ -534,6 +534,31 @@ front and away. A fourth package (`VPLXBGT04`) is the non-game app with
 VitaPlex's extended memory (`ATTRIBUTE2=12`). Those numbers decide between
 VitaPlex itself as a non-game app and a small player app beside it.
 
+They came back (logs `9462d9ec`, `babbea68`): `sceAppMgrGetBudgetInfo` is
+refused to these apps (0x8080201C), but what they could really allocate was
+measured directly:
+
+| Package | Main memory free | Largest block | CDRAM | Phycont |
+|---|---|---|---|---|
+| `VPLXBGT03` (gdc) | 231 MB | 233 MB | 89 MB | 26 MB |
+| `VPLXBGT04` (gdc, `ATTRIBUTE2=12`) | 340 MB | 342 MB | 89 MB | 26 MB |
+
+Both asked the Plex server for `/identity` every 5 s and got HTTP 200 in front
+and away (21 to 261 ms), and both logged "alive, away" with the audio still
+going. So the non-game package has room for VitaPlex's 172 MB heap with the
+extended memory setting, and NanoVG's textures sit in main memory unless
+told otherwise, so the 89 MB of CDRAM holds only framebuffers and ring
+buffers. `VitaPlexBG.vpk` is therefore VitaPlex itself, the same eboot and
+files, packaged as `VPLXBGT04` is, under its own title id (`VPLEX0002`) so it
+installs beside VitaPlex. As a non-game app it gets the activate and
+deactivate events, so the watcher's report on return ("Away 1:00. VitaPlex
+kept running...") applies to it unchanged.
+
+Both test apps were asked to quit a few seconds after being sent to the
+background a second time. Whether that was the user closing them or the
+system making room for VitaPlex, started as the test app's screen asks, is not
+known yet; the answer decides whether music can play on beside a game.
+
 The third run of the stream test (`668ce811`) went only as far as music player
 type 0, because PS was pressed twice during it. The http link got no connection
 again. It also showed two faults in the test, both fixed: the first clock
