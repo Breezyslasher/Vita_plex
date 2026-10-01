@@ -44,6 +44,7 @@ public:
         std::function<void(bool)> onSetShuffle;             // server-aware shuffle + icon refresh
         std::function<void(RepeatMode)> onSetRepeat;        // set repeat + icon refresh
         std::function<void(int)> onPlayIndex;               // jump to a queue row (rich UI load)
+        std::function<void()> onRecovered;                  // a lost track is playing again
     };
 
     // Called by PlayerActivity on create (attach) and on destroy / background
@@ -122,6 +123,37 @@ public:
     void setRepeatMode(RepeatMode mode);
     void cycleRepeatMode();
 
+    // Getting a track back after the connection to the server drops.
+    //
+    // A stream that broke partway through, or a next track whose URL could not
+    // be resolved, used to leave playback stopped with no message and no retry.
+    // A device log caught both: a song cut off at 3:34 of 4:09 when the phone
+    // lost the server, and a next track that failed on "could not resolve
+    // hostname"; each time the connection came back on its own a few minutes
+    // later and nothing tried again, so the music stayed off until a track was
+    // skipped by hand.
+    //
+    // The player screen and the headless poll report those failures here. The
+    // controller then checks every few seconds whether the server answers, and
+    // once it does reloads the same track from where it stopped. It gives up
+    // after about fifteen minutes without the server, or sooner if the server
+    // answers and the track still will not play, which is not a lost connection.
+    //
+    // onPlaybackFailed: MpvPlayer stopped on an error. Resumes where it was.
+    // onTrackLoadFailed: the current track could not be resolved. Resumes at 0.
+    // retryNow: Play with nothing playing. Tries at once, starting a recovery
+    //   if none is running; false when there is nothing to retry.
+    // cancelRecovery: playback was paused or stopped, or (keepResumePoint
+    //   false) a track is being loaded in its place. A kept resume point is
+    //   what lets Play afterwards carry on from where the track was lost.
+    void onPlaybackFailed();
+    void onTrackLoadFailed();
+    bool retryNow();
+    void cancelRecovery(bool keepResumePoint = true);
+    // Counts as playing for the transport: the music is meant to be on, and
+    // pressing pause during a recovery is how it is called off.
+    bool isRecovering() const { return m_recover.active; }
+
 private:
     MusicController() = default;
     MusicController(const MusicController&) = delete;
@@ -191,6 +223,33 @@ private:
     brls::RepeatingTimer m_sleepTimer;
     int m_sleepMinutes = 0;            // what the user picked, 0 = off
     int m_sleepSecondsLeft = 0;
+
+    // Lost-connection recovery; see onPlaybackFailed().
+    struct Recovery {
+        bool active = false;
+        std::string ratingKey;          // the track being brought back
+        long long positionMs = 0;       // where to resume it, absolute
+        int probes = 0;                 // server checks so far
+        int reloadFailures = 0;         // reloads that failed with the server answering
+        bool toldUser = false;          // "lost connection" has been shown
+        bool busy = false;              // a check or a URL resolve is in flight
+        bool reloading = false;         // a reload is loading; waiting to see it play
+        std::chrono::steady_clock::time_point startedAt{}, nextAt{}, reloadAt{};
+    };
+    Recovery m_recover;
+    // Bumped whenever a recovery starts or ends, so a check that comes back
+    // after that is recognised as belonging to an old one and dropped.
+    uint32_t m_recoverGen = 0;
+    // MpvPlayer::errorSerial() of the last failure acted on. The player stays in
+    // ERROR until something new is loaded, and both pollers see it every tick;
+    // this is what makes one failure start one recovery, not one per tick.
+    uint32_t m_handledErrorSerial = 0;
+    brls::RepeatingTimer m_recoverTimer;
+    void beginRecovery(long long positionMs, const std::string& why);
+    void recoveryTick();
+    void recoveryReload();
+    void recoveryAttemptFailed(bool serverAnswered);
+    void endRecovery();
 };
 
 } // namespace vitaplex

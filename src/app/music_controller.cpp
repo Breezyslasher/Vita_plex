@@ -5,6 +5,8 @@
 
 #include "app/music_controller.hpp"
 
+#include <algorithm>
+
 #include "utils/now_playing.hpp"
 #include "player/mpv_player.hpp"
 #include "app/plex_client.hpp"
@@ -88,6 +90,10 @@ void MusicController::install() {
             }
         } else if (p.isPlaying() || p.isPaused()) {
             m_endHandled = false;
+        } else if (p.hasError()) {
+            // A stream that broke or a load that failed. Not an end of track:
+            // the queue must not move past a song that never finished.
+            onPlaybackFailed();
         }
         if (++m_pollTick >= 4) {
             m_pollTick = 0;
@@ -99,6 +105,8 @@ void MusicController::install() {
             if (p.isPlaying() && p.getPosition() > 5.0) prefetchNextTrack();
         }
     });
+
+    m_recoverTimer.setCallback([this]() { recoveryTick(); });
 }
 
 void MusicController::registerOsHandler() {
@@ -161,8 +169,12 @@ void MusicController::detachForeground() {
     // LOADING, then not one line logged for the next four and a half minutes
     // while a 223-second track played out, and the queue advancing only when
     // the player was reopened and its own timers took over again.
+    //
+    // A recovery in progress counts too: nothing is playing while it waits for
+    // the server, but the track it reloads needs this poll to be watched.
     MpvPlayer& p = MpvPlayer::getInstance();
-    if (p.isInitialized() && (p.isPlaying() || p.isPaused() || p.isLoading())) {
+    if (p.isInitialized() && (p.isPlaying() || p.isPaused() || p.isLoading() ||
+                              m_recover.active)) {
         m_endHandled = p.hasEnded();
         startPolling();
         publishNowPlaying();
@@ -212,6 +224,7 @@ static int64_t nowMs() { return brls::getCPUTimeUsec() / 1000; }
 bool MusicController::loadCurrentHeadless() {
     const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
     if (!track) return false;
+    cancelRecovery(false);   // this load decides what plays now
 
     std::string url;
     DownloadItem dl;
@@ -242,6 +255,7 @@ bool MusicController::loadCurrentHeadless() {
         m_prefetchKey.clear();
         m_prefetchUrl.clear();
         m_prefetchSession.clear();
+        onTrackLoadFailed();
         return false;
     }
     // Spent, whichever branch ran.
@@ -342,7 +356,10 @@ void MusicController::publishNowPlaying(int playingOverride, long long positionO
         : m_streamStartOffsetMs + (long long)(p.getPosition() * 1000.0);
     // MpvPlayer's state lags the play()/pause() command; trust the caller's intent
     // when it knows it (playingOverride), else fall back to the queried state.
-    info.playing = (playingOverride >= 0) ? (playingOverride != 0) : p.isPlaying();
+    // A recovery reads as playing: the music is meant to be on. On Android that
+    // is also what keeps the CPU and Wi-Fi awake for its checks of the server.
+    info.playing = (playingOverride >= 0) ? (playingOverride != 0)
+                                          : (p.isPlaying() || m_recover.active);
     info.hasNext = q.hasNext();
     info.hasPrev = q.hasPrevious();
     info.repeat = toBridgeRepeat(q.getRepeatMode());
@@ -495,9 +512,25 @@ void MusicController::syncSessionState() {
     if (drift > 1500) publishNowPlaying(-1, realMs);
 }
 
+// Nothing is loaded: a track that failed, or a recovery that was called off or
+// gave up. Neither playing nor paused, so play/pause have nothing to act on.
+static bool nothingLoaded(MpvPlayer& p) {
+    return !p.isPlaying() && !p.isPaused() && !p.hasEnded() && !p.isLoading();
+}
+
 void MusicController::togglePlayPause() {
     MpvPlayer& p = MpvPlayer::getInstance();
     if (!p.isInitialized()) return;
+    // A recovery reads as playing, so the toggle is a pause: call it off.
+    if (m_recover.active) {
+        cancelRecovery();
+        p.pause();
+        publishNowPlaying(0);
+        return;
+    }
+    // With nothing loaded, Play means try the track again. Before this it
+    // flipped mpv's pause flag on an empty player and nothing happened.
+    if (nothingLoaded(p) && retryNow()) return;
     bool wasPaused = p.isPaused();   // settled state read before the toggle
     p.togglePause();
     publishNowPlaying(wasPaused ? 1 : 0);
@@ -506,7 +539,13 @@ void MusicController::togglePlayPause() {
 void MusicController::playPause(bool play) {
     MpvPlayer& p = MpvPlayer::getInstance();
     if (!p.isInitialized()) return;
-    if (play) p.play(); else p.pause();
+    if (play) {
+        if ((m_recover.active || nothingLoaded(p)) && retryNow()) return;
+        p.play();
+    } else {
+        cancelRecovery();
+        p.pause();
+    }
     publishNowPlaying(play ? 1 : 0);
 }
 
@@ -570,8 +609,9 @@ void MusicController::startSleepTimer(int minutes) {
         m_sleepTimer.stop();
         m_sleepMinutes = 0;
         // Pause rather than stop: the queue and position survive, so picking it back up in the morning is one press.
+        // A track waiting on a lost connection counts as playing: left alone it would start again after the timer.
         MpvPlayer& p = MpvPlayer::getInstance();
-        if (p.isInitialized() && p.isPlaying()) playPause(false);
+        if (p.isInitialized() && (p.isPlaying() || m_recover.active)) playPause(false);
         brls::Application::notify("Sleep timer - playback paused");
     });
     m_sleepTimer.start(1000);
@@ -587,6 +627,20 @@ void MusicController::seekToMs(long long ms) {
     MpvPlayer& p = MpvPlayer::getInstance();
     if (!p.isInitialized()) return;
     if (ms < 0) ms = 0;
+
+    // Waiting for the server to come back: there is nothing loaded to seek in,
+    // and a restart of our own would race the recovery's reload. Move where
+    // the recovery will resume instead, and try at once.
+    if (m_recover.active) {
+        m_recover.positionMs = ms;
+        if (m_recover.reloading) {   // the reload under way is for the old point
+            m_recover.reloading = false;
+            if (p.isLoading()) p.stop();
+        }
+        retryNow();
+        publishNowPlaying(-1, ms);
+        return;
+    }
     const long long nowMs = m_streamStartOffsetMs + (long long)(p.getPosition() * 1000.0);
     brls::Logger::info("MusicController: seek to {}ms (from {}ms, mpv seekable={})",
                        ms, nowMs, p.isSeekable());
@@ -677,6 +731,7 @@ void MusicController::restartTranscodeAtMs(long long ms) {
 }
 
 void MusicController::stopPlayback() {
+    cancelRecovery();
     MpvPlayer& p = MpvPlayer::getInstance();
     if (p.isInitialized()) p.stop();
     stopSession();
@@ -715,6 +770,283 @@ void MusicController::cycleRepeatMode() {
         case RepeatMode::ONE: default: next = RepeatMode::OFF; break;
     }
     setRepeatMode(next);
+}
+
+// ---- Lost-connection recovery (see the header) ----
+
+// Seconds to wait before each check of the server. Quick at first, since a
+// dropped stream is often a short interruption, then every fifteen seconds:
+// often enough to resume soon after the connection is back, rare enough not to
+// matter while it stays away.
+static const int kRecoverDelaysSec[] = {2, 3, 5, 10, 15};
+static constexpr int kRecoverDelayCount = sizeof(kRecoverDelaysSec) / sizeof(kRecoverDelaysSec[0]);
+// Give up after this long without the server, and only after this many checks.
+// The count matters because the clock can keep running while a Vita sleeps: it
+// should get a few tries after waking, not give up the moment it wakes.
+static constexpr auto kRecoverGiveUpAfter = std::chrono::minutes(15);
+static constexpr int kRecoverMinChecks = 10;
+// The server answering and the track still not playing is not a lost
+// connection, so a few tries and no more.
+static constexpr int kRecoverMaxReloadFailures = 3;
+// A reload that has not started playing by then has failed.
+static constexpr auto kRecoverLoadTimeout = std::chrono::seconds(45);
+
+void MusicController::onPlaybackFailed() {
+    MpvPlayer& p = MpvPlayer::getInstance();
+    if (!p.isInitialized() || !p.hasError()) return;
+    const uint32_t serial = p.errorSerial();
+    if (serial == m_handledErrorSerial) return;
+    m_handledErrorSerial = serial;
+    // A reload the recovery issued itself; its tick sees the failure and counts it.
+    if (m_recover.active) return;
+
+    long long pos = m_streamStartOffsetMs + (long long)(p.getPosition() * 1000.0);
+    // Two seconds back, so it does not pick up in the middle of a word.
+    pos = pos > 2000 ? pos - 2000 : 0;
+    beginRecovery(pos, p.getErrorMessage());
+}
+
+void MusicController::onTrackLoadFailed() {
+    if (m_recover.active) return;
+    beginRecovery(0, "could not resolve its stream");
+}
+
+void MusicController::beginRecovery(long long positionMs, const std::string& why) {
+    install();   // the recovery timer's callback is set there
+    const QueueItem* t = MusicQueue::getInstance().getCurrentTrack();
+    if (!t || t->ratingKey.empty()) return;
+
+    // A downloaded track plays from disk. Waiting for the server will not fix it.
+    DownloadItem dl;
+    if (DownloadsManager::getInstance().getDownloadCopy(t->ratingKey, dl) &&
+        dl.state == DownloadState::COMPLETED && !dl.localPath.empty()) {
+        brls::Logger::warning("MusicController: {} failed playing from disk ({}); not retrying",
+                              t->ratingKey, why);
+        return;
+    }
+
+    // Not past the end: a restart there hands back a stream that ends at once.
+    const long long durationMs = (long long)t->duration * 1000;
+    if (durationMs > 5000 && positionMs > durationMs - 5000) positionMs = durationMs - 5000;
+    if (positionMs < 0) positionMs = 0;
+
+    m_recoverGen++;
+    m_recover = Recovery{};
+    m_recover.active = true;
+    m_recover.ratingKey = t->ratingKey;
+    m_recover.positionMs = positionMs;
+    m_recover.startedAt = std::chrono::steady_clock::now();
+    m_recover.nextAt = m_recover.startedAt + std::chrono::seconds(kRecoverDelaysSec[0]);
+    brls::Logger::warning("MusicController: lost {} at {}ms ({}); will reload it when the "
+                          "server answers", t->ratingKey, positionMs, why);
+
+    m_recoverTimer.start(500);
+    publishNowPlaying(1, positionMs);
+    // In the background this poll is what pumps mpv and watches the reload.
+    if (!m_hasForeground) startPolling();
+}
+
+bool MusicController::retryNow() {
+    const QueueItem* t = MusicQueue::getInstance().getCurrentTrack();
+    MpvPlayer& p = MpvPlayer::getInstance();
+    if (!t || t->ratingKey.empty() || !p.isInitialized()) return false;
+
+    if (!m_recover.active) {
+        // Resume where a recovery of this same track left off, if one was
+        // called off or gave up; otherwise from wherever the player stopped.
+        long long pos = m_streamStartOffsetMs + (long long)(p.getPosition() * 1000.0);
+        if (m_recover.ratingKey == t->ratingKey) pos = m_recover.positionMs;
+        beginRecovery(pos, "Play pressed");
+        if (!m_recover.active) return false;
+    }
+    if (!m_recover.reloading) m_recover.nextAt = std::chrono::steady_clock::now();
+    m_recover.reloadFailures = 0;   // a fresh press gets a fresh set of tries
+    return true;
+}
+
+void MusicController::cancelRecovery(bool keepResumePoint) {
+    if (m_recover.active) {
+        brls::Logger::info("MusicController: recovery of {} called off", m_recover.ratingKey);
+        // A reload already under way would start the music after this.
+        MpvPlayer& p = MpvPlayer::getInstance();
+        if (m_recover.reloading && p.isInitialized() && p.isLoading()) p.stop();
+    }
+    endRecovery();
+    if (!keepResumePoint) {
+        m_recover.ratingKey.clear();
+        m_recover.positionMs = 0;
+    }
+}
+
+void MusicController::endRecovery() {
+    m_recover.active = false;
+    m_recover.busy = false;
+    m_recover.reloading = false;
+    m_recoverGen++;   // drops any check or resolve still in flight
+    m_recoverTimer.stop();
+}
+
+void MusicController::recoveryAttemptFailed(bool serverAnswered) {
+    const auto now = std::chrono::steady_clock::now();
+    if (serverAnswered) {
+        if (++m_recover.reloadFailures >= kRecoverMaxReloadFailures) {
+            brls::Logger::error("MusicController: {} would not play after {} reloads with the "
+                                "server answering; giving up", m_recover.ratingKey,
+                                m_recover.reloadFailures);
+            endRecovery();
+            brls::Application::notify("Couldn't play this track. Press Play to try again.");
+            publishNowPlaying(0);
+            return;
+        }
+    } else {
+        // Gone again, so earlier failures are as likely the connection as the
+        // track; only failures since the server last answered count.
+        m_recover.reloadFailures = 0;
+        if (!m_recover.toldUser) {
+            m_recover.toldUser = true;
+            brls::Application::notify("Lost connection to the server. Music will resume when it's back.");
+        }
+    }
+    const int idx = std::min(m_recover.probes, kRecoverDelayCount - 1);
+    m_recover.nextAt = now + std::chrono::seconds(kRecoverDelaysSec[idx]);
+    brls::Logger::info("MusicController: {} (check {}); next try in {}s",
+                       serverAnswered ? "server answered but the track did not load"
+                                      : "server unreachable",
+                       m_recover.probes, kRecoverDelaysSec[idx]);
+}
+
+void MusicController::recoveryTick() {
+    if (!m_recover.active) {
+        m_recoverTimer.stop();
+        return;
+    }
+
+    // The queue moved on underneath: a track picked, the queue replaced. Whatever
+    // loads for that decides what plays now.
+    const QueueItem* t = MusicQueue::getInstance().getCurrentTrack();
+    if (!t || t->ratingKey != m_recover.ratingKey) {
+        brls::Logger::info("MusicController: the track changed; recovery of {} dropped",
+                           m_recover.ratingKey);
+        endRecovery();
+        return;
+    }
+
+    MpvPlayer& p = MpvPlayer::getInstance();
+    const auto now = std::chrono::steady_clock::now();
+
+    if (m_recover.reloading) {
+        if (p.isPlaying() || p.isPaused()) {
+            const long long secs = std::chrono::duration_cast<std::chrono::seconds>(
+                                       now - m_recover.startedAt).count();
+            brls::Logger::info("MusicController: {} is playing again from {}ms, after {}s "
+                               "and {} check(s) of the server", m_recover.ratingKey,
+                               m_recover.positionMs, secs, m_recover.probes);
+            const bool told = m_recover.toldUser;
+            const long long resumedAt = m_recover.positionMs;
+            endRecovery();
+            m_recover.ratingKey.clear();   // done; nothing left to resume
+            m_recover.positionMs = 0;
+            if (told) brls::Application::notify("Connection is back. Playing again.");
+            if (m_hasForeground && m_fg.onRecovered) m_fg.onRecovered();
+            publishNowPlaying(-1, resumedAt);
+            return;
+        }
+        // Still opening: a remote server can take a while to start a stream.
+        if (p.isLoading() && now - m_recover.reloadAt < kRecoverLoadTimeout) return;
+        brls::Logger::warning("MusicController: reload of {} did not play (state {}{}{})",
+                              m_recover.ratingKey, (int)p.getState(),
+                              p.hasError() ? ", " : "",
+                              p.hasError() ? p.getErrorMessage() : std::string());
+        m_handledErrorSerial = p.errorSerial();   // this failure is counted here
+        m_recover.reloading = false;
+        if (p.isLoading()) p.stop();
+        recoveryAttemptFailed(true);
+        return;
+    }
+
+    if (m_recover.busy || now < m_recover.nextAt) return;
+
+    if (now - m_recover.startedAt > kRecoverGiveUpAfter &&
+        m_recover.probes >= kRecoverMinChecks) {
+        brls::Logger::error("MusicController: no server for {} min; giving up on {}",
+                            std::chrono::duration_cast<std::chrono::minutes>(
+                                now - m_recover.startedAt).count(),
+                            m_recover.ratingKey);
+        endRecovery();
+        brls::Application::notify("Still can't reach the server. Press Play to try again.");
+        publishNowPlaying(0);
+        return;
+    }
+
+    m_recover.busy = true;
+    m_recover.probes++;
+    const uint32_t gen = m_recoverGen;
+    // Capturing `this` is safe: the controller is a singleton.
+    asyncRun([this, gen]() {
+        const bool up = PlexClient::getInstance().isServerReachable(8);
+        brls::sync([this, gen, up]() {
+            if (gen != m_recoverGen || !m_recover.active) return;
+            m_recover.busy = false;
+            if (up) recoveryReload();
+            else    recoveryAttemptFailed(false);
+        });
+    });
+}
+
+void MusicController::recoveryReload() {
+    const QueueItem* t = MusicQueue::getInstance().getCurrentTrack();
+    if (!t || t->ratingKey != m_recover.ratingKey) {
+        endRecovery();
+        return;
+    }
+    const std::string key = t->ratingKey;
+    const std::string title = t->title;
+    const long long durationMs = (long long)t->duration * 1000;
+    const long long posMs = m_recover.positionMs;
+
+    m_recover.busy = true;
+    const uint32_t gen = m_recoverGen;
+    // Two blocking round-trips (/library/metadata, then /decision): off the UI thread.
+    asyncRun([this, gen, key, title, durationMs, posMs]() {
+        std::string url;
+        const bool ok = PlexClient::getInstance().getTranscodeUrl(key, url, (int)posMs);
+        brls::sync([this, gen, key, title, durationMs, posMs, url, ok]() {
+            if (gen != m_recoverGen || !m_recover.active) return;
+            m_recover.busy = false;
+            if (posMs != m_recover.positionMs) {
+                // Seeked while this was resolving; resolve the new point instead.
+                m_recover.nextAt = std::chrono::steady_clock::now();
+                return;
+            }
+            if (!ok || url.empty()) {
+                brls::Logger::warning("MusicController: {} did not resolve", key);
+                recoveryAttemptFailed(true);
+                return;
+            }
+            MpvPlayer& p = MpvPlayer::getInstance();
+            if (!p.isInitialized()) {   // torn down meanwhile; nothing to reload into
+                endRecovery();
+                return;
+            }
+            // A transcode is restarted by the server at the offset, so mpv's
+            // clock starts at zero there. A direct-play original carries no
+            // offset; mpv opens it and seeks there itself.
+            const bool transcode = url.find("/transcode/universal/start") != std::string::npos;
+            m_streamStartOffsetMs = transcode ? posMs : 0;
+            const int64_t expectedMs = durationMs > 0 ? durationMs - m_streamStartOffsetMs : 0;
+            p.setAudioOnly(true);
+            if (!p.loadUrl(url, title, expectedMs, transcode ? 0.0 : posMs / 1000.0)) {
+                m_streamStartOffsetMs = 0;
+                recoveryAttemptFailed(true);
+                return;
+            }
+            brls::Logger::info("MusicController: reloading {} at {}ms ({})", key, posMs,
+                               transcode ? "transcode restarted there" : "seeking the original");
+            m_endHandled = false;
+            m_recover.reloading = true;
+            m_recover.reloadAt = std::chrono::steady_clock::now();
+        });
+    });
 }
 
 } // namespace vitaplex
