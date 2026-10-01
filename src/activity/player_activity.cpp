@@ -181,7 +181,8 @@ PlayerActivity* PlayerActivity::createWithQueue(const std::vector<MediaItem>& tr
         [activity](const QueueItem* nextTrack) { activity->onTrackEnded(nextTrack); },
         [activity](bool on) { activity->setShuffleFromOs(on); },
         [activity](RepeatMode m) { activity->setRepeatFromOs(m); },
-        [activity](int index) { activity->playFromQueue(index); }
+        [activity](int index) { activity->playFromQueue(index); },
+        [activity]() { activity->reloadAlbumArt(); }
     });
 
     brls::Logger::info("PlayerActivity created with queue of {} tracks, starting at {} (server={})",
@@ -204,7 +205,8 @@ PlayerActivity* PlayerActivity::createResumeQueue() {
         [activity](const QueueItem* nextTrack) { activity->onTrackEnded(nextTrack); },
         [activity](bool on) { activity->setShuffleFromOs(on); },
         [activity](RepeatMode m) { activity->setRepeatFromOs(m); },
-        [activity](int index) { activity->playFromQueue(index); }
+        [activity](int index) { activity->playFromQueue(index); },
+        [activity]() { activity->reloadAlbumArt(); }
     });
 
     brls::Logger::info("PlayerActivity resumed existing queue at index {}", queue.getCurrentIndex());
@@ -852,25 +854,7 @@ void PlayerActivity::onContentAvailable() {
         applyContentRefreshRate();
 
         bool fg = brls::Application::isWindowForeground();
-        if (m_isQueueMode && fg && !m_wasForeground && albumArt && !m_destroying) {
-            const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
-            if (track && !track->ratingKey.empty()) {
-                DownloadItem dl;
-                if (DownloadsManager::getInstance().getDownloadCopy(track->ratingKey, dl) &&
-                    dl.state == DownloadState::COMPLETED && !dl.thumbPath.empty()) {
-                    if (ImageLoader::loadFromFile(dl.thumbPath, albumArt))
-                        albumArt->setVisibility(brls::Visibility::VISIBLE);
-                } else if (!track->thumb.empty()) {
-                    std::string thumbUrl = PlexClient::getInstance().getThumbnailUrl(track->thumb, m_mobileLayout ? 900 : 300,
-                                                 m_mobileLayout ? 900 : 300);
-                    ImageLoader::setPaused(false);
-                    ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
-                        img->setVisibility(brls::Visibility::VISIBLE);
-                    }, albumArt, m_alive);
-                    ImageLoader::setPaused(true);
-                }
-            }
-        }
+        if (m_isQueueMode && fg && !m_wasForeground) reloadAlbumArt();
         m_wasForeground = fg;
     });
     m_updateTimer.start(1000); // Update every second
@@ -1082,6 +1066,8 @@ void PlayerActivity::willDisappear(bool resetState) {
     // Save queue state
     if (m_isQueueMode) {
         MusicQueue::getInstance().saveState();
+        // Playback is ending for real, so nothing should come back on its own.
+        MusicController::getInstance().cancelRecovery(false);
     }
 
     // Stop playback (safe to call even if not playing)
@@ -1140,11 +1126,14 @@ void PlayerActivity::loadFromQueue() {
     m_partId = 0;
 
     // Resuming with mpv already playing: update the UI without restarting the track.
+    // A track waiting for the server to come back counts: reloading it here from
+    // the start would lose the point it is being resumed from.
     MpvPlayer& resumePlayer = MpvPlayer::getInstance();
+    const bool recovering = MusicController::getInstance().isRecovering();
     if (m_isResuming && resumePlayer.isInitialized() &&
-        (resumePlayer.isPlaying() || resumePlayer.isPaused())) {
+        (resumePlayer.isPlaying() || resumePlayer.isPaused() || recovering)) {
         brls::Logger::info("PlayerActivity: Resuming existing playback, skipping reload");
-        m_isPlaying = resumePlayer.isPlaying();
+        m_isPlaying = resumePlayer.isPlaying() || recovering;
         m_mediaKey = track->ratingKey;
         m_isResuming = false;
 
@@ -1191,6 +1180,10 @@ void PlayerActivity::loadFromQueue() {
         m_loadingMedia = false;
         return;
     }
+
+    // Whatever was being brought back after a lost connection, this load
+    // replaces it.
+    MusicController::getInstance().cancelRecovery(false);
 
     // Past the resume shortcut, so this is a different track. The full-screen
     // lyrics view is somewhere you sit while an album plays, so it stays open
@@ -1290,6 +1283,11 @@ void PlayerActivity::loadFromQueue() {
         if (!prefetched && !client.getTranscodeUrl(track->ratingKey, url, 0)) {
             brls::Logger::error("Failed to get transcode URL for track: {}", track->ratingKey);
             m_loadingMedia = false;
+            // Usually the connection: this used to be the end of it, with the
+            // player stopped and nothing said. The controller retries it.
+            MusicController::getInstance().onTrackLoadFailed();
+            m_isPlaying = MusicController::getInstance().isRecovering();
+            updatePlayPauseLabel();
             return;
         }
 
@@ -1389,6 +1387,10 @@ void PlayerActivity::loadMedia() {
         return;
     }
     m_loadingMedia = true;
+
+    // This takes over the player. A queue track still waiting to be brought
+    // back after a lost connection must not be reloaded over it.
+    MusicController::getInstance().cancelRecovery(false);
 
     // A content switch supersedes a pending seek; clear the cached duration so a stale value cannot bleed through.
     m_seekCommitTimer.stop();
@@ -1899,6 +1901,13 @@ void PlayerActivity::updateProgress() {
         return;
     }
 
+    // A music stream that broke partway, or a track that failed to open. The
+    // controller keeps trying to get it back; it ignores a failure it has
+    // already seen, so calling this every tick is fine.
+    if (m_isQueueMode && player.hasError()) {
+        MusicController::getInstance().onPlaybackFailed();
+    }
+
     // Handle pending seek when playback becomes ready
     if (m_pendingSeek > 0.0 && player.isPlaying()) {
         player.seekTo(m_pendingSeek);
@@ -2276,8 +2285,11 @@ void PlayerActivity::updateProgress() {
         }
     }
 
-    // Keep play/pause label in sync with actual player state
-    bool actuallyPlaying = player.isPlaying();
+    // Keep play/pause label in sync with actual player state. A track being
+    // brought back after a lost connection shows as playing, as it does in the
+    // OS controls, and pausing is how that is called off.
+    bool actuallyPlaying = player.isPlaying() ||
+                           (m_isQueueMode && MusicController::getInstance().isRecovering());
     if (actuallyPlaying != m_isPlaying) {
         m_isPlaying = actuallyPlaying;
         updatePlayPauseLabel();
@@ -2377,8 +2389,16 @@ void PlayerActivity::playNextEpisode() {
 
 void PlayerActivity::togglePlayPause() {
     MpvPlayer& player = MpvPlayer::getInstance();
+    MusicController& music = MusicController::getInstance();
 
     if (player.isPlaying()) {
+        player.pause();
+        m_isPlaying = false;
+    } else if (m_isQueueMode && music.isRecovering()) {
+        // Waiting to get a track back after a lost connection. The button
+        // reads as playing then, so this is a pause: stop trying. Play
+        // afterwards picks it up from the same point.
+        music.cancelRecovery();
         player.pause();
         m_isPlaying = false;
     } else if (player.isPaused()) {
@@ -2399,6 +2419,10 @@ void PlayerActivity::togglePlayPause() {
         m_endHandled = false;
         m_endHandledAtSec = 0.0;
         player.play();      // play() rewinds out of ENDED; see MpvPlayer
+        m_isPlaying = true;
+    } else if (m_isQueueMode && !player.isLoading() && music.retryNow()) {
+        // Nothing loaded: the track failed, or getting it back was called off
+        // or gave up. This button used to do nothing then. Play tries again.
         m_isPlaying = true;
     }
     updatePlayPauseLabel();
@@ -2877,6 +2901,13 @@ void PlayerActivity::reloadLyricsForCurrentTrack() {
 // Reached from the lyrics button and from tapping the cover.
 void PlayerActivity::openLyrics() {
     fetchPlexStreams();
+    // The track's details never arrived, so whether it has lyrics is unknown.
+    // A log showed "This track has no lyrics" four times in two seconds while
+    // every request was failing with "could not resolve hostname".
+    if (!m_streamsLoaded) {
+        showLyricsMessage("Couldn't load this track's lyrics from the server.");
+        return;
+    }
     bool ambiguous = false;
     if (const PlexStream* pick = chooseLyricsStream(m_plexStreams, &ambiguous)) {
         loadAndShowLyrics(*pick);
@@ -4156,6 +4187,26 @@ void PlayerActivity::onTrackEnded(const QueueItem* nextTrack) {
     }
 }
 
+
+void PlayerActivity::reloadAlbumArt() {
+    if (!albumArt || m_destroying) return;
+    const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
+    if (!track || track->ratingKey.empty()) return;
+    DownloadItem dl;
+    if (DownloadsManager::getInstance().getDownloadCopy(track->ratingKey, dl) &&
+        dl.state == DownloadState::COMPLETED && !dl.thumbPath.empty()) {
+        if (ImageLoader::loadFromFile(dl.thumbPath, albumArt))
+            albumArt->setVisibility(brls::Visibility::VISIBLE);
+    } else if (!track->thumb.empty()) {
+        std::string thumbUrl = PlexClient::getInstance().getThumbnailUrl(track->thumb, m_mobileLayout ? 900 : 300,
+                                     m_mobileLayout ? 900 : 300);
+        ImageLoader::setPaused(false);
+        ImageLoader::loadAsync(thumbUrl, [](brls::Image* img) {
+            img->setVisibility(brls::Visibility::VISIBLE);
+        }, albumArt, m_alive);
+        ImageLoader::setPaused(true);
+    }
+}
 
 void PlayerActivity::updateQueueDisplay() {
     if (!m_isQueueMode) return;

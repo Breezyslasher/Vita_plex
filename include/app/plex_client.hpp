@@ -485,6 +485,11 @@ public:
                                     std::string& outSessionId);
     // Make a speculatively-resolved session the current one (see above).
     void adoptTranscodeSession(const std::string& sessionId) { m_lastSessionId = sessionId; }
+    // Whether the server answers at all, within timeoutSec. A GET of /identity:
+    // it needs no token, has no side effects and returns a few hundred bytes, so
+    // it can be repeated every few seconds while waiting out a lost connection.
+    // Blocking; call it off the UI thread.
+    bool isServerReachable(int timeoutSec = 8);
     void stopTranscode();  // Stop the current transcode session
     bool updatePlayProgress(const std::string& ratingKey, int timeMs);
     bool reportTimeline(const std::string& ratingKey, const std::string& key,

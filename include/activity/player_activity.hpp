@@ -97,6 +97,9 @@ private:
     void updateRepeatIcon();        // Update repeat button icon based on state
     void onTrackEnded(const QueueItem* nextTrack);  // Called when track ends
     void updateQueueDisplay();      // Update UI with queue info
+    // Request the current track's cover again: on return from the background,
+    // and when a track that could not load at first (lost connection) plays.
+    void reloadAlbumArt();
     void playNextEpisode();         // Auto-play next episode in season/show
 
     // Queue list overlay (Direction-A side sheet)
