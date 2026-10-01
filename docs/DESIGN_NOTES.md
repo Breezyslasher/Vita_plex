@@ -618,9 +618,18 @@ the server every 10 s. When the track ended it loaded the next from the play
 queue, a fresh transcode, and played that too, all while away. Two things
 remain:
 
-- It ignores the system's request to quit. The user opened another app and
+- It ignored the system's request to quit. The user opened another app and
   confirmed the prompt to close VitaPlex BG; the request arrived, and it went
-  on playing. A game is never asked, so VitaPlex never answered it.
+  on playing. A game is never asked, so VitaPlex never answered it. That turned
+  out to hang the console (log `3ea218f5`, build 1957): asked to quit at
+  17:29:09, VitaPlex released its audio port, so the music stopped, and then
+  ran on for four minutes. Meanwhile the app the user had opened sat on its
+  loading screen with its theme music playing, nothing else would open, and
+  the console had to be held off with the power button. The test apps and
+  ElevenMPV-A call `sceKernelExitProcess` on this request, and closing those
+  the same way caused none of it. VitaPlex now quits too: the normal way
+  first, and the watcher ends the process itself 2 s later if that has not
+  happened.
 - Sleep (the power button) turns off Wi-Fi, so the stream stops once mpv's
   buffer runs out, about 30 s in that log.
 
