@@ -212,7 +212,16 @@ bool MpvPlayer::init() {
     mpv_set_option_string(m_mpv, "input-vo-keyboard", "no");
     mpv_set_option_string(m_mpv, "terminal", "no");
     mpv_set_option_string(m_mpv, "ytdl", "no");  // Disable youtube-dl (like switchfin)
-    mpv_set_option_string(m_mpv, "reset-on-next-file", "speed,pause");  // Reset state between files
+    // Speed only. pause used to be listed too, and that is what made songs open
+    // paused: mpv does not reset a listed option to its default. It saves the
+    // value the option had when a file started and puts that back when the file
+    // ends (loadfile.c, m_config_backup_opt / m_config_restore_backups). A
+    // pause that lands while nothing is loaded therefore becomes the value
+    // every following file starts with, and each one hands it to the next. A
+    // device log showed exactly that: one pause sent at 16:23:16 with no song
+    // loaded, then four songs in a row opening paused. loadUrl() sets pause
+    // itself now, so a new file starts playing whatever came before it.
+    mpv_set_option_string(m_mpv, "reset-on-next-file", "speed");
 
     // HDR. Every port renders HDR down to SDR — Android through vo=gpu, the
     // rest through the libmpv FBO composite — so the tone-mapping curve is
@@ -809,7 +818,7 @@ void MpvPlayer::setAudioOnly(bool audioOnly) {
 }
 
 bool MpvPlayer::loadUrl(const std::string& url, const std::string& title,
-                        int64_t expectedDurationMs) {
+                        int64_t expectedDurationMs, double startSec) {
     // Set before anything can fail, and unconditionally, so a value from the
     // previous track can never be read against this one.
     m_expectedDurationMs.store(expectedDurationMs);
@@ -833,6 +842,13 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title,
         brls::Logger::debug("MpvPlayer: Command already pending, ignoring load request");
         return false;
     }
+
+    // Below, the new file is told to start playing before it is loaded. A
+    // paused file still has audio sitting in the output's buffer, so
+    // unpausing it and then replacing it would let a moment of it out first.
+    // Stopped here, it is flushed while still paused. With a file loaded the
+    // stop settles in a few tens of milliseconds.
+    if (m_state == MpvPlayerState::PAUSED) stop();
 
     // Discard events left over from a previous playback session. The event
     // pump lives on PlayerActivity's update timer, which is stopped before
@@ -919,6 +935,18 @@ bool MpvPlayer::loadUrl(const std::string& url, const std::string& title,
         flushGxmPipeline();
     }
 #endif
+
+    // Every new file starts playing, at startSec. Both are set here on every
+    // load, so nothing can carry over from before: not the pause keep-open
+    // applies at the end of a track, not a pause pressed while nothing was
+    // loaded, not an earlier load's start point. mpv runs requests from one
+    // client in order on its core thread, so these land ahead of the loadfile.
+    int unpaused = 0;
+    mpv_set_property_async(m_mpv, 0, "pause", MPV_FORMAT_FLAG, &unpaused);
+    char startStr[32] = "none";
+    if (startSec > 0.0) snprintf(startStr, sizeof(startStr), "%.3f", startSec);
+    const char* startArg = startStr;
+    mpv_set_property_async(m_mpv, 0, "start", MPV_FORMAT_STRING, &startArg);
 
     const char* cmd[] = {"loadfile", normalizedUrl.c_str(), "replace", nullptr};
     int result = mpv_command_async(m_mpv, CMD_LOADFILE, cmd);
@@ -1452,6 +1480,8 @@ void MpvPlayer::setState(MpvPlayerState newState) {
     brls::Logger::debug("MpvPlayer::setState entered with newState={}", (int)newState);
     if (m_state != newState) {
         brls::Logger::debug("MpvPlayer: State change: {} -> {}", (int)m_state.load(), (int)newState);
+        // Before the state, so whoever sees ERROR also sees its serial.
+        if (newState == MpvPlayerState::ERROR) m_errorSerial++;
         m_state = newState;
 
         // Prevent screen from turning off during playback.
