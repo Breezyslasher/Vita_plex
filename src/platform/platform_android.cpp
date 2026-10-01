@@ -365,6 +365,28 @@ void invokeDeepLinkHandler() {
     if (g_deepLinkHandler) g_deepLinkHandler();
 }
 
+// Android's own view of the network and power state, written into this log by
+// org.VitaPlex.app.NetworkMonitor. Started once the log file is open, so the
+// first report of the network lands in the file.
+static void startNetworkMonitor() {
+    JNIEnv* env = static_cast<JNIEnv*>(SDL_AndroidGetJNIEnv());
+    if (!env) return;
+    jclass cls = env->FindClass("org/VitaPlex/app/NetworkMonitor");
+    if (!cls) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        brls::Logger::warning("Android: NetworkMonitor not found; network events will not be logged");
+        return;
+    }
+    jmethodID mid = env->GetStaticMethodID(cls, "start", "()V");
+    if (mid) {
+        env->CallStaticVoidMethod(cls, mid);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    } else if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
+    env->DeleteLocalRef(cls);
+}
+
 bool init() {
     // Borealis on Android loads resources via fopen("resources/...") which
     // can't read APK assets directly, so extract them to internal storage
@@ -373,6 +395,7 @@ bool init() {
 
     // After the assets, because it writes into the same directory those set up.
     openLogFile();
+    startNetworkMonitor();
 
     if (!::vitaplex::HttpClient::globalInit()) {
         brls::Logger::error("Failed to initialize curl");
@@ -529,5 +552,18 @@ Java_org_VitaPlex_app_VitaPlexActivity_nativeDeepLink(JNIEnv*, jclass) {
     brls::sync([]() {
         vitaplex::platform::invokeDeepLinkHandler();
     });
+}
+
+// Java -> native: one line from NetworkMonitor. Logged straight from the
+// calling thread rather than through brls::sync: the logger is thread-safe, and
+// the main loop is not guaranteed to be turning at the moment the network goes,
+// which is exactly when the time on the line matters.
+extern "C" JNIEXPORT void JNICALL
+Java_org_VitaPlex_app_NetworkMonitor_nativeLog(JNIEnv* env, jclass, jstring line) {
+    if (!env || !line) return;
+    const char* raw = env->GetStringUTFChars(line, nullptr);
+    if (!raw) return;
+    brls::Logger::info("Android: {}", raw);
+    env->ReleaseStringUTFChars(line, raw);
 }
 #endif
