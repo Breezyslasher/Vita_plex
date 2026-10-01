@@ -629,7 +629,9 @@ remain:
   ElevenMPV-A call `sceKernelExitProcess` on this request, and closing those
   the same way caused none of it. VitaPlex now quits too: the normal way
   first, and the watcher ends the process itself 2 s later if that has not
-  happened.
+  happened. The watcher runs whatever the background playback setting, since
+  it is the only thing that reads this request; with the setting off it does
+  nothing else.
 - Sleep (the power button) turns off Wi-Fi, so the stream stops once mpv's
   buffer runs out, about 30 s in that log.
 
