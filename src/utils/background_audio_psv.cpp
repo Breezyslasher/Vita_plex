@@ -154,6 +154,10 @@ std::string joinNames(const std::vector<std::string>& names) {
 }
 
 std::atomic<bool> g_keepPlaying{false};
+// Whether anything has asked for the watcher's reports: background playback,
+// or a system player test. The watcher also runs without, but then only to
+// answer the system's request to quit (see watcherMain).
+std::atomic<bool> g_watcherReports{false};
 
 // ── The BGM port ─────────────────────────────────────────────────────────
 // Held at one priority at a time: the app's while mpv plays, the shell's
@@ -339,8 +343,9 @@ void onRequestQuit(SceInt64 now) {
     }
 }
 
-// True if a deactivate or activate event was among them.
-bool drainAppEvents(SceInt64 now, SceInt64 gapUs) {
+// True if a deactivate or activate event was among them. With quitOnly, the
+// quit request is the only event acted on; the rest are read and dropped.
+bool drainAppEvents(SceInt64 now, SceInt64 gapUs, bool quitOnly) {
     int n = 0;
     const int rc = sceAppMgrReceiveEventNum(&n);
     if (rc < 0 || n <= 0) return false;
@@ -349,6 +354,7 @@ bool drainAppEvents(SceInt64 now, SceInt64 gapUs) {
         AppEvent ev;
         std::memset(&ev, 0, sizeof(ev));
         if (sceAppMgrReceiveEvent(&ev) < 0) break;
+        if (quitOnly && ev.event != kEventRequestQuit) continue;
         switch (ev.event) {
             case kEventDeactivate:  onDeactivate(now, gapUs); focus = true; break;
             case kEventActivate:    onActivate(now); focus = true; break;
@@ -408,6 +414,7 @@ void reportHold(SceInt64 gapUs) {
 }
 
 int powerCallback(int, int, int powerInfo, void*) {
+    if (!g_watcherReports) return 0;   // running only to answer a quit
     std::string what;
     const struct { unsigned bit; const char* name; } kBits[] = {
         {SCE_POWER_CB_APP_SUSPEND, "app suspend"},
@@ -445,20 +452,26 @@ int watcherMain(SceSize, void*) {
         const SceInt64 now = sceKernelGetSystemTimeWide();
         const SceInt64 gap = now - last;
         last = now;
+        // With nothing asking for reports, this thread still runs, but only to
+        // answer the system's request to quit: the non-game package hangs the
+        // console if that goes unanswered (see onRequestQuit), whatever the
+        // background playback setting.
+        const bool watching = g_watcherReports;
         const bool held = gap > kGapUs;
-        if (held) {
+        if (held && watching) {
             // Nothing in this loop waits for long, so a tick this late means the
             // thread was not scheduled at all: the process was held, or the
             // console slept.
             brls::Logger::info("[bgaudio] watcher did not run for {:.1f}s", gap / 1e6);
             if (g_away && gap > g_awayLongestGapUs) g_awayLongestGapUs = gap;
         }
-        const bool focusEvent = drainAppEvents(now, gap);
+        const bool focusEvent = drainAppEvents(now, gap, !watching);
         if (g_quitAskedAt != 0 && now - g_quitAskedAt > kQuitGraceUs) {
             brls::Logger::warning("[bgaudio] still running {:.1f}s after the system asked "
                                   "to quit; ending the process", (now - g_quitAskedAt) / 1e6);
             sceKernelExitProcess(0);
         }
+        if (!watching) continue;
         // A game is sent neither event, so without this nothing would say,
         // on the way back, that it was held.
         if (held && !g_away && !focusEvent) reportHold(gap);
@@ -470,7 +483,9 @@ int watcherMain(SceSize, void*) {
     return 0;
 }
 
-void startWatcher() {
+// reports=false starts it only to answer a quit; see g_watcherReports.
+void startWatcher(bool reports = true) {
+    if (reports) g_watcherReports = true;
     if (g_watcherStarted.exchange(true)) return;
     const SceUID thid = sceKernelCreateThread("VitaPlexBgAudio", watcherMain, 0x10000100, 0x10000,
                                               0, 0, nullptr);
@@ -1146,7 +1161,10 @@ private:
 void init(bool keepPlaying) {
     g_keepPlaying = keepPlaying;
     brls::Logger::info("[bgaudio] keep playing in background: {}", keepPlaying);
-    if (keepPlaying) startWatcher();
+    // Whatever the setting: the watcher is also what answers the system's
+    // request to quit (see onRequestQuit and watcherMain). Off, that is all
+    // it does.
+    startWatcher(keepPlaying);
 }
 
 void setKeepPlaying(bool on) {
