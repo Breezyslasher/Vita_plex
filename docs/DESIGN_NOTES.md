@@ -158,6 +158,62 @@ the version, so a reorder, add or remove simply makes the cache stop matching. A
 cached entry with an empty URL records a *failed* attempt, so a track whose
 resolve fails is not retried every second.
 
+### `reset-on-next-file` restores, it does not reset
+
+`reset-on-next-file=speed,pause` read as "every file starts unpaused". It does
+not do that. mpv backs up each listed option when a file starts and restores the
+backup when the file ends (`loadfile.c`: `m_config_backup_opt`, then
+`m_config_restore_backups`; the same in 0.36 and master). The value restored is
+whatever the option held when the file *started*.
+
+So a pause that lands while nothing is loaded is captured by the next file and
+handed on by every file after it. An Android log (build 1944) had one
+`pause=true` at 16:23:16 with nothing loaded, then four songs in a row open
+paused, each needing Play, with no pause command anywhere near them. Running
+that sequence through libmpv 0.37 reproduces it: the next track starts paused,
+and the one after starts paused again though Play was pressed in between.
+
+`pause` is off the list now, and `loadUrl` sets it, and `start`, on every load.
+That is also needed because `keep-open` pauses the player at the end of every
+track; before, the restore was what undid that. A paused file is stopped before
+it is replaced, so unpausing it first cannot let a moment of it out.
+
+### Getting a track back after a lost connection
+
+The same log has the music stopping twice while the phone lost the server for a
+few minutes. Once the song had been fully read, played out, and the next one
+failed to resolve (`Could not resolve hostname`). Once the stream broke at 3:34 of
+4:09 and mpv's reconnects failed on DNS. Both times the connection came back on
+its own, and nothing tried again until a track was skipped by hand.
+
+`MusicController` now takes over from either failure, foreground or headless:
+
+- It resumes from 2 s before where the audio stopped, or from the start of a
+  track that never loaded.
+- It checks the server with `GET /identity`, which needs no token and has no
+  side effects. The checks run at 2, 3, 5 and 10 s, then every 15 s.
+- Once the server answers, it resolves the track again at that point. A
+  transcode is restarted on the server with `offset=`. A direct-play original is
+  opened by mpv at the point (`start`).
+- It gives up after 15 minutes without the server, but only after at least ten
+  checks: the clock can run on while a Vita sleeps. It also gives up after three
+  reloads that fail with the server answering, which is not a lost connection.
+- While it waits, the OS session reads as playing. Pause calls it off, and Play
+  starts it again from the same point. On Android, "playing" is also what keeps
+  the CPU and Wi-Fi locks held for the checks.
+- Next, a picked track, a video, or Stop drops it.
+
+`"Lost connection to the server..."` shows when a check first fails. A lyrics
+request that fails now says so, instead of "This track has no lyrics".
+
+Why the connection went is a separate question that log could not answer.
+Android now reports into the same log through `NetworkMonitor`:
+
+- the default network appearing, going and changing;
+- Android blocking this app's access (Android 10+);
+- Doze, battery saver, Data Saver, and screen on/off;
+- the app's restrictions at start.
+
 ---
 
 ## Platform notes
