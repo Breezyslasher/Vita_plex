@@ -21,6 +21,7 @@
 
 #include <borealis.hpp>
 
+#include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/net/netctl.h>
 #include <psp2/power.h>
@@ -85,6 +86,9 @@ constexpr int kPortForShell = 0x80;
 constexpr SceUInt kTickUs      = 250 * 1000;
 constexpr int     kBeatTicks   = 16;           // a heartbeat line every 4 s away
 constexpr SceInt64 kGapUs      = 3 * 1000000;  // a tick this late was not scheduled
+// How long the normal way out gets after the system asks the app to quit,
+// before the watcher ends the process itself.
+constexpr SceInt64 kQuitGraceUs = 2 * 1000000;
 
 // Formats SceShell decodes, as ElevenMPV-A hands them to it.
 const char* const kShellExts[] = {"mp3", "m4a", "aac", "wav", "at9"};
@@ -304,8 +308,11 @@ void heartbeat(SceInt64 now) {
 
 void stopShellLocked(const char* why);
 
-void onRequestQuit() {
-    brls::Logger::info("[bgaudio] the system asked the app to quit");
+// When the system asked the app to quit; 0 until it has. Watcher thread only.
+SceInt64 g_quitAskedAt = 0;
+
+void onRequestQuit(SceInt64 now) {
+    brls::Logger::info("[bgaudio] the system asked the app to quit; quitting");
     // A file the system player was given would otherwise play on after the app
     // is gone, with nothing left to stop it. Not waited for if a test is mid-run
     // (see shellStatusLine); the process is going either way.
@@ -314,6 +321,22 @@ void onRequestQuit() {
         if (lock.owns_lock()) stopShellLocked("app quitting");
     }
     releasePort(0, "app quitting");
+
+    // And then actually quit. The system waits for this process to end before
+    // it starts the app the user opened, and this used to stop at the line
+    // above. A log (3ea218f5, build 1957) had the request at 17:29:09 and
+    // VitaPlex still running four minutes later, while the app the user had
+    // opened sat on its loading screen and the console had to be held off.
+    // ElevenMPV-A and the test apps exit on this request, and those were
+    // closed the same way without any of that.
+    //
+    // The normal way out first, which saves the settings. watcherMain ends the
+    // process itself if that has not happened by kQuitGraceUs, since the UI
+    // thread may be stuck in a request to a server it cannot reach.
+    if (g_quitAskedAt == 0) {
+        g_quitAskedAt = now;
+        brls::sync([]() { brls::Application::quit(); });
+    }
 }
 
 // True if a deactivate or activate event was among them.
@@ -330,7 +353,7 @@ bool drainAppEvents(SceInt64 now, SceInt64 gapUs) {
             case kEventDeactivate:  onDeactivate(now, gapUs); focus = true; break;
             case kEventActivate:    onActivate(now); focus = true; break;
             case kEventResume:      brls::Logger::info("[bgaudio] app event: resume"); break;
-            case kEventRequestQuit: onRequestQuit(); break;
+            case kEventRequestQuit: onRequestQuit(now); break;
             default:
                 brls::Logger::info("[bgaudio] app event {}", hex(ev.event));
                 break;
@@ -431,6 +454,11 @@ int watcherMain(SceSize, void*) {
             if (g_away && gap > g_awayLongestGapUs) g_awayLongestGapUs = gap;
         }
         const bool focusEvent = drainAppEvents(now, gap);
+        if (g_quitAskedAt != 0 && now - g_quitAskedAt > kQuitGraceUs) {
+            brls::Logger::warning("[bgaudio] still running {:.1f}s after the system asked "
+                                  "to quit; ending the process", (now - g_quitAskedAt) / 1e6);
+            sceKernelExitProcess(0);
+        }
         // A game is sent neither event, so without this nothing would say,
         // on the way back, that it was held.
         if (held && !g_away && !focusEvent) reportHold(gap);
