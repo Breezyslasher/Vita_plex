@@ -116,7 +116,9 @@ static volatile SceInt64 g_lastGapUs;       // the most recent such gap
 static volatile int g_events;               // app events received
 static volatile int g_lastEvent;
 static volatile int g_away;                 // deactivated and not yet activated
+#ifndef BGTEST_SYSTEM_MODE
 static char g_memLine[128] = "Memory: measuring";
+#endif
 static char g_netLine[128] = "Network: starting";
 
 static double secs(void) { return (sceKernelGetSystemTimeWide() - g_t0) / 1e6; }
@@ -215,6 +217,14 @@ static void reportMemory(void) {
     logLine("free memory (0x%08X): main %d MB, cdram %d MB, phycont %d MB", (unsigned)rcFree,
             f.size_user / MB, f.size_cdram / MB, f.size_phycont / MB);
 
+#ifdef BGTEST_SYSTEM_MODE
+    // Whatever this app's budget does not cover may come from memory the
+    // shell is using, so the probe asks for no more than a system-mode app
+    // can hold (vita-make-fself allows up to 74 MB), and video and contiguous
+    // memory, which the budget line above reports, are not probed.
+    const int mainMb = largestBlockMb(SCE_KERNEL_MEMBLOCK_TYPE_USER_RW, 80);
+    logLine("largest block it could allocate: main %d MB (probed up to 80)", mainMb);
+#else
     const int mainMb = largestBlockMb(SCE_KERNEL_MEMBLOCK_TYPE_USER_RW, 512);
     const int cdramMb = largestBlockMb(SCE_KERNEL_MEMBLOCK_TYPE_USER_CDRAM_RW, 512);
     const int phycontMb = largestBlockMb(SCE_KERNEL_MEMBLOCK_TYPE_USER_MAIN_PHYCONT_RW, 512);
@@ -224,6 +234,7 @@ static void reportMemory(void) {
     snprintf(g_memLine, sizeof(g_memLine),
              "Memory: budget %u MB, could allocate %d MB more (video %d MB)",
              b.total_user_rw_mem / MB, mainMb, cdramMb);
+#endif
 }
 
 // ── Network ──────────────────────────────────────────────────────────────
