@@ -88,6 +88,9 @@ int _newlib_heap_size_user = 8 * 1024 * 1024;
 int sceAppMgrReceiveEventNum(int* eventNum);
 int sceAppMgrReceiveEvent(void* event);
 int sceAppMgrAcquireBgmPortWithPriority(int priority);
+// SceAudio; this SDK's headers declare sceAudioOutGetAdopt but not this. The
+// calling process's private 0..256 gain for one kind of port.
+int sceAudioOutGetPortVolume_forUser(SceAudioOutPortType type);
 #ifdef BGTEST_SYSTEM_MODE
 // Declared as ElevenMPV-A's libScePafPreload declares it: the bytes to add to
 // a system-mode app's budget. The second argument is 1 there, unexplained.
@@ -122,6 +125,15 @@ static char g_memLine[128] = "Memory: measuring";
 static char g_netLine[128] = "Network: starting";
 
 static double secs(void) { return (sceKernelGetSystemTimeWide() - g_t0) / 1e6; }
+
+// A call's result as a number, or as the error code it is when negative.
+static const char* result(char* buf, size_t size, int value) {
+    if (value < 0)
+        snprintf(buf, size, "error 0x%08X", (unsigned)value);
+    else
+        snprintf(buf, size, "%d", value);
+    return buf;
+}
 
 static void logLine(const char* fmt, ...) {
     if (!g_log) return;
@@ -435,6 +447,7 @@ static int watcherMain(SceSize args, void* argp) {
 
     SceInt64 last = sceKernelGetSystemTimeWide();
     unsigned beat = 0;
+    int lastAdopt = 0x7FFFFFFF, lastGain = 0x7FFFFFFF;
     for (;;) {
         sceKernelDelayThreadCB(250 * 1000);
         const SceInt64 now = sceKernelGetSystemTimeWide();
@@ -444,6 +457,20 @@ static int watcherMain(SceSize args, void* argp) {
             g_lastGapUs = gap;
             if (gap > g_longestGapUs) g_longestGapUs = gap;
             logLine("did not run for %.1fs: the process was held", gap / 1e6);
+        }
+
+        // Whether this app's BGM output is adopted, and its private gain: two
+        // states audioout.h documents for the calling process. Logged when
+        // either changes, to see whether the beeps that go quiet beside
+        // another app are muted through one of them.
+        const int adopt = sceAudioOutGetAdopt(SCE_AUDIO_OUT_PORT_TYPE_BGM);
+        const int gain = sceAudioOutGetPortVolume_forUser(SCE_AUDIO_OUT_PORT_TYPE_BGM);
+        if (adopt != lastAdopt || gain != lastGain) {
+            char a[24], g[24];
+            logLine("BGM output%s: adopted %s, gain %s", g_away ? ", away" : "",
+                    result(a, sizeof(a), adopt), result(g, sizeof(g), gain));
+            lastAdopt = adopt;
+            lastGain = gain;
         }
 
         int count = 0;

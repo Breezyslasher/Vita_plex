@@ -709,6 +709,18 @@ while the user started the game. In this run VitaShell was closed first and
 nothing asked. `VPLXBGT06` beeped while a game loaded; whether it lasts into
 the game is not yet known. Both logs end mid-run, with no quit request.
 
+Opening VitaPlex silenced the beeps (`VPLXBGT06`, log `8098b625`), though the
+test app ran on: "alive" every 5 s, the audio clock moving with the time, HTTP
+200 from the server, and no quit request until the user closed it. VitaPlex
+makes no audio call when it starts: mpv starts with the first playback, and
+the BGM port is acquired only while mpv plays with the setting on. Its only
+system call at start near this is `sceAppUtilInit`, the standard set-up for
+save data and system settings. So if VitaPlex takes the music over when it
+opens, the system does it on VitaPlex's behalf. The test apps now log
+whether their BGM output is adopted and its private gain
+(`sceAudioOutGetAdopt`, `sceAudioOutGetPortVolume_forUser`) whenever either
+changes, to see whether the beeps are muted through one of them.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which
