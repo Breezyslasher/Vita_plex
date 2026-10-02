@@ -659,6 +659,17 @@ nothing, so it is now noticed (a poll seconds late) and made again. The BGM
 state call is refused to an app (0x8080201F), so it is no longer logged after
 that.
 
+The fourth run (`40f14e4c`, build 1964) went through all six services
+uninterrupted, and settles it: **the shell plays files, not links.** Music
+player types 0 to 4 each played the MP3 from disk (the clock ran 0:00 to 0:03)
+and answered every link, http and https to 127.0.0.1 and, on type 0, http to
+the Wi-Fi address, with open 0 and play 0 while going on with the file they
+already had. The application-BGM service accepted the file and both links,
+reporting no progress for any. The control server logged one request in all,
+VitaPlex's own self-check, so no service so much as connected; Plex's own links
+were therefore not tried. Music through the shell, which is what plays on
+beside an app with extended memory, has to come from a file on the memory card.
+
 **Playing while a game runs.** VitaPlex BG, and the test apps it was modelled
 on, run on the game budget, which an eboot without a boot param gets:
 `VPLXBGT03` and `VPLXBGT04` could allocate 233 and 342 MB of it. That amount is
