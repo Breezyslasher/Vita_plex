@@ -721,6 +721,22 @@ whether their BGM output is adopted and its private gain
 (`sceAudioOutGetAdopt`, `sceAudioOutGetPortVolume_forUser`) whenever either
 changes, to see whether the beeps are muted through one of them.
 
+**Extended memory takes the BGM output** (build 1971). With `VPLXBGT05` beeping
+in the background, the beeps went quiet while `VPLXBGT07` (a silent game with
+`ATTRIBUTE2=12`, as VitaPlex is) or VitaSurf (another homebrew with extended
+memory) was in front. They went on beside `VPLXBGT08` (the same silent game
+with `ATTRIBUTE2=0`), VitaShell and LittleBigPlanet. `VPLXBGT07` had the BGM
+output adopted for it (`sceAudioOutGetAdopt` 1) a moment after it started,
+without opening a BGM port, and `VPLXBGT08` did not (0) (logs `f794d228`,
+`b25e8414`). In the run `VPLXBGT05`'s log covers (`42dfdc2b`), its own
+adoption (1) and gain (256) stayed as they were. This vitasdk's vita-mksfoex
+names 12 `ATTRIBUTE2_MEM109` and uses it by default; `MEM29` (4) and `MEM77`
+(8) are the smaller steps. The system Music app played on beside VitaSurf, so
+the shell's own music is not silenced this way. `VPLXBGT09` is `VPLXBGT07`
+giving the output up with `sceAudioOutSetAdopt_forUser` whenever it is
+adopted. If the beeps come back beside it, VitaPlex can keep its memory and
+do the same.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

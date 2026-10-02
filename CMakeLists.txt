@@ -1445,7 +1445,7 @@ if(PLATFORM_PSV)
     # leaves the foreground, and with what memory and network; VitaPlex itself
     # is frozen. A system-mode build of it is packaged twice more, to find out
     # whether that kind plays on while a game runs. See the source's header
-    # for all eight. vita_create_vpk is a macro that appends to these flag
+    # for all nine. vita_create_vpk is a macro that appends to these flag
     # variables in this scope (the updater comment above has the same trap
     # for FILE), so each package gets them fresh and they are put back
     # afterwards. Built after the main vpk, so nothing leaks into it.
@@ -1504,8 +1504,9 @@ if(PLATFORM_PSV)
             # fourth is the third with VitaPlex's extended memory. The fifth
             # and sixth are the third with ElevenMPV-A's boot param too, the
             # sixth growing its memory as ElevenMPV-A does (main.c). The last
-            # two make no sound: games with and without VitaPlex's extended
-            # memory, to open while the fifth beeps.
+            # three make no sound: games with and without VitaPlex's extended
+            # memory, to open while the fifth beeps, and the first of them
+            # again giving up the BGM output the system adopts for it.
             "VPLXBGT01|BG Test 1 game|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12"
             "VPLXBGT02|BG Test 2 BG flag|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -d ATTRIBUTE=0x04008000"
             "VPLXBGT03|BG Test 3 non-game|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
@@ -1513,7 +1514,8 @@ if(PLATFORM_PSV)
             "VPLXBGT05|BG Test 5 system 16MB|vitaplex_bgtest_sys.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
             "VPLXBGT06|BG Test 6 system grown|vitaplex_bgtest_sys.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
             "VPLXBGT07|BG Test 7 silent mem|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12"
-            "VPLXBGT08|BG Test 8 silent|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0")
+            "VPLXBGT08|BG Test 8 silent|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0"
+            "VPLXBGT09|BG Test 9 silent mem release|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12")
         string(REPLACE "|" ";" _bgt "${_bgt}")
         list(GET _bgt 0 _bgt_id)
         list(GET _bgt 1 _bgt_name)

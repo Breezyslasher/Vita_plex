@@ -52,6 +52,14 @@
  *   VPLXBGT07  a game with ATTRIBUTE2=12, as VitaPlex is.
  *   VPLXBGT08  a game with ATTRIBUTE2=0.
  *
+ * It is: VPLXBGT05's beeps went quiet beside VPLXBGT07 and VitaSurf (another
+ * homebrew with extended memory) and went on beside VPLXBGT08, and
+ * VPLXBGT07 had the BGM output adopted for it without opening a BGM port,
+ * where VPLXBGT08 did not (logs f794d228, b25e8414). So:
+ *
+ *   VPLXBGT09  VPLXBGT07 giving the BGM output up when it is adopted
+ *              (sceAudioOutSetAdopt_forUser), to see whether that is enough.
+ *
  * Nothing here is VitaPlex code; what it finds goes into VitaPlex (or a
  * helper app) and this goes away.
  */
@@ -96,9 +104,12 @@ int _newlib_heap_size_user = 8 * 1024 * 1024;
 int sceAppMgrReceiveEventNum(int* eventNum);
 int sceAppMgrReceiveEvent(void* event);
 int sceAppMgrAcquireBgmPortWithPriority(int priority);
-// SceAudio; this SDK's headers declare sceAudioOutGetAdopt but not this. The
-// calling process's private 0..256 gain for one kind of port.
+// SceAudio; this SDK's headers declare sceAudioOutGetAdopt but not these. The
+// calling process's private 0..256 gain for one kind of port, and its
+// adoption of one: SCE_FALSE gives it up, over ramp_length ms (1..4096).
 int sceAudioOutGetPortVolume_forUser(SceAudioOutPortType type);
+int sceAudioOutSetAdopt_forUser(SceAudioOutPortType type, SceBool adopt, int ramp_length,
+                                SceBool wait_for_completion);
 #ifdef BGTEST_SYSTEM_MODE
 // Declared as ElevenMPV-A's libScePafPreload declares it: the bytes to add to
 // a system-mode app's budget. The second argument is 1 there, unexplained.
@@ -163,12 +174,14 @@ static const char* describe(void) {
     if (strcmp(g_title, "VPLXBGT06") == 0) return "a system-mode app grown as ElevenMPV-A grows";
     if (strcmp(g_title, "VPLXBGT07") == 0) return "a silent game with VitaPlex's extended memory";
     if (strcmp(g_title, "VPLXBGT08") == 0) return "a silent game without extended memory";
+    if (strcmp(g_title, "VPLXBGT09") == 0) return "the silent game of 7, giving up the BGM output";
     return "unknown variant";
 }
 
 // The variants that make no sound, for opening while another one beeps.
 static int silent(void) {
-    return strcmp(g_title, "VPLXBGT07") == 0 || strcmp(g_title, "VPLXBGT08") == 0;
+    return strcmp(g_title, "VPLXBGT07") == 0 || strcmp(g_title, "VPLXBGT08") == 0 ||
+           strcmp(g_title, "VPLXBGT09") == 0;
 }
 
 // ── Memory ───────────────────────────────────────────────────────────────
@@ -478,7 +491,8 @@ static int watcherMain(SceSize args, void* argp) {
         // states audioout.h documents for the calling process. Logged when
         // either changes, to see whether the beeps that go quiet beside
         // another app are muted through one of them.
-        const int adopt = sceAudioOutGetAdopt(SCE_AUDIO_OUT_PORT_TYPE_BGM);
+        const int prevAdopt = lastAdopt;
+        int adopt = sceAudioOutGetAdopt(SCE_AUDIO_OUT_PORT_TYPE_BGM);
         const int gain = sceAudioOutGetPortVolume_forUser(SCE_AUDIO_OUT_PORT_TYPE_BGM);
         if (adopt != lastAdopt || gain != lastGain) {
             char a[24], g[24];
@@ -486,6 +500,20 @@ static int watcherMain(SceSize args, void* argp) {
                     result(a, sizeof(a), adopt), result(g, sizeof(g), gain));
             lastAdopt = adopt;
             lastGain = gain;
+        }
+        // A game with extended memory has the BGM output adopted for it a
+        // moment after it starts, without opening a BGM port, and other
+        // apps' beeps go quiet while it is in front (VPLXBGT07). This one
+        // gives it up each time it appears, to see whether they come back.
+        // Once per appearance, so a refusal is logged once, not every tick.
+        if (adopt == 1 && prevAdopt != 1 && strcmp(g_title, "VPLXBGT09") == 0) {
+            char r[24], a[24];
+            const int rc = sceAudioOutSetAdopt_forUser(SCE_AUDIO_OUT_PORT_TYPE_BGM, SCE_FALSE, 100,
+                                                       SCE_FALSE);
+            adopt = sceAudioOutGetAdopt(SCE_AUDIO_OUT_PORT_TYPE_BGM);
+            logLine("give up the BGM output: %s; adopted now %s", result(r, sizeof(r), rc),
+                    result(a, sizeof(a), adopt));
+            lastAdopt = adopt;
         }
 
         int count = 0;
