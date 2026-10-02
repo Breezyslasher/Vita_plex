@@ -681,16 +681,33 @@ otherwise) and draws into the shell's shared framebuffer.
 
 `MEMSIZE 0x4000 ATTRIBUTE 2` on `vita_create_self` writes the same boot param:
 the eboot's control info 6 matches ElevenMPV-A's 256-byte `ebootparam.bin`
-byte for byte. The background test has a
-system-mode build that carries it, packaged as `VPLXBGT05` (16 MB as it is)
-and `VPLXBGT06` (grown at start as ElevenMPV-A grows). It has no screen, since
-vita2d's GPU buffers come to about 10 MB in that mode, and START does not quit
-it, since it is meant to run while a game is in front. It logs its budget every
-5 s, so memory the system takes back when a game starts would show. If a
-system-mode app plays on through a game, music during games takes two apps:
-VitaPlex with its full memory for browsing and video, and a small player that
-does the playing and outlives it. `VPLXBGT06` says whether that player can
-have 57 MB or only 16.
+byte for byte. The background test has a system-mode build that carries it,
+packaged as `VPLXBGT05` (16 MB as it is) and `VPLXBGT06` (grown at start as
+ElevenMPV-A grows). It has no screen, since vita2d's GPU buffers come to about
+10 MB in that mode, and START does not quit it, since it is meant to run while
+a game is in front. It logs its budget every 5 s, so memory the system takes
+back when a game starts would show. If a system-mode app plays on through a
+game, music during games takes two apps: VitaPlex with its full memory for
+browsing and video, and a small player that does the playing and outlives it.
+`VPLXBGT06` says whether that player can have 57 MB or only 16.
+
+**A system-mode app plays through a game** (build 1968). Both test apps started
+in system mode: `sceAppMgrGetBudgetInfo` answered them (mode 2; 16 MB of main
+memory, 10 MB free; no physically contiguous memory; 16 MB of CDRAM, none
+free). `VPLXBGT06`'s `sceAppMgrGrowMemory3(41 MB, 1)` returned 0 and raised its
+budget to 57 MB, 51 MB of which it could allocate in one block, so the budget
+is a real limit (log `46aa6630`). Both asked the Plex server for `/identity`
+every 5 s, in front and away, and got HTTP 200.
+
+`VPLXBGT05` kept beeping while LittleBigPlanet, a retail game, started and
+reached its hub (log `b6e6f6f5`). Its log covers 88 s away, with "alive" and
+the audio clock every 5 s and HTTP 200 from the server every 5 s throughout.
+The budget stayed at 16 MB with 10 MB free. Starting the game asked to close
+VitaShell, a game-budget app, and named nothing else. In an earlier run with
+VitaShell open (`c801b94e`), `VPLXBGT05` was asked to quit 4.3 s after PS,
+while the user started the game. In this run VitaShell was closed first and
+nothing asked. `VPLXBGT06` beeped while a game loaded; whether it lasts into
+the game is not yet known. Both logs end mid-run, with no quit request.
 
 ### PS4: the popup, and nothing to hang progress on
 
