@@ -659,6 +659,39 @@ nothing, so it is now noticed (a poll seconds late) and made again. The BGM
 state call is refused to an app (0x8080201F), so it is no longer logged after
 that.
 
+**Playing while a game runs.** VitaPlex BG, and the test apps it was modelled
+on, run on the game budget, which an eboot without a boot param gets:
+`VPLXBGT03` and `VPLXBGT04` could allocate 233 and 342 MB of it. That amount is
+set when the app starts, and freeing memory inside the app does not hand it
+back. SceAppMgr's exports (vita-headers' NID table for 3.60) have
+`sceAppMgrGrowMemory` and `sceAppMgrGrowMemory3` and nothing that shrinks. So
+VitaPlex cannot drop to a small footprint when it leaves the foreground and
+take its full memory back on return.
+
+ElevenMPV-A is the other kind of app. Its eboot carries a boot param (SELF
+control info 6, `ebootparam.bin` in its source) of attribute 2, no physically
+contiguous memory and a 16 MB budget, which `vita-make-fself` documents as a
+system-mode app (0x1000 to 0x12800 KB, where a normal app has 0). Its PAF
+loader (`libScePafPreload`) then asks `sceAppMgrGrowMemory3` for 41 MB more, or
+failing that 16 MB more, and the app sizes its texture pools from
+`sceAppMgrGetBudgetInfo`. vitasdk's vita2d has a path for such an app: when
+`sceAppMgrGetBudgetInfo` succeeds, which it does not on the game budget, it
+starts GXM with `sceGxmVshInitialize` and a 2 MB parameter buffer (16 MB
+otherwise) and draws into the shell's shared framebuffer.
+
+`MEMSIZE 0x4000 ATTRIBUTE 2` on `vita_create_self` writes the same boot param:
+the eboot's control info 6 matches ElevenMPV-A's 256-byte `ebootparam.bin`
+byte for byte. The background test has a
+system-mode build that carries it, packaged as `VPLXBGT05` (16 MB as it is)
+and `VPLXBGT06` (grown at start as ElevenMPV-A grows). It has no screen, since
+vita2d's GPU buffers come to about 10 MB in that mode, and START does not quit
+it, since it is meant to run while a game is in front. It logs its budget every
+5 s, so memory the system takes back when a game starts would show. If a
+system-mode app plays on through a game, music during games takes two apps:
+VitaPlex with its full memory for browsing and video, and a small player that
+does the playing and outlives it. `VPLXBGT06` says whether that player can
+have 57 MB or only 16.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which
