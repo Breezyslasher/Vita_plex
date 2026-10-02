@@ -1445,11 +1445,10 @@ if(PLATFORM_PSV)
     # leaves the foreground, and with what memory and network; VitaPlex itself
     # is frozen. A system-mode build of it is packaged twice more, to find out
     # whether that kind plays on while a game runs. See the source's header
-    # for all six. vita_create_vpk is a
-    # macro that appends to these flag variables in this scope (the updater
-    # comment above has the same trap for FILE), so each package gets them
-    # fresh and they are put back afterwards. Built after the main vpk, so
-    # nothing leaks into it.
+    # for all six. vita_create_vpk is a macro that appends to these flag
+    # variables in this scope (the updater comment above has the same trap
+    # for FILE), so each package gets them fresh and they are put back
+    # afterwards. Built after the main vpk, so nothing leaks into it.
     add_executable(vitaplex_bgtest src/bgtest_psv/main.c)
     target_link_libraries(vitaplex_bgtest
         vita2d freetype png z m
