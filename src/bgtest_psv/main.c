@@ -44,6 +44,14 @@
  * and START does not quit them. What they are for is whether they play on
  * while a game runs.
  *
+ * VPLXBGT05 played through LittleBigPlanet and on beside VitaShell, but its
+ * beeps stopped when VitaPlex was opened, which makes no audio call at
+ * start. VitaPlex is packaged with the extended memory vita-mksfoex calls
+ * ATTRIBUTE2_MEM109, so two silent games tell whether that is what does it:
+ *
+ *   VPLXBGT07  a game with ATTRIBUTE2=12, as VitaPlex is.
+ *   VPLXBGT08  a game with ATTRIBUTE2=0.
+ *
  * Nothing here is VitaPlex code; what it finds goes into VitaPlex (or a
  * helper app) and this goes away.
  */
@@ -153,7 +161,14 @@ static const char* describe(void) {
     if (strcmp(g_title, "VPLXBGT04") == 0) return "a non-game app with VitaPlex's memory setting";
     if (strcmp(g_title, "VPLXBGT05") == 0) return "a system-mode app with ElevenMPV-A's 16 MB";
     if (strcmp(g_title, "VPLXBGT06") == 0) return "a system-mode app grown as ElevenMPV-A grows";
+    if (strcmp(g_title, "VPLXBGT07") == 0) return "a silent game with VitaPlex's extended memory";
+    if (strcmp(g_title, "VPLXBGT08") == 0) return "a silent game without extended memory";
     return "unknown variant";
+}
+
+// The variants that make no sound, for opening while another one beeps.
+static int silent(void) {
+    return strcmp(g_title, "VPLXBGT07") == 0 || strcmp(g_title, "VPLXBGT08") == 0;
 }
 
 // ── Memory ───────────────────────────────────────────────────────────────
@@ -539,13 +554,21 @@ static void drawScreen(vita2d_pgf* font, const char* path) {
     vita2d_clear_screen();
     drawText(font, 40, 50, gold, 1.3f, "VitaPlex background test");
     drawText(font, 40, 85, white, 1.0f, "%s: %s", g_title, describe());
-    drawText(font, 40, 135, white, 1.0f, "It beeps once a second. Press PS and listen:");
-    drawText(font, 60, 165, muted, 1.0f, "keeps beeping: this kind of app runs in the background");
-    drawText(font, 60, 195, muted, 1.0f, "goes quiet: the system froze it");
-    drawText(font, 40, 230, white, 1.0f, "Then start VitaPlex: do the beeps go on beside it?");
-    drawText(font, 40, 260, white, 1.0f, "Come back here after. START quits.");
-    drawText(font, 40, 310, white, 1.0f, "Running %.0fs, audio played %.0fs", secs(),
-             (double)g_grains * GRAIN / RATE);
+    if (silent()) {
+        drawText(font, 40, 135, white, 1.0f, "This one makes no sound. Open it while BG Test 5 beeps:");
+        drawText(font, 60, 165, muted, 1.0f, "do the beeps go on while this is in front?");
+        drawText(font, 60, 195, muted, 1.0f, "and once you press PS to leave it?");
+        drawText(font, 40, 260, white, 1.0f, "START quits.");
+        drawText(font, 40, 310, white, 1.0f, "Running %.0fs", secs());
+    } else {
+        drawText(font, 40, 135, white, 1.0f, "It beeps once a second. Press PS and listen:");
+        drawText(font, 60, 165, muted, 1.0f, "keeps beeping: this kind of app runs in the background");
+        drawText(font, 60, 195, muted, 1.0f, "goes quiet: the system froze it");
+        drawText(font, 40, 230, white, 1.0f, "Then start VitaPlex: do the beeps go on beside it?");
+        drawText(font, 40, 260, white, 1.0f, "Come back here after. START quits.");
+        drawText(font, 40, 310, white, 1.0f, "Running %.0fs, audio played %.0fs", secs(),
+                 (double)g_grains * GRAIN / RATE);
+    }
     if (g_lastGapUs > 0)
         drawText(font, 40, 340, gold, 1.0f, "Last time away it was frozen for %.1fs "
                  "(longest %.1fs)", g_lastGapUs / 1e6, g_longestGapUs / 1e6);
@@ -576,8 +599,12 @@ int main(void) {
 
     SceUID t = sceKernelCreateThread("BgTestWatcher", watcherMain, 0x10000100, 0x10000, 0, 0, NULL);
     if (t >= 0) sceKernelStartThread(t, 0, NULL);
-    t = sceKernelCreateThread("BgTestAudio", audioMain, 0x10000100 - 10, 0x10000, 0, 0, NULL);
-    if (t >= 0) sceKernelStartThread(t, 0, NULL);
+    if (silent()) {
+        logLine("audio: none, this variant is silent");
+    } else {
+        t = sceKernelCreateThread("BgTestAudio", audioMain, 0x10000100 - 10, 0x10000, 0, 0, NULL);
+        if (t >= 0) sceKernelStartThread(t, 0, NULL);
+    }
 
 #ifdef BGTEST_SYSTEM_MODE
     logLine("display: none (system mode)");
