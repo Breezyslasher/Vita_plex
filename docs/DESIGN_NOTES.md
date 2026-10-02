@@ -627,11 +627,15 @@ remain:
   loading screen with its theme music playing, nothing else would open, and
   the console had to be held off with the power button. The test apps and
   ElevenMPV-A call `sceKernelExitProcess` on this request, and closing those
-  the same way caused none of it. VitaPlex now quits too: the normal way
-  first, and the watcher ends the process itself 2 s later if that has not
-  happened. The watcher runs whatever the background playback setting, since
-  it is the only thing that reads this request; with the setting off it does
-  nothing else.
+  the same way caused none of it. VitaPlex now quits too, the normal way
+  first. The watcher runs whatever the background playback setting, since it
+  is the only thing that reads this request; with the setting off it does
+  nothing else. On the console (log `280b1532`, build 1964) the request came
+  2.5 s after PS, VitaPlex was gone 1.2 s later, and the other app opened.
+  That shutdown rewrites `settings.json` in place (at 1.14 s there), so
+  ending the process during it could lose the login. The watcher therefore
+  ends the process itself only after 2 s if the UI thread has not taken the
+  request, which means it is stuck, and after 10 s if it has.
 - Sleep (the power button) turns off Wi-Fi, so the stream stops once mpv's
   buffer runs out, about 30 s in that log.
 
