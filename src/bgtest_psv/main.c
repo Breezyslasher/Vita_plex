@@ -28,6 +28,22 @@
  *   VPLXBGT04  the non-game app of VPLXBGT03 with VitaPlex's memory setting
  *              (ATTRIBUTE2=12), to see whether that setting holds for one.
  *
+ * Both of those could allocate 233 and 342 MB (logs 9462d9ec, babbea68), the
+ * game budget an eboot without a boot param gets, and both were asked to
+ * close when another app was opened. ElevenMPV-A's eboot carries what theirs
+ * does not, a boot param (SELF control info 6) of attribute 2 and a 16 MB
+ * budget, which vita-make-fself calls a system-mode app. Its PAF loader then
+ * grows that with sceAppMgrGrowMemory3, to 57 MB or else 32 MB, and nothing
+ * in SceAppMgr's exports gives memory back. A second binary, built with
+ * BGTEST_SYSTEM_MODE and that boot param, is packaged twice:
+ *
+ *   VPLXBGT05  ElevenMPV-A's 16 MB as it is.
+ *   VPLXBGT06  the same, grown at start as ElevenMPV-A grows.
+ *
+ * They have no screen, since vita2d's GPU buffers alone come to about 10 MB,
+ * and START does not quit them. What they are for is whether they play on
+ * while a game runs.
+ *
  * Nothing here is VitaPlex code; what it finds goes into VitaPlex (or a
  * helper app) and this goes away.
  */
@@ -42,7 +58,9 @@
 #include <psp2/net/netctl.h>
 #include <psp2/power.h>
 #include <psp2/sysmodule.h>
+#ifndef BGTEST_SYSTEM_MODE
 #include <vita2d.h>
+#endif
 
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -58,13 +76,23 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Small, so the non-game variants fit whatever budget they are given.
+// Small, so the non-game variants fit whatever budget they are given. The
+// system-mode build has 16 MB in all and draws nothing, so it takes less.
+#ifdef BGTEST_SYSTEM_MODE
+int _newlib_heap_size_user = 4 * 1024 * 1024;
+#else
 int _newlib_heap_size_user = 8 * 1024 * 1024;
+#endif
 
 // SceAppMgrUser / SceAppMgr; not declared by this SDK's headers.
 int sceAppMgrReceiveEventNum(int* eventNum);
 int sceAppMgrReceiveEvent(void* event);
 int sceAppMgrAcquireBgmPortWithPriority(int priority);
+#ifdef BGTEST_SYSTEM_MODE
+// Declared as ElevenMPV-A's libScePafPreload declares it: the bytes to add to
+// a system-mode app's budget. The second argument is 1 there, unexplained.
+int sceAppMgrGrowMemory3(unsigned int size, int unk);
+#endif
 
 #define EVENT_ACTIVATE     0x10000001
 #define EVENT_DEACTIVATE   0x10000002
@@ -87,7 +115,6 @@ static volatile SceInt64 g_longestGapUs;    // longest time the watcher did not 
 static volatile SceInt64 g_lastGapUs;       // the most recent such gap
 static volatile int g_events;               // app events received
 static volatile int g_lastEvent;
-static volatile int g_quit;
 static volatile int g_away;                 // deactivated and not yet activated
 static char g_memLine[128] = "Memory: measuring";
 static char g_netLine[128] = "Network: starting";
@@ -110,6 +137,8 @@ static const char* describe(void) {
     if (strcmp(g_title, "VPLXBGT02") == 0) return "a game with the BG_APP flag";
     if (strcmp(g_title, "VPLXBGT03") == 0) return "a non-game app, set up like ElevenMPV-A";
     if (strcmp(g_title, "VPLXBGT04") == 0) return "a non-game app with VitaPlex's memory setting";
+    if (strcmp(g_title, "VPLXBGT05") == 0) return "a system-mode app with ElevenMPV-A's 16 MB";
+    if (strcmp(g_title, "VPLXBGT06") == 0) return "a system-mode app grown as ElevenMPV-A grows";
     return "unknown variant";
 }
 
@@ -139,20 +168,45 @@ static int freeUserMb(void) {
     return sceKernelGetFreeMemorySize(&f) < 0 ? -1 : f.size_user / MB;
 }
 
+// What the system says this app may use. Refused to the game-budget variants
+// (0x8080201C on the console); vita2d reads it succeeding as system mode.
+static int budget(SceAppMgrBudgetInfo* b) {
+    memset(b, 0, sizeof(*b));
+    b->size = sizeof(*b);
+    return sceAppMgrGetBudgetInfo(b);
+}
+
+static void logBudget(const char* when, SceAppMgrBudgetInfo* b) {
+    const int rc = budget(b);
+    logLine("memory budget%s (0x%08X): mode %d; main %u MB, %u MB free; extra %s, %u MB, %u MB free; "
+            "phycont %u MB, %u MB free; cdram %u MB, %u MB free",
+            when, (unsigned)rc, b->app_mode, b->total_user_rw_mem / MB, b->free_user_rw / MB,
+            b->extra_mem_allowed ? "allowed" : "not allowed", b->total_extra_mem / MB,
+            b->free_extra_mem / MB, b->total_phycont_mem / MB, b->free_phycont_mem / MB,
+            b->total_cdram_mem / MB, b->free_cdram_mem / MB);
+}
+
+#ifdef BGTEST_SYSTEM_MODE
+// VPLXBGT06 asks for more, as ElevenMPV-A's libScePafPreload does before
+// anything else runs: 41 MB more (57 MB in all), or failing that 16 MB more.
+static void growMemory(void) {
+    SceAppMgrBudgetInfo b;
+    logBudget(" before growing", &b);
+    int rc = sceAppMgrGrowMemory3(41 * MB, 1);
+    logLine("grow memory by 41 MB: 0x%08X", (unsigned)rc);
+    if (rc < 0) {
+        rc = sceAppMgrGrowMemory3(16 * MB, 1);
+        logLine("grow memory by 16 MB: 0x%08X", (unsigned)rc);
+    }
+}
+#endif
+
 // What the system says this app may use, and what it can really have. Taken
-// after the display is up, with the 8 MB heap and the audio buffers already
+// after the display is up, with the heap and the audio buffers already
 // allocated, so "free" is what a running app has left.
 static void reportMemory(void) {
     SceAppMgrBudgetInfo b;
-    memset(&b, 0, sizeof(b));
-    b.size = sizeof(b);
-    const int rcBudget = sceAppMgrGetBudgetInfo(&b);
-    logLine("memory budget (0x%08X): mode %d; main %u MB, %u MB free; extra %s, %u MB, %u MB free; "
-            "phycont %u MB, %u MB free; cdram %u MB, %u MB free",
-            (unsigned)rcBudget, b.app_mode, b.total_user_rw_mem / MB, b.free_user_rw / MB,
-            b.extra_mem_allowed ? "allowed" : "not allowed", b.total_extra_mem / MB,
-            b.free_extra_mem / MB, b.total_phycont_mem / MB, b.free_phycont_mem / MB,
-            b.total_cdram_mem / MB, b.free_cdram_mem / MB);
+    logBudget("", &b);
 
     SceKernelFreeMemorySizeInfo f;
     memset(&f, 0, sizeof(f));
@@ -398,18 +452,36 @@ static int watcherMain(SceSize args, void* argp) {
                      : id == EVENT_REQUEST_QUIT ? " (asked to quit)" : "");
                 if (id == EVENT_DEACTIVATE) g_away = 1;
                 if (id == EVENT_ACTIVATE) g_away = 0;
-                if (id == EVENT_REQUEST_QUIT) g_quit = 1;
+                if (id == EVENT_REQUEST_QUIT) {
+                    // Ended here rather than by the main loop, which could be
+                    // stuck: the system starts the next app only once this
+                    // process ends, and VitaPlex not ending hung the console
+                    // (log 3ea218f5).
+                    logLine("quit");
+                    sceKernelExitProcess(0);
+                }
             }
         }
 
         // A line every 5 s, so the log shows it running (or not) while away.
-        if (++beat % 20 == 0)
-            logLine("alive%s; audio has played %.0fs; %d MB free", g_away ? ", away" : "",
-                    (double)g_grains * GRAIN / RATE, freeUserMb());
+        // The budget, where the system gives it, shows any memory it takes
+        // back, from a grown VPLXBGT06 when a game starts, say.
+        if (++beat % 20 == 0) {
+            SceAppMgrBudgetInfo b;
+            char mem[64];
+            if (budget(&b) >= 0)
+                snprintf(mem, sizeof(mem), "budget %u MB, %u MB free", b.total_user_rw_mem / MB,
+                         b.free_user_rw / MB);
+            else
+                snprintf(mem, sizeof(mem), "%d MB free", freeUserMb());
+            logLine("alive%s; audio has played %.0fs; %s", g_away ? ", away" : "",
+                    (double)g_grains * GRAIN / RATE, mem);
+        }
     }
     return 0;
 }
 
+#ifndef BGTEST_SYSTEM_MODE
 static void drawText(vita2d_pgf* font, int x, int y, unsigned color, float scale,
                      const char* fmt, ...) {
     char line[256];
@@ -420,6 +492,38 @@ static void drawText(vita2d_pgf* font, int x, int y, unsigned color, float scale
     vita2d_pgf_draw_text(font, x, y, color, scale, line);
 }
 
+static void drawScreen(vita2d_pgf* font, const char* path) {
+    const unsigned white = RGBA8(0xF2, 0xF2, 0xF2, 0xFF);
+    const unsigned muted = RGBA8(0x9A, 0x9A, 0x9A, 0xFF);
+    const unsigned gold  = RGBA8(0xE5, 0xA0, 0x0D, 0xFF);
+
+    vita2d_start_drawing();
+    vita2d_clear_screen();
+    drawText(font, 40, 50, gold, 1.3f, "VitaPlex background test");
+    drawText(font, 40, 85, white, 1.0f, "%s: %s", g_title, describe());
+    drawText(font, 40, 135, white, 1.0f, "It beeps once a second. Press PS and listen:");
+    drawText(font, 60, 165, muted, 1.0f, "keeps beeping: this kind of app runs in the background");
+    drawText(font, 60, 195, muted, 1.0f, "goes quiet: the system froze it");
+    drawText(font, 40, 230, white, 1.0f, "Then start VitaPlex: do the beeps go on beside it?");
+    drawText(font, 40, 260, white, 1.0f, "Come back here after. START quits.");
+    drawText(font, 40, 310, white, 1.0f, "Running %.0fs, audio played %.0fs", secs(),
+             (double)g_grains * GRAIN / RATE);
+    if (g_lastGapUs > 0)
+        drawText(font, 40, 340, gold, 1.0f, "Last time away it was frozen for %.1fs "
+                 "(longest %.1fs)", g_lastGapUs / 1e6, g_longestGapUs / 1e6);
+    else
+        drawText(font, 40, 340, white, 1.0f, "Never frozen so far");
+    drawText(font, 40, 370, white, 1.0f, "%s", g_memLine);
+    drawText(font, 40, 400, white, 1.0f, "%s", g_netLine);
+    drawText(font, 40, 430, muted, 1.0f, "App events: %d, last 0x%08X", g_events,
+             (unsigned)g_lastEvent);
+    drawText(font, 40, 510, muted, 0.8f, "Log: %s", path);
+    vita2d_end_drawing();
+    vita2d_swap_buffers();
+    vita2d_wait_rendering_done();
+}
+#endif
+
 int main(void) {
     g_t0 = sceKernelGetSystemTimeWide();
     sceAppMgrAppParamGetString(SCE_KERNEL_PROCESS_ID_SELF, 12, g_title, sizeof(g_title));  // 12: TITLE_ID
@@ -428,60 +532,47 @@ int main(void) {
     snprintf(path, sizeof(path), "ux0:data/VitaPlex/bgtest-%s.log", g_title);
     g_log = fopen(path, "w");
     logLine("start: %s, %s", g_title, describe());
+#ifdef BGTEST_SYSTEM_MODE
+    if (strcmp(g_title, "VPLXBGT06") == 0) growMemory();
+#endif
 
     SceUID t = sceKernelCreateThread("BgTestWatcher", watcherMain, 0x10000100, 0x10000, 0, 0, NULL);
     if (t >= 0) sceKernelStartThread(t, 0, NULL);
     t = sceKernelCreateThread("BgTestAudio", audioMain, 0x10000100 - 10, 0x10000, 0, 0, NULL);
     if (t >= 0) sceKernelStartThread(t, 0, NULL);
 
+#ifdef BGTEST_SYSTEM_MODE
+    logLine("display: none (system mode)");
+#else
     sceSysmoduleLoadModule(SCE_SYSMODULE_PGF);
     const int video = vita2d_init();
     vita2d_pgf* font = video > 0 ? vita2d_load_default_pgf() : NULL;
     logLine("display: %s", font ? "ok" : "none (running without a screen)");
+#endif
 
     reportMemory();
     t = sceKernelCreateThread("BgTestNet", netMain, 0x10000100 + 10, 0x10000, 0, 0, NULL);
     if (t >= 0) sceKernelStartThread(t, 0, NULL);
 
-    const unsigned white = RGBA8(0xF2, 0xF2, 0xF2, 0xFF);
-    const unsigned muted = RGBA8(0x9A, 0x9A, 0x9A, 0xFF);
-    const unsigned gold  = RGBA8(0xE5, 0xA0, 0x0D, 0xFF);
-
+#ifdef BGTEST_SYSTEM_MODE
+    // No START to quit, unlike the others: there is no screen to say so, and
+    // this one is meant to run on while a game is in front, where START is
+    // pressed all the time. Closed from the LiveArea, it is asked to quit and
+    // the watcher ends it.
+    for (;;) sceKernelDelayThread(60 * 1000 * 1000);
+#else
     SceCtrlData pad;
-    while (!g_quit) {
+    for (;;) {
         memset(&pad, 0, sizeof(pad));
         sceCtrlPeekBufferPositive(0, &pad, 1);
         if (pad.buttons & SCE_CTRL_START) break;
-
         if (!font) {
             sceKernelDelayThread(100 * 1000);
             continue;
         }
-        vita2d_start_drawing();
-        vita2d_clear_screen();
-        drawText(font, 40, 50, gold, 1.3f, "VitaPlex background test");
-        drawText(font, 40, 85, white, 1.0f, "%s: %s", g_title, describe());
-        drawText(font, 40, 135, white, 1.0f, "It beeps once a second. Press PS and listen:");
-        drawText(font, 60, 165, muted, 1.0f, "keeps beeping: this kind of app runs in the background");
-        drawText(font, 60, 195, muted, 1.0f, "goes quiet: the system froze it");
-        drawText(font, 40, 230, white, 1.0f, "Then start VitaPlex: do the beeps go on beside it?");
-        drawText(font, 40, 260, white, 1.0f, "Come back here after. START quits.");
-        drawText(font, 40, 310, white, 1.0f, "Running %.0fs, audio played %.0fs", secs(),
-                 (double)g_grains * GRAIN / RATE);
-        if (g_lastGapUs > 0)
-            drawText(font, 40, 340, gold, 1.0f, "Last time away it was frozen for %.1fs "
-                     "(longest %.1fs)", g_lastGapUs / 1e6, g_longestGapUs / 1e6);
-        else
-            drawText(font, 40, 340, white, 1.0f, "Never frozen so far");
-        drawText(font, 40, 370, white, 1.0f, "%s", g_memLine);
-        drawText(font, 40, 400, white, 1.0f, "%s", g_netLine);
-        drawText(font, 40, 430, muted, 1.0f, "App events: %d, last 0x%08X", g_events,
-                 (unsigned)g_lastEvent);
-        drawText(font, 40, 510, muted, 0.8f, "Log: %s", path);
-        vita2d_end_drawing();
-        vita2d_swap_buffers();
-        vita2d_wait_rendering_done();
+        drawScreen(font, path);
     }
+#endif
 
     logLine("quit");
     if (g_log) fclose(g_log);
