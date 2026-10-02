@@ -192,6 +192,12 @@ jobs:
             done
             rm -rf "$p"
           done
+      # build-vita's second artifact (the background-test apps and VitaPlex
+      # BG) is for trying on a console, not for release: the Vita globs below
+      # take every .vpk, and the in-app updater installs the first asset
+      # whose name ends in .vpk.
+      - name: Leave out the Vita test packages
+        run: rm -rf VitaPlex-vita-bgtest-*
       # Sign every asset so the in-app updater can verify authenticity before
       # installing (see src/utils/update_verify.cpp): detached ECDSA-P256 /
       # SHA-256 signatures published beside each asset as "<asset>.sig". No-op
@@ -293,8 +299,10 @@ jobs:
           find . -name "*.nro" -print 2>/dev/null || true
           echo "======================================="
 
-          # Vita VPK
-          for f in $(find . -name "*.vpk"); do
+          # Vita VPK. VitaPlex.vpk only: build-vita's second artifact holds
+          # the background-test apps and VitaPlex BG, and every file this
+          # loop finds is copied to the same name, the last one winning.
+          for f in $(find . -name "VitaPlex.vpk"); do
             cp "$f" "release/VitaPlex.${FVER}.vpk"
           done
 
