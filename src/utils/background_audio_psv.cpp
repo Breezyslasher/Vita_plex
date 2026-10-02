@@ -87,8 +87,13 @@ constexpr SceUInt kTickUs      = 250 * 1000;
 constexpr int     kBeatTicks   = 16;           // a heartbeat line every 4 s away
 constexpr SceInt64 kGapUs      = 3 * 1000000;  // a tick this late was not scheduled
 // How long the normal way out gets after the system asks the app to quit,
-// before the watcher ends the process itself.
-constexpr SceInt64 kQuitGraceUs = 2 * 1000000;
+// before the watcher ends the process itself. Short while the UI thread has
+// not even taken the request, since then it is stuck. Longer once it has, so
+// a shutdown already under way is not cut off: it rewrites settings.json in
+// place, and ending the process mid-write would lose the user's login. A
+// device log (280b1532) had the whole of it take 1.2 s, the write at 1.14 s.
+constexpr SceInt64 kQuitGraceUs    = 2 * 1000000;
+constexpr SceInt64 kQuitShutdownUs = 10 * 1000000;
 
 // Formats SceShell decodes, as ElevenMPV-A hands them to it.
 const char* const kShellExts[] = {"mp3", "m4a", "aac", "wav", "at9"};
@@ -314,6 +319,9 @@ void stopShellLocked(const char* why);
 
 // When the system asked the app to quit; 0 until it has. Watcher thread only.
 SceInt64 g_quitAskedAt = 0;
+// Set on the UI thread once it has taken the request and begun the normal
+// shutdown; see kQuitShutdownUs.
+std::atomic<bool> g_quitUnderway{false};
 
 void onRequestQuit(SceInt64 now) {
     brls::Logger::info("[bgaudio] the system asked the app to quit; quitting");
@@ -335,11 +343,14 @@ void onRequestQuit(SceInt64 now) {
     // closed the same way without any of that.
     //
     // The normal way out first, which saves the settings. watcherMain ends the
-    // process itself if that has not happened by kQuitGraceUs, since the UI
-    // thread may be stuck in a request to a server it cannot reach.
+    // process itself if that has not happened in time (kQuitGraceUs), since
+    // the UI thread may be stuck in a request to a server it cannot reach.
     if (g_quitAskedAt == 0) {
         g_quitAskedAt = now;
-        brls::sync([]() { brls::Application::quit(); });
+        brls::sync([]() {
+            g_quitUnderway = true;
+            brls::Application::quit();
+        });
     }
 }
 
@@ -466,9 +477,14 @@ int watcherMain(SceSize, void*) {
             if (g_away && gap > g_awayLongestGapUs) g_awayLongestGapUs = gap;
         }
         const bool focusEvent = drainAppEvents(now, gap, !watching);
-        if (g_quitAskedAt != 0 && now - g_quitAskedAt > kQuitGraceUs) {
+        const bool underway = g_quitUnderway;
+        if (g_quitAskedAt != 0 &&
+            now - g_quitAskedAt > (underway ? kQuitShutdownUs : kQuitGraceUs)) {
             brls::Logger::warning("[bgaudio] still running {:.1f}s after the system asked "
-                                  "to quit; ending the process", (now - g_quitAskedAt) / 1e6);
+                                  "to quit ({}); ending the process",
+                                  (now - g_quitAskedAt) / 1e6,
+                                  underway ? "the shutdown did not finish"
+                                           : "the UI never took the request");
             sceKernelExitProcess(0);
         }
         if (!watching) continue;
