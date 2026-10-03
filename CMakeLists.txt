@@ -1444,8 +1444,9 @@ if(PLATFORM_PSV)
     # find out on hardware which kind of app the system keeps running once it
     # leaves the foreground, and with what memory and network; VitaPlex itself
     # is frozen. A system-mode build of it is packaged twice more, to find out
-    # whether that kind plays on while a game runs. See the source's header
-    # for all nine. vita_create_vpk is a macro that appends to these flag
+    # whether that kind plays on while a game runs, and a third time with a
+    # player through SceShell's music service. See the source's header for
+    # all ten. vita_create_vpk is a macro that appends to these flag
     # variables in this scope (the updater comment above has the same trap
     # for FILE), so each package gets them fresh and they are put back
     # afterwards. Built after the main vpk, so nothing leaks into it.
@@ -1493,6 +1494,36 @@ if(PLATFORM_PSV)
     vita_create_self(vitaplex_bgtest_sys.self vitaplex_bgtest_sys UNSAFE MEMSIZE 0x4000 ATTRIBUTE 2)
     set(VITA_MAKE_FSELF_FLAGS "${_bgt_saved_fself}")
 
+    # The system-mode build again with what a player through SceShell's music
+    # service needs (src/bgtest_psv/player_test.c): curl, mbedtls and zlib as
+    # VitaPlex fetches with them, and libShellAudio with its one import stub.
+    # Mozilla's CA bundle goes in its package below.
+    add_executable(vitaplex_bgtest_player
+        src/bgtest_psv/main.c
+        src/bgtest_psv/player_test.c
+        lib/libshellaudio/ShellAudio.c
+        lib/libshellaudio/shellsvc_stub.S)
+    target_compile_definitions(vitaplex_bgtest_player PRIVATE BGTEST_SYSTEM_MODE BGTEST_PLAYER)
+    target_include_directories(vitaplex_bgtest_player PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio)
+    target_link_libraries(vitaplex_bgtest_player
+        curl mbedtls mbedx509 mbedcrypto z m
+        SceAudio_stub
+        SceAppMgr_stub
+        ScePower_stub
+        SceSysmodule_stub
+        SceIofilemgr_stub
+        SceNet_stub
+        SceNetCtl_stub
+        SceRtc_stub
+        SceLibKernel_stub
+        # curl resolves names on a thread; whole, as borealis links it for VitaPlex
+        -Wl,--whole-archive pthread -Wl,--no-whole-archive)
+    target_link_options(vitaplex_bgtest_player PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
+    set(VITA_MAKE_FSELF_FLAGS "")
+    vita_create_self(vitaplex_bgtest_player.self vitaplex_bgtest_player UNSAFE MEMSIZE 0x4000 ATTRIBUTE 2)
+    set(VITA_MAKE_FSELF_FLAGS "${_bgt_saved_fself}")
+
     set(_bgt_saved_sfo "${VITA_MKSFOEX_FLAGS}")
     set(_bgt_saved_pack "${VITA_PACK_VPK_FLAGS}")
     set(_bgt_saved_resources "${resources}")
@@ -1528,6 +1559,14 @@ if(PLATFORM_PSV)
             VERSION 01.00
             NAME "${_bgt_name}")
     endforeach()
+    # The player test, set up as the fifth is, with the CA bundle at app0:.
+    set(VITA_MKSFOEX_FLAGS "-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16")
+    set(VITA_PACK_VPK_FLAGS "")
+    set(resources "")
+    vita_create_vpk(VitaPlexBgTest-VPLXBGT10.vpk VPLXBGT10 vitaplex_bgtest_player.self
+        VERSION 01.00
+        NAME "BG Test 10 player"
+        FILE resources/cacert.pem cacert.pem)
     set(VITA_MKSFOEX_FLAGS "${_bgt_saved_sfo}")
     set(VITA_PACK_VPK_FLAGS "${_bgt_saved_pack}")
     set(resources "${_bgt_saved_resources}")

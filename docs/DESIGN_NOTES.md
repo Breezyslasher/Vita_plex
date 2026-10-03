@@ -748,6 +748,22 @@ giving the output up with `sceAudioOutSetAdopt_forUser` whenever it is
 adopted. If the beeps come back beside it, VitaPlex can keep its memory and
 do the same.
 
+**A player through the shell** (`VPLXBGT10`, `src/bgtest_psv/player_test.c`).
+The shell plays files and plays on beside extended memory, so the other route
+is a small system-mode app that downloads songs and hands them over. The test
+app does that once it is sent away. It picks two songs of 1 to 4 minutes from
+the first music library. It downloads the first as the server has it, when the
+shell decodes that (MP3, AAC, WAV), and hands it to the shell. Then, while the
+first plays, it downloads the second as the server's MP3 and hands it over
+when the first ends. It logs each download's speed and whether it started and
+ended in the background. A song counts as playing once the shell's clock moves
+with the length the server gives it, which tells it from an old file the
+shell goes on with. Requests go over https as VitaPlex makes them (curl,
+mbedtls, the CA bundle), the token from VitaPlex's `settings.json` is never
+logged, and on the way out the app stops the shell's playback. A host harness
+with fake responses and a scripted shell exercised the choice of songs, both
+hand-overs and the end detection, the shell ignoring an open included.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which
