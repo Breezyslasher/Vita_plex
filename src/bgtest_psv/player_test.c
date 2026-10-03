@@ -63,6 +63,7 @@ static volatile int g_shellUp;
 static volatile int g_portHeld;
 static Track g_tracks[2];
 static volatile int g_secondReady;   // 1 downloaded, -1 failed
+static volatile int g_handedOver;    // a song has been given to the shell
 
 static double now(void) { return sceKernelGetSystemTimeWide() / 1e6; }
 
@@ -206,8 +207,40 @@ static int getBody(const char* path, const char* accept, Body* body) {
 
 // ── Picking two songs ────────────────────────────────────────────────────
 
+// A character reference (&#8217; or &#x2019;) at p, as UTF-8 into out (which
+// has room for 4 bytes). The bytes written, with *len its length; 0 if none.
+static size_t charRef(const char* p, char* out, size_t* len) {
+    if (p[0] != '&' || p[1] != '#') return 0;
+    const int hex = p[2] == 'x' || p[2] == 'X';
+    char* end;
+    const unsigned long c = strtoul(p + (hex ? 3 : 2), &end, hex ? 16 : 10);
+    if (*end != ';' || end == p + (hex ? 3 : 2) || c == 0 || c > 0x10FFFF) return 0;
+    *len = (size_t)(end - p) + 1;
+    if (c < 0x80) {
+        out[0] = (char)c;
+        return 1;
+    }
+    if (c < 0x800) {
+        out[0] = (char)(0xC0 | (c >> 6));
+        out[1] = (char)(0x80 | (c & 0x3F));
+        return 2;
+    }
+    if (c < 0x10000) {
+        out[0] = (char)(0xE0 | (c >> 12));
+        out[1] = (char)(0x80 | ((c >> 6) & 0x3F));
+        out[2] = (char)(0x80 | (c & 0x3F));
+        return 3;
+    }
+    out[0] = (char)(0xF0 | (c >> 18));
+    out[1] = (char)(0x80 | ((c >> 12) & 0x3F));
+    out[2] = (char)(0x80 | ((c >> 6) & 0x3F));
+    out[3] = (char)(0x80 | (c & 0x3F));
+    return 4;
+}
+
 // The value of attribute `name` in the XML element that starts at el and ends
-// at the next '>', with the five predefined entities decoded. 0 when found.
+// at the next '>', with the predefined entities and character references
+// decoded. 0 when found.
 static int xmlAttr(const char* el, const char* name, char* out, size_t size) {
     static const char* const entities[][2] = {
         {"&amp;", "&"}, {"&lt;", "<"}, {"&gt;", ">"}, {"&quot;", "\""}, {"&apos;", "'"}};
@@ -220,13 +253,19 @@ static int xmlAttr(const char* el, const char* name, char* out, size_t size) {
     size_t i = 0;
     while (p < end && *p != '"' && i + 1 < size) {
         size_t skip = 0;
-        if (*p == '&')
+        char utf8[4];
+        const size_t n = i + 5 <= size ? charRef(p, utf8, &skip) : 0;
+        if (n) {
+            memcpy(out + i, utf8, n);
+            i += n;
+        } else if (*p == '&') {
             for (size_t e = 0; e < sizeof(entities) / sizeof(entities[0]); e++)
                 if (strncmp(p, entities[e][0], strlen(entities[e][0])) == 0) {
                     out[i++] = entities[e][1][0];
                     skip = strlen(entities[e][0]);
                     break;
                 }
+        }
         if (skip) {
             p += skip;
         } else {
@@ -440,25 +479,46 @@ static int download(int song) {
 
 // ── The system player ────────────────────────────────────────────────────
 
+// The first hand-over goes one step every 5 s. Done all at once from the
+// background, it was answered within 250 ms by the system asking the app to
+// quit (log 7a912d67), and the watcher reads events four times a second, so
+// only spacing the steps out says which one the system answers.
+static void step(int first) {
+    if (first) sceKernelDelayThread(5 * 1000 * 1000);
+}
+
 static void handOver(int song) {
     char r[3][24];
+    const int first = !g_portHeld && !g_shellUp;
     if (!g_portHeld) {
+        logLine("player: step 1 of 4%s: acquire the BGM port at 0x%X", g_away ? ", away" : "",
+                SHELL_PORT_PRIORITY);
         const int rc = sceAppMgrAcquireBgmPortWithPriority(SHELL_PORT_PRIORITY);
-        logLine("player: acquire BGM port 0x%X: %s", SHELL_PORT_PRIORITY, result(r[0], 24, rc));
+        logLine("player: acquire BGM port: %s", result(r[0], 24, rc));
         g_portHeld = rc >= 0;
+        step(first);
     }
     if (!g_shellUp) {
+        logLine("player: step 2 of 4%s: start the system player (music player, type 0)",
+                g_away ? ", away" : "");
         const int rc = sceMusicPlayerServiceInitialize(0);
-        logLine("player: system player (music player, type 0): initialize %s",
-                result(r[0], 24, rc));
+        logLine("player: system player initialize %s", result(r[0], 24, rc));
         if (rc < 0) return;
         g_shellUp = 1;
+        step(first);
     }
     char path[64];
     snprintf(path, sizeof(path), "%s", g_tracks[song - 1].path);
+    if (first) logLine("player: step 3 of 4%s: stop, open %s", g_away ? ", away" : "", path);
     const int rcStop = sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_STOP, 0);
     const int rcOpen = sceMusicPlayerServiceOpen(path, NULL);
+    if (first) {
+        logLine("player: stop %s, open %s", result(r[0], 24, rcStop), result(r[1], 24, rcOpen));
+        step(first);
+        logLine("player: step 4 of 4%s: play", g_away ? ", away" : "");
+    }
     const int rcPlay = sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_PLAY, 0);
+    g_handedOver = 1;
     logLine("player: song %d handed to the system player%s (%s): stop %s, open %s, play %s",
             song, g_away ? ", away" : "", path, result(r[0], 24, rcStop),
             result(r[1], 24, rcOpen), result(r[2], 24, rcPlay));
@@ -552,7 +612,17 @@ static void stopShell(const char* why) {
     }
 }
 
-void playerQuit(void) { stopShell("asked to quit"); }
+// Asked to quit once a song is with the shell, it is left playing, to see
+// whether the shell plays it on with this app gone; it stops at the song's
+// end. Before that, everything is put back.
+void playerQuit(void) {
+    if (g_handedOver) {
+        logLine("player: asked to quit with a song handed over; leaving the system player to "
+                "play it");
+        return;
+    }
+    stopShell("asked to quit");
+}
 
 // ── The run ──────────────────────────────────────────────────────────────
 
@@ -577,7 +647,7 @@ static int playerMain(SceSize args, void* argp) {
     if (songs == 0) return 0;
 
     // Time to press PS and start a game: 15 s after being sent away, or after
-    // two minutes in front.
+    // five minutes in front.
     logLine("player: waiting for PS, then 15 s for a game to start");
     const double t0 = now();
     double awaySince = 0;
@@ -589,7 +659,7 @@ static int playerMain(SceSize args, void* argp) {
         } else {
             awaySince = 0;
         }
-        if (t - t0 >= 120.0) break;
+        if (t - t0 >= 300.0) break;
         sceKernelDelayThread(250 * 1000);
     }
     logLine("player: starting%s", g_away ? ", away" : " in front (never sent away)");
