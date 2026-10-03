@@ -60,6 +60,13 @@
  *   VPLXBGT09  VPLXBGT07 giving the BGM output up when it is adopted
  *              (sceAudioOutSetAdopt_forUser), to see whether that is enough.
  *
+ * The shell's music service plays on beside extended memory, but only from
+ * files. A third system-mode build, with BGTEST_PLAYER, adds what a player
+ * using it would need:
+ *
+ *   VPLXBGT10  once sent away, downloads two songs from the Plex server and
+ *              hands them to the shell one after the other (player_test.c).
+ *
  * Nothing here is VitaPlex code; what it finds goes into VitaPlex (or a
  * helper app) and this goes away.
  */
@@ -92,9 +99,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "bgtest.h"
+
 // Small, so the non-game variants fit whatever budget they are given. The
-// system-mode build has 16 MB in all and draws nothing, so it takes less.
-#ifdef BGTEST_SYSTEM_MODE
+// system-mode build has 16 MB in all and draws nothing, so it takes less,
+// though the player's curl, TLS and CA list need more than the beeps do.
+#if defined(BGTEST_PLAYER)
+int _newlib_heap_size_user = 8 * 1024 * 1024;
+#elif defined(BGTEST_SYSTEM_MODE)
 int _newlib_heap_size_user = 4 * 1024 * 1024;
 #else
 int _newlib_heap_size_user = 8 * 1024 * 1024;
@@ -127,6 +139,7 @@ int sceAppMgrGrowMemory3(unsigned int size, int unk);
 #define MB (1024 * 1024)
 
 static FILE* g_log;
+static SceUID g_logMutex = -1;   // lines from several threads came out mixed
 static char g_title[16] = "?";
 static SceInt64 g_t0;
 
@@ -137,7 +150,8 @@ static volatile SceInt64 g_longestGapUs;    // longest time the watcher did not 
 static volatile SceInt64 g_lastGapUs;       // the most recent such gap
 static volatile int g_events;               // app events received
 static volatile int g_lastEvent;
-static volatile int g_away;                 // deactivated and not yet activated
+volatile int g_away;                        // deactivated and not yet activated
+volatile int g_netReady;                    // SceNet is up
 #ifndef BGTEST_SYSTEM_MODE
 static char g_memLine[128] = "Memory: measuring";
 #endif
@@ -145,8 +159,7 @@ static char g_netLine[128] = "Network: starting";
 
 static double secs(void) { return (sceKernelGetSystemTimeWide() - g_t0) / 1e6; }
 
-// A call's result as a number, or as the error code it is when negative.
-static const char* result(char* buf, size_t size, int value) {
+const char* result(char* buf, size_t size, int value) {
     if (value < 0)
         snprintf(buf, size, "error 0x%08X", (unsigned)value);
     else
@@ -154,15 +167,22 @@ static const char* result(char* buf, size_t size, int value) {
     return buf;
 }
 
-static void logLine(const char* fmt, ...) {
+// Whole lines, one thread at a time: the file is not safe to write from two.
+void logLine(const char* fmt, ...) {
     if (!g_log) return;
+    char line[512];
+    int n = snprintf(line, sizeof(line), "%9.3f ", secs());
     va_list ap;
     va_start(ap, fmt);
-    fprintf(g_log, "%9.3f ", secs());
-    vfprintf(g_log, fmt, ap);
-    fputc('\n', g_log);
+    vsnprintf(line + n, sizeof(line) - n - 1, fmt, ap);
     va_end(ap);
+    n = (int)strlen(line);
+    line[n] = '\n';
+    line[n + 1] = '\0';
+    if (g_logMutex >= 0) sceKernelLockMutex(g_logMutex, 1, NULL);
+    fputs(line, g_log);
     fflush(g_log);
+    if (g_logMutex >= 0) sceKernelUnlockMutex(g_logMutex, 1);
 }
 
 static const char* describe(void) {
@@ -175,13 +195,14 @@ static const char* describe(void) {
     if (strcmp(g_title, "VPLXBGT07") == 0) return "a silent game with VitaPlex's extended memory";
     if (strcmp(g_title, "VPLXBGT08") == 0) return "a silent game without extended memory";
     if (strcmp(g_title, "VPLXBGT09") == 0) return "the silent game of 7, giving up the BGM output";
+    if (strcmp(g_title, "VPLXBGT10") == 0) return "a system-mode app playing songs through the shell";
     return "unknown variant";
 }
 
 // The variants that make no sound, for opening while another one beeps.
 static int silent(void) {
     return strcmp(g_title, "VPLXBGT07") == 0 || strcmp(g_title, "VPLXBGT08") == 0 ||
-           strcmp(g_title, "VPLXBGT09") == 0;
+           strcmp(g_title, "VPLXBGT09") == 0 || strcmp(g_title, "VPLXBGT10") == 0;
 }
 
 // ── Memory ───────────────────────────────────────────────────────────────
@@ -279,7 +300,11 @@ static void reportMemory(void) {
 
 // ── Network ──────────────────────────────────────────────────────────────
 
+#ifdef BGTEST_PLAYER
+static char g_netMemory[1024 * 1024];   // whole songs, over https
+#else
 static char g_netMemory[256 * 1024];
+#endif
 
 // The Plex server in VitaPlex's settings, as an IPv4 address and a port.
 // Only "serverUrl" is read from the file. 0 on success.
@@ -384,6 +409,7 @@ static int netMain(SceSize args, void* argp) {
         snprintf(g_netLine, sizeof(g_netLine), "Network: could not start (0x%08X)", (unsigned)rc);
         return 0;
     }
+    g_netReady = 1;
 
     char ip[48], host[160];
     int port = 32400;
@@ -538,6 +564,9 @@ static int watcherMain(SceSize args, void* argp) {
                     // stuck: the system starts the next app only once this
                     // process ends, and VitaPlex not ending hung the console
                     // (log 3ea218f5).
+#ifdef BGTEST_PLAYER
+                    playerQuit();   // or the shell plays on with nothing to stop it
+#endif
                     logLine("quit");
                     sceKernelExitProcess(0);
                 }
@@ -615,6 +644,7 @@ static void drawScreen(vita2d_pgf* font, const char* path) {
 
 int main(void) {
     g_t0 = sceKernelGetSystemTimeWide();
+    g_logMutex = sceKernelCreateMutex("BgTestLog", 0, 0, NULL);
     sceAppMgrAppParamGetString(SCE_KERNEL_PROCESS_ID_SELF, 12, g_title, sizeof(g_title));  // 12: TITLE_ID
 
     char path[96];
@@ -646,6 +676,9 @@ int main(void) {
     reportMemory();
     t = sceKernelCreateThread("BgTestNet", netMain, 0x10000100 + 10, 0x10000, 0, 0, NULL);
     if (t >= 0) sceKernelStartThread(t, 0, NULL);
+#ifdef BGTEST_PLAYER
+    if (strcmp(g_title, "VPLXBGT10") == 0) playerStart();
+#endif
 
 #ifdef BGTEST_SYSTEM_MODE
     // No START to quit, unlike the others: there is no screen to say so, and
