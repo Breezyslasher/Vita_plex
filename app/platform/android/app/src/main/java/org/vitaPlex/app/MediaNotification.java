@@ -96,7 +96,8 @@ public final class MediaNotification {
     private static MediaSessionCompat sSession;
     private static boolean sChannelCreated;
     private static BroadcastReceiver sReceiver;
-    private static boolean sServiceStarted;   // MusicService is foregrounding us
+    private static boolean sServiceWasPlaying;  // sPlaying the last time ensureService() ran
+    private static boolean sServiceStartFailed; // a start was refused since playback last started
     // Audio focus. Without holding it Android never asks us to stop, so starting
     // a video or a podcast elsewhere left both playing over each other.
     private static Object  sFocusRequest;        // AudioFocusRequest on O+, unused below
@@ -851,10 +852,23 @@ public final class MediaNotification {
     }
 
     // Start the media foreground service so audio + the notification survive the
-    // app being backgrounded / the screen turning off. Started from the app's
-    // foreground (music begins while the app is visible), so it's allowed.
+    // app being backgrounded / the screen turning off, and keep the app on the
+    // network there. Started when it is not running, and again every time
+    // playback starts: starting it again while it runs only repeats
+    // startForeground(). A log had the app cut off from the network seconds
+    // after leaving the screen with music playing, hours after the service was
+    // first started and after a long pause. The flag this used to check was set
+    // on asking and cleared only by clear(), so it could not have noticed the
+    // service going and started it again.
+    //
+    // Android 12+ refuses a start from the background unless the app is exempt
+    // (a tap on the media controls, battery optimization off). One refusal is
+    // logged and then left until playback next starts.
     private static void ensureService(Context ctx) {
-        if (sServiceStarted) return;
+        final boolean playbackStarting = sPlaying && !sServiceWasPlaying;
+        sServiceWasPlaying = sPlaying;
+        if (playbackStarting) sServiceStartFailed = false;
+        if (!playbackStarting && (MusicService.isForeground() || sServiceStartFailed)) return;
         try {
             Intent i = new Intent(ctx, MusicService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -862,16 +876,18 @@ public final class MediaNotification {
             } else {
                 ctx.startService(i);
             }
-            sServiceStarted = true;
         } catch (Throwable t) {
+            sServiceStartFailed = true;
             Log.w(TAG, "startForegroundService failed", t);
+            NetworkMonitor.log("music service: could not start (app " + NetworkMonitor.processState()
+                               + "): " + t);
         }
     }
 
     private static void stopService(Context ctx) {
-        if (!sServiceStarted) return;
+        sServiceWasPlaying = false;
+        sServiceStartFailed = false;
         try { ctx.stopService(new Intent(ctx, MusicService.class)); } catch (Throwable ignore) {}
-        sServiceStarted = false;
     }
 
     private static NotificationCompat.Action action(Context ctx, int icon, String title, int code) {

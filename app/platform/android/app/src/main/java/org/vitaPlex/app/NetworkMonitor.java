@@ -64,7 +64,10 @@ public final class NetworkMonitor {
         }
     }
 
-    private static void log(String line) {
+    // Package-visible so the music service can put its own story in the same
+    // log: whether it is running in the foreground is what decides if Android
+    // lets a backgrounded VitaPlex use the network.
+    static void log(String line) {
         Log.i(TAG, line);
         try {
             nativeLog(line);
@@ -146,10 +149,13 @@ public final class NetworkMonitor {
             }
 
             // Android 10+. This is the line that says Android itself cut
-            // VitaPlex off, as opposed to the network going away.
+            // VitaPlex off, as opposed to the network going away. The
+            // process state says why: a log had access blocked 5-20 s after
+            // each trip to the background, music playing or not.
             @Override public void onBlockedStatusChanged(Network n, boolean blocked) {
                 log("network " + n + ": access " + (blocked ? "BLOCKED for VitaPlex"
-                                                            : "allowed for VitaPlex"));
+                                                            : "allowed for VitaPlex")
+                    + " (app " + processState() + ")");
             }
         };
 
@@ -163,6 +169,37 @@ public final class NetworkMonitor {
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
                 .build(), cb);
         }
+    }
+
+    // How Android ranks this process now. A foreground service keeps network
+    // access in the background; playing audio alone does not.
+    static String processState() {
+        ActivityManager.RunningAppProcessInfo info = new ActivityManager.RunningAppProcessInfo();
+        try {
+            ActivityManager.getMyMemoryState(info);
+        } catch (Throwable t) {
+            return "state unknown";
+        }
+        String name;
+        switch (info.importance) {
+            case ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND:
+                name = "in front"; break;
+            case ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE:
+                name = "foreground service"; break;
+            case ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE:
+                name = "visible"; break;
+            case ActivityManager.RunningAppProcessInfo.IMPORTANCE_PERCEPTIBLE:
+                name = "perceptible"; break;
+            case ActivityManager.RunningAppProcessInfo.IMPORTANCE_SERVICE:
+                name = "background service"; break;
+            case ActivityManager.RunningAppProcessInfo.IMPORTANCE_TOP_SLEEPING:
+                name = "in front, screen off"; break;
+            case ActivityManager.RunningAppProcessInfo.IMPORTANCE_CACHED:
+                name = "cached"; break;
+            default:
+                name = "importance"; break;
+        }
+        return name + " " + info.importance;
     }
 
     private static String describe(NetworkCapabilities nc) {

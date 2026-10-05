@@ -214,6 +214,56 @@ Android now reports into the same log through `NetworkMonitor`:
 - Doze, battery saver, Data Saver, and screen on/off;
 - the app's restrictions at start.
 
+### Android cut the app off, and curl kept the failure
+
+A log from a Galaxy Z Fold6 (build 1961, on mobile data) answers that.
+
+Android blocked VitaPlex's network 5 to 20 s after each trip to the background
+(`MpvPlayer: detached Android surface`, then `access BLOCKED`). It allowed it
+again as the app came back. A foreground service keeps an app on the network in
+the background, and at first it did. At 07:44 the phone changed networks with
+VitaPlex playing in the background, and access stayed allowed.
+
+The music was paused at 07:45. At 07:58 access was blocked, with the screen on.
+After that, the blocks also came with music playing: at 11:36 and at 11:39. The
+log cannot say what happened to the service, since nothing logged it. Once the
+service was gone, though, nothing would have started it again.
+`MediaNotification.ensureService()` returned early while its flag was set. The
+flag was set when it asked for the service, and only `clear()` reset it.
+
+The song playing at 11:39 finished from mpv's buffer. The next one needed the
+server's name looked up at 11:41:31, while Android blocked the app, and the
+lookup failed. Every check after it failed in under 10 ms for the 2.5 minutes
+the log ran on, including while access was allowed and the app was on screen.
+That was curl, not Android:
+
+- curl 8.16 caches a failed lookup as an entry with no address. Its
+  `dnscache_entry_is_stale()` doubles the age of such an entry, so it is kept
+  for half of `CURLOPT_DNS_CACHE_TIMEOUT`: 150 s at our 300.
+- A cache hit fails at once, without asking the system or renewing the entry
+  (`Curl_resolv`).
+- The log ends 6 s before the entry would have expired.
+
+This was replayed against libcurl 8.22 with a `getaddrinfo` that fails and then
+recovers. Every request after the recovery failed in 0.0 ms, without a lookup.
+
+Changes:
+
+- `HttpClient`: after `CURLE_COULDNT_RESOLVE_HOST` for a host, its requests use
+  `CURLOPT_DNS_CACHE_TIMEOUT` 0 until one gets past the lookup. curl then drops
+  the entry and asks the system. When the transfer ends it also prunes the
+  shared cache by that timeout, which clears it. In the same replay, the first
+  request after the recovery succeeds.
+- `MusicService` records whether it is in the foreground. `MediaNotification`
+  starts it whenever it isn't, and again every time playback starts. A start
+  while it runs only repeats `startForeground()`. Android 12+ refuses a start
+  from the background unless the app is exempt: a tap on its media controls, or
+  battery optimization off. A refused start is logged once, and retried the
+  next time playback starts.
+- vitaplex.log gets the service's starts, stops and failures. Each `access
+  BLOCKED` or `allowed` line now ends with the app's process state, such as
+  `foreground service 125` or `cached 400`.
+
 ---
 
 ## Platform notes
