@@ -12,6 +12,7 @@
 #include <cstdio>
 #include <cctype>
 #include <mutex>
+#include <set>
 
 namespace vitaplex {
 
@@ -80,6 +81,42 @@ static void applyCurlPerfDefaults(CURL* curl) {
     if (CURLSH* sh = curlShare())
         curl_easy_setopt(curl, CURLOPT_SHARE, sh);
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
+}
+
+// A failed name lookup is cached too. curl (8.16 here) keeps a "negative" DNS
+// entry for half of CURLOPT_DNS_CACHE_TIMEOUT, 150 s at our 300, and every
+// request to that host meanwhile fails at once with "Could not resolve
+// hostname" without asking the system again. When the lookup failed because
+// the network did (Android cutting off a backgrounded app, a phone changing
+// networks), that keeps the server unreachable after it is back: an Android
+// log had every check of the server fail in under 10 ms for the 2.5 minutes it
+// ran on, while Android allowed access again and with the app on screen.
+//
+// So once a host fails to resolve, its requests skip the cache until one gets
+// past the lookup. With a timeout of 0 curl drops the cached entry and asks
+// the system; the transfer then prunes the shared cache by that timeout too,
+// which clears it. That costs nothing much while the network is down.
+static std::mutex s_dnsRetryLock;
+static std::set<std::string> s_dnsRetryHosts;
+
+// "scheme://host:port" of a URL: one key per name and port, like curl's.
+static std::string dnsKey(const std::string& url) {
+    size_t start = url.find("://");
+    start = (start == std::string::npos) ? 0 : start + 3;
+    return url.substr(0, url.find_first_of("/?#", start));
+}
+
+static bool dnsLookupFailedBefore(const std::string& key) {
+    std::lock_guard<std::mutex> lock(s_dnsRetryLock);
+    return s_dnsRetryHosts.count(key) != 0;
+}
+
+static void noteDnsOutcome(const std::string& key, CURLcode res) {
+    std::lock_guard<std::mutex> lock(s_dnsRetryLock);
+    if (res == CURLE_COULDNT_RESOLVE_HOST)
+        s_dnsRetryHosts.insert(key);
+    else
+        s_dnsRetryHosts.erase(key);
 }
 
 // Apply baseline security-sensitive curl options shared by every request.
@@ -315,8 +352,11 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, connectTimeout);
 
-    // Enable DNS caching for faster reconnects
-    curl_easy_setopt(curl, CURLOPT_DNS_CACHE_TIMEOUT, 300);  // 5 minutes
+    // Enable DNS caching for faster reconnects, but not for a host whose last
+    // lookup failed (see s_dnsRetryHosts).
+    const std::string hostKey = dnsKey(req.url);
+    const bool freshLookup = dnsLookupFailedBefore(hostKey);
+    curl_easy_setopt(curl, CURLOPT_DNS_CACHE_TIMEOUT, freshLookup ? 0L : 300L);  // 5 minutes
 
     // Pin HTTP/1.1.  curl_easy's default is CURL_HTTP_VERSION_2TLS, and HTTP/2
     // multiplexed responses can leave the easy interface blocked in
@@ -393,8 +433,10 @@ HttpResponse HttpClient::request(const HttpRequest& req) {
     }
 
     // Perform request. Redact tokens from the logged URL — req.url commonly contains ?X-Plex-Token=<long-lived-secret>.
-    brls::Logger::debug("HTTP {} {}", req.method, redactTokensInUrl(req.url));
+    brls::Logger::debug("HTTP {} {}{}", req.method, redactTokensInUrl(req.url),
+                        freshLookup ? " (looking the name up again)" : "");
     CURLcode res = curl_easy_perform(curl);
+    noteDnsOutcome(hostKey, res);
 
     // Cleanup headers
     if (headerList) {
@@ -668,6 +710,11 @@ bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallbac
     applyCurlSecurityDefaults(curl);
     applyCurlPerfDefaults(curl);
 
+    // Same DNS cache as request(), so the same rule for a failed lookup.
+    const std::string hostKey = dnsKey(url);
+    if (dnsLookupFailedBefore(hostKey))
+        curl_easy_setopt(curl, CURLOPT_DNS_CACHE_TIMEOUT, 0L);
+
     // User agent
     curl_easy_setopt(curl, CURLOPT_USERAGENT, m_userAgent.c_str());
 
@@ -723,6 +770,7 @@ bool HttpClient::downloadFile(const std::string& url, WriteCallback writeCallbac
 
     // Perform download
     CURLcode res = curl_easy_perform(curl);
+    noteDnsOutcome(hostKey, res);
 
     if (headerList) {
         curl_slist_free_all(headerList);
