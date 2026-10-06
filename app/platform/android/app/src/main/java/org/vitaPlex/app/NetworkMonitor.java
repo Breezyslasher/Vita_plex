@@ -56,6 +56,7 @@ public final class NetworkMonitor {
         sStarted = true;
         try {
             logRestrictions(ctx);
+            ExitReasons.start(ctx);
             watchNetwork(ctx);
             watchPower(ctx);
         } catch (Throwable t) {
@@ -180,8 +181,12 @@ public final class NetworkMonitor {
         } catch (Throwable t) {
             return "state unknown";
         }
+        return importanceName(info.importance);
+    }
+
+    static String importanceName(int importance) {
         String name;
-        switch (info.importance) {
+        switch (importance) {
             case ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND:
                 name = "in front"; break;
             case ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND_SERVICE:
@@ -199,7 +204,7 @@ public final class NetworkMonitor {
             default:
                 name = "importance"; break;
         }
-        return name + " " + info.importance;
+        return name + " " + importance;
     }
 
     private static String describe(NetworkCapabilities nc) {

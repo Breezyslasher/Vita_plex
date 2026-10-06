@@ -264,6 +264,45 @@ Changes:
   BLOCKED` or `allowed` line now ends with the app's process state, such as
   `foreground service 125` or `cached 400`.
 
+The next log (build 1976) shows the service holding. It started on each play
+(12:36:53, 12:36:58), and the song then played in the background with no block,
+with the app at `foreground service 125`. Android does stop the service on its
+own once nothing plays. Paused at 05:36, the app was at `background service 300`
+by 06:06 and the service stopped at 06:09. After the queue ended at 12:41, the
+service stopped at 12:55. The next play starts it again.
+
+### A crash while typing in search
+
+The same log ends mid-search, at 13:20:10, with no error. Each letter of "Day
+dream" had started a library search and a Live TV search on threads of their
+own, their answers came back out of order, and a native crash writes nothing to
+this log. What crashed is not known. Two things changed:
+
+- **How a run ended is now logged at the next start** (`ExitReasons`, Android
+  11+). Android keeps a record of every process death: crash, ANR, low-memory
+  kill, and so on, with the app's state and memory. For a native crash (Android
+  12+) the record includes the tombstone, a protobuf. Its signal, cause and the
+  crashing thread's backtrace are decoded with the field numbers from the
+  framework's own `TombstoneProtos`. This covers a crash from before this
+  shipped, while Android still holds the record. Java exceptions are now also
+  written to the log as they happen (`CRASH:` lines).
+- **`ImageLoader` could write into a freed `brls::Image`.** A reply was checked
+  only against the caller's alive flag, which usually covers a whole screen.
+  The player's queue deletes and rebuilds rows while its activity, and so its
+  flag, lives on. A reply for a deleted row's image then reached
+  `setImageFromMem()` on freed memory. Run against the shipped file, a host
+  harness gets a heap-use-after-free from ASan at exactly that call.
+  Each pending load now holds the image's own borealis deletion token, the one
+  `ASYNC_RETAIN` uses. A reply is dropped unless it is still that image's current
+  request and the image still exists. That also stops a late reply for a recycled
+  view's old URL replacing its new picture.
+
+The same retry hook re-sent every thumbnail still missing after 0.9 s, up to
+three times, even while its first request was still queued. Loads run one at a
+time on borealis' single task thread, so on the "Day" search (136 results) that
+queued 550 duplicate requests in three seconds. A load is now retried only
+after its request fails.
+
 ---
 
 ## Platform notes
