@@ -1259,6 +1259,35 @@ program. Since the packages are tried one after another, a player still
 running quits as soon as another app asks for its player (the note
 appearing), so that two do not play over each other.
 
+**The power button stops the music; the program goes on** (log `91252932`,
+`VPLXBGT16` again, build 1999). The times are the log's.
+
+- The player started 1.08 s after the ask, and the shell played song 1 from
+  0:08.
+- At 1:56 the power callback carried 0x80401000: the power button
+  (0x80000000) and apps suspending (0x00400000). Half a second later the
+  shell's state was 2, stopped, at 1:47 of the song, and nothing played it
+  again.
+- The Vita went to sleep at 2:15 (0x00010000) and woke at 2:21. The player
+  was held for those 6 s ("did not run for 6.0s"), then went on, and the first
+  request after it took 2.4 s.
+- From the PS press at 2:29 to the end of the log at 4:58 it ran without a
+  gap. At 4:32 song 1's time ran out (its length and a minute), with the shell
+  still stopped at 1:47, so the player handed over song 2 and the shell played
+  it. That was the second song the user heard. So the program was running
+  then, whatever was in front. The log does not say whether a game had been
+  started.
+
+ElevenMPV-A's power callback handles exactly this. At bit 22 (0x00400000),
+with a song in the shell, it sends play again. While it plays, it ticks
+`sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DISABLE_AUTO_SUSPEND)`, so that the
+Vita does not sleep by itself. The player now does both. A song that stops
+part-way gets play again every 5 s, and the player moves on after two minutes;
+time spent stopped is not counted against the song. A host run covered a song
+stopped part-way, the same with the power callback, and play doing nothing,
+and each went on to the end.
+
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

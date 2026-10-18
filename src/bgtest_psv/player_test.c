@@ -811,6 +811,18 @@ static void seekTo(int song, unsigned ms) {
     }
 }
 
+// The power button: the system stops the shell's music as it suspends apps
+// (0x00400000, which came with the press in log 91252932, and the song was
+// stopped at 1:47 half a second later). ElevenMPV-A sends play again from its
+// power callback at that event (PowerCallback in its utils.cpp), and so does
+// this, from main.c's.
+void playerPowerEvent(int powerInfo) {
+    if (!(powerInfo & 0x00400000) || !g_handedOver || !g_shellUp) return;
+    char r[24];
+    logLine("player: apps suspending (power button?); play again, as ElevenMPV-A does: %s",
+            result(r, sizeof(r), sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_PLAY, 0)));
+}
+
 // Watches song play until it ends: its clock moving with a new song loaded
 // (shellHasNewSong), then either going back after the last 10 s or the state
 // leaving 1 (playing) there, against the server's length. The first readings
@@ -823,8 +835,14 @@ static int watchSong(int song) {
     unsigned maxTime = 0, prevTime = 0;
     const double t0 = now();
     double lastLine = t0;
+    // A song stopped part-way: since when, and for how long in all, which the
+    // time it is given leaves out.
+    double stoppedSince = 0, stoppedFor = 0, lastPlay = 0;
     for (;;) {
         sceKernelDelayThread(500 * 1000);
+        // As ElevenMPV-A does while it plays: the Vita does not go to sleep
+        // by itself in the middle of a song.
+        sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DISABLE_AUTO_SUSPEND);
         SceMusicPlayerServicePlayStatusExtension st;
         memset(&st, 0, sizeof(st));
         const int rc = sceMusicPlayerServiceGetPlayStatusExtension(&st);
@@ -880,11 +898,36 @@ static int watchSong(int song) {
                 logLine("player: song %d ended (it got to %s of %s)", song, at, dur);
                 return 1;
             }
+            // Stopped before its end, as the power button stopped it in log
+            // 91252932, where it never went on: play again every 5 s while it
+            // stays so, and move on after two minutes of it.
+            if (state != 1) {
+                if (stoppedSince == 0) stoppedSince = t;
+                if (t - stoppedSince > 120.0) {
+                    logLine("player: song %d stayed stopped at %s for two minutes; moving on", song,
+                            at);
+                    return 0;
+                }
+                if (t - lastPlay >= 5.0) {
+                    logLine("player: song %d stopped at %s, before its end (state %d); play again: "
+                            "%s",
+                            song, at, state,
+                            result(r, sizeof(r),
+                                   sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_PLAY, 0)));
+                    lastPlay = t;
+                }
+            } else if (stoppedSince > 0) {
+                logLine("player: song %d plays again at %s, after %.1fs stopped", song, at,
+                        t - stoppedSince);
+                stoppedFor += t - stoppedSince;
+                stoppedSince = 0;
+            }
         } else if (t - t0 > 15.0) {
             logLine("player: song %d: the system player never started it", song);
             return 0;
         }
-        if (t - t0 > durMs / 1000.0 + 60.0) {
+        const double stopped = stoppedFor + (stoppedSince > 0 ? t - stoppedSince : 0);
+        if (t - t0 - stopped > durMs / 1000.0 + 60.0) {
             mmss(at, sizeof(at), maxTime);
             logLine("player: song %d did not end in time (it got to %s of %s)", song, at, dur);
             return 0;

@@ -41,6 +41,9 @@ void playerStart(int mode);
 // Stops the system player and gives the BGM port back, on the way out (why
 // says which, for the log), unless a song is with the shell.
 void playerQuit(const char* why);
+// The power callback's argument (main.c): the power button stops the shell's
+// music, and this plays it again, as ElevenMPV-A does.
+void playerPowerEvent(int powerInfo);
 #endif
 
 #endif

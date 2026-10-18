@@ -650,6 +650,9 @@ static int powerCallback(int notifyId, int notifyCount, int powerInfo, void* com
     (void)notifyCount;
     (void)common;
     logLine("power callback 0x%08X", (unsigned)powerInfo);
+#ifdef BGTEST_PLAYER
+    playerPowerEvent(powerInfo);
+#endif
     return 0;
 }
 
