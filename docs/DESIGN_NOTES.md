@@ -1103,6 +1103,18 @@ The first is the likeliest to matter. If the switch only works between safe
 SELFs, the player would also have to work as a safe one, which is not known
 for the shell's music service. VitaPlex itself is built unsafe.
 
+**The last try, as RetroArch does it.** `VPLXBGT12` and `VPLXBGT13` now carry
+safe builds of both programs, separate targets made from the same sources
+with the same settings. vitasdk's `vita_create_self` (`cmake_toolchain/vita.cmake`)
+adds `-s` when `UNSAFE` is not given. It names its intermediate files after
+the source target, so the same program cannot be made twice. The switch asks
+for `app0:/<program>`, and the program quits as soon as the call returns
+success, as RetroArch's does. A configure of these targets with vitasdk's own
+macros, and stand-ins for its tools, generated `vita-make-fself -c -s` for the
+program with the screen and `-c -at 2 -m 0x4000 -s` for the player. The
+unsafe builds were left as they were, and both packages hold the safe
+programs. The test is triangle on `VPLXBGT13`, the game, as RetroArch is.
+
 The switch back from the player also moved off the watcher onto the main
 thread. Run on the watcher, a switch that does not return before the quit
 request would leave no one to answer it, and an app that did not quit once

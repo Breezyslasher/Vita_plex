@@ -289,10 +289,11 @@ static int takeSwitchNote(SwitchNote* n, int titleKnown) {
 // Only the two programs that switch need what follows: the build with a
 // screen and the player. The system-mode beeper of 5 and 6 never does.
 #if !defined(BGTEST_SYSTEM_MODE) || defined(BGTEST_PLAYER)
-// Replaces this program with app0:<program> of the same app. Returns only if
-// the system refused. It had not returned when the system asked the app to
-// quit, 69 ms after (log 4a8451a1), so it must not run on the watcher, which
-// answers that.
+// Replaces this program with app0:/<program> of the same app, as RetroArch
+// switches between its cores (frontend_psp_exec): that path form, no argv, no
+// options, and the process ending right after. It had not returned when the
+// system asked the app to quit, 69 ms after (log 4a8451a1), so it must not
+// run on the watcher, which answers that. Returns only if the system refused.
 static void switchTo(const char* program) {
     char app[32], r[24];
     FILE* f = fopen(SWITCH_NOTE, "w");
@@ -301,12 +302,17 @@ static void switchTo(const char* program) {
                 sceKernelGetSystemTimeWide() / 1e6);
         fclose(f);
     }
-    snprintf(app, sizeof(app), "app0:%s", program);
+    snprintf(app, sizeof(app), "app0:/%s", program);
     logLine("switching to %s with sceAppMgrLoadExec%s", app, g_away ? ", away" : "");
     g_switchingTo = program;
     const int rc = sceAppMgrLoadExec(app, NULL, NULL);
+    logLine("sceAppMgrLoadExec(%s): %s", app, result(r, sizeof(r), rc));
+    if (rc >= 0) {
+        logLine("quit, for the switch to %s", program);
+        sceKernelExitProcess(0);
+    }
     g_switchingTo = NULL;
-    logLine("sceAppMgrLoadExec(%s): %s; still %s", app, result(r, sizeof(r), rc), g_program);
+    logLine("still %s", g_program);
     remove(SWITCH_NOTE);
 }
 #endif

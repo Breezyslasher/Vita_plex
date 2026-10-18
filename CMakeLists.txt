@@ -1531,6 +1531,30 @@ if(PLATFORM_PSV)
     vita_create_self(vitaplex_bgtest_player.self vitaplex_bgtest_player UNSAFE MEMSIZE 0x4000 ATTRIBUTE 2)
     set(VITA_MAKE_FSELF_FLAGS "${_bgt_saved_fself}")
 
+    # Both again as safe SELFs, for the switch test: what vita_create_self
+    # makes without UNSAFE (vita-make-fself -s, authority id
+    # 0x2F00000000000002). RetroArch builds the programs it switches between
+    # with sceAppMgrLoadExec that way (Makefile.vita), and every switch
+    # between the unsafe ones failed, even to eboot.bin itself
+    # (docs/DESIGN_NOTES.md). vita_create_self names its intermediate files
+    # after the source target, so each is a target of its own, built from the
+    # same sources with the same settings.
+    foreach(_bgt_prog vitaplex_bgtest vitaplex_bgtest_player)
+        get_target_property(_bgt_srcs ${_bgt_prog} SOURCES)
+        add_executable(${_bgt_prog}_safe ${_bgt_srcs})
+        foreach(_bgt_prop COMPILE_DEFINITIONS INCLUDE_DIRECTORIES LINK_LIBRARIES LINK_OPTIONS)
+            get_target_property(_bgt_val ${_bgt_prog} ${_bgt_prop})
+            if(_bgt_val)
+                set_property(TARGET ${_bgt_prog}_safe PROPERTY ${_bgt_prop} "${_bgt_val}")
+            endif()
+        endforeach()
+    endforeach()
+    set(VITA_MAKE_FSELF_FLAGS "")
+    vita_create_self(vitaplex_bgtest_safe.self vitaplex_bgtest_safe)
+    set(VITA_MAKE_FSELF_FLAGS "")
+    vita_create_self(vitaplex_bgtest_player_safe.self vitaplex_bgtest_player_safe MEMSIZE 0x4000 ATTRIBUTE 2)
+    set(VITA_MAKE_FSELF_FLAGS "${_bgt_saved_fself}")
+
     set(_bgt_saved_sfo "${VITA_MKSFOEX_FLAGS}")
     set(_bgt_saved_pack "${VITA_PACK_VPK_FLAGS}")
     set(_bgt_saved_resources "${resources}")
@@ -1587,10 +1611,11 @@ if(PLATFORM_PSV)
     # Two programs in one app: the build with a screen as eboot.bin, and the
     # player as player.self, which the first switches to with
     # sceAppMgrLoadExec (main.c); and a copy of the first as screen.self, to
-    # switch to as a control. The twelfth is a non-game app with VitaPlex's
-    # extended memory, as VitaPlex BG is; the thirteenth a game with it, as
-    # VitaPlex is. Listing the player as a FILE also makes each package wait
-    # for it to be built, as VitaPlex.vpk does for updater.vpk.
+    # switch to as a control. All three are the safe SELFs above. The twelfth
+    # is a non-game app with VitaPlex's extended memory, as VitaPlex BG is;
+    # the thirteenth a game with it, as VitaPlex and RetroArch are. Listing
+    # the player as a FILE also makes each package wait for it to be built, as
+    # VitaPlex.vpk does for updater.vpk.
     foreach(_bgt
             "VPLXBGT12|BG Test 12 switch app|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
             "VPLXBGT13|BG Test 13 switch game|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12")
@@ -1601,11 +1626,11 @@ if(PLATFORM_PSV)
         set(VITA_MKSFOEX_FLAGS "${_bgt_flags}")
         set(VITA_PACK_VPK_FLAGS "")
         set(resources "")
-        vita_create_vpk(VitaPlexBgTest-${_bgt_id}.vpk ${_bgt_id} vitaplex_bgtest.self
+        vita_create_vpk(VitaPlexBgTest-${_bgt_id}.vpk ${_bgt_id} vitaplex_bgtest_safe.self
             VERSION 01.00
             NAME "${_bgt_name}"
-            FILE ${CMAKE_BINARY_DIR}/vitaplex_bgtest_player.self player.self
-            FILE ${CMAKE_BINARY_DIR}/vitaplex_bgtest.self screen.self
+            FILE ${CMAKE_BINARY_DIR}/vitaplex_bgtest_player_safe.self player.self
+            FILE ${CMAKE_BINARY_DIR}/vitaplex_bgtest_safe.self screen.self
             FILE resources/cacert.pem cacert.pem)
     endforeach()
     set(VITA_MKSFOEX_FLAGS "${_bgt_saved_sfo}")
