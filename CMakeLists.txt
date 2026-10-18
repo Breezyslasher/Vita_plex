@@ -1451,13 +1451,18 @@ if(PLATFORM_PSV)
     # is frozen. A system-mode build of it is packaged twice more, to find out
     # whether that kind plays on while a game runs, and a third time with a
     # player through SceShell's music service; two more pack that player
-    # beside the first as one app, and the last three as the app's background
+    # beside the first as one app, and the last eight as the app's background
     # program. See the source's header for all of them.
     # vita_create_vpk is a macro that appends to these flag
     # variables in this scope (the updater comment above has the same trap
     # for FILE), so each package gets them fresh and they are put back
     # afterwards. Built after the main vpk, so nothing leaks into it.
-    add_executable(vitaplex_bgtest src/bgtest_psv/main.c src/bgtest_psv/bgapp.c)
+    # exit_stub.S imports the system call under sceKernelExitProcess, for the
+    # rescue of an app whose exit does not finish (main.c, quitNow).
+    add_executable(vitaplex_bgtest
+        src/bgtest_psv/main.c
+        src/bgtest_psv/bgapp.c
+        src/bgtest_psv/exit_stub.S)
     target_link_libraries(vitaplex_bgtest
         vita2d freetype png z m
         SceGxm_stub
@@ -1541,6 +1546,7 @@ if(PLATFORM_PSV)
         src/bgtest_psv/player_test.c
         src/bgtest_psv/mp3_info.c
         src/bgtest_psv/bgapp.c
+        src/bgtest_psv/exit_stub.S
         lib/libshellaudio/ShellAudio.c
         lib/libshellaudio/shellsvc_stub.S)
     target_compile_definitions(vitaplex_bgtest_bgapp PRIVATE
@@ -1695,14 +1701,18 @@ if(PLATFORM_PSV)
     # starter. 16 worked and 14 and 15 gave 0x80101104, so three more with
     # the screen build: VitaPlex BG's param.sfo (17), the same without
     # extended memory (18), and the game of 14 with the ATTRIBUTE of BGFTP's
-    # main app (19).
+    # main app (19). 19 would not install and 18 could not quit once its
+    # player ran, so the last two are 18 and 17 again, quitting as soon as
+    # they start it, as 16 does (20 and 21; main.c tells them apart).
     foreach(_bgt
             "VPLXBGT14|BG Test 14 bg app|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12"
             "VPLXBGT15|BG Test 15 bg app|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0"
             "VPLXBGT16|BG Test 16 bg app|vitaplex_bgtest_starter.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01009000 -d ATTRIBUTE_MINOR=17"
             "VPLXBGT17|BG Test 17 bg app|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
             "VPLXBGT18|BG Test 18 bg app|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
-            "VPLXBGT19|BG Test 19 bg app|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -d ATTRIBUTE=0x01009000 -d ATTRIBUTE_MINOR=17")
+            "VPLXBGT19|BG Test 19 bg app|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -d ATTRIBUTE=0x01009000 -d ATTRIBUTE_MINOR=17"
+            "VPLXBGT20|BG Test 20 bg app|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
+            "VPLXBGT21|BG Test 21 bg app|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16")
         string(REPLACE "|" ";" _bgt "${_bgt}")
         list(GET _bgt 0 _bgt_id)
         list(GET _bgt 1 _bgt_name)

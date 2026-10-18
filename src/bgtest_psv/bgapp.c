@@ -1,5 +1,5 @@
 /**
- * VPLXBGT14 to 16: the player as its app's background application.
+ * VPLXBGT14 to 21: the player as its app's background application.
  *
  * A package can carry a second program, eboot2.bin with its own
  * sce_sys/param2.sfo, which the app starts with sceBgAppUtilStartBgApp and
@@ -13,6 +13,10 @@
  * background program reads it as it starts, so that its log names the app
  * that started it and how long that took, and its clock carries on from the
  * app's.
+ *
+ * The app asks a running program to stop with a second note, which says when
+ * and why: as it opens again and takes the music back (VPLXBGT20 and 21), or
+ * when it cannot quit while the program runs, as VPLXBGT18 could not.
  */
 
 #include "bgtest.h"
@@ -29,6 +33,7 @@ int sceBgAppUtilStartBgApp(int mode);
 
 // One path whatever the app, as for the switch tests' note.
 #define BGAPP_NOTE "ux0:data/VitaPlex/bgtest-bgapp.txt"
+#define BGAPP_QUIT "ux0:data/VitaPlex/bgtest-bgapp-quit.txt"
 
 static double systemSecs(void) { return sceKernelGetSystemTimeWide() / 1e6; }
 
@@ -74,5 +79,39 @@ int bgappTakeNote(char* title, size_t size, double* t0, double* since) {
     if (start <= 0 || asked <= 0 || *since < 0 || *since > 30) return 0;
     snprintf(title, size, "%s", app);
     *t0 = start;
+    return 1;
+}
+
+void bgappAskQuit(const char* why) {
+    FILE* f = fopen(BGAPP_QUIT, "w");
+    if (!f) return;
+    fprintf(f, "%.6f %s\n", systemSecs(), why);
+    fclose(f);
+}
+
+void bgappCancelQuit(void) { remove(BGAPP_QUIT); }
+
+int bgappQuitWaiting(void) {
+    FILE* f = fopen(BGAPP_QUIT, "r");
+    if (!f) return 0;
+    fclose(f);
+    return 1;
+}
+
+// A note it cannot read yet, caught half written, is left for the next look.
+int bgappTakeQuit(double startedAt, char* why, size_t size) {
+    FILE* f = fopen(BGAPP_QUIT, "r");
+    if (!f) return 0;
+    char line[160];
+    const int got = fgets(line, sizeof(line), f) != NULL;
+    fclose(f);
+    char* end = got ? strchr(line, '\n') : NULL;
+    double asked = 0;
+    int at = 0;
+    if (!end || sscanf(line, "%lf %n", &asked, &at) < 1 || !at) return 0;
+    remove(BGAPP_QUIT);
+    if (asked < startedAt) return -1;
+    *end = '\0';
+    snprintf(why, size, "%s", line + at);
     return 1;
 }

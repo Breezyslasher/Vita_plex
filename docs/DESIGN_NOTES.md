@@ -1311,6 +1311,72 @@ time spent stopped is not counted against the song. A host run covered a song
 stopped part-way, the same with the power callback, and play doing nothing,
 and each went on to the end.
 
+**The game opened over 18 hung, and 19 would not install** (the user, after
+build 2002).
+
+- The game started over `VPLXBGT18` at 0:50 was 2048, and it never came up;
+  the console had to be restarted. 2048 waited for 18 to end, as the next app
+  waited for VitaPlex in `3ea218f5`, and 18 never did. Its watcher logged
+  "quit" and called `sceKernelExitProcess`, which did not return, while its
+  other threads ran on. So an app cannot quit while its background program
+  runs, at least on that path. 16 and BGFTP's main app never meet this: they
+  are gone 0.04 s after they ask, a second before their program is up.
+- 2048 is a vitasdk homebrew game, and vita-mksfoex gives those
+  `ATTRIBUTE2_MEM109` unless told otherwise, so it most likely runs in
+  enlarged memory mode. BGFTP's README says starting such a game ends a
+  background program, so the hang may need that too. The next run does not
+  open one.
+- `VPLXBGT19`, the game of 14 with the `ATTRIBUTE` of BGFTP's main app, would
+  not install either. So the category decides: a game cannot carry a
+  background program, and VitaPlex would have to become a non-game app to have
+  one.
+
+So VitaPlex would do what BGFTP's main app does: start the program and quit at
+once. Two more packages do that from the app with a screen:
+
+- `VPLXBGT20` is 18 (no extended memory) with X starting the player and the
+  app quitting at once. When the system asks it to quit, as when a game is
+  started over it, it starts the player first. That is the hand-over VitaPlex
+  would make as a game takes its place.
+- `VPLXBGT21` is the same with extended memory: VitaPlex BG's `param.sfo`, as
+  17 has. 17 itself would hang as 18 did, so it is not to be run.
+- Opened again while their player plays, both take the music back, as
+  VitaPlex would. They ask the player to stop and wait up to 10 s for it to
+  go. The request is a second note, `bgtest-bgapp-quit.txt`, which says when
+  it was made and why; the program drops one made before it started, which
+  was for another program. Whether the system lists a background program by
+  its title id (`sceAppMgrGetIdByName` on `VPLXBGP20`) is not known, so the
+  request goes out even when it does not, and is taken back after 2 s if
+  nothing has taken it.
+- Every exit of 14 to 21 and of the program now has a rescue behind it. A
+  thread started just before the exit call wakes 3 s later, which it only
+  does if the process is still there. In an app it asks the player to stop,
+  in case the exit is waiting for that, and gives it 5 s and 1 s more. Then
+  the app ends with `_sceKernelExitProcessForUser`, the system call
+  `sceKernelExitProcess` (SceLibKernel) ends with, past whatever LibKernel
+  does before it; the program's own rescue goes straight to that. vita-headers
+  declares the call, but vitasdk 2026.08's stubs may not carry it, so
+  `exit_stub.S` imports it (SceProcessmgr 0x2DD91812, 0xC053DC6B) under a name
+  of this project's. Each step is logged, so a rescue that ran shows which
+  step ended the process. 18 opened with this build would answer the rest for
+  an app that stays: whether its exit finishes once the player has stopped.
+- A program the system asks to quit (as its app's LiveArea is peeled off)
+  now stops the music as it goes, where before it left the shell playing.
+
+The run: open 20 and press X, and the music starts. Press PS and start BG Test
+8 (a game without extended memory): does the music go on? Close it and open 20
+again, and the music should stop as it opens. Press PS and start BG Test 8
+again: 20 is closed and starts its player as it goes. Does the music start in
+the game? Then 21 the same, though opening an app with extended memory may end
+the player before 21 can ask; the logs would show that as a program that
+stops with no request. Not 2048, BG Test 7 or VitaSurf yet. A host run covered
+the request and its note (fresh, from before the program, half written), the
+take-back (no player, one listed, one not listed, one that never takes the
+request, one that takes it and stays), X and the quit request in 20 and 21, X
+refused, 18 and 8 as before, both rescues, and the player stopped part-way
+through a song, which plays nothing again and starts no second song. The
+packages' `param.sfo` and `param2.sfo` were decoded from the configured build.
+
 
 ### PS4: the popup, and nothing to hang progress on
 

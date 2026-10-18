@@ -81,8 +81,10 @@ static volatile int g_handedOver;    // a song has been given to the shell
 // library, and the first goes on from where VitaPlex paused it.
 static int g_handoff;
 static unsigned g_startMs;
-// VPLXBGT14 to 16: the app's background program, started at once.
+// VPLXBGT14 to 21: the app's background program, started at once.
 static int g_background;
+// playerStop: the music is over, and nothing is to start it again.
+static volatile int g_stopped;
 // The CA bundle packaged beside the eboot (findCaBundle).
 static char g_caPath[64] = "app0:cacert.pem";
 
@@ -840,6 +842,8 @@ static int watchSong(int song) {
     double stoppedSince = 0, stoppedFor = 0, lastPlay = 0;
     for (;;) {
         sceKernelDelayThread(500 * 1000);
+        // Stopped from another thread, which is quitting: not played again.
+        if (g_stopped) return 0;
         // As ElevenMPV-A does while it plays: the Vita does not go to sleep
         // by itself in the middle of a song.
         sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DISABLE_AUTO_SUSPEND);
@@ -962,6 +966,11 @@ void playerQuit(const char* why) {
     stopShell(why);
 }
 
+void playerStop(const char* why) {
+    g_stopped = 1;
+    stopShell(why);
+}
+
 // ── The run ──────────────────────────────────────────────────────────────
 
 static int secondMain(SceSize args, void* argp) {
@@ -1009,7 +1018,7 @@ static void run(void) {
         logLine("player: starting%s", g_away ? ", away" : " in front (never sent away)");
     }
 
-    if (download(1) < 0) return;
+    if (download(1) < 0 || g_stopped) return;
     handOver(1);
     if (g_startMs > 0) seekTo(1, g_startMs);
     SceUID second = -1;
@@ -1021,7 +1030,7 @@ static void run(void) {
     watchSong(1);
     if (second >= 0) {
         sceKernelWaitThreadEnd(second, NULL, NULL);
-        if (g_secondReady == 1) {
+        if (g_secondReady == 1 && !g_stopped) {
             handOver(2);
             watchSong(2);
         }

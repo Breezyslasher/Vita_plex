@@ -112,6 +112,20 @@
  *   VPLXBGT19  a game with extended memory and the ATTRIBUTE of BGFTP's main
  *              app, to tell its category from its attributes.
  *
+ * 19 would not install either, so a game cannot carry one. 18 started it, and
+ * it played both songs and on through the power button, but 18 itself could
+ * not quit once it ran: asked to as 2048 was started, it called
+ * sceKernelExitProcess, which never returned, and 2048 hung (logs d942eac0,
+ * e98e760e). BGFTP's main app and 16 quit before their program is up. Two more
+ * do that from the app with a screen, and take the music back when opened
+ * again, as VitaPlex would. Every exit of 14 to 21 and of the program now has
+ * a rescue behind it (quitNow).
+ *
+ *   VPLXBGT20  the app of 18, whose X starts the player and quits at once, and
+ *              which does the same when the system asks it to quit, as when a
+ *              game is started over it.
+ *   VPLXBGT21  the same with extended memory: VitaPlex BG's param.sfo, as 17.
+ *
  * Nothing here is VitaPlex code; what it finds goes into VitaPlex (or a
  * helper app) and this goes away.
  */
@@ -237,14 +251,21 @@ static int switchTest(void) {
     return strcmp(g_title, "VPLXBGT12") == 0 || strcmp(g_title, "VPLXBGT13") == 0;
 }
 
-// VPLXBGT14 to 19: the player as the app's background program (bgapp.c).
+// VPLXBGT14 to 21: the player as the app's background program (bgapp.c).
 static int bgappTest(void) {
-    static const char* const titles[] = {"VPLXBGT14", "VPLXBGT15", "VPLXBGT16",
-                                         "VPLXBGT17", "VPLXBGT18", "VPLXBGT19"};
+    static const char* const titles[] = {"VPLXBGT14", "VPLXBGT15", "VPLXBGT16", "VPLXBGT17",
+                                         "VPLXBGT18", "VPLXBGT19", "VPLXBGT20", "VPLXBGT21"};
     for (unsigned i = 0; i < sizeof(titles) / sizeof(titles[0]); i++)
         if (strcmp(g_title, titles[i]) == 0) return 1;
     return 0;
 }
+
+#ifndef BGTEST_SYSTEM_MODE
+// VPLXBGT20 and 21: those of them that quit as soon as the player is started.
+static int quitsAfterStart(void) {
+    return strcmp(g_title, "VPLXBGT20") == 0 || strcmp(g_title, "VPLXBGT21") == 0;
+}
+#endif
 
 static const char* describe(void) {
 #ifdef BGTEST_BGAPP
@@ -258,6 +279,8 @@ static const char* describe(void) {
     if (strcmp(g_title, "VPLXBGT17") == 0) return "a non-game app set up as VitaPlex BG, starting its player";
     if (strcmp(g_title, "VPLXBGT18") == 0) return "the app of 17 without extended memory";
     if (strcmp(g_title, "VPLXBGT19") == 0) return "the game of 14 with the ATTRIBUTE of BGFTP's main app";
+    if (strcmp(g_title, "VPLXBGT20") == 0) return "a non-game app that starts its player and quits at once";
+    if (strcmp(g_title, "VPLXBGT21") == 0) return "the app of 20 with extended memory, as VitaPlex BG has";
     if (strcmp(g_title, "VPLXBGT12") == 0) return "a non-game app that switches itself to a player";
     if (strcmp(g_title, "VPLXBGT13") == 0) return "a game that switches itself to a player";
     if (strcmp(g_title, "VPLXBGT01") == 0) return "a game, set up like VitaPlex (the control)";
@@ -298,6 +321,7 @@ static volatile int g_switchBack;           // the watcher asks, the main thread
 #endif
 #ifdef BGTEST_BGAPP
 static int g_parentKnown;                   // g_title is the app that started it
+static double g_startedAt;                  // on the system clock
 #endif
 
 typedef struct SwitchNote {
@@ -365,6 +389,143 @@ static void switchTo(const char* program) {
     g_switchingTo = NULL;
     logLine("still %s", g_program);
     remove(SWITCH_NOTE);
+}
+#endif
+
+// ── Background program (VPLXBGT14 to 21) ─────────────────────────────────
+
+#ifndef BGTEST_SYSTEM_MODE
+static char g_bgappLine[96] = "Player: not started";
+
+// The title id the system gives the app's background program: BGP for BGT
+// (CMakeLists.txt, its param2.sfo).
+static void playerTitle(char* out, size_t size) {
+    snprintf(out, size, "%s", g_title);
+    char* p = strstr(out, "BGT");
+    if (p) p[2] = 'P';
+}
+
+// X in VPLXBGT14, 15 and 17 to 21: the player, as the app's background
+// program. 0 or more when the system took the request.
+static int startPlayerApp(void) {
+    char r[24];
+    const int rc = bgappStart(g_title, g_t0 / 1e6);
+    if (rc >= 0)
+        snprintf(g_bgappLine, sizeof(g_bgappLine), "Player: started (at %.0fs)", secs());
+    else
+        snprintf(g_bgappLine, sizeof(g_bgappLine), "Player: refused, %s", result(r, sizeof(r), rc));
+    return rc;
+}
+
+// Opened while its player plays, the app takes the music back, as VitaPlex
+// would: it asks the player to stop and waits up to 10 s for it to go, since
+// an app could not quit while its player ran (VPLXBGT18). Whether the system
+// lists a background program by its title id is not known yet, so the
+// request goes out either way; a running player takes it within a second,
+// and one that nothing has taken in 2 s is taken back.
+static void takeBackPlayer(void) {
+    char player[16], r[24];
+    playerTitle(player, sizeof(player));
+    SceUID pid = -1;
+    const int rc = sceAppMgrGetIdByName(&pid, player);
+    const int wasListed = rc >= 0;
+    if (wasListed)
+        logLine("its player %s: running, process 0x%08X; asking it to stop, to take the music back",
+                player, (unsigned)pid);
+    else
+        logLine("its player %s: %s; asking it to stop all the same, in case it runs unlisted",
+                player, result(r, sizeof(r), rc));
+    bgappAskQuit("its app is open again, and takes the music back");
+    const SceInt64 asked = sceKernelGetSystemTimeWide();
+    int took = 0;
+    for (;;) {
+        sceKernelDelayThread(100 * 1000);
+        const double waited = (sceKernelGetSystemTimeWide() - asked) / 1e6;
+        const int listed = sceAppMgrGetIdByName(&pid, player) >= 0;
+        if (!took && !bgappQuitWaiting()) {
+            took = 1;
+            logLine("its player took the request after %.2f s", waited);
+        }
+        const char* line = NULL;
+        if (took && !listed) {
+            logLine("its player has gone%s, %.2f s after it was asked",
+                    wasListed ? "" : " (if the system lists it at all)", waited);
+            line = "Player: was playing; stopped, taking the music back";
+        } else if (!took && !listed && waited >= 2.0) {
+            logLine("nothing took the request in 2 s, and no player is listed");
+            line = "Player: not started";
+        } else if (waited >= 10.0) {
+            logLine("its player %s the request, and is still listed 10 s after it was asked",
+                    took ? "took" : "did not take");
+            line = "Player: still running; it did not stop when asked";
+        }
+        if (line) {
+            snprintf(g_bgappLine, sizeof(g_bgappLine), "%s", line);
+            break;
+        }
+    }
+    bgappCancelQuit();
+}
+#endif
+
+#if !defined(BGTEST_SYSTEM_MODE) || defined(BGTEST_BGAPP)
+// _sceKernelExitProcessForUser, the system call that sceKernelExitProcess
+// ends with, through this project's own import stub (exit_stub.S).
+int bgtestRawExit(int status);
+
+// Started by quitNow, it wakes 3 s later only if the process is still there.
+// VPLXBGT18's sceKernelExitProcess never returned once its player ran: its
+// other threads went on for minutes, and the game that had asked it to quit
+// hung, waiting for it. The app asks its player to stop, in case the exit
+// waits for that, and gives it 5 s to go; then the app, or the player itself,
+// ends through the system call underneath, past whatever LibKernel does
+// before it.
+static int rescueMain(SceSize args, void* argp) {
+    (void)args;
+    (void)argp;
+    sceKernelDelayThread(3 * 1000 * 1000);
+    logLine("still running 3 s after the exit call");
+#ifndef BGTEST_BGAPP
+    char player[16], r[24];
+    playerTitle(player, sizeof(player));
+    SceUID pid = -1;
+    const int rc = sceAppMgrGetIdByName(&pid, player);
+    logLine("its player %s: %s; asking it to stop, in case the exit waits for it", player,
+            rc >= 0 ? "running" : result(r, sizeof(r), rc));
+    bgappAskQuit("its app cannot quit while it runs");
+    const SceInt64 asked = sceKernelGetSystemTimeWide();
+    while (sceKernelGetSystemTimeWide() - asked < 5 * 1000000LL &&
+           (bgappQuitWaiting() || sceAppMgrGetIdByName(&pid, player) >= 0))
+        sceKernelDelayThread(100 * 1000);
+    // A second more for the exit to finish, if the player was what held it.
+    sceKernelDelayThread(1000 * 1000);
+    logLine("still running %.1f s after asking its player to stop, which %s the request and is %s",
+            (sceKernelGetSystemTimeWide() - asked) / 1e6, bgappQuitWaiting() ? "has not taken" : "took",
+            sceAppMgrGetIdByName(&pid, player) >= 0 ? "still listed" : "not listed");
+    bgappCancelQuit();
+#endif
+    logLine("ending through _sceKernelExitProcessForUser, the system call underneath");
+    bgtestRawExit(0);
+    sceKernelDelayThread(3 * 1000 * 1000);
+    logLine("still running after that too: restart the console by holding the power button");
+    return 0;
+}
+
+// Ends the process, with the rescue started first in the apps that start a
+// background program and in that program itself. The log stays open for it.
+static void quitNow(void) {
+#ifdef BGTEST_BGAPP
+    const int rescue = 1;
+#else
+    const int rescue = bgappTest();
+#endif
+    if (rescue) {
+        const SceUID t =
+            sceKernelCreateThread("BgTestRescue", rescueMain, 0x10000100, 0x10000, 0, 0, NULL);
+        if (t >= 0) sceKernelStartThread(t, 0, NULL);
+    }
+    logLine("quit");
+    sceKernelExitProcess(0);
 }
 #endif
 
@@ -737,8 +898,17 @@ static int watcherMain(SceSize args, void* argp) {
             logLine("another app is starting its player; quitting, so that the two do not "
                     "play over each other");
             playerQuit("replaced");
-            logLine("quit");
-            sceKernelExitProcess(0);
+            quitNow();
+        }
+        // Its app asking it to stop: open again and taking the music back,
+        // or unable to quit while this runs (rescueMain).
+        char why[96];
+        const int asked = bgappTakeQuit(g_startedAt, why, sizeof(why));
+        if (asked < 0) logLine("a request to stop from before it started, so for another one: dropped");
+        if (asked > 0) {
+            logLine("its app asks it to stop: %s", why);
+            playerStop("asked by its app");
+            quitNow();
         }
 #endif
 
@@ -774,10 +944,20 @@ static int watcherMain(SceSize args, void* argp) {
                     // build left a switch's request to the system for 5 s,
                     // and closing the app after the error then crashed the
                     // console.
-#ifdef BGTEST_PLAYER
+#if defined(BGTEST_BGAPP)
+                    // As its app's LiveArea is closed, say: the music goes
+                    // with it.
+                    playerStop("asked to quit");
+                    quitNow();
+#elif defined(BGTEST_PLAYER)
                     // Or the shell plays on with nothing to stop it. A switch
                     // back has done this already.
                     if (!g_switchingTo) playerQuit("asked to quit");
+#elif !defined(BGTEST_SYSTEM_MODE)
+                    // 20 and 21 hand the music to their player as they go, as
+                    // VitaPlex would when a game is started over it.
+                    if (quitsAfterStart()) startPlayerApp();
+                    if (bgappTest()) quitNow();
 #endif
                     if (g_switchingTo)
                         logLine("quit, for the switch to %s", g_switchingTo);
@@ -807,18 +987,6 @@ static int watcherMain(SceSize args, void* argp) {
 }
 
 #ifndef BGTEST_SYSTEM_MODE
-static char g_bgappLine[96] = "Player: not started";
-
-// X in VPLXBGT14, 15 and 17 to 19: the player, as the app's background program.
-static void startPlayerApp(void) {
-    char r[24];
-    const int rc = bgappStart(g_title, g_t0 / 1e6);
-    if (rc >= 0)
-        snprintf(g_bgappLine, sizeof(g_bgappLine), "Player: started (at %.0fs)", secs());
-    else
-        snprintf(g_bgappLine, sizeof(g_bgappLine), "Player: refused, %s", result(r, sizeof(r), rc));
-}
-
 static void drawText(vita2d_pgf* font, int x, int y, unsigned color, float scale,
                      const char* fmt, ...) {
     char line[256];
@@ -846,6 +1014,15 @@ static void drawScreen(vita2d_pgf* font, const char* path) {
         drawText(font, 60, 240, muted, 1.0f, "plays two songs: do you hear them in the game?");
         drawText(font, 40, 270, white, 1.0f, "Open this app again after: it switches back here.");
         drawText(font, 40, 305, white, 1.0f, "Now %s. START quits. Running %.0fs", g_program, secs());
+    } else if (quitsAfterStart()) {
+        drawText(font, 40, 120, white, 1.0f, "X starts the player as a background program, and this");
+        drawText(font, 40, 145, white, 1.0f, "app quits at once. A song plays soon after.");
+        drawText(font, 40, 175, white, 1.0f, "Press PS and start BG Test 8: does the music go on?");
+        drawText(font, 40, 205, white, 1.0f, "Open this app again: it stops the player, taking the music back.");
+        drawText(font, 40, 235, white, 1.0f, "Press PS and start BG Test 8 again: this app is closed, and");
+        drawText(font, 60, 260, muted, 1.0f, "starts its player as it goes. Does the music start in the game?");
+        drawText(font, 40, 290, gold, 1.0f, "%s", g_bgappLine);
+        drawText(font, 40, 315, white, 1.0f, "START quits without the player. Running %.0fs", secs());
     } else if (bgappTest()) {
         drawText(font, 40, 125, white, 1.0f, "X starts the player as a background program.");
         drawText(font, 40, 155, white, 1.0f, "A song plays through the system player soon after.");
@@ -898,6 +1075,7 @@ int main(void) {
     // Appended to, in case the app starts it twice.
     char own[16];
     snprintf(own, sizeof(own), "%s", g_title);
+    g_startedAt = g_t0 / 1e6;
     double t0 = 0, since = 0;
     g_parentKnown = bgappTakeNote(g_title, sizeof(g_title), &t0, &since);
     if (g_parentKnown) g_t0 = (SceInt64)(t0 * 1e6);
@@ -984,6 +1162,11 @@ int main(void) {
 #endif
     }
 #else
+    if (bgappTest()) {
+        snprintf(g_bgappLine, sizeof(g_bgappLine), "Player: asking one that runs to stop");
+        if (font) drawScreen(font, path);
+        takeBackPlayer();
+    }
     SceCtrlData pad;
     unsigned held = 0;
     for (;;) {
@@ -992,20 +1175,27 @@ int main(void) {
         if (pad.buttons & SCE_CTRL_START) break;
         // Once a press, in VPLXBGT12 and 13: X switches to the player, O to a
         // copy of this program and triangle to this program again, the
-        // controls for the switch itself. In 14, 15 and 17 to 19, X starts
-        // the player as the app's background program.
+        // controls for the switch itself. In 14, 15 and 17 to 21, X starts
+        // the player as the app's background program, and 20 and 21 then
+        // quit at once, as BGFTP's main app does, which is gone before its
+        // program is up: 18 stayed, and could not quit once its player ran.
         const unsigned pressed = pad.buttons & ~held;
         held = pad.buttons;
         if (switchTest() && (pressed & SCE_CTRL_CROSS)) switchTo("player.self");
         if (switchTest() && (pressed & SCE_CTRL_CIRCLE)) switchTo("screen.self");
         if (switchTest() && (pressed & SCE_CTRL_TRIANGLE)) switchTo("eboot.bin");
-        if (bgappTest() && (pressed & SCE_CTRL_CROSS)) startPlayerApp();
+        if (bgappTest() && (pressed & SCE_CTRL_CROSS) && startPlayerApp() >= 0 &&
+            quitsAfterStart()) {
+            logLine("quitting at once, as BGFTP's main app does");
+            quitNow();
+        }
         if (!font) {
             sceKernelDelayThread(100 * 1000);
             continue;
         }
         drawScreen(font, path);
     }
+    if (bgappTest()) quitNow();
 #endif
 
     logLine("quit");
