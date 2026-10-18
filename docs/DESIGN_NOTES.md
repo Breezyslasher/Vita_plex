@@ -991,6 +991,35 @@ close (as `VPLXBGT03` and `VPLXBGT04` were when another app opened). Also
 whether either seek moves the shell's clock. VitaPlex itself is a game, so a
 working hand-over from VitaPlex BG still leaves VitaPlex's own launch to try.
 
+**The helper takes VitaPlex BG's place** (logs `0bbfcb94` and `6f40de92`,
+build 1988). The launch with 0x20000 returned 0, and VitaPlex BG was
+deactivated 0.3 s later, behind the system's prompt to close it. Once the user
+confirmed, 2.8 s after the launch, the system asked it to quit, and it shut down
+cleanly. `VPLXBGT11` started 1 to 2 s after that and read a hand-over written
+5 s earlier. It was activated, so it came to the front with nothing to show,
+and stayed there until PS was pressed 7 s in. So VitaPlex BG cannot keep
+running beside an app it starts this way, whatever the flag.
+
+The rest worked. The helper downloaded the first song, the original M4A
+(2.67 MB in 3.6 s), and handed it over 4.7 s after it started. The shell
+played it from 0:00 within 0.5 s. The first seek, `SetSeekTime` and then the
+seek event, took the clock to 0:23, where VitaPlex had paused, in 0.3 s. The
+second song went over 26 ms after the first ended, at the server's length,
+and played away from the app as in BG Test 10. From the button to the song
+again took about 10 s. About 5 s of that was the prompt and VitaPlex BG
+closing, and most of the rest was the download.
+
+VitaPlex is a game, and starting another game closes it anyway, so a hand-over
+that ends VitaPlex costs nothing to someone leaving to play one. Still worth
+trying:
+- VitaPlex quitting by itself right after the launch, as its updater does
+  (`app_update.cpp`), to see whether the prompt then goes;
+- the helper started first, since `VPLXBGT06` ran on when VitaPlex was opened
+  (`8098b625`), with hand-overs going to it while it runs;
+- seeking before play, which would avoid the half second from 0:00;
+- the first song taken from a file VitaPlex already has, which would save the
+  download.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which
