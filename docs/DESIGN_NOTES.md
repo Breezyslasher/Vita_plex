@@ -1060,6 +1060,13 @@ the note nor its log. Two changes tell these apart:
   a program the system tells none takes from it. One that has neither logs to
   `bgtest-noid.log`.
 
+The second build (log `bfab5b72`, build 1992) went the same way: the quit
+request came 44 ms after the switch was asked for, and the app quit. Then the
+system showed "An error has occurred. (C1-2697-4)", and the note was again
+left unread. So the system itself refused to start `player.self`. The code is
+not in vitasdk's documentation, and a web search found nothing on it. The
+control, O to `screen.self`, was not part of that run.
+
 The switch back from the player also moved off the watcher onto the main
 thread. Run on the watcher, a switch that does not return before the quit
 request would leave no one to answer it, and an app that did not quit once
