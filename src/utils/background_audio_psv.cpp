@@ -18,6 +18,7 @@
 #include "platform/platform.hpp"
 #include "player/mpv_player.hpp"
 #include "utils/http_client.hpp"
+#include "utils/vita_install.hpp"
 
 #include <borealis.hpp>
 
@@ -42,6 +43,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -1650,6 +1652,89 @@ std::string stopShellTest() {
     lock.unlock();
     releasePort(kPortForShell, "system player test over");
     return "System player stopped.";
+}
+
+// ── BG Test 11 ───────────────────────────────────────────────────────────
+//
+// BG Test 10 showed a small system-mode app downloading songs from the server
+// and handing them to the shell, on through a game. Here VitaPlex starts that
+// app itself, with the song it is playing and where it paused it, and the app
+// carries on from there (src/bgtest_psv/player_test.c, as VPLXBGT11). The
+// watcher's activate and deactivate events say whether VitaPlex stayed in
+// front.
+
+void runHandoffTest(Report done) {
+    static const char* const kHelper = "VPLXBGT11";
+    const QueueItem* track = MusicQueue::getInstance().getCurrentTrack();
+    if (!track || track->ratingKey.empty()) {
+        done("Play a song first: this hands it to BG Test 11.");
+        return;
+    }
+    if (!fileExists(std::string("ux0:app/") + kHelper + "/eboot.bin")) {
+        done("Install VitaPlexBgTest-VPLXBGT11.vpk first. It is in the build's "
+             "VitaPlex-vita-bgtest artifact.");
+        return;
+    }
+    startWatcher();
+
+    // Where in the song: mpv's clock counts from where its stream begins, which
+    // a seek that restarted the transcode moved part-way in.
+    const double position = MpvPlayer::getInstance().getPosition();
+    const long long streamStartMs = MusicController::getInstance().streamStartOffsetMs();
+    pauseMpvForShell();
+    const unsigned positionMs =
+        (unsigned)std::max(0LL, streamStartMs + (position > 0 ? (long long)(position * 1000) : 0));
+    const QueueItem* next = MusicQueue::getInstance().peekNextTrack();
+    const std::string title = track->title;
+    const std::string ratingKey = track->ratingKey;
+    const std::string nextKey = next ? next->ratingKey : std::string();
+
+    // The helper takes the BGM port and the shell's music player for itself,
+    // so VitaPlex lets go of both: the port it holds through a pause, and a
+    // file a system player test left playing.
+    {
+        std::unique_lock<std::mutex> lock(g_shellMutex, std::try_to_lock);
+        if (lock.owns_lock() && g_shellInit) stopShellLocked("handed to BG Test 11");
+    }
+    releasePort(0, "handed to BG Test 11");
+
+    // One line a field, as the helper's readHandoff() reads them.
+    const std::string path = platformPath("bgtest11-handoff.txt");
+    FILE* f = std::fopen(path.c_str(), "w");
+    if (!f) {
+        done("Could not write " + path + ".");
+        return;
+    }
+    std::fprintf(f, "ratingKey=%s\npositionMs=%u\nnext=%s\nwritten=%ld\n", ratingKey.c_str(),
+                 positionMs, nextKey.c_str(), (long)std::time(nullptr));
+    std::fclose(f);
+
+    // 0x20000 first: per vita-headers, the one value that does not open the
+    // LiveArea, so the one that may leave VitaPlex in front. If it is refused,
+    // 0xFFFFF, which VitaPlex's updater launch uses.
+    int flags = 0x20000;
+    int rc = vita::launchTitleWith(kHelper, flags);
+    if (rc < 0) {
+        brls::Logger::info("[bgaudio] BG Test 11: launch with 0x20000: {}; trying 0xFFFFF",
+                           hex(rc));
+        flags = 0xFFFFF;
+        rc = vita::launchTitleWith(kHelper, flags);
+    }
+    brls::Logger::info("[bgaudio] BG Test 11: handed over \"{}\" ({}) at {}, then {}; launch "
+                       "with {:#x}: {}",
+                       title, ratingKey, mmss(positionMs), nextKey.empty() ? "nothing" : nextKey,
+                       flags, hex(rc));
+    if (rc < 0) {
+        std::remove(path.c_str());   // or BG Test 11, opened later, would play it
+        done("BG Test 11 did not start (" + hex(rc) + "). The song is paused here; play it to "
+             "carry on.");
+        return;
+    }
+    done("Handed \"" + title + "\" to BG Test 11 at " + mmss(positionMs) + ". In a few seconds "
+         "it should go on from there through the system player" +
+         (nextKey.empty() ? std::string("") : std::string(", then play the next song")) +
+         ", and then quit. Note whether VitaPlex stayed on screen. Then press PS and start a "
+         "game. Afterwards, send bgtest-VPLXBGT11.log and vitaplex.log.");
 }
 
 }  // namespace bgaudio

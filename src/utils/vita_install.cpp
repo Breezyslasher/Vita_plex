@@ -567,6 +567,11 @@ void launchTitle(const std::string& titleId) {
     sceKernelDelayThread(200 * 1000);
 }
 
+int launchTitleWith(const std::string& titleId, int flags) {
+    std::string uri = "psgm:play?titleid=" + titleId;
+    return sceAppMgrLaunchAppByUri(flags, const_cast<char*>(uri.c_str()));
+}
+
 void removeUpdaterStub() {
     // The stub's title id — matches the launch in app_update.cpp and the
     // updater target's param.sfo. The promoter installs to ux0:app (or ur0:app

@@ -1175,6 +1175,15 @@ brls::Box* SettingsTab::createMusicSection() {
         });
         box->addView(stopTest);
 
+        auto* handoffTest = new brls::DetailCell();
+        handoffTest->setText("Test: Hand This Song to BG Test 11");
+        handoffTest->setDetailText("Pauses it here and starts BG Test 11 with it");
+        handoffTest->registerClickAction([](brls::View*) {
+            bgaudio::runHandoffTest(showTestReport);
+            return true;
+        });
+        box->addView(handoffTest);
+
         auto* testInfoLabel = new brls::Label();
         testInfoLabel->setText("Tests for playing on after leaving VitaPlex. Turn the toggle on, "
                                "play music, press PS, and come back: a message says what "

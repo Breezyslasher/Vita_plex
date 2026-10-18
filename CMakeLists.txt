@@ -1566,12 +1566,18 @@ if(PLATFORM_PSV)
             NAME "${_bgt_name}")
     endforeach()
     # The player test, set up as the fifth is, with the CA bundle at app0:.
+    # Twice: the eleventh is the same eboot, started by VitaPlex BG with the
+    # song it was playing (main.c tells them apart by title id).
     set(VITA_MKSFOEX_FLAGS "-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16")
     set(VITA_PACK_VPK_FLAGS "")
     set(resources "")
     vita_create_vpk(VitaPlexBgTest-VPLXBGT10.vpk VPLXBGT10 vitaplex_bgtest_player.self
         VERSION 01.00
         NAME "BG Test 10 player"
+        FILE resources/cacert.pem cacert.pem)
+    vita_create_vpk(VitaPlexBgTest-VPLXBGT11.vpk VPLXBGT11 vitaplex_bgtest_player.self
+        VERSION 01.00
+        NAME "BG Test 11 hand-off"
         FILE resources/cacert.pem cacert.pem)
     set(VITA_MKSFOEX_FLAGS "${_bgt_saved_sfo}")
     set(VITA_PACK_VPK_FLAGS "${_bgt_saved_pack}")

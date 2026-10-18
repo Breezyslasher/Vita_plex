@@ -1,6 +1,6 @@
 /**
- * What main.c shares with the background test's player variant
- * (player_test.c, VPLXBGT10).
+ * What main.c shares with the background test's player variants
+ * (player_test.c, VPLXBGT10 and VPLXBGT11).
  */
 
 #ifndef BGTEST_H
@@ -17,8 +17,10 @@ extern volatile int g_away;      // deactivated and not yet activated
 extern volatile int g_netReady;  // SceNet is up (netMain)
 
 #ifdef BGTEST_PLAYER
-// Starts the player thread (VPLXBGT10).
-void playerStart(void);
+// Starts the player thread: with handoff 0 it picks two songs from the
+// library (VPLXBGT10), with 1 it plays the ones VitaPlex handed it
+// (VPLXBGT11).
+void playerStart(int handoff);
 // Stops the system player and gives the BGM port back, on the way out.
 void playerQuit(void);
 #endif

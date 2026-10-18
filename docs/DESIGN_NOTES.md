@@ -956,6 +956,41 @@ the id CMake gives VitaPlex BG. As `VPLEX0001` the toggle counts as off,
 whatever was saved. The watcher still starts in both, as the one reader of the
 request to quit.
 
+**Handing a song over** (`VPLXBGT11`). BG Test 10 showed the helper's half
+working: downloads in the background, and songs through a game, back to back,
+at the right length. A player built that way also needs VitaPlex to start the
+helper and hand it the music. VitaPlex BG's settings have a button for that,
+"Test: Hand This Song to BG Test 11". It pauses the song, noting where:
+mpv's clock plus the stream's start offset, since mpv counts from 0 again once
+a seek has restarted the transcode part-way in. It lets go of the BGM port. It
+writes the song, the position and the queue's next song to
+`bgtest11-handoff.txt`, then launches `VPLXBGT11` with
+`sceAppMgrLaunchAppByUri`: 0x20000 first, the one value vita-headers says does
+not open the LiveArea, else 0xFFFFF. VitaPlex's watcher logs whether VitaPlex
+was deactivated, and so whether it stayed in front.
+
+`VPLXBGT11` is BG Test 10's eboot under another title id. It reads the file
+once and removes it, then looks both tracks up (`/library/metadata/<key>`). It
+downloads each as the server has it when the shell decodes that, else as the
+server's MP3 behind a length header. It hands the first over at once, without
+BG Test 10's 5 s between steps, since no step was answered (`468b487f`). Once
+the shell plays it, the helper seeks to where VitaPlex paused it. First it
+tries `sceMusicPlayerServiceSetSeekTime` and then the seek event (0x11), as
+`ShellAudio.h` documents them, and gives that 8 s. If that fails it tries
+`sceMusicPlayerServiceSeek`. A seek counts only if the clock gets further than
+playing alone would take it. So a song paused in its first 10 s, or its last
+10 s, starts from the beginning. The next song follows as in BG Test 10. The
+helper quits when they are over, because it reads a hand-over only as it
+starts. On a host, the whole run went through against a scripted shell and
+canned server replies: with the seek event working, with only the seek call
+working, with neither, and with no next song.
+
+What the console has to say: whether VitaPlex BG, a non-game app on the game
+budget, can launch a system-mode app at all, and stay in front, or is asked to
+close (as `VPLXBGT03` and `VPLXBGT04` were when another app opened). Also
+whether either seek moves the shell's clock. VitaPlex itself is a game, so a
+working hand-over from VitaPlex BG still leaves VitaPlex's own launch to try.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

@@ -65,6 +65,11 @@ void runShellStreamTest(Report done);
 // Stops whatever the tests left playing. Returns what happened.
 std::string stopShellTest();
 
+// BG Test 11: pauses the song VitaPlex is playing, writes it, where it was
+// paused and the queue's next song for VPLXBGT11, and starts that app, which
+// carries them on through the shell. done gets a report for a person.
+void runHandoffTest(Report done);
+
 // Which shell service the tests use: 0-4 are the music player service's
 // client types (ElevenMPV-A uses 0), 5 the application-BGM service. Which of
 // them the quick menu's Music controls answer to, and whether any takes a
@@ -84,6 +89,7 @@ inline void onPlayerShutdown() {}
 inline void runShellFileTest(Report) {}
 inline void runShellStreamTest(Report) {}
 inline std::string stopShellTest() { return {}; }
+inline void runHandoffTest(Report) {}
 inline int shellService() { return 0; }
 inline void setShellService(int) {}
 

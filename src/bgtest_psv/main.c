@@ -67,6 +67,13 @@
  *   VPLXBGT10  once sent away, downloads two songs from the Plex server and
  *              hands them to the shell one after the other (player_test.c).
  *
+ * The shell played them through a game, so a song VitaPlex is playing could go
+ * on the same way:
+ *
+ *   VPLXBGT11  the same, started by VitaPlex BG from its settings with the song
+ *              it was playing, carried on from where VitaPlex paused it, then
+ *              the next one in its queue.
+ *
  * Nothing here is VitaPlex code; what it finds goes into VitaPlex (or a
  * helper app) and this goes away.
  */
@@ -196,13 +203,16 @@ static const char* describe(void) {
     if (strcmp(g_title, "VPLXBGT08") == 0) return "a silent game without extended memory";
     if (strcmp(g_title, "VPLXBGT09") == 0) return "the silent game of 7, giving up the BGM output";
     if (strcmp(g_title, "VPLXBGT10") == 0) return "a system-mode app playing songs through the shell";
+    if (strcmp(g_title, "VPLXBGT11") == 0) return "the player of 10, carrying on a song from VitaPlex";
     return "unknown variant";
 }
 
-// The variants that make no sound, for opening while another one beeps.
+// The variants that make no sound of their own: the silent games, for opening
+// while another one beeps, and the players, whose sound comes from the shell.
 static int silent(void) {
     return strcmp(g_title, "VPLXBGT07") == 0 || strcmp(g_title, "VPLXBGT08") == 0 ||
-           strcmp(g_title, "VPLXBGT09") == 0 || strcmp(g_title, "VPLXBGT10") == 0;
+           strcmp(g_title, "VPLXBGT09") == 0 || strcmp(g_title, "VPLXBGT10") == 0 ||
+           strcmp(g_title, "VPLXBGT11") == 0;
 }
 
 // ── Memory ───────────────────────────────────────────────────────────────
@@ -677,7 +687,8 @@ int main(void) {
     t = sceKernelCreateThread("BgTestNet", netMain, 0x10000100 + 10, 0x10000, 0, 0, NULL);
     if (t >= 0) sceKernelStartThread(t, 0, NULL);
 #ifdef BGTEST_PLAYER
-    if (strcmp(g_title, "VPLXBGT10") == 0) playerStart();
+    if (strcmp(g_title, "VPLXBGT10") == 0) playerStart(0);
+    if (strcmp(g_title, "VPLXBGT11") == 0) playerStart(1);
 #endif
 
 #ifdef BGTEST_SYSTEM_MODE

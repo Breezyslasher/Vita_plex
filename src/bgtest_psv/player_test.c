@@ -18,6 +18,13 @@
  * which the second download's speed shows; an original file has no such
  * limit.
  *
+ * VPLXBGT11 is the same app started by VitaPlex BG from its settings, with
+ * the song VitaPlex was playing, where it paused it and the next one in its
+ * queue. It hands those to the shell at once, the first taken on to where it
+ * was paused, and quits when they are over. What that tries is what a player
+ * built this way needs: whether VitaPlex can start it and stay in front, and
+ * whether the shell seeks.
+ *
  * Requests go over https as VitaPlex makes them, with curl, mbedtls and
  * Mozilla's CA bundle (packaged beside the eboot). The sign-in token comes
  * from VitaPlex's settings.json and goes to the server in the requests, and
@@ -67,6 +74,10 @@ static volatile int g_portHeld;
 static Track g_tracks[2];
 static volatile int g_secondReady;   // 1 downloaded, -1 failed
 static volatile int g_handedOver;    // a song has been given to the shell
+// VPLXBGT11: the songs are the ones VitaPlex handed over, not picked from the
+// library, and the first goes on from where VitaPlex paused it.
+static int g_handoff;
+static unsigned g_startMs;
 
 static double now(void) { return sceKernelGetSystemTimeWide() / 1e6; }
 
@@ -285,6 +296,43 @@ static int shellDecodes(const char* ext) {
            strcmp(ext, "wav") == 0;
 }
 
+// The Track element at p, up to the next one: its ids, title, artist, length
+// and first part. 0 when it has a ratingKey and a part to fetch.
+static int trackAt(const char* p, Track* t) {
+    memset(t, 0, sizeof(*t));
+    char num[24];
+    xmlAttr(p, "ratingKey", t->ratingKey, sizeof(t->ratingKey));
+    xmlAttr(p, "title", t->title, sizeof(t->title));
+    xmlAttr(p, "grandparentTitle", t->artist, sizeof(t->artist));
+    if (xmlAttr(p, "duration", num, sizeof(num)) == 0) t->durationMs = atoi(num);
+    const char* next = strstr(p + 1, "<Track ");
+    const char* part = strstr(p, "<Part ");
+    if (!part || (next && part > next)) return -1;
+    xmlAttr(part, "key", t->partKey, sizeof(t->partKey));
+    if (xmlAttr(part, "size", num, sizeof(num)) == 0) t->size = atoll(num);
+    const char* dot = strrchr(t->partKey, '.');
+    snprintf(t->ext, sizeof(t->ext), "%s", dot ? dot + 1 : "");
+    for (char* e = t->ext; *e; e++)
+        if (*e >= 'A' && *e <= 'Z') *e += 'a' - 'A';
+    if (strcmp(t->ext, "mp4") == 0) strcpy(t->ext, "m4a");
+    return t->ratingKey[0] && t->partKey[0] ? 0 : -1;
+}
+
+// Where each of the n songs is saved (ux0:data/VitaPlex/<prefix>-N.ext), and
+// what they are, in the log.
+static void nameTracks(int n, const char* prefix) {
+    for (int i = 0; i < n; i++) {
+        Track* s = &g_tracks[i];
+        snprintf(s->path, sizeof(s->path), "ux0:data/VitaPlex/%s-%d.%s", prefix, i + 1,
+                 s->transcode ? "mp3" : s->ext);
+        char d[16];
+        mmss(d, sizeof(d), (unsigned)s->durationMs);
+        logLine("player: song %d: \"%s\" by %s, %s, %s file of %.1f MB; fetched %s", i + 1,
+                s->title, s->artist, d, s->ext, s->size / (double)MB,
+                s->transcode ? "as the server's MP3" : "as it is");
+    }
+}
+
 // Two songs of 1 to 4 minutes from the first music library, the first one the
 // shell decodes as it is (else any), the second to fetch as the server's MP3.
 static int pickTracks(void) {
@@ -317,23 +365,7 @@ static int pickTracks(void) {
     Track t, plays, any[2];
     int havePlays = 0, haveAny = 0, seen = 0;
     for (const char* p = b.data; p && (p = strstr(p, "<Track ")) != NULL; p++, seen++) {
-        memset(&t, 0, sizeof(t));
-        char num[24];
-        xmlAttr(p, "ratingKey", t.ratingKey, sizeof(t.ratingKey));
-        xmlAttr(p, "title", t.title, sizeof(t.title));
-        xmlAttr(p, "grandparentTitle", t.artist, sizeof(t.artist));
-        if (xmlAttr(p, "duration", num, sizeof(num)) == 0) t.durationMs = atoi(num);
-        const char* next = strstr(p + 1, "<Track ");
-        const char* part = strstr(p, "<Part ");
-        if (!part || (next && part > next)) continue;
-        xmlAttr(part, "key", t.partKey, sizeof(t.partKey));
-        if (xmlAttr(part, "size", num, sizeof(num)) == 0) t.size = atoll(num);
-        const char* dot = strrchr(t.partKey, '.');
-        snprintf(t.ext, sizeof(t.ext), "%s", dot ? dot + 1 : "");
-        for (char* e = t.ext; *e; e++)
-            if (*e >= 'A' && *e <= 'Z') *e += 'a' - 'A';
-        if (strcmp(t.ext, "mp4") == 0) strcpy(t.ext, "m4a");
-        if (!t.ratingKey[0] || !t.partKey[0]) continue;
+        if (trackAt(p, &t) != 0) continue;
         if (t.durationMs < 60000 || t.durationMs > 240000) continue;
         if (!havePlays && shellDecodes(t.ext)) {
             plays = t;
@@ -359,17 +391,90 @@ static int pickTracks(void) {
             g_tracks[n++].transcode = 1;
         }
     }
-    for (int i = 0; i < n; i++) {
-        Track* s = &g_tracks[i];
-        snprintf(s->path, sizeof(s->path), "ux0:data/VitaPlex/bgtest10-%d.%s", i + 1,
-                 s->transcode ? "mp3" : s->ext);
-        char d[16];
-        mmss(d, sizeof(d), (unsigned)s->durationMs);
-        logLine("player: song %d: \"%s\" by %s, %s, %s file of %.1f MB; fetched %s", i + 1,
-                s->title, s->artist, d, s->ext, s->size / (double)MB,
-                s->transcode ? "as the server's MP3" : "as it is");
-    }
+    nameTracks(n, "bgtest10");
     if (n == 0) logLine("player: no song of 1 to 4 minutes among %d tracks", seen);
+    return n;
+}
+
+// ── BG Test 11: what VitaPlex hands over ─────────────────────────────────
+
+// VitaPlex BG writes the song it was playing, where it paused it and the next
+// one in its queue (background_audio_psv.cpp, runHandoffTest), one field a
+// line, then starts this app. Read once and removed, so that starting this
+// from the LiveArea later does not play an old one. 0 when there is a song in
+// it.
+static int readHandoff(char* current, char* next, size_t size, unsigned* positionMs,
+                       long* age) {
+    const char* path = "ux0:data/VitaPlex/bgtest11-handoff.txt";
+    FILE* f = fopen(path, "r");
+    if (!f) {
+        logLine("player: nothing handed over (no %s); start this from VitaPlex BG's settings",
+                path);
+        return -1;
+    }
+    char line[128];
+    long written = 0;
+    current[0] = next[0] = '\0';
+    *positionMs = 0;
+    while (fgets(line, sizeof(line), f)) {
+        line[strcspn(line, "\r\n")] = '\0';
+        if (strncmp(line, "ratingKey=", 10) == 0) snprintf(current, size, "%s", line + 10);
+        else if (strncmp(line, "next=", 5) == 0) snprintf(next, size, "%s", line + 5);
+        else if (strncmp(line, "positionMs=", 11) == 0)
+            *positionMs = (unsigned)strtoul(line + 11, NULL, 10);
+        else if (strncmp(line, "written=", 8) == 0) written = strtol(line + 8, NULL, 10);
+    }
+    fclose(f);
+    remove(path);
+    *age = written > 0 ? (long)time(NULL) - written : -1;
+    return current[0] ? 0 : -1;
+}
+
+// A track's details from the server, as the library list gives them.
+static int fetchTrack(const char* ratingKey, Track* t) {
+    char path[48];
+    snprintf(path, sizeof(path), "/library/metadata/%s", ratingKey);
+    Body b = {0};
+    const int status = getBody(path, NULL, &b);
+    const char* p = b.data ? strstr(b.data, "<Track ") : NULL;
+    const int ok = p && trackAt(p, t) == 0;
+    free(b.data);
+    if (!ok) logLine("player: track %s: HTTP %d, nothing to play in it", ratingKey, status);
+    return ok ? 0 : -1;
+}
+
+// The songs VitaPlex handed over, each fetched as the shell decodes it when it
+// can, else as the server's MP3, as a player would. The first starts where
+// VitaPlex paused it.
+static int handoffTracks(void) {
+    char current[16], next[16];
+    unsigned positionMs = 0;
+    long age = -1;
+    if (readHandoff(current, next, sizeof(current), &positionMs, &age) != 0) return 0;
+    char at[16], when[32];
+    mmss(at, sizeof(at), positionMs);
+    if (age >= 0)
+        snprintf(when, sizeof(when), "%lds ago", age);
+    else
+        snprintf(when, sizeof(when), "at a time not given");
+    logLine("player: handed over %s: track %s at %s, then %s", when, current, at,
+            next[0] ? next : "nothing");
+    int n = 0;
+    if (fetchTrack(current, &g_tracks[n]) != 0) return 0;
+    n++;
+    if (next[0] && fetchTrack(next, &g_tracks[n]) == 0) n++;
+    for (int i = 0; i < n; i++) g_tracks[i].transcode = !shellDecodes(g_tracks[i].ext);
+    nameTracks(n, "bgtest11");
+
+    // A seek of a few seconds could not be told from the song playing, and
+    // one to its last seconds leaves nothing to hear.
+    if (positionMs < 10000)
+        logLine("player: song 1 was paused only %s in, so it starts from the beginning", at);
+    else if (positionMs + 10000 > (unsigned)g_tracks[0].durationMs)
+        logLine("player: song 1 was paused at %s, near its end, so it starts from the beginning",
+                at);
+    else
+        g_startMs = positionMs;
     return n;
 }
 
@@ -447,8 +552,9 @@ static int logMp3(int song, const char* path, Mp3Info* m) {
 // whether it then has the song's length. A host check had ffmpeg read 2:51
 // for a 2:51 file that way, and the same audio, where it guessed 5:34 without.
 static void giveHeader(int song, Track* t, const Mp3Info* m) {
-    char copy[64];
-    snprintf(copy, sizeof(copy), "ux0:data/VitaPlex/bgtest10-%dx.mp3", song);
+    char copy[64];   // bgtest10-2.mp3 -> bgtest10-2x.mp3
+    const size_t stem = strlen(t->path) - strlen(".mp3");
+    snprintf(copy, sizeof(copy), "%.*sx.mp3", (int)stem, t->path);
     if (mp3WriteWithHeader(t->path, m, copy) != 0) {
         logLine("player: song %d: could not write %s; the shell gets the file as the server sent "
                 "it",
@@ -536,9 +642,11 @@ static int download(int song) {
 // The first hand-over goes one step every 5 s. Done all at once from the
 // background, it was answered within 250 ms by the system asking the app to
 // quit (log 7a912d67), and the watcher reads events four times a second, so
-// only spacing the steps out says which one the system answers.
+// only spacing the steps out says which one the system answers. None was (log
+// 468b487f), so a song VitaPlex hands over, which someone is waiting to hear,
+// goes over at once.
 static void step(int first) {
-    if (first) sceKernelDelayThread(5 * 1000 * 1000);
+    if (first && !g_handoff) sceKernelDelayThread(5 * 1000 * 1000);
 }
 
 static void handOver(int song) {
@@ -591,6 +699,89 @@ static int shellHasNewSong(int shellLenMs, int serverLenMs) {
     if (d > -3000 && d < 3000) return 1;
     const int e = shellLenMs - g_lastShellLenMs;
     return g_lastShellLenMs > 0 && shellLenMs > 0 && (e <= -3000 || e >= 3000);
+}
+
+static void shellClock(unsigned* timeMs, int* state) {
+    SceMusicPlayerServicePlayStatusExtension st;
+    memset(&st, 0, sizeof(st));
+    sceMusicPlayerServiceGetPlayStatusExtension(&st);
+    *timeMs = st.currentTime;
+    *state = st.currentState;
+}
+
+// Whether `how` took the clock to ms within `wait` seconds: there or a little
+// past it, and further on from `from`, where it was when asked, than playing
+// alone would have taken it. 1 when it did.
+static int seekLanded(int song, unsigned ms, unsigned from, const char* how, int* state,
+                      double wait) {
+    const double t0 = now();
+    unsigned time = from;
+    char at[16];
+    while (now() - t0 < wait) {
+        sceKernelDelayThread(250 * 1000);
+        shellClock(&time, state);
+        const unsigned played = (unsigned)((now() - t0) * 1000);
+        if (time + 2000 >= ms && time <= ms + 6000 && time > from + played + 3000) {
+            mmss(at, sizeof(at), time);
+            logLine("player: song %d: %s took the clock to %s in %.1fs, state %d", song, how, at,
+                    now() - t0, *state);
+            return 1;
+        }
+    }
+    mmss(at, sizeof(at), time);
+    logLine("player: song %d: %s left the clock at %s, state %d", song, how, at, *state);
+    return 0;
+}
+
+// Takes song on to ms, where VitaPlex paused it: first as ShellAudio.h has
+// it, the time and then the seek event, and failing that the call that seeks
+// by itself. Which of them works, if either, is half of what VPLXBGT11 is for.
+static void seekTo(int song, unsigned ms) {
+    char want[16], at[16], r[2][24];
+    mmss(want, sizeof(want), ms);
+
+    // Once it plays, so that the open cannot undo the seek: the clock moving
+    // with this song's length (shellHasNewSong), for up to 10 s.
+    const int durMs = g_tracks[song - 1].durationMs;
+    unsigned time = 0, prev = 0;
+    int state = 0, playing = 0;
+    const double t0 = now();
+    for (int havePrev = 0; !playing && now() - t0 < 10.0; havePrev = 1) {
+        sceKernelDelayThread(250 * 1000);
+        prev = time;
+        shellClock(&time, &state);
+        if (state == 1 && havePrev && time > prev) {
+            static SceMusicPlayerServiceTrackInfo info;
+            memset(&info, 0, sizeof(info));
+            playing = sceMusicPlayerServiceGetTrackInfo(&info) >= 0 &&
+                      shellHasNewSong(info.duration, durMs);
+        }
+    }
+    mmss(at, sizeof(at), time);
+    logLine("player: song %d: %s after %.1fs, at %s; seeking to %s", song,
+            playing ? "playing" : "not seen playing", now() - t0, at, want);
+
+    const int rcTime = sceMusicPlayerServiceSetSeekTime(ms);
+    const int rcEvent = sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_SEEK, 0);
+    logLine("player: song %d: set seek time %s, seek event %s", song, result(r[0], 24, rcTime),
+            result(r[1], 24, rcEvent));
+    // The event gets the longer wait: one that lands after the call is made
+    // would be taken for the call's doing.
+    int landed = seekLanded(song, ms, time, "the seek event", &state, 8.0);
+    if (!landed) {
+        shellClock(&time, &state);
+        logLine("player: song %d: seek call %s", song,
+                result(r[0], 24, sceMusicPlayerServiceSeek(ms)));
+        landed = seekLanded(song, ms, time, "the seek call", &state, 4.0);
+    }
+    if (!landed) {
+        logLine("player: song %d: neither way took it to %s; it plays on from where it is", song,
+                want);
+    } else if (state != 1) {
+        // There, but not playing: a seek that leaves the song paused.
+        logLine("player: song %d: not playing after the seek; play %s", song,
+                result(r[0], 24, sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_PLAY, 0)));
+    }
 }
 
 // Watches song play until it ends: its clock moving with a new song loaded
@@ -710,39 +901,43 @@ static int secondMain(SceSize args, void* argp) {
     return 0;
 }
 
-static int playerMain(SceSize args, void* argp) {
-    (void)args;
-    (void)argp;
-    if (readSettings() < 0) return 0;
+static void run(void) {
+    if (readSettings() < 0) return;
     for (int i = 0; i < 300 && !g_netReady; i++) sceKernelDelayThread(100 * 1000);
     if (!g_netReady) {
         logLine("player: the network did not start");
-        return 0;
+        return;
     }
     curl_global_init(CURL_GLOBAL_DEFAULT);
-    const int songs = pickTracks();
-    if (songs == 0) return 0;
+    const int songs = g_handoff ? handoffTracks() : pickTracks();
+    if (songs == 0) return;
 
-    // Time to press PS and start a game: 15 s after being sent away, or after
-    // five minutes in front.
-    logLine("player: waiting for PS, then 15 s for a game to start");
-    const double t0 = now();
-    double awaySince = 0;
-    for (;;) {
-        const double t = now();
-        if (g_away) {
-            if (awaySince == 0) awaySince = t;
-            if (t - awaySince >= 15.0) break;
-        } else {
-            awaySince = 0;
+    if (g_handoff) {
+        // VitaPlex has paused the song for this, so it goes on at once.
+        logLine("player: starting at once%s", g_away ? ", away" : "");
+    } else {
+        // Time to press PS and start a game: 15 s after being sent away, or
+        // after five minutes in front.
+        logLine("player: waiting for PS, then 15 s for a game to start");
+        const double t0 = now();
+        double awaySince = 0;
+        for (;;) {
+            const double t = now();
+            if (g_away) {
+                if (awaySince == 0) awaySince = t;
+                if (t - awaySince >= 15.0) break;
+            } else {
+                awaySince = 0;
+            }
+            if (t - t0 >= 300.0) break;
+            sceKernelDelayThread(250 * 1000);
         }
-        if (t - t0 >= 300.0) break;
-        sceKernelDelayThread(250 * 1000);
+        logLine("player: starting%s", g_away ? ", away" : " in front (never sent away)");
     }
-    logLine("player: starting%s", g_away ? ", away" : " in front (never sent away)");
 
-    if (download(1) < 0) return 0;
+    if (download(1) < 0) return;
     handOver(1);
+    if (g_startMs > 0) seekTo(1, g_startMs);
     SceUID second = -1;
     if (songs > 1) {
         second = sceKernelCreateThread("BgTestSecond", secondMain, 0x10000100 + 20, 256 * 1024, 0,
@@ -759,10 +954,23 @@ static int playerMain(SceSize args, void* argp) {
     }
     stopShell("test over");
     logLine("player: done");
+}
+
+static int playerMain(SceSize args, void* argp) {
+    (void)args;
+    (void)argp;
+    run();
+    // Started by VitaPlex, it quits once that is over: it reads a hand-over
+    // only as it starts, so the next one needs it started afresh.
+    if (g_handoff) {
+        logLine("player: quitting, so that the next hand-over starts this afresh");
+        sceKernelExitProcess(0);
+    }
     return 0;
 }
 
-void playerStart(void) {
+void playerStart(int handoff) {
+    g_handoff = handoff;
     const SceUID t =
         sceKernelCreateThread("BgTestPlayer", playerMain, 0x10000100 + 20, 256 * 1024, 0, 0, NULL);
     if (t >= 0) sceKernelStartThread(t, 0, NULL);

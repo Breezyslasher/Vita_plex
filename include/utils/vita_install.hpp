@@ -45,6 +45,11 @@ int installVpk(const std::string& vpkPath, const std::string& workDir, std::stri
 /// off to the updater stub, and by the stub to relaunch VitaPlex afterwards.
 void launchTitle(const std::string& titleId);
 
+/// The same launch with sceAppMgrLaunchAppByUri's flags given, returning what
+/// it returns. vita-headers: 0x20000 starts the app without opening the
+/// LiveArea, anything else opens it (launchTitle's 0xFFFFF does).
+int launchTitleWith(const std::string& titleId, int flags);
+
 /// Uninstall the updater stub (title VPLXUPD01) if it's installed, via
 /// ScePromoterUtility. Call from VitaPlex on startup after an update: the stub
 /// is installed fresh from the bundled updater.vpk each update and left on the
