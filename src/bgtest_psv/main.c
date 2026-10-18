@@ -103,6 +103,15 @@
  *   VPLXBGT16  a small non-game app that starts it and quits, as BGFTP's main
  *              app does (bgstart.c), the control.
  *
+ * 16 started it and it played (log 6b8dce16); 14 and 15 gave 0x80101104.
+ * Three more with X, each one step from those:
+ *
+ *   VPLXBGT17  a non-game app on the game budget with extended memory: VitaPlex
+ *              BG's param.sfo.
+ *   VPLXBGT18  the same without extended memory: VPLXBGT03's, ElevenMPV-A's.
+ *   VPLXBGT19  a game with extended memory and the ATTRIBUTE of BGFTP's main
+ *              app, to tell its category from its attributes.
+ *
  * Nothing here is VitaPlex code; what it finds goes into VitaPlex (or a
  * helper app) and this goes away.
  */
@@ -228,10 +237,13 @@ static int switchTest(void) {
     return strcmp(g_title, "VPLXBGT12") == 0 || strcmp(g_title, "VPLXBGT13") == 0;
 }
 
-// VPLXBGT14 to 16: the player as the app's background program (bgapp.c).
+// VPLXBGT14 to 19: the player as the app's background program (bgapp.c).
 static int bgappTest(void) {
-    return strcmp(g_title, "VPLXBGT14") == 0 || strcmp(g_title, "VPLXBGT15") == 0 ||
-           strcmp(g_title, "VPLXBGT16") == 0;
+    static const char* const titles[] = {"VPLXBGT14", "VPLXBGT15", "VPLXBGT16",
+                                         "VPLXBGT17", "VPLXBGT18", "VPLXBGT19"};
+    for (unsigned i = 0; i < sizeof(titles) / sizeof(titles[0]); i++)
+        if (strcmp(g_title, titles[i]) == 0) return 1;
+    return 0;
 }
 
 static const char* describe(void) {
@@ -243,6 +255,9 @@ static const char* describe(void) {
 #endif
     if (strcmp(g_title, "VPLXBGT14") == 0) return "a game that starts its player as a background program";
     if (strcmp(g_title, "VPLXBGT15") == 0) return "the game of 14 without extended memory";
+    if (strcmp(g_title, "VPLXBGT17") == 0) return "a non-game app set up as VitaPlex BG, starting its player";
+    if (strcmp(g_title, "VPLXBGT18") == 0) return "the app of 17 without extended memory";
+    if (strcmp(g_title, "VPLXBGT19") == 0) return "the game of 14 with the ATTRIBUTE of BGFTP's main app";
     if (strcmp(g_title, "VPLXBGT12") == 0) return "a non-game app that switches itself to a player";
     if (strcmp(g_title, "VPLXBGT13") == 0) return "a game that switches itself to a player";
     if (strcmp(g_title, "VPLXBGT01") == 0) return "a game, set up like VitaPlex (the control)";
@@ -781,7 +796,7 @@ static int watcherMain(SceSize args, void* argp) {
 #ifndef BGTEST_SYSTEM_MODE
 static char g_bgappLine[96] = "Player: not started";
 
-// X in VPLXBGT14 and 15: the player, as the app's background program.
+// X in VPLXBGT14, 15 and 17 to 19: the player, as the app's background program.
 static void startPlayerApp(void) {
     char r[24];
     const int rc = bgappStart(g_title, g_t0 / 1e6);
@@ -964,8 +979,8 @@ int main(void) {
         if (pad.buttons & SCE_CTRL_START) break;
         // Once a press, in VPLXBGT12 and 13: X switches to the player, O to a
         // copy of this program and triangle to this program again, the
-        // controls for the switch itself. In 14 and 15, X starts the player
-        // as the app's background program.
+        // controls for the switch itself. In 14, 15 and 17 to 19, X starts
+        // the player as the app's background program.
         const unsigned pressed = pad.buttons & ~held;
         held = pad.buttons;
         if (switchTest() && (pressed & SCE_CTRL_CROSS)) switchTo("player.self");

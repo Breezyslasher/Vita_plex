@@ -1215,6 +1215,45 @@ the order of the two calls and the player's run, which starts at once and
 stops 10 minutes after its songs. The `param2.sfo` the build writes was
 decoded and compared with BGFTP's.
 
+**The control's background program plays; the games' give an error** (logs
+`65082821`, `6b8dce16`, build 1999).
+
+- `VPLXBGT16`'s starter loaded the module, asked with 0, got 0 in 0.04 s, and
+  quit. The background program started 0.99 s later. The system gave it the
+  title id `VPLXBGP16`, and `app0:` was its app's (the CA bundle was there).
+  Its budget was mode 2: 16 MB of main memory, 4 MB free, and 16 MB of CDRAM.
+  So attribute 3 in its boot param did not give it contiguous memory (mode 3).
+- It played as BG Test 10's player does. It downloaded the first song
+  (3.07 MB in 2.9 s), and the shell played it at its length while it fetched
+  the second and gave that a length header. "Its app VPLXBGT16: not running"
+  came at once, and it carried on, so it outlives the app that started it.
+- After PS (0x20000000 at 51.4 s), it logged on at the home screen. Its log
+  stops at 56.8 s, 0:44 into the first song, with no quit request and nothing
+  after. The user started a game then, and VitaSurf later, and heard music
+  through both. The shell plays a song it was given to its end without the
+  app that gave it (BG Test 10), so that music does not show the program
+  running. Whether it was ended or held at that point, and whether the second
+  song followed, the log cannot say.
+- `VPLXBGT14` and 15, the games, gave 0x80101104. The code is not
+  documented. The ones beside it, 0x801010xx, are the app database's
+  (SceLsdb), which records an app's foreground and background title ids
+  (`_fg_title_id`, `_bg_title_id`), so that is where to look first.
+
+Three more packages take a step from 14 at a time, all with X:
+
+- `VPLXBGT17` has VitaPlex BG's `param.sfo`: a non-game app (`gdc`,
+  `ATTRIBUTE` 0x01089088) on the game budget, with extended memory. That is
+  the one app VitaPlex could be.
+- `VPLXBGT18` is the same without extended memory (`VPLXBGT03`'s, ElevenMPV-A's).
+- `VPLXBGT19` is the game of 14 with the `ATTRIBUTE` of BGFTP's main app
+  (0x01009000, `ATTRIBUTE_MINOR` 17). If it works where 14 did not, the
+  attributes decide, not the category.
+
+The run that answers the open question: X, then PS and a game without
+extended memory, listening into the second song, then the home screen for
+20 s, then VitaSurf. A program the system held logs how long when it
+resumes ("did not run for"), and one it ended logs nothing more.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

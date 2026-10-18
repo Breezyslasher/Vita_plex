@@ -1692,11 +1692,17 @@ if(PLATFORM_PSV)
     # with VitaPlex's extended memory, as VitaPlex is, the fifteenth the same
     # without it, both the build with a screen, whose X asks for the player.
     # The sixteenth is the control, BGFTP's main app: its param.sfo, and the
-    # starter.
+    # starter. 16 worked and 14 and 15 gave 0x80101104, so three more with
+    # the screen build: VitaPlex BG's param.sfo (17), the same without
+    # extended memory (18), and the game of 14 with the ATTRIBUTE of BGFTP's
+    # main app (19).
     foreach(_bgt
             "VPLXBGT14|BG Test 14 bg app|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12"
             "VPLXBGT15|BG Test 15 bg app|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0"
-            "VPLXBGT16|BG Test 16 bg app|vitaplex_bgtest_starter.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01009000 -d ATTRIBUTE_MINOR=17")
+            "VPLXBGT16|BG Test 16 bg app|vitaplex_bgtest_starter.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01009000 -d ATTRIBUTE_MINOR=17"
+            "VPLXBGT17|BG Test 17 bg app|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
+            "VPLXBGT18|BG Test 18 bg app|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
+            "VPLXBGT19|BG Test 19 bg app|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -d ATTRIBUTE=0x01009000 -d ATTRIBUTE_MINOR=17")
         string(REPLACE "|" ";" _bgt "${_bgt}")
         list(GET _bgt 0 _bgt_id)
         list(GET _bgt 1 _bgt_name)
