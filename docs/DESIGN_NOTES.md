@@ -1115,6 +1115,27 @@ program with the screen and `-c -at 2 -m 0x4000 -s` for the player. The
 unsafe builds were left as they were, and both packages hold the safe
 programs. The test is triangle on `VPLXBGT13`, the game, as RetroArch is.
 
+**In a game the switch works, and changes nothing that matters** (logs
+`6b8415c2` and `5571cc78`, build 1997). `VPLXBGT13`, the game, switched both
+ways without an error. Triangle restarted `eboot.bin` 0.87 s after it was
+asked for, and X started `player.self` 0.98 s after. Both picked the log up
+from the note. But the player kept the game's memory: 348 MB of main memory
+free, and the full 80 MB probe allocated, where a system-mode app has 16 MB.
+Its system-mode boot param counted for nothing. When PS was pressed, 19 s in,
+the log stopped: no deactivate event and no "away" lines followed, as for any
+game, which is held the moment it leaves the foreground (`VPLXBGT01`). The
+safe programs' budget calls were refused with 0x8080201F, "not authorized",
+where the unsafe ones got 0x8080201C, which shows they were built safe.
+
+`VPLXBGT12`, the non-game app, still failed with the same programs. The switch
+to `eboot.bin` never returned and no quit request came. The program ran on
+for 16 s until PS was pressed, and the user saw the error.
+
+So one app cannot be both. The switch works only in a game, and the program
+it starts runs as the app it is in: a game, with a game's memory, held when
+it leaves the foreground. A player that plays on through another game has to
+be an app of its own, as in BG Test 11.
+
 The switch back from the player also moved off the watcher onto the main
 thread. Run on the watcher, a switch that does not return before the quit
 request would leave no one to answer it, and an app that did not quit once
