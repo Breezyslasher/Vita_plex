@@ -1450,8 +1450,9 @@ if(PLATFORM_PSV)
     # leaves the foreground, and with what memory and network; VitaPlex itself
     # is frozen. A system-mode build of it is packaged twice more, to find out
     # whether that kind plays on while a game runs, and a third time with a
-    # player through SceShell's music service. See the source's header for
-    # all ten. vita_create_vpk is a macro that appends to these flag
+    # player through SceShell's music service, and the last two pack it
+    # beside the first as one app. See the source's header for all of them.
+    # vita_create_vpk is a macro that appends to these flag
     # variables in this scope (the updater comment above has the same trap
     # for FILE), so each package gets them fresh and they are put back
     # afterwards. Built after the main vpk, so nothing leaks into it.
@@ -1581,6 +1582,28 @@ if(PLATFORM_PSV)
         vita_create_vpk(VitaPlexBgTest-${_bgt_id}.vpk ${_bgt_id} vitaplex_bgtest_player.self
             VERSION 01.00
             NAME "${_bgt_name}"
+            FILE resources/cacert.pem cacert.pem)
+    endforeach()
+    # Two programs in one app: the build with a screen as eboot.bin, and the
+    # player as player.self, which the first switches to with
+    # sceAppMgrLoadExec (main.c). The twelfth is a non-game app with
+    # VitaPlex's extended memory, as VitaPlex BG is; the thirteenth a game
+    # with it, as VitaPlex is. Listing the player as a FILE also makes each
+    # package wait for it to be built, as VitaPlex.vpk does for updater.vpk.
+    foreach(_bgt
+            "VPLXBGT12|BG Test 12 switch app|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
+            "VPLXBGT13|BG Test 13 switch game|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12")
+        string(REPLACE "|" ";" _bgt "${_bgt}")
+        list(GET _bgt 0 _bgt_id)
+        list(GET _bgt 1 _bgt_name)
+        list(GET _bgt 2 _bgt_flags)
+        set(VITA_MKSFOEX_FLAGS "${_bgt_flags}")
+        set(VITA_PACK_VPK_FLAGS "")
+        set(resources "")
+        vita_create_vpk(VitaPlexBgTest-${_bgt_id}.vpk ${_bgt_id} vitaplex_bgtest.self
+            VERSION 01.00
+            NAME "${_bgt_name}"
+            FILE ${CMAKE_BINARY_DIR}/vitaplex_bgtest_player.self player.self
             FILE resources/cacert.pem cacert.pem)
     endforeach()
     set(VITA_MKSFOEX_FLAGS "${_bgt_saved_sfo}")

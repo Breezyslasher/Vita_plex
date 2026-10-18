@@ -21,8 +21,9 @@ extern volatile int g_netReady;  // SceNet is up (netMain)
 // library (VPLXBGT10), with 1 it plays the ones VitaPlex handed it
 // (VPLXBGT11).
 void playerStart(int handoff);
-// Stops the system player and gives the BGM port back, on the way out.
-void playerQuit(void);
+// Stops the system player and gives the BGM port back, on the way out (why
+// says which, for the log), unless a song is with the shell.
+void playerQuit(const char* why);
 #endif
 
 #endif

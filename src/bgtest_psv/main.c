@@ -74,6 +74,18 @@
  *              it was playing, carried on from where VitaPlex paused it, then
  *              the next one in its queue.
  *
+ * It did, but the system closed VitaPlex BG to start it (log 0bbfcb94). One
+ * app could be both, if the system goes by the program an app is running:
+ * sceAppMgrLoadExec switches an app to another SELF in its own package. Two
+ * more packages carry this build with a screen as eboot.bin and the player
+ * of 10 as player.self, with its system-mode boot param. X switches to the
+ * player; opened again after PS, the player switches back. Both programs
+ * keep one log, carried across by a note.
+ *
+ *   VPLXBGT12  as a non-game app with VitaPlex's extended memory, as VitaPlex
+ *              BG is.
+ *   VPLXBGT13  as a game with it, as VitaPlex is.
+ *
  * Nothing here is VitaPlex code; what it finds goes into VitaPlex (or a
  * helper app) and this goes away.
  */
@@ -192,7 +204,17 @@ void logLine(const char* fmt, ...) {
     if (g_logMutex >= 0) sceKernelUnlockMutex(g_logMutex, 1);
 }
 
+// VPLXBGT12 and 13: one package, two programs (see the header).
+static int switchTest(void) {
+    return strcmp(g_title, "VPLXBGT12") == 0 || strcmp(g_title, "VPLXBGT13") == 0;
+}
+
 static const char* describe(void) {
+#ifdef BGTEST_PLAYER
+    if (switchTest()) return "its player, player.self, switched to with sceAppMgrLoadExec";
+#endif
+    if (strcmp(g_title, "VPLXBGT12") == 0) return "a non-game app that switches itself to a player";
+    if (strcmp(g_title, "VPLXBGT13") == 0) return "a game that switches itself to a player";
     if (strcmp(g_title, "VPLXBGT01") == 0) return "a game, set up like VitaPlex (the control)";
     if (strcmp(g_title, "VPLXBGT02") == 0) return "a game with the BG_APP flag";
     if (strcmp(g_title, "VPLXBGT03") == 0) return "a non-game app, set up like ElevenMPV-A";
@@ -212,8 +234,68 @@ static const char* describe(void) {
 static int silent(void) {
     return strcmp(g_title, "VPLXBGT07") == 0 || strcmp(g_title, "VPLXBGT08") == 0 ||
            strcmp(g_title, "VPLXBGT09") == 0 || strcmp(g_title, "VPLXBGT10") == 0 ||
-           strcmp(g_title, "VPLXBGT11") == 0;
+           strcmp(g_title, "VPLXBGT11") == 0 || switchTest();
 }
+
+// ── Switching program (VPLXBGT12 and 13) ─────────────────────────────────
+
+#define SWITCH_NOTE "ux0:data/VitaPlex/bgtest-%s-switch.txt"
+
+// The note a program leaves as it switches (switchTo): which one it was, when
+// the first program started and when it asked, on the system clock, which
+// runs on from one program to the next. A program that finds a fresh one
+// carries the log on, its clock continuing from the first's, and gets the
+// seconds since the ask; -1 otherwise. Read once and removed.
+static double takeSwitchNote(char* from, size_t size) {
+    char note[96], line[96], who[16] = "";
+    snprintf(note, sizeof(note), SWITCH_NOTE, g_title);
+    FILE* f = fopen(note, "r");
+    if (!f) return -1;
+    const int got = fgets(line, sizeof(line), f) != NULL;
+    fclose(f);
+    remove(note);
+    char* p = NULL;
+    double t0 = 0, asked = 0;
+    if (got && sscanf(line, "%15s", who) == 1 && (p = strchr(line, ' ')) != NULL) {
+        t0 = strtod(p, &p);
+        asked = strtod(p, &p);
+    }
+    const double since = sceKernelGetSystemTimeWide() / 1e6 - asked;
+    if (!who[0] || t0 <= 0 || asked <= 0 || since < 0 || since > 30) return -1;
+    snprintf(from, size, "%s", who);
+    g_t0 = (SceInt64)(t0 * 1e6);
+    return since;
+}
+
+// Only the two programs that switch need what follows: the build with a
+// screen and the player. The system-mode beeper of 5 and 6 never does.
+#if !defined(BGTEST_SYSTEM_MODE) || defined(BGTEST_PLAYER)
+static const char* thisProgram(void) {
+#ifdef BGTEST_PLAYER
+    return "player.self";
+#else
+    return "eboot.bin";
+#endif
+}
+
+// Replaces this program with app0:<program> of the same app. Returns only if
+// the system refused.
+static void switchTo(const char* program) {
+    char note[96], app[32], r[24];
+    snprintf(note, sizeof(note), SWITCH_NOTE, g_title);
+    FILE* f = fopen(note, "w");
+    if (f) {
+        fprintf(f, "%s %.6f %.6f\n", thisProgram(), g_t0 / 1e6,
+                sceKernelGetSystemTimeWide() / 1e6);
+        fclose(f);
+    }
+    snprintf(app, sizeof(app), "app0:%s", program);
+    logLine("switching to %s with sceAppMgrLoadExec%s", app, g_away ? ", away" : "");
+    const int rc = sceAppMgrLoadExec(app, NULL, NULL);
+    logLine("sceAppMgrLoadExec(%s): %s; still %s", app, result(r, sizeof(r), rc), thisProgram());
+    remove(note);
+}
+#endif
 
 // ── Memory ───────────────────────────────────────────────────────────────
 
@@ -568,14 +650,24 @@ static int watcherMain(SceSize args, void* argp) {
                      : id == EVENT_RESUME     ? " (resumed)"
                      : id == EVENT_REQUEST_QUIT ? " (asked to quit)" : "");
                 if (id == EVENT_DEACTIVATE) g_away = 1;
-                if (id == EVENT_ACTIVATE) g_away = 0;
+                if (id == EVENT_ACTIVATE) {
+#ifdef BGTEST_PLAYER
+                    // Opened again after PS: back to the program with the
+                    // screen. A song with the shell plays on (playerQuit).
+                    if (g_away && switchTest()) {
+                        playerQuit("switching back");
+                        switchTo("eboot.bin");
+                    }
+#endif
+                    g_away = 0;
+                }
                 if (id == EVENT_REQUEST_QUIT) {
                     // Ended here rather than by the main loop, which could be
                     // stuck: the system starts the next app only once this
                     // process ends, and VitaPlex not ending hung the console
                     // (log 3ea218f5).
 #ifdef BGTEST_PLAYER
-                    playerQuit();   // or the shell plays on with nothing to stop it
+                    playerQuit("asked to quit");   // or the shell plays on with nothing to stop it
 #endif
                     logLine("quit");
                     sceKernelExitProcess(0);
@@ -621,7 +713,14 @@ static void drawScreen(vita2d_pgf* font, const char* path) {
     vita2d_clear_screen();
     drawText(font, 40, 50, gold, 1.3f, "VitaPlex background test");
     drawText(font, 40, 85, white, 1.0f, "%s: %s", g_title, describe());
-    if (silent()) {
+    if (switchTest()) {
+        drawText(font, 40, 135, white, 1.0f, "Press X: this app switches itself to its player.");
+        drawText(font, 60, 165, muted, 1.0f, "the screen then goes black: that is the player");
+        drawText(font, 40, 200, white, 1.0f, "Then press PS and start a game. 15 s after PS the");
+        drawText(font, 60, 230, muted, 1.0f, "player plays two songs: do you hear them in the game?");
+        drawText(font, 40, 265, white, 1.0f, "Open this app again after: it switches back here.");
+        drawText(font, 40, 310, white, 1.0f, "START quits. Running %.0fs", secs());
+    } else if (silent()) {
         drawText(font, 40, 135, white, 1.0f, "This one makes no sound. Open it while BG Test 5 beeps:");
         drawText(font, 60, 165, muted, 1.0f, "do the beeps go on while this is in front?");
         drawText(font, 60, 195, muted, 1.0f, "and once you press PS to leave it?");
@@ -657,10 +756,14 @@ int main(void) {
     g_logMutex = sceKernelCreateMutex("BgTestLog", 0, 0, NULL);
     sceAppMgrAppParamGetString(SCE_KERNEL_PROCESS_ID_SELF, 12, g_title, sizeof(g_title));  // 12: TITLE_ID
 
-    char path[96];
+    char path[96], from[16] = "";
     snprintf(path, sizeof(path), "ux0:data/VitaPlex/bgtest-%s.log", g_title);
-    g_log = fopen(path, "w");
+    // A program VPLXBGT12 or 13 switched to carries the log on.
+    const double sinceAsked = switchTest() ? takeSwitchNote(from, sizeof(from)) : -1;
+    g_log = fopen(path, sinceAsked >= 0 ? "a" : "w");
     logLine("start: %s, %s", g_title, describe());
+    if (sinceAsked >= 0)
+        logLine("switched to from %s: started %.2f s after it asked", from, sinceAsked);
 #ifdef BGTEST_SYSTEM_MODE
     if (strcmp(g_title, "VPLXBGT06") == 0) growMemory();
 #endif
@@ -687,7 +790,7 @@ int main(void) {
     t = sceKernelCreateThread("BgTestNet", netMain, 0x10000100 + 10, 0x10000, 0, 0, NULL);
     if (t >= 0) sceKernelStartThread(t, 0, NULL);
 #ifdef BGTEST_PLAYER
-    if (strcmp(g_title, "VPLXBGT10") == 0) playerStart(0);
+    if (strcmp(g_title, "VPLXBGT10") == 0 || switchTest()) playerStart(0);
     if (strcmp(g_title, "VPLXBGT11") == 0) playerStart(1);
 #endif
 
@@ -699,10 +802,14 @@ int main(void) {
     for (;;) sceKernelDelayThread(60 * 1000 * 1000);
 #else
     SceCtrlData pad;
+    unsigned held = 0;
     for (;;) {
         memset(&pad, 0, sizeof(pad));
         sceCtrlPeekBufferPositive(0, &pad, 1);
         if (pad.buttons & SCE_CTRL_START) break;
+        // X, once a press: VPLXBGT12 and 13 switch to their player.
+        if (switchTest() && (pad.buttons & ~held & SCE_CTRL_CROSS)) switchTo("player.self");
+        held = pad.buttons;
         if (!font) {
             sceKernelDelayThread(100 * 1000);
             continue;

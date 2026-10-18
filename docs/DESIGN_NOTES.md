@@ -1020,6 +1020,30 @@ trying:
 - the first song taken from a file VitaPlex already has, which would save the
   download.
 
+**One app, two programs** (`VPLXBGT12`, `VPLXBGT13`). A separate helper is a
+second app for the user to have, and starting it closed VitaPlex BG.
+`sceAppMgrLoadExec` replaces a running app's program with another SELF from
+its own package. If the system then treats the app by the program it runs,
+one app could be both: VitaPlex in front, and the small player once you
+leave. Two packages try it. Each holds the test build with a screen as
+`eboot.bin` and the player as `player.self`, with its system-mode boot param.
+`VPLXBGT12` is a non-game app with VitaPlex's extended memory, as VitaPlex BG
+is, and `VPLXBGT13` a game with it, as VitaPlex is. X switches to the player,
+which does what BG Test 10 does: once sent away, it plays two songs from the
+library. Opened again after PS, it switches back to `eboot.bin`.
+
+Both programs write one log. The one switching leaves a note with its start
+and the time it asked, on the system clock, and the next carries the log and
+its clock on from there. A host check ran the note through both programs'
+code, and also notes that were too old or broken, which are ignored. The log
+answers:
+- what `sceAppMgrLoadExec` returns, and how long the switch takes;
+- the player's budget: a system-mode app's 16 MB (mode 2), or still the big
+  one;
+- whether the player keeps running and the songs play when a game starts, or
+  the system holds the app or asks it to close;
+- whether `eboot.bin`, switched back to, can allocate its big memory again.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

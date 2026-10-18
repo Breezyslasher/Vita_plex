@@ -882,14 +882,14 @@ static void stopShell(const char* why) {
 
 // Asked to quit once a song is with the shell, it is left playing, to see
 // whether the shell plays it on with this app gone; it stops at the song's
-// end. Before that, everything is put back.
-void playerQuit(void) {
+// end. Before that, everything is put back. The same when VPLXBGT12 or 13
+// switches back to its other program.
+void playerQuit(const char* why) {
     if (g_handedOver) {
-        logLine("player: asked to quit with a song handed over; leaving the system player to "
-                "play it");
+        logLine("player: %s with a song handed over; leaving the system player to play it", why);
         return;
     }
-    stopShell("asked to quit");
+    stopShell(why);
 }
 
 // ── The run ──────────────────────────────────────────────────────────────
