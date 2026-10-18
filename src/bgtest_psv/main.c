@@ -606,7 +606,6 @@ static int watcherMain(SceSize args, void* argp) {
          (unsigned)(cb >= 0 ? scePowerRegisterCallback(cb) : cb));
 
     SceInt64 last = sceKernelGetSystemTimeWide();
-    SceInt64 switchQuitAt = 0;   // when the quit request of a switch came
     unsigned beat = 0;
     int lastAdopt = 0x7FFFFFFF, lastGain = 0x7FFFFFFF;
     for (;;) {
@@ -618,10 +617,6 @@ static int watcherMain(SceSize args, void* argp) {
             g_lastGapUs = gap;
             if (gap > g_longestGapUs) g_longestGapUs = gap;
             logLine("did not run for %.1fs: the process was held", gap / 1e6);
-        }
-        if (switchQuitAt && now - switchQuitAt > 5 * 1000000LL) {
-            logLine("still running 5 s after the switch's quit request; quitting");
-            sceKernelExitProcess(0);
         }
 
         // Whether this app's BGM output is adopted, and its private gain: two
@@ -677,28 +672,23 @@ static int watcherMain(SceSize args, void* argp) {
 #endif
                     g_away = 0;
                 }
-                if (id == EVENT_REQUEST_QUIT && g_switchingTo && !switchQuitAt) {
-                    // A switch (switchTo) brings this request 44 to 69 ms
-                    // after it is asked for. Quitting at once was followed by
-                    // the system's error C1-2697-4, switching to the player
-                    // (logs 4a8451a1, bfab5b72) and, the user saw, to a plain
-                    // copy of this program too. An app that switches would
-                    // not usually read this event at all, so the system is
-                    // left to end the process itself, for up to 5 s.
-                    switchQuitAt = now;
-                    logLine("asked to quit for the switch to %s: left to the system",
-                            g_switchingTo);
-                } else if (id == EVENT_REQUEST_QUIT) {
+                if (id == EVENT_REQUEST_QUIT) {
                     // Ended here rather than by the main loop, which could be
                     // stuck: the system starts the next app only once this
                     // process ends, and VitaPlex not ending hung the console
-                    // (log 3ea218f5).
+                    // (log 3ea218f5). That holds during a switch too: one
+                    // build left a switch's request to the system for 5 s,
+                    // and closing the app after the error then crashed the
+                    // console.
 #ifdef BGTEST_PLAYER
                     // Or the shell plays on with nothing to stop it. A switch
                     // back has done this already.
                     if (!g_switchingTo) playerQuit("asked to quit");
 #endif
-                    logLine("quit");
+                    if (g_switchingTo)
+                        logLine("quit, for the switch to %s", g_switchingTo);
+                    else
+                        logLine("quit");
                     sceKernelExitProcess(0);
                 }
             }

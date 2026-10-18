@@ -1078,6 +1078,31 @@ for up to 5 s before quitting. It also adds triangle, which switches to
 On a host, the real watcher with a faked clock and events quit at once when
 no switch was asked for, and 5 s after the request when one was.
 
+That made no difference (log `6dfdec3c`, build 1994). Triangle asked to switch
+to `eboot.bin` itself, and the quit request came 37 ms later. The system did
+not end the app in the next 5 s, and `sceAppMgrLoadExec` never returned. Then
+the app quit, and the same error followed. So the switch fails even to restart
+the same program. The user also reported that closing BG Test 12 after the
+error crashed the console, in this build and the ones before it. The 5 s wait
+is gone again, since quitting at once never made that worse.
+
+**What RetroArch does differently.** RetroArch switches between its cores,
+separate SELFs in one package, with this call (`frontend_psp_exec` in
+`frontend/drivers/platform_psp.c`). Its call is the same as ours: a path, no
+argv, no options, and the process ends right after. Its setup differs in
+three ways:
+- its SELFs are safe (`vita-make-fself -s`, or `-ss`, in `Makefile.vita`),
+  which `vita-make-fself` marks with authority id `0x2F00000000000002` (`…03`).
+  Every SELF here is unsafe, `0x2F00000000000001`. vitasdk's tool describes a
+  safe one as having no access "to restricted APIs and important parts of the
+  filesystem";
+- its paths are `app0:/<core>.self`, with a slash;
+- it is a game with `ATTRIBUTE2=12`, as `VPLXBGT13` is.
+
+The first is the likeliest to matter. If the switch only works between safe
+SELFs, the player would also have to work as a safe one, which is not known
+for the shell's music service. VitaPlex itself is built unsafe.
+
 The switch back from the player also moved off the watcher onto the main
 thread. Run on the watcher, a switch that does not return before the quit
 request would leave no one to answer it, and an app that did not quit once
