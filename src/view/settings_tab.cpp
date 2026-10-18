@@ -1124,7 +1124,8 @@ brls::Box* SettingsTab::createMusicSection() {
 
     // Vita: leaving the app itself still stops the music, whatever the toggle
     // above says. These try the two ways past that on the console, and report
-    // what happened; see utils/background_audio.hpp. Absent elsewhere.
+    // what happened; see utils/background_audio.hpp. Only VitaPlex BG, the
+    // non-game package, has them; VitaPlex itself and other platforms do not.
     if (bgaudio::available()) {
         auto* keepPlaying = new brls::BooleanCell();
         keepPlaying->init("Keep Playing Outside VitaPlex (test)", settings.vitaBackgroundAudio,

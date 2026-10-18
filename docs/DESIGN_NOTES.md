@@ -865,6 +865,15 @@ logged, and on the way out the app stops the shell's playback. A host harness
 with fake responses and a scripted shell exercised the choice of songs, both
 hand-overs and the end detection, the shell ignoring an open included.
 
+**Only VitaPlex BG has the tests.** `VitaPlex.vpk`, the package that is
+released, is the same eboot as `VitaPlexBG.vpk`, so its settings had the toggle,
+the service picker and the three tests too, and a toggle saved on would have held
+the BGM port there. The eboot now reads the title id it runs under
+(`sceAppMgrAppParamGetString`, param 12) and offers them only as `VPLEX0002`,
+the id CMake gives VitaPlex BG. As `VPLEX0001` the toggle counts as off,
+whatever was saved. The watcher still starts in both, as the one reader of the
+request to quit.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

@@ -56,6 +56,7 @@ int sceAppMgrReceiveEventNum(int* eventNum);
 int sceAppMgrReceiveEvent(void* event);
 int sceAppMgrAcquireBgmPortWithPriority(int priority);
 int sceAppMgrReleaseBgmPort(void);
+int sceAppMgrAppParamGetString(int pid, int param, char* string, SceSize length);
 // patches/psv_platform.cpp: how many times the UI loop has run.
 unsigned vitaplex_main_loop_ticks(void);
 }
@@ -156,6 +157,18 @@ std::string joinNames(const std::vector<std::string>& names) {
         s += names[i];
     }
     return s;
+}
+
+// The title id this process runs under, from its param.sfo: VitaPlex and
+// VitaPlex BG are one eboot in two packages.
+std::string runningTitleId() {
+    char id[16] = {};   // param 12, the title id, needs at least 10 bytes
+    const int rc = sceAppMgrAppParamGetString(0, 12, id, sizeof(id));
+    if (rc < 0) {
+        brls::Logger::error("[bgaudio] could not read the title id: {}", hex(rc));
+        return {};
+    }
+    return id;
 }
 
 std::atomic<bool> g_keepPlaying{false};
@@ -1174,16 +1187,24 @@ private:
 
 }  // namespace
 
+bool available() {
+    static const bool bg = runningTitleId() == VITAPLEX_BG_TITLEID;
+    return bg;
+}
+
 void init(bool keepPlaying) {
-    g_keepPlaying = keepPlaying;
-    brls::Logger::info("[bgaudio] keep playing in background: {}", keepPlaying);
-    // Whatever the setting: the watcher is also what answers the system's
-    // request to quit (see onRequestQuit and watcherMain). Off, that is all
-    // it does.
-    startWatcher(keepPlaying);
+    // A toggle saved where it was offered stays off in VitaPlex itself.
+    g_keepPlaying = keepPlaying && available();
+    brls::Logger::info("[bgaudio] running as {}; keep playing in background: {}",
+                       available() ? "VitaPlex BG" : "VitaPlex", g_keepPlaying.load());
+    // Whatever the setting, and in either package: the watcher is also what
+    // answers the system's request to quit (see onRequestQuit and
+    // watcherMain). Off, that is all it does.
+    startWatcher(g_keepPlaying);
 }
 
 void setKeepPlaying(bool on) {
+    if (!available()) return;
     g_keepPlaying = on;
     brls::Logger::info("[bgaudio] keep playing in background set to {}", on);
     if (on) {

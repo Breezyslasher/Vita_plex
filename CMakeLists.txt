@@ -108,6 +108,10 @@ endif()
 if(PLATFORM_PSV)
     set(VITA_APP_NAME "VitaPlex")
     set(VITA_TITLEID  "VPLEX0001")
+    # VitaPlex BG: the same eboot packaged as a non-game app (VitaPlexBG.vpk).
+    # The eboot reads which of the two it runs as, and only this one offers
+    # the background-audio tests (utils/background_audio.hpp).
+    set(VITA_BG_TITLEID "VPLEX0002")
     set(VITA_VERSION  "01.00")
     set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12")
 endif()
@@ -829,6 +833,7 @@ int main() {
         lib/libshellaudio/shellsvc_stub.S)
     target_include_directories(${PROJECT_NAME} PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_BG_TITLEID=\"${VITA_BG_TITLEID}\")
 elseif(PLATFORM_SWITCH)
     # Required for __wrap_pthread_create in src/utils/switch_stubs.c — floors
     # libmpv/ffmpeg thread stacks above libnx's 128 KB default so they stop
@@ -1431,7 +1436,7 @@ if(PLATFORM_PSV)
     set(VITA_MKSFOEX_FLAGS "-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16")
     set(VITA_PACK_VPK_FLAGS "")
     set(resources "")
-    vita_create_vpk(VitaPlexBG.vpk VPLEX0002 ${PROJECT_NAME}.self
+    vita_create_vpk(VitaPlexBG.vpk ${VITA_BG_TITLEID} ${PROJECT_NAME}.self
         VERSION ${VITA_VERSION}
         NAME    "VitaPlex BG"
         ${VITA_MAIN_VPK_FILES})

@@ -21,6 +21,12 @@
  * Everything goes to the log under "[bgaudio]", with every system call's return
  * code, so one test run can be read back afterwards. Other platforms get the
  * inline no-ops below and no call site needs an #ifdef.
+ *
+ * On a Vita only VitaPlex BG has the tests: the same eboot as VitaPlex,
+ * packaged as a non-game app (VitaPlexBG.vpk), the kind the system lets run on
+ * in the background. VitaPlex itself is a game, held the moment it leaves the
+ * foreground, and it is the package that is released, so it gets none of this
+ * until background music works there.
  */
 
 #pragma once
@@ -35,10 +41,11 @@ using Report = std::function<void(const std::string&)>;
 
 #if defined(__vita__)
 
-// Whether the tests exist on this platform at all.
-inline bool available() { return true; }
+// Whether the tests exist here at all: running as VitaPlex BG.
+bool available();
 
 // Called once at startup, after settings are loaded, with the saved toggle.
+// Outside VitaPlex BG the toggle is taken as off, whatever was saved.
 void init(bool keepPlaying);
 
 // The settings toggle: hold the BGM port while music plays, and have mpv
