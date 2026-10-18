@@ -26,6 +26,9 @@ int bgappStart(const char* title, double t0);
 // The note, read by the background program as it starts and removed. 1 when
 // it is fresh, with the app's title id and start, and how long ago it asked.
 int bgappTakeNote(char* title, size_t size, double* t0, double* since);
+// 1 while a note is waiting to be read: an app has just asked for its
+// background program, which takes about a second to start and read it.
+int bgappNoteWaiting(void);
 
 #ifdef BGTEST_PLAYER
 // How the player starts: with two songs from the library, 15 s after the app

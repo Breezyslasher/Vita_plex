@@ -53,6 +53,13 @@ int bgappStart(const char* title, double t0) {
     return rc;
 }
 
+int bgappNoteWaiting(void) {
+    FILE* f = fopen(BGAPP_NOTE, "r");
+    if (!f) return 0;
+    fclose(f);
+    return 1;
+}
+
 int bgappTakeNote(char* title, size_t size, double* t0, double* since) {
     FILE* f = fopen(BGAPP_NOTE, "r");
     if (!f) return 0;

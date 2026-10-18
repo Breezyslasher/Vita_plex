@@ -727,6 +727,16 @@ static int watcherMain(SceSize args, void* argp) {
                 lastAppPid = pid;
             }
         }
+        // Another app asking for its player, one test after another: this
+        // one goes, so that the two do not play over each other. Its own
+        // note was read and removed before the watcher started.
+        if (bgappNoteWaiting()) {
+            logLine("another app is starting its player; quitting, so that the two do not "
+                    "play over each other");
+            playerQuit("replaced");
+            logLine("quit");
+            sceKernelExitProcess(0);
+        }
 #endif
 
         int count = 0;

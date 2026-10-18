@@ -1252,7 +1252,12 @@ Three more packages take a step from 14 at a time, all with X:
 The run that answers the open question: X, then PS and a game without
 extended memory, listening into the second song, then the home screen for
 20 s, then VitaSurf. A program the system held logs how long when it
-resumes ("did not run for"), and one it ended logs nothing more.
+resumes ("did not run for"), and one it ended logs nothing more. The user's
+recollection that the music went on through LittleBigPlanet fits either: the
+first song plays on in the shell either way, and only the second needs the
+program. Since the packages are tried one after another, a player still
+running quits as soon as another app asks for its player (the note
+appearing), so that two do not play over each other.
 
 ### PS4: the popup, and nothing to hang progress on
 
