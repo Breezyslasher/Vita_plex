@@ -178,6 +178,29 @@ That is also needed because `keep-open` pauses the player at the end of every
 track; before, the restore was what undid that. A paused file is stopped before
 it is replaced, so unpausing it first cannot let a moment of it out.
 
+### Subtitle size
+
+The Subtitle Size setting was saved and shown but never applied. Small, Medium
+and Large are now 0.8, 1 and 1.25 times the default size
+(`Application::subtitleScale`), multiplied by Android's own caption size where the
+user set one. Medium therefore follows the system size exactly, as subtitles did
+before. Subtitles reach the screen two ways, and the setting covers both:
+
+- **mpv draws** the text subtitles it is given: embedded tracks, sidecars, and
+  downloads, which embed theirs. They are sized by `sub-scale`. The mpv instance
+  lives for the session once the first playback starts it, so the value is read
+  when it starts and pushed to it again when the setting changes. In a host run
+  with libmpv 2.2, an SRT line came out 146, 183 and 229 px wide at the three
+  sizes, and changing the value during playback resized it in the frames after
+  the change. Picture-based subtitles (PGS, VobSub) were not tried.
+- **The server burns in** the subtitles the client cannot draw (`subtitles=auto`),
+  and no client-side scale reaches those. They take `subtitleSize`, a
+  percentage, on `decision` and `start.*`, which Plex's API documents for burned
+  subtitles.
+
+A missing `subtitleSize` key used to load as 0, which is Small. It now loads as
+Medium, the default.
+
 ### Getting a track back after a lost connection
 
 The same log has the music stopping twice while the phone lost the server for a

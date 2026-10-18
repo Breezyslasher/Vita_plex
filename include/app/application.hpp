@@ -354,6 +354,10 @@ public:
     static std::string getQualityString(VideoQuality quality);
     static std::string getThemeString(AppTheme theme);
     static std::string getSubtitleSizeString(SubtitleSize size);
+    // The Subtitle Size setting as a factor on the default size (Medium is 1),
+    // times the platform's own caption size where it has one. mpv takes it as
+    // sub-scale; the server, for subtitles it burns in, as a percentage.
+    static float subtitleScale(SubtitleSize size);
 
     // Quality tiers in ladder order (best first) for the settings pickers, filtered to what this platform can decode.
     static std::vector<VideoQuality> qualityLadder();

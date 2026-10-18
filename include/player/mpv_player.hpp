@@ -148,6 +148,9 @@ public:
     void cycleAudio();
     void toggleSubtitles();
     void setSubtitleDelay(double seconds);
+    // Re-reads the Subtitle Size setting. mpv lives for the session once the
+    // first playback starts it, so a change has to reach it here.
+    void applySubtitleSize();
     void setAudioDelay(double seconds);
     void disableSubtitles();
     void loadSubtitleUrl(const std::string& url);   // Load external subtitle (e.g. lyrics) by URL

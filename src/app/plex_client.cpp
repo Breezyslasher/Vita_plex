@@ -53,6 +53,14 @@ static std::string redactBodyForLog(const std::string& body) {
     return out;
 }
 
+// The Subtitle Size setting, for a transcode. Subtitles the server burns into
+// the video are part of the picture, out of reach of mpv's sub-scale, so the
+// server sizes them itself: a percentage of their own size.
+static std::string subtitleSizeParam(const AppSettings& settings) {
+    const float pct = Application::subtitleScale(settings.subtitleSize) * 100.0f;
+    return "&subtitleSize=" + std::to_string((int)(pct + 0.5f));
+}
+
 // Encode one code point as UTF-8. Shared by the JSON and lyrics decoders,
 // which both turn a numeric escape back into characters.
 static void appendUtf8(std::string& s, uint32_t cp) {
@@ -3832,6 +3840,7 @@ bool PlexClient::resolveTranscodeUrl(const std::string& ratingKey, std::string& 
             queryParams += "&subtitles=none";
         } else {
             queryParams += "&subtitles=auto";
+            queryParams += subtitleSizeParam(settings);
         }
     }
 
@@ -5643,7 +5652,8 @@ bool PlexClient::buildLiveSessionStreamUrl(const std::string& liveSessionId, std
     snprintf(buf, sizeof(buf), "&videoResolution=%s",
              Application::resolutionFor(settings.videoQuality)); q += buf;
     q += "&videoQuality=100";
-    q += settings.showSubtitles ? "&subtitles=auto" : "&subtitles=none";
+    if (settings.showSubtitles) q += "&subtitles=auto" + subtitleSizeParam(settings);
+    else                        q += "&subtitles=none";
     q += "&session=" + sessionId;
     q += "&X-Plex-Token=" + m_authToken;
 

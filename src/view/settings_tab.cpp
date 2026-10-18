@@ -22,6 +22,7 @@
 #include "app/synclounge_session.hpp"
 #include "view/media_detail_view.hpp"
 #include "activity/player_activity.hpp"
+#include "player/mpv_player.hpp"
 #include "utils/http_client.hpp"
 #include "utils/http_cache.hpp"
 #include "app/music_controller.hpp"
@@ -1795,6 +1796,7 @@ void SettingsTab::onSubtitleSizeChanged(int index) {
 
     settings.subtitleSize = static_cast<SubtitleSize>(index);
     app.saveSettings();
+    MpvPlayer::getInstance().applySubtitleSize();
 }
 
 void SettingsTab::onConnectionTimeoutChanged(int index) {

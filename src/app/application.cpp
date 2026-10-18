@@ -397,6 +397,17 @@ std::string Application::getSubtitleSizeString(SubtitleSize size) {
     }
 }
 
+float Application::subtitleScale(SubtitleSize size) {
+    float scale = 1.0f;
+    if (size == SubtitleSize::SMALL)      scale = 0.8f;
+    else if (size == SubtitleSize::LARGE) scale = 1.25f;
+    // Android's caption size, from its accessibility settings. Medium follows
+    // it exactly, as subtitles did before this setting did anything.
+    const auto& cs = platform::getSystemCaptionStyle();
+    if (cs.valid && cs.fontScale > 0.01f) scale *= cs.fontScale;
+    return scale;
+}
+
 bool Application::loadSettings() {
     // Single unified path: std::ifstream works on every target (on Vita it
     // goes through newlib's POSIX shim into sceIoOpen). This replaces the
@@ -503,7 +514,12 @@ bool Application::loadSettings() {
     m_settings.autoPlayNext    = extractBool("autoPlayNext", true);
     m_settings.resumePlayback  = extractBool("resumePlayback", true);
     m_settings.showSubtitles   = extractBool("showSubtitles", true);
-    m_settings.subtitleSize    = static_cast<SubtitleSize>(extractInt("subtitleSize"));
+    // extractInt reads a missing key as 0, which here is Small, not the
+    // default. Absent or out of range keeps the default, Medium.
+    if (content.find("\"subtitleSize\":") != std::string::npos) {
+        const int size = extractInt("subtitleSize");
+        if (size >= 0 && size <= 2) m_settings.subtitleSize = static_cast<SubtitleSize>(size);
+    }
     m_settings.seekInterval    = extractInt("seekInterval");
     if (m_settings.seekInterval <= 0) m_settings.seekInterval = 10;
     m_settings.controlsAutoHideSeconds = extractInt("controlsAutoHideSeconds");

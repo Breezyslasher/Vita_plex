@@ -245,7 +245,8 @@ bool MpvPlayer::init() {
     // Subtitles follow the platform's accessibility caption settings where it
     // has any. Someone who set large high-contrast captions system-wide was
     // still getting small white text here. valid is false on every port that
-    // exposes nothing, so their subtitle styling is untouched.
+    // exposes nothing, so their subtitle styling is untouched. The caption
+    // size goes in with the Subtitle Size setting, below.
     {
         const auto& cs = platform::getSystemCaptionStyle();
         if (cs.valid) {
@@ -255,10 +256,6 @@ bool MpvPlayer::init() {
                 snprintf(buf, sizeof(buf), "#%08X", argb);
                 return std::string(buf);
             };
-            if (cs.fontScale > 0.01f && cs.fontScale != 1.0f) {
-                mpv_set_option_string(m_mpv, "sub-scale",
-                                      std::to_string(cs.fontScale).c_str());
-            }
             if (cs.hasForeground) {
                 mpv_set_option_string(m_mpv, "sub-color",
                                       argbToMpv(cs.foreground).c_str());
@@ -294,6 +291,15 @@ bool MpvPlayer::init() {
                     break;
             }
         }
+    }
+
+    // Subtitle Size, with the system caption size (Application::subtitleScale).
+    // A change after this point reaches mpv through applySubtitleSize().
+    {
+        char scale[16];
+        snprintf(scale, sizeof(scale), "%.3f",
+                 Application::subtitleScale(Application::getInstance().getSettings().subtitleSize));
+        mpv_set_option_string(m_mpv, "sub-scale", scale);
     }
 
     // Audio passthrough. Without it mpv decodes Dolby/DTS to PCM and downmixes
@@ -1307,6 +1313,13 @@ void MpvPlayer::setAudioDelay(double seconds) {
     if (!m_mpv || m_stopping) return;
 
     mpv_set_property_async(m_mpv, 0, "audio-delay", MPV_FORMAT_DOUBLE, &seconds);
+}
+
+void MpvPlayer::applySubtitleSize() {
+    if (!m_mpv || m_stopping) return;
+
+    double scale = Application::subtitleScale(Application::getInstance().getSettings().subtitleSize);
+    mpv_set_property_async(m_mpv, 0, "sub-scale", MPV_FORMAT_DOUBLE, &scale);
 }
 
 void MpvPlayer::toggleSubtitles() {
