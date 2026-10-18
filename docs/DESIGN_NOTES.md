@@ -1141,6 +1141,80 @@ thread. Run on the watcher, a switch that does not return before the quit
 request would leave no one to answer it, and an app that did not quit once
 hung the console (`3ea218f5`).
 
+**What the other apps do.** Before going further, the setup was checked
+against the apps that play on, from their sources:
+
+- ElevenMPV-A's `param.sfx` has `CATEGORY` `gdc`, `ATTRIBUTE` 0x01089088,
+  `ATTRIBUTE_MINOR` 16 and `ATTRIBUTE2` 0, and its `ebootparam.bin` gives
+  attribute 2 and 16 MB. Those are the helper's settings exactly (`VPLXBGT05`,
+  06, 10 and 11), so the helper is that app without its screen. ElevenMPV-A is
+  one app because all of it fits that budget: its screens are Sony's PAF, built
+  with Sony's SDK. Its quick-menu controls come from the plugin it loads into
+  SceShell as it starts (`sceAppMgrGetIdByName` on NPXS19999, then
+  `taiLoadStartModuleForPid`). ConsoleMods' wiki says its background playback
+  works "with most of the games" as it is, and "with all games" with the
+  LowMemMode plugin.
+- vita-headers (September 2026) documents the call under `sceAppMgrLoadExec`
+  as "Replace the current game process with another executable", which is what
+  `VPLXBGT12` and 13 found.
+- LowMemMode, also GrapheneCt's, is a SceShell plugin (`*main`) that makes one
+  SceShell function, the memory budget check at app launch, return 0. It has
+  offsets for retail 3.60, 3.65, 3.67 and 3.68. Its README: "Allows you to
+  launch other applications in LOWPHYMEM mode while enlarged memory mode app
+  (+29MiB, +77MiB and +109MiB) is in the background". VitaPlex and VitaPlex BG
+  are such apps (`ATTRIBUTE2=12`, +109 MiB), and the helper is a small one, so
+  that check is the likely source of the prompt to close VitaPlex BG
+  (`0bbfcb94`). It also fits the other order passing: `VPLXBGT06` ran on when
+  VitaPlex was opened (`8098b625`). Not proven yet.
+- BGFTP, GrapheneCt's FTP server, is one package with two programs, using the
+  system's background applications. `eboot.bin` with `sce_sys/param.sfo` (gdc,
+  `ATTRIBUTE` 0x01009000, `ATTRIBUTE_MINOR` 17, `ATTRIBUTE2` 0, boot param
+  attribute 0 and 4 MB) loads `SCE_SYSMODULE_BG_APP_UTIL`, calls
+  `sceBgAppUtilStartBgApp(0)` and quits. `eboot2.bin` with
+  `sce_sys/param2.sfo` (`CATEGORY` `gdd`, a title id of its own,
+  `INSTALL_DIR_ADDCONT` and `INSTALL_DIR_SAVEDATA` set to the main app's,
+  `ATTRIBUTE` 0x81000; boot param attribute 3 and 16 MB) is the server, on a
+  14 MB heap. Its README says it works "simultaneously with any game, including
+  enlarged memory mode games, and in sleep mode". It is ended when "LiveArea
+  of the main application is peeled off" or an "Enlarged memory mode game is
+  started", and with LowMemMode it can be started again after the latter.
+  vitasdk has the call (`psp2/bgapputil.h`, `SceBgAppUtil_stub`, sysmodule
+  0x34), and its header says the mode must be 1, where BGFTP passes 0.
+
+So there is a second program for one package after all, started as a process
+of its own with its own small budget, which is what the switch could not give.
+
+**The player as a background program** (`VPLXBGT14` to 16). Three packages
+carry BG Test 10's player as `eboot2.bin`, with BGFTP's background boot param
+(`vita_create_self … MEMSIZE 0x4000 ATTRIBUTE 3`) and a `param2.sfo` that
+vita-mksfoex writes with its defaults off. That file has the keys of BGFTP's
+background program's and no others, under title ids of its own (`VPLXBGP14`
+to 16) and pointing at its app's. Built with `BGTEST_BGAPP`, the player has no
+screen, logs to `bgtest-<app>-bgapp.log` on the app's clock, plays two songs
+from the library as soon as it starts, and quits 10 minutes after they end.
+It also logs whether the app that started it is still running
+(`sceAppMgrGetIdByName`), whenever that changes. Whether it has its app's
+files at `app0:` is not known either, so it looks for the CA bundle there,
+says whether it found it, and otherwise takes the one in the app's directory.
+
+- `VPLXBGT14` is a game with VitaPlex's extended memory, as VitaPlex is. X
+  asks for the player: with 0, as BGFTP does, then with 1 if that is refused.
+- `VPLXBGT15` is the same game without extended memory.
+- `VPLXBGT16` is the control, BGFTP's main app: its `param.sfo` values and a
+  starter that asks for the player and quits (`bgstart.c`). It runs in system
+  mode with attribute 0, as BGFTP's does, but on 16 MB where that has 4. The
+  system loads its own modules into every vitasdk program, and BGFTP's main
+  app turns that off to fit.
+
+The logs say whether a game, with and without extended memory, can start a
+background program, and what the program gets: its title id and its budget.
+They also say whether it plays on when the app is left, when a game starts and
+closes the app, and when the app's LiveArea is peeled off. If 16 fails too, the
+packaging is wrong, whatever the app. A host check ran the note, the log names,
+the order of the two calls and the player's run, which starts at once and
+stops 10 minutes after its songs. The `param2.sfo` the build writes was
+decoded and compared with BGFTP's.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which

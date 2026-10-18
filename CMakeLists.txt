@@ -1450,13 +1450,14 @@ if(PLATFORM_PSV)
     # leaves the foreground, and with what memory and network; VitaPlex itself
     # is frozen. A system-mode build of it is packaged twice more, to find out
     # whether that kind plays on while a game runs, and a third time with a
-    # player through SceShell's music service, and the last two pack it
-    # beside the first as one app. See the source's header for all of them.
+    # player through SceShell's music service; two more pack that player
+    # beside the first as one app, and the last three as the app's background
+    # program. See the source's header for all of them.
     # vita_create_vpk is a macro that appends to these flag
     # variables in this scope (the updater comment above has the same trap
     # for FILE), so each package gets them fresh and they are put back
     # afterwards. Built after the main vpk, so nothing leaks into it.
-    add_executable(vitaplex_bgtest src/bgtest_psv/main.c)
+    add_executable(vitaplex_bgtest src/bgtest_psv/main.c src/bgtest_psv/bgapp.c)
     target_link_libraries(vitaplex_bgtest
         vita2d freetype png z m
         SceGxm_stub
@@ -1468,6 +1469,7 @@ if(PLATFORM_PSV)
         SceAppMgr_stub
         ScePower_stub
         SceSysmodule_stub
+        SceBgAppUtil_stub
         SceIofilemgr_stub
         SceNet_stub
         SceNetCtl_stub
@@ -1529,6 +1531,55 @@ if(PLATFORM_PSV)
     target_link_options(vitaplex_bgtest_player PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
     set(VITA_MAKE_FSELF_FLAGS "")
     vita_create_self(vitaplex_bgtest_player.self vitaplex_bgtest_player UNSAFE MEMSIZE 0x4000 ATTRIBUTE 2)
+    set(VITA_MAKE_FSELF_FLAGS "${_bgt_saved_fself}")
+
+    # The player once more, as an app's background program (eboot2.bin,
+    # started with sceBgAppUtilStartBgApp; src/bgtest_psv/bgapp.c), with the
+    # boot param of BGFTP's: attribute 3 and 16 MB.
+    add_executable(vitaplex_bgtest_bgapp
+        src/bgtest_psv/main.c
+        src/bgtest_psv/player_test.c
+        src/bgtest_psv/mp3_info.c
+        src/bgtest_psv/bgapp.c
+        lib/libshellaudio/ShellAudio.c
+        lib/libshellaudio/shellsvc_stub.S)
+    target_compile_definitions(vitaplex_bgtest_bgapp PRIVATE
+        BGTEST_SYSTEM_MODE BGTEST_PLAYER BGTEST_BGAPP)
+    target_include_directories(vitaplex_bgtest_bgapp PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio)
+    target_link_libraries(vitaplex_bgtest_bgapp
+        curl mbedtls mbedx509 mbedcrypto z m
+        SceAudio_stub
+        SceAppMgr_stub
+        ScePower_stub
+        SceSysmodule_stub
+        SceBgAppUtil_stub
+        SceIofilemgr_stub
+        SceNet_stub
+        SceNetCtl_stub
+        SceRtc_stub
+        SceLibKernel_stub
+        -Wl,--whole-archive pthread -Wl,--no-whole-archive)
+    target_link_options(vitaplex_bgtest_bgapp PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
+    set(VITA_MAKE_FSELF_FLAGS "")
+    vita_create_self(vitaplex_bgtest_bgapp.self vitaplex_bgtest_bgapp UNSAFE MEMSIZE 0x4000 ATTRIBUTE 3)
+    set(VITA_MAKE_FSELF_FLAGS "${_bgt_saved_fself}")
+
+    # VPLXBGT16's eboot.bin, which starts that program and quits, as BGFTP's
+    # main app does (src/bgtest_psv/bgstart.c): system mode with attribute 0,
+    # as that app's boot param has, but 16 MB where it has 4, since the
+    # system loads its modules into every vitasdk program and BGFTP turns
+    # that off.
+    add_executable(vitaplex_bgtest_starter src/bgtest_psv/bgstart.c src/bgtest_psv/bgapp.c)
+    target_link_libraries(vitaplex_bgtest_starter
+        SceAppMgr_stub
+        SceSysmodule_stub
+        SceBgAppUtil_stub
+        SceIofilemgr_stub
+        SceLibKernel_stub)
+    target_link_options(vitaplex_bgtest_starter PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
+    set(VITA_MAKE_FSELF_FLAGS "")
+    vita_create_self(vitaplex_bgtest_starter.self vitaplex_bgtest_starter UNSAFE MEMSIZE 0x4000)
     set(VITA_MAKE_FSELF_FLAGS "${_bgt_saved_fself}")
 
     # Both again as safe SELFs, for the switch test: what vita_create_self
@@ -1631,6 +1682,47 @@ if(PLATFORM_PSV)
             NAME "${_bgt_name}"
             FILE ${CMAKE_BINARY_DIR}/vitaplex_bgtest_player_safe.self player.self
             FILE ${CMAKE_BINARY_DIR}/vitaplex_bgtest_safe.self screen.self
+            FILE resources/cacert.pem cacert.pem)
+    endforeach()
+    # The player as each app's background program: eboot2.bin with its own
+    # sce_sys/param2.sfo, laid out as BGFTP's package is. That param.sfo has
+    # the keys of BGFTP's background program's and no others (vita-mksfoex
+    # -e, without its defaults), a title id of its own (BGP for BGT), and the
+    # app's for its save data and add-on content. The fourteenth is a game
+    # with VitaPlex's extended memory, as VitaPlex is, the fifteenth the same
+    # without it, both the build with a screen, whose X asks for the player.
+    # The sixteenth is the control, BGFTP's main app: its param.sfo, and the
+    # starter.
+    foreach(_bgt
+            "VPLXBGT14|BG Test 14 bg app|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12"
+            "VPLXBGT15|BG Test 15 bg app|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0"
+            "VPLXBGT16|BG Test 16 bg app|vitaplex_bgtest_starter.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01009000 -d ATTRIBUTE_MINOR=17")
+        string(REPLACE "|" ";" _bgt "${_bgt}")
+        list(GET _bgt 0 _bgt_id)
+        list(GET _bgt 1 _bgt_name)
+        list(GET _bgt 2 _bgt_self)
+        list(GET _bgt 3 _bgt_flags)
+        string(REPLACE "BGT" "BGP" _bgt_bgid "${_bgt_id}")
+        string(REPLACE "bg app" "player" _bgt_bgname "${_bgt_name}")
+        set(_bgt_param2 ${CMAKE_CURRENT_BINARY_DIR}/${_bgt_id}_param2.sfo)
+        add_custom_command(OUTPUT ${_bgt_param2}
+            COMMAND ${VITA_MKSFOEX} -e
+                -s APP_VER=01.00 -d ATTRIBUTE=0x81000 -d ATTRIBUTE2=0 -s CATEGORY=gdd
+                -s CONTENT_ID=HB0001-${_bgt_bgid}_00-0000000000000000
+                -s INSTALL_DIR_ADDCONT=${_bgt_id} -s INSTALL_DIR_SAVEDATA=${_bgt_id}
+                -d PARENTAL_LEVEL=1 -d REGION_DENY=0 -d SAVEDATA_MAX_SIZE=1048576
+                -s "STITLE=${_bgt_bgname}" -s "TITLE=${_bgt_bgname}"
+                -s TITLE_ID=${_bgt_bgid} -s VERSION=01.00 ${_bgt_param2}
+            COMMENT "Generating param2.sfo for ${_bgt_id}"
+            VERBATIM)
+        set(VITA_MKSFOEX_FLAGS "${_bgt_flags}")
+        set(VITA_PACK_VPK_FLAGS "")
+        set(resources "")
+        vita_create_vpk(VitaPlexBgTest-${_bgt_id}.vpk ${_bgt_id} ${_bgt_self}
+            VERSION 01.00
+            NAME "${_bgt_name}"
+            FILE ${CMAKE_BINARY_DIR}/vitaplex_bgtest_bgapp.self eboot2.bin
+            FILE ${_bgt_param2} sce_sys/param2.sfo
             FILE resources/cacert.pem cacert.pem)
     endforeach()
     set(VITA_MKSFOEX_FLAGS "${_bgt_saved_sfo}")

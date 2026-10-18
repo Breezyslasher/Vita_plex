@@ -88,6 +88,21 @@
  *              BG is.
  *   VPLXBGT13  as a game with it, as VitaPlex is.
  *
+ * Only the game switched, and its player then ran as the game, with the
+ * game's memory, held once PS was pressed (logs 6b8415c2, 5571cc78). The
+ * system has a way of its own to give an app a second program: a background
+ * application, eboot2.bin with a param2.sfo, which the app starts with
+ * sceBgAppUtilStartBgApp and which runs as a process of its own (bgapp.c).
+ * BGFTP runs its FTP server like that, through games. The player of 10 is
+ * that program in three more packages, built with BGTEST_BGAPP, logging to a
+ * file of its own and playing two songs as soon as it starts:
+ *
+ *   VPLXBGT14  a game with VitaPlex's extended memory, as VitaPlex is, whose
+ *              X starts it.
+ *   VPLXBGT15  the same game without extended memory.
+ *   VPLXBGT16  a small non-game app that starts it and quits, as BGFTP's main
+ *              app does (bgstart.c), the control.
+ *
  * Nothing here is VitaPlex code; what it finds goes into VitaPlex (or a
  * helper app) and this goes away.
  */
@@ -180,6 +195,8 @@ static char g_netLine[128] = "Network: starting";
 
 static double secs(void) { return (sceKernelGetSystemTimeWide() - g_t0) / 1e6; }
 
+const char* bgtestTitle(void) { return g_title; }
+
 const char* result(char* buf, size_t size, int value) {
     if (value < 0)
         snprintf(buf, size, "error 0x%08X", (unsigned)value);
@@ -211,10 +228,21 @@ static int switchTest(void) {
     return strcmp(g_title, "VPLXBGT12") == 0 || strcmp(g_title, "VPLXBGT13") == 0;
 }
 
+// VPLXBGT14 to 16: the player as the app's background program (bgapp.c).
+static int bgappTest(void) {
+    return strcmp(g_title, "VPLXBGT14") == 0 || strcmp(g_title, "VPLXBGT15") == 0 ||
+           strcmp(g_title, "VPLXBGT16") == 0;
+}
+
 static const char* describe(void) {
+#ifdef BGTEST_BGAPP
+    return "its background program, eboot2.bin, started with sceBgAppUtilStartBgApp";
+#endif
 #ifdef BGTEST_PLAYER
     if (switchTest()) return "its player, player.self, switched to with sceAppMgrLoadExec";
 #endif
+    if (strcmp(g_title, "VPLXBGT14") == 0) return "a game that starts its player as a background program";
+    if (strcmp(g_title, "VPLXBGT15") == 0) return "the game of 14 without extended memory";
     if (strcmp(g_title, "VPLXBGT12") == 0) return "a non-game app that switches itself to a player";
     if (strcmp(g_title, "VPLXBGT13") == 0) return "a game that switches itself to a player";
     if (strcmp(g_title, "VPLXBGT01") == 0) return "a game, set up like VitaPlex (the control)";
@@ -234,9 +262,12 @@ static const char* describe(void) {
 // The variants that make no sound of their own: the silent games, for opening
 // while another one beeps, and the players, whose sound comes from the shell.
 static int silent(void) {
+#ifdef BGTEST_BGAPP
+    return 1;   // whatever title id it ends up with
+#endif
     return strcmp(g_title, "VPLXBGT07") == 0 || strcmp(g_title, "VPLXBGT08") == 0 ||
            strcmp(g_title, "VPLXBGT09") == 0 || strcmp(g_title, "VPLXBGT10") == 0 ||
-           strcmp(g_title, "VPLXBGT11") == 0 || switchTest();
+           strcmp(g_title, "VPLXBGT11") == 0 || switchTest() || bgappTest();
 }
 
 // ── Switching program (VPLXBGT12 and 13) ─────────────────────────────────
@@ -250,6 +281,9 @@ static const char* volatile g_switchingTo;  // the one asked for, for the quit l
 #ifdef BGTEST_PLAYER
 static volatile int g_switchBack;           // the watcher asks, the main thread switches
 #endif
+#ifdef BGTEST_BGAPP
+static int g_parentKnown;                   // g_title is the app that started it
+#endif
 
 typedef struct SwitchNote {
     char title[16], from[16], to[16];
@@ -262,7 +296,8 @@ typedef struct SwitchNote {
 // one program to the next. Read once and removed. 1 when it is fresh and for
 // this app: the log then carries on, its clock continuing from the first
 // program's, and a program the system told no title id (titleKnown 0) takes
-// it from here.
+// it from here. The background program of 14 to 16 has a note of its own.
+#ifndef BGTEST_BGAPP
 static int takeSwitchNote(SwitchNote* n, int titleKnown) {
     memset(n, 0, sizeof(*n));
     FILE* f = fopen(SWITCH_NOTE, "r");
@@ -285,6 +320,7 @@ static int takeSwitchNote(SwitchNote* n, int titleKnown) {
     g_t0 = (SceInt64)(n->t0 * 1e6);
     return 1;
 }
+#endif
 
 // Only the two programs that switch need what follows: the build with a
 // screen and the player. The system-mode beeper of 5 and 6 never does.
@@ -614,6 +650,10 @@ static int watcherMain(SceSize args, void* argp) {
     SceInt64 last = sceKernelGetSystemTimeWide();
     unsigned beat = 0;
     int lastAdopt = 0x7FFFFFFF, lastGain = 0x7FFFFFFF;
+#ifdef BGTEST_BGAPP
+    int lastAppRc = 1;   // no call returns that, so the first look is logged
+    SceUID lastAppPid = -1;
+#endif
     for (;;) {
         sceKernelDelayThreadCB(250 * 1000);
         const SceInt64 now = sceKernelGetSystemTimeWide();
@@ -653,6 +693,26 @@ static int watcherMain(SceSize args, void* argp) {
                     result(a, sizeof(a), adopt));
             lastAdopt = adopt;
         }
+
+#ifdef BGTEST_BGAPP
+        // Whether the app that started it is still there: a game is held once
+        // PS takes it out of the front, and closed when another game starts.
+        // Logged as that changes.
+        if (g_parentKnown) {
+            SceUID pid = -1;
+            const int rc = sceAppMgrGetIdByName(&pid, g_title);
+            if (rc != lastAppRc || (rc >= 0 && pid != lastAppPid)) {
+                char r[24];
+                if (rc >= 0)
+                    logLine("its app %s: running, process 0x%08X", g_title, (unsigned)pid);
+                else   // 0x80802012: no such application or process
+                    logLine("its app %s: %s%s", g_title, result(r, sizeof(r), rc),
+                            rc == (int)0x80802012 ? ", not running" : "");
+                lastAppRc = rc;
+                lastAppPid = pid;
+            }
+        }
+#endif
 
         int count = 0;
         if (sceAppMgrReceiveEventNum(&count) >= 0) {
@@ -719,6 +779,18 @@ static int watcherMain(SceSize args, void* argp) {
 }
 
 #ifndef BGTEST_SYSTEM_MODE
+static char g_bgappLine[96] = "Player: not started";
+
+// X in VPLXBGT14 and 15: the player, as the app's background program.
+static void startPlayerApp(void) {
+    char r[24];
+    const int rc = bgappStart(g_title, g_t0 / 1e6);
+    if (rc >= 0)
+        snprintf(g_bgappLine, sizeof(g_bgappLine), "Player: started (at %.0fs)", secs());
+    else
+        snprintf(g_bgappLine, sizeof(g_bgappLine), "Player: refused, %s", result(r, sizeof(r), rc));
+}
+
 static void drawText(vita2d_pgf* font, int x, int y, unsigned color, float scale,
                      const char* fmt, ...) {
     char line[256];
@@ -746,6 +818,14 @@ static void drawScreen(vita2d_pgf* font, const char* path) {
         drawText(font, 60, 240, muted, 1.0f, "plays two songs: do you hear them in the game?");
         drawText(font, 40, 270, white, 1.0f, "Open this app again after: it switches back here.");
         drawText(font, 40, 305, white, 1.0f, "Now %s. START quits. Running %.0fs", g_program, secs());
+    } else if (bgappTest()) {
+        drawText(font, 40, 125, white, 1.0f, "X starts the player as a background program.");
+        drawText(font, 40, 155, white, 1.0f, "A song plays through the system player soon after.");
+        drawText(font, 40, 185, white, 1.0f, "Then press PS and start a game. Does the music go on,");
+        drawText(font, 60, 210, muted, 1.0f, "and does the second song follow the first?");
+        drawText(font, 40, 240, white, 1.0f, "After that, close this app's LiveArea (peel it off).");
+        drawText(font, 40, 275, gold, 1.0f, "%s", g_bgappLine);
+        drawText(font, 40, 305, white, 1.0f, "START quits. Running %.0fs", secs());
     } else if (silent()) {
         drawText(font, 40, 135, white, 1.0f, "This one makes no sound. Open it while BG Test 5 beeps:");
         drawText(font, 60, 165, muted, 1.0f, "do the beeps go on while this is in front?");
@@ -783,14 +863,35 @@ int main(void) {
     const int rcTitle =
         sceAppMgrAppParamGetString(SCE_KERNEL_PROCESS_ID_SELF, 12, g_title, sizeof(g_title));  // 12: TITLE_ID
 
+    char path[96];
+#ifdef BGTEST_BGAPP
+    // Started by its app, which leaves a note as it asks (bgapp.c): the log is
+    // named after the app, and its clock carries on from the app's start.
+    // Appended to, in case the app starts it twice.
+    char own[16];
+    snprintf(own, sizeof(own), "%s", g_title);
+    double t0 = 0, since = 0;
+    g_parentKnown = bgappTakeNote(g_title, sizeof(g_title), &t0, &since);
+    if (g_parentKnown) g_t0 = (SceInt64)(t0 * 1e6);
+    snprintf(path, sizeof(path), "ux0:data/VitaPlex/bgtest-%s-bgapp.log",
+             g_parentKnown || rcTitle >= 0 ? g_title : "noid");
+    g_log = fopen(path, "a");
+    logLine("start: %s, %s", g_title, describe());
+    if (g_parentKnown)
+        logLine("started %.2f s after %s asked for it", since, g_title);
+    else
+        logLine("no note from its app: started by something else, or over 30 s after it was asked");
+    if (rcTitle >= 0) logLine("the system gives it the title id %s", own);
+    const int switched = 0;
+#else
     // A program VPLXBGT12 or 13 switched to carries the log on, and takes the
-    // app's title id from the note when the system tells it none.
+    // app's title id from the note when the system tells it none. 14 to 16's
+    // are appended to, so that opening one again after the test keeps the run.
     SwitchNote note;
     const int switched = (rcTitle < 0 || switchTest()) && takeSwitchNote(&note, rcTitle >= 0);
-    char path[96];
     snprintf(path, sizeof(path), "ux0:data/VitaPlex/bgtest-%s.log",
              rcTitle >= 0 || switched ? g_title : "noid");
-    g_log = fopen(path, switched ? "a" : "w");
+    g_log = fopen(path, switched || bgappTest() ? "a" : "w");
     if (switchTest())
         logLine("start: %s, %s, as %s", g_title, describe(), g_program);
     else
@@ -798,6 +899,7 @@ int main(void) {
     if (switched)
         logLine("switched to %s from %s: started %.2f s after it asked", note.to, note.from,
                 note.since);
+#endif
     if (rcTitle < 0) {
         char r[24];
         logLine("no title id from the system (%s)%s", result(r, sizeof(r), rcTitle),
@@ -828,9 +930,11 @@ int main(void) {
     reportMemory();
     t = sceKernelCreateThread("BgTestNet", netMain, 0x10000100 + 10, 0x10000, 0, 0, NULL);
     if (t >= 0) sceKernelStartThread(t, 0, NULL);
-#ifdef BGTEST_PLAYER
-    if (strcmp(g_title, "VPLXBGT10") == 0 || switchTest()) playerStart(0);
-    if (strcmp(g_title, "VPLXBGT11") == 0) playerStart(1);
+#if defined(BGTEST_BGAPP)
+    playerStart(PLAYER_BACKGROUND);
+#elif defined(BGTEST_PLAYER)
+    if (strcmp(g_title, "VPLXBGT10") == 0 || switchTest()) playerStart(PLAYER_AWAY);
+    if (strcmp(g_title, "VPLXBGT11") == 0) playerStart(PLAYER_HANDOFF);
 #endif
 
 #ifdef BGTEST_SYSTEM_MODE
@@ -860,12 +964,14 @@ int main(void) {
         if (pad.buttons & SCE_CTRL_START) break;
         // Once a press, in VPLXBGT12 and 13: X switches to the player, O to a
         // copy of this program and triangle to this program again, the
-        // controls for the switch itself.
+        // controls for the switch itself. In 14 and 15, X starts the player
+        // as the app's background program.
         const unsigned pressed = pad.buttons & ~held;
         held = pad.buttons;
         if (switchTest() && (pressed & SCE_CTRL_CROSS)) switchTo("player.self");
         if (switchTest() && (pressed & SCE_CTRL_CIRCLE)) switchTo("screen.self");
         if (switchTest() && (pressed & SCE_CTRL_TRIANGLE)) switchTo("eboot.bin");
+        if (bgappTest() && (pressed & SCE_CTRL_CROSS)) startPlayerApp();
         if (!font) {
             sceKernelDelayThread(100 * 1000);
             continue;

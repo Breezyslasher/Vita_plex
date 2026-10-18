@@ -25,6 +25,9 @@
  * built this way needs: whether VitaPlex can start it and stay in front, and
  * whether the shell seeks.
  *
+ * In VPLXBGT14 to 16 it is the app's background program (bgapp.c), which is
+ * never in front, so it plays two songs from the library at once.
+ *
  * Requests go over https as VitaPlex makes them, with curl, mbedtls and
  * Mozilla's CA bundle (packaged beside the eboot). The sign-in token comes
  * from VitaPlex's settings.json and goes to the server in the requests, and
@@ -78,6 +81,10 @@ static volatile int g_handedOver;    // a song has been given to the shell
 // library, and the first goes on from where VitaPlex paused it.
 static int g_handoff;
 static unsigned g_startMs;
+// VPLXBGT14 to 16: the app's background program, started at once.
+static int g_background;
+// The CA bundle packaged beside the eboot (findCaBundle).
+static char g_caPath[64] = "app0:cacert.pem";
 
 static double now(void) { return sceKernelGetSystemTimeWide() / 1e6; }
 
@@ -178,11 +185,31 @@ static CURL* request(const char* path, struct curl_slist** headers) {
     curl_easy_setopt(c, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
     curl_easy_setopt(c, CURLOPT_SSL_VERIFYPEER, 1L);
     curl_easy_setopt(c, CURLOPT_SSL_VERIFYHOST, 2L);
-    curl_easy_setopt(c, CURLOPT_CAINFO, "app0:cacert.pem");
+    curl_easy_setopt(c, CURLOPT_CAINFO, g_caPath);
     curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 20L);
     return c;
+}
+
+// Whether the background program has its app's files at app0:, as an app has
+// its own: nothing says so, and without the CA bundle no request works. If
+// not, it looks in the app's directory, and the log says which it got.
+static void findCaBundle(void) {
+    FILE* f = fopen(g_caPath, "rb");
+    if (f) {
+        fclose(f);
+        logLine("player: CA bundle at %s, so app0: is the app's", g_caPath);
+        return;
+    }
+    char alt[64];
+    snprintf(alt, sizeof(alt), "ux0:app/%s/cacert.pem", bgtestTitle());
+    f = fopen(alt, "rb");
+    logLine("player: no %s; %s %s", g_caPath, f ? "using" : "nor", alt);
+    if (f) {
+        fclose(f);
+        snprintf(g_caPath, sizeof(g_caPath), "%s", alt);
+    }
 }
 
 // The part of a path before its query, for the log.
@@ -391,7 +418,7 @@ static int pickTracks(void) {
             g_tracks[n++].transcode = 1;
         }
     }
-    nameTracks(n, "bgtest10");
+    nameTracks(n, g_background ? "bgtest14" : "bgtest10");
     if (n == 0) logLine("player: no song of 1 to 4 minutes among %d tracks", seen);
     return n;
 }
@@ -644,9 +671,9 @@ static int download(int song) {
 // quit (log 7a912d67), and the watcher reads events four times a second, so
 // only spacing the steps out says which one the system answers. None was (log
 // 468b487f), so a song VitaPlex hands over, which someone is waiting to hear,
-// goes over at once.
+// goes over at once, and so does the background program's.
 static void step(int first) {
-    if (first && !g_handoff) sceKernelDelayThread(5 * 1000 * 1000);
+    if (first && !g_handoff && !g_background) sceKernelDelayThread(5 * 1000 * 1000);
 }
 
 static void handOver(int song) {
@@ -909,12 +936,16 @@ static void run(void) {
         return;
     }
     curl_global_init(CURL_GLOBAL_DEFAULT);
+    if (g_background) findCaBundle();
     const int songs = g_handoff ? handoffTracks() : pickTracks();
     if (songs == 0) return;
 
     if (g_handoff) {
         // VitaPlex has paused the song for this, so it goes on at once.
         logLine("player: starting at once%s", g_away ? ", away" : "");
+    } else if (g_background) {
+        // Never in front, so there is nothing to be sent away from.
+        logLine("player: starting at once, as the app's background program");
     } else {
         // Time to press PS and start a game: 15 s after being sent away, or
         // after five minutes in front.
@@ -966,11 +997,21 @@ static int playerMain(SceSize args, void* argp) {
         logLine("player: quitting, so that the next hand-over starts this afresh");
         sceKernelExitProcess(0);
     }
+    // The background program stays a while once the songs are over, for its
+    // app's LiveArea to be closed (BGFTP's README says that ends one), and
+    // then goes, so that it does not outlive the test.
+    if (g_background) {
+        logLine("player: staying 10 minutes, then quitting");
+        sceKernelDelayThread(600 * 1000 * 1000);
+        logLine("player: quitting, 10 minutes after the songs");
+        sceKernelExitProcess(0);
+    }
     return 0;
 }
 
-void playerStart(int handoff) {
-    g_handoff = handoff;
+void playerStart(int mode) {
+    g_handoff = mode == PLAYER_HANDOFF;
+    g_background = mode == PLAYER_BACKGROUND;
     const SceUID t =
         sceKernelCreateThread("BgTestPlayer", playerMain, 0x10000100 + 20, 256 * 1024, 0, 0, NULL);
     if (t >= 0) sceKernelStartThread(t, 0, NULL);

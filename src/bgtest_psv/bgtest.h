@@ -1,6 +1,7 @@
 /**
  * What main.c shares with the background test's player variants
- * (player_test.c, VPLXBGT10 and VPLXBGT11).
+ * (player_test.c, VPLXBGT10 and VPLXBGT11), and with the background program
+ * of VPLXBGT14 to 16 and its starter (bgapp.c, bgstart.c).
  */
 
 #ifndef BGTEST_H
@@ -15,12 +16,25 @@ const char* result(char* buf, size_t size, int value);
 
 extern volatile int g_away;      // deactivated and not yet activated
 extern volatile int g_netReady;  // SceNet is up (netMain)
+// The app's title id: for the background program, the app that started it.
+const char* bgtestTitle(void);
+
+// VPLXBGT14 to 16 (bgapp.c). The app asks for its background program,
+// eboot2.bin, and leaves it a note with its title id and its start (t0, on the
+// system clock); 0 or more when the system took the request.
+int bgappStart(const char* title, double t0);
+// The note, read by the background program as it starts and removed. 1 when
+// it is fresh, with the app's title id and start, and how long ago it asked.
+int bgappTakeNote(char* title, size_t size, double* t0, double* since);
 
 #ifdef BGTEST_PLAYER
-// Starts the player thread: with handoff 0 it picks two songs from the
-// library (VPLXBGT10), with 1 it plays the ones VitaPlex handed it
-// (VPLXBGT11).
-void playerStart(int handoff);
+// How the player starts: with two songs from the library, 15 s after the app
+// is sent away (VPLXBGT10, and the player of 12 and 13); with the ones VitaPlex
+// handed it, at once (VPLXBGT11); or with two from the library at once, as its
+// app's background program, which is never in front (14 to 16).
+enum { PLAYER_AWAY, PLAYER_HANDOFF, PLAYER_BACKGROUND };
+// Starts the player thread.
+void playerStart(int mode);
 // Stops the system player and gives the BGM port back, on the way out (why
 // says which, for the log), unless a song is with the shell.
 void playerQuit(const char* why);
