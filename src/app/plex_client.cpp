@@ -6376,11 +6376,15 @@ bool PlexClient::removeFromPlayQueue(int playQueueID, int playQueueItemID) {
 }
 
 bool PlexClient::movePlayQueueItem(int playQueueID, int playQueueItemID, int afterItemID) {
-    std::string url = buildApiUrl("/playQueues/" + std::to_string(playQueueID) +
-                                  "/items/" + std::to_string(playQueueItemID) + "/move");
+    // "after" goes in the endpoint so buildApiUrl joins the token with '&'.
+    // Appended to its result, it made the token "<token>?after=N", and the
+    // server refused every such move with 401.
+    std::string endpoint = "/playQueues/" + std::to_string(playQueueID) + "/items/" +
+                           std::to_string(playQueueItemID) + "/move";
     if (afterItemID > 0) {
-        url += "?after=" + std::to_string(afterItemID);
+        endpoint += "?after=" + std::to_string(afterItemID);
     }
+    std::string url = buildApiUrl(endpoint);
 
     HttpClient client;
     std::string response;
