@@ -888,6 +888,24 @@ logged, and on the way out the app stops the shell's playback. A host harness
 with fake responses and a scripted shell exercised the choice of songs, both
 hand-overs and the end detection, the shell ignoring an open included.
 
+**The shell played a downloaded song through a game** (log `468b487f`).
+`VPLXBGT10` was sent away with PS 82 s after it started. While away, it
+downloaded the first song (the original M4A, 3.07 MB in 2.5 s, 1283 KB/s). It
+then handed the song over in four steps 5 s apart: the BGM port at 0x80,
+initialize, open, play. Each returned 0, and no quit request followed any of
+them, so the one in `7a912d67` was not an answer to a step. The shell played
+the song at the server's length (3:23) while the app downloaded the second
+song in the background as the server's MP3 (4.41 MB in 4.8 s, 948 KB/s). The
+user heard the music go on through LittleBigPlanet, and when VitaSurf, which
+has extended memory, was opened. The 16 MB budget kept 3 MB free with curl,
+mbedtls and both downloads.
+
+The BGM output was adopted for the app when it took the port, and stopped
+being adopted once the shell played. The system asked the app to quit 10 s
+after the third PS press, 1:21 into the song. The app quit and left the song
+to the shell. The log does not say which app asked, and the second hand-over
+never came.
+
 **Only VitaPlex BG has the tests.** `VitaPlex.vpk`, the package that is
 released, is the same eboot as `VitaPlexBG.vpk`, so its settings had the toggle,
 the service picker and the three tests too, and a toggle saved on would have held
