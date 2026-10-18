@@ -50,6 +50,30 @@ void setFlexWrap(brls::Box* box) {
     YGNodeStyleSetFlexWrap(box->getYGNode(), YGWrapWrap);
 }
 
+// Space between the wrapped lines of a word row. A one-line label is only as
+// tall as its text, so a wrapped row of them stacks its lines at about one
+// font size apart, where a wrapped whole-line label spaces them by its line
+// height (borealis' default 1.65). Yoga's row gap applies between wrapped
+// lines only, so a row that fits on one line is unchanged.
+void setWrapGap(brls::Box* box, float gap) {
+    YGNodeStyleSetGap(box->getYGNode(), YGGutterRow, gap);
+}
+
+// Whether the classic lyrics sheet builds word rows. A word-timed line is one
+// label per word (the densest sampled file is about 2,200), and a line change
+// resizes the words of two rows, each resize a layout pass from the root. A
+// desktop, tablet, TV or home console absorbs that, as phones already do in
+// the mobile layout. The Vita's 444 MHz cores are the reason the cost was kept
+// off the classic sheet in the first place, so there it stays whole lines.
+// The Mobile layout, forced in settings, still has them everywhere.
+bool classicWordRowsAffordable() {
+#if defined(__vita__) || defined(__PSV__)
+    return false;
+#else
+    return true;
+#endif
+}
+
 }  // namespace
 
 std::atomic<bool> PlayerActivity::s_active{false};
@@ -3010,10 +3034,11 @@ void PlayerActivity::buildLyricsRows() {
 
     const bool synced = !m_lyricsFailed && !m_lyrics.empty()
                      && m_lyrics.front().timeMs >= 0;
-    // Word rows are the full-screen layout only: the classic side sheet is a
-    // narrow panel where a wrapped row of words would be mostly wrapping.
-    const bool wordByWord = m_mobileLayout &&
-                            Application::getInstance().getSettings().lyricsWordByWord;
+    // Word rows in both layouts, except the Vita's classic sheet (see
+    // classicWordRowsAffordable). The classic sheet is about 416 units of
+    // text wide, so a word row wraps there just as a whole-line label does.
+    const bool wordByWord = Application::getInstance().getSettings().lyricsWordByWord &&
+                            (m_mobileLayout || classicWordRowsAffordable());
 
     for (size_t i = 0; i < m_lyrics.size(); i++) {
         const auto& line = m_lyrics[i];
@@ -3021,8 +3046,17 @@ void PlayerActivity::buildLyricsRows() {
 
         auto styleWord = [this](brls::Label* l) {
             l->setTextColor(nvgRGB(0x8A, 0x8A, 0x90));
-            l->setFontSize(ui(kLyricRest));
+            l->setFontSize(lyricRestSize());
             l->setVerticalAlign(brls::VerticalAlign::BASELINE);
+            // A word never wraps inside itself; the row wraps between words.
+            // Left to wrap, a label could draw broken even when laid out at
+            // its full width: borealis decides "wrapping" in the measure
+            // function, and yoga reuses a cached measurement without calling
+            // it again, so the flag can be left from a narrower trial pass.
+            // The label then draws as a text box exactly its text's width and
+            // the last letter falls onto a line below the row ("hallway" with
+            // its "," underneath). Single-line labels never take that path.
+            l->setSingleLine(true);
         };
 
         // The row: either one label for the whole line, or a wrapping row of
@@ -3034,11 +3068,20 @@ void PlayerActivity::buildLyricsRows() {
         if (asWords) {
             auto* box = new brls::Box(brls::Axis::ROW);
             setFlexWrap(box);
-            box->setJustifyContent(brls::JustifyContent::CENTER);
             box->setAlignItems(brls::AlignItems::FLEX_END);
-            box->setMarginTop(ui(5));
-            box->setMarginBottom(ui(5));
-            box->setMinHeight(ui(40));
+            if (m_mobileLayout) {
+                box->setJustifyContent(brls::JustifyContent::CENTER);
+                box->setMarginTop(ui(5));
+                box->setMarginBottom(ui(5));
+                box->setMinHeight(ui(40));
+            } else {
+                // Left-aligned with the same spacing as the sheet's whole-line
+                // labels, wrapped lines included.
+                box->setJustifyContent(brls::JustifyContent::FLEX_START);
+                box->setMarginBottom(10);
+                const float lineHeight = brls::getStyle()["brls/label/default_line_height"];
+                setWrapGap(box, (lineHeight - 1.0f) * lyricRestSize());
+            }
             wordLabels.reserve(line.words.size());
             // Syllables of one word go in a nested row of their own.
             //
@@ -3070,7 +3113,8 @@ void PlayerActivity::buildLyricsRows() {
                 // text, so a wrap never leaves a space hanging at a line end.
                 if (end + 1 < line.words.size() && line.words[end].spaceAfter) {
                     brls::View* last = group ? (brls::View*)group : (brls::View*)wordLabels.back();
-                    last->setMarginRight(ui(6));
+                    // The same fraction of the type size in either layout.
+                    last->setMarginRight(m_mobileLayout ? ui(6) : 5.0f);
                 }
                 w = end + 1;
             }
@@ -3080,18 +3124,17 @@ void PlayerActivity::buildLyricsRows() {
             // A timed blank is a rest; give it height so the scroll still tracks the music through an instrumental break.
             label->setText(line.text.empty() ? " " : line.text);
             label->setTextColor(nvgRGB(0x8A, 0x8A, 0x90));
+            label->setFontSize(lyricRestSize());
             if (m_mobileLayout) {
                 // Centred as a column, 5px of air either side, and never shorter
                 // than a 40dp touch target so tap-to-seek has something to hit.
                 // Minimum rather than fixed: a wrapped lyric must still grow.
-                label->setFontSize(ui(kLyricRest));
                 label->setHorizontalAlign(brls::HorizontalAlign::CENTER);
                 label->setMarginTop(ui(5));
                 label->setMarginBottom(ui(5));
                 label->setMinHeight(ui(40));
             } else {
                 // The classic side sheet is untouched by this handoff.
-                label->setFontSize(17);
                 label->setMarginBottom(10);
             }
             row = label;
@@ -3257,7 +3300,7 @@ void PlayerActivity::syncLyricWords(int posMs) {
     // Sung words hold the highlight rather than dimming behind the cursor: the
     // line is read as a whole, and a single lit word with grey either side is
     // harder to follow than a line filling up.
-    const NVGcolor lit    = nvgRGB(0xFF, 0xC2, 0x3D);
+    const NVGcolor lit    = lyricLitColor();
     const NVGcolor unlit  = nvgRGB(0x8A, 0x8A, 0x90);
     const int lo = std::min(prev, upTo), hi = std::max(prev, upTo);
     for (int i = std::max(0, lo); i <= hi && i < (int)labels.size(); i++)
@@ -3298,7 +3341,7 @@ void PlayerActivity::syncLyricsToPosition() {
     auto resize = [](brls::Label* l, float size) {
         if (l->getFontSize() != size) l->setFontSize(size);
     };
-    const float restSize = m_mobileLayout ? ui(kLyricRest) : 17.0f;
+    const float restSize = lyricRestSize();
     const NVGcolor sung = nvgRGB(0x5C, 0x5C, 0x63);
     const NVGcolor toCome = nvgRGB(0x8A, 0x8A, 0x90);
     const int lo = std::min(prev, idx), hi = std::max(prev, idx);
@@ -3321,20 +3364,15 @@ void PlayerActivity::syncLyricsToPosition() {
 
     brls::View* row = m_lyricRows[(size_t)idx];
     if (brls::Label* r = m_lyricLabels[(size_t)idx]) {
-        if (m_mobileLayout) {
-            r->setTextColor(nvgRGB(0xFF, 0xC2, 0x3D));
-            resize(r, ui(kLyricActive));
-            r->setLineHeight(1.28f);
-        } else {
-            r->setTextColor(nvgRGB(0xE5, 0xA0, 0x0D));
-            resize(r, 19.0f);
-        }
+        r->setTextColor(lyricLitColor());
+        resize(r, lyricActiveSize());
+        if (m_mobileLayout) r->setLineHeight(1.28f);
     } else {
         // Word row: it grows to the active size as a whole, and the words then
         // light one at a time within it. Sizing here rather than in
         // syncLyricWords keeps the row's height settled before the scroll
         // anchor below measures it.
-        for (brls::Label* w : m_lyricWordRows[(size_t)idx]) resize(w, ui(kLyricActive));
+        for (brls::Label* w : m_lyricWordRows[(size_t)idx]) resize(w, lyricActiveSize());
         syncLyricWords(posMs);
     }
     // getY() is absolute, so subtract the content origin. The active line sits

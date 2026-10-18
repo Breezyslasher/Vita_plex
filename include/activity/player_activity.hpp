@@ -161,6 +161,16 @@ private:
     // Handoff type sizes, in its 412-wide frame; ui() scales them.
     static constexpr float kLyricRest   = 19.0f;
     static constexpr float kLyricActive = 27.0f;
+    // The classic sheet's own sizes, unscaled.
+    static constexpr float kClassicLyricRest   = 17.0f;
+    static constexpr float kClassicLyricActive = 19.0f;
+    // Lyric type and highlight for whichever layout is up. A word row and a
+    // whole-line label use the same ones, so the two look alike in either.
+    float lyricRestSize() const   { return m_mobileLayout ? ui(kLyricRest) : kClassicLyricRest; }
+    float lyricActiveSize() const { return m_mobileLayout ? ui(kLyricActive) : kClassicLyricActive; }
+    NVGcolor lyricLitColor() const {
+        return m_mobileLayout ? nvgRGB(0xFF, 0xC2, 0x3D) : nvgRGB(0xE5, 0xA0, 0x0D);
+    }
 
     std::vector<LyricLine> m_lyrics;
     // Three parallel views of the same rows, because a row is drawn one of two

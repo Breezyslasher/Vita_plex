@@ -907,6 +907,23 @@ node through `View::getYGNode()`, which is public — no subclass, no patch. The
 row needs a definite width for wrapping to happen at all, which it gets from
 `player/lyrics_list` being `alignItems="stretch"`.
 
+Word labels are single-line, and have to be. A label decides whether it
+wraps inside its measure function and keeps the answer as a flag, and yoga
+often reuses a cached measurement without calling the function again. The
+flag can then be left over from a trial pass that offered less width. The
+label is laid out exactly as wide as its text but drawn as a wrapped text box,
+and its last letter falls onto a line below the row. A desktop render of the
+mobile list showed "hallway," and "humming" drawn as "hallway" and "hummin",
+with the "," and the "g" under them. Single-line labels never take the
+wrapped path, and the row does all the wrapping anyway.
+
+In the classic sheet, a word row's wrapped lines get yoga's row gap,
+(1.65 − 1) × the font size. A one-line label is only as tall as its text, so
+without the gap a wrapped row stacks its lines about one font size apart. A
+wrapped whole-line label spaces them by its line height, borealis' default
+1.65. The row gap applies between wrapped lines only, so a row that fits on
+one line is unchanged. The mobile layout keeps the spacing it shipped with.
+
 Sung words hold the highlight rather than dimming behind the cursor: a line is
 read as a whole, and one lit word between two greys is harder to follow than a
 line filling up.
@@ -1026,9 +1043,15 @@ dense track ever hitches. Nothing here has been profiled on a device.
 Two things keep that affordable, and both are worth knowing before anyone
 moves this code:
 
-`useMobileLayout()` is false on PSV, PS4, Switch and desktop, so word rows are
-only ever built on a phone. The handhelds keep the classic sheet and pay
-nothing at all.
+Where word rows are built. At first that was the mobile layout only, so in
+practice a phone. The classic sheet now builds them too, on desktop, tablets,
+TV and the home consoles, at its own sizes (17 at rest, 19 active, the amber
+`#E5A00D` highlight). The rows are left-aligned like its whole-line labels, and
+`lyrics_list` is already `alignItems="stretch"`, so a row has the sheet's ~416
+units of text width to wrap in. The exception is the Vita
+(`classicWordRowsAffordable()`). The classic sheet is its default, and it is
+the hardware the cost below was kept away from, so it stays whole lines there.
+Forcing the Mobile layout in settings still gives word rows on any platform.
 
 `Box::draw` culls only leaf children — "nested boxes will do that check
 themselves" — so a row that is a Box no longer gets skipped wholesale when it
