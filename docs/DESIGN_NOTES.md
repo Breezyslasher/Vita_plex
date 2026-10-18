@@ -904,7 +904,33 @@ The BGM output was adopted for the app when it took the port, and stopped
 being adopted once the shell played. The system asked the app to quit 10 s
 after the third PS press, 1:21 into the song. The app quit and left the song
 to the shell. The log does not say which app asked, and the second hand-over
-never came.
+never came. The user saw no prompt to close the test app, in that run or the
+next: the prompts were for other apps. So the system asked it to quit
+without one.
+
+**The second hand-over works, and the server's MP3 has no length** (log
+`1a1cef7f`). The first song played to its end (state 2 at 0:00, once it
+reached 3:22 of 3:23). The app handed the second over at once, during the
+game, and every call returned 0. The shell played it: state 1, the clock from
+0:00 to 0:14, and the user heard it. But the shell gave that song as 19:17
+long, where the server says 2:51, so the test took it for some other file and
+stopped it after 15 s. Nothing asked the app to quit in this run.
+
+19:17 is that file's 4.41 MB read at 32 kbps, MP3's lowest bitrate. That is
+how a player works out the length of a variable-bitrate MP3 with no Xing,
+Info or VBRI frame giving its frame count, when the first frame is at
+32 kbps. On a host, ffmpeg writing VBR MP3 to a pipe, as a streamed transcode
+has to, left that frame out; written to a file, it put one in. For a 2:51
+file starting with a second of silence, the first frame's bitrate gave 9:21
+and ffprobe estimated 5:34, while the file with the frame read 2:51.
+
+So the test now logs, for each MP3 it downloads, the ID3 tag, the first
+frame's bitrate, any length header, and the frames' real count and length
+(`mp3_info.c`). It hands the shell a copy of the server's MP3 with a Xing
+frame in front, giving that count, and without the ID3 tag. On the host that
+copy decoded to the same audio, byte for byte, and ffprobe read its length
+exactly. A length that is neither the server's nor the last song's now counts
+as the new song as well.
 
 **Only VitaPlex BG has the tests.** `VitaPlex.vpk`, the package that is
 released, is the same eboot as `VitaPlexBG.vpk`, so its settings had the toggle,

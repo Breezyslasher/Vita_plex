@@ -10,7 +10,9 @@
  *   1. the first song that fits, downloaded as the server has it when the
  *      shell decodes that (MP3, AAC), and handed to the shell at once;
  *   2. the next one, downloaded as the server's MP3 of it while the first
- *      plays, and handed over when the first ends.
+ *      plays, and handed over when the first ends. The server's MP3 has no
+ *      length header, and the shell made a 2:51 song 19:17 long from it (log
+ *      1a1cef7f), so it is handed over as a copy with one in front.
  *
  * Plex makes the MP3 as it sends it and may hold back once it is well ahead,
  * which the second download's speed shows; an original file has no such
@@ -23,6 +25,7 @@
  */
 
 #include "bgtest.h"
+#include "mp3_info.h"
 
 #include "ShellAudio.h"
 
@@ -414,6 +417,51 @@ static void transcodePath(const Track* t, int song, char* out, size_t size, int 
     curl_free(token);
 }
 
+// What the shell has to go on for an MP3's length (mp3_info.h). The server's
+// MP3 of a 2:51 song came out 19:17 long to it (log 1a1cef7f), which is that
+// file's size at 32 kbps. 0 with *m filled in, or -1.
+static int logMp3(int song, const char* path, Mp3Info* m) {
+    if (mp3Inspect(path, m) != 0) {
+        logLine("player: song %d: no MP3 frame found in %s", song, path);
+        return -1;
+    }
+    char header[64], len[16], guess[16];
+    if (m->header[0])
+        snprintf(header, sizeof(header), "a %s header for %ld frames", m->header,
+                 m->headerFrames);
+    else
+        snprintf(header, sizeof(header), "no Xing, Info or VBRI header");
+    mmss(len, sizeof(len), (unsigned)(m->seconds * 1000));
+    mmss(guess, sizeof(guess), (unsigned)(mp3FirstFrameGuess(m) * 1000));
+    logLine("player: song %d: MP3 of %ld bytes: ID3 tag %ld bytes; first frame %d kbps, MPEG-%s, "
+            "%d Hz; %s; %ld frames make %s at %d to %d kbps; %ld bytes after them. The first "
+            "frame's bitrate alone makes it %s long",
+            song, m->fileSize, m->id3Size, m->firstKbps,
+            m->version == 10 ? "1" : m->version == 20 ? "2" : "2.5", m->sampleRate, header,
+            m->frames, len, m->minKbps, m->maxKbps, m->trailing, guess);
+    return 0;
+}
+
+// The shell gets an MP3 the server sent with no length header as a copy with
+// one in front, the same frames behind a Xing frame giving their count, to see
+// whether it then has the song's length. A host check had ffmpeg read 2:51
+// for a 2:51 file that way, and the same audio, where it guessed 5:34 without.
+static void giveHeader(int song, Track* t, const Mp3Info* m) {
+    char copy[64];
+    snprintf(copy, sizeof(copy), "ux0:data/VitaPlex/bgtest10-%dx.mp3", song);
+    if (mp3WriteWithHeader(t->path, m, copy) != 0) {
+        logLine("player: song %d: could not write %s; the shell gets the file as the server sent "
+                "it",
+                song, copy);
+        return;
+    }
+    logLine("player: song %d: wrote %s: the same %ld frames behind a %s header%s; the shell gets "
+            "that one",
+            song, copy, m->frames, m->minKbps == m->maxKbps ? "Info" : "Xing",
+            m->id3Size ? ", without the ID3 tag" : "");
+    snprintf(t->path, sizeof(t->path), "%s", copy);
+}
+
 static int download(int song) {
     Track* t = &g_tracks[song - 1];
     char path[1536];
@@ -474,7 +522,13 @@ static int download(int song) {
             song, rc == CURLE_OK ? "downloaded" : curl_easy_strerror(rc), status,
             bytes / (double)MB, took, took > 0 ? bytes / 1024.0 / took : 0.0,
             awayAtStart ? "yes" : "no", g_away ? "yes" : "no");
-    return rc == CURLE_OK && status == 200 && bytes > 0 ? 0 : -1;
+    const int ok = rc == CURLE_OK && status == 200 && bytes > 0;
+    if (ok && (t->transcode || strcmp(t->ext, "mp3") == 0)) {
+        Mp3Info m;
+        if (logMp3(song, t->path, &m) == 0 && t->transcode && !m.header[0])
+            giveHeader(song, t, &m);
+    }
+    return ok ? 0 : -1;
 }
 
 // ── The system player ────────────────────────────────────────────────────
@@ -524,11 +578,25 @@ static void handOver(int song) {
             result(r[1], 24, rcOpen), result(r[2], 24, rcPlay));
 }
 
-// Watches song play until it ends: its clock moving with the length the
-// server gives it loaded, then either going back after the last 10 s or the
-// state leaving 1 (playing) there. The length is what tells it from the file
-// played before, which the shell goes on with when an open does not take and
-// whose clock the first readings after an open can show. 1 when it ended.
+// The length the shell gave the last song it played; 0 before the first.
+static int g_lastShellLenMs;
+
+// Whether the shell has the song just opened, by the length it gives: the
+// server's, or after an earlier song any length but that one's. An open that
+// does not take leaves the shell on the file before, whose length is known,
+// while its own length for an MP3 with no length header is a guess: 19:17 for
+// a 2:51 song in log 1a1cef7f, which was then wrongly given up on.
+static int shellHasNewSong(int shellLenMs, int serverLenMs) {
+    const int d = shellLenMs - serverLenMs;
+    if (d > -3000 && d < 3000) return 1;
+    const int e = shellLenMs - g_lastShellLenMs;
+    return g_lastShellLenMs > 0 && shellLenMs > 0 && (e <= -3000 || e >= 3000);
+}
+
+// Watches song play until it ends: its clock moving with a new song loaded
+// (shellHasNewSong), then either going back after the last 10 s or the state
+// leaving 1 (playing) there, against the server's length. The first readings
+// after an open can still show the file before's clock. 1 when it ended.
 static int watchSong(int song) {
     const unsigned durMs = (unsigned)g_tracks[song - 1].durationMs;
     char dur[16], at[16], r[24];
@@ -558,12 +626,21 @@ static int watchSong(int song) {
             const int diff = info.duration - (int)durMs;
             char len[16];
             mmss(len, sizeof(len), (unsigned)(info.duration > 0 ? info.duration : 0));
-            if (rcInfo >= 0 && diff > -3000 && diff < 3000) {
+            if (rcInfo >= 0 && shellHasNewSong(info.duration, (int)durMs)) {
                 started = 1;
                 maxTime = time;
-                logLine("player: song %d plays: the system player has it as %s long, the server "
-                        "%s, and is at %s",
-                        song, len, dur, at);
+                if (diff > -3000 && diff < 3000) {
+                    logLine("player: song %d plays: the system player has it as %s long, the "
+                            "server %s, and is at %s",
+                            song, len, dur, at);
+                } else {
+                    char last[16];
+                    mmss(last, sizeof(last), (unsigned)g_lastShellLenMs);
+                    logLine("player: song %d plays: the system player has it as %s long, not the "
+                            "server's %s, but not the last song's %s either, and is at %s",
+                            song, len, dur, last, at);
+                }
+                g_lastShellLenMs = info.duration;
             } else if (!otherLogged) {
                 logLine("player: song %d: the system player is playing something %s long, not "
                         "this song of %s (%s)",

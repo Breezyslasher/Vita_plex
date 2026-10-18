@@ -1506,6 +1506,7 @@ if(PLATFORM_PSV)
     add_executable(vitaplex_bgtest_player
         src/bgtest_psv/main.c
         src/bgtest_psv/player_test.c
+        src/bgtest_psv/mp3_info.c
         lib/libshellaudio/ShellAudio.c
         lib/libshellaudio/shellsvc_stub.S)
     target_compile_definitions(vitaplex_bgtest_player PRIVATE BGTEST_SYSTEM_MODE BGTEST_PLAYER)
