@@ -1067,6 +1067,16 @@ left unread. So the system itself refused to start `player.self`. The code is
 not in vitasdk's documentation, and a web search found nothing on it. The
 control, O to `screen.self`, was not part of that run.
 
+The user then reported the same error for O: a plain copy of the program
+fails as the player does. So the switch itself fails here, whatever it
+switches to. These test apps are unusual in one way: they quit as soon as the
+system asks, and an app that switches would not usually read that event at
+all. The third build therefore leaves a switch's quit request to the system
+for up to 5 s before quitting. It also adds triangle, which switches to
+`eboot.bin` itself: the commonest use of the call, an app restarting itself.
+On a host, the real watcher with a faked clock and events quit at once when
+no switch was asked for, and 5 s after the request when one was.
+
 The switch back from the player also moved off the watcher onto the main
 thread. Run on the watcher, a switch that does not return before the quit
 request would leave no one to answer it, and an app that did not quit once

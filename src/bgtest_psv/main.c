@@ -79,9 +79,10 @@
  * sceAppMgrLoadExec switches an app to another SELF in its own package. Two
  * more packages carry this build with a screen as eboot.bin, the player of
  * 10 as player.self, with its system-mode boot param, and a copy of the
- * first as screen.self. X switches to the player, O to the copy, the control
- * for the switch itself; opened again after PS, the player switches back.
- * All of them keep one log, carried across by a note.
+ * first as screen.self. X switches to the player; O to the copy and triangle
+ * to eboot.bin again, the controls for the switch itself. Opened again after
+ * PS, the player switches back. All of them keep one log, carried across by
+ * a note.
  *
  *   VPLXBGT12  as a non-game app with VitaPlex's extended memory, as VitaPlex
  *              BG is.
@@ -605,6 +606,7 @@ static int watcherMain(SceSize args, void* argp) {
          (unsigned)(cb >= 0 ? scePowerRegisterCallback(cb) : cb));
 
     SceInt64 last = sceKernelGetSystemTimeWide();
+    SceInt64 switchQuitAt = 0;   // when the quit request of a switch came
     unsigned beat = 0;
     int lastAdopt = 0x7FFFFFFF, lastGain = 0x7FFFFFFF;
     for (;;) {
@@ -616,6 +618,10 @@ static int watcherMain(SceSize args, void* argp) {
             g_lastGapUs = gap;
             if (gap > g_longestGapUs) g_longestGapUs = gap;
             logLine("did not run for %.1fs: the process was held", gap / 1e6);
+        }
+        if (switchQuitAt && now - switchQuitAt > 5 * 1000000LL) {
+            logLine("still running 5 s after the switch's quit request; quitting");
+            sceKernelExitProcess(0);
         }
 
         // Whether this app's BGM output is adopted, and its private gain: two
@@ -671,7 +677,18 @@ static int watcherMain(SceSize args, void* argp) {
 #endif
                     g_away = 0;
                 }
-                if (id == EVENT_REQUEST_QUIT) {
+                if (id == EVENT_REQUEST_QUIT && g_switchingTo && !switchQuitAt) {
+                    // A switch (switchTo) brings this request 44 to 69 ms
+                    // after it is asked for. Quitting at once was followed by
+                    // the system's error C1-2697-4, switching to the player
+                    // (logs 4a8451a1, bfab5b72) and, the user saw, to a plain
+                    // copy of this program too. An app that switches would
+                    // not usually read this event at all, so the system is
+                    // left to end the process itself, for up to 5 s.
+                    switchQuitAt = now;
+                    logLine("asked to quit for the switch to %s: left to the system",
+                            g_switchingTo);
+                } else if (id == EVENT_REQUEST_QUIT) {
                     // Ended here rather than by the main loop, which could be
                     // stuck: the system starts the next app only once this
                     // process ends, and VitaPlex not ending hung the console
@@ -681,10 +698,7 @@ static int watcherMain(SceSize args, void* argp) {
                     // back has done this already.
                     if (!g_switchingTo) playerQuit("asked to quit");
 #endif
-                    if (g_switchingTo)
-                        logLine("quit, for the switch to %s", g_switchingTo);
-                    else
-                        logLine("quit");
+                    logLine("quit");
                     sceKernelExitProcess(0);
                 }
             }
@@ -729,9 +743,9 @@ static void drawScreen(vita2d_pgf* font, const char* path) {
     drawText(font, 40, 50, gold, 1.3f, "VitaPlex background test");
     drawText(font, 40, 85, white, 1.0f, "%s: %s", g_title, describe());
     if (switchTest()) {
-        drawText(font, 40, 130, white, 1.0f, "O first: the app switches to a copy of this screen.");
-        drawText(font, 60, 155, muted, 1.0f, "this screen coming back means switching works at all");
-        drawText(font, 40, 185, white, 1.0f, "Then X: it switches to its player; the screen goes black.");
+        drawText(font, 40, 125, white, 1.0f, "Triangle: the app restarts this screen. O: it switches");
+        drawText(font, 40, 150, white, 1.0f, "to a copy of it. This screen coming back means it works.");
+        drawText(font, 40, 185, white, 1.0f, "X: it switches to its player; the screen goes black.");
         drawText(font, 40, 215, white, 1.0f, "Press PS and start a game. 15 s after PS the player");
         drawText(font, 60, 240, muted, 1.0f, "plays two songs: do you hear them in the game?");
         drawText(font, 40, 270, white, 1.0f, "Open this app again after: it switches back here.");
@@ -849,11 +863,13 @@ int main(void) {
         sceCtrlPeekBufferPositive(0, &pad, 1);
         if (pad.buttons & SCE_CTRL_START) break;
         // Once a press, in VPLXBGT12 and 13: X switches to the player, O to a
-        // copy of this program, the control for the switch itself.
+        // copy of this program and triangle to this program again, the
+        // controls for the switch itself.
         const unsigned pressed = pad.buttons & ~held;
         held = pad.buttons;
         if (switchTest() && (pressed & SCE_CTRL_CROSS)) switchTo("player.self");
         if (switchTest() && (pressed & SCE_CTRL_CIRCLE)) switchTo("screen.self");
+        if (switchTest() && (pressed & SCE_CTRL_TRIANGLE)) switchTo("eboot.bin");
         if (!font) {
             sceKernelDelayThread(100 * 1000);
             continue;
