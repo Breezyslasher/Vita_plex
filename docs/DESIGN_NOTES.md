@@ -1067,9 +1067,10 @@ left unread. So the system itself refused to start `player.self`. The code is
 not in vitasdk's documentation, and a web search found nothing on it. The
 control, O to `screen.self`, was not part of that run.
 
-The user then reported the same error for O: a plain copy of the program
-fails as the player does. So the switch itself fails here, whatever it
-switches to. These test apps are unusual in one way: they quit as soon as the
+The control failed the same way (log `8063b843`, build 1992). The quit
+request came 220 ms after the switch to `screen.self` was asked for, the app
+quit, and the copy never started, and the user saw the same error. So the
+switch itself fails here, whatever it switches to. These test apps are unusual in one way: they quit as soon as the
 system asks, and an app that switches would not usually read that event at
 all. The third build therefore leaves a switch's quit request to the system
 for up to 5 s before quitting. It also adds triangle, which switches to
