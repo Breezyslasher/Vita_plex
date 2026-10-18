@@ -276,7 +276,7 @@ service stopped at 12:55. The next play starts it again.
 The same log ends mid-search, at 13:20:10, with no error. Each letter of "Day
 dream" had started a library search and a Live TV search on threads of their
 own, their answers came back out of order, and a native crash writes nothing to
-this log. What crashed is not known. Two things changed:
+this log. What crashed is not known. Three things changed:
 
 - **How a run ended is now logged at the next start** (`ExitReasons`, Android
   11+). Android keeps a record of every process death: crash, ANR, low-memory
@@ -296,6 +296,18 @@ this log. What crashed is not known. Two things changed:
   `ASYNC_RETAIN` uses. A reply is dropped unless it is still that image's current
   request and the image still exists. That also stops a late reply for a recycled
   view's old URL replacing its new picture.
+- **A result card that had focus was freed with it.** Touching a card focuses
+  it, and every answer rebuilds all the cards. borealis does not let go of a
+  focused view when it is deleted: `View`'s destructor calls `giveFocus(nullptr)`,
+  which `giveFocus()` ignores, so the next touch called `onFocusLost()` on the
+  freed card. An activity opened from a card (the options menu a hold opens, the
+  player, a detail page) keeps the card on borealis' focus stack instead, and
+  closing it read the freed card in `popActivity()`. A host harness that builds
+  the cards as search does and drives them through borealis' own touch path gets
+  a heap-use-after-free from ASan at both. Whether this was the 13:20 crash is
+  not known either. Search now moves focus out of the results before replacing
+  them, and while another activity is on top it draws new results only once the
+  tab is uncovered.
 
 The same retry hook re-sent every thumbnail still missing after 0.9 s, up to
 three times, even while its first request was still queued. Loads run one at a
@@ -1129,6 +1141,19 @@ too small on some screen, that constant is the one to move.
 - `PanGestureRecognizer` rebases `startPosition` when it promotes UNSURE to
   START, so both of those states report a zero delta. STAY is the only state
   that reports motion, and it fires every frame the finger is held.
+- `giveFocus(nullptr)` does nothing, so deleting the focused view leaves
+  `currentFocus` pointing at freed memory, and the focus stack does the same for
+  a view that had focus when an activity was pushed over it. Move focus before
+  freeing, and free nothing on a covered activity: pushing one tells the
+  activity below nothing (no `willDisappear()`), so its async work runs on.
+- When any recognizer returns START or END, borealis interrupts every recognizer
+  still UNSURE from the touched view up. The pans start after 6 units, about
+  5 px on a 1080p phone, so ordinary finger drift interrupts a hold inside a
+  scroll view, and a tap's END interrupts the hold beside it.
+  `LongPressGestureRecognizer` checked for INTERRUPTED before handling START,
+  so one interruption disabled the cell's hold for good and its tap fired
+  instead. It now starts afresh on every touch, and a hold stands while the
+  finger stays within `MAX_MOVEMENT` (25 units).
 
 ### Reading the MPV stats overlay
 

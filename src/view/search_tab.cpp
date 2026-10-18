@@ -97,6 +97,31 @@ bool icontains(const std::string& hay, const std::string& needle) {
     return lower(hay).find(lower(needle)) != std::string::npos;
 }
 
+bool isInside(brls::View* view, brls::View* ancestor) {
+    for (brls::View* v = view; v; v = v->getParent())
+        if (v == ancestor) return true;
+    return false;
+}
+
+// Whether two result lists make the same cards: the same items, showing the
+// same text, art and watched state.
+bool sameCards(const std::vector<MediaItem>& a, const std::vector<MediaItem>& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); i++) {
+        const MediaItem& x = a[i];
+        const MediaItem& y = b[i];
+        if (x.ratingKey != y.ratingKey || x.mediaType != y.mediaType ||
+            x.isLiveTV != y.isLiveTV || x.title != y.title ||
+            x.grandparentTitle != y.grandparentTitle || x.parentTitle != y.parentTitle ||
+            x.thumb != y.thumb || x.year != y.year || x.index != y.index ||
+            x.parentIndex != y.parentIndex || x.watched != y.watched ||
+            x.viewOffset != y.viewOffset || x.airStartAt != y.airStartAt ||
+            x.airEndAt != y.airEndAt)
+            return false;
+    }
+    return true;
+}
+
 std::string cardTitle(const MediaItem& it) {
     if (it.mediaType == MediaType::EPISODE && !it.grandparentTitle.empty())
         return it.grandparentTitle;       // show name (episode title goes in the sub)
@@ -199,6 +224,7 @@ void SearchTab::buildLayout() {
     m_queryLabel = nullptr;
     m_keyboardFirstKey = nullptr;
     m_clearButton = nullptr;
+    m_field = nullptr;
     m_resultsScroll = nullptr;
     m_resultsContent = nullptr;
 
@@ -400,6 +426,7 @@ void SearchTab::buildMobile() {
     // Tapping the field is how you type: it raises the platform keyboard.
     field->setFocusable(true);
     field->setHighlightCornerRadius(12);
+    m_field = field;
 
     auto* fieldIcon = new brls::Image();
     fieldIcon->setImageFromRes("icons/magnify.png");
@@ -596,29 +623,48 @@ void SearchTab::performSearch() {
             if (!alive || !*alive) return;
             if (gen != m_loadGeneration) return;   // stale
 
-            m_movies.clear(); m_episodes.clear(); m_shows.clear();
-            m_artists.clear(); m_albums.clear(); m_tracks.clear();
-            m_liveTV = live;
+            std::vector<MediaItem> movies, episodes, shows, artists, albums, tracks;
             if (ok) {
                 for (const auto& it : results) {
                     switch (it.mediaType) {
-                        case MediaType::MOVIE:        m_movies.push_back(it);   break;
+                        case MediaType::MOVIE:        movies.push_back(it);   break;
                         case MediaType::EPISODE:
                             // Plex returns every episode of a show whose NAME
                             // matches (all of "One Piece" for "one"); keep only
                             // episodes whose own title contains the query — the
                             // show itself is already in the TV Shows row.
-                            if (icontains(it.title, q)) m_episodes.push_back(it);
+                            if (icontains(it.title, q)) episodes.push_back(it);
                             break;
                         case MediaType::SHOW:
-                        case MediaType::SEASON:       m_shows.push_back(it);    break;
-                        case MediaType::MUSIC_ARTIST: m_artists.push_back(it);  break;
-                        case MediaType::MUSIC_ALBUM:  m_albums.push_back(it);   break;
-                        case MediaType::MUSIC_TRACK:  m_tracks.push_back(it);   break;
+                        case MediaType::SEASON:       shows.push_back(it);    break;
+                        case MediaType::MUSIC_ARTIST: artists.push_back(it);  break;
+                        case MediaType::MUSIC_ALBUM:  albums.push_back(it);   break;
+                        case MediaType::MUSIC_TRACK:  tracks.push_back(it);   break;
                         default: break;
                     }
                 }
             }
+
+            // Results arrive for every keystroke, and the last letters of a
+            // query mostly match the same items. Rebuilding for those replaced
+            // every card, the one under a finger too, which cancels a hold in
+            // progress. No results still rebuild: that label names the query.
+            const bool none = movies.empty() && episodes.empty() && shows.empty() &&
+                              artists.empty() && albums.empty() && tracks.empty() &&
+                              live.empty();
+            if (!none && sameCards(movies, m_movies) && sameCards(episodes, m_episodes) &&
+                sameCards(shows, m_shows) && sameCards(artists, m_artists) &&
+                sameCards(albums, m_albums) && sameCards(tracks, m_tracks) &&
+                sameCards(live, m_liveTV))
+                return;
+
+            m_movies   = std::move(movies);
+            m_episodes = std::move(episodes);
+            m_shows    = std::move(shows);
+            m_artists  = std::move(artists);
+            m_albums   = std::move(albums);
+            m_tracks   = std::move(tracks);
+            m_liveTV   = live;
             rebuildResults();
         });
     });
@@ -626,6 +672,26 @@ void SearchTab::performSearch() {
 
 void SearchTab::rebuildResults() {
     if (!m_resultsContent) return;
+    if (coveredByActivity()) {
+        if (!m_rebuildPending) {
+            m_rebuildPending = true;
+            rebuildWhenUncovered();
+        }
+        return;
+    }
+    m_rebuildPending = false;
+
+    // The cards about to be freed may hold focus: touching one focuses it, and
+    // a D-pad walks into them. borealis would go on pointing at the freed card
+    // (View's destructor calls giveFocus(nullptr), which borealis ignores) and
+    // the next touch or button press would call into freed memory. Park focus
+    // outside the results first, as Live TV and Downloads do.
+    const bool focusInResults = isInside(brls::Application::getCurrentFocus(), m_resultsContent);
+    if (focusInResults) {
+        if (brls::View* park = m_keyboardFirstKey ? m_keyboardFirstKey : m_field)
+            brls::Application::giveFocus(park);
+    }
+
     m_resultsContent->clearViews();
 
     // Fresh image-alive token so loads from the previous result set bail.
@@ -650,6 +716,29 @@ void SearchTab::rebuildResults() {
         empty->setTextColor(spal::muted());
         m_resultsContent->addView(empty);
     }
+
+    // A D-pad user goes back into the new results; a touch needs no focus.
+    if (focusInResults && brls::Application::getInputType() == brls::InputType::GAMEPAD) {
+        if (brls::View* first = m_resultsContent->getDefaultFocus())
+            brls::Application::giveFocus(first);
+    }
+}
+
+bool SearchTab::coveredByActivity() {
+    brls::Activity* mine = getParentActivity();
+    if (!mine) return false;   // not attached yet: nothing on it can have focus
+    auto stack = brls::Application::getActivitiesStack();
+    return !stack.empty() && stack.back() != mine;
+}
+
+void SearchTab::rebuildWhenUncovered() {
+    std::weak_ptr<bool> aliveWeak = m_alive;
+    brls::delay(150, [this, aliveWeak]() {
+        auto alive = aliveWeak.lock();
+        if (!alive || !*alive || !m_rebuildPending) return;
+        if (coveredByActivity()) rebuildWhenUncovered();
+        else                     rebuildResults();
+    });
 }
 
 void SearchTab::addSection(const std::string& title, const std::vector<MediaItem>& items) {
@@ -858,6 +947,7 @@ void SearchTab::willDisappear(bool resetState) {
 void SearchTab::onFocusGained() {
     brls::Box::onFocusGained();
     m_alive = std::make_shared<bool>(true);
+    if (m_rebuildPending) rebuildWhenUncovered();   // the old token ended its wait
     // Land on the keyboard so the user can start typing immediately.
     if (m_keyboardFirstKey) brls::Application::giveFocus(m_keyboardFirstKey);
 }
