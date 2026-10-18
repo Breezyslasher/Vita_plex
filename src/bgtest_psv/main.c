@@ -77,10 +77,11 @@
  * It did, but the system closed VitaPlex BG to start it (log 0bbfcb94). One
  * app could be both, if the system goes by the program an app is running:
  * sceAppMgrLoadExec switches an app to another SELF in its own package. Two
- * more packages carry this build with a screen as eboot.bin and the player
- * of 10 as player.self, with its system-mode boot param. X switches to the
- * player; opened again after PS, the player switches back. Both programs
- * keep one log, carried across by a note.
+ * more packages carry this build with a screen as eboot.bin, the player of
+ * 10 as player.self, with its system-mode boot param, and a copy of the
+ * first as screen.self. X switches to the player, O to the copy, the control
+ * for the switch itself; opened again after PS, the player switches back.
+ * All of them keep one log, carried across by a note.
  *
  *   VPLXBGT12  as a non-game app with VitaPlex's extended memory, as VitaPlex
  *              BG is.
@@ -239,61 +240,73 @@ static int silent(void) {
 
 // ── Switching program (VPLXBGT12 and 13) ─────────────────────────────────
 
-#define SWITCH_NOTE "ux0:data/VitaPlex/bgtest-%s-switch.txt"
+// One path whatever the app, so that a program the system tells no title id
+// still finds the note.
+#define SWITCH_NOTE "ux0:data/VitaPlex/bgtest-switch.txt"
 
-// The note a program leaves as it switches (switchTo): which one it was, when
-// the first program started and when it asked, on the system clock, which
-// runs on from one program to the next. A program that finds a fresh one
-// carries the log on, its clock continuing from the first's, and gets the
-// seconds since the ask; -1 otherwise. Read once and removed.
-static double takeSwitchNote(char* from, size_t size) {
-    char note[96], line[96], who[16] = "";
-    snprintf(note, sizeof(note), SWITCH_NOTE, g_title);
-    FILE* f = fopen(note, "r");
-    if (!f) return -1;
+static char g_program[16] = "eboot.bin";    // which of the app's programs this is
+static const char* volatile g_switchingTo;  // the one asked for, for the quit line
+#ifdef BGTEST_PLAYER
+static volatile int g_switchBack;           // the watcher asks, the main thread switches
+#endif
+
+typedef struct SwitchNote {
+    char title[16], from[16], to[16];
+    double t0, asked, since;
+} SwitchNote;
+
+// The note a program leaves as it switches (switchTo): the app's title id,
+// the program it was, the one it asked for, when the first program started
+// and when it asked. The last two are on the system clock, which runs on from
+// one program to the next. Read once and removed. 1 when it is fresh and for
+// this app: the log then carries on, its clock continuing from the first
+// program's, and a program the system told no title id (titleKnown 0) takes
+// it from here.
+static int takeSwitchNote(SwitchNote* n, int titleKnown) {
+    memset(n, 0, sizeof(*n));
+    FILE* f = fopen(SWITCH_NOTE, "r");
+    if (!f) return 0;
+    char line[160];
     const int got = fgets(line, sizeof(line), f) != NULL;
     fclose(f);
-    remove(note);
-    char* p = NULL;
-    double t0 = 0, asked = 0;
-    if (got && sscanf(line, "%15s", who) == 1 && (p = strchr(line, ' ')) != NULL) {
-        t0 = strtod(p, &p);
-        asked = strtod(p, &p);
-    }
-    const double since = sceKernelGetSystemTimeWide() / 1e6 - asked;
-    if (!who[0] || t0 <= 0 || asked <= 0 || since < 0 || since > 30) return -1;
-    snprintf(from, size, "%s", who);
-    g_t0 = (SceInt64)(t0 * 1e6);
-    return since;
+    remove(SWITCH_NOTE);
+    int at = 0;
+    if (!got || sscanf(line, "%15s %15s %15s %n", n->title, n->from, n->to, &at) < 3 || !at)
+        return 0;
+    char* p = line + at;
+    n->t0 = strtod(p, &p);
+    n->asked = strtod(p, &p);
+    n->since = sceKernelGetSystemTimeWide() / 1e6 - n->asked;
+    if (n->t0 <= 0 || n->asked <= 0 || n->since < 0 || n->since > 30) return 0;
+    if (titleKnown && strcmp(n->title, g_title) != 0) return 0;
+    snprintf(g_title, sizeof(g_title), "%s", n->title);
+    snprintf(g_program, sizeof(g_program), "%s", n->to);
+    g_t0 = (SceInt64)(n->t0 * 1e6);
+    return 1;
 }
 
 // Only the two programs that switch need what follows: the build with a
 // screen and the player. The system-mode beeper of 5 and 6 never does.
 #if !defined(BGTEST_SYSTEM_MODE) || defined(BGTEST_PLAYER)
-static const char* thisProgram(void) {
-#ifdef BGTEST_PLAYER
-    return "player.self";
-#else
-    return "eboot.bin";
-#endif
-}
-
 // Replaces this program with app0:<program> of the same app. Returns only if
-// the system refused.
+// the system refused. It had not returned when the system asked the app to
+// quit, 69 ms after (log 4a8451a1), so it must not run on the watcher, which
+// answers that.
 static void switchTo(const char* program) {
-    char note[96], app[32], r[24];
-    snprintf(note, sizeof(note), SWITCH_NOTE, g_title);
-    FILE* f = fopen(note, "w");
+    char app[32], r[24];
+    FILE* f = fopen(SWITCH_NOTE, "w");
     if (f) {
-        fprintf(f, "%s %.6f %.6f\n", thisProgram(), g_t0 / 1e6,
+        fprintf(f, "%s %s %s %.6f %.6f\n", g_title, g_program, program, g_t0 / 1e6,
                 sceKernelGetSystemTimeWide() / 1e6);
         fclose(f);
     }
     snprintf(app, sizeof(app), "app0:%s", program);
     logLine("switching to %s with sceAppMgrLoadExec%s", app, g_away ? ", away" : "");
+    g_switchingTo = program;
     const int rc = sceAppMgrLoadExec(app, NULL, NULL);
-    logLine("sceAppMgrLoadExec(%s): %s; still %s", app, result(r, sizeof(r), rc), thisProgram());
-    remove(note);
+    g_switchingTo = NULL;
+    logLine("sceAppMgrLoadExec(%s): %s; still %s", app, result(r, sizeof(r), rc), g_program);
+    remove(SWITCH_NOTE);
 }
 #endif
 
@@ -653,11 +666,8 @@ static int watcherMain(SceSize args, void* argp) {
                 if (id == EVENT_ACTIVATE) {
 #ifdef BGTEST_PLAYER
                     // Opened again after PS: back to the program with the
-                    // screen. A song with the shell plays on (playerQuit).
-                    if (g_away && switchTest()) {
-                        playerQuit("switching back");
-                        switchTo("eboot.bin");
-                    }
+                    // screen, which the main thread does (switchTo).
+                    if (g_away && switchTest()) g_switchBack = 1;
 #endif
                     g_away = 0;
                 }
@@ -667,9 +677,14 @@ static int watcherMain(SceSize args, void* argp) {
                     // process ends, and VitaPlex not ending hung the console
                     // (log 3ea218f5).
 #ifdef BGTEST_PLAYER
-                    playerQuit("asked to quit");   // or the shell plays on with nothing to stop it
+                    // Or the shell plays on with nothing to stop it. A switch
+                    // back has done this already.
+                    if (!g_switchingTo) playerQuit("asked to quit");
 #endif
-                    logLine("quit");
+                    if (g_switchingTo)
+                        logLine("quit, for the switch to %s", g_switchingTo);
+                    else
+                        logLine("quit");
                     sceKernelExitProcess(0);
                 }
             }
@@ -714,12 +729,13 @@ static void drawScreen(vita2d_pgf* font, const char* path) {
     drawText(font, 40, 50, gold, 1.3f, "VitaPlex background test");
     drawText(font, 40, 85, white, 1.0f, "%s: %s", g_title, describe());
     if (switchTest()) {
-        drawText(font, 40, 135, white, 1.0f, "Press X: this app switches itself to its player.");
-        drawText(font, 60, 165, muted, 1.0f, "the screen then goes black: that is the player");
-        drawText(font, 40, 200, white, 1.0f, "Then press PS and start a game. 15 s after PS the");
-        drawText(font, 60, 230, muted, 1.0f, "player plays two songs: do you hear them in the game?");
-        drawText(font, 40, 265, white, 1.0f, "Open this app again after: it switches back here.");
-        drawText(font, 40, 310, white, 1.0f, "START quits. Running %.0fs", secs());
+        drawText(font, 40, 130, white, 1.0f, "O first: the app switches to a copy of this screen.");
+        drawText(font, 60, 155, muted, 1.0f, "this screen coming back means switching works at all");
+        drawText(font, 40, 185, white, 1.0f, "Then X: it switches to its player; the screen goes black.");
+        drawText(font, 40, 215, white, 1.0f, "Press PS and start a game. 15 s after PS the player");
+        drawText(font, 60, 240, muted, 1.0f, "plays two songs: do you hear them in the game?");
+        drawText(font, 40, 270, white, 1.0f, "Open this app again after: it switches back here.");
+        drawText(font, 40, 305, white, 1.0f, "Now %s. START quits. Running %.0fs", g_program, secs());
     } else if (silent()) {
         drawText(font, 40, 135, white, 1.0f, "This one makes no sound. Open it while BG Test 5 beeps:");
         drawText(font, 60, 165, muted, 1.0f, "do the beeps go on while this is in front?");
@@ -754,16 +770,29 @@ static void drawScreen(vita2d_pgf* font, const char* path) {
 int main(void) {
     g_t0 = sceKernelGetSystemTimeWide();
     g_logMutex = sceKernelCreateMutex("BgTestLog", 0, 0, NULL);
-    sceAppMgrAppParamGetString(SCE_KERNEL_PROCESS_ID_SELF, 12, g_title, sizeof(g_title));  // 12: TITLE_ID
+    const int rcTitle =
+        sceAppMgrAppParamGetString(SCE_KERNEL_PROCESS_ID_SELF, 12, g_title, sizeof(g_title));  // 12: TITLE_ID
 
-    char path[96], from[16] = "";
-    snprintf(path, sizeof(path), "ux0:data/VitaPlex/bgtest-%s.log", g_title);
-    // A program VPLXBGT12 or 13 switched to carries the log on.
-    const double sinceAsked = switchTest() ? takeSwitchNote(from, sizeof(from)) : -1;
-    g_log = fopen(path, sinceAsked >= 0 ? "a" : "w");
-    logLine("start: %s, %s", g_title, describe());
-    if (sinceAsked >= 0)
-        logLine("switched to from %s: started %.2f s after it asked", from, sinceAsked);
+    // A program VPLXBGT12 or 13 switched to carries the log on, and takes the
+    // app's title id from the note when the system tells it none.
+    SwitchNote note;
+    const int switched = (rcTitle < 0 || switchTest()) && takeSwitchNote(&note, rcTitle >= 0);
+    char path[96];
+    snprintf(path, sizeof(path), "ux0:data/VitaPlex/bgtest-%s.log",
+             rcTitle >= 0 || switched ? g_title : "noid");
+    g_log = fopen(path, switched ? "a" : "w");
+    if (switchTest())
+        logLine("start: %s, %s, as %s", g_title, describe(), g_program);
+    else
+        logLine("start: %s, %s", g_title, describe());
+    if (switched)
+        logLine("switched to %s from %s: started %.2f s after it asked", note.to, note.from,
+                note.since);
+    if (rcTitle < 0) {
+        char r[24];
+        logLine("no title id from the system (%s)%s", result(r, sizeof(r), rcTitle),
+                switched ? "; took it from the switch note" : "");
+    }
 #ifdef BGTEST_SYSTEM_MODE
     if (strcmp(g_title, "VPLXBGT06") == 0) growMemory();
 #endif
@@ -799,7 +828,19 @@ int main(void) {
     // this one is meant to run on while a game is in front, where START is
     // pressed all the time. Closed from the LiveArea, it is asked to quit and
     // the watcher ends it.
-    for (;;) sceKernelDelayThread(60 * 1000 * 1000);
+    for (;;) {
+#ifdef BGTEST_PLAYER
+        // The switch back VPLXBGT12 and 13's watcher asks for (switchTo).
+        if (g_switchBack) {
+            g_switchBack = 0;
+            playerQuit("switching back");
+            switchTo("eboot.bin");
+        }
+        sceKernelDelayThread(100 * 1000);
+#else
+        sceKernelDelayThread(60 * 1000 * 1000);
+#endif
+    }
 #else
     SceCtrlData pad;
     unsigned held = 0;
@@ -807,9 +848,12 @@ int main(void) {
         memset(&pad, 0, sizeof(pad));
         sceCtrlPeekBufferPositive(0, &pad, 1);
         if (pad.buttons & SCE_CTRL_START) break;
-        // X, once a press: VPLXBGT12 and 13 switch to their player.
-        if (switchTest() && (pad.buttons & ~held & SCE_CTRL_CROSS)) switchTo("player.self");
+        // Once a press, in VPLXBGT12 and 13: X switches to the player, O to a
+        // copy of this program, the control for the switch itself.
+        const unsigned pressed = pad.buttons & ~held;
         held = pad.buttons;
+        if (switchTest() && (pressed & SCE_CTRL_CROSS)) switchTo("player.self");
+        if (switchTest() && (pressed & SCE_CTRL_CIRCLE)) switchTo("screen.self");
         if (!font) {
             sceKernelDelayThread(100 * 1000);
             continue;

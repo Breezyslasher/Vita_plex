@@ -1586,10 +1586,11 @@ if(PLATFORM_PSV)
     endforeach()
     # Two programs in one app: the build with a screen as eboot.bin, and the
     # player as player.self, which the first switches to with
-    # sceAppMgrLoadExec (main.c). The twelfth is a non-game app with
-    # VitaPlex's extended memory, as VitaPlex BG is; the thirteenth a game
-    # with it, as VitaPlex is. Listing the player as a FILE also makes each
-    # package wait for it to be built, as VitaPlex.vpk does for updater.vpk.
+    # sceAppMgrLoadExec (main.c); and a copy of the first as screen.self, to
+    # switch to as a control. The twelfth is a non-game app with VitaPlex's
+    # extended memory, as VitaPlex BG is; the thirteenth a game with it, as
+    # VitaPlex is. Listing the player as a FILE also makes each package wait
+    # for it to be built, as VitaPlex.vpk does for updater.vpk.
     foreach(_bgt
             "VPLXBGT12|BG Test 12 switch app|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
             "VPLXBGT13|BG Test 13 switch game|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12")
@@ -1604,6 +1605,7 @@ if(PLATFORM_PSV)
             VERSION 01.00
             NAME "${_bgt_name}"
             FILE ${CMAKE_BINARY_DIR}/vitaplex_bgtest_player.self player.self
+            FILE ${CMAKE_BINARY_DIR}/vitaplex_bgtest.self screen.self
             FILE resources/cacert.pem cacert.pem)
     endforeach()
     set(VITA_MKSFOEX_FLAGS "${_bgt_saved_sfo}")

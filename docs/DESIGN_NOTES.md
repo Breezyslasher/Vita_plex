@@ -1044,6 +1044,27 @@ answers:
   the system holds the app or asks it to close;
 - whether `eboot.bin`, switched back to, can allocate its big memory again.
 
+**The player did not start** (`VPLXBGT12`, log `4a8451a1`, build 1991).
+`eboot.bin` had the game budget (342 MB in one block) and asked for
+`app0:player.self`. `sceAppMgrLoadExec` had not returned when the system asked
+the app to quit, 69 ms later, and the app quit 10 ms after that. That is how
+the switch frees the app for the next program. Then nothing: the player logged
+nothing, and the note it reads and removes first thing was still there,
+written 13.2 s after the start, as the log says. Either the system did not
+start the player, perhaps refusing its system-mode boot param in an app with
+the game budget, or the player started without a title id and so found neither
+the note nor its log. Two changes tell these apart:
+- `screen.self`, a copy of `eboot.bin` in the same package, is switched to
+  with O, as a control for the switch itself;
+- the note is at one path for every app and carries the app's title id, which
+  a program the system tells none takes from it. One that has neither logs to
+  `bgtest-noid.log`.
+
+The switch back from the player also moved off the watcher onto the main
+thread. Run on the watcher, a switch that does not return before the quit
+request would leave no one to answer it, and an app that did not quit once
+hung the console (`3ea218f5`).
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which
