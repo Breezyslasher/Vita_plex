@@ -932,6 +932,21 @@ copy decoded to the same audio, byte for byte, and ffprobe read its length
 exactly. A length that is neither the server's nor the last song's now counts
 as the new song as well.
 
+**With a length header, the shell has the right length** (log `e822493b`).
+The server's MP3 of the second song, as the console downloaded it, was a
+45-byte ID3 tag, then 6577 frames at 32 to 320 kbps, making 2:51. The first
+frame was at 32 kbps, and there was no Xing, Info or VBRI header. From that
+first frame alone the song is 19:17 long, the length the shell gave it in
+`1a1cef7f`. The copy with a Xing frame in front went to the shell as 2:51, the
+server's length. It played during the game to its end: 2:50 of 2:51, then
+state 2 at 0:00, and the user heard all of it. About 0.6 s passed between the
+first song's end and the second's start. A player handing the shell the
+server's MP3 has to write that header first.
+
+The quick menu's Music controls stayed dimmed, as they are for any source but
+the system's own without a SceShell plugin (ElevenMPV-A, above). Its music
+volume did change the shell's playback.
+
 **Only VitaPlex BG has the tests.** `VitaPlex.vpk`, the package that is
 released, is the same eboot as `VitaPlexBG.vpk`, so its settings had the toggle,
 the service picker and the three tests too, and a toggle saved on would have held
