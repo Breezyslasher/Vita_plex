@@ -1567,18 +1567,22 @@ if(PLATFORM_PSV)
     endforeach()
     # The player test, set up as the fifth is, with the CA bundle at app0:.
     # Twice: the eleventh is the same eboot, started by VitaPlex BG with the
-    # song it was playing (main.c tells them apart by title id).
-    set(VITA_MKSFOEX_FLAGS "-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16")
-    set(VITA_PACK_VPK_FLAGS "")
-    set(resources "")
-    vita_create_vpk(VitaPlexBgTest-VPLXBGT10.vpk VPLXBGT10 vitaplex_bgtest_player.self
-        VERSION 01.00
-        NAME "BG Test 10 player"
-        FILE resources/cacert.pem cacert.pem)
-    vita_create_vpk(VitaPlexBgTest-VPLXBGT11.vpk VPLXBGT11 vitaplex_bgtest_player.self
-        VERSION 01.00
-        NAME "BG Test 11 hand-off"
-        FILE resources/cacert.pem cacert.pem)
+    # song it was playing (main.c tells them apart by title id). Each starts
+    # from cleared flags and resources, as above: vita_create_vpk is a macro,
+    # and what it gathers for one package is still set for the next, which
+    # gave the eleventh the CA bundle twice (build 1987).
+    foreach(_bgt "VPLXBGT10|BG Test 10 player" "VPLXBGT11|BG Test 11 hand-off")
+        string(REPLACE "|" ";" _bgt "${_bgt}")
+        list(GET _bgt 0 _bgt_id)
+        list(GET _bgt 1 _bgt_name)
+        set(VITA_MKSFOEX_FLAGS "-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16")
+        set(VITA_PACK_VPK_FLAGS "")
+        set(resources "")
+        vita_create_vpk(VitaPlexBgTest-${_bgt_id}.vpk ${_bgt_id} vitaplex_bgtest_player.self
+            VERSION 01.00
+            NAME "${_bgt_name}"
+            FILE resources/cacert.pem cacert.pem)
+    endforeach()
     set(VITA_MKSFOEX_FLAGS "${_bgt_saved_sfo}")
     set(VITA_PACK_VPK_FLAGS "${_bgt_saved_pack}")
     set(resources "${_bgt_saved_resources}")
