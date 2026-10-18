@@ -1278,6 +1278,30 @@ appearing), so that two do not play over each other.
   then, whatever was in front. The log does not say whether a game had been
   started.
 
+**A non-game app on the game budget starts it, and the music survives the
+power button** (logs `d942eac0`, `e98e760e`, `VPLXBGT18`, build 2002).
+
+- `VPLXBGT18` (no extended memory, `VPLXBGT03`'s `param.sfo`) installed with
+  the background program, where 14 and 15 gave 0x80101104. X asked with 0,
+  which returned 0 in 0.02 s, and the program started 0.98 s later as
+  `VPLXBGP18`, on 16 MB (mode 2).
+- It played the first song to its end (3:23) and the second straight after
+  it, with the app in the background from 0:17.
+- At each press of the power button (0x80401080), the shell stopped the song
+  within half a second, and the player's play brought it back after 0.5 to
+  4.6 s. The user turned the screen off and on several times and heard the
+  music go on.
+- Then power was held (0x40000000, at 5:01) and the system suspended
+  (0x00010000, at 5:03). The program ran on and so did the song (1:17 to
+  1:47 by the end of the log), but the network was gone ("could not
+  connect"). So only songs already downloaded can play then.
+- The app was asked to quit at 0:50 and logged its quit, but its process went
+  on. Its network check ran for another 4½ minutes, to the end of the log,
+  and the program kept finding it running. The same call ended the process in
+  every earlier test, so the background program is the difference. The last
+  time an app did not end when asked (`3ea218f5`), the next app hung. What
+  the user opened then, and whether it started, is the open question.
+
 ElevenMPV-A's power callback handles exactly this. At bit 22 (0x00400000),
 with a song in the shell, it sends play again. While it plays, it ticks
 `sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DISABLE_AUTO_SUSPEND)`, so that the
