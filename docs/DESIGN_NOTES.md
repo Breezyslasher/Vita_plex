@@ -1349,10 +1349,12 @@ once. Two more packages do that from the app with a screen:
   request goes out even when it does not, and is taken back after 2 s if
   nothing has taken it.
 - Every exit of 14 to 21 and of the program now has a rescue behind it. A
-  thread started just before the exit call wakes 3 s later, which it only
-  does if the process is still there. In an app it asks the player to stop,
-  in case the exit is waiting for that, and gives it 5 s and 1 s more. Then
-  the app ends with `_sceKernelExitProcessForUser`, the system call
+  thread started as the process begins to quit wakes 3 s later, which it only
+  does if the process is still there. It starts just before the exit call,
+  and on a quit request in 20 and 21 before they ask for the player, in case
+  the system, switching apps, holds that call. In an app it asks the player
+  to stop, in case the exit is waiting for that, and gives it 5 s and 1 s
+  more. Then the app ends with `_sceKernelExitProcessForUser`, the system call
   `sceKernelExitProcess` (SceLibKernel) ends with, past whatever LibKernel
   does before it; the program's own rescue goes straight to that. vita-headers
   declares the call, but vitasdk 2026.08's stubs may not carry it, so

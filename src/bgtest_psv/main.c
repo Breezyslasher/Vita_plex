@@ -473,18 +473,18 @@ static void takeBackPlayer(void) {
 // ends with, through this project's own import stub (exit_stub.S).
 int bgtestRawExit(int status);
 
-// Started by quitNow, it wakes 3 s later only if the process is still there.
-// VPLXBGT18's sceKernelExitProcess never returned once its player ran: its
-// other threads went on for minutes, and the game that had asked it to quit
-// hung, waiting for it. The app asks its player to stop, in case the exit
-// waits for that, and gives it 5 s to go; then the app, or the player itself,
-// ends through the system call underneath, past whatever LibKernel does
-// before it.
+// Started as the process begins to quit (armRescue), it wakes 3 s later only
+// if the process is still there. VPLXBGT18's sceKernelExitProcess never
+// returned once its player ran: its other threads went on for minutes, and
+// the game that had asked it to quit hung, waiting for it. The app asks its
+// player to stop, in case the exit waits for that, and gives it 5 s to go;
+// then the app, or the player itself, ends through the system call
+// underneath, past whatever LibKernel does before it.
 static int rescueMain(SceSize args, void* argp) {
     (void)args;
     (void)argp;
     sceKernelDelayThread(3 * 1000 * 1000);
-    logLine("still running 3 s after the exit call");
+    logLine("still running 3 s after it began to quit");
 #ifndef BGTEST_BGAPP
     char player[16], r[24];
     playerTitle(player, sizeof(player));
@@ -511,19 +511,25 @@ static int rescueMain(SceSize args, void* argp) {
     return 0;
 }
 
-// Ends the process, with the rescue started first in the apps that start a
-// background program and in that program itself. The log stays open for it.
-static void quitNow(void) {
+// Starts the rescue, once, in the apps that start a background program and in
+// that program itself.
+static int g_rescueArmed;
+static void armRescue(void) {
 #ifdef BGTEST_BGAPP
     const int rescue = 1;
 #else
     const int rescue = bgappTest();
 #endif
-    if (rescue) {
-        const SceUID t =
-            sceKernelCreateThread("BgTestRescue", rescueMain, 0x10000100, 0x10000, 0, 0, NULL);
-        if (t >= 0) sceKernelStartThread(t, 0, NULL);
-    }
+    if (!rescue || g_rescueArmed) return;
+    g_rescueArmed = 1;
+    const SceUID t =
+        sceKernelCreateThread("BgTestRescue", rescueMain, 0x10000100, 0x10000, 0, 0, NULL);
+    if (t >= 0) sceKernelStartThread(t, 0, NULL);
+}
+
+// Ends the process, with the rescue behind it. The log stays open for it.
+static void quitNow(void) {
+    armRescue();
     logLine("quit");
     sceKernelExitProcess(0);
 }
@@ -955,8 +961,13 @@ static int watcherMain(SceSize args, void* argp) {
                     if (!g_switchingTo) playerQuit("asked to quit");
 #elif !defined(BGTEST_SYSTEM_MODE)
                     // 20 and 21 hand the music to their player as they go, as
-                    // VitaPlex would when a game is started over it.
-                    if (quitsAfterStart()) startPlayerApp();
+                    // VitaPlex would when a game is started over it. The
+                    // rescue goes first, in case the system, in the middle of
+                    // switching apps, holds the request for the player.
+                    if (quitsAfterStart()) {
+                        armRescue();
+                        startPlayerApp();
+                    }
                     if (bgappTest()) quitNow();
 #endif
                     if (g_switchingTo)
