@@ -158,6 +158,163 @@ the version, so a reorder, add or remove simply makes the cache stop matching. A
 cached entry with an empty URL records a *failed* attempt, so a track whose
 resolve fails is not retried every second.
 
+### `reset-on-next-file` restores, it does not reset
+
+`reset-on-next-file=speed,pause` read as "every file starts unpaused". It does
+not do that. mpv backs up each listed option when a file starts and restores the
+backup when the file ends (`loadfile.c`: `m_config_backup_opt`, then
+`m_config_restore_backups`; the same in 0.36 and master). The value restored is
+whatever the option held when the file *started*.
+
+So a pause that lands while nothing is loaded is captured by the next file and
+handed on by every file after it. An Android log (build 1944) had one
+`pause=true` at 16:23:16 with nothing loaded, then four songs in a row open
+paused, each needing Play, with no pause command anywhere near them. Running
+that sequence through libmpv 0.37 reproduces it: the next track starts paused,
+and the one after starts paused again though Play was pressed in between.
+
+`pause` is off the list now, and `loadUrl` sets it, and `start`, on every load.
+That is also needed because `keep-open` pauses the player at the end of every
+track; before, the restore was what undid that. A paused file is stopped before
+it is replaced, so unpausing it first cannot let a moment of it out.
+
+### Getting a track back after a lost connection
+
+The same log has the music stopping twice while the phone lost the server for a
+few minutes. Once the song had been fully read, played out, and the next one
+failed to resolve (`Could not resolve hostname`). Once the stream broke at 3:34 of
+4:09 and mpv's reconnects failed on DNS. Both times the connection came back on
+its own, and nothing tried again until a track was skipped by hand.
+
+`MusicController` now takes over from either failure, foreground or headless:
+
+- It resumes from 2 s before where the audio stopped, or from the start of a
+  track that never loaded.
+- It checks the server with `GET /identity`, which needs no token and has no
+  side effects. The checks run at 2, 3, 5 and 10 s, then every 15 s.
+- Once the server answers, it resolves the track again at that point. A
+  transcode is restarted on the server with `offset=`. A direct-play original is
+  opened by mpv at the point (`start`).
+- It gives up after 15 minutes without the server, but only after at least ten
+  checks: the clock can run on while a Vita sleeps. It also gives up after three
+  reloads that fail with the server answering, which is not a lost connection.
+- While it waits, the OS session reads as playing. Pause calls it off, and Play
+  starts it again from the same point. On Android, "playing" is also what keeps
+  the CPU and Wi-Fi locks held for the checks.
+- Next, a picked track, a video, or Stop drops it.
+
+`"Lost connection to the server..."` shows when a check first fails. A lyrics
+request that fails now says so, instead of "This track has no lyrics".
+
+Why the connection went is a separate question that log could not answer.
+Android now reports into the same log through `NetworkMonitor`:
+
+- the default network appearing, going and changing;
+- Android blocking this app's access (Android 10+);
+- Doze, battery saver, Data Saver, and screen on/off;
+- the app's restrictions at start.
+
+### Android cut the app off, and curl kept the failure
+
+A log from a Galaxy Z Fold6 (build 1961, on mobile data) answers that.
+
+Android blocked VitaPlex's network 5 to 20 s after each trip to the background
+(`MpvPlayer: detached Android surface`, then `access BLOCKED`). It allowed it
+again as the app came back. A foreground service keeps an app on the network in
+the background, and at first it did. At 07:44 the phone changed networks with
+VitaPlex playing in the background, and access stayed allowed.
+
+The music was paused at 07:45. At 07:58 access was blocked, with the screen on.
+After that, the blocks also came with music playing: at 11:36 and at 11:39. The
+log cannot say what happened to the service, since nothing logged it. Once the
+service was gone, though, nothing would have started it again.
+`MediaNotification.ensureService()` returned early while its flag was set. The
+flag was set when it asked for the service, and only `clear()` reset it.
+
+The song playing at 11:39 finished from mpv's buffer. The next one needed the
+server's name looked up at 11:41:31, while Android blocked the app, and the
+lookup failed. Every check after it failed in under 10 ms for the 2.5 minutes
+the log ran on, including while access was allowed and the app was on screen.
+That was curl, not Android:
+
+- curl 8.16 caches a failed lookup as an entry with no address. Its
+  `dnscache_entry_is_stale()` doubles the age of such an entry, so it is kept
+  for half of `CURLOPT_DNS_CACHE_TIMEOUT`: 150 s at our 300.
+- A cache hit fails at once, without asking the system or renewing the entry
+  (`Curl_resolv`).
+- The log ends 6 s before the entry would have expired.
+
+This was replayed against libcurl 8.22 with a `getaddrinfo` that fails and then
+recovers. Every request after the recovery failed in 0.0 ms, without a lookup.
+
+Changes:
+
+- `HttpClient`: after `CURLE_COULDNT_RESOLVE_HOST` for a host, its requests use
+  `CURLOPT_DNS_CACHE_TIMEOUT` 0 until one gets past the lookup. curl then drops
+  the entry and asks the system. When the transfer ends it also prunes the
+  shared cache by that timeout, which clears it. In the same replay, the first
+  request after the recovery succeeds.
+- `MusicService` records whether it is in the foreground. `MediaNotification`
+  starts it whenever it isn't, and again every time playback starts. A start
+  while it runs only repeats `startForeground()`. Android 12+ refuses a start
+  from the background unless the app is exempt: a tap on its media controls, or
+  battery optimization off. A refused start is logged once, and retried the
+  next time playback starts.
+- vitaplex.log gets the service's starts, stops and failures. Each `access
+  BLOCKED` or `allowed` line now ends with the app's process state, such as
+  `foreground service 125` or `cached 400`.
+
+The next log (build 1976) shows the service holding. It started on each play
+(12:36:53, 12:36:58), and the song then played in the background with no block,
+with the app at `foreground service 125`. Android does stop the service on its
+own once nothing plays. Paused at 05:36, the app was at `background service 300`
+by 06:06 and the service stopped at 06:09. After the queue ended at 12:41, the
+service stopped at 12:55. The next play starts it again.
+
+### A crash while typing in search
+
+The same log ends mid-search, at 13:20:10, with no error. Each letter of "Day
+dream" had started a library search and a Live TV search on threads of their
+own, their answers came back out of order, and a native crash writes nothing to
+this log. What crashed is not known. Three things changed:
+
+- **How a run ended is now logged at the next start** (`ExitReasons`, Android
+  11+). Android keeps a record of every process death: crash, ANR, low-memory
+  kill, and so on, with the app's state and memory. For a native crash (Android
+  12+) the record includes the tombstone, a protobuf. Its signal, cause and the
+  crashing thread's backtrace are decoded with the field numbers from the
+  framework's own `TombstoneProtos`. This covers a crash from before this
+  shipped, while Android still holds the record. Java exceptions are now also
+  written to the log as they happen (`CRASH:` lines).
+- **`ImageLoader` could write into a freed `brls::Image`.** A reply was checked
+  only against the caller's alive flag, which usually covers a whole screen.
+  The player's queue deletes and rebuilds rows while its activity, and so its
+  flag, lives on. A reply for a deleted row's image then reached
+  `setImageFromMem()` on freed memory. Run against the shipped file, a host
+  harness gets a heap-use-after-free from ASan at exactly that call.
+  Each pending load now holds the image's own borealis deletion token, the one
+  `ASYNC_RETAIN` uses. A reply is dropped unless it is still that image's current
+  request and the image still exists. That also stops a late reply for a recycled
+  view's old URL replacing its new picture.
+- **A result card that had focus was freed with it.** Touching a card focuses
+  it, and every answer rebuilds all the cards. borealis does not let go of a
+  focused view when it is deleted: `View`'s destructor calls `giveFocus(nullptr)`,
+  which `giveFocus()` ignores, so the next touch called `onFocusLost()` on the
+  freed card. An activity opened from a card (the options menu a hold opens, the
+  player, a detail page) keeps the card on borealis' focus stack instead, and
+  closing it read the freed card in `popActivity()`. A host harness that builds
+  the cards as search does and drives them through borealis' own touch path gets
+  a heap-use-after-free from ASan at both. Whether this was the 13:20 crash is
+  not known either. Search now moves focus out of the results before replacing
+  them, and while another activity is on top it draws new results only once the
+  tab is uncovered.
+
+The same retry hook re-sent every thumbnail still missing after 0.9 s, up to
+three times, even while its first request was still queued. Loads run one at a
+time on borealis' single task thread, so on the "Day" search (136 results) that
+queued 550 duplicate requests in three seconds. A load is now retried only
+after its request fails.
+
 ---
 
 ## Platform notes
@@ -364,6 +521,359 @@ Matching that would mean a proprietary toolchain, a kernel plugin, and a
 different distribution model for an Apache-2.0 repo. Notifications are the part
 that is reachable with open vitasdk, so notifications are the part we do.
 
+### Vita: background audio (an experiment, not yet settled)
+
+The "Background Music" setting covers leaving the *player screen*; leaving the
+app, for the LiveArea or another app, still stops the music. ElevenMPV-A plays on
+in that situation, and it gets there two different ways, both reachable with
+vitasdk. `utils/background_audio.hpp` tries each on real hardware; Settings >
+Music carries the controls, and every step is logged under `[bgaudio]`.
+
+**The BGM port.** mpv's Vita audio output (switchfin's `ao_vita`) opens
+`sceAudioOutOpenPort(rate > 47999 ? MAIN : BGM, 1024, rate, …)`: read from the
+disassembly of the libmpv the CI links, so music, nearly always 44.1 kHz, is on
+the BGM port already. vita-headers documents `sceAppMgrAcquireBgmPort` as
+obtaining that port "even when it is not in front". ElevenMPV-A does exactly this
+for the formats it decodes in its own process (FLAC, Opus, its YouTube streams):
+it acquires at priority 0x81 and outputs on a BGM port. Its main loop also keeps
+running after `SCE_APP_EVENT_ON_DEACTIVATE`, where it merely lowers its own
+priority, which is evidence that a deactivated app is not frozen as a matter of
+course. One difference is untested: ElevenMPV-A's `param.sfo` says `CATEGORY`
+`gdc`, a non-game application, where VitaPlex is a game (`gd`). If this route
+works, it streams exactly as the app does now, with nothing to cache.
+
+The toggle "Keep Playing Outside VitaPlex (test)" acquires the port at 0x81 when
+music plays and has mpv resample to 44.1 kHz so 48 kHz music lands on it too. A
+watcher thread reads the AppMgr events, which nothing else in the app does. It
+logs a heartbeat every 4 s while the app is away, with the mpv position, how many
+times the UI loop ran, and how many files mpv loaded. A tick that comes late by
+more than 3 s means the process was held. On return a notification gives the
+verdict: how long the app was away, whether VitaPlex ran for it, and whether the
+track or the queue moved. The queue advances from the UI loop, so "UI stopped"
+there means the current track may finish but the next will not start.
+
+**SceShell's music service.** libShellAudio (`lib/libshellaudio`, MIT) drives
+the service the system Music app plays through, so audio handed to it outlives
+anything that happens to the app. The object `sceShellSvcGetSvcObj` returns is
+an IPMI client. Vita3K's client vtable puts `invokeSyncMethod` at 0x14, the slot
+libShellAudio calls, and its "events" are the service's method ids. vitasdk has
+no stub for that one function; `shellsvc_stub.S` supplies it, checked against
+the 3.60 firmware's exports and Vita3K's NID table. The shell decodes only MP3,
+AAC/M4A, WAV and ATRAC9, and ElevenMPV-A sends it local files only; its streams
+go through its own decoders and the BGM port. Whether the shell will open an
+http(s) URL was unknown, and that is what "Test: System Player, Streaming" is
+for; how it grew from build to build is below. "Test: System Player, Local
+File" plays a download or a `test.mp3` on the picked service, so a service that
+plays nothing at all can be told from one that plays no links.
+
+What each outcome leads to:
+
+- VitaPlex keeps running with the port held: this becomes the feature. The
+  test label goes, the port is released when paused in the background (as
+  ElevenMPV-A does, so the system Music app can take over), and the power button
+  gets looked at.
+- The process is held but the shell plays a URL: streaming goes to the shell,
+  with the queue handed over one track at a time while the app is in front.
+- The process is held and the shell plays only files: the current and next few
+  tracks are cached as MP3 while the app is in front and handed over from disk.
+  Advancing past them without the app running would need the shell's track list
+  (`sceMusicPlayerServiceSetTrackList`, an undocumented 0x828-byte SQLite
+  command buffer), so that part would stay out of reach.
+
+**What the console showed** (a PS Vita, logs `ea96fd9a` and `01daccd2` on the
+first test build, `3bba2674` and `e764091b` on the second):
+
+- The shell plays a local file (a downloaded WAV). It carries on when VitaPlex is
+  frozen, and when VitaPlex is closed by starting a game. The quick menu's Music
+  controls stay dimmed for it, with play showing ▶ while it plays, at client
+  type 0.
+- The shell did not open **Plex's transcode link**. `Open` returned 0 for https
+  and plain http alike and changed nothing, so PLAY resumed whatever file it
+  had before. It keeps that file through stop, terminate and a fresh
+  initialize, too. The first test build took the moving clock as the stream
+  playing, a false positive the user caught by ear ("it keeps playing the old
+  download"). The test now counts only a new source that replaced the old one:
+  a different length, or the clock starting again from the top.
+- The first build never tried the plain file: it read the format from
+  `MediaItem::audioCodec`, which `fetchMediaDetails` never fills, so it always
+  skipped, though the track was an MP3. The second build took the format from
+  the part's extension, asked the server about each link with VitaPlex's own
+  client, and ran a control: VitaPlex served a file the shell had played from
+  disk on the plainest possible link (`http://127.0.0.1:port/…/track.wav`, with
+  a length and range support), fetched from it itself, and logged every request.
+- **Music player, type 0** (`3bba2674`): no request reached the control, on
+  127.0.0.1 or on the Wi-Fi address, while VitaPlex's own fetch got a 206. The
+  server answered Plex's MP3 file over http and https (206 `audio/mpeg`), and
+  the shell switched to neither.
+- **Application-BGM service** (`e764091b`, `SetUri`): no request reached the
+  control either, and this time it served an MP3 (a download), on 127.0.0.1 and
+  the Wi-Fi address. Plex's file over http and https gave no progress. This
+  service reports no clock (`GetLastResult` stays at state 0, 0:00). Its
+  playback status reply holds pieces of the URI that was set, at the URI's own
+  offsets, so most of that reply is a buffer the shell leaves unwritten; its
+  layout is unknown and nothing is read from it. Whether this service played
+  even a file from disk was never measured.
+- VitaPlex is **frozen** the moment PS takes it out of the foreground, with mpv
+  playing and the BGM port held at 0x81. The watcher's first tick back was
+  7.4 s late, the time away. No `ON_DEACTIVATE` or `ON_ACTIVATE` arrives, only
+  `ON_RESUME` on return. ElevenMPV-A handles those two events. The power
+  callback does see the PS button press itself.
+- Plex's MP3 transcode is 48 kHz, so on the Vita mpv plays music on the **MAIN**
+  port, not the BGM port assumed above. The 44.1 kHz resample only applies when
+  mpv starts with the setting already on.
+
+**What ElevenMPV-A's source shows.** It is the one other app that plays through
+this service, written by libShellAudio's author, and it never hands the shell a
+link. `GetDecoderType` sends any `https://` path to its own `YoutubeDecoder`,
+which decodes in its own process onto a BGM port at 0x81; the shell only ever
+gets local MP3 and AAC files (`ShellCommonDecoder`). Its quick-menu controls are
+not the shell's either. It ships a SceShell plugin (`ElevenMPV-A-ShellPlugin`,
+loaded by taiHEN) that finds the quick menu's Music widgets by hash (rewind,
+play, fast-forward and two text lines), registers its own callbacks on the
+buttons that message the app over a message pipe, and writes the title and
+artist in. The plugin also hooks SceShell's import of
+`sceAppMgrGetCurrentBgmState2` to cap the BGM port priority it sees at 0x80.
+So dimmed controls are what a third-party source gets without code running
+inside SceShell. ElevenMPV-A puts that code there itself: the plugin ships in
+its package (`module/shell_plugin.suprx`), and at start the app loads it into
+SceShell (`taiLoadStartModuleForPid` on NPXS19999's process), which any Vita
+with taiHEN allows. The plugin is written against Sony's PAF UI framework, for
+which vitasdk has no headers. Code in SceShell also keeps running whatever
+happens to the app that loaded it, which is a route to background playback in
+its own right, and an untried one here.
+
+**The last test of links** ("Test: System Player, Streaming", third build)
+closes what the two controls left open: the WAV, and four services never tried.
+It downloads the first 2 MB of the current track as an MP3 (the file itself
+when it is an MP3, else the transcode, since the start of an M4A need not play
+without its index). Then on every service, the picked one first:
+
+1. From disk: a copy of the MP3 under a name of its own for that service, so one
+   service having opened it cannot count for the next. The clock runs to 3.5 s,
+   so the next attempt can tell a new source by the clock going back. A first
+   try that cannot tell (what was loaded before is as long and had not played
+   3 s) is repeated once.
+2. The same MP3 as a plain http link to VitaPlex's own server, and as an https
+   link to it. The server has no certificate, so https cannot play, but it
+   counts connections as they are accepted and recognises a TLS handshake
+   (a first byte of 0x16), so "began https" is seen too.
+
+Plex's own links are tried only on a service that fetched or began one of
+those, since on any other they cannot work. The BGM port's state
+(`sceAppMgrGetCurrentBgmState2`: owner, priority, state) is logged at every
+attempt as a second reading that does not depend on the service's own status.
+The report says, per service, whether it played the MP3 from disk and whether
+it connected over http or https.
+
+So the in-process route fails as VitaPlex is packaged, and on present evidence
+the shell route covers local files only. What was left to try was the packaging
+itself. vita-mksfoex names `ATTRIBUTE_BG_APP` (0x04000000), which neither
+VitaPlex nor ElevenMPV-A sets, and ElevenMPV-A is a non-game application
+(`gdc`). `src/bgtest_psv` is one beeping binary packaged as VitaPlex is, as
+VitaPlex plus `BG_APP`, and as ElevenMPV-A is. On the console (logs `cfbcf9a7`,
+`778d6cd7`, `3aa821e5`):
+
+- As VitaPlex is (`VPLXBGT01`): frozen, 10.9 s with no tick, then only
+  `ON_RESUME`, as VitaPlex itself.
+- With `BG_APP` (`VPLXBGT02`): no line after the PS press, and not heard
+  (the user heard only `VPLXBGT03` in the background).
+- As ElevenMPV-A is (`VPLXBGT03`, `gdc`): **kept running**. It got
+  `ON_ACTIVATE` at start and `ON_DEACTIVATE` at the PS press, then logged "alive"
+  every 5 s, with the audio still going and heard, until it was closed.
+
+So a non-game app plays on in the background; a game does not, flag or no flag.
+What that allows for VitaPlex depends on what such an app is given. ElevenMPV-A
+reads its memory budget and plans for 17 to 33 MB, where VitaPlex runs on a
+172 MB heap. The test app now logs its budget (`sceAppMgrGetBudgetInfo`), what
+is free, and the largest blocks it can really allocate, and asks the Plex
+server in VitaPlex's settings for `/identity` over plain http every 5 s, in
+front and away. A fourth package (`VPLXBGT04`) is the non-game app with
+VitaPlex's extended memory (`ATTRIBUTE2=12`). Those numbers decide between
+VitaPlex itself as a non-game app and a small player app beside it.
+
+They came back (logs `9462d9ec`, `babbea68`): `sceAppMgrGetBudgetInfo` is
+refused to these apps (0x8080201C), but what they could really allocate was
+measured directly:
+
+| Package | Main memory free | Largest block | CDRAM | Phycont |
+|---|---|---|---|---|
+| `VPLXBGT03` (gdc) | 231 MB | 233 MB | 89 MB | 26 MB |
+| `VPLXBGT04` (gdc, `ATTRIBUTE2=12`) | 340 MB | 342 MB | 89 MB | 26 MB |
+
+Both asked the Plex server for `/identity` every 5 s and got HTTP 200 in front
+and away (21 to 261 ms), and both logged "alive, away" with the audio still
+going. So the non-game package has room for VitaPlex's 172 MB heap with the
+extended memory setting, and NanoVG's textures sit in main memory unless
+told otherwise, so the 89 MB of CDRAM holds only framebuffers and ring
+buffers. `VitaPlexBG.vpk` is therefore VitaPlex itself, the same eboot and
+files, packaged as `VPLXBGT04` is, under its own title id (`VPLEX0002`) so it
+installs beside VitaPlex. As a non-game app it gets the activate and
+deactivate events, so the watcher's report on return ("Away 1:00. VitaPlex
+kept running...") applies to it unchanged.
+
+**VitaPlex BG works** (log `a93baa71`, build 1954). Sent away with PS 30.9 s
+into a track streamed from Plex (through the server's remote address, as it
+happened), it logged "away" every 4 s for almost five minutes with mpv playing
+and its position moving, the UI loop running, and the timeline reported to
+the server every 10 s. When the track ended it loaded the next from the play
+queue, a fresh transcode, and played that too, all while away. Two things
+remain:
+
+- It ignored the system's request to quit. The user opened another app and
+  confirmed the prompt to close VitaPlex BG; the request arrived, and it went
+  on playing. A game is never asked, so VitaPlex never answered it. That turned
+  out to hang the console (log `3ea218f5`, build 1957): asked to quit at
+  17:29:09, VitaPlex released its audio port, so the music stopped, and then
+  ran on for four minutes. Meanwhile the app the user had opened sat on its
+  loading screen with its theme music playing, nothing else would open, and
+  the console had to be held off with the power button. The test apps and
+  ElevenMPV-A call `sceKernelExitProcess` on this request, and closing those
+  the same way caused none of it. VitaPlex now quits too, the normal way
+  first. The watcher runs whatever the background playback setting, since it
+  is the only thing that reads this request; with the setting off it does
+  nothing else. On the console (log `280b1532`, build 1964) the request came
+  2.5 s after PS, VitaPlex was gone 1.2 s later, and the other app opened.
+  That shutdown rewrites `settings.json` in place (at 1.14 s there), so
+  ending the process during it could lose the login. The watcher therefore
+  ends the process itself only after 2 s if the UI thread has not taken the
+  request, which means it is stuck, and after 10 s if it has.
+- Sleep (the power button) turns off Wi-Fi, so the stream stops once mpv's
+  buffer runs out, about 30 s in that log.
+
+Both test apps were asked to quit a few seconds after being sent to the
+background a second time. That was the user: opening another app brought up
+the system's prompt to close the running one, and they confirmed it. So a
+non-game app plays on in the LiveArea, but opening an app it cannot run
+beside closes it, with the user's say-so. Which apps those are (a game, other
+homebrew, system apps) is the next thing to note. If games are among them,
+the current song could be handed to the system player on the way out, which
+does play on during a game, though only that one song.
+
+The third run of the stream test (`668ce811`) went only as far as music player
+type 0, because PS was pressed twice during it. The http link got no connection
+again. It also showed two faults in the test, both fixed: the first clock
+reading after an open can still be the old file's, stopped (state 2 at 0:08,
+then state 1 at 0:00), which the test took for the new file's start and so
+reported "clock stopped" for a file that played (the length changed from 1:19
+to 3:58, so it had loaded); and an attempt VitaPlex is held through shows
+nothing, so it is now noticed (a poll seconds late) and made again. The BGM
+state call is refused to an app (0x8080201F), so it is no longer logged after
+that.
+
+The fourth run (`40f14e4c`, build 1964) went through all six services
+uninterrupted, and settles it: **the shell plays files, not links.** Music
+player types 0 to 4 each played the MP3 from disk (the clock ran 0:00 to 0:03)
+and answered every link, http and https to 127.0.0.1 and, on type 0, http to
+the Wi-Fi address, with open 0 and play 0 while going on with the file they
+already had. The application-BGM service accepted the file and both links,
+reporting no progress for any. The control server logged one request in all,
+VitaPlex's own self-check, so no service so much as connected; Plex's own links
+were therefore not tried. Music through the shell, which is what plays on
+beside an app with extended memory, has to come from a file on the memory card.
+
+**Playing while a game runs.** VitaPlex BG, and the test apps it was modelled
+on, run on the game budget, which an eboot without a boot param gets:
+`VPLXBGT03` and `VPLXBGT04` could allocate 233 and 342 MB of it. That amount is
+set when the app starts, and freeing memory inside the app does not hand it
+back. SceAppMgr's exports (vita-headers' NID table for 3.60) have
+`sceAppMgrGrowMemory` and `sceAppMgrGrowMemory3` and nothing that shrinks. So
+VitaPlex cannot drop to a small footprint when it leaves the foreground and
+take its full memory back on return.
+
+ElevenMPV-A is the other kind of app. Its eboot carries a boot param (SELF
+control info 6, `ebootparam.bin` in its source) of attribute 2, no physically
+contiguous memory and a 16 MB budget, which `vita-make-fself` documents as a
+system-mode app (0x1000 to 0x12800 KB, where a normal app has 0). Its PAF
+loader (`libScePafPreload`) then asks `sceAppMgrGrowMemory3` for 41 MB more, or
+failing that 16 MB more, and the app sizes its texture pools from
+`sceAppMgrGetBudgetInfo`. vitasdk's vita2d has a path for such an app: when
+`sceAppMgrGetBudgetInfo` succeeds, which it does not on the game budget, it
+starts GXM with `sceGxmVshInitialize` and a 2 MB parameter buffer (16 MB
+otherwise) and draws into the shell's shared framebuffer.
+
+`MEMSIZE 0x4000 ATTRIBUTE 2` on `vita_create_self` writes the same boot param:
+the eboot's control info 6 matches ElevenMPV-A's 256-byte `ebootparam.bin`
+byte for byte. The background test has a system-mode build that carries it,
+packaged as `VPLXBGT05` (16 MB as it is) and `VPLXBGT06` (grown at start as
+ElevenMPV-A grows). It has no screen, since vita2d's GPU buffers come to about
+10 MB in that mode, and START does not quit it, since it is meant to run while
+a game is in front. It logs its budget every 5 s, so memory the system takes
+back when a game starts would show. If a system-mode app plays on through a
+game, music during games takes two apps: VitaPlex with its full memory for
+browsing and video, and a small player that does the playing and outlives it.
+`VPLXBGT06` says whether that player can have 57 MB or only 16.
+
+**A system-mode app plays through a game** (build 1968). Both test apps started
+in system mode: `sceAppMgrGetBudgetInfo` answered them (mode 2; 16 MB of main
+memory, 10 MB free; no physically contiguous memory; 16 MB of CDRAM, none
+free). `VPLXBGT06`'s `sceAppMgrGrowMemory3(41 MB, 1)` returned 0 and raised its
+budget to 57 MB, 51 MB of which it could allocate in one block, so the budget
+is a real limit (log `46aa6630`). Both asked the Plex server for `/identity`
+every 5 s, in front and away, and got HTTP 200.
+
+`VPLXBGT05` kept beeping while LittleBigPlanet, a retail game, started and
+reached its hub (log `b6e6f6f5`). Its log covers 88 s away, with "alive" and
+the audio clock every 5 s and HTTP 200 from the server every 5 s throughout.
+The budget stayed at 16 MB with 10 MB free. Starting the game asked to close
+VitaShell, a game-budget app, and named nothing else. In an earlier run with
+VitaShell open (`c801b94e`), `VPLXBGT05` was asked to quit 4.3 s after PS,
+while the user started the game. In this run VitaShell was closed first and
+nothing asked. `VPLXBGT06` beeped while a game loaded; whether it lasts into
+the game is not yet known. Both logs end mid-run, with no quit request.
+
+Opening VitaPlex silenced the beeps (`VPLXBGT06`, log `8098b625`), though the
+test app ran on: "alive" every 5 s, the audio clock moving with the time, HTTP
+200 from the server, and no quit request until the user closed it. VitaPlex
+makes no audio call when it starts: mpv starts with the first playback, and
+the BGM port is acquired only while mpv plays with the setting on. Its only
+system call at start near this is `sceAppUtilInit`, the standard set-up for
+save data and system settings. So if VitaPlex takes the music over when it
+opens, the system does it on VitaPlex's behalf. The test apps now log
+whether their BGM output is adopted and its private gain
+(`sceAudioOutGetAdopt`, `sceAudioOutGetPortVolume_forUser`) whenever either
+changes, to see whether the beeps are muted through one of them.
+
+**Extended memory takes the BGM output** (build 1971). With `VPLXBGT05` beeping
+in the background, the beeps went quiet while `VPLXBGT07` (a silent game with
+`ATTRIBUTE2=12`, as VitaPlex is) or VitaSurf (another homebrew with extended
+memory) was in front. They went on beside `VPLXBGT08` (the same silent game
+with `ATTRIBUTE2=0`), VitaShell and LittleBigPlanet. `VPLXBGT07` had the BGM
+output adopted for it (`sceAudioOutGetAdopt` 1) a moment after it started,
+without opening a BGM port, and `VPLXBGT08` did not (0) (logs `f794d228`,
+`b25e8414`). In the run `VPLXBGT05`'s log covers (`42dfdc2b`), its own
+adoption (1) and gain (256) stayed as they were. This vitasdk's vita-mksfoex
+names 12 `ATTRIBUTE2_MEM109` and uses it by default; `MEM29` (4) and `MEM77`
+(8) are the smaller steps. The system Music app played on beside VitaSurf, so
+the shell's own music is not silenced this way. `VPLXBGT09` is `VPLXBGT07`
+giving the output up with `sceAudioOutSetAdopt_forUser` whenever it is
+adopted. If the beeps come back beside it, VitaPlex can keep its memory and
+do the same.
+
+**A player through the shell** (`VPLXBGT10`, `src/bgtest_psv/player_test.c`).
+The shell plays files and plays on beside extended memory, so the other route
+is a small system-mode app that downloads songs and hands them over. The test
+app does that once it is sent away. It picks two songs of 1 to 4 minutes from
+the first music library. It downloads the first as the server has it, when the
+shell decodes that (MP3, AAC, WAV), and hands it to the shell. Then, while the
+first plays, it downloads the second as the server's MP3 and hands it over
+when the first ends. It logs each download's speed and whether it started and
+ended in the background. A song counts as playing once the shell's clock moves
+with the length the server gives it, which tells it from an old file the
+shell goes on with. Requests go over https as VitaPlex makes them (curl,
+mbedtls, the CA bundle), the token from VitaPlex's `settings.json` is never
+logged, and on the way out the app stops the shell's playback. A host harness
+with fake responses and a scripted shell exercised the choice of songs, both
+hand-overs and the end detection, the shell ignoring an open included.
+
+**Only VitaPlex BG has the tests.** `VitaPlex.vpk`, the package that is
+released, is the same eboot as `VitaPlexBG.vpk`, so its settings had the toggle,
+the service picker and the three tests too, and a toggle saved on would have held
+the BGM port there. The eboot now reads the title id it runs under
+(`sceAppMgrAppParamGetString`, param 12) and offers them only as `VPLEX0002`,
+the id CMake gives VitaPlex BG. As `VPLEX0001` the toggle counts as off,
+whatever was saved. The watcher still starts in both, as the one reader of the
+request to quit.
+
 ### PS4: the popup, and nothing to hang progress on
 
 `sceKernelSendNotificationRequest` writes to `/dev/notification0`, which
@@ -417,6 +927,23 @@ exposes most of yoga's style but not flex-wrap, so `setFlexWrap` reaches the
 node through `View::getYGNode()`, which is public — no subclass, no patch. The
 row needs a definite width for wrapping to happen at all, which it gets from
 `player/lyrics_list` being `alignItems="stretch"`.
+
+Word labels are single-line, and have to be. A label decides whether it
+wraps inside its measure function and keeps the answer as a flag, and yoga
+often reuses a cached measurement without calling the function again. The
+flag can then be left over from a trial pass that offered less width. The
+label is laid out exactly as wide as its text but drawn as a wrapped text box,
+and its last letter falls onto a line below the row. A desktop render of the
+mobile list showed "hallway," and "humming" drawn as "hallway" and "hummin",
+with the "," and the "g" under them. Single-line labels never take the
+wrapped path, and the row does all the wrapping anyway.
+
+In the classic sheet, a word row's wrapped lines get yoga's row gap,
+(1.65 − 1) × the font size. A one-line label is only as tall as its text, so
+without the gap a wrapped row stacks its lines about one font size apart. A
+wrapped whole-line label spaces them by its line height, borealis' default
+1.65. The row gap applies between wrapped lines only, so a row that fits on
+one line is unchanged. The mobile layout keeps the spacing it shipped with.
 
 Sung words hold the highlight rather than dimming behind the cursor: a line is
 read as a whole, and one lit word between two greys is harder to follow than a
@@ -537,9 +1064,15 @@ dense track ever hitches. Nothing here has been profiled on a device.
 Two things keep that affordable, and both are worth knowing before anyone
 moves this code:
 
-`useMobileLayout()` is false on PSV, PS4, Switch and desktop, so word rows are
-only ever built on a phone. The handhelds keep the classic sheet and pay
-nothing at all.
+Where word rows are built. At first that was the mobile layout only, so in
+practice a phone. The classic sheet now builds them too, on desktop, tablets,
+TV and the home consoles, at its own sizes (17 at rest, 19 active, the amber
+`#E5A00D` highlight). The rows are left-aligned like its whole-line labels, and
+`lyrics_list` is already `alignItems="stretch"`, so a row has the sheet's ~416
+units of text width to wrap in. The exception is the Vita
+(`classicWordRowsAffordable()`). The classic sheet is its default, and it is
+the hardware the cost below was kept away from, so it stays whole lines there.
+Forcing the Mobile layout in settings still gives word rows on any platform.
 
 `Box::draw` culls only leaf children — "nested boxes will do that check
 themselves" — so a row that is a Box no longer gets skipped wholesale when it
@@ -617,6 +1150,19 @@ too small on some screen, that constant is the one to move.
 - `PanGestureRecognizer` rebases `startPosition` when it promotes UNSURE to
   START, so both of those states report a zero delta. STAY is the only state
   that reports motion, and it fires every frame the finger is held.
+- `giveFocus(nullptr)` does nothing, so deleting the focused view leaves
+  `currentFocus` pointing at freed memory, and the focus stack does the same for
+  a view that had focus when an activity was pushed over it. Move focus before
+  freeing, and free nothing on a covered activity: pushing one tells the
+  activity below nothing (no `willDisappear()`), so its async work runs on.
+- When any recognizer returns START or END, borealis interrupts every recognizer
+  still UNSURE from the touched view up. The pans start after 6 units, about
+  5 px on a 1080p phone, so ordinary finger drift interrupts a hold inside a
+  scroll view, and a tap's END interrupts the hold beside it.
+  `LongPressGestureRecognizer` checked for INTERRUPTED before handling START,
+  so one interruption disabled the cell's hold for good and its tap fired
+  instead. It now starts afresh on every touch, and a hold stands while the
+  finger stays within `MAX_MOVEMENT` (25 units).
 
 ### Reading the MPV stats overlay
 

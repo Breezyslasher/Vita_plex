@@ -3696,6 +3696,17 @@ bool PlexClient::getTranscodeUrl(const std::string& ratingKey, std::string& url,
     return true;
 }
 
+bool PlexClient::isServerReachable(int timeoutSec) {
+    if (m_serverUrl.empty()) return false;
+    HttpClient client;
+    HttpRequest req;
+    req.url = m_serverUrl + "/identity";
+    req.method = "GET";
+    req.timeout = timeoutSec;
+    HttpResponse resp = client.request(req);
+    return resp.statusCode == 200;
+}
+
 bool PlexClient::getTranscodeUrlSpeculative(const std::string& ratingKey, std::string& url,
                                             std::string& outSessionId) {
     // Deliberately does not touch m_lastSessionId — see the header. The caller

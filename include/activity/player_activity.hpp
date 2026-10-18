@@ -97,6 +97,9 @@ private:
     void updateRepeatIcon();        // Update repeat button icon based on state
     void onTrackEnded(const QueueItem* nextTrack);  // Called when track ends
     void updateQueueDisplay();      // Update UI with queue info
+    // Request the current track's cover again: on return from the background,
+    // and when a track that could not load at first (lost connection) plays.
+    void reloadAlbumArt();
     void playNextEpisode();         // Auto-play next episode in season/show
 
     // Queue list overlay (Direction-A side sheet)
@@ -158,6 +161,16 @@ private:
     // Handoff type sizes, in its 412-wide frame; ui() scales them.
     static constexpr float kLyricRest   = 19.0f;
     static constexpr float kLyricActive = 27.0f;
+    // The classic sheet's own sizes, unscaled.
+    static constexpr float kClassicLyricRest   = 17.0f;
+    static constexpr float kClassicLyricActive = 19.0f;
+    // Lyric type and highlight for whichever layout is up. A word row and a
+    // whole-line label use the same ones, so the two look alike in either.
+    float lyricRestSize() const   { return m_mobileLayout ? ui(kLyricRest) : kClassicLyricRest; }
+    float lyricActiveSize() const { return m_mobileLayout ? ui(kLyricActive) : kClassicLyricActive; }
+    NVGcolor lyricLitColor() const {
+        return m_mobileLayout ? nvgRGB(0xFF, 0xC2, 0x3D) : nvgRGB(0xE5, 0xA0, 0x0D);
+    }
 
     std::vector<LyricLine> m_lyrics;
     // Three parallel views of the same rows, because a row is drawn one of two

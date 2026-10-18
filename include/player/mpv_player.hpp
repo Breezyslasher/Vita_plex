@@ -59,6 +59,9 @@ struct MpvPlaybackInfo {
     std::string audioCodec;
     int audioChannels = 0;
     int sampleRate = 0;
+    // The rate handed to the audio output, after any resampling. On the Vita
+    // it also says which port ao_vita opened: BGM below 48 kHz, MAIN at 48.
+    int outSampleRate = 0;
     int subtitleTrack = 0;
     int audioTrack = 0;
     double cacheUsed = 0.0;
@@ -88,8 +91,16 @@ public:
     // shrinks to match the position and the two can no longer be compared
     // against each other. Pass 0 when unknown (live, local files); the check
     // then falls back to mpv's figure.
+    //
+    // startSec is where in the file to begin, for a file mpv can seek in: a
+    // download or a direct-play original. A Plex transcode cannot be seeked
+    // that way; it is restarted on the server at an offset instead, so pass 0
+    // there.
+    //
+    // The file always starts playing. Whatever pause state the previous file
+    // was left in does not carry over.
     bool loadUrl(const std::string& url, const std::string& title = "",
-                 int64_t expectedDurationMs = 0);
+                 int64_t expectedDurationMs = 0, double startSec = 0.0);
     bool loadFile(const std::string& path);
     void play();
     void pause();
@@ -166,6 +177,22 @@ public:
     bool isSeekable() const;
     const MpvPlaybackInfo& getPlaybackInfo() const { return m_playbackInfo; }
     std::string getErrorMessage() const { return m_errorMessage; }
+    // Goes up by one each time the player enters ERROR. The state stays ERROR
+    // until something new is loaded, so this is how a caller that polls tells
+    // a new failure from the one it has already handled.
+    uint32_t errorSerial() const { return m_errorSerial.load(); }
+
+    // A copy of what the event pump last saw, for code on another thread.
+    // Takes the pump lock and never calls into libmpv, so it is safe to call
+    // while the UI thread is tearing the player down.
+    struct Snapshot {
+        MpvPlayerState state = MpvPlayerState::IDLE;
+        bool initialized = false;
+        bool audioOnly = false;
+        double position = 0.0;
+        int outSampleRate = 0;
+    };
+    Snapshot snapshot();
 
     // OSD
     void showOSD(const std::string& text, double durationSec = 2.0);
@@ -238,6 +265,7 @@ private:
     // Atomic because the event thread writes it while the UI thread reads it
     // through isPlaying()/hasEnded()/getState().
     std::atomic<MpvPlayerState> m_state{MpvPlayerState::IDLE};
+    std::atomic<uint32_t> m_errorSerial{0};     // see errorSerial()
     MpvPlaybackInfo m_playbackInfo;
     std::string m_errorMessage;
     std::string m_currentUrl;

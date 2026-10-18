@@ -33,15 +33,14 @@ brls::GestureState LongPressGestureRecognizer::recognitionLoop(
         return this->state;
     }
 
-    // If already interrupted, stay that way
-    if (this->state == brls::GestureState::INTERRUPTED) {
-        m_tracking = false;
-        return this->state;
-    }
-
     switch (phase) {
         case brls::TouchPhase::START: {
-            // Start tracking
+            // Start tracking. Every touch starts afresh, whatever ended the
+            // last one, as borealis' own recognizers do. This used to return
+            // early while INTERRUPTED, before reaching here, so one interruption
+            // left the cell deaf to holds for good: a tap (the tap recognizer
+            // ends first and interrupts the rest) or a swipe that began on it.
+            // Its tap still fired, so holding it did whatever tapping does.
             m_tracking = true;
             m_triggered = false;
             m_startPosition = position;
@@ -75,6 +74,15 @@ brls::GestureState LongPressGestureRecognizer::recognitionLoop(
                 this->state = brls::GestureState::FAILED;
                 break;
             }
+
+            // Still within MAX_MOVEMENT, so still a hold, even if a scroll view
+            // above the cell has claimed the touch. borealis' pans start after
+            // 6 units and interrupt every recognizer still unsure, this one
+            // included, and 6 units is about 5 px on a 1080p phone (the
+            // viewport is 1280 units wide): less than a finger drifts while it
+            // holds still.
+            if (this->state == brls::GestureState::INTERRUPTED)
+                this->state = brls::GestureState::UNSURE;
 
             // Check if held long enough
             auto now = std::chrono::steady_clock::now();

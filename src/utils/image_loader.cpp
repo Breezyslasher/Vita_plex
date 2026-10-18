@@ -17,6 +17,69 @@ std::atomic<uint64_t> ImageLoader::s_generation{0};
 std::atomic<bool> ImageLoader::s_paused{false};
 std::vector<ImageLoader::DeferredUpload> ImageLoader::s_deferred;
 std::map<brls::Image*, ImageLoader::PendingImage> ImageLoader::s_pendingImages;
+uint64_t ImageLoader::s_lastRequest = 0;
+
+// ASYNC_RETAIN's bookkeeping, which as a macro only works inside a View.
+ImageLoader::ViewHold::ViewHold(brls::View* view) : m_view(view) {
+    if (!view) return;
+    if (!view->deletionToken && !view->deletionTokenCounter) {
+        view->deletionToken = new bool(false);
+        view->deletionTokenCounter = new int(0);
+    }
+    ++*view->deletionTokenCounter;
+    m_deleted = view->deletionToken;
+    m_count = view->deletionTokenCounter;
+}
+
+// ASYNC_RELEASE's: the last holder frees the token, and detaches it from a
+// view that still exists, so that view's next hold starts a fresh one.
+void ImageLoader::ViewHold::reset() {
+    if (!m_count) return;
+    const bool deleted = *m_deleted;
+    if (*m_count > 0 && --*m_count == 0) {
+        delete m_deleted;
+        delete m_count;
+        if (!deleted) {
+            m_view->deletionToken = nullptr;
+            m_view->deletionTokenCounter = nullptr;
+        }
+    }
+    m_view = nullptr;
+    m_deleted = nullptr;
+    m_count = nullptr;
+}
+
+ImageLoader::PendingImage* ImageLoader::currentRequest(brls::Image* target, uint64_t request) {
+    auto it = s_pendingImages.find(target);
+    if (it == s_pendingImages.end() || it->second.request != request) return nullptr;
+    PendingImage& p = it->second;
+    if (!p.alive || !p.alive->load() || p.gen != s_generation.load() || !p.view.viewAlive()) {
+        s_pendingImages.erase(it);
+        return nullptr;
+    }
+    return &p;
+}
+
+void ImageLoader::settle(brls::Image* target, uint64_t request) {
+    // Looked up again: the caller's callback may have asked anew for this
+    // target, or deleted it.
+    PendingImage* p = currentRequest(target, request);
+    if (!p) return;
+    if (target->getTexture() != 0) {
+        s_pendingImages.erase(target);
+        return;
+    }
+    // Decoded to nothing; treat it like a failed request.
+    p->waiting = false;
+    p->nextRetryAt = brls::getCPUTimeUsec() + 900 * 1000;
+}
+
+void ImageLoader::requestFailed(brls::Image* target, uint64_t request) {
+    PendingImage* p = currentRequest(target, request);
+    if (!p) return;
+    p->waiting = false;
+    p->nextRetryAt = brls::getCPUTimeUsec() + 900 * 1000;
+}
 
 // Defined below; the deferred-upload drain replays cover loads through it.
 static void dispatchCoverFromBytes(const std::vector<uint8_t>& bytes,
@@ -54,7 +117,7 @@ bool ImageLoader::uploadsAreSafe() {
 }
 
 // One run-loop subscriber serving both recovery paths: replaying uploads that
-// were parked with no GL surface, and re-issuing image loads that never landed.
+// were parked with no GL surface, and re-issuing image requests that failed.
 // It fires every iteration, right after the sync tasks that would otherwise have
 // done the work, so a recovered image appears on the very next frame.
 void ImageLoader::ensureRunLoopHook() {
@@ -79,13 +142,18 @@ void ImageLoader::ensureRunLoopHook() {
                 if (p.coverCallback) {
                     dispatchCoverFromBytes(p.data, p.coverCallback, p.alive, p.gen, s_generation);
                 } else if (p.target) {
+                    if (!currentRequest(p.target, p.request)) {
+                        noteSkip("deferred: target destroyed");
+                        continue;
+                    }
                     p.target->setImageFromMem(p.data.data(), p.data.size());
                     if (p.imageCallback) p.imageCallback(p.target);
+                    settle(p.target, p.request);
                 }
             }
         }
 
-        // ── Image loads that never landed ────────────────────────────────
+        // ── Image requests that failed ───────────────────────────────────
         if (s_pendingImages.empty()) return;
         const int64_t now = brls::getCPUTimeUsec();
         constexpr int kMaxRetries = 3;
@@ -94,17 +162,19 @@ void ImageLoader::ensureRunLoopHook() {
             PendingImage& p = it->second;
             brls::Image* target = it->first;
 
-            // Gone, superseded, or satisfied — stop tracking. The alive flag is
-            // the only safe way to know the target still exists, so it is
-            // checked before the pointer is touched.
-            if (!p.alive || !p.alive->load() || p.gen != s_generation.load()) {
+            // Gone, superseded, or the target destroyed: stop tracking, without
+            // touching the pointer.
+            if (!p.alive || !p.alive->load() || p.gen != s_generation.load() ||
+                !p.view.viewAlive()) {
                 it = s_pendingImages.erase(it);
                 continue;
             }
-            if (target->getTexture() != 0) {          // it arrived
-                it = s_pendingImages.erase(it);
-                continue;
-            }
+            // Its request is still out, or its upload is parked for a surface;
+            // the reply settles it. Re-issuing here used to send every slow
+            // thumbnail again after 0.9 s, up to three times: on one search,
+            // 550 duplicate requests queued behind the single loader thread in
+            // three seconds.
+            if (p.waiting) { ++it; continue; }
             if (p.retries >= kMaxRetries) {           // genuinely missing artwork
                 it = s_pendingImages.erase(it);
                 continue;
@@ -122,7 +192,7 @@ void ImageLoader::ensureRunLoopHook() {
             const int retries     = p.retries + 1;
             it = s_pendingImages.erase(it);
 
-            noteSkip("image never landed — retrying");
+            noteSkip("image request failed — retrying");
             loadAsync(url, cb, target, alive);
             auto again = s_pendingImages.find(target);
             if (again != s_pendingImages.end()) again->second.retries = retries;
@@ -183,21 +253,26 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
     uint64_t gen = s_generation.load();
 
     // Remember the request. Almost every caller asks once and never retries, so
-    // without this a load dropped after the fact leaves the view blank for as
-    // long as it lives. Keyed by target, so a recycled view's newer request
-    // replaces this one instead of racing it.
+    // without this a failed load leaves the view blank for as long as it
+    // lives. Keyed by target, so a recycled view's newer request replaces this
+    // one, and the reply to the older one is then dropped.
+    const uint64_t request = ++s_lastRequest;
     {
         PendingImage pending;
-        pending.url         = url;
-        pending.callback    = callback;
-        pending.alive       = alive;
-        pending.gen         = gen;
-        pending.nextRetryAt = brls::getCPUTimeUsec() + 900 * 1000;
+        pending.url      = url;
+        pending.callback = callback;
+        pending.alive    = alive;
+        pending.gen      = gen;
+        pending.request  = request;
+        pending.view     = ViewHold(target);
         s_pendingImages[target] = std::move(pending);
         ensureRunLoopHook();
     }
 
-    // Check cache first
+    // Check cache first. The bytes are copied out: the callback below runs
+    // without the lock held, and the decoder may write to its input.
+    std::vector<uint8_t> cached;
+    bool hit = false;
     {
         std::lock_guard<std::mutex> lock(s_cacheMutex);
         auto it = s_cache.find(url);
@@ -206,78 +281,88 @@ void ImageLoader::loadAsync(const std::string& url, LoadCallback callback,
             s_lruOrder.erase(it->second.lruIt);
             s_lruOrder.push_front(url);
             it->second.lruIt = s_lruOrder.begin();
-
-            // Load from cache (we're on the main thread, target is valid right now).
-            // With no drawing surface the upload would be discarded and the image
-            // left blank forever, so park it for replay instead.
-            if (!uploadsAreSafe()) {
-                DeferredUpload pending;
-                pending.data          = it->second.data;
-                pending.imageCallback = callback;
-                pending.target        = target;
-                pending.alive         = alive;
-                pending.gen           = gen;
-                deferUpload(std::move(pending));
-                return;
-            }
-            target->setImageFromMem(it->second.data.data(), it->second.data.size());
-            if (callback) callback(target);
-            return;
+            cached = it->second.data;
+            hit = true;
         }
     }
+    if (hit) {
+        // With no drawing surface the upload would be discarded and the image
+        // left blank forever, so park it for replay instead.
+        if (!uploadsAreSafe()) {
+            DeferredUpload pending;
+            pending.data          = std::move(cached);
+            pending.imageCallback = callback;
+            pending.target        = target;
+            pending.request       = request;
+            pending.alive         = alive;
+            pending.gen           = gen;
+            deferUpload(std::move(pending));
+            return;
+        }
+        target->setImageFromMem(cached.data(), cached.size());
+        if (callback) callback(target);
+        settle(target, request);
+        return;
+    }
 
-    // Load asynchronously
-    brls::async([url, callback, target, alive, gen]() {
-        // Check if cancelled before making the HTTP request.
+    // Load asynchronously. The worker never touches `target`: it is only the key
+    // the reply is filed under, looked up again on the UI thread.
+    brls::async([url, callback, target, alive, gen, request]() {
+        // Check if cancelled before making the HTTP request. The run-loop hook
+        // drops the entry for the same reasons.
         if (!alive->load() || gen != s_generation.load()) return;
 
         HttpClient client;
         HttpResponse resp = client.get(url);
 
-        if (resp.success && !resp.body.empty()) {
-            // Cache the image data
-            std::vector<uint8_t> imageData(resp.body.begin(), resp.body.end());
+        if (!resp.success || resp.body.empty()) {
+            brls::sync([target, request]() { requestFailed(target, request); });
+            return;
+        }
 
-            {
-                std::lock_guard<std::mutex> lock(s_cacheMutex);
+        // Cache the image data
+        std::vector<uint8_t> imageData(resp.body.begin(), resp.body.end());
+        {
+            std::lock_guard<std::mutex> lock(s_cacheMutex);
 
-                // LRU eviction: remove oldest entries until we're under the limit
-                while (s_cache.size() >= getMaxCacheSize() && !s_lruOrder.empty()) {
-                    const std::string& oldest = s_lruOrder.back();
-                    s_cache.erase(oldest);
-                    s_lruOrder.pop_back();
-                }
-
-                // Insert new entry at front of LRU
-                s_lruOrder.push_front(url);
-                CacheEntry entry;
-                entry.data = imageData;
-                entry.lruIt = s_lruOrder.begin();
-                s_cache[url] = std::move(entry);
+            // LRU eviction: remove oldest entries until we're under the limit
+            while (s_cache.size() >= getMaxCacheSize() && !s_lruOrder.empty()) {
+                const std::string& oldest = s_lruOrder.back();
+                s_cache.erase(oldest);
+                s_lruOrder.pop_back();
             }
 
-            // Update UI on main thread - check alive flag AND generation to prevent
-            // use-after-free when the target view has been destroyed
-            brls::sync([imageData, callback, target, alive, gen]() {
-                if (!alive->load()) return;        // Target was destroyed
-                if (gen != s_generation.load()) return;  // cancelAll() was called
-                // Sync tasks keep running while backgrounded (by design, so audio
-                // and timers survive), but the GL surface is gone then — uploading
-                // now would silently produce a blank texture.
-                if (!uploadsAreSafe()) {
-                    DeferredUpload pending;
-                    pending.data          = imageData;
-                    pending.imageCallback = callback;
-                    pending.target        = target;
-                    pending.alive         = alive;
-                    pending.gen           = gen;
-                    deferUpload(std::move(pending));
-                    return;
-                }
-                target->setImageFromMem(imageData.data(), imageData.size());
-                if (callback) callback(target);
-            });
+            // Insert new entry at front of LRU
+            s_lruOrder.push_front(url);
+            CacheEntry entry;
+            entry.data = imageData;
+            entry.lruIt = s_lruOrder.begin();
+            s_cache[url] = std::move(entry);
         }
+
+        // Update UI on main thread, only if this is still the target's request,
+        // the caller's alive flag and generation hold, and the image itself
+        // still exists.
+        brls::sync([imageData, callback, target, alive, gen, request]() {
+            if (!currentRequest(target, request)) return;
+            // Sync tasks keep running while backgrounded (by design, so audio
+            // and timers survive), but the GL surface is gone then — uploading
+            // now would silently produce a blank texture.
+            if (!uploadsAreSafe()) {
+                DeferredUpload pending;
+                pending.data          = imageData;
+                pending.imageCallback = callback;
+                pending.target        = target;
+                pending.request       = request;
+                pending.alive         = alive;
+                pending.gen           = gen;
+                deferUpload(std::move(pending));
+                return;
+            }
+            target->setImageFromMem(imageData.data(), imageData.size());
+            if (callback) callback(target);
+            settle(target, request);
+        });
     });
 }
 

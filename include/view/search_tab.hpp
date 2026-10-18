@@ -69,6 +69,13 @@ private:
 
     void performSearch();
     void rebuildResults();
+    // An activity above this tab (the options popover a hold opens, the player
+    // a tapped track starts, a detail page) keeps the card that had focus on
+    // borealis' focus stack and focuses it again when it closes, so no card
+    // may be freed while one is up. Results that arrive meanwhile wait here.
+    bool coveredByActivity();
+    void rebuildWhenUncovered();
+    bool m_rebuildPending = false;
     void addSection(const std::string& title, const std::vector<MediaItem>& items);
     brls::Box* makeCard(const MediaItem& item);
     void onItemSelected(const MediaItem& item);
@@ -80,6 +87,9 @@ private:
     brls::Box*   m_keyboardFirstKey = nullptr;   // default focus target
     // Clear affordance on the field; only shown once there is a query.
     brls::Box*   m_clearButton = nullptr;
+    // The mobile field. With m_keyboardFirstKey, where focus waits while the
+    // result cards are replaced.
+    brls::Box*   m_field = nullptr;
 
     // Right column
     brls::ScrollingFrame* m_resultsScroll = nullptr;

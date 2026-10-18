@@ -108,6 +108,10 @@ endif()
 if(PLATFORM_PSV)
     set(VITA_APP_NAME "VitaPlex")
     set(VITA_TITLEID  "VPLEX0001")
+    # VitaPlex BG: the same eboot packaged as a non-game app (VitaPlexBG.vpk).
+    # The eboot reads which of the two it runs as, and only this one offers
+    # the background-audio tests (utils/background_audio.hpp).
+    set(VITA_BG_TITLEID "VPLEX0002")
     set(VITA_VERSION  "01.00")
     set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12")
 endif()
@@ -726,31 +730,37 @@ if(PLATFORM_PSV)
     # Required for __wrap_pthread_create in src/utils/vita_stubs.c
     target_link_options(${PROJECT_NAME} PRIVATE "-Wl,--wrap=pthread_create")
 
-    # vita-elf-create appends the SCE module data to the end of the first LOAD
-    # segment, and fails outright if that runs into the second:
+    # vita-elf-create appends the SCE module data (module info plus the import
+    # and export tables: 4152 bytes as of writing) to the end of the first LOAD
+    # segment, and gives up if that range reaches the second:
     #
     #   Cannot allocate 4152 bytes for SCE data at end of segment 0;
     #   segment 1 overlaps
     #   Segmentation fault (core dumped)
     #
-    # Binutils defaults to -z separate-code, which splits the read-only and
-    # executable parts of the image into their own LOAD segments and packs them
-    # tightly instead of padding each out to a page. That leaves nothing after
-    # segment 0 for the blob, and whether a given build packages at all comes
-    # down to where segment 0 happens to end — it worked until a commit adding
-    # about a kilobyte shifted it, with no error in the code and after a clean
-    # compile and link. Confirmed as a layout matter and not a toolchain one by
-    # re-running the last commit that packaged, unchanged, on the same image:
-    # it still passed.
+    # The linker starts segment 1 on the next 64 KiB boundary after segment 0,
+    # so the room left is only whatever segment 0 happens to fall short of that
+    # boundary by. A build whose code ends within about 4 KB of it cannot be
+    # packaged, and any change that moves the end of the code can tip it either
+    # way, which is why it came and went between unrelated commits. Raising
+    # max-page-size and linking with -z noseparate-code were both tried and
+    # changed nothing; the latter links byte-identically.
     #
-    # -z noseparate-code returns to page-padded segments, so segment 0 ends on
-    # a page boundary with the rest of that page free.
-    #
-    # Raising max-page-size was tried first and did nothing, which is worth
-    # recording: the gap is (alignment - end-of-segment-0 mod alignment), so a
-    # bigger alignment moves the figure around without ever guaranteeing it is
-    # large enough. Padding is what is needed here, not alignment.
-    target_link_options(${PROJECT_NAME} PRIVATE "-Wl,-z,noseparate-code")
+    # vitasdk's linker script has a knob for exactly this: __sce_headroom is
+    # added before the data segment is aligned, so segment 1 always starts at
+    # least that far past segment 0. It costs one 64 KiB step of address space
+    # between the segments, not memory, since the loader places each segment on
+    # its own. Checked by relinking the app with segment 0 padded to end 2 KB
+    # short of the boundary: that fails exactly as above without the headroom,
+    # and packages with it.
+    target_link_options(${PROJECT_NAME} PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
+    execute_process(COMMAND ${CMAKE_LINKER} --verbose
+                    OUTPUT_VARIABLE _vita_ld_script ERROR_QUIET)
+    if(NOT _vita_ld_script MATCHES "__sce_headroom")
+        message(WARNING "This vitasdk's linker script has no __sce_headroom, so "
+                        "packaging can fail with 'Cannot allocate ... bytes for "
+                        "SCE data'. The CI image (vitasdk/vitasdk:2026.08) has it.")
+    endif()
 
     target_link_libraries(${PROJECT_NAME}
         archive
@@ -811,6 +821,19 @@ int main() {
     else()
         message(STATUS "SceNotificationUtil unavailable — no Vita download notifications")
     endif()
+
+    # The background-audio experiment (utils/background_audio.hpp): the BGM
+    # port calls come from SceAppMgr_stub, linked above; SceShell's music
+    # service is driven through the vendored libShellAudio, plus the one
+    # import stub vitasdk has no library for (lib/libshellaudio/README.md).
+    enable_language(ASM)
+    target_sources(${PROJECT_NAME} PRIVATE
+        src/utils/background_audio_psv.cpp
+        lib/libshellaudio/ShellAudio.c
+        lib/libshellaudio/shellsvc_stub.S)
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_BG_TITLEID=\"${VITA_BG_TITLEID}\")
 elseif(PLATFORM_SWITCH)
     # Required for __wrap_pthread_create in src/utils/switch_stubs.c — floors
     # libmpv/ffmpeg thread stacks above libnx's 128 KB default so they stop
@@ -1314,6 +1337,8 @@ if(PLATFORM_PSV)
         SceAppMgr_stub
         SceIofilemgr_stub
         SceLibKernel_stub)
+    # Same room for the SCE data as the main app; see __sce_headroom above.
+    target_link_options(vitaplex_updater PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
     vita_create_self(vitaplex_updater.self vitaplex_updater UNSAFE NOASLR)
     # No FILE args: vita_create_vpk accumulates them in a variable it does
     # not clear between calls, so any file listed here leaks into the main
@@ -1342,10 +1367,9 @@ if(PLATFORM_PSV)
         list(APPEND VITA_RES_FILE_ARGS FILE ${res} ${res})
     endforeach()
 
-    vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
-        VERSION ${VITA_VERSION}
-        NAME    ${VITA_APP_NAME}
-
+    # What goes into VitaPlex.vpk besides the eboot; VitaPlexBG.vpk below
+    # packs the same.
+    set(VITA_MAIN_VPK_FILES
         FILE app/platform/psv/sce_sys/icon0.png                      sce_sys/icon0.png
         FILE app/platform/psv/sce_sys/pic0.png                       sce_sys/pic0.png
         FILE app/platform/psv/sce_sys/livearea/contents/bg.png       sce_sys/livearea/contents/bg.png
@@ -1390,6 +1414,167 @@ if(PLATFORM_PSV)
         # vita_create_vpk above, so CMake builds the stub vpk first.
         FILE ${CMAKE_BINARY_DIR}/vitaplex_updater.vpk     updater.vpk
     )
+
+    vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
+        VERSION ${VITA_VERSION}
+        NAME    ${VITA_APP_NAME}
+        ${VITA_MAIN_VPK_FILES})
+
+    # ── VitaPlex as a non-game app (test) ───────────────────────────────
+    # The same eboot and files, packaged as the background test's VPLXBGT04
+    # is: a non-game application (gdc) with ElevenMPV-A's attributes and
+    # VitaPlex's extended memory. On a console that package kept running,
+    # network and audio included, after PS, where VitaPlex as a game is
+    # frozen, and it could allocate 342 MB of main memory against VitaPlex's
+    # 172 MB heap. It has a title id of its own so it installs beside
+    # VitaPlex; the two share ux0:data/VitaPlex, so only one should be open
+    # at a time. The same save-and-restore as the background test below,
+    # for the same reason (vita_create_vpk appends to these in this scope).
+    set(_bg_saved_sfo "${VITA_MKSFOEX_FLAGS}")
+    set(_bg_saved_pack "${VITA_PACK_VPK_FLAGS}")
+    set(_bg_saved_resources "${resources}")
+    set(VITA_MKSFOEX_FLAGS "-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16")
+    set(VITA_PACK_VPK_FLAGS "")
+    set(resources "")
+    vita_create_vpk(VitaPlexBG.vpk ${VITA_BG_TITLEID} ${PROJECT_NAME}.self
+        VERSION ${VITA_VERSION}
+        NAME    "VitaPlex BG"
+        ${VITA_MAIN_VPK_FILES})
+    set(VITA_MKSFOEX_FLAGS "${_bg_saved_sfo}")
+    set(VITA_PACK_VPK_FLAGS "${_bg_saved_pack}")
+    set(resources "${_bg_saved_resources}")
+
+    # ── Background test (src/bgtest_psv) ────────────────────────────────
+    # One small binary packaged several times, identical but for param.sfo, to
+    # find out on hardware which kind of app the system keeps running once it
+    # leaves the foreground, and with what memory and network; VitaPlex itself
+    # is frozen. A system-mode build of it is packaged twice more, to find out
+    # whether that kind plays on while a game runs, and a third time with a
+    # player through SceShell's music service. See the source's header for
+    # all ten. vita_create_vpk is a macro that appends to these flag
+    # variables in this scope (the updater comment above has the same trap
+    # for FILE), so each package gets them fresh and they are put back
+    # afterwards. Built after the main vpk, so nothing leaks into it.
+    add_executable(vitaplex_bgtest src/bgtest_psv/main.c)
+    target_link_libraries(vitaplex_bgtest
+        vita2d freetype png z m
+        SceGxm_stub
+        SceDisplay_stub
+        SceCommonDialog_stub
+        ScePgf_stub
+        SceCtrl_stub
+        SceAudio_stub
+        SceAppMgr_stub
+        ScePower_stub
+        SceSysmodule_stub
+        SceIofilemgr_stub
+        SceNet_stub
+        SceNetCtl_stub
+        SceLibKernel_stub)
+    target_link_options(vitaplex_bgtest PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
+    vita_create_self(vitaplex_bgtest.self vitaplex_bgtest UNSAFE)
+
+    # The same source as a system-mode app, which is what ElevenMPV-A is:
+    # its eboot carries a boot param (SELF control info 6) of attribute 2 and
+    # a 16 MB budget, where these eboots carry none and get the game budget.
+    # MEMSIZE and ATTRIBUTE write that param. Built without vita2d, whose GPU
+    # buffers come to about 10 MB of the 16, so it has no screen.
+    # vita_create_self appends to VITA_MAKE_FSELF_FLAGS in this scope (the
+    # eboot above gets "-c -na -c -na -c"), so this one starts from nothing.
+    add_executable(vitaplex_bgtest_sys src/bgtest_psv/main.c)
+    target_compile_definitions(vitaplex_bgtest_sys PRIVATE BGTEST_SYSTEM_MODE)
+    target_link_libraries(vitaplex_bgtest_sys
+        m
+        SceAudio_stub
+        SceAppMgr_stub
+        ScePower_stub
+        SceSysmodule_stub
+        SceIofilemgr_stub
+        SceNet_stub
+        SceNetCtl_stub
+        SceLibKernel_stub)
+    target_link_options(vitaplex_bgtest_sys PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
+    set(_bgt_saved_fself "${VITA_MAKE_FSELF_FLAGS}")
+    set(VITA_MAKE_FSELF_FLAGS "")
+    vita_create_self(vitaplex_bgtest_sys.self vitaplex_bgtest_sys UNSAFE MEMSIZE 0x4000 ATTRIBUTE 2)
+    set(VITA_MAKE_FSELF_FLAGS "${_bgt_saved_fself}")
+
+    # The system-mode build again with what a player through SceShell's music
+    # service needs (src/bgtest_psv/player_test.c): curl, mbedtls and zlib as
+    # VitaPlex fetches with them, and libShellAudio with its one import stub.
+    # Mozilla's CA bundle goes in its package below.
+    add_executable(vitaplex_bgtest_player
+        src/bgtest_psv/main.c
+        src/bgtest_psv/player_test.c
+        lib/libshellaudio/ShellAudio.c
+        lib/libshellaudio/shellsvc_stub.S)
+    target_compile_definitions(vitaplex_bgtest_player PRIVATE BGTEST_SYSTEM_MODE BGTEST_PLAYER)
+    target_include_directories(vitaplex_bgtest_player PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio)
+    target_link_libraries(vitaplex_bgtest_player
+        curl mbedtls mbedx509 mbedcrypto z m
+        SceAudio_stub
+        SceAppMgr_stub
+        ScePower_stub
+        SceSysmodule_stub
+        SceIofilemgr_stub
+        SceNet_stub
+        SceNetCtl_stub
+        SceRtc_stub
+        SceLibKernel_stub
+        # curl resolves names on a thread; whole, as borealis links it for VitaPlex
+        -Wl,--whole-archive pthread -Wl,--no-whole-archive)
+    target_link_options(vitaplex_bgtest_player PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
+    set(VITA_MAKE_FSELF_FLAGS "")
+    vita_create_self(vitaplex_bgtest_player.self vitaplex_bgtest_player UNSAFE MEMSIZE 0x4000 ATTRIBUTE 2)
+    set(VITA_MAKE_FSELF_FLAGS "${_bgt_saved_fself}")
+
+    set(_bgt_saved_sfo "${VITA_MKSFOEX_FLAGS}")
+    set(_bgt_saved_pack "${VITA_PACK_VPK_FLAGS}")
+    set(_bgt_saved_resources "${resources}")
+    foreach(_bgt
+            # title id | name | eboot | sfo flags. The first two are games
+            # like VitaPlex (extended memory as it has); the second adds
+            # ATTRIBUTE_BG_APP to VitaPlex's default ATTRIBUTE (0x8000).
+            # The third copies ElevenMPV-A's param.sfo: a non-game app. The
+            # fourth is the third with VitaPlex's extended memory. The fifth
+            # and sixth are the third with ElevenMPV-A's boot param too, the
+            # sixth growing its memory as ElevenMPV-A does (main.c). The last
+            # three make no sound: games with and without VitaPlex's extended
+            # memory, to open while the fifth beeps, and the first of them
+            # again giving up the BGM output the system adopts for it.
+            "VPLXBGT01|BG Test 1 game|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12"
+            "VPLXBGT02|BG Test 2 BG flag|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -d ATTRIBUTE=0x04008000"
+            "VPLXBGT03|BG Test 3 non-game|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
+            "VPLXBGT04|BG Test 4 non-game mem|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
+            "VPLXBGT05|BG Test 5 system 16MB|vitaplex_bgtest_sys.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
+            "VPLXBGT06|BG Test 6 system grown|vitaplex_bgtest_sys.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16"
+            "VPLXBGT07|BG Test 7 silent mem|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12"
+            "VPLXBGT08|BG Test 8 silent|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0"
+            "VPLXBGT09|BG Test 9 silent mem release|vitaplex_bgtest.self|-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12")
+        string(REPLACE "|" ";" _bgt "${_bgt}")
+        list(GET _bgt 0 _bgt_id)
+        list(GET _bgt 1 _bgt_name)
+        list(GET _bgt 2 _bgt_self)
+        list(GET _bgt 3 _bgt_flags)
+        set(VITA_MKSFOEX_FLAGS "${_bgt_flags}")
+        set(VITA_PACK_VPK_FLAGS "")
+        set(resources "")
+        vita_create_vpk(VitaPlexBgTest-${_bgt_id}.vpk ${_bgt_id} ${_bgt_self}
+            VERSION 01.00
+            NAME "${_bgt_name}")
+    endforeach()
+    # The player test, set up as the fifth is, with the CA bundle at app0:.
+    set(VITA_MKSFOEX_FLAGS "-d PARENTAL_LEVEL=1 -d ATTRIBUTE2=0 -s CATEGORY=gdc -d ATTRIBUTE=0x01089088 -d ATTRIBUTE_MINOR=16")
+    set(VITA_PACK_VPK_FLAGS "")
+    set(resources "")
+    vita_create_vpk(VitaPlexBgTest-VPLXBGT10.vpk VPLXBGT10 vitaplex_bgtest_player.self
+        VERSION 01.00
+        NAME "BG Test 10 player"
+        FILE resources/cacert.pem cacert.pem)
+    set(VITA_MKSFOEX_FLAGS "${_bgt_saved_sfo}")
+    set(VITA_PACK_VPK_FLAGS "${_bgt_saved_pack}")
+    set(resources "${_bgt_saved_resources}")
 
 elseif(PLATFORM_PS4)
     if(PS4)

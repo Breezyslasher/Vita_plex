@@ -72,28 +72,77 @@ private:
         LoadCallback imageCallback;   // set when the target is a brls::Image
         CoverCallback coverCallback;  // set for raw-NVG cover loads
         brls::Image* target = nullptr;
+        uint64_t request = 0;         // the target's PendingImage it belongs to
         std::shared_ptr<std::atomic<bool>> alive;
         uint64_t gen = 0;
     };
     static std::vector<DeferredUpload> s_deferred;
 
-    // In-flight brls::Image loads, so one that never lands can be re-issued.
-    // A load is dropped without the caller ever hearing about it — the loader
-    // is paused during playback, the upload had no GL surface, or a view
-    // teardown's cancelAll() invalidated it — and nearly every caller requests
-    // its image exactly once, leaving the view blank for good. Keyed by target
-    // so a recycled view's newer request replaces the older one rather than
-    // racing it. MediaItemCell and the detail-view poster do their own retry
-    // from draw(); this covers everything else.
+    // A hold on a view's own deletion token (borealis' ASYNC_RETAIN): the view
+    // sets it when destroyed and the last holder frees it. The caller's alive
+    // flag usually covers a whole screen, so it stays true while a list on
+    // that screen deletes rows — the player's queue does — and a reply for a
+    // deleted row's image would then write into freed memory. This covers the
+    // one image. UI thread only, like everything that touches a target.
+    class ViewHold {
+    public:
+        ViewHold() = default;
+        explicit ViewHold(brls::View* view);
+        ViewHold(ViewHold&& other) noexcept { take(other); }
+        ViewHold& operator=(ViewHold&& other) noexcept {
+            if (this != &other) { reset(); take(other); }
+            return *this;
+        }
+        ViewHold(const ViewHold&) = delete;
+        ViewHold& operator=(const ViewHold&) = delete;
+        ~ViewHold() { reset(); }
+
+        bool viewAlive() const { return m_deleted && !*m_deleted; }
+        void reset();
+
+    private:
+        void take(ViewHold& other) {
+            m_view = other.m_view;
+            m_deleted = other.m_deleted;
+            m_count = other.m_count;
+            other.m_view = nullptr;
+            other.m_deleted = nullptr;
+            other.m_count = nullptr;
+        }
+        brls::View* m_view = nullptr;
+        bool* m_deleted = nullptr;
+        int* m_count = nullptr;
+    };
+
+    // Outstanding brls::Image loads, one per target, so one that fails can be
+    // re-issued: nearly every caller requests its image exactly once, so a
+    // failed request would otherwise leave the view blank for good. Keyed by
+    // target so a recycled view's newer request replaces the older one; a
+    // reply carries its request number and is dropped unless it is still the
+    // target's current one, and unless the target still exists. MediaItemCell
+    // and the detail-view poster do their own retry from draw(); this covers
+    // everything else.
     struct PendingImage {
         std::string url;
         LoadCallback callback;
         std::shared_ptr<std::atomic<bool>> alive;
         uint64_t gen = 0;
-        int64_t  nextRetryAt = 0;   // CPU usec
+        uint64_t request = 0;
+        ViewHold view;              // the target's own deletion token
+        bool     waiting = true;    // request out, or its upload parked
+        int64_t  nextRetryAt = 0;   // CPU usec; set when a request fails
         int      retries = 0;
     };
     static std::map<brls::Image*, PendingImage> s_pendingImages;
+    static uint64_t s_lastRequest;
+
+    // A reply for `target`'s request number `request` arrived (UI thread):
+    // the entry if it is still current and its target alive, else nullptr
+    // (and a dead entry is dropped).
+    static PendingImage* currentRequest(brls::Image* target, uint64_t request);
+    // After setting the image: done if it took, else retry later.
+    static void settle(brls::Image* target, uint64_t request);
+    static void requestFailed(brls::Image* target, uint64_t request);
 
     // Subscribe the run-loop worker that drains deferrals and retries images.
     static void ensureRunLoopHook();
