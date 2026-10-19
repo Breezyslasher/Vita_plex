@@ -30,15 +30,20 @@ int bgappTakeNote(char* title, size_t size, double* t0, double* since);
 // background program, which takes about a second to start and read it.
 int bgappNoteWaiting(void);
 // The app asking its running background program to stop, and why, in a note
-// of its own; and taking the request back if no program has read it.
-void bgappAskQuit(const char* why);
-void bgappCancelQuit(void);
+// of the app's own (app, its title id); and taking the request back if no
+// program has read it.
+void bgappAskQuit(const char* app, const char* why);
+void bgappCancelQuit(const char* app);
 // 1 while that request is waiting to be read.
-int bgappQuitWaiting(void);
+int bgappQuitWaiting(const char* app);
 // The request, read by the background program and removed: 1 with why, or -1
 // when it was made before the program started (at startedAt, on the system
 // clock), so was for another one.
-int bgappTakeQuit(double startedAt, char* why, size_t size);
+int bgappTakeQuit(const char* app, double startedAt, char* why, size_t size);
+// The copy of its CA bundle the app leaves its background program as it asks
+// for it (bgappStart). The program lost app0: when its app was ended after it
+// had started, and with it the bundle (log 5d35ef15).
+#define BGAPP_CA_BUNDLE "ux0:data/VitaPlex/bgtest-cacert.pem"
 
 #ifdef BGTEST_PLAYER
 // How the player starts: with two songs from the library, 15 s after the app

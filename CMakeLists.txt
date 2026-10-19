@@ -1458,11 +1458,17 @@ if(PLATFORM_PSV)
     # for FILE), so each package gets them fresh and they are put back
     # afterwards. Built after the main vpk, so nothing leaks into it.
     # exit_stub.S imports the system call under sceKernelExitProcess, for the
-    # rescue of an app whose exit does not finish (main.c, quitNow).
+    # rescue of an app whose exit does not finish (main.c, quitNow); and
+    # libShellAudio stops a song the shell plays on for a player that is gone
+    # (main.c, stopOrphanedMusic).
     add_executable(vitaplex_bgtest
         src/bgtest_psv/main.c
         src/bgtest_psv/bgapp.c
-        src/bgtest_psv/exit_stub.S)
+        src/bgtest_psv/exit_stub.S
+        lib/libshellaudio/ShellAudio.c
+        lib/libshellaudio/shellsvc_stub.S)
+    target_include_directories(vitaplex_bgtest PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio)
     target_link_libraries(vitaplex_bgtest
         vita2d freetype png z m
         SceGxm_stub

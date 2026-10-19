@@ -1536,6 +1536,55 @@ They also hand the music over on PS as on X, when the deactivation comes
 within 2 s of a PS press, so a game started next finds nothing to close. A
 host run covered both, and the earlier paths still pass.
 
+**On PS the player starts but loses its CA bundle; the system's ending did
+not stop a refusal; X in 21 over 20's song crashed the console** (logs
+`753b3fb0`, `7ba90482`, `8fe35d97`, `5d35ef15` and `39f8db61`, build 2010;
+each run on its own clock).
+
+- PS handed over three times (20 twice, 21 once). The deactivation came
+  0.21 to 0.31 s after the press. The ask returned 0 in 0.03 or 0.04 s, the
+  exit stuck, and the rescue ended the app through the system call 2 s later,
+  as planned. Each player started 1.04 to 1.12 s after the ask and found the
+  CA bundle at app0:. The app was gone 1.4 to 1.7 s into its log. The library
+  request, whose connection was made before then, came back. Song 1's
+  download, a new connection, failed at once with "Problem with the SSL CA
+  cert", since curl reads the bundle for each connection. So app0: went with
+  the app, and there was no music, as the user found. Each player then idled.
+- 20 took the music back through the system twice. Each time its player took
+  the request in 0.10 s, `sceAppMgrDestroyAppByName` returned 0 half a second
+  later, and the player was gone 0.73 or 0.75 s after the ask. After the
+  first, X 6 s later was refused (0x80010013, then 0x80106501), and so were PS
+  and the quit request that came as 21 was started. After the second, X 0.9 s
+  later went through, and that player played song 1. So ending the player
+  through the system does not by itself keep the next start from being
+  refused. A refusal also came 0.9 s after a player quit by itself (log
+  `befac425`), so the time since is not it either. What causes it is open.
+- The request to stop was one file for every app. Opened again while 21's
+  idle player ran, 20 asked its own, and 21's took the request, waited 3 s to
+  be ended and quit by itself. 20 had no player running, and its X, PS and
+  quit request were all refused.
+- 20's last player played song 1 from 0:01 at 12.85 s. Its log ends there
+  with no request, as 21, with its extended memory, was opened, and the shell
+  played on. 21 found no player of its own, X got 0 in 0.04 s and 21 quit.
+  Then the console crashed, the user said. 21's player logged nothing of that
+  run, but its lines may have been lost in the crash. It would have
+  downloaded song 1 into `bgtest14-1.m4a`, the file the shell was playing for
+  20's player, part-way in, and then handed that file to the shell over the
+  song. In `3edd00fd` a player did the same with the shell at 3:21 of 3:23 in
+  that file, near its end, and nothing crashed.
+
+So the app now copies its CA bundle to `ux0:data/VitaPlex/bgtest-cacert.pem`
+as it asks for its player. The copy is written beside the target and moved
+in, and is skipped when one of the same size is there. The player uses that
+copy first. Each app's request to stop is a file of its own
+(`bgtest-<title id>-quit.txt`). Each player saves its songs under its app's
+title id (`bgtest-<title id>-N.ext`), so no player writes another's file. As
+it takes the music back, the app opens the shell's music service and reads
+its clock twice, 0.5 s apart. If the clock moved, or the state is 1, it stops
+the shell and logs both readings. A player that gives way to another app's
+now stops the music as it goes. A host run covered these, and the earlier
+paths still pass.
+
 
 ### PS4: the popup, and nothing to hang progress on
 

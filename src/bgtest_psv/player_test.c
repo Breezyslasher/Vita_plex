@@ -194,24 +194,37 @@ static CURL* request(const char* path, struct curl_slist** headers) {
     return c;
 }
 
-// Whether the background program has its app's files at app0:, as an app has
-// its own: nothing says so, and without the CA bundle no request works. If
-// not, it looks in the app's directory, and the log says which it got.
+static int readable(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return 0;
+    fclose(f);
+    return 1;
+}
+
+// The CA bundle for the background program, without which no request works:
+// the copy its app left it (bgappStart), since app0: went from under one whose
+// app was ended after it started (log 5d35ef15); else the one at app0:, if
+// app0: is the app's, as nothing says, or in the app's directory. The log says
+// which it got, and whether app0: is the app's.
 static void findCaBundle(void) {
-    FILE* f = fopen(g_caPath, "rb");
-    if (f) {
-        fclose(f);
-        logLine("player: CA bundle at %s, so app0: is the app's", g_caPath);
+    const int app0 = readable(g_caPath);
+    if (readable(BGAPP_CA_BUNDLE)) {
+        logLine("player: CA bundle at %s, its app's copy; %s", BGAPP_CA_BUNDLE,
+                app0 ? "app0: has one too, so is the app's" : "app0: has none");
+        snprintf(g_caPath, sizeof(g_caPath), "%s", BGAPP_CA_BUNDLE);
+        return;
+    }
+    if (app0) {
+        logLine("player: no copy at %s; CA bundle at %s, so app0: is the app's", BGAPP_CA_BUNDLE,
+                g_caPath);
         return;
     }
     char alt[64];
     snprintf(alt, sizeof(alt), "ux0:app/%s/cacert.pem", bgtestTitle());
-    f = fopen(alt, "rb");
-    logLine("player: no %s; %s %s", g_caPath, f ? "using" : "nor", alt);
-    if (f) {
-        fclose(f);
-        snprintf(g_caPath, sizeof(g_caPath), "%s", alt);
-    }
+    const int there = readable(alt);
+    logLine("player: no copy at %s, nor %s; %s %s", BGAPP_CA_BUNDLE, g_caPath,
+            there ? "using" : "nor", alt);
+    if (there) snprintf(g_caPath, sizeof(g_caPath), "%s", alt);
 }
 
 // The part of a path before its query, for the log.
@@ -420,7 +433,12 @@ static int pickTracks(void) {
             g_tracks[n++].transcode = 1;
         }
     }
-    nameTracks(n, g_background ? "bgtest14" : "bgtest10");
+    // Each app's program its own files: 21's was to write over the file the
+    // shell still played for 20's, which 21 had ended as it opened, when the
+    // console crashed (logs 8fe35d97, 7ba90482).
+    char prefix[24] = "bgtest10";
+    if (g_background) snprintf(prefix, sizeof(prefix), "bgtest-%s", bgtestTitle());
+    nameTracks(n, prefix);
     if (n == 0) logLine("player: no song of 1 to 4 minutes among %d tracks", seen);
     return n;
 }
