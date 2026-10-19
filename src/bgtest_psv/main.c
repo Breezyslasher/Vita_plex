@@ -396,6 +396,9 @@ static void switchTo(const char* program) {
 
 #ifndef BGTEST_SYSTEM_MODE
 static char g_bgappLine[96] = "Player: not started";
+// 20 and 21 quitting after starting their player: its rescue leaves the
+// player be, since that is what the app leaves behind.
+static volatile int g_handingOver;
 
 // The title id the system gives the app's background program: BGP for BGT
 // (CMakeLists.txt, its param2.sfo).
@@ -406,23 +409,37 @@ static void playerTitle(char* out, size_t size) {
 }
 
 // X in VPLXBGT14, 15 and 17 to 21: the player, as the app's background
-// program. 0 or more when the system took the request.
+// program. 0 or more when the system took the request. A refusal also logs
+// whether the system still lists a player: 20 was refused (0x80010013) after
+// its player had stopped when asked (log 10c46450).
 static int startPlayerApp(void) {
     char r[24];
     const int rc = bgappStart(g_title, g_t0 / 1e6);
-    if (rc >= 0)
+    if (rc >= 0) {
         snprintf(g_bgappLine, sizeof(g_bgappLine), "Player: started (at %.0fs)", secs());
-    else
+    } else {
         snprintf(g_bgappLine, sizeof(g_bgappLine), "Player: refused, %s", result(r, sizeof(r), rc));
+        char player[16];
+        playerTitle(player, sizeof(player));
+        SceUID pid = -1;
+        const int listed = sceAppMgrGetIdByName(&pid, player);
+        if (listed >= 0)
+            logLine("background program: refused, with its player %s listed, process 0x%08X",
+                    player, (unsigned)pid);
+        else
+            logLine("background program: refused, with its player %s not listed (%s)", player,
+                    result(r, sizeof(r), listed));
+    }
     return rc;
 }
 
 // Opened while its player plays, the app takes the music back, as VitaPlex
 // would: it asks the player to stop and waits up to 10 s for it to go, since
-// an app could not quit while its player ran (VPLXBGT18). Whether the system
-// lists a background program by its title id is not known yet, so the
-// request goes out either way; a running player takes it within a second,
-// and one that nothing has taken in 2 s is taken back.
+// an app could not quit while its player ran (VPLXBGT18). The system lists a
+// background program by its title id, even one whose start is still to come
+// (log 10c46450). The request goes out all the same when it does not, in case
+// it runs unlisted; a running player takes it within a second, and one that
+// nothing has taken in 2 s is taken back.
 static void takeBackPlayer(void) {
     char player[16], r[24];
     playerTitle(player, sizeof(player));
@@ -479,10 +496,22 @@ int bgtestRawExit(int status);
 // the game that had asked it to quit hung, waiting for it. The app asks its
 // player to stop, in case the exit waits for that, and gives it 5 s to go;
 // then the app, or the player itself, ends through the system call
-// underneath, past whatever LibKernel does before it.
+// underneath, past whatever LibKernel does before it. An app handing the
+// music over (g_handingOver) leaves the player be and goes after 2 s.
 static int rescueMain(SceSize args, void* argp) {
     (void)args;
     (void)argp;
+#ifndef BGTEST_BGAPP
+    if (g_handingOver) {
+        sceKernelDelayThread(2 * 1000 * 1000);
+        logLine("still running 2 s after it began to quit, handing the music over; ending "
+                "through _sceKernelExitProcessForUser, leaving the player be");
+        bgtestRawExit(0);
+        sceKernelDelayThread(3 * 1000 * 1000);
+        logLine("still running after that too: restart the console by holding the power button");
+        return 0;
+    }
+#endif
     sceKernelDelayThread(3 * 1000 * 1000);
     logLine("still running 3 s after it began to quit");
 #ifndef BGTEST_BGAPP
@@ -961,12 +990,20 @@ static int watcherMain(SceSize args, void* argp) {
                     if (!g_switchingTo) playerQuit("asked to quit");
 #elif !defined(BGTEST_SYSTEM_MODE)
                     // 20 and 21 hand the music to their player as they go, as
-                    // VitaPlex would when a game is started over it. The
-                    // rescue goes first, in case the system, in the middle of
-                    // switching apps, holds the request for the player.
+                    // VitaPlex would when a game is started over it, and end
+                    // through the system call underneath at once. On a quit
+                    // request sceKernelExitProcess has not returned in an app
+                    // that had used SceBgAppUtil: with its player running
+                    // (18), just asked for, and refused (20, log 10c46450).
+                    // The system starts the player once the app has gone. The
+                    // rescue goes first, in case the request for the player
+                    // is held.
                     if (quitsAfterStart()) {
+                        g_handingOver = 1;
                         armRescue();
                         startPlayerApp();
+                        logLine("quit, through _sceKernelExitProcessForUser at once");
+                        bgtestRawExit(0);
                     }
                     if (bgappTest()) quitNow();
 #endif
@@ -1198,6 +1235,7 @@ int main(void) {
         if (bgappTest() && (pressed & SCE_CTRL_CROSS) && startPlayerApp() >= 0 &&
             quitsAfterStart()) {
             logLine("quitting at once, as BGFTP's main app does");
+            g_handingOver = 1;
             quitNow();
         }
         if (!font) {

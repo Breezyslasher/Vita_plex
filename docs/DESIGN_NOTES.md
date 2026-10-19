@@ -1439,6 +1439,55 @@ has it more than 5 s in, takes it back to 0:00 with the seek event (BG Test
 position still seeks there. A host run covered the shell keeping its place at
 3:21, and the earlier cases and BG Test 11's seeks still pass.
 
+**The hand-over on a quit request works once the rescue ends the app; the
+player plays the whole queue beside a game; taking the music back works**
+(logs `10c46450`, `8c401491` and `96f3c9a7`, build 2007; 20's clock for each
+run).
+
+In the first run, 20 found no player and was sent away. At 52.3 s the system
+asked it to quit as the user started BG Test 8.
+
+- It asked for its player: the ask returned 0 in 0.03 s, and it logged
+  "quit" at 52.43 s. The exit did not finish: its network thread ran on, and
+  at 55.3 s the rescue found it still there. The player was listed as running
+  then, but had not started, and took no request in 6 s. At 61.4 s the rescue
+  ended the app through `_sceKernelExitProcessForUser`, which worked.
+- The player started at 62.98 s, 10.64 s after the ask and 1.5 s after the
+  app had gone, and found it gone. So the system starts the program only once
+  its app has gone. The app's exit waited on something the system does only
+  after the game the user had asked for, and BG Test 8 waited those 9 s.
+- The player played song 1 whole beside the game and handed over song 2 at
+  4:32, as song 1 ended, and the user heard it start. The network check ran
+  throughout. Each request took about 1 s this time, in all three logs, so
+  the server or the Wi-Fi was slower.
+
+In the second run, the user opened 20 again.
+
+- At 3.2 s the system listed the player by its title id, with its process.
+  It took the request in 0.10 s, stopped the music, gave the BGM port back,
+  and was gone 0.24 s after the ask, through its own `sceKernelExitProcess`.
+  The user heard the music stop.
+- X then failed four times: the ask returned 0x80010013 (the errno range:
+  ENODEV) with 0, and 0x80106501 with 1. At 39.7 s the system asked 20 to quit
+  from the background. It asked for the player, was refused the same way, and
+  its exit stuck again: still there at 42.7 s with no player listed, it was
+  ended through the system call at 48.75 s.
+
+So on a quit request, `sceKernelExitProcess` does not return in an app that
+has used SceBgAppUtil, whether its player is running (18), just asked for
+(20's first run) or refused (its second). On X, in front, it returns: four
+times for 20 and 21. The system call underneath ends the app every time, and
+the system then goes on: the game opens and the player starts. Why the ask was
+refused in the second run is open. The first run ended through the system
+call, which skips whatever LibKernel does on the way out, and the player had
+quit by itself. Either could have left something behind that only a restart
+clears.
+
+Now 20 and 21, asked to quit, start the player and end through the system call
+at once. Their rescue, when they hand over, waits 2 s and leaves the player
+be. A refusal logs whether the player is listed. A host run covered both, and
+the earlier paths still pass.
+
 
 ### PS4: the popup, and nothing to hang progress on
 
