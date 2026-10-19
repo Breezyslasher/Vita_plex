@@ -1379,6 +1379,29 @@ refused, 18 and 8 as before, both rescues, and the player stopped part-way
 through a song, which plays nothing again and starts no second song. The
 packages' `param.sfo` and `param2.sfo` were decoded from the configured build.
 
+**The app hands over and is gone; the player plays on beside a game** (logs
+`f82c4a2b`, `f7c0b792` and `c03d8023`, build 2005). The times are 20's clock.
+
+- 20 looked for a player first and found none: its title id gave 0x80802012,
+  and nothing took the request in 2 s. Then X: the module loaded, the ask
+  returned 0 in 0.02 s, and 20 logged "quitting at once" and "quit" at 5.33 s.
+  Nothing came after, so the rescue never woke and the process ended within
+  3 s. The player found its app gone at 6.59 s. So the hand-over BGFTP's main
+  app makes works from an app with a screen, a network thread and all the
+  rest.
+- The player started 1.02 s after the ask, as `VPLXBGP20` on 16 MB (mode 2),
+  and the shell played song 1 from 11.3 s.
+- BG Test 8, a game without extended memory, started at 25.0 s. Its PS press,
+  11.45 s into its log, is the player's at 36.48 s. The player ran on beside
+  it for those 11 s, with the network working.
+- At 42.15 s, 5.7 s after that press and 0:30 into song 1, the player's log
+  stops, with no quit request. One would have stopped the music and said so.
+  The user had gone on to VitaSurf, which has extended memory, and heard the
+  music go on there. That fits BGFTP's README, which says such an app ends a
+  background program: the shell plays a song it was given to its end without
+  the app that gave it (BG Test 10). If so, the second song never came.
+  Opening 20 again would show whether the player is still listed.
+
 
 ### PS4: the popup, and nothing to hang progress on
 
