@@ -1488,6 +1488,54 @@ at once. Their rescue, when they hand over, waits 2 s and leaves the player
 be. A refusal logs whether the player is listed. A host run covered both, and
 the earlier paths still pass.
 
+**A player that quits by itself leaves its app's next start refused; on a
+quit request the game waits about 10.8 s, whatever the app does** (logs
+`0a521b78`, `f527e31b`, `befac425`, `0b39eeea` and `232303fb`, builds 2007
+and 2009; each run on its own clock).
+
+- 20 after a restart (build 2009): X got 0 in 0.02 s and 20 quit cleanly. The
+  player started 1.09 s later and played. Opened again, 20 found the player
+  listed; it took the request in 0.10 s and was gone 0.27 s later, by its own
+  exit. Then X was refused nine times over 40 s, with 0x80010013 for mode 0
+  and 0x80106501 for 1, and no player listed. The system's quit request was
+  refused the same way. The refusal in log `10c46450` came after a run that
+  had gone through the system call; this one came after a clean exit, so
+  that is not the cause.
+- 21 on build 2007 did the same. Asked to quit as a game started, it got 0
+  in 0.10 s, stuck, and went through the rescue's system call 9.1 s later;
+  its player started 2.1 s after that. Opened again at once, 21 found it
+  listed. It took the request in 0.25 s and was gone 0.41 s later, by itself,
+  and X was then refused twice, 48 s apart.
+- After the system had ended a player, as an app with extended memory
+  opened, the next start went through (log `3edd00fd`). So a player that
+  quits by itself, through `sceKernelExitProcess`, leaves something that
+  refuses its app's next start until a restart. One the system ends does not.
+- 21 after the restart (build 2009): asked to quit as BG Test 8 started, it
+  asked for the player (0 in 0.08 s) and went through the system call at
+  once, at 12.08 s. BG Test 8 still started only at 22.74 s (its PS press,
+  10.68 s into its log, is the player's at 33.42 s), and the player 0.85 s
+  after it, 11.63 s after the ask. In the earlier runs, which went through
+  the rescue 9.1 s in, the game also came 10.6 to 11.2 s after the request.
+  So on a quit request, in an app that has used SceBgAppUtil, the system
+  starts the next app about 10.8 s after asking, however soon the app has
+  gone. Neither X nor the system call changes that. PS, which brings no quit
+  request, might.
+- In that run the player played on through the power button, sending play
+  again each time. Then power was held (0x40000000, then 0x00011080), and the
+  shell's player went to state 10 at 0:22, then to 0, refusing play with
+  0x8002058E, while the network still worked. Whether the console was
+  restarted then is not known.
+
+So 20 and 21 now take the music back by ending the player through the
+system. The player stops the music and waits to be ended, and quits by
+itself only if that has not come in 3 s. Half a second after the player has
+taken the request, the app calls `sceAppMgrDestroyAppByName` (SceAppMgrUser,
+in `SceAppMgr_stub`). It ends a player that has not taken the request in
+5 s all the same, and the rescue ends a player it asks to stop the same way.
+They also hand the music over on PS as on X, when the deactivation comes
+within 2 s of a PS press, so a game started next finds nothing to close. A
+host run covered both, and the earlier paths still pass.
+
 
 ### PS4: the popup, and nothing to hang progress on
 
