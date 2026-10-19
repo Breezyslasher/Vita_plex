@@ -1425,11 +1425,13 @@ clock).
   on, or from a note the player keeps up to date.
 - The second run's player started 0.91 s after the ask and played song 1
   from 0:00. It ran on through a PS press at 50.5 s for another 31 s. Its log
-  stops at 81.9 s, 1:05 into song 1, again with no quit request, and what was
-  opened then is not known. VitaShell, which the user copies the logs with,
-  sets no `ATTRIBUTE2` (its CMakeLists.txt), so it gets vita-mksfoex's
-  default, which is now `ATTRIBUTE2_MEM109`. If the user's copy was built with
-  that default, opening it ends the player too.
+  stops at 81.9 s, 1:05 into song 1, again with no quit request. The user
+  heard the song in VitaShell, where the logs were copied. The shell would
+  play it there either way, and the copy may simply have been made at 81.9 s.
+  The log as it is on the Vita now would tell, since a player still running
+  went on writing to it. VitaShell sets no `ATTRIBUTE2` (its CMakeLists.txt),
+  so it gets vita-mksfoex's default, which is now `ATTRIBUTE2_MEM109`. If the
+  user's copy was built with that default, opening it would end the player.
 
 So the player now waits for each song it hands over to play, and if the shell
 has it more than 5 s in, takes it back to 0:00 with the seek event (BG Test
