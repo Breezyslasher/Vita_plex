@@ -1644,6 +1644,55 @@ going, and the player paused part-way (with the shell keeping its place or
 not), before song 1, with its app still there at the start, and never asked
 again. The earlier paths still pass.
 
+**Paused and asked again, the player goes on with no start refused; ending
+it takes app0: from the app with the refusal's own code; 21 plays without a
+crash** (logs `26b60329`, `c2cb7096`, `1aaa6411`, `3ddd1547` and `f8b59a55`,
+build 2012; each run on its own clock). `sceIoSync("ux0:")` returned 0 in
+every process.
+
+- 20 was sent away with PS: the CA bundle was copied (188,900 bytes in
+  0.23 s), and the ask returned 0. The player started 1.27 s later, found
+  its app still there and waited. At 15.136 s app0: gave it 0x80010013, and
+  1 ms later it found the app gone, 1.01 s into the wait. It used the copy
+  and the shell played song 1 from 22.4 s.
+- 20 was opened again three times. Each time the same player, process
+  0x0146343D, took the pause request in 0.10 to 0.31 s and stopped the shell,
+  which stayed at the song's place (state 2 at 24.7, 36.1 and 50.7 s). Then
+  PS, X and PS asked it for the music again, and nothing was started or
+  refused. After PS it waited 2.08 and 2.04 s for 20 to go; after X, 20 had
+  gone already. Each time the shell started the file again at 0:00, not
+  where it had stopped, and the seek event took it to 0:24, 0:36 and 0:50 in
+  0.3 s.
+- The fifth time, Triangle ended the player, paused at 1:20, through the
+  system. It was gone 0.10 s later, and 3 ms after that, 20's own app0: gave
+  0x80010013. PS 9 s later found no `app0:cacert.pem`, and the ask was
+  refused with 0x80010013, then 0x80106501, as it was on the quit request.
+  So the refusal's code is app0:'s own: an app loses app0: when its
+  background program ends while it runs, and the start then cannot reach
+  eboot2.bin. A program loses it as its app ends (15.136 s above). One
+  started after its app had gone (21's X below) has app0: of its own.
+- 21 was sent away with PS. Its player started 1.10 s after the ask and
+  waited for 21, which went 1.00 s later, 0.2 s after its rescue's system
+  call. It had taken 10.3 s in build 2011, while the player worked. The
+  shell played song 1 from 24.7 s, and nothing crashed.
+- 21 was opened again. Its player was gone, ended as 21 opened, and the
+  shell played on at 26.8 s. 21 stopped it: 0.5 s later the shell was in
+  state 2 at 27.2 s. X: the ask returned 0 and 21 quit. The new player found
+  21 gone at its first look and app0: readable, with the CA bundle there
+  too, and played song 1. Nothing crashed. The user went on with the music
+  playing.
+
+So for VitaPlex BG, whose param.sfo 21 has:
+
+- The app never ends its background program while it is open. Asked to
+  pause, the program stops the music and stays, and the app asks the same
+  program for the music again as it goes.
+- Opening VitaPlex BG ends the program by itself, as opening 21 did, since
+  it has extended memory. The song plays on in the shell, where VitaPlex BG
+  can read its place and go on with it.
+- The program does nothing until its app has gone, and keeps everything it
+  needs, the CA bundle and the songs, in ux0:data.
+
 
 ### PS4: the popup, and nothing to hang progress on
 
