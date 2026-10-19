@@ -739,8 +739,8 @@ static void shellClock(unsigned* timeMs, int* state) {
 }
 
 // Whether `how` took the clock to ms within `wait` seconds: there or a little
-// past it, and further on from `from`, where it was when asked, than playing
-// alone would have taken it. 1 when it did.
+// past it, and over 3 s from where playing alone would have taken it from
+// `from`, where it was when asked, forward or back. 1 when it did.
 static int seekLanded(int song, unsigned ms, unsigned from, const char* how, int* state,
                       double wait) {
     const double t0 = now();
@@ -749,8 +749,8 @@ static int seekLanded(int song, unsigned ms, unsigned from, const char* how, int
     while (now() - t0 < wait) {
         sceKernelDelayThread(250 * 1000);
         shellClock(&time, state);
-        const unsigned played = (unsigned)((now() - t0) * 1000);
-        if (time + 2000 >= ms && time <= ms + 6000 && time > from + played + 3000) {
+        const double off = (double)time - from - (now() - t0) * 1000;
+        if (time + 2000 >= ms && time <= ms + 6000 && (off > 3000 || off < -3000)) {
             mmss(at, sizeof(at), time);
             logLine("player: song %d: %s took the clock to %s in %.1fs, state %d", song, how, at,
                     now() - t0, *state);
@@ -762,34 +762,36 @@ static int seekLanded(int song, unsigned ms, unsigned from, const char* how, int
     return 0;
 }
 
-// Takes song on to ms, where VitaPlex paused it: first as ShellAudio.h has
-// it, the time and then the seek event, and failing that the call that seeks
-// by itself. Which of them works, if either, is half of what VPLXBGT11 is for.
-static void seekTo(int song, unsigned ms) {
-    char want[16], at[16], r[2][24];
-    mmss(want, sizeof(want), ms);
-
-    // Once it plays, so that the open cannot undo the seek: the clock moving
-    // with this song's length (shellHasNewSong), for up to 10 s.
+// Waits for song to play, so that the open cannot undo a seek: the clock
+// moving with this song's length (shellHasNewSong), for up to 10 s. The
+// clock then, and 1 in *playing when it was seen to.
+static unsigned untilPlaying(int song, int* playing) {
     const int durMs = g_tracks[song - 1].durationMs;
     unsigned time = 0, prev = 0;
-    int state = 0, playing = 0;
+    int state = 0;
+    *playing = 0;
     const double t0 = now();
-    for (int havePrev = 0; !playing && now() - t0 < 10.0; havePrev = 1) {
+    for (int havePrev = 0; !*playing && now() - t0 < 10.0; havePrev = 1) {
         sceKernelDelayThread(250 * 1000);
         prev = time;
         shellClock(&time, &state);
         if (state == 1 && havePrev && time > prev) {
             static SceMusicPlayerServiceTrackInfo info;
             memset(&info, 0, sizeof(info));
-            playing = sceMusicPlayerServiceGetTrackInfo(&info) >= 0 &&
-                      shellHasNewSong(info.duration, durMs);
+            *playing = sceMusicPlayerServiceGetTrackInfo(&info) >= 0 &&
+                       shellHasNewSong(info.duration, durMs);
         }
     }
-    mmss(at, sizeof(at), time);
-    logLine("player: song %d: %s after %.1fs, at %s; seeking to %s", song,
-            playing ? "playing" : "not seen playing", now() - t0, at, want);
+    return time;
+}
 
+// Takes song to ms from the clock at time: first as ShellAudio.h has it, the
+// time and then the seek event, and failing that the call that seeks by
+// itself.
+static void seekFrom(int song, unsigned ms, unsigned time) {
+    char want[16], r[2][24];
+    mmss(want, sizeof(want), ms);
+    int state = 1;
     const int rcTime = sceMusicPlayerServiceSetSeekTime(ms);
     const int rcEvent = sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_SEEK, 0);
     logLine("player: song %d: set seek time %s, seek event %s", song, result(r[0], 24, rcTime),
@@ -803,14 +805,45 @@ static void seekTo(int song, unsigned ms) {
                 result(r[0], 24, sceMusicPlayerServiceSeek(ms)));
         landed = seekLanded(song, ms, time, "the seek call", &state, 4.0);
     }
-    if (!landed) {
-        logLine("player: song %d: neither way took it to %s; it plays on from where it is", song,
+    if (!landed)
+        logLine("player: song %d: neither way took it to %s; it goes on from where it is", song,
                 want);
-    } else if (state != 1) {
-        // There, but not playing: a seek that leaves the song paused.
+    if (state != 1) {
+        // Not playing: a seek that leaves the song paused, or a song that
+        // ended while it was taken back.
         logLine("player: song %d: not playing after the seek; play %s", song,
                 result(r[0], 24, sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_PLAY, 0)));
     }
+}
+
+// Takes song on to ms, where VitaPlex paused it. Which way works, if either,
+// is half of what VPLXBGT11 is for.
+static void seekTo(int song, unsigned ms) {
+    char want[16], at[16];
+    mmss(want, sizeof(want), ms);
+    int playing = 0;
+    const double t0 = now();
+    const unsigned time = untilPlaying(song, &playing);
+    mmss(at, sizeof(at), time);
+    logLine("player: song %d: %s after %.1fs, at %s; seeking to %s", song,
+            playing ? "playing" : "not seen playing", now() - t0, at, want);
+    seekFrom(song, ms, time);
+}
+
+// The shell can start a file it has had before where it left it: song 1 of
+// VPLXBGT21's first run started at 3:21 and was over 2 s later (log
+// 2aefa839). That was the file the player before had handed over, which the
+// shell played on by itself once that player was ended. A song that should
+// start at 0:00 and starts more than 5 s in is taken back there.
+static void fromTheStart(int song) {
+    int playing = 0;
+    const unsigned time = untilPlaying(song, &playing);
+    if (!playing || time < 5000) return;
+    char at[16];
+    mmss(at, sizeof(at), time);
+    logLine("player: song %d: the system player started it at %s, not 0:00; seeking back", song,
+            at);
+    seekFrom(song, 0, time);
 }
 
 // The power button: the system stops the shell's music as it suspends apps
@@ -1020,7 +1053,10 @@ static void run(void) {
 
     if (download(1) < 0 || g_stopped) return;
     handOver(1);
-    if (g_startMs > 0) seekTo(1, g_startMs);
+    if (g_startMs > 0)
+        seekTo(1, g_startMs);
+    else
+        fromTheStart(1);
     SceUID second = -1;
     if (songs > 1) {
         second = sceKernelCreateThread("BgTestSecond", secondMain, 0x10000100 + 20, 256 * 1024, 0,
@@ -1032,6 +1068,7 @@ static void run(void) {
         sceKernelWaitThreadEnd(second, NULL, NULL);
         if (g_secondReady == 1 && !g_stopped) {
             handOver(2);
+            fromTheStart(2);
             watchSong(2);
         }
     }

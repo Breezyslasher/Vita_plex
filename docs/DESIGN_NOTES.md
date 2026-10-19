@@ -1402,6 +1402,41 @@ packages' `param.sfo` and `param2.sfo` were decoded from the configured build.
   the app that gave it (BG Test 10). If so, the second song never came.
   Opening 20 again would show whether the player is still listed.
 
+**21 does the same with extended memory, and opening it again ends the
+player** (logs `3edd00fd` and `2aefa839`, build 2005; each run on its own
+clock).
+
+- 21 had 340 MB free and could allocate 342 MB, as VitaPlex BG can. Both
+  times it found no player, asked with 0, got 0 in 0.02 or 0.03 s, and quit
+  (at 9.24 s and 7.69 s) with nothing after, so no rescue. VitaPlex BG's own
+  `param.sfo` can carry the player and hand over to it.
+- In the first run the player started 1.03 s after the ask. The shell played
+  song 1 from 3:21, not 0:00, and it was over 2 s later. The player opens the
+  same file every run, and the shell had played that one on by itself after
+  20's player was ended, so it seems to have kept its place in it. The player
+  went on to fetch song 2, and its log stops at 26.3 s, before song 2 was
+  ready, with no quit request.
+- 21 was opened again, and 4.5 s in the player was not listed by its title
+  id; nothing took the request in 2 s. It had been ended before 21 could ask,
+  as an app with extended memory started, which is what BGFTP's README says
+  of enlarged memory mode games. So for VitaPlex, which has extended memory,
+  opening VitaPlex takes the music back by itself, and the player gets no
+  warning. What it was playing would have to come from the shell, which plays
+  on, or from a note the player keeps up to date.
+- The second run's player started 0.91 s after the ask and played song 1
+  from 0:00. It ran on through a PS press at 50.5 s for another 31 s. Its log
+  stops at 81.9 s, 1:05 into song 1, again with no quit request, and what was
+  opened then is not known. VitaShell, which the user copies the logs with,
+  sets no `ATTRIBUTE2` (its CMakeLists.txt), so it gets vita-mksfoex's
+  default, which is now `ATTRIBUTE2_MEM109`. If the user's copy was built with
+  that default, opening it ends the player too.
+
+So the player now waits for each song it hands over to play, and if the shell
+has it more than 5 s in, takes it back to 0:00 with the seek event (BG Test
+11's, which worked) and plays it if it is not playing. A hand-off to a
+position still seeks there. A host run covered the shell keeping its place at
+3:21, and the earlier cases and BG Test 11's seeks still pass.
+
 
 ### PS4: the popup, and nothing to hang progress on
 
