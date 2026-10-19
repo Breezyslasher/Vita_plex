@@ -10,6 +10,7 @@
 
 #include "utils/background_audio.hpp"
 
+#include "activity/player_activity.hpp"
 #include "app/downloads_manager.hpp"
 #include "app/music_controller.hpp"
 #include "app/music_queue.hpp"
@@ -22,10 +23,14 @@
 
 #include <borealis.hpp>
 
+#include <psp2/io/dirent.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/net/netctl.h>
 #include <psp2/power.h>
+#include <psp2/sysmodule.h>
+
+#include "bgplayer.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -59,6 +64,13 @@ int sceAppMgrReceiveEvent(void* event);
 int sceAppMgrAcquireBgmPortWithPriority(int priority);
 int sceAppMgrReleaseBgmPort(void);
 int sceAppMgrAppParamGetString(int pid, int param, char* string, SceSize length);
+int sceAppMgrGetIdByName(SceUID* pid, const char* name);
+// SceBgAppUtil (psp2/bgapputil.h): starts the package's eboot2.bin. vitasdk's
+// header says the mode must be 1; BGFTP passes 0.
+int sceBgAppUtilStartBgApp(int mode);
+// _sceKernelExitProcessForUser, the system call that sceKernelExitProcess
+// ends with (src/bgplayer_psv/raw_exit.S).
+int vitaplexRawExit(int status);
 // patches/psv_platform.cpp: how many times the UI loop has run.
 unsigned vitaplex_main_loop_ticks(void);
 }
@@ -174,10 +186,27 @@ std::string runningTitleId() {
 }
 
 std::atomic<bool> g_keepPlaying{false};
+// The setting (OutsideMusic); kOutsideStops outside VitaPlex BG.
+std::atomic<int> g_outsideMusic{kOutsideStops};
 // Whether anything has asked for the watcher's reports: background playback,
 // or a system player test. The watcher also runs without, but then only to
 // answer the system's request to quit (see watcherMain).
 std::atomic<bool> g_watcherReports{false};
+
+// ── The background player's side (see "The background player" below) ─────
+// sceBgAppUtilStartBgApp has been called: the process then ends through the
+// system call under sceKernelExitProcess (exitProcess).
+std::atomic<bool> g_bgAppUsed{false};
+// When the queue was handed over, on the way out; 0 before. Past
+// kQuitShutdownUs after it the watcher ends the process itself.
+std::atomic<SceInt64> g_handedOverAt{0};
+// The last press of PS (the power callback): a deactivation within 2 s of
+// one is the user leaving, as BG Tests 20 and 21 took it.
+std::atomic<SceInt64> g_psPressUs{0};
+// When this process set up the background player's side, on the system
+// clock, which runs on from one process to the next as the notes have it.
+double g_initSecs = 0;
+bool handOver(const char* why);
 
 // ── The BGM port ─────────────────────────────────────────────────────────
 // Held at one priority at a time: the app's while mpv plays, the shell's
@@ -276,6 +305,16 @@ void onDeactivate(SceInt64 now, SceInt64 gapUs) {
                        "BGM port {:#x}, keep playing {}{}",
                        heldFirst ? ", read only after the process was held" : "",
                        describeMpv(s), portPriority(), g_keepPlaying.load(), shellStatusLine());
+
+    // Left with PS, by the setting: the background player takes the queue
+    // over and VitaPlex BG goes, so that a game started next finds nothing
+    // to close. On the UI thread, which owns the queue, and runs on in a
+    // non-game app sent away (log a93baa71).
+    if (g_outsideMusic == kOutsideHandsOver && now - g_psPressUs.load() < 2000000) {
+        brls::sync([]() {
+            if (handOver("left with PS")) brls::Application::quit();
+        });
+    }
 }
 
 void onActivate(SceInt64 now) {
@@ -338,8 +377,17 @@ SceInt64 g_quitAskedAt = 0;
 // shutdown; see kQuitShutdownUs.
 std::atomic<bool> g_quitUnderway{false};
 
-void onRequestQuit(SceInt64 now) {
-    brls::Logger::info("[bgaudio] the system asked the app to quit; quitting");
+void onRequestQuit(SceInt64 now, const AppEvent& ev) {
+    // What asks, in full, once: the event may say why (a game started over
+    // the app, or its LiveArea closed), which nothing here tells apart yet.
+    std::string param;
+    for (int i = 0; i < 24; i++) {
+        char h[4];
+        std::snprintf(h, sizeof(h), "%02X", (unsigned char)ev.param[i]);
+        param += h;
+    }
+    brls::Logger::info("[bgaudio] the system asked the app to quit (app {}, then {}); quitting",
+                       hex(ev.appId), param);
     // A file the system player was given would otherwise play on after the app
     // is gone, with nothing left to stop it. Not waited for if a test is mid-run
     // (see shellStatusLine); the process is going either way.
@@ -360,10 +408,13 @@ void onRequestQuit(SceInt64 now) {
     // The normal way out first, which saves the settings. watcherMain ends the
     // process itself if that has not happened in time (kQuitGraceUs), since
     // the UI thread may be stuck in a request to a server it cannot reach.
+    // Music playing goes to the background player on the way, by the setting:
+    // this is what a game started over VitaPlex BG brings.
     if (g_quitAskedAt == 0) {
         g_quitAskedAt = now;
         brls::sync([]() {
             g_quitUnderway = true;
+            handOver("the system asked VitaPlex BG to quit");
             brls::Application::quit();
         });
     }
@@ -385,7 +436,7 @@ bool drainAppEvents(SceInt64 now, SceInt64 gapUs, bool quitOnly) {
             case kEventDeactivate:  onDeactivate(now, gapUs); focus = true; break;
             case kEventActivate:    onActivate(now); focus = true; break;
             case kEventResume:      brls::Logger::info("[bgaudio] app event: resume"); break;
-            case kEventRequestQuit: onRequestQuit(now); break;
+            case kEventRequestQuit: onRequestQuit(now, ev); break;
             default:
                 brls::Logger::info("[bgaudio] app event {}", hex(ev.event));
                 break;
@@ -462,6 +513,7 @@ int powerCallback(int, int, int powerInfo, void*) {
     if ((unsigned)powerInfo & SCE_POWER_CB_BUTTON_PS_PRESS) {
         g_atPs = MpvPlayer::getInstance().snapshot();
         g_haveAtPs = true;
+        g_psPressUs = sceKernelGetSystemTimeWide();
     }
     return 0;
 }
@@ -500,7 +552,16 @@ int watcherMain(SceSize, void*) {
                                   (now - g_quitAskedAt) / 1e6,
                                   underway ? "the shutdown did not finish"
                                            : "the UI never took the request");
-            sceKernelExitProcess(0);
+            exitProcess(0);
+        }
+        // Handed over and quitting by itself: the background player waits
+        // for the app to go before it plays.
+        const SceInt64 handedAt = g_handedOverAt;
+        if (handedAt != 0 && now - handedAt > kQuitShutdownUs) {
+            brls::Logger::warning("[bgaudio] still running {:.1f}s after handing the music to "
+                                  "the background player; ending the process",
+                                  (now - handedAt) / 1e6);
+            exitProcess(0);
         }
         if (!watching) continue;
         // A game is sent neither event, so without this nothing would say,
@@ -1187,6 +1248,404 @@ private:
     std::atomic<long long> m_sent{0};
 };
 
+// ── The background player ────────────────────────────────────────────────
+//
+// VitaPlex BG's own background program (src/bgplayer_psv), which outlives the
+// app: the system closes VitaPlex BG to start a game, and the player carries
+// the queue on through the shell's music player, which plays on beside games
+// (docs/DESIGN_NOTES.md, BG Tests 10 to 21). The two talk through files in
+// ux0:data/VitaPlex (bgplayer.h). The app hands the queue over as it goes and
+// takes the music back as it opens again; the player waits for the app to go
+// before it plays, and never ends while the app is open, since the two share
+// app0: and the app lost it each time its program ended under it.
+
+double systemSecs() { return sceKernelGetSystemTimeWide() / 1e6; }
+
+// A file in place of `to`, written beside it: rename does not replace a file
+// on every target (platform_common.cpp).
+bool moveIn(const std::string& from, const std::string& to) {
+    std::remove(to.c_str());
+    return std::rename(from.c_str(), to.c_str()) == 0;
+}
+
+bool writeWhole(const std::string& path, const std::string& text) {
+    const std::string part = path + ".part";
+    FILE* f = std::fopen(part.c_str(), "w");
+    if (!f) return false;
+    const bool ok = std::fwrite(text.data(), 1, text.size(), f) == text.size();
+    if (std::fclose(f) != 0 || !ok || !moveIn(part, path)) {
+        std::remove(part.c_str());
+        return false;
+    }
+    return true;
+}
+
+// A request to the player, one line as bgplayer.h has it.
+void ask(const char* path, const char* why) {
+    char line[160];
+    std::snprintf(line, sizeof(line), "%.6f %s\n", systemSecs(), why);
+    writeWhole(path, line);
+}
+
+long fileSize(const char* path) {
+    FILE* f = std::fopen(path, "rb");
+    if (!f) return -1;
+    const long size = std::fseek(f, 0, SEEK_END) == 0 ? std::ftell(f) : -1;
+    std::fclose(f);
+    return size;
+}
+
+// The CA bundle for the player in ux0:data, unless a copy of its size is
+// there already: the background test's player lost app0: when its app went
+// after it had started, and every https request with it (log 5d35ef15).
+void copyCaBundle() {
+    const char* from = "app0:resources/cacert.pem";
+    const long size = fileSize(from);
+    if (size < 0 || fileSize(BGPLAYER_CA_BUNDLE) == size) return;
+    const bool ok = copyFile(from, BGPLAYER_CA_BUNDLE ".part") &&
+                    moveIn(BGPLAYER_CA_BUNDLE ".part", BGPLAYER_CA_BUNDLE);
+    brls::Logger::info("[bgaudio] background player: CA bundle {} {}",
+                       ok ? "copied to" : "could not be copied to", BGPLAYER_CA_BUNDLE);
+}
+
+// A field of a track line: '|' separates them, and a line ends the track.
+std::string trackField(std::string s) {
+    for (auto& c : s)
+        if (c == '|' || c == '\n' || c == '\r') c = ' ';
+    return s;
+}
+
+int repeatCode(RepeatMode m) {
+    return m == RepeatMode::ONE ? BGPLAYER_REPEAT_ONE
+         : m == RepeatMode::ALL ? BGPLAYER_REPEAT_ALL : BGPLAYER_REPEAT_OFF;
+}
+
+// The queue in the order it plays, the song playing and where in it, as
+// bgplayer.h lays it out. A queue longer than the player takes goes from the
+// song playing on. On the UI thread, which owns the queue. The song, for the
+// log, in *what.
+bool writeQueue(std::string& what) {
+    MusicQueue& q = MusicQueue::getInstance();
+    const std::vector<QueueItem>& items = q.getQueue();
+    std::vector<int> order;
+    int at = q.getCurrentIndex();
+    if (q.isShuffleEnabled() && q.getShuffleOrder().size() == items.size()) {
+        order = q.getShuffleOrder();
+        at = q.getShufflePosition();
+    } else {
+        for (int i = 0; i < (int)items.size(); i++) order.push_back(i);
+    }
+    if (at < 0 || at >= (int)order.size()) return false;
+    std::size_t from = 0;
+    if (order.size() > BGPLAYER_MAX_TRACKS) {
+        from = (std::size_t)at;
+        at = 0;
+    }
+
+    // Where in the song: mpv's clock counts from where its stream begins,
+    // which a seek that restarted the transcode moved part-way in.
+    const double position = MpvPlayer::getInstance().getPosition();
+    const long long positionMs = std::max(
+        0LL, MusicController::getInstance().streamStartOffsetMs() +
+                 (position > 0 ? (long long)(position * 1000) : 0));
+
+    char head[160];
+    std::snprintf(head, sizeof(head), "written=%.6f\nindex=%d\npositionMs=%lld\nrepeat=%d\nfile=\n",
+                  systemSecs(), at, positionMs, repeatCode(q.getRepeatMode()));
+    std::string text = head;
+    DownloadsManager& downloads = DownloadsManager::getInstance();
+    for (std::size_t i = from; i < order.size() && i - from < BGPLAYER_MAX_TRACKS; i++) {
+        const QueueItem& t = items[(std::size_t)order[i]];
+        std::string local;
+        DownloadItem dl;
+        if (downloads.getDownloadCopy(t.ratingKey, dl) && dl.state == DownloadState::COMPLETED)
+            local = dl.localPath;
+        char rating[16];
+        std::snprintf(rating, sizeof(rating), "%.1f", t.userRating);
+        text += "track=" + trackField(t.ratingKey) + "|" + std::to_string(t.duration * 1000) +
+                "|" + trackField(local) + "|" + rating + "|" + trackField(t.thumb) + "|" +
+                trackField(t.title) + "|" + trackField(t.artist) + "|" + trackField(t.album) +
+                "\n";
+    }
+    text += "end\n";
+    if (!writeWhole(BGPLAYER_QUEUE, text)) return false;
+    const QueueItem& now = items[(std::size_t)order[from + (std::size_t)at]];
+    what = std::to_string(std::min<std::size_t>(order.size() - from, BGPLAYER_MAX_TRACKS)) +
+           " song(s), from \"" + now.title + "\" at " + mmss((unsigned)positionMs);
+    return true;
+}
+
+// The player asked for: a request to play when it runs already, paused since
+// the app took the music back; else started. 0 or more when it took it.
+int askForPlayer() {
+    SceUID pid = -1;
+    if (sceAppMgrGetIdByName(&pid, BGPLAYER_TITLEID) >= 0) {
+        ask(BGPLAYER_ASK_PLAY, "VitaPlex BG hands the music over as it goes");
+        brls::Logger::info("[bgaudio] background player: {} runs, process {}; asked for the "
+                           "music again, not started anew",
+                           BGPLAYER_TITLEID, hex(pid));
+        return 0;
+    }
+    const int rcLoad = sceSysmoduleLoadModule(SCE_SYSMODULE_BG_APP_UTIL);
+    int rc = -1;
+    // As BGFTP asks, then as vitasdk documents it if that is refused.
+    for (int mode = 0; mode <= 1 && rc < 0; mode++) {
+        g_bgAppUsed = true;
+        rc = sceBgAppUtilStartBgApp(mode);
+        brls::Logger::info("[bgaudio] background player: load the module {}, start it with {}: {}",
+                           hex(rcLoad), mode, hex(rc));
+    }
+    return rc;
+}
+
+// Music playing goes to the background player: the queue written, the CA
+// bundle copied, the player asked for, and only then mpv paused and the BGM
+// port given back, so that a refusal leaves the music playing here. The
+// player plays once the app has gone, so the caller quits. On the UI thread.
+// true when it was handed over.
+bool handOver(const char* why) {
+    if (!available() || g_outsideMusic == kOutsideStops || g_handedOverAt != 0) return false;
+    const MpvPlayer::Snapshot s = MpvPlayer::getInstance().snapshot();
+    const bool playing = s.initialized && s.audioOnly &&
+                         (s.state == MpvPlayerState::PLAYING ||
+                          s.state == MpvPlayerState::BUFFERING ||
+                          s.state == MpvPlayerState::LOADING);
+    if (!playing || !MusicQueue::getInstance().isMusicQueue()) {
+        brls::Logger::info("[bgaudio] background player: {}, with no music playing ({}); "
+                           "nothing handed over",
+                           why, describeMpv(s));
+        return false;
+    }
+    std::string what;
+    if (!writeQueue(what)) {
+        brls::Logger::error("[bgaudio] background player: {}, but the queue could not be written "
+                            "to {}", why, BGPLAYER_QUEUE);
+        return false;
+    }
+    copyCaBundle();
+    const int rc = askForPlayer();
+    if (rc < 0) {
+        brls::Logger::error("[bgaudio] background player: refused ({}); the music plays on here",
+                            hex(rc));
+        return false;
+    }
+    MusicController::getInstance().playPause(false);
+    releasePort(0, "handed to the background player");
+    g_handedOverAt = sceKernelGetSystemTimeWide();
+    brls::Logger::info("[bgaudio] background player: {}: handed over {}", why, what);
+    return true;
+}
+
+// ── Taking the music back ────────────────────────────────────────────────
+
+// A note as bgplayer.h lays them out: "key=value" lines, and "end" last. The
+// track lines in order, split into their fields, in *tracks when asked for.
+bool readNote(const char* path, std::map<std::string, std::string>& fields,
+              std::vector<std::vector<std::string>>* tracks) {
+    FILE* f = std::fopen(path, "r");
+    if (!f) return false;
+    bool whole = false;
+    char buf[2048];
+    while (std::fgets(buf, sizeof(buf), f)) {
+        std::string line = buf;
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
+        if (line == "end") {
+            whole = true;
+            continue;
+        }
+        const std::size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+        const std::string key = line.substr(0, eq);
+        const std::string value = line.substr(eq + 1);
+        if (key == "track" && tracks) {
+            std::vector<std::string> parts;
+            std::size_t at = 0;
+            for (;;) {
+                const std::size_t bar = value.find('|', at);
+                parts.push_back(value.substr(at, bar == std::string::npos ? bar : bar - at));
+                if (bar == std::string::npos) break;
+                at = bar + 1;
+            }
+            parts.resize(BGPLAYER_TRACK_FIELDS);
+            tracks->push_back(parts);
+        } else if (key != "track") {
+            fields[key] = value;
+        }
+    }
+    std::fclose(f);
+    return whole;
+}
+
+double fieldNum(const std::map<std::string, std::string>& m, const char* key) {
+    const auto it = m.find(key);
+    return it == m.end() ? -1 : std::atof(it->second.c_str());
+}
+
+std::string fieldText(const std::map<std::string, std::string>& m, const char* key) {
+    const auto it = m.find(key);
+    return it == m.end() ? std::string() : it->second;
+}
+
+// The songs a player left as the system ended it, once nothing plays them.
+void removePlayerSongs() {
+    const SceUID d = sceIoDopen(BGPLAYER_SONGS);
+    if (d < 0) return;
+    SceIoDirent e;
+    int removed = 0;
+    for (;;) {
+        std::memset(&e, 0, sizeof(e));
+        if (sceIoDread(d, &e) <= 0) break;
+        if (e.d_name[0] == '.') continue;
+        if (std::remove((std::string(BGPLAYER_SONGS) + "/" + e.d_name).c_str()) == 0) removed++;
+    }
+    sceIoDclose(d);
+    if (removed)
+        brls::Logger::info("[bgaudio] background player: removed {} song file(s) it left", removed);
+}
+
+// The song the shell plays on for a player the system ended as VitaPlex BG
+// opened, as an app with extended memory does (BG Test 21, build 2012): its
+// clock read twice, half a second apart, and its length checked against the
+// player's song, so that the system Music app's song is left alone. Stopped
+// when it is the player's. Where it was, or -1.
+long long takeFromShell(int durationMs) {
+    std::lock_guard<std::mutex> lock(g_shellMutex);
+    if (g_shellInit) return -1;   // a test has the shell
+    const int rcInit = sceMusicPlayerServiceInitialize(0);
+    if (rcInit < 0) {
+        brls::Logger::info("[bgaudio] background player: the system player would not start "
+                           "({}); its song is left as it is", hex(rcInit));
+        return -1;
+    }
+    SceMusicPlayerServicePlayStatusExtension a, b;
+    std::memset(&a, 0, sizeof(a));
+    std::memset(&b, 0, sizeof(b));
+    sceMusicPlayerServiceGetPlayStatusExtension(&a);
+    sceKernelDelayThread(500 * 1000);
+    sceMusicPlayerServiceGetPlayStatusExtension(&b);
+    const bool plays = b.currentTime != a.currentTime || b.currentState == 1;
+    std::unique_ptr<SceMusicPlayerServiceTrackInfo> info(new SceMusicPlayerServiceTrackInfo());
+    const int rcInfo = sceMusicPlayerServiceGetTrackInfo(info.get());
+    const int off = info->duration - durationMs;
+    const bool ours = rcInfo >= 0 && durationMs > 0 && off > -3000 && off < 3000;
+    brls::Logger::info("[bgaudio] background player: the system player is at {} then {} (state "
+                       "{}), with a song {} long against the player's {}",
+                       mmss(a.currentTime), mmss(b.currentTime), b.currentState,
+                       mmss((unsigned)std::max(0, info->duration)),
+                       mmss((unsigned)std::max(0, durationMs)));
+    long long at = -1;
+    if (plays && ours) {
+        at = b.currentTime;
+        const int rcStop = sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_STOP, 0);
+        brls::Logger::info("[bgaudio] background player: its song plays on in the system "
+                           "player; stopped there ({}) to go on here", hex(rcStop));
+    }
+    sceMusicPlayerServiceTerminate();
+    return at;
+}
+
+// What the background player had got to as VitaPlex BG opens, taken back:
+// a running player is asked to pause and says where; one the system ended
+// left its song playing in the shell, which is stopped. The queue then plays
+// on here from that song and place. Off the UI thread: it waits on the
+// player and on the shell.
+void takeBack() {
+    std::map<std::string, std::string> status, queue;
+    std::vector<std::vector<std::string>> tracks;
+    const bool haveStatus = readNote(BGPLAYER_STATUS, status, nullptr);
+    const bool haveQueue = readNote(BGPLAYER_QUEUE, queue, &tracks);
+    SceUID pid = -1;
+    const bool listed = sceAppMgrGetIdByName(&pid, BGPLAYER_TITLEID) >= 0;
+    if (!haveStatus && !listed) return;   // never handed over, or long done
+
+    int index = -1;
+    long long at = -1;
+    if (listed) {
+        // It stays, paused: it must not end while the app is open.
+        const double asked = systemSecs();
+        ask(BGPLAYER_ASK_PAUSE, "VitaPlex BG is open again and takes the music back");
+        brls::Logger::info("[bgaudio] background player: {} runs, process {}; asked to pause",
+                           BGPLAYER_TITLEID, hex(pid));
+        bool taken = false;
+        for (int i = 0; i < 50 && !taken; i++) {
+            sceKernelDelayThread(100 * 1000);
+            taken = !fileExists(BGPLAYER_ASK_PAUSE);
+        }
+        if (!taken) {
+            std::remove(BGPLAYER_ASK_PAUSE);
+            brls::Logger::warning("[bgaudio] background player: it did not take the request in "
+                                  "5 s; the music is left to it");
+            return;
+        }
+        status.clear();
+        readNote(BGPLAYER_STATUS, status, nullptr);
+        brls::Logger::info("[bgaudio] background player: paused, {} of song {} ({})",
+                           mmss((unsigned)std::max(0.0, fieldNum(status, "positionMs"))),
+                           (int)fieldNum(status, "index") + 1, fieldText(status, "state"));
+        if (fieldText(status, "state") == BGPLAYER_STATE_PAUSED &&
+            fieldNum(status, "written") >= asked && fieldNum(status, "wasPlaying") == 1) {
+            index = (int)fieldNum(status, "index");
+            at = (long long)fieldNum(status, "positionMs");
+        }
+    } else {
+        // Ended by the system as this app opened, the player said it played
+        // moments before; it writes every 2 s while it does.
+        const double age = g_initSecs - fieldNum(status, "written");
+        brls::Logger::info("[bgaudio] background player: not running; it last said \"{}\", {:.1f} "
+                           "s before VitaPlex BG started",
+                           fieldText(status, "state"), age);
+        const bool said = fieldText(status, "state") == BGPLAYER_STATE_PLAYING;
+        if (said && age < 20.0) {
+            at = takeFromShell((int)fieldNum(status, "durationMs"));
+            if (at >= 0) index = (int)fieldNum(status, "index");
+        }
+        // Not while the shell may still play one of them: a file written over
+        // as the shell played it preceded a crash (logs 8fe35d97, 7ba90482).
+        // The next player clears what is left as it starts.
+        if (!said || at >= 0) removePlayerSongs();
+    }
+    if (index < 0 || at < 0) return;
+    if (!haveQueue || fieldNum(queue, "written") != fieldNum(status, "queue") ||
+        index >= (int)tracks.size()) {
+        brls::Logger::warning("[bgaudio] background player: its queue at {} is not the one it "
+                              "played; nothing to go on with",
+                              BGPLAYER_QUEUE);
+        return;
+    }
+
+    std::vector<MediaItem> items;
+    for (const auto& t : tracks) {
+        MediaItem item;
+        item.ratingKey = t[BGPLAYER_TRACK_KEY];
+        item.duration = std::atoi(t[BGPLAYER_TRACK_DURATION].c_str());
+        item.userRating = (float)std::atof(t[BGPLAYER_TRACK_RATING].c_str());
+        item.thumb = t[BGPLAYER_TRACK_THUMB];
+        item.title = t[BGPLAYER_TRACK_TITLE];
+        item.grandparentTitle = t[BGPLAYER_TRACK_ARTIST];
+        item.parentTitle = t[BGPLAYER_TRACK_ALBUM];
+        item.type = "track";
+        item.mediaType = MediaType::MUSIC_TRACK;
+        items.push_back(item);
+    }
+    const int repeat = (int)fieldNum(queue, "repeat");
+    brls::sync([items, index, at, repeat]() {
+        const MpvPlayer::Snapshot s = MpvPlayer::getInstance().snapshot();
+        if (s.initialized && s.state != MpvPlayerState::IDLE && s.state != MpvPlayerState::ENDED &&
+            s.state != MpvPlayerState::ERROR) {
+            brls::Logger::info("[bgaudio] background player: VitaPlex plays something already; "
+                               "the queue is not taken back");
+            return;
+        }
+        MusicQueue::getInstance().setRepeatMode(repeat == BGPLAYER_REPEAT_ONE ? RepeatMode::ONE
+                                                : repeat == BGPLAYER_REPEAT_ALL ? RepeatMode::ALL
+                                                                                : RepeatMode::OFF);
+        brls::Logger::info("[bgaudio] background player: the queue goes on here, \"{}\" at {}",
+                           items[(std::size_t)index].title, mmss((unsigned)at));
+        brls::Application::pushActivity(
+            PlayerActivity::createWithRestoredQueue(items, index, at));
+    });
+}
+
 }  // namespace
 
 bool available() {
@@ -1194,21 +1653,38 @@ bool available() {
     return bg;
 }
 
-void init(bool keepPlaying) {
-    // A toggle saved where it was offered stays off in VitaPlex itself.
-    g_keepPlaying = keepPlaying && available();
-    brls::Logger::info("[bgaudio] running as {}; keep playing in background: {}",
-                       available() ? "VitaPlex BG" : "VitaPlex", g_keepPlaying.load());
+void init(int outsideMusic) {
+    // A setting saved where it was offered counts as off in VitaPlex itself.
+    if (outsideMusic < kOutsideStops || outsideMusic > kOutsideHandsOver || !available())
+        outsideMusic = kOutsideStops;
+    g_outsideMusic = outsideMusic;
+    g_keepPlaying = outsideMusic != kOutsideStops;
+    g_initSecs = systemSecs();
+    brls::Logger::info("[bgaudio] running as {}; music after leaving: {}",
+                       available() ? "VitaPlex BG" : "VitaPlex",
+                       outsideMusic == kOutsidePlaysOn     ? "plays on, then the background player"
+                       : outsideMusic == kOutsideHandsOver ? "the background player at once"
+                                                           : "stops");
     // Whatever the setting, and in either package: the watcher is also what
     // answers the system's request to quit (see onRequestQuit and
     // watcherMain). Off, that is all it does.
     startWatcher(g_keepPlaying);
+    // Whatever the setting too: music handed over before it was changed
+    // comes back all the same. In the first frame, once the server is
+    // connected and the main screen is up; the song plays on in the shell
+    // until then.
+    if (available()) {
+        brls::sync([]() { platform::launchThread([]() { takeBack(); }); });
+    }
 }
 
-void setKeepPlaying(bool on) {
+void setOutsideMusic(int mode) {
     if (!available()) return;
+    if (mode < kOutsideStops || mode > kOutsideHandsOver) mode = kOutsideStops;
+    g_outsideMusic = mode;
+    const bool on = mode != kOutsideStops;
     g_keepPlaying = on;
-    brls::Logger::info("[bgaudio] keep playing in background set to {}", on);
+    brls::Logger::info("[bgaudio] music after leaving set to {}", mode);
     if (on) {
         startWatcher();
         if (MpvPlayer::getInstance().isPlaying()) holdPort(kPortForApp, "mpv, already playing");
@@ -1217,7 +1693,15 @@ void setKeepPlaying(bool on) {
     }
 }
 
+int outsideMusic() { return g_outsideMusic; }
+
 bool keepPlaying() { return g_keepPlaying; }
+
+void exitProcess(int code) {
+    if (g_bgAppUsed) vitaplexRawExit(code);
+    sceKernelExitProcess(code);
+    for (;;) sceKernelDelayThread(1000 * 1000);
+}
 
 void onAudioPlayback(bool playing) {
     // Held from the first play and through pauses, like ElevenMPV-A; it goes

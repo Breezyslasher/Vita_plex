@@ -237,6 +237,32 @@ PlayerActivity* PlayerActivity::createResumeQueue() {
     return activity;
 }
 
+PlayerActivity* PlayerActivity::createWithRestoredQueue(const std::vector<MediaItem>& tracks,
+                                                        int startIndex, long long startOffsetMs) {
+    PlayerActivity* activity = new PlayerActivity("", false);
+    activity->m_isQueueMode = true;
+    activity->m_queueStartOffsetMs = startOffsetMs > 0 ? startOffsetMs : 0;
+
+    // Shuffle off first: setQueue would shuffle the order it was played in again.
+    MusicQueue& queue = MusicQueue::getInstance();
+    queue.setShuffle(false);
+    queue.setQueue(tracks, startIndex);
+
+    MusicController::getInstance().attachForeground({
+        [activity]() { activity->playNext(); },
+        [activity]() { activity->playPrevious(); },
+        [activity](const QueueItem* nextTrack) { activity->onTrackEnded(nextTrack); },
+        [activity](bool on) { activity->setShuffleFromOs(on); },
+        [activity](RepeatMode m) { activity->setRepeatFromOs(m); },
+        [activity](int index) { activity->playFromQueue(index); },
+        [activity]() { activity->reloadAlbumArt(); }
+    });
+
+    brls::Logger::info("PlayerActivity created with a restored queue of {} tracks, at {} from {}ms",
+                       tracks.size(), startIndex, startOffsetMs);
+    return activity;
+}
+
 // borealis fatal()s on a navigation route to a non-focusable view, so skip rather than die.
 static void routeIfFocusable(brls::View* v, brls::FocusDirection dir, brls::View* target) {
     if (v && v->isFocusable()) v->setCustomNavigationRoute(dir, target);
@@ -1143,6 +1169,9 @@ void PlayerActivity::loadFromQueue() {
     // New track: the stream restarts at the top, so drop any offset a seek left behind.
     MusicController::getInstance().resetStreamStartOffset();
     m_transcodeBaseOffsetMs = 0;
+    // A queue taken back from the background player goes on where its song had got to; the first load only.
+    const long long startAt = m_queueStartOffsetMs;
+    m_queueStartOffsetMs = 0;
 
     // Reset streams cache for the new track
     m_streamsLoaded = false;
@@ -1266,6 +1295,7 @@ void PlayerActivity::loadFromQueue() {
         url = dlItem.localPath;
         useLocalFile = true;
         m_isLocalFile = true;  // Suppress timeline reports when offline
+        if (startAt > 0) m_pendingSeek = startAt / 1000.0;
         brls::Logger::info("PlayerActivity: Using downloaded file for track: {}", url);
 
         // Load cover art from local file if available (preferred over server URL)
@@ -1304,7 +1334,7 @@ void PlayerActivity::loadFromQueue() {
         m_prefetchSession.clear();
         m_prefetchAtMs = 0;
 
-        if (!prefetched && !client.getTranscodeUrl(track->ratingKey, url, 0)) {
+        if (!prefetched && !client.getTranscodeUrl(track->ratingKey, url, (int)startAt)) {
             brls::Logger::error("Failed to get transcode URL for track: {}", track->ratingKey);
             m_loadingMedia = false;
             // Usually the connection: this used to be the end of it, with the
@@ -1313,6 +1343,14 @@ void PlayerActivity::loadFromQueue() {
             m_isPlaying = MusicController::getInstance().isRecovering();
             updatePlayPauseLabel();
             return;
+        }
+        if (startAt > 0 && !prefetched) {
+            // A transcode starts there itself, so mpv's clock runs from 0 and the controller adds
+            // the offset back; the server's own file is sought in instead.
+            if (url.find("/transcode/universal/start") != std::string::npos)
+                MusicController::getInstance().setStreamStartOffset(startAt);
+            else
+                m_pendingSeek = startAt / 1000.0;
         }
 
         // Unpause briefly so loadAsync accepts the album-art request, then re-pause to block other page loads.
@@ -1340,12 +1378,16 @@ void PlayerActivity::loadFromQueue() {
         ImageLoader::clearCache();
     }
 
+    // The length of what mpv is given: a stream started part-way into the track is that much shorter.
+    int64_t expectedMs = (int64_t)track->duration * 1000 - MusicController::getInstance().streamStartOffsetMs();
+    if (expectedMs < 0) expectedMs = 0;
+
     // Stream audio directly via MPV (transcode API returns mp3 stream or local file)
     if (!player.isInitialized()) {
         // Defer MPV init + load to after activity transition completes
         m_pendingPlayUrl = url;
         m_pendingPlayTitle = track->title;
-        m_pendingDurationMs = (int64_t)track->duration * 1000;
+        m_pendingDurationMs = expectedMs;
         m_pendingIsAudio = true;
         m_isPlaying = true;
         m_loadingMedia = false;
@@ -1353,7 +1395,7 @@ void PlayerActivity::loadFromQueue() {
     }
 
     // Player already initialized (track change) - load immediately
-    if (!player.loadUrl(url, track->title, (int64_t)track->duration * 1000)) {
+    if (!player.loadUrl(url, track->title, expectedMs)) {
         brls::Logger::error("Failed to load URL: {}", redactTokensInUrl(url));
         m_loadingMedia = false;
         return;

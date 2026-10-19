@@ -224,10 +224,12 @@ struct AppSettings {
     // song on a handheld is where that shows.
     bool lyricsWordByWord = true;
     bool backgroundMusic = true;       // Allow leaving player without stopping music
-    // Vita only, and an experiment: hold the system's background-music port
-    // while music plays, so leaving the app itself need not stop it. See
-    // utils/background_audio.hpp. Off until it is known to work on hardware.
-    bool vitaBackgroundAudio = false;
+    // VitaPlex BG only: what music playing does as the user leaves the app
+    // (bgaudio::OutsideMusic). 0 stops it; 1 plays on in the app through the
+    // system's background-music port, handed to the package's background
+    // player when the system closes the app for a game; 2 hands it to that
+    // player at once. See utils/background_audio.hpp.
+    int vitaOutsideMusic = 1;
     // Turn shuffle on whenever a new music queue starts. Mainly for remote
     // controllers: the framework MediaSession this app uses has no
     // onSetShuffleMode callback, so clients like Android Auto head units and

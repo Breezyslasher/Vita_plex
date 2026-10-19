@@ -1123,20 +1123,32 @@ brls::Box* SettingsTab::createMusicSection() {
     musicInfoLabel->setMarginTop(8);
     box->addView(musicInfoLabel);
 
-    // Vita: leaving the app itself still stops the music, whatever the toggle
-    // above says. These try the two ways past that on the console, and report
-    // what happened; see utils/background_audio.hpp. Only VitaPlex BG, the
-    // non-game package, has them; VitaPlex itself and other platforms do not.
+    // Vita: leaving the app itself stops the music in VitaPlex, whatever the
+    // toggle above says. VitaPlex BG, the non-game package, plays on, and its
+    // background player carries the queue on through games; see
+    // utils/background_audio.hpp. VitaPlex itself and other platforms have
+    // none of this.
     if (bgaudio::available()) {
-        auto* keepPlaying = new brls::BooleanCell();
-        keepPlaying->init("Keep Playing Outside VitaPlex (test)", settings.vitaBackgroundAudio,
-            [](bool value) {
+        box->addView(makePickerCell("Music After Leaving VitaPlex",
+            {"Stops", "Plays on, then the background player", "Background player at once"},
+            settings.vitaOutsideMusic,
+            [](int index) {
                 Application& app = Application::getInstance();
-                app.getSettings().vitaBackgroundAudio = value;
+                app.getSettings().vitaOutsideMusic = index;
                 app.saveSettings();
-                bgaudio::setKeepPlaying(value);
-            });
-        box->addView(keepPlaying);
+                bgaudio::setOutsideMusic(index);
+            }));
+
+        auto* outsideInfo = new brls::Label();
+        outsideInfo->setText("Plays on: music goes on after PS. When a game is started, the "
+                             "background player takes the queue over through the system's music "
+                             "player, and the game takes about 10 s more to start. At once: the "
+                             "background player takes over as you press PS, and VitaPlex BG "
+                             "closes. Opening VitaPlex BG takes the music back.");
+        outsideInfo->setFontSize(14);
+        outsideInfo->setMarginLeft(16);
+        outsideInfo->setMarginTop(8);
+        box->addView(outsideInfo);
 
         // Which of the shell's services the two tests below go through. Not
         // saved: it is for trying each in turn.
@@ -1185,9 +1197,9 @@ brls::Box* SettingsTab::createMusicSection() {
         box->addView(handoffTest);
 
         auto* testInfoLabel = new brls::Label();
-        testInfoLabel->setText("Tests for playing on after leaving VitaPlex. Turn the toggle on, "
-                               "play music, press PS, and come back: a message says what "
-                               "happened, and the log has the detail.");
+        testInfoLabel->setText("Tests of the system player. With music playing, press PS and "
+                               "come back: a message says what happened, and the log has the "
+                               "detail.");
         testInfoLabel->setFontSize(14);
         testInfoLabel->setMarginLeft(16);
         testInfoLabel->setMarginTop(8);

@@ -1693,6 +1693,111 @@ So for VitaPlex BG, whose param.sfo 21 has:
 - The program does nothing until its app has gone, and keeps everything it
   needs, the CA bundle and the songs, in ux0:data.
 
+**VitaPlex BG's background player** (`src/bgplayer_psv`). VitaPlex BG now
+carries the background tests' player as its own background program:
+`eboot2.bin` in `VitaPlexBG.vpk`, with a `param2.sfo` giving it the title id
+`VPLEXPLAY`. It is one package to install, with no bubble of its own. It
+plays the app's queue, not two songs from the library. The two talk through
+files in `ux0:data/VitaPlex`, each written beside its place and moved in
+(`bgplayer.h`):
+
+- The queue: the app's songs in the order they play, from the one playing,
+  where it had got to, and the repeat mode. For each song it has the
+  ratingKey, its length, a download on the card if there is one, and what
+  the app shows (title, artist, album, cover, rating). So the app can set the
+  queue up again without asking the server.
+- The status: the song the player is on, its place in the queue and the
+  song, and whether it plays. The player writes it every 2 s and at every
+  change.
+- A pause request and a play request, as 20 and 21 had. The player removes a
+  request only after acting on it, so the status already says where the music
+  stopped when the app sees the request taken.
+
+The player waits for its app to go before anything else. For each song it
+uses, in order:
+
+1. the app's download, if the shell decodes it;
+2. the file if one is already in `ux0:data/VitaPlex/bgplayer`;
+3. the server's file if the shell decodes it;
+4. else the server's MP3 behind a Xing header.
+
+Downloads go to a `.part` file and are moved in once whole. The next song
+downloads while one plays, and goes over the moment the song ends. Telling
+the server it was played (`/:/scrobble`) waits until the next one is with the
+shell. Repeat one and repeat all are kept. A song the server has nothing for
+is skipped, and one that will not download is tried again after 10 s, up to
+three times; three songs in a row that will not play stop the queue.
+
+A pause stops the shell and any download, and the player stays. A play
+request has it wait for the app to go and read the queue again. With no new
+queue it goes on with the paused song where it stopped. It never ends while
+its app is open. When the queue is over it waits, and it quits once the app
+has gone without asking.
+
+It keeps the power button handling, the Vita kept awake while a song plays,
+the synced log (`ux0:data/VitaPlex/bgplayer.log`, wall-clock times) and the
+raw exit (`raw_exit.S`, shared with VitaPlex). A host run covered 17 cases
+under ASan and UBSan: the queue whole, a start part-way in, a file the app
+made ready, a pause then a new queue, then the same queue, then the app going
+without asking, a quit request, both repeat modes, songs that will not play,
+a start at a song's last seconds, an app still there at start, the queue
+over with the app open, a dropped connection, a pause during the first
+download, and the power button. BG Tests 14 to 21's harness still passes
+with `mp3_info.c` moved here.
+
+**Which apps end a background program.** The test's player outlived
+VitaShell, while opening 21 ended 21's own every time. That is no proof
+against extended memory doing it: in the beep tests the beeps went on beside
+VitaShell and went quiet beside BG Test 7 and VitaSurf. So VitaShell behaved
+as an app without extended memory. VitaShell's CMake sets no `ATTRIBUTE2`;
+vita-mksfoex now gives `MEM109` (12) by default, but the user's copy may
+predate that. The player now reads every installed app's `param.sfo` once
+and logs the ones with `ATTRIBUTE2` set, then logs every 2 s which apps start
+and go beside it (`apps.c`). If the player is ended, the last app logged as
+starting is the likely cause.
+
+**When the app hands over.** VitaPlex BG alone plays on after PS, through the
+BGM port, with the UI loop running (log `a93baa71`). What it cannot survive
+is the system closing it to start a game. So the setting "Music After Leaving
+VitaPlex" has three choices:
+
+- Stops.
+- Plays on, then the background player (the default). VitaPlex BG keeps
+  playing after PS, with no gap, and hands the queue over when the system
+  asks it to quit. The cost is the one 20 and 21 measured: once an app has
+  used SceBgAppUtil on a quit request, the system starts the game about
+  10.8 s after asking.
+- Background player at once. PS hands the queue over (a deactivation within
+  2 s of a PS press, as 20 and 21 had) and VitaPlex BG quits, so a game
+  started next finds nothing to close.
+
+The hand-over writes the queue, copies the CA bundle, and asks for the
+player. A player still running, paused, gets a play request instead of being
+started again. Only once the player has it does the app pause mpv and give
+the BGM port back, so a refusal leaves the music playing in VitaPlex BG. The
+app then quits. From then on the process ends through
+`_sceKernelExitProcessForUser`, since `sceKernelExitProcess` did not return
+in 18, 20 and 21; the watcher does so itself 10 s after the hand-over if
+nothing else has.
+
+Opened again, VitaPlex BG takes the music back once its first frame is up:
+
+- If the player is listed, the app asks it to pause, and goes on from the
+  song and place the player wrote.
+- If it is not, the system most likely ended it as VitaPlex BG opened, as
+  happened to 21's. If its last status said it played, in the 20 s before
+  the app started, the app reads the shell's clock. When the song the shell
+  plays has the player's song's length (to 3 s), the app stops it there.
+
+The queue then plays in VitaPlex from that song and place, set as it was
+played, with no server play queue or shuffle
+(`PlayerActivity::createWithRestoredQueue`). Its first song starts part-way
+in: a transcode with Plex's `offset` (`MusicController::setStreamStartOffset`),
+or a seek into a download. A song the system Music app plays has another
+length and is left alone. The request to quit is now logged with the event's
+bytes, since the app cannot yet tell a game started over it from its
+LiveArea closed: both hand the music over.
+
 
 ### PS4: the popup, and nothing to hang progress on
 

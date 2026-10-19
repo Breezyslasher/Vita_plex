@@ -45,6 +45,12 @@ public:
     // Resume existing queue (return to player without resetting queue)
     static PlayerActivity* createResumeQueue();
 
+    // A queue taken back from VitaPlex BG's background player (utils/background_audio.hpp),
+    // set as it is: in the order it played, with no server play queue or shuffle, its
+    // first track loaded from startOffsetMs.
+    static PlayerActivity* createWithRestoredQueue(const std::vector<MediaItem>& tracks,
+                                                   int startIndex, long long startOffsetMs);
+
     // True while a player is on screen; the SyncLounge prompt skips prompting when we are already watching.
     static bool isActive();
 
@@ -399,6 +405,8 @@ private:
     void setupVideoMediaSession();
     void publishVideoNowPlaying();
     double m_pendingSeek = 0.0;    // Pending seek position (set when resuming)
+    // Where the queue's first track starts, for a queue taken back part-way through one; spent by the first load.
+    long long m_queueStartOffsetMs = 0;
     int m_transcodeBaseOffsetMs = 0;  // Base offset (ms) used to start current transcode
     int m_mediaDurationMs = 0;        // Full media length (ms) from Plex metadata; 0 = unknown
     // Track length handed to loadUrl so an early end-of-stream is told from a real one; 0 means unknown.

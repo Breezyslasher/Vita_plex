@@ -27,6 +27,14 @@
  * in the background. VitaPlex itself is a game, held the moment it leaves the
  * foreground, and it is the package that is released, so it gets none of this
  * until background music works there.
+ *
+ * VitaPlex BG plays on after PS through the BGM port, but the system closes it
+ * to start a game. Its package carries a background player for that
+ * (src/bgplayer_psv, bgplayer.h): a small program of its own that outlives the
+ * app and plays the queue through the shell's music player, which plays on
+ * beside games. The app hands it the queue as the system closes it, or as soon
+ * as it is left, by the setting, and takes the music back from it when opened
+ * again.
  */
 
 #pragma once
@@ -44,14 +52,31 @@ using Report = std::function<void(const std::string&)>;
 // Whether the tests exist here at all: running as VitaPlex BG.
 bool available();
 
-// Called once at startup, after settings are loaded, with the saved toggle.
-// Outside VitaPlex BG the toggle is taken as off, whatever was saved.
-void init(bool keepPlaying);
+// What happens to music playing as the user leaves VitaPlex BG (the setting).
+enum OutsideMusic {
+    kOutsideStops = 0,        // it stops, as in VitaPlex
+    kOutsidePlaysOn = 1,      // VitaPlex BG plays on; its background player
+                              // takes over when the system closes it
+    kOutsideHandsOver = 2,    // the background player takes over at once, on PS
+};
 
-// The settings toggle: hold the BGM port while music plays, and have mpv
-// resample music to 44.1 kHz so its Vita output uses that port.
-void setKeepPlaying(bool on);
+// Called once at startup, after settings are loaded, with the saved setting.
+// Outside VitaPlex BG it is taken as kOutsideStops, whatever was saved. In
+// VitaPlex BG it also takes the music back from its background player, once
+// the first frame is up.
+void init(int outsideMusic);
+
+// The setting. Anything but kOutsideStops holds the BGM port while music
+// plays, and has mpv resample music to 44.1 kHz so its Vita output uses that
+// port (keepPlaying).
+void setOutsideMusic(int mode);
+int outsideMusic();
 bool keepPlaying();
+
+// Ends the process: through the system call under sceKernelExitProcess once
+// VitaPlex BG has asked for its background player, since that function did
+// not return then (docs/DESIGN_NOTES.md, BG Tests 18 to 21).
+[[noreturn]] void exitProcess(int code);
 
 // From MpvPlayer, audio-only mode only.
 void onAudioPlayback(bool playing);
@@ -80,8 +105,9 @@ void setShellService(int service);
 #else
 
 inline bool available() { return false; }
-inline void init(bool) {}
-inline void setKeepPlaying(bool) {}
+inline void init(int) {}
+inline void setOutsideMusic(int) {}
+inline int outsideMusic() { return 0; }
 inline bool keepPlaying() { return false; }
 inline void onAudioPlayback(bool) {}
 inline void onTrackLoad() {}

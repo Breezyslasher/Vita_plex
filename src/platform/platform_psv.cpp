@@ -25,6 +25,7 @@
 #include <psp2/io/fcntl.h>
 
 #include <borealis.hpp>
+#include "utils/background_audio.hpp"
 #include "utils/http_client.hpp"
 
 #include <chrono>
@@ -372,9 +373,9 @@ bool needsHardExit() {
 }
 
 [[noreturn]] void hardExit(int code) {
-    sceKernelExitProcess(code);
-    // sceKernelExitProcess is [[noreturn]] but the toolchain doesn't know.
-    while (true) {}
+    // Through the system call underneath once VitaPlex BG has started its
+    // background player, after which sceKernelExitProcess did not return.
+    bgaudio::exitProcess(code);
 }
 
 }  // namespace platform

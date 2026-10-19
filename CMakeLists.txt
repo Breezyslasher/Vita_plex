@@ -112,6 +112,10 @@ if(PLATFORM_PSV)
     # The eboot reads which of the two it runs as, and only this one offers
     # the background-audio tests (utils/background_audio.hpp).
     set(VITA_BG_TITLEID "VPLEX0002")
+    # VitaPlex BG's background player, eboot2.bin in its package
+    # (src/bgplayer_psv): the title id its param2.sfo gives it, which the
+    # system lists it by.
+    set(VITA_BG_PLAYER_TITLEID "VPLEXPLAY")
     set(VITA_VERSION  "01.00")
     set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1 -d ATTRIBUTE2=12")
 endif()
@@ -826,14 +830,23 @@ int main() {
     # port calls come from SceAppMgr_stub, linked above; SceShell's music
     # service is driven through the vendored libShellAudio, plus the one
     # import stub vitasdk has no library for (lib/libshellaudio/README.md).
+    # VitaPlex BG starts its background player with SceBgAppUtil, talks to it
+    # through the files bgplayer.h lays out, and ends through the system call
+    # under sceKernelExitProcess once it has (raw_exit.S).
     enable_language(ASM)
     target_sources(${PROJECT_NAME} PRIVATE
         src/utils/background_audio_psv.cpp
+        src/bgplayer_psv/raw_exit.S
         lib/libshellaudio/ShellAudio.c
         lib/libshellaudio/shellsvc_stub.S)
     target_include_directories(${PROJECT_NAME} PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE VITAPLEX_BG_TITLEID=\"${VITA_BG_TITLEID}\")
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/bgplayer_psv)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        VITAPLEX_BG_TITLEID=\"${VITA_BG_TITLEID}\"
+        BGPLAYER_TITLEID=\"${VITA_BG_PLAYER_TITLEID}\"
+        BGPLAYER_APP_TITLEID=\"${VITA_BG_TITLEID}\")
+    target_link_libraries(${PROJECT_NAME} SceBgAppUtil_stub)
 elseif(PLATFORM_SWITCH)
     # Required for __wrap_pthread_create in src/utils/switch_stubs.c — floors
     # libmpv/ffmpeg thread stacks above libnx's 128 KB default so they stop
@@ -1420,7 +1433,62 @@ if(PLATFORM_PSV)
         NAME    ${VITA_APP_NAME}
         ${VITA_MAIN_VPK_FILES})
 
-    # ── VitaPlex as a non-game app (test) ───────────────────────────────
+    # ── VitaPlex BG's background player (src/bgplayer_psv) ─────────────
+    # A program of its own in VitaPlex BG's package, eboot2.bin with its own
+    # sce_sys/param2.sfo, which the app starts with sceBgAppUtilStartBgApp as
+    # the system closes it for a game. It plays the app's queue through
+    # SceShell's music service, which plays on beside games: the background
+    # test's player (src/bgtest_psv, BG Tests 14 to 21) with a queue. curl,
+    # mbedtls and zlib fetch as VitaPlex does, and the boot param of BGFTP's
+    # program (attribute 3, 16 MB) makes it one. vita_create_self appends to
+    # VITA_MAKE_FSELF_FLAGS in this scope, so it starts from nothing and the
+    # flags are put back after.
+    add_executable(vitaplex_bgplayer
+        src/bgplayer_psv/main.c
+        src/bgplayer_psv/player.c
+        src/bgplayer_psv/apps.c
+        src/bgplayer_psv/mp3_info.c
+        src/bgplayer_psv/raw_exit.S
+        lib/libshellaudio/ShellAudio.c
+        lib/libshellaudio/shellsvc_stub.S)
+    target_include_directories(vitaplex_bgplayer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio)
+    target_compile_definitions(vitaplex_bgplayer PRIVATE
+        BGPLAYER_TITLEID=\"${VITA_BG_PLAYER_TITLEID}\"
+        BGPLAYER_APP_TITLEID=\"${VITA_BG_TITLEID}\")
+    target_link_libraries(vitaplex_bgplayer
+        curl mbedtls mbedx509 mbedcrypto z m
+        SceAppMgr_stub
+        ScePower_stub
+        SceSysmodule_stub
+        SceIofilemgr_stub
+        SceNet_stub
+        SceNetCtl_stub
+        SceRtc_stub
+        SceLibKernel_stub
+        # curl resolves names on a thread; whole, as borealis links it for VitaPlex
+        -Wl,--whole-archive pthread -Wl,--no-whole-archive)
+    target_link_options(vitaplex_bgplayer PRIVATE "-Wl,--defsym=__sce_headroom=0x4000")
+    set(_bgp_saved_fself "${VITA_MAKE_FSELF_FLAGS}")
+    set(VITA_MAKE_FSELF_FLAGS "")
+    vita_create_self(vitaplex_bgplayer.self vitaplex_bgplayer UNSAFE MEMSIZE 0x4000 ATTRIBUTE 3)
+    set(VITA_MAKE_FSELF_FLAGS "${_bgp_saved_fself}")
+    # Its param2.sfo: the keys of BGFTP's background program's and no others
+    # (vita-mksfoex -e, without its defaults), a title id of its own, and its
+    # app's for save data and add-on content, as the background tests had.
+    set(_bgp_param2 ${CMAKE_CURRENT_BINARY_DIR}/bgplayer_param2.sfo)
+    add_custom_command(OUTPUT ${_bgp_param2}
+        COMMAND ${VITA_MKSFOEX} -e
+            -s APP_VER=01.00 -d ATTRIBUTE=0x81000 -d ATTRIBUTE2=0 -s CATEGORY=gdd
+            -s CONTENT_ID=HB0001-${VITA_BG_PLAYER_TITLEID}_00-0000000000000000
+            -s INSTALL_DIR_ADDCONT=${VITA_BG_TITLEID} -s INSTALL_DIR_SAVEDATA=${VITA_BG_TITLEID}
+            -d PARENTAL_LEVEL=1 -d REGION_DENY=0 -d SAVEDATA_MAX_SIZE=1048576
+            -s "STITLE=VitaPlex BG player" -s "TITLE=VitaPlex BG player"
+            -s TITLE_ID=${VITA_BG_PLAYER_TITLEID} -s VERSION=01.00 ${_bgp_param2}
+        COMMENT "Generating param2.sfo for VitaPlex BG's background player"
+        VERBATIM)
+
+    # ── VitaPlex as a non-game app ──────────────────────────────────────
     # The same eboot and files, packaged as the background test's VPLXBGT04
     # is: a non-game application (gdc) with ElevenMPV-A's attributes and
     # VitaPlex's extended memory. On a console that package kept running,
@@ -1428,8 +1496,10 @@ if(PLATFORM_PSV)
     # frozen, and it could allocate 342 MB of main memory against VitaPlex's
     # 172 MB heap. It has a title id of its own so it installs beside
     # VitaPlex; the two share ux0:data/VitaPlex, so only one should be open
-    # at a time. The same save-and-restore as the background test below,
-    # for the same reason (vita_create_vpk appends to these in this scope).
+    # at a time. A game cannot carry a background program, a non-game app
+    # can (BG Tests 14 to 19), so its player is packed here alone. The same
+    # save-and-restore as the background test below, for the same reason
+    # (vita_create_vpk appends to these in this scope).
     set(_bg_saved_sfo "${VITA_MKSFOEX_FLAGS}")
     set(_bg_saved_pack "${VITA_PACK_VPK_FLAGS}")
     set(_bg_saved_resources "${resources}")
@@ -1439,7 +1509,9 @@ if(PLATFORM_PSV)
     vita_create_vpk(VitaPlexBG.vpk ${VITA_BG_TITLEID} ${PROJECT_NAME}.self
         VERSION ${VITA_VERSION}
         NAME    "VitaPlex BG"
-        ${VITA_MAIN_VPK_FILES})
+        ${VITA_MAIN_VPK_FILES}
+        FILE ${CMAKE_BINARY_DIR}/vitaplex_bgplayer.self eboot2.bin
+        FILE ${_bgp_param2} sce_sys/param2.sfo)
     set(VITA_MKSFOEX_FLAGS "${_bg_saved_sfo}")
     set(VITA_PACK_VPK_FLAGS "${_bg_saved_pack}")
     set(resources "${_bg_saved_resources}")
@@ -1520,12 +1592,13 @@ if(PLATFORM_PSV)
     add_executable(vitaplex_bgtest_player
         src/bgtest_psv/main.c
         src/bgtest_psv/player_test.c
-        src/bgtest_psv/mp3_info.c
+        src/bgplayer_psv/mp3_info.c
         lib/libshellaudio/ShellAudio.c
         lib/libshellaudio/shellsvc_stub.S)
     target_compile_definitions(vitaplex_bgtest_player PRIVATE BGTEST_SYSTEM_MODE BGTEST_PLAYER)
     target_include_directories(vitaplex_bgtest_player PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio)
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/bgplayer_psv)
     target_link_libraries(vitaplex_bgtest_player
         curl mbedtls mbedx509 mbedcrypto z m
         SceAudio_stub
@@ -1550,7 +1623,7 @@ if(PLATFORM_PSV)
     add_executable(vitaplex_bgtest_bgapp
         src/bgtest_psv/main.c
         src/bgtest_psv/player_test.c
-        src/bgtest_psv/mp3_info.c
+        src/bgplayer_psv/mp3_info.c
         src/bgtest_psv/bgapp.c
         src/bgtest_psv/exit_stub.S
         lib/libshellaudio/ShellAudio.c
@@ -1558,7 +1631,8 @@ if(PLATFORM_PSV)
     target_compile_definitions(vitaplex_bgtest_bgapp PRIVATE
         BGTEST_SYSTEM_MODE BGTEST_PLAYER BGTEST_BGAPP)
     target_include_directories(vitaplex_bgtest_bgapp PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio)
+        ${CMAKE_CURRENT_SOURCE_DIR}/lib/libshellaudio
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/bgplayer_psv)
     target_link_libraries(vitaplex_bgtest_bgapp
         curl mbedtls mbedx509 mbedcrypto z m
         SceAudio_stub
