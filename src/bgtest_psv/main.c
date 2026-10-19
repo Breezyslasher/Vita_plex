@@ -124,9 +124,10 @@
  *   VPLXBGT20  the app of 18, whose X starts the player and quits at once, and
  *              which does the same when PS sends it away, and when the system
  *              asks it to quit, as when a game is started over it. Opened
- *              again, it has the player stop the music and ends it through
- *              the system, and stops a song the shell plays on for a player
- *              that is gone.
+ *              again, it pauses the player, which stays, and X or PS then
+ *              has it go on where it stopped; Triangle ends it through the
+ *              system instead. It also stops a song the shell plays on for
+ *              a player that is gone.
  *   VPLXBGT21  the same with extended memory: VitaPlex BG's param.sfo, as 17.
  *
  * Nothing here is VitaPlex code; what it finds goes into VitaPlex (or a
@@ -136,6 +137,8 @@
 #include <psp2/appmgr.h>
 #include <psp2/audioout.h>
 #include <psp2/ctrl.h>
+#include <psp2/io/fcntl.h>
+#include <psp2/io/stat.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/sysmem.h>
 #include <psp2/kernel/threadmgr.h>
@@ -205,6 +208,9 @@ int sceAppMgrGrowMemory3(unsigned int size, int unk);
 
 static FILE* g_log;
 static SceUID g_logMutex = -1;   // lines from several threads came out mixed
+#ifdef __vita__
+static int g_syncLog;            // each line forced out to the card (main)
+#endif
 static char g_title[16] = "?";
 static SceInt64 g_t0;
 
@@ -250,6 +256,9 @@ void logLine(const char* fmt, ...) {
     if (g_logMutex >= 0) sceKernelLockMutex(g_logMutex, 1, NULL);
     fputs(line, g_log);
     fflush(g_log);
+#ifdef __vita__
+    if (g_syncLog) sceIoSync("ux0:", 0);
+#endif
     if (g_logMutex >= 0) sceKernelUnlockMutex(g_logMutex, 1);
 }
 
@@ -265,6 +274,18 @@ static int bgappTest(void) {
     for (unsigned i = 0; i < sizeof(titles) / sizeof(titles[0]); i++)
         if (strcmp(g_title, titles[i]) == 0) return 1;
     return 0;
+}
+
+// app0: as this process sees it, by the background program's file, which
+// sceBgAppUtilStartBgApp starts: 0 when it is there, else the error. Opened
+// again after its player had been ended, 20 could not read its CA bundle at
+// app0:, and each start was refused with 0x80010013 (log 7d5ae5e7). Logged as
+// it changes, for 14 to 21 and their program (watcherMain).
+static volatile int g_app0 = 1;   // no call returns 1, so the first look is logged
+static int app0State(void) {
+    SceIoStat st;
+    const int rc = sceIoGetstat("app0:eboot2.bin", &st);
+    return rc < 0 ? rc : 0;
 }
 
 #ifndef BGTEST_SYSTEM_MODE
@@ -419,9 +440,21 @@ static void playerTitle(char* out, size_t size) {
 // X in VPLXBGT14, 15 and 17 to 21: the player, as the app's background
 // program. 0 or more when the system took the request. A refusal also logs
 // whether the system still lists a player: 20 was refused (0x80010013) after
-// its player had stopped when asked (log 10c46450).
+// its player had stopped when asked (log 10c46450). A player still there,
+// paused as the app took the music back (takeBackPlayer), is asked for the
+// music again instead of another being started.
 static int startPlayerApp(void) {
-    char r[24];
+    char r[24], running[16];
+    playerTitle(running, sizeof(running));
+    SceUID id = -1;
+    if (sceAppMgrGetIdByName(&id, running) >= 0) {
+        bgappAsk(g_title, BGAPP_PLAY, "its app hands the music back as it goes");
+        logLine("its player %s is there, process 0x%08X: asking it for the music again, not "
+                "starting another",
+                running, (unsigned)id);
+        snprintf(g_bgappLine, sizeof(g_bgappLine), "Player: asked to play again (at %.0fs)", secs());
+        return 0;
+    }
     const int rc = bgappStart(g_title, g_t0 / 1e6);
     if (rc >= 0) {
         snprintf(g_bgappLine, sizeof(g_bgappLine), "Player: started (at %.0fs)", secs());
@@ -481,68 +514,96 @@ static int stopOrphanedMusic(void) {
 }
 
 // Opened while its player plays, the app takes the music back, as VitaPlex
-// would: it asks the player to stop the music, then ends it through the
-// system. Each time a player quit by itself, the app's next
-// sceBgAppUtilStartBgApp was refused with 0x80010013 until a restart (logs
-// 0a521b78, befac425); after one the system had ended, as an app with
-// extended memory opened, the next start went through (log 3edd00fd). One
-// that has not taken the request in 5 s is ended all the same. The system
-// lists a background program by its title id, even one whose start is still
-// to come (log 10c46450); the request goes out when it does not, in case it
-// runs unlisted, and is taken back if nothing has taken it in 2 s.
+// would: it asks the player to stop the music and stay, paused, and asks it
+// for the music again as it goes (startPlayerApp). A player that had ended
+// while its app was open, by itself (logs 0a521b78, befac425) or through the
+// system (logs 753b3fb0, 7d5ae5e7), left the app's next starts refused with
+// 0x80010013 until a restart, all but once; and in 7d5ae5e7 the app could no
+// longer read app0:. Starts after the system had ended a player as an app
+// with extended memory opened went through (logs 3edd00fd, 8fe35d97). One
+// that has not taken the request in 5 s is ended through the system all the
+// same. The system lists a background program by its title id, even one whose
+// start is still to come (log 10c46450); the request goes out when it does
+// not, in case it runs unlisted, and is taken back if nothing has taken it in
+// 2 s.
 static void takeBackPlayer(void) {
     char player[16], r[24];
     playerTitle(player, sizeof(player));
     SceUID pid = -1;
     const int rc = sceAppMgrGetIdByName(&pid, player);
-    const int wasListed = rc >= 0;
-    if (wasListed)
-        logLine("its player %s: running, process 0x%08X; asking it to stop, to take the music back",
+    if (rc >= 0)
+        logLine("its player %s: running, process 0x%08X; asking it to pause, to take the music "
+                "back",
                 player, (unsigned)pid);
     else
-        logLine("its player %s: %s; asking it to stop all the same, in case it runs unlisted",
+        logLine("its player %s: %s; asking it to pause all the same, in case it runs unlisted",
                 player, result(r, sizeof(r), rc));
-    bgappAskQuit(g_title, "its app is open again, and takes the music back");
+    bgappAsk(g_title, BGAPP_PAUSE, "its app is open again, and takes the music back");
     const SceInt64 asked = sceKernelGetSystemTimeWide();
-    double tookAt = -1;
     int ended = 0;
     for (;;) {
         sceKernelDelayThread(100 * 1000);
         const double waited = (sceKernelGetSystemTimeWide() - asked) / 1e6;
         const int listed = sceAppMgrGetIdByName(&pid, player) >= 0;
-        if (tookAt < 0 && !bgappQuitWaiting(g_title)) {
-            tookAt = waited;
-            logLine("its player took the request after %.2f s", waited);
-        }
-        // Half a second for the player to stop the music, which takes it
-        // about 20 ms.
-        if (listed && !ended && ((tookAt >= 0 && waited >= tookAt + 0.5) || waited >= 5.0)) {
-            ended = 1;
-            logLine("ending it through the system (sceAppMgrDestroyAppByName): %s",
-                    result(r, sizeof(r), sceAppMgrDestroyAppByName(player)));
-        }
         const char* line = NULL;
-        if (!listed && (tookAt >= 0 || ended)) {
-            logLine("its player has gone%s, %.2f s after it was asked",
-                    ended || wasListed ? "" : " (if the system lists it at all)", waited);
-            line = "Player: was playing; stopped, taking the music back";
+        if (!bgappWaiting(g_title, BGAPP_PAUSE)) {
+            logLine("its player took the request after %.2f s, and stays%s", waited,
+                    listed ? "" : " (if the system lists it at all)");
+            // Half a second for it to stop the music, which takes it about
+            // 20 ms, before the shell is looked at.
+            sceKernelDelayThread(500 * 1000);
+            line = "Player: paused; X or PS asks it for the music again";
+        } else if (ended && !listed) {
+            logLine("its player has gone, %.2f s after it was asked", waited);
+            line = "Player: did not pause, so it was ended";
         } else if (!listed && waited >= 2.0) {
             logLine("nothing took the request in 2 s, and no player is listed");
             line = "Player: not started";
+        } else if (listed && !ended && waited >= 5.0) {
+            ended = 1;
+            logLine("its player did not take the request in 5 s; ending it through the system "
+                    "(sceAppMgrDestroyAppByName): %s",
+                    result(r, sizeof(r), sceAppMgrDestroyAppByName(player)));
         } else if (waited >= 15.0) {
-            logLine("its player %s the request, and is still listed 15 s after it was asked",
-                    tookAt >= 0 ? "took" : "did not take");
-            line = "Player: still running; it did not stop when asked";
+            logLine("its player did not take the request, and is still listed 15 s after it was "
+                    "asked");
+            line = "Player: still running; it did not pause when asked";
         }
         if (line) {
             snprintf(g_bgappLine, sizeof(g_bgappLine), "%s", line);
             break;
         }
     }
-    bgappCancelQuit(g_title);
+    bgappCancel(g_title, BGAPP_PAUSE);
     if (stopOrphanedMusic())
         snprintf(g_bgappLine, sizeof(g_bgappLine),
                  "Player: none, but the shell played on; stopped that song");
+}
+
+// Triangle in 20 and 21: the player ended through the system, as the app took
+// the music back in build 2011, to see whether app0: goes with it (logged as
+// it changes) and the next start is refused again.
+static void endPlayer(void) {
+    char player[16], r[24];
+    playerTitle(player, sizeof(player));
+    SceUID pid = -1;
+    if (sceAppMgrGetIdByName(&pid, player) < 0) {
+        logLine("Triangle: no player listed to end");
+        snprintf(g_bgappLine, sizeof(g_bgappLine), "Player: none to end");
+        return;
+    }
+    logLine("Triangle: ending its player %s through the system (sceAppMgrDestroyAppByName): %s",
+            player, result(r, sizeof(r), sceAppMgrDestroyAppByName(player)));
+    const SceInt64 t0 = sceKernelGetSystemTimeWide();
+    int listed = 1;
+    while (listed && sceKernelGetSystemTimeWide() - t0 < 5 * 1000000LL) {
+        sceKernelDelayThread(100 * 1000);
+        listed = sceAppMgrGetIdByName(&pid, player) >= 0;
+    }
+    logLine("its player %s, %.2f s after", listed ? "is still listed" : "has gone",
+            (sceKernelGetSystemTimeWide() - t0) / 1e6);
+    snprintf(g_bgappLine, sizeof(g_bgappLine), "%s",
+             listed ? "Player: still listed after Triangle" : "Player: ended through the system");
 }
 #endif
 
@@ -582,16 +643,15 @@ static int rescueMain(SceSize args, void* argp) {
     const int rc = sceAppMgrGetIdByName(&pid, player);
     logLine("its player %s: %s; asking it to stop, in case the exit waits for it", player,
             rc >= 0 ? "running" : result(r, sizeof(r), rc));
-    bgappAskQuit(g_title, "its app cannot quit while it runs");
+    bgappAsk(g_title, BGAPP_QUIT, "its app cannot quit while it runs");
     const SceInt64 asked = sceKernelGetSystemTimeWide();
     SceInt64 tookAt = 0;
     int ended = 0;
     while (sceKernelGetSystemTimeWide() - asked < 5 * 1000000LL &&
-           (bgappQuitWaiting(g_title) || sceAppMgrGetIdByName(&pid, player) >= 0)) {
+           (bgappWaiting(g_title, BGAPP_QUIT) || sceAppMgrGetIdByName(&pid, player) >= 0)) {
         sceKernelDelayThread(100 * 1000);
-        // Ended through the system once it has stopped the music, as the
-        // app does when it takes the music back (takeBackPlayer).
-        if (!tookAt && !bgappQuitWaiting(g_title)) tookAt = sceKernelGetSystemTimeWide();
+        // Ended through the system once it has stopped the music.
+        if (!tookAt && !bgappWaiting(g_title, BGAPP_QUIT)) tookAt = sceKernelGetSystemTimeWide();
         if (tookAt && !ended && sceKernelGetSystemTimeWide() - tookAt >= 500 * 1000) {
             ended = 1;
             logLine("its player stopped the music; ending it through the system: %s",
@@ -602,9 +662,9 @@ static int rescueMain(SceSize args, void* argp) {
     sceKernelDelayThread(1000 * 1000);
     logLine("still running %.1f s after asking its player to stop, which %s the request and is %s",
             (sceKernelGetSystemTimeWide() - asked) / 1e6,
-            bgappQuitWaiting(g_title) ? "has not taken" : "took",
+            bgappWaiting(g_title, BGAPP_QUIT) ? "has not taken" : "took",
             sceAppMgrGetIdByName(&pid, player) >= 0 ? "still listed" : "not listed");
-    bgappCancelQuit(g_title);
+    bgappCancel(g_title, BGAPP_QUIT);
 #endif
     logLine("ending through _sceKernelExitProcessForUser, the system call underneath");
     bgtestRawExit(0);
@@ -982,6 +1042,15 @@ static int watcherMain(SceSize args, void* argp) {
             lastAdopt = adopt;
         }
 
+        if (bgappTest()) {
+            const int app0 = app0State();
+            if (app0 != g_app0) {
+                char r[24];
+                logLine("app0: eboot2.bin %s", app0 == 0 ? "readable" : result(r, sizeof(r), app0));
+                g_app0 = app0;
+            }
+        }
+
 #ifdef BGTEST_BGAPP
         // Whether the app that started it is still there: a game is held once
         // PS takes it out of the front, and closed when another game starts.
@@ -1011,14 +1080,13 @@ static int watcherMain(SceSize args, void* argp) {
             playerStop("replaced");
             quitNow();
         }
-        // Its app asking it to stop: open again and taking the music back,
-        // or unable to quit while this runs (rescueMain). The music stops,
-        // and the app ends this program through the system (takeBackPlayer):
-        // one that quit by itself left the app's next start refused. It
-        // quits by itself only if that has not come in 3 s, as from a rescue,
-        // which cannot end it.
+        // Its app asking it to stop for good, unable to quit while this runs
+        // (rescueMain). The music stops, and the app ends this program
+        // through the system: one that quit by itself left the app's next
+        // start refused. It quits by itself only if that has not come in
+        // 3 s.
         char why[96];
-        const int asked = bgappTakeQuit(g_title, g_startedAt, why, sizeof(why));
+        const int asked = bgappTake(g_title, BGAPP_QUIT, g_startedAt, why, sizeof(why));
         if (asked < 0) logLine("a request to stop from before it started, so for another one: dropped");
         if (asked > 0) {
             logLine("its app asks it to stop: %s", why);
@@ -1029,6 +1097,22 @@ static int watcherMain(SceSize args, void* argp) {
         if (g_stoppedAtUs > 0 && sceKernelGetSystemTimeWide() - g_stoppedAtUs > 3 * 1000000LL) {
             logLine("not ended in 3 s; quitting by itself");
             quitNow();
+        }
+        // Its app open again, taking the music back (takeBackPlayer), and
+        // asking for it again as it goes (startPlayerApp): this program
+        // stays between the two, so that it never ends while its app is
+        // open.
+        const int paused = bgappTake(g_title, BGAPP_PAUSE, g_startedAt, why, sizeof(why));
+        if (paused < 0) logLine("a request to pause from before it started: dropped");
+        if (paused > 0) {
+            logLine("its app asks it to pause: %s", why);
+            playerPause("paused by its app");
+        }
+        const int resumed = bgappTake(g_title, BGAPP_PLAY, g_startedAt, why, sizeof(why));
+        if (resumed < 0) logLine("a request to play from before it started: dropped");
+        if (resumed > 0) {
+            logLine("its app asks it for the music again: %s", why);
+            playerResume();
         }
 #endif
 
@@ -1168,11 +1252,18 @@ static void drawScreen(vita2d_pgf* font, const char* path) {
         drawText(font, 40, 120, white, 1.0f, "X or PS hands the music to the player, a background program,");
         drawText(font, 40, 145, white, 1.0f, "and this app quits at once. A song plays soon after.");
         drawText(font, 40, 175, white, 1.0f, "Start BG Test 8: does it open at once, and the music go on?");
-        drawText(font, 40, 205, white, 1.0f, "Open this app again: it stops the player and any song it left.");
-        drawText(font, 40, 235, white, 1.0f, "Then X or PS again: does the music start again?");
-        drawText(font, 60, 260, muted, 1.0f, "Last time that was refused (0x80106501) once, and worked once.");
+        drawText(font, 40, 205, white, 1.0f, "Open this app again: the player pauses and stays.");
+        drawText(font, 40, 235, white, 1.0f, "Then X or PS: does the song go on where it stopped?");
+        drawText(font, 60, 260, muted, 1.0f, "Triangle ends the player instead; is X refused after?");
         drawText(font, 40, 290, gold, 1.0f, "%s", g_bgappLine);
-        drawText(font, 40, 315, white, 1.0f, "START quits without the player. Running %.0fs", secs());
+        char a0[24];
+        if (g_app0 == 0)
+            snprintf(a0, sizeof(a0), "ok");
+        else if (g_app0 == 1)
+            snprintf(a0, sizeof(a0), "not looked at yet");
+        else
+            result(a0, sizeof(a0), g_app0);
+        drawText(font, 40, 315, white, 1.0f, "app0: %s. START quits. Running %.0fs", a0, secs());
     } else if (bgappTest()) {
         drawText(font, 40, 125, white, 1.0f, "X starts the player as a background program.");
         drawText(font, 40, 155, white, 1.0f, "A song plays through the system player soon after.");
@@ -1261,6 +1352,17 @@ int main(void) {
         logLine("no title id from the system (%s)%s", result(r, sizeof(r), rcTitle),
                 switched ? "; took it from the switch note" : "");
     }
+#ifdef __vita__
+    // 14 to 21 and their program: each line forced out to the card. The
+    // console crashed twice while a player played, and a process's last
+    // lines may not reach the card otherwise (logs 5d35ef15, cf918ac6).
+    if (bgappTest()) {
+        char r[24];
+        const int rc = sceIoSync("ux0:", 0);
+        g_syncLog = rc >= 0;
+        logLine("log: each line synced to the card: %s", result(r, sizeof(r), rc));
+    }
+#endif
 #ifdef BGTEST_SYSTEM_MODE
     if (strcmp(g_title, "VPLXBGT06") == 0) growMemory();
 #endif
@@ -1313,7 +1415,7 @@ int main(void) {
     }
 #else
     if (bgappTest()) {
-        snprintf(g_bgappLine, sizeof(g_bgappLine), "Player: asking one that runs to stop");
+        snprintf(g_bgappLine, sizeof(g_bgappLine), "Player: asking one that runs to pause");
         if (font) drawScreen(font, path);
         takeBackPlayer();
     }
@@ -1329,11 +1431,13 @@ int main(void) {
         // the player as the app's background program, and 20 and 21 then
         // quit at once, as BGFTP's main app does, which is gone before its
         // program is up: 18 stayed, and could not quit once its player ran.
+        // Triangle in 20 and 21 ends the player through the system.
         const unsigned pressed = pad.buttons & ~held;
         held = pad.buttons;
         if (switchTest() && (pressed & SCE_CTRL_CROSS)) switchTo("player.self");
         if (switchTest() && (pressed & SCE_CTRL_CIRCLE)) switchTo("screen.self");
         if (switchTest() && (pressed & SCE_CTRL_TRIANGLE)) switchTo("eboot.bin");
+        if (quitsAfterStart() && (pressed & SCE_CTRL_TRIANGLE)) endPlayer();
         if (bgappTest() && (pressed & SCE_CTRL_CROSS) && startPlayerApp() >= 0 &&
             quitsAfterStart()) {
             logLine("quitting at once, as BGFTP's main app does");

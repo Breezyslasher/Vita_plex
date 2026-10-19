@@ -1585,6 +1585,65 @@ the shell and logs both readings. A player that gives way to another app's
 now stops the music as it goes. A host run covered these, and the earlier
 paths still pass.
 
+**PS hands the music over and it plays through a game; after the player was
+ended, 20 could not read app0:; 21 crashed again as it went** (logs
+`7d5ae5e7`, `0f24166b`, `5e625dcf`, `cf918ac6` and `35df39c3`, build 2011;
+each run on its own clock).
+
+- 20 was sent away with PS at 86.6 s. It copied its CA bundle (188,900 bytes
+  in 0.21 s), the ask returned 0, and the rescue ended it 2 s later. The
+  player started 1.29 s after the ask, used the copy and downloaded song 1
+  (3.07 MB in 2.7 s), and the shell played it from 95.4 s. BG Test 8 opened
+  at about 105 s, and the song played on beside it, as the user heard.
+- 20 was opened again at 157.5 s. Its player took the request in 0.10 s,
+  stopped the music at 1:07 and gave the BGM port back. The system ended it
+  half a second later, and it was gone 0.74 s after the ask. Then X, 10.4 s
+  later, found no `app0:cacert.pem`: the app could no longer open its own
+  CA bundle. The ask was refused (0x80010013, then 0x80106501), five times
+  over 15 s, and again on PS and on the quit request. Nothing read app0: in
+  that run before X, so when it went is not known. That 0x80010013 is the
+  errno range's ENODEV fits a start that cannot find eboot2.bin.
+- Every refusal so far came after a player had ended while its app was
+  open, or after its app had been opened over a player that ended later. The
+  one X that went through after an ending came 0.9 s after it (log
+  `753b3fb0`); the refused ones 6 s and 10.4 s after. A player that loses
+  app0: when its app ends under it (log `5d35ef15`) and an app that loses it
+  when its player ends would fit one mount shared by the two processes.
+  That is a reading of the logs, not something they show.
+- 21 was opened after 20 and found no player of its own, and the shell
+  silent at 67.4 s. 158 s later PS: the copy was already there, the ask
+  returned 0, and the rescue ended 21 at 160.25 s. The player started 1.13 s
+  after the ask, and the shell played song 1 from 165.8 s. 21 stayed listed
+  until 170.5 s, 10.3 s after it had ended itself; in build 2010 it was gone
+  0.76 s after, its player idle then, and 20 here 0.4 s after. The player's
+  last line is at 170.53 s, 19 ms after it saw 21 gone, 0:05 into song 1,
+  with song 2 just downloaded. Then the console crashed, the user said.
+- Both crashes came with 21, the app with extended memory, going while the
+  shell played: 20's song as X ended 21 (build 2010), and 21's own here. In
+  every run of 21 that played without a crash (logs `2aefa839`, twice, and
+  `0b39eeea`), the player found 21 already gone at its first look, before it
+  took the BGM port. No run of 20 crashed.
+
+So build 2012 keeps the player alive while its app is open. Opened again, 20
+and 21 ask the player to pause (a note of their own, like the stop): it
+reads where the song is, stops the shell, gives the BGM port back and stays.
+X, PS and the quit request then ask the running player for the music again,
+in a third note, instead of starting another. The player waits for its app
+to go and hands the song over again. It seeks back to where the song was
+paused, unless the shell is there already: the shell kept its place through
+a stop (67.4 s above). A player not asked again within 10 minutes quits. Triangle ends the player
+through the system instead, as build 2011 did, to see whether app0: goes
+with it and the next start is refused. Both the app and the player log
+app0: as it changes, from `sceIoGetstat` on `app0:eboot2.bin`, with the
+error code. The player of 20 and 21 does nothing until its app has gone,
+for up to 30 s, at its start as well as before going on after a pause. Each
+log line of 14 to 21 and their program is followed by `sceIoSync("ux0:")`,
+so that a crash keeps what came before it. A host run covered these: pause
+and play notes, the take-back and X with the player paused, Triangle, app0:
+going, and the player paused part-way (with the shell keeping its place or
+not), before song 1, with its app still there at the start, and never asked
+again. The earlier paths still pass.
+
 
 ### PS4: the popup, and nothing to hang progress on
 

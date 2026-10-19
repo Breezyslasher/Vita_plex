@@ -26,7 +26,9 @@
  * whether the shell seeks.
  *
  * In VPLXBGT14 to 16 it is the app's background program (bgapp.c), which is
- * never in front, so it plays two songs from the library at once.
+ * never in front, so it plays two songs from the library at once. Its app,
+ * opened again, pauses it and later asks for the music again (VPLXBGT20 and
+ * 21), and it goes on where it stopped once the app has gone.
  *
  * Requests go over https as VitaPlex makes them, with curl, mbedtls and
  * Mozilla's CA bundle (packaged beside the eboot). The sign-in token comes
@@ -39,6 +41,7 @@
 
 #include "ShellAudio.h"
 
+#include <psp2/appmgr.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
 
@@ -85,6 +88,14 @@ static unsigned g_startMs;
 static int g_background;
 // playerStop: the music is over, and nothing is to start it again.
 static volatile int g_stopped;
+// playerPause: its app has the music. Where the song had got to, and whether
+// the app has asked for it again (playerResume).
+static volatile int g_paused, g_resumeAsked;
+static volatile unsigned g_pausedAtMs;
+// run() is over, so a song paused now has nothing to go on with.
+static volatile int g_runDone;
+// Paused for 10 minutes with nothing asked of it: the program goes.
+static volatile int g_pauseTimedOut;
 // The CA bundle packaged beside the eboot (findCaBundle).
 static char g_caPath[64] = "app0:cacert.pem";
 
@@ -843,6 +854,14 @@ static void seekTo(int song, unsigned ms) {
     const double t0 = now();
     const unsigned time = untilPlaying(song, &playing);
     mmss(at, sizeof(at), time);
+    // The shell keeps its place in a file through a stop (67.4 s in log
+    // 7d5ae5e7) and can start it there again (log 2aefa839), so a song
+    // paused and handed over again may be there already.
+    if (playing && time + 3000 >= ms && time <= ms + 3000) {
+        logLine("player: song %d: playing after %.1fs, at %s, where it is to go on from", song,
+                now() - t0, at);
+        return;
+    }
     logLine("player: song %d: %s after %.1fs, at %s; seeking to %s", song,
             playing ? "playing" : "not seen playing", now() - t0, at, want);
     seekFrom(song, ms, time);
@@ -876,10 +895,13 @@ void playerPowerEvent(int powerInfo) {
             result(r, sizeof(r), sceMusicPlayerServiceSendEvent(SCE_MUSIC_EVENTID_PLAY, 0)));
 }
 
+#define WATCH_PAUSED (-1)
+
 // Watches song play until it ends: its clock moving with a new song loaded
 // (shellHasNewSong), then either going back after the last 10 s or the state
 // leaving 1 (playing) there, against the server's length. The first readings
-// after an open can still show the file before's clock. 1 when it ended.
+// after an open can still show the file before's clock. 1 when it ended,
+// WATCH_PAUSED when its app paused it.
 static int watchSong(int song) {
     const unsigned durMs = (unsigned)g_tracks[song - 1].durationMs;
     char dur[16], at[16], r[24];
@@ -895,6 +917,7 @@ static int watchSong(int song) {
         sceKernelDelayThread(500 * 1000);
         // Stopped from another thread, which is quitting: not played again.
         if (g_stopped) return 0;
+        if (g_paused) return WATCH_PAUSED;
         // As ElevenMPV-A does while it plays: the Vita does not go to sleep
         // by itself in the middle of a song.
         sceKernelPowerTick(SCE_KERNEL_POWER_TICK_DISABLE_AUTO_SUSPEND);
@@ -963,7 +986,8 @@ static int watchSong(int song) {
                             at);
                     return 0;
                 }
-                if (t - lastPlay >= 5.0) {
+                // Not the stop of a pause, which comes from another thread.
+                if (t - lastPlay >= 5.0 && !g_paused && !g_stopped) {
                     logLine("player: song %d stopped at %s, before its end (state %d); play again: "
                             "%s",
                             song, at, state,
@@ -1022,6 +1046,94 @@ void playerStop(const char* why) {
     stopShell(why);
 }
 
+// From the watcher, as the app takes the music back: the place is read before
+// the stop, and the flag set before it, so that the player's thread does not
+// take the stop for one to play through (watchSong).
+void playerPause(const char* why) {
+    if (g_paused || g_stopped) return;
+    unsigned at = 0;
+    int state = 0;
+    if (g_shellUp) shellClock(&at, &state);
+    g_pausedAtMs = at;
+    g_resumeAsked = 0;
+    g_paused = 1;
+    stopShell(why);
+    char a[16];
+    mmss(a, sizeof(a), at);
+    logLine("player: paused at %s; it goes on from there when its app asks", a);
+}
+
+void playerResume(void) {
+    if (!g_paused) {
+        logLine("player: not paused, so nothing to go on with");
+    } else if (g_runDone) {
+        logLine("player: the songs are over, so nothing to go on with");
+        g_paused = 0;
+    } else {
+        g_resumeAsked = 1;
+    }
+}
+
+// 20 and 21, whose app quits as it hands the music over.
+static int appQuits(void) {
+    return strcmp(bgtestTitle(), "VPLXBGT20") == 0 || strcmp(bgtestTitle(), "VPLXBGT21") == 0;
+}
+
+// Nothing starts while the app handing the music over is still there: 21 was
+// listed for 10.3 s after it had ended itself, while this program played, and
+// the console crashed as it went (log cf918ac6). Up to 30 s.
+static void waitForAppGone(void) {
+    if (!g_background || !appQuits()) return;
+    SceUID pid = -1;
+    if (sceAppMgrGetIdByName(&pid, bgtestTitle()) < 0) return;
+    logLine("player: its app %s is still there; waiting for it to go first", bgtestTitle());
+    const double t0 = now();
+    while (sceAppMgrGetIdByName(&pid, bgtestTitle()) >= 0 && now() - t0 < 30.0)
+        sceKernelDelayThread(250 * 1000);
+    if (sceAppMgrGetIdByName(&pid, bgtestTitle()) < 0)
+        logLine("player: its app has gone, after %.2f s", now() - t0);
+    else
+        logLine("player: its app is still there after 30 s; going on all the same");
+}
+
+// While its app has the music: stopped here too, in case the pause came in
+// the middle of a hand-over, which would go on to play. Then waits for the app
+// to ask for the music again and go, for up to 10 minutes. 0 when the program
+// is to stop instead.
+static int waitWhilePaused(void) {
+    if (!g_paused) return 1;
+    if (g_shellUp || g_portHeld) stopShell("paused during a hand-over");
+    logLine("player: waiting for its app to ask for the music again");
+    const double since = now();
+    while (!g_resumeAsked && !g_stopped) {
+        if (now() - since > 600.0) {
+            g_pauseTimedOut = 1;
+            g_stopped = 1;
+            return 0;
+        }
+        sceKernelDelayThread(250 * 1000);
+    }
+    if (g_stopped) return 0;
+    logLine("player: its app asks for the music again");
+    waitForAppGone();
+    g_resumeAsked = 0;
+    g_paused = 0;
+    return 1;
+}
+
+// Song handed over again where its app paused it and watched on, once the app
+// has asked for it and gone: what watchSong gives.
+static int resumeSong(int song) {
+    const unsigned at = g_pausedAtMs;
+    if (!waitWhilePaused()) return 0;
+    handOver(song);
+    if (at >= 5000)
+        seekTo(song, at);
+    else
+        fromTheStart(song);
+    return watchSong(song);
+}
+
 // ── The run ──────────────────────────────────────────────────────────────
 
 static int secondMain(SceSize args, void* argp) {
@@ -1032,6 +1144,7 @@ static int secondMain(SceSize args, void* argp) {
 }
 
 static void run(void) {
+    waitForAppGone();
     if (readSettings() < 0) return;
     for (int i = 0; i < 300 && !g_netReady; i++) sceKernelDelayThread(100 * 1000);
     if (!g_netReady) {
@@ -1069,7 +1182,7 @@ static void run(void) {
         logLine("player: starting%s", g_away ? ", away" : " in front (never sent away)");
     }
 
-    if (download(1) < 0 || g_stopped) return;
+    if (download(1) < 0 || g_stopped || !waitWhilePaused()) return;
     handOver(1);
     if (g_startMs > 0)
         seekTo(1, g_startMs);
@@ -1081,13 +1194,15 @@ static void run(void) {
                                        0, NULL);
         if (second >= 0) sceKernelStartThread(second, 0, NULL);
     }
-    watchSong(1);
+    int watched = watchSong(1);
+    while (watched == WATCH_PAUSED) watched = resumeSong(1);
     if (second >= 0) {
         sceKernelWaitThreadEnd(second, NULL, NULL);
-        if (g_secondReady == 1 && !g_stopped) {
+        if (g_secondReady == 1 && !g_stopped && waitWhilePaused()) {
             handOver(2);
             fromTheStart(2);
-            watchSong(2);
+            watched = watchSong(2);
+            while (watched == WATCH_PAUSED) watched = resumeSong(2);
         }
     }
     stopShell("test over");
@@ -1098,6 +1213,12 @@ static int playerMain(SceSize args, void* argp) {
     (void)args;
     (void)argp;
     run();
+    g_runDone = 1;
+    if (g_pauseTimedOut) {
+        logLine("player: quitting, paused for 10 minutes with nothing asked of it");
+        sceKernelExitProcess(0);
+        return 0;
+    }
     // Started by VitaPlex, it quits once that is over: it reads a hand-over
     // only as it starts, so the next one needs it started afresh.
     if (g_handoff) {

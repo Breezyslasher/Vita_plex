@@ -29,17 +29,21 @@ int bgappTakeNote(char* title, size_t size, double* t0, double* since);
 // 1 while a note is waiting to be read: an app has just asked for its
 // background program, which takes about a second to start and read it.
 int bgappNoteWaiting(void);
-// The app asking its running background program to stop, and why, in a note
-// of the app's own (app, its title id); and taking the request back if no
-// program has read it.
-void bgappAskQuit(const char* app, const char* why);
-void bgappCancelQuit(const char* app);
+// What an app asks of its running background program, each in a note of the
+// app's own (app, its title id): to stop for good (BGAPP_QUIT), to stop the
+// music and stay (BGAPP_PAUSE), or to play it again once the app has gone
+// (BGAPP_PLAY).
+enum { BGAPP_QUIT, BGAPP_PAUSE, BGAPP_PLAY };
+// The app asking, and why; and taking the request back if no program has
+// read it.
+void bgappAsk(const char* app, int what, const char* why);
+void bgappCancel(const char* app, int what);
 // 1 while that request is waiting to be read.
-int bgappQuitWaiting(const char* app);
+int bgappWaiting(const char* app, int what);
 // The request, read by the background program and removed: 1 with why, or -1
 // when it was made before the program started (at startedAt, on the system
 // clock), so was for another one.
-int bgappTakeQuit(const char* app, double startedAt, char* why, size_t size);
+int bgappTake(const char* app, int what, double startedAt, char* why, size_t size);
 // The copy of its CA bundle the app leaves its background program as it asks
 // for it (bgappStart). The program lost app0: when its app was ended after it
 // had started, and with it the bundle (log 5d35ef15).
@@ -59,6 +63,11 @@ void playerQuit(const char* why);
 // The same whatever is playing, and for good: the background program, asked
 // by its app or the system to go, takes the music with it.
 void playerStop(const char* why);
+// The background program, its app open again: the music stops, and where it
+// was is kept (playerPause). Asked for it again, it goes on from there once
+// the app has gone (playerResume).
+void playerPause(const char* why);
+void playerResume(void);
 // The power callback's argument (main.c): the power button stops the shell's
 // music, and this plays it again, as ElevenMPV-A does.
 void playerPowerEvent(int powerInfo);

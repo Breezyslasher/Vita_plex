@@ -14,10 +14,11 @@
  * that started it and how long that took, and its clock carries on from the
  * app's.
  *
- * The app asks a running program to stop with a second note, which says when
- * and why: as it opens again and takes the music back (VPLXBGT20 and 21), or
- * when it cannot quit while the program runs, as VPLXBGT18 could not. That
- * note is the app's own: with one for all, 21's program took 20's request.
+ * The app asks things of a running program with notes of its own, which say
+ * when and why: to pause as it opens again and takes the music back, and to
+ * play again as it goes (VPLXBGT20 and 21); or to stop for good when it
+ * cannot quit while the program runs, as VPLXBGT18 could not. With one note
+ * for every app, 21's program took 20's request.
  *
  * As it asks, the app also copies its CA bundle to ux0:data for the program.
  * A program started before its app had gone lost app0: when the app was ended
@@ -42,8 +43,9 @@ int sceBgAppUtilStartBgApp(int mode);
 
 static double systemSecs(void) { return sceKernelGetSystemTimeWide() / 1e6; }
 
-static void quitPath(char* out, size_t size, const char* app) {
-    snprintf(out, size, "ux0:data/VitaPlex/bgtest-%s-quit.txt", app);
+static void notePath(char* out, size_t size, const char* app, int what) {
+    static const char* const kinds[] = {"quit", "pause", "play"};
+    snprintf(out, size, "ux0:data/VitaPlex/bgtest-%s-%s.txt", app, kinds[what]);
 }
 
 static long fileSize(const char* path) {
@@ -148,24 +150,24 @@ int bgappTakeNote(char* title, size_t size, double* t0, double* since) {
     return 1;
 }
 
-void bgappAskQuit(const char* app, const char* why) {
+void bgappAsk(const char* app, int what, const char* why) {
     char path[64];
-    quitPath(path, sizeof(path), app);
+    notePath(path, sizeof(path), app, what);
     FILE* f = fopen(path, "w");
     if (!f) return;
     fprintf(f, "%.6f %s\n", systemSecs(), why);
     fclose(f);
 }
 
-void bgappCancelQuit(const char* app) {
+void bgappCancel(const char* app, int what) {
     char path[64];
-    quitPath(path, sizeof(path), app);
+    notePath(path, sizeof(path), app, what);
     remove(path);
 }
 
-int bgappQuitWaiting(const char* app) {
+int bgappWaiting(const char* app, int what) {
     char path[64];
-    quitPath(path, sizeof(path), app);
+    notePath(path, sizeof(path), app, what);
     FILE* f = fopen(path, "r");
     if (!f) return 0;
     fclose(f);
@@ -173,9 +175,9 @@ int bgappQuitWaiting(const char* app) {
 }
 
 // A note it cannot read yet, caught half written, is left for the next look.
-int bgappTakeQuit(const char* app, double startedAt, char* why, size_t size) {
+int bgappTake(const char* app, int what, double startedAt, char* why, size_t size) {
     char path[64];
-    quitPath(path, sizeof(path), app);
+    notePath(path, sizeof(path), app, what);
     FILE* f = fopen(path, "r");
     if (!f) return 0;
     char line[160];
